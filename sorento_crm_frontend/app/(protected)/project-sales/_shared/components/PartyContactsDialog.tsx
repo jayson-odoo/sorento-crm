@@ -266,7 +266,9 @@ function PartyContactRows({
           options={options}
           placeholder="Choose contacts"
           emptyMessage="No contacts match."
-          disabled={adding}
+          // Locked while a contact or a number is being typed, so a pick cannot pull the open
+          // form out from under the user (it would leave no Done, no Cancel and no way back).
+          disabled={editing}
           renderOption={(opt) => (
             // One line per contact: name, then the phone (owner, 11 Nov).
             <div className="flex min-w-0 flex-1 items-center gap-2">

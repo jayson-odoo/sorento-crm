@@ -1071,8 +1071,9 @@ export function QuotationFormClient({
                 liveGrandTotal={liveTotal}
                 details={details}
                 // Prepared By is the document's creator: on a new one, whoever is creating it
-                // (owner ruling 11 Nov 2026); a saved one carries its own prepared_by.
-                preparedBy={preparedBy}
+                // (owner ruling 11 Nov 2026); a saved one carries its own prepared_by and never
+                // falls back to the viewer.
+                preparedBy={isEdit ? null : preparedBy}
                 onChange={(patch) => {
                   setDirty(true);
                   setHeader((previous) => ({ ...(previous ?? {}), ...patch }));

@@ -2,6 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useImpersonationSession } from '@/lib/impersonation-store';
+import { useSessionOrSignedOut } from '@/hooks/useSessionOrSignedOut';
 
 /**
  * The acting user's id, impersonation-aware.
@@ -28,13 +29,8 @@ export function useEffectiveUserId(): string | null {
  */
 export function useEffectiveUserName(): string | null {
   // Read as signed out where no SessionProvider wraps the tree (the quotation form renders in
-  // isolation in its tests), the same guard as `usePermissions`.
-  let session: ReturnType<typeof useSession>['data'] = null;
-  try {
-    session = useSession().data;
-  } catch {
-    session = null;
-  }
+  // isolation in its tests), the same guard `usePermissions` uses.
+  const { data: session } = useSessionOrSignedOut();
   const impersonation = useImpersonationSession();
   if (impersonation?.targetUser) {
     return impersonation.targetUser.name || impersonation.targetUser.email || null;

@@ -187,4 +187,16 @@ describe('adding a contact is the only CTA while its form is open', () => {
     fireEvent.click(done);
     expect(props.onSave).toHaveBeenCalledWith({ 'p-1': ['c-1', 'c-new'] });
   });
+
+  it('while a missing number is typed the picker is locked and only the number form acts', async () => {
+    listPartyContacts.mockResolvedValue(CONTACTS);
+    renderDialog({ picks: { 'p-1': ['c-3'] } });
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Add number' }));
+    expect(within(dialog).getByRole('combobox', { name: 'Contacts' })).toBeDisabled();
+    expect(within(dialog).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(within(dialog).getByRole('combobox', { name: 'Contacts' })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
 });
