@@ -100,7 +100,10 @@ PAGE_EDITS_TOTAL_MAX = 4_000_000
 #: Layer types the designer produces (FE `TagLayerType`). The strict `TagLayerDoc` schema is not
 #: used: it lacks `barcode` and demands fields a layer may legitimately omit.
 LAYER_TYPES = frozenset(
-    {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group", "table"}
+    {
+        "image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group",
+        "feature_icons", "accessories", "table",
+    }
 )
 LAYER_DEPTH_MAX = 8
 LAYER_STRING_MAX = 5000
@@ -1778,6 +1781,10 @@ def _check_apply(changes: Any) -> dict:
     return clean
 
 
+def _is_target(layer: Any, layer_id: str) -> bool:
+    return isinstance(layer, dict) and (layer.get("id") == layer_id or layer.get("source_id") == layer_id)
+
+
 def apply_to_all_pages(
     db: Session,
     sheet: ProjectQuotationSpecSheet,
@@ -1805,11 +1812,12 @@ def apply_to_all_pages(
     touched = 0
     for key, template in entries:
         layers = _page_layers(sheet, pinned, key, template)
-        if not any(isinstance(layer, dict) and layer.get("id") == layer_id for layer in layers):
+        # An Every page add leaves copies under fresh ids that remember the client id (`source_id`).
+        if not any(_is_target(layer, layer_id) for layer in layers):
             continue
         merged = []
         for layer in layers:
-            if isinstance(layer, dict) and layer.get("id") == layer_id:
+            if _is_target(layer, layer_id):
                 layer = {**layer, **{k: v for k, v in clean.items() if k != "props"}}
                 if "props" in clean:
                     layer["props"] = {**(layer.get("props") or {}), **clean["props"]}
@@ -1852,16 +1860,17 @@ def add_layer_to_all_pages(
     else:
         entries = [(p["key"], p["template"]) for p in pages(db, sheet) if not p["hidden"]]
     edits = dict(sheet.page_edits or {})
+    added = 0
     for key, template in entries:
         layers = _page_layers(sheet, pinned, key, template)
-        if any(
-            isinstance(held, dict) and (held.get("id") == layer_id or held.get("source_id") == layer_id)
-            for held in layers
-        ):
+        if any(_is_target(held, layer_id) for held in layers):
             continue
         merged = [*layers, {**layer, "id": f"layer-{uuid.uuid4().hex[:12]}", "source_id": layer_id}]
         _validate_page_edit(db, sheet, merged, pinned=pinned)
         edits[key] = {"layers": merged}
+        added += 1
+    if not added:
+        return sheet  # a repeat: nothing changed, so it is no edit (no stamp)
     if sum(_edit_size(v) for v in edits.values()) > PAGE_EDITS_TOTAL_MAX:
         raise _too_large()
     sheet.page_edits = edits
