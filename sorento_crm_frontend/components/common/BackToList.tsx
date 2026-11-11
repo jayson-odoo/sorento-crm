@@ -25,6 +25,28 @@ export interface BackToListProps {
    * their own) gets no page Back, the breadcrumb is their way back.
    */
   hideForLimited?: string;
+  /**
+   * The label when the page was opened from somewhere else that named itself in `?back=` (a
+   * project's Sponsorship Form tab opening a form): Back then returns there, for everyone.
+   */
+  originLabel?: string;
+}
+
+/** The query param a page that opens a record names itself in, so Back returns to it. */
+export const BACK_PARAM = 'back';
+
+/**
+ * A same-app relative path only: one leading slash, no `//host`, no backslash or control
+ * character (WHATWG URL parsing turns `/\evil.test` into another host). Same rule as the
+ * review pages' `from` (`isSafeReviewOrigin`).
+ */
+function safeAppPath(candidate: string | null): string | null {
+  return candidate &&
+    candidate.startsWith('/') &&
+    !candidate.startsWith('//') &&
+    !/[\\\x00-\x1f]/.test(candidate)
+    ? candidate
+    : null;
 }
 
 /**
@@ -45,6 +67,7 @@ export function useHrefWithListState(path: string, appendListState = true): stri
     if (!appendListState) return '';
     const params = new URLSearchParams(searchParams.toString());
     params.delete('tab');
+    params.delete(BACK_PARAM);
     for (const key of [...params.keys()]) if (isDetailViewKey(key)) params.delete(key);
     return params.toString();
   }, [appendListState, searchParams]);
@@ -76,16 +99,21 @@ export default function BackToList({
   appendListState = true,
   className,
   hideForLimited,
+  originLabel,
 }: BackToListProps) {
-  const href = useBackToListHref(listPath, appendListState);
+  const listHref = useBackToListHref(listPath, appendListState);
+  const origin = safeAppPath(useSearchParams().get(BACK_PARAM));
+  const href = origin && originLabel ? origin : listHref;
 
   const button = (
     <Button asChild variant="outline" className={className}>
       <Link href={href}>
-        <MoveLeft /> {label}
+        <MoveLeft /> {origin && originLabel ? originLabel : label}
       </Link>
     </Button>
   );
+  // Back to where the record was opened from is everyone's way back, a limited user's too.
+  if (origin && originLabel) return button;
   return hideForLimited ? <HiddenWhenLimited kind={hideForLimited}>{button}</HiddenWhenLimited> : button;
 }
 

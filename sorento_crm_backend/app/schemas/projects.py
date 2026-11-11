@@ -1871,6 +1871,8 @@ class ProjectSponsorshipResponse(BaseModel):
     sponsor_subject: Optional[str] = None
     sponsor_subject_other: Optional[str] = None
     total_project_value: Optional[Decimal] = None
+    # What the form sponsors (its lines' Grand total); `total_project_value` is the project's.
+    sponsored_total: Optional[Decimal] = None
     purpose: Optional[str] = None
 
 

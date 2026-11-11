@@ -155,13 +155,16 @@ beforeEach(() => {
 });
 
 describe('limited user, New Sponsorship Form renders the portal form', () => {
-  it('is the portal form: no request-type selector, no CRM registered-project picker, Expected PO date is the portal date input', async () => {
+  it('is the portal form: no request-type selector, no CRM registered-project picker, Expected delivery date is the shared DD/MM/YYYY picker', async () => {
     mountForm(LIMITED);
     expect(await screen.findByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
     expect(screen.queryByText('Request type')).toBeNull();
     
     await waitFor(() => expect(document.getElementById('expected_delivery_date')).not.toBeNull());
-    expect((document.getElementById('expected_delivery_date') as HTMLInputElement).type).toBe('date');
+    // Never the browser's own date box (standing rule): the shared picker, typed as DD/MM/YYYY.
+    const date = document.getElementById('expected_delivery_date') as HTMLInputElement;
+    expect(date.type).not.toBe('date');
+    expect(date.placeholder).toBe('DD/MM/YYYY');
     
     await waitFor(() => expect(urls((c) => c.url === '/api/v1/my-requests/me').length).toBeGreaterThan(0));
   });
@@ -355,11 +358,13 @@ const draftFields = () => {
 };
 
 describe('limited user, Sponsorship Form seeded from a project (?project_id=)', () => {
-  it('unflagged contact: picker hidden, the draft carries project_id and the project title, Project title input shows it', async () => {
+  it('unflagged contact: the project it started from is shown (as staff see it), the draft carries project_id and the project title', async () => {
     meNow = { requires_registered_project: false };
     mountSeeded(PROJECT_ID);
     await waitFor(() => expect((document.getElementById('project_title') as HTMLInputElement | null)?.value).toBe('Project One'));
-    expect(screen.queryByText('Registered project')).toBeNull();
+    // PROJECT-STAGE-ACTIONS (crew pass 11 Nov): one form from a project, the same fields for all.
+    expect(await screen.findByText('Registered project')).toBeInTheDocument();
+    await waitFor(() => expect((document.getElementById('project_id') as HTMLInputElement | null)?.value ?? '').toContain('PRJ-0001'));
     fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
     await waitFor(() => expect(draftFields().project_id).toBe(PROJECT_ID));
     expect(draftFields().project_title).toBe('Project One');

@@ -150,3 +150,62 @@ def test_the_project_carries_its_salespersons_contact(world):
 
     assert res.status_code == 200, res.text
     assert res.json()["owner_contact_id"] == salesperson_contact
+
+
+def test_staff_submit_refuses_a_salespersons_own_portal_draft(world):
+    """Security review S1: their own draft is theirs to submit, and their contact's
+    registered-project rule must not be skipped by a staff submit."""
+    from tests._forms_chain_support import SUB
+
+    w = world
+    salesperson = contact(w.db, name="portal draft salesperson")
+    staff = _staff(w, ADD, VIEW)
+    w.db.commit()
+    res = w.as_contact(salesperson).post(
+        f"{SUB}/sponsorship_form",
+        json={
+            "fields": {"customer_name": "ZZT Example Trading", "requested_by_contact_id": salesperson},
+            "products": [{"item_code": "ZZT-TILE-1", "quantity": 4, "unit_price": 25, "total": 100}],
+        },
+    )
+    assert res.status_code == 200, res.text
+    rid = res.json()["id"]
+
+    refused = w.as_user(staff).post(f"{PR_BASE}/{rid}/submit")
+
+    assert refused.status_code == 400, refused.text
+    assert w.as_user(staff).get(f"{PR_BASE}/{rid}").json()["status"] == "draft"
+
+
+def test_staff_submit_clears_an_approval_stamp_set_at_create(world):
+    """Security review S2: the staff create accepts approval fields; a submitted form must
+    reach the office with no approval on it."""
+    w = world
+    salesperson = contact(w.db, name="stamp salesperson")
+    staff = _staff(w, ADD, VIEW)
+    res = w.as_user(staff).post(
+        PR_BASE,
+        json={
+            "request_type": "sponsorship_form",
+            "customer_name": "ZZT Example Trading",
+            "pic": "Ann 012-0000000",
+            "delivery_address": "1 Example Road",
+            "project_title": "ZZT Tower",
+            "requested_by_contact_id": salesperson,
+            "contact_id": salesperson,
+            "approval_status": "approved",
+            "approved_by": staff,
+            "approval_signature_ref": "zzt-forged",
+            "products": [{"item_code": "ZZT-TILE-1", "quantity": 4, "unit_price": 25, "total": 100}],
+        },
+    )
+    assert res.status_code == 201, res.text
+    rid = res.json()["id"]
+
+    done = w.as_user(staff).post(f"{PR_BASE}/{rid}/submit")
+
+    assert done.status_code == 200, done.text
+    body = done.json()
+    assert body["status"] == "submitted"
+    assert body["approval_status"] is None
+    assert body.get("approval_signature_ref") is None

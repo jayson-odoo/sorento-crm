@@ -61,7 +61,20 @@ that form returns to the project tab it belongs to.
    draft (`source = manual`), and shares its tail (`_finish_submit`: number, history, notify,
    project feed, form SLA) with the portal submit so the two cannot drift.
 
-No new button: the staff submit is the existing form's Submit, so no assistant `ActionDef`
+5. Crew pass, 11 Nov (salesperson path + standing rules): a field the form starts with is shown
+   even when its contact rule hides it (both paths show Registered project); the salesperson's
+   project-started form has the staff path's Cancel / Submit destination and no AI Extract
+   (`MyRequestPortalForm` `paths` / `aiExtract`); the staff client pre-selects each lookup's admin
+   default through its `purchase_requests` binding (Sales type = Project), as the salesperson's
+   does; the portal form's date fields use the shared DD/MM/YYYY `DatePicker`; the project
+   Sponsorships tab and its rollup show the sponsored amount (the form's line Grand total), never
+   `total_project_value` (the project's); a form opened from that tab goes Back to it (`?back=`,
+   `BackToList originLabel`).
+6. Security review: the staff submit takes only a staff-written draft (`source = manual`, no
+   `portal_draft_at`) and clears any approval stamp set at create.
+
+The clicking user is recorded by the audit log (the request actor); `purchase_requests` has no
+`created_by` column. No new button: the staff submit is the existing form's Submit, so no assistant `ActionDef`
 (cloud-lanes DoD line 7). No migration.
 
 ## Open

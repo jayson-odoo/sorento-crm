@@ -15,6 +15,8 @@ import {
 } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
 import { InfoHint } from './InfoHint';
+import { BACK_PARAM } from '@/components/common/BackToList';
+import { projectTabOriginHref } from '../../_shared/lib/reviewOrigin';
 import { formatMyr } from './QuotationsPanel';
 
 /**
@@ -84,12 +86,13 @@ export function SponsorshipsPanel({ project }: { project: Project }) {
       },
       {
         id: 'total',
-        accessorFn: (row) => Number(row.total_project_value ?? 0),
+        // The sponsored amount (the form's Grand total), never the project's value.
+        accessorFn: (row) => Number(row.sponsored_total ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
         cell: ({ row }) =>
-          row.original.total_project_value ? (
+          Number(row.original.sponsored_total ?? 0) > 0 ? (
             <span className="truncate text-sm font-medium">
-              {formatMyr(row.original.total_project_value)}
+              {formatMyr(row.original.sponsored_total as string)}
             </span>
           ) : (
             <span className="text-muted-foreground">-</span>
@@ -187,8 +190,13 @@ export function SponsorshipsPanel({ project }: { project: Project }) {
       isLoading={sponsorships.isLoading}
       error={sponsorships.isError ? sponsorships.error : undefined}
       emptyTitle="Nothing sponsored on this project"
+      // Back on the form returns to this tab (`?back=`, BackToList).
       onRowClick={(row) =>
-        router.push(`/procurement-management/sponsorship-forms/${row.id}`)
+        router.push(
+          `/procurement-management/sponsorship-forms/${row.id}?${BACK_PARAM}=${encodeURIComponent(
+            projectTabOriginHref(project.id, 'sponsorships'),
+          )}`,
+        )
       }
     />
   );

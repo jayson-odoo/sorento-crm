@@ -28,3 +28,15 @@ Plan: `PLAN-project-stage-actions-11nov.md`.
   `staffSponsorshipSubmissionClient.test.ts`.
 - PSA-9 Spec In, Sample submitted and Final negotiation behave as before. Existing
   `ProjectDetailClient.test.tsx` AC-PS tests.
+- PSA-10 From a project the salesperson's form and the staff form start identically: Registered
+  project shown, the lookup defaults pre-selected, no AI Extract; the salesperson's bottom Cancel
+  and Submit return to the project tab. `SponsorshipForm.portalForm.test.tsx`,
+  `PurchaseRequestForm.projectSponsorship.test.tsx`, `staffSponsorshipSubmissionClient.test.ts`.
+- PSA-11 Expected delivery date is the shared DD/MM/YYYY picker. `SponsorshipForm.portalForm.test.tsx`.
+- PSA-12 The project Sponsorships tab and its total show the sponsored amount (line Grand total),
+  not the project value. `SponsorshipsPanel.sponsoredTotal.test.tsx`,
+  `tests/test_sponsorship_project_link.py`.
+- PSA-13 A sponsorship form opened from the project tab goes "Back to project"; a non-app origin
+  is ignored. `BackToList.origin.test.tsx`, `SponsorshipsPanel.sponsoredTotal.test.tsx`.
+- PSA-14 A staff draft line with no quantity is refused at Save draft as a plain 422 (no line
+  reference), stricter than a portal draft; unchanged staff create behaviour.

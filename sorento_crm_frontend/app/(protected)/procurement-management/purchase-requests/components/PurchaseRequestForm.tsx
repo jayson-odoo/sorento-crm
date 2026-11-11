@@ -68,7 +68,7 @@ import { RequestorContactSelect } from '@/app/(protected)/master-data-management
 import { cn } from '@/lib/utils';
 import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { useProject } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
+import { SPONSORSHIPS_KEY, useProject } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 import {
   SubmissionForm,
@@ -78,9 +78,11 @@ import {
   SubmissionClientProvider,
   type SubmissionClient,
 } from '@/app/(auth)/portal/lib/submission-client';
-import { SPONSORSHIPS_KEY } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
 import type { Project } from '@/app/(protected)/project-sales/_shared/types/project.types';
-import { createStaffSponsorshipClient } from '../services/staffSponsorshipSubmissionClient';
+import {
+  createStaffSponsorshipClient,
+  projectSponsorshipPaths,
+} from '../services/staffSponsorshipSubmissionClient';
 
 const PURCHASE_REQUESTS_EDIT = "/procurement-management/purchase-requests";
 const SPONSORSHIP_FORMS_EDIT = "/procurement-management/sponsorship-forms";
@@ -145,7 +147,8 @@ export function projectSponsorshipSeed(project: Project): SubmissionInitialValue
   };
   const fields: Record<string, string> = {};
   for (const [name, value] of Object.entries(candidates)) {
-    if (value && value.trim()) fields[name] = value.trim();
+    const text = value == null ? "" : String(value).trim();
+    if (text) fields[name] = text;
   }
   return { fields, labels: { project_code: projectCodeLabel(project) } };
 }
@@ -225,6 +228,11 @@ function NewOwnRequestForm({
             },
     [project, kind],
   );
+  const fromProject = useMemo(
+    () =>
+      project && kind === "sponsorship_form" ? projectSponsorshipPaths(project.id) : undefined,
+    [project, kind],
+  );
   if (projectId && isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -232,7 +240,18 @@ function NewOwnRequestForm({
       </div>
     );
   }
-  return <MyRequestPortalForm kind={kind} initialValues={initialValues} />;
+  // From a project, the salesperson's form is the one staff see: no AI Extract, and Cancel /
+  // Submit go back to the project's Sponsorship Form tab.
+  return fromProject ? (
+    <MyRequestPortalForm
+      kind={kind}
+      initialValues={initialValues}
+      paths={fromProject}
+      aiExtract={false}
+    />
+  ) : (
+    <MyRequestPortalForm kind={kind} initialValues={initialValues} />
+  );
 }
 
 function StaffPurchaseRequestForm({

@@ -1388,6 +1388,13 @@ class PortalService:
         kind = (getattr(row, "request_type", None) or "purchase_request").strip().lower()
         if row.status != "draft":
             raise handle_validation_error(f"Cannot submit {kind} with status {row.status!r}.")
+        # Only a draft staff wrote. A salesperson's own portal draft is theirs to submit: staff
+        # submitting it would send a form they never chose to send, and skip their contact's
+        # registered-project rule (security review, PROJECT-STAGE-ACTIONS).
+        if getattr(row, "source", None) != "manual" or getattr(row, "portal_draft_at", None):
+            raise handle_validation_error(
+                f"This {kind.replace('_', ' ')} is a salesperson's own draft; they submit it."
+            )
         if getattr(row, "project_id", None):
             from app.services.project_service import assert_linkable_project
 
@@ -1399,6 +1406,14 @@ class PortalService:
         portal_required_fields.require_complete(kind, row)
         row.status = submission_status.status_on_submit(was_rejected=False)
         row.submitted_at = _utcnow()
+        # A submitted form starts its approval from nothing, as the portal's resubmit clears it:
+        # the staff create accepts these fields, so a stamp set there must not ride into the
+        # office queue looking approved (security review).
+        row.approval_status = None
+        row.approval_comments = None
+        row.approved_at = None
+        row.approved_by = None
+        row.approval_signature_ref = None
         self._finish_submit(
             kind,
             row,

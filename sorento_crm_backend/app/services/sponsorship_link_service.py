@@ -19,12 +19,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import Integer, extract, func
+from sqlalchemy import Integer, extract, func, select
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
 from app.models.company import Company, RespondContactCompany
-from app.models.procurement import PurchaseRequestHeader
+from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.models.projects import Project, ProjectPurchaseOrder
 from app.services.error_handler import AppException
 
@@ -149,6 +149,25 @@ def assert_project_requirement(
 # ---------------------------------------------------------------------- reading
 
 
+def _sponsored_totals():
+    """Each sponsorship form's sponsored amount: the sum of its lines' totals (a line with no
+    total counts quantity x unit price), the form's own Grand total. NOT `total_project_value`,
+    which is the value of the PROJECT the form names (PROJECT-STAGE-ACTIONS, crew pass 11 Nov)."""
+    line_amount = func.coalesce(
+        PurchaseRequestLine.total,
+        PurchaseRequestLine.quantity * PurchaseRequestLine.unit_price,
+        0,
+    )
+    return (
+        select(
+            PurchaseRequestLine.purchase_request_id.label("request_id"),
+            func.sum(line_amount).label("amount"),
+        )
+        .group_by(PurchaseRequestLine.purchase_request_id)
+        .subquery()
+    )
+
+
 def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
     """Sponsorship forms linked to one project.
 
@@ -156,8 +175,10 @@ def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
     sponsorship spend, and mixing the two would double-count it in the rollup that reads
     the same rows.
     """
+    sums = _sponsored_totals()
     rows = (
-        db.query(PurchaseRequestHeader)
+        db.query(PurchaseRequestHeader, sums.c.amount)
+        .outerjoin(sums, sums.c.request_id == PurchaseRequestHeader.id)
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
@@ -177,9 +198,10 @@ def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
             "sponsor_subject": row.sponsor_subject,
             "sponsor_subject_other": row.sponsor_subject_other,
             "total_project_value": row.total_project_value,
+            "sponsored_total": Decimal(amount or 0).quantize(_CENTS),
             "purpose": row.purpose,
         }
-        for row in rows
+        for row, amount in rows
     ]
 
 
@@ -190,11 +212,13 @@ def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
     "how much did we spend on sponsorship in 2026" are two different management questions
     and only the second one justifies next year's budget.
     """
+    sums = _sponsored_totals()
     total, count = (
         db.query(
-            func.coalesce(func.sum(PurchaseRequestHeader.total_project_value), 0),
+            func.coalesce(func.sum(sums.c.amount), 0),
             func.count(PurchaseRequestHeader.id),
         )
+        .outerjoin(sums, sums.c.request_id == PurchaseRequestHeader.id)
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
@@ -205,9 +229,10 @@ def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
     year_rows = (
         db.query(
             extract("year", PurchaseRequestHeader.request_date).label("year"),
-            func.coalesce(func.sum(PurchaseRequestHeader.total_project_value), 0),
+            func.coalesce(func.sum(sums.c.amount), 0),
             func.count(PurchaseRequestHeader.id),
         )
+        .outerjoin(sums, sums.c.request_id == PurchaseRequestHeader.id)
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,

@@ -10,15 +10,15 @@
  * - Submit: save, then `POST /purchase-requests/{id}/submit`, which runs the portal's submit rules
  *   and side effects for staff (`PortalService.submit_staff_request`).
  * - Profile (`fetchMe`): the PROJECT SALESPERSON's contact, so Requested by defaults to them and
- *   the form is written on their behalf. The registered project field is always shown.
+ *   the form is written on their behalf.
  * - Lookups: the staff pickers the staff form already uses (customers, products, projects,
  *   lookup sets, requestor contacts).
  *
  * Only creating a new form from a project is served; the form's other calls answer plainly.
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
-import { getLookupSetOptions } from '@/lib/lookupBindingService';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { getLookupOptionsByBinding, getLookupSetOptions } from '@/lib/lookupBindingService';
 import type {
   DebtorLookupItem,
   LookupSetResult,
@@ -156,15 +156,16 @@ async function lookupDebtors(q: string): Promise<DebtorLookupItem[]> {
 }
 
 async function lookupProjects(q: string, limit = 20): Promise<ProjectLookupItem[]> {
-  const usp = new URLSearchParams({
-    page: '1',
-    limit: String(limit),
-    sort: 'updated_at',
-    dir: 'desc',
+  const usp = buildDataGridParams(
+    {
+      pageIndex: 0,
+      pageSize: limit,
+      sorting: [{ id: 'updated_at', desc: true }],
+      searchQuery: q.trim(),
+    },
     // A registration waiting for approval is not a project to link yet (PROJECT-REG-PORTAL R4).
-    approved_only: 'true',
-  });
-  if (q.trim()) usp.set('query', q.trim());
+    { approved_only: 'true' },
+  );
   const body = await unwrap<{ data?: { id: string; project_code: string | null; title: string; name?: string | null }[] }>(
     await apiFetch(`/api/v1/project-sales/projects/?${usp.toString()}`),
     'Failed to load projects.',
@@ -177,25 +178,43 @@ async function lookupProjects(q: string, limit = 20): Promise<ProjectLookupItem[
   }));
 }
 
+/** The sets this form reads, by the `purchase_requests` column each is bound to: the binding
+ *  carries the admin's "Default (new forms)", which the salesperson's form pre-selects too. */
+const SET_BINDINGS: Record<string, string> = {
+  procurement_sales_type: 'sales_type',
+  procurement_sponsor_subject: 'sponsor_subject',
+};
+
 /** One fetch per set per form, as the portal client caches it. */
 function cachedLookupSet(): (setKey: string) => Promise<LookupSetResult> {
   const cache: Record<string, Promise<LookupSetResult>> = {};
+  const load = async (setKey: string): Promise<LookupSetResult> => {
+    const column = SET_BINDINGS[setKey];
+    if (column) {
+      const bound = await getLookupOptionsByBinding('purchase_requests', column);
+      return {
+        options: bound.options.filter((o) => o.is_active !== false).map((o) => ({ value: o.value, label: o.label })),
+        defaultValue: bound.default_value ?? null,
+      };
+    }
+    const options = await getLookupSetOptions(setKey);
+    return {
+      options: options.filter((o) => o.is_active !== false).map((o) => ({ value: o.value, label: o.label })),
+      defaultValue: null,
+    };
+  };
   return (setKey) => {
-    cache[setKey] ??= getLookupSetOptions(setKey)
-      .then((options) => ({
-        options: options.filter((o) => o.is_active !== false).map((o) => ({ value: o.value, label: o.label })),
-        defaultValue: null,
-      }))
-      .catch((e: unknown) => {
-        delete cache[setKey];
-        throw e;
-      });
+    cache[setKey] ??= load(setKey).catch((e: unknown) => {
+      delete cache[setKey];
+      throw e;
+    });
     return cache[setKey];
   };
 }
 
-/** Where the form's own links go: back to the project's Sponsorship Form tab when it is done. */
-export function staffSponsorshipPaths(projectId: string): SubmissionPaths {
+/** Where a project's sponsorship form goes when it is done or cancelled: back to the project's
+ *  Sponsorship Form tab. The salesperson's and staff's alike. */
+export function projectSponsorshipPaths(projectId: string): SubmissionPaths {
   const back = `/project-sales/${encodeURIComponent(projectId)}?tab=sponsorships`;
   return {
     home: () => back,
@@ -213,8 +232,9 @@ export function createStaffSponsorshipClient(project: StaffSponsorshipProject): 
     name: project.owner_name ?? null,
     phone_number: null,
     expires_at: '',
-    // Written from a project: its registered project is always on the form.
-    requires_registered_project: true,
+    // As for an unflagged salesperson: the project the form starts with is shown by the form
+    // itself (a seeded field is always shown), so both paths show the same fields.
+    requires_registered_project: false,
   };
   return {
     fetchMe: async () => me,
@@ -255,7 +275,7 @@ export function createStaffSponsorshipClient(project: StaffSponsorshipProject): 
     portalAttachmentDownloadUrl: () => '',
     fetchPortalAttachmentBytes: unavailable('Previewing a file'),
     getPriceTagDesign: async () => null,
-    paths: staffSponsorshipPaths(project.id),
+    paths: projectSponsorshipPaths(project.id),
     embedded: true,
     aiExtract: false,
   } as SubmissionClient;

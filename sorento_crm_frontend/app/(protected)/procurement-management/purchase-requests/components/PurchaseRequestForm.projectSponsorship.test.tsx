@@ -112,4 +112,12 @@ describe('Sponsorship form from a project', () => {
       initialValues: { fields: SEED },
     });
   });
+
+  it("a salesperson's Cancel and Submit go back to the project, with no AI Extract, as for staff", () => {
+    scope.limited = true;
+    renderForm({ defaultProjectId: 'p1' });
+    const props = seen.props.at(-1) as { aiExtract?: boolean; paths?: { home: (k: string) => string } };
+    expect(props.aiExtract).toBe(false);
+    expect(props.paths?.home('sponsorship_form')).toBe('/project-sales/p1?tab=sponsorships');
+  });
 });

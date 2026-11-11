@@ -1407,6 +1407,8 @@ export interface ProjectSponsorship {
   sponsor_subject?: string | null;
   sponsor_subject_other?: string | null;
   total_project_value?: string | null;
+  /** What the form sponsors (its lines' Grand total). `total_project_value` is the project's. */
+  sponsored_total?: string | null;
   purpose?: string | null;
 }
 

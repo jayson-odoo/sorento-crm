@@ -103,14 +103,21 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const searchParams = useSearchParams();
   const uploadRequested = searchParams.get('upload') === 'po';
   const canUpload = canWorkOnProject(project);
+  // Once per landing (StrictMode runs an effect twice), and read through refs so a new router or
+  // params object can never re-open the dialog the person just closed.
+  const uploadHandled = React.useRef(false);
+  const latest = React.useRef({ searchParams, router, projectId: project.id });
+  latest.current = { searchParams, router, projectId: project.id };
   React.useEffect(() => {
-    if (!uploadRequested) return;
+    if (!uploadRequested || uploadHandled.current) return;
+    uploadHandled.current = true;
     if (canUpload) setUploadingFor({ po: null });
-    const next = new URLSearchParams(searchParams.toString());
+    const { searchParams: params, router: nav, projectId } = latest.current;
+    const next = new URLSearchParams(params.toString());
     next.delete('upload');
     const query = next.toString();
-    router.replace(`/project-sales/${project.id}${query ? `?${query}` : ''}`, { scroll: false });
-  }, [uploadRequested, canUpload, searchParams, router, project.id]);
+    nav.replace(`/project-sales/${projectId}${query ? `?${query}` : ''}`, { scroll: false });
+  }, [uploadRequested, canUpload]);
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   const [menuPo, setMenuPo] = React.useState<ProjectPurchaseOrder | null>(null);
   const schedules = useDeliverySchedules(project.id);

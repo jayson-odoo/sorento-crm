@@ -97,6 +97,7 @@ import { cleanLineItems } from '../lib/line-items';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
 import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
@@ -467,6 +468,11 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   complaint: [],
 };
 
+/** A picked day as YYYY-MM-DD in local time (toISOString would shift it a day in UTC+8). */
+function isoLocalDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 const VERB_DOING = { Submit: 'Submitting...', Appeal: 'Appealing...' };
 const VERB_DONE = { Submit: 'Submitted.', Appeal: 'Appealed.' };
 
@@ -590,12 +596,17 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
 
   // One filtered list feeds seeding, validation, submit payload, AI extract and render,
   // so a contact-hidden field cannot survive in one of them (AC-F4).
+  // A field the form was started with is shown even when the contact rule hides it: a
+  // sponsorship form opened from a project shows that project to everyone (PROJECT-STAGE-ACTIONS).
   const fieldDefs = useMemo(
     () =>
       FIELDS[kind].filter((f) =>
-        f.showWhenContact ? f.showWhenContact(contact) : true,
+        f.showWhenContact
+          ? f.showWhenContact(contact) ||
+            (!submissionId && Boolean(initialValues?.fields?.[f.name]))
+          : true,
       ),
-    [kind, contact],
+    [kind, contact, submissionId, initialValues],
   );
   const showLines = HAS_LINES.includes(kind);
   // The id to save/flush against: the route param when one exists, else
@@ -3342,13 +3353,14 @@ function FieldControl({
         />
       );
     case 'date':
+      // The shared DD/MM/YYYY picker (typeable + calendar), never the browser's own date box.
+      // The stored value stays YYYY-MM-DD.
       return (
-        <Input
+        <DatePicker
           id={field.name}
-          type="date"
-          value={stringValue}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
+          ariaLabel={field.label}
+          value={parseDateInput(stringValue)}
+          onChange={(date) => onChange(date ? isoLocalDate(date) : '')}
           disabled={disabled}
         />
       );

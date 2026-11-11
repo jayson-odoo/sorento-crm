@@ -22,9 +22,11 @@ if (!window.matchMedia) {
 
 const replace = vi.fn();
 let params = new URLSearchParams();
+// One router object, as Next gives: a fresh one per render is not what the app sees.
+const router = { push: vi.fn(), replace };
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace }),
+  useRouter: () => router,
   usePathname: () => '/project-sales/p1',
   useSearchParams: () => params,
 }));
@@ -65,8 +67,6 @@ function project(overrides: Partial<Project> = {}): Project {
     title: 'Menara Test',
     outcome: 'open',
     is_critical: false,
-    brands: [],
-    brand_ids: [],
     next_action_overdue: false,
     stale_level: 0,
     is_unattended: false,
@@ -103,12 +103,27 @@ describe('PurchaseOrdersPanel opened by the PO received stage button', () => {
     expect(replace).toHaveBeenCalledWith('/project-sales/p1?tab=orders', { scroll: false });
   });
 
-  it('Cancel closes the dialog and leaves the PO tab in place', () => {
+  it('Cancel closes the dialog and leaves the PO tab in place', async () => {
     params = new URLSearchParams('tab=orders&upload=po');
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog', { name: 'Upload a customer PO' })).toBeNull();
-    expect(screen.getByText('No PO received yet')).toBeTruthy();
+    expect(await screen.findByText('No PO received yet')).toBeTruthy();
+  });
+
+  it('opens once: a re-render with the param still there does not reopen it', () => {
+    params = new URLSearchParams('tab=orders&upload=po');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <PurchaseOrdersPanel project={project()} />
+      </QueryClientProvider>
+    );
+    const view = render(tree());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    view.rerender(tree());
+    expect(screen.queryByRole('dialog', { name: 'Upload a customer PO' })).toBeNull();
+    expect(replace).toHaveBeenCalledTimes(1);
   });
 
   it('opens nothing without the param', () => {

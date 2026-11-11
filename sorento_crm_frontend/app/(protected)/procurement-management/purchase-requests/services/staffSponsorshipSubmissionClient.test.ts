@@ -21,11 +21,19 @@ function bodyOf(call: unknown[]) {
 beforeEach(() => apiFetch.mockReset());
 
 describe('staff sponsorship client', () => {
-  it('speaks as the project salesperson and always shows the registered project', async () => {
+  it('speaks as the project salesperson', async () => {
     const me = await createStaffSponsorshipClient(project).fetchMe();
     expect(me.contact_id).toBe('c-ann');
     expect(me.name).toBe('Ann Sales');
-    expect(me.requires_registered_project).toBe(true);
+  });
+
+  it("pre-selects a set's admin default, as the salesperson's form does", async () => {
+    apiFetch.mockResolvedValueOnce(
+      json({ set_key: 'procurement_sales_type', options: [{ value: 'project', label: 'Project', keywords: [], is_active: true }], default_value: 'project' }),
+    );
+    const result = await createStaffSponsorshipClient(project).lookupSet('procurement_sales_type');
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/v1/lookup/by-binding?table=purchase_requests&column=sales_type');
+    expect(result).toEqual({ options: [{ value: 'project', label: 'Project' }], defaultValue: 'project' });
   });
 
   it('Save draft creates a sponsorship form through the staff create, owned by the salesperson', async () => {
