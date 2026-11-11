@@ -537,21 +537,28 @@ class PoLinkService:
         False is returned (both lines stay, `keep` under its old ref)."""
         from app.services.dependent_probe import referrers_of
 
+        # Re-pointing the referrers is the step that can clash (a unique key on the keep line). It
+        # runs under a plain SQL savepoint: a failed statement is undone with ROLLBACK TO and the
+        # session stays usable, and no ORM transaction event fires (the ORM `begin_nested` here
+        # ended its parent savepoint through a flush-time commit hook and lost the whole merge).
+        self.db.flush()
         try:
-            with self.db.begin_nested():
-                for referrer, column in referrers_of(self.db, PurchaseOrderLine.__tablename__):
-                    self.db.execute(
-                        text(f'UPDATE {referrer} SET "{column}" = :keep WHERE "{column}" = :dup'),
-                        {"keep": str(keep.id), "dup": str(dup.id)},
-                    )
-                for column in _INGEST_OWNED:
-                    setattr(keep, column, getattr(dup, column))
-                self.db.delete(dup)
-                self.db.flush()
+            self.db.execute(text("SAVEPOINT po_link_merge"))
+            for referrer, column in referrers_of(self.db, PurchaseOrderLine.__tablename__):
+                self.db.execute(
+                    text(f'UPDATE {referrer} SET "{column}" = :keep WHERE "{column}" = :dup'),
+                    {"keep": str(keep.id), "dup": str(dup.id)},
+                )
+            self.db.execute(text("RELEASE SAVEPOINT po_link_merge"))
         except Exception:  # noqa: BLE001
-            logger.warning("po link: could not merge the ingest duplicate %s into %s", dup.id, keep.id, exc_info=True)
+            logger.warning("po link: could not merge the ingest duplicate %s into %s", dup.id, keep.id)
+            self.db.execute(text("ROLLBACK TO SAVEPOINT po_link_merge"))
             self.db.expire_all()
             return False
+        for column in _INGEST_OWNED:
+            setattr(keep, column, getattr(dup, column))
+        self.db.delete(dup)
+        self.db.flush()
         return True
 
     def _apply(self, answer: Dict[str, Any], po_line: PurchaseOrderLine, so_ref: Optional[str]) -> None:
