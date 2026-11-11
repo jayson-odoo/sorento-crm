@@ -681,6 +681,8 @@ export interface ConfirmSupplyBody {
 export interface CancelledLineBody {
   project_line_id: string;
   reason: string;
+  /** Set on the retry after a 409 `non_cancellable_line`, by a holder of the override permission. */
+  non_cancellable_override_reason?: string;
 }
 
 /** A line a press transferred to Cancel SO, as the server echoes it. */

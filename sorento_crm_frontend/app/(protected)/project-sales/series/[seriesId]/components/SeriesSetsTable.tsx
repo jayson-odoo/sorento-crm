@@ -3,11 +3,14 @@
 import * as React from 'react';
 import { getProductSets } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
+  INLINE_CHECKED,
   InlineLineTable,
+  isInlineChecked,
   type InlineDraft,
   type InlineLineColumn,
 } from '../../../_shared/components/InlineLineTable';
 import {
+  useSeriesSetNonCancellable,
   useSeriesSetRowMutations,
   useSeriesSetRows,
 } from '../../../_shared/hooks/useProjects';
@@ -26,6 +29,7 @@ const CURRENCY = 'RM';
 export function SeriesSetsTable({ seriesId }: { seriesId: string }) {
   const rows = useSeriesSetRows(seriesId);
   const { setPricing, remove } = useSeriesSetRowMutations(seriesId);
+  const setNonCancellable = useSeriesSetNonCancellable(seriesId);
 
   const fetchSets = React.useCallback(async (query: string) => {
     const sets = await getProductSets({
@@ -105,6 +109,12 @@ export function SeriesSetsTable({ seriesId }: { seriesId: string }) {
         placeholder: '-',
       },
       {
+        key: 'non_cancellable',
+        header: 'Non-cancellable',
+        width: 130,
+        kind: 'checkbox',
+      },
+      {
         key: 'derived_floor',
         header: 'Minimum price',
         width: 130,
@@ -127,6 +137,7 @@ export function SeriesSetsTable({ seriesId }: { seriesId: string }) {
       set_name: row.set_name ?? '',
       selling_price: row.selling_price ?? '',
       max_discount_pct: row.max_discount_pct ?? '',
+      non_cancellable: row.non_cancellable ? INLINE_CHECKED : '',
       derived_floor: row.derived_floor ?? '',
     }),
     [],
@@ -138,6 +149,7 @@ export function SeriesSetsTable({ seriesId }: { seriesId: string }) {
       set_name: '',
       selling_price: '',
       max_discount_pct: '',
+      non_cancellable: '',
       derived_floor: '',
     }),
     [],
@@ -179,6 +191,12 @@ export function SeriesSetsTable({ seriesId }: { seriesId: string }) {
             max_discount_pct: money(draft.max_discount_pct),
           },
         });
+        if (isInlineChecked(draft.non_cancellable)) {
+          await setNonCancellable.mutateAsync({
+            productSetId: draft.product_set_id,
+            value: true,
+          });
+        }
       }}
       onUpdate={async (row, draft) => {
         await setPricing.mutateAsync({
@@ -188,6 +206,12 @@ export function SeriesSetsTable({ seriesId }: { seriesId: string }) {
             max_discount_pct: money(draft.max_discount_pct),
           },
         });
+        if (isInlineChecked(draft.non_cancellable) !== Boolean(row.non_cancellable)) {
+          await setNonCancellable.mutateAsync({
+            productSetId: row.product_set_id,
+            value: isInlineChecked(draft.non_cancellable),
+          });
+        }
       }}
       onDelete={async (row) => {
         await remove.mutateAsync(row.product_set_id);

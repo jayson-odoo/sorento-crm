@@ -283,6 +283,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'projects.types.view',
           },
           {
+            title: 'Non-cancellable Items',
+            path: '/project-sales/non-cancellable',
+            permission: 'projects.types.view',
+          },
+          {
             title: 'Quotation Templates',
             path: '/project-sales/quotation-templates',
             permission: 'projects.types.view',
@@ -2388,6 +2393,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Price Floors',
         path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Non-cancellable Items',
+        path: '/project-sales/non-cancellable',
         permission: 'projects.types.view',
       },
       {

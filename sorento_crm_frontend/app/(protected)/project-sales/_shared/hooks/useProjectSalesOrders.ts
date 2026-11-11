@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/
 import { toast } from '@/lib/toast';
 import { saveBlobAs } from '../services/fileDownload';
 import { projectKey } from './useProjects';
+import { isOverridableRefusal } from '../lib/nonCancellable';
 import { allocationsKey } from './useProjectAllocations';
 import { acknowledgeFinding, acknowledgeScheduleFinding, buildSalesOrders, bulkDeleteProjectSalesOrders, bulkSetLinesStockLocation, createAmendment, deleteProjectSalesOrder, downloadAmendmentAutocountChangeListXlsx, downloadSalesOrderImportFile, getAmendment, getAmendmentAutocountChangeList, getProjectSalesOrder, getSalesOrderWorksheet, listPoVersions, listProjectSalesOrders, listScheduleFindings, listScheduleVersions, previewAmendment, publishAmendment, publishSalesOrder, regroupSalesOrder, reorderSalesOrderLines, saveSalesOrderDocument, unpublishSalesOrder, updateAmendmentRowDecisions, updateSalesOrderLine } from '../services/projectSalesOrderService';
 import type {
@@ -457,14 +458,18 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
   });
 
   const publish = useMutation({
-    mutationFn: (amendmentId: string) => publishAmendment(amendmentId),
+    mutationFn: ({ amendmentId, overrideReason }: { amendmentId: string; overrideReason?: string }) =>
+      publishAmendment(amendmentId, overrideReason),
     onSuccess: (amendment) => {
       queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) });
       queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
       queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY, amendment.id] });
       toast.success('Amendment published');
     },
-    onError: (error: Error) => toast.error(error.message),
+    // An overridable refusal opens the override dialog instead of a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   /**

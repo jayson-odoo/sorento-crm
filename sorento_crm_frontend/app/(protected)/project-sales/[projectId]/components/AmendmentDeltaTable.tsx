@@ -155,9 +155,19 @@ export function AmendmentDeltaTable({
         cell: ({ row }) => {
           const text = row.original.description || '-';
           return (
-            <span className={cn('block truncate', declinedClass(row.original))} title={text}>
-              {text}
-            </span>
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className={cn('block min-w-0 truncate', declinedClass(row.original))}
+                title={text}
+              >
+                {text}
+              </span>
+              {row.original.non_cancellable && (
+                <Badge variant="warning" appearance="light" size="sm" className="shrink-0 whitespace-nowrap">
+                  Non-cancellable
+                </Badge>
+              )}
+            </div>
           );
         },
         size: 280,

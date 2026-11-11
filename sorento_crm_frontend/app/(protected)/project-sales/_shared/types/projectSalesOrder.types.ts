@@ -388,6 +388,8 @@ export interface AmendmentDeltaRow {
   qty?: string | null;
   phase_label_from?: string | null;
   phase_label_to?: string | null;
+  /** The line is non-cancellable: a cancel or reduction here needs an override. */
+  non_cancellable?: boolean;
 
   /**
    * GUESS (section 9.3): present once this row belongs to a CREATED amendment, addressing it

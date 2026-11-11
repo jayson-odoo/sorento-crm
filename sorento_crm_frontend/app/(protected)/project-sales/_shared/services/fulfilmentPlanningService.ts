@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, codedError, extractApiError } from '@/lib/api-client';
+import { refusalAwareError } from '../lib/nonCancellable';
 import type {
   AdoptSalesOrderResult,
   BoardDecision,
@@ -616,10 +617,9 @@ export async function confirmMany(
     body: JSON.stringify(body),
     ...(signal ? { signal } : {}),
   });
+  // A 409 `non_cancellable_line` arrives as a `NonCancellableRefusalError` (the override dialog).
   if (!response.ok)
-    throw new Error(
-      await extractApiError(response, 'Failed to confirm the approved decisions'),
-    );
+    throw await refusalAwareError(response, 'Failed to confirm the approved decisions');
   return response.json();
 }
 

@@ -885,6 +885,8 @@ export interface QuotationLine {
   is_section?: boolean;
 
   is_non_standard: boolean;
+  /** Bulky item: cannot be cancelled or reduced once the SO is confirmed. Decided on the server. */
+  is_non_cancellable?: boolean;
   /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */
   floor_value_applied?: string | null;
   floor_level_applied?: FloorLevel | null;
@@ -1007,6 +1009,8 @@ export interface ProjectSeries {
   is_active: boolean;
   category_ids: string[];
   category_names: string[];
+  /** The categories (a subset of `category_ids`) whose lines cannot be cancelled once the SO is confirmed. */
+  non_cancellable_category_ids: string[];
   /** Nominated plus every descendant: what the non-standard check compares against. */
   covered_category_count: number;
   /** Products nominated BY NAME, independently of any category (S18). */
@@ -1039,6 +1043,10 @@ export interface SeriesProductRow {
   derived_floor?: string | null;
   /** Of the series' brand and under one of its categories. Out-of-scope rows can only be removed. */
   in_scope: boolean;
+  /** This row's own answer; null means it follows its category. */
+  non_cancellable?: boolean | null;
+  /** What actually applies once the category is taken into account. */
+  non_cancellable_effective?: boolean;
 }
 
 /** One product SET priced on a series; the twin of `SeriesProductRow`. */
@@ -1051,6 +1059,7 @@ export interface SeriesSetRow {
   max_discount_pct?: string | null;
   /** Computed on the SERVER, null unless both numbers are set. */
   derived_floor?: string | null;
+  non_cancellable?: boolean;
 }
 
 /** A list of product codes to load onto a series (S18). */
@@ -1165,6 +1174,8 @@ export interface ProjectSeriesBody {
   description?: string | null;
   is_active?: boolean;
   category_ids?: string[];
+  /** A subset of `category_ids`, sent whole on update. */
+  non_cancellable_category_ids?: string[];
 }
 
 export interface PriceFloorRule {
@@ -1478,4 +1489,39 @@ export interface ProjectDashboard {
   by_salesperson: SalespersonRow[];
   sponsorship: SponsorshipConversion;
   delivery_lag_months: number;
+}
+
+
+/** One company-wide default: a product or a category whose lines cannot be cancelled. */
+export interface NonCancellableRule {
+  id: string;
+  product_id?: string | null;
+  product_code?: string | null;
+  product_name?: string | null;
+  category_id?: string | null;
+  category_name?: string | null;
+  non_cancellable: boolean;
+  notes?: string | null;
+  updated_at?: string | null;
+}
+
+/** Exactly one of `product_id` / `category_id` is set on create. */
+export interface NonCancellableRuleBody {
+  product_id?: string;
+  category_id?: string;
+  non_cancellable: boolean;
+  notes?: string | null;
+}
+
+/** One refused line, as the 409 `non_cancellable_line` names it. */
+export interface NonCancellableRefusedLine {
+  label: string;
+  from_qty: number | string;
+  to_qty: number | string;
+}
+
+/** The `details` of a 409 `non_cancellable_line` refusal. */
+export interface NonCancellableRefusal {
+  can_override: boolean;
+  lines: NonCancellableRefusedLine[];
 }

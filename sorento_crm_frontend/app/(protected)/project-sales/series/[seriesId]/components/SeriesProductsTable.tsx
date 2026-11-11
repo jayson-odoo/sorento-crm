@@ -14,8 +14,10 @@ import {
   type InlineLineTableControl,
 } from '../../../_shared/components/InlineLineTable';
 import { toast } from '@/lib/toast';
+import { Badge } from '@/components/ui/badge';
 import {
   useSeriesProductMutations,
+  useSeriesProductNonCancellable,
   useSeriesProductRowMutations,
   useSeriesProductRows,
 } from '../../../_shared/hooks/useProjects';
@@ -40,6 +42,16 @@ import { distinctName } from '@/lib/product-display';
 const CURRENCY = 'RM';
 /** The smallest page size the pager offers; a series that fits in it needs no pager. */
 const PAGER_MIN_ROWS = 25;
+
+/** The select's draft value for a row's own answer: `yes`, `no`, or blank (follows the category). */
+function ownAnswer(value: boolean | null | undefined): string {
+  return value === true ? 'yes' : value === false ? 'no' : '';
+}
+
+/** The draft value back to the wire: blank is null, which follows the category. */
+function wireAnswer(value: string): boolean | null {
+  return value === 'yes' ? true : value === 'no' ? false : null;
+}
 
 export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
   const {
@@ -108,6 +120,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
   }, [rows.data, rows.isPlaceholderData, pagination.pageIndex, pagination.pageSize, query]);
   const { setPricing, remove } = useSeriesProductRowMutations(seriesId);
   const { importCodes } = useSeriesProductMutations();
+  const setNonCancellable = useSeriesProductNonCancellable(seriesId);
 
   const fetchProducts = React.useCallback(async (query: string) => {
     const products = await getProductsForLineSelect(query || undefined);
@@ -180,6 +193,42 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
         placeholder: '-',
       },
       {
+        // This model's own answer; blank follows its category.
+        key: 'non_cancellable',
+        header: 'Non-cancellable',
+        width: 150,
+        kind: 'select',
+        placeholder: 'Follows category',
+        options: [
+          { value: 'yes', label: 'Yes' },
+          { value: 'no', label: 'No' },
+        ],
+        resolveSelected: (row, draft) =>
+          draft.non_cancellable === 'yes'
+            ? { value: 'yes', label: 'Yes' }
+            : draft.non_cancellable === 'no'
+              ? { value: 'no', label: 'No' }
+              : row?.non_cancellable === true
+                ? { value: 'yes', label: 'Yes' }
+                : row?.non_cancellable === false
+                  ? { value: 'no', label: 'No' }
+                  : undefined,
+      },
+      {
+        key: 'non_cancellable_effective',
+        header: 'Applies',
+        width: 130,
+        kind: 'derived',
+        derive: (_draft, _index, row) =>
+          row?.non_cancellable_effective ? (
+            <Badge variant="warning" appearance="light" size="sm">
+              Non-cancellable
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+      },
+      {
         key: 'derived_floor',
         header: 'Minimum price',
         width: 130,
@@ -206,6 +255,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
       product_name: row.product_name ?? '',
       selling_price: row.selling_price ?? '',
       max_discount_pct: row.max_discount_pct ?? '',
+      non_cancellable: ownAnswer(row.non_cancellable),
       derived_floor: row.derived_floor ?? '',
     }),
     [],
@@ -218,6 +268,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
       product_name: '',
       selling_price: '',
       max_discount_pct: '',
+      non_cancellable: '',
       derived_floor: '',
     }),
     [],
@@ -314,6 +365,12 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
               },
             });
           }
+          if (draft.non_cancellable) {
+            await setNonCancellable.mutateAsync({
+              productId: draft.product_id,
+              value: wireAnswer(draft.non_cancellable),
+            });
+          }
           toast.success('Saved');
         }}
         onUpdate={async (row, draft) => {
@@ -324,6 +381,12 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
               max_discount_pct: money(draft.max_discount_pct),
             },
           });
+          if (draft.non_cancellable !== ownAnswer(row.non_cancellable)) {
+            await setNonCancellable.mutateAsync({
+              productId: row.product_id,
+              value: wireAnswer(draft.non_cancellable),
+            });
+          }
           toast.success('Saved');
         }}
         onDelete={async (row) => {

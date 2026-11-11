@@ -108,6 +108,8 @@ export type QuotationSignLine = {
   uom?: string | null;
   unit_price: string;
   complete_set: string | null;
+  /** The REMARK cell ("Non-cancellable"), null when the line carries none. */
+  remark?: string | null;
   band_label: string | null;
   /** A heading row: its band_label is the band, nothing else (PROPOSAL-FORM-COLLAPSE). */
   is_section?: boolean;

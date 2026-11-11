@@ -144,6 +144,7 @@ const OLD_PATHS: string[] = [
   '/project-sales/setup',
   '/project-sales/series',
   '/project-sales/price-floors',
+  '/project-sales/non-cancellable',
   '/project-sales/quotation-templates',
   '/marketing-management/promotions',
   '/marketing-management/promotion-attachments',

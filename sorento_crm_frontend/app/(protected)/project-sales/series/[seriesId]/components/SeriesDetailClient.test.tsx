@@ -225,7 +225,7 @@ describe('SeriesDetailClient save on an existing series', () => {
 
   it('A1/A6: brand is a multi-select that reads "All brands" and "All categories" when empty', () => {
     render(<SeriesDetailClient seriesId="new" />);
-    expect(document.querySelectorAll('[data-slot="searchable-multi-select-trigger"]')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-slot="searchable-multi-select-trigger"]')).toHaveLength(3);
     expect(screen.getByText('All brands')).toBeInTheDocument();
     expect(screen.getByText('All categories')).toBeInTheDocument();
   });

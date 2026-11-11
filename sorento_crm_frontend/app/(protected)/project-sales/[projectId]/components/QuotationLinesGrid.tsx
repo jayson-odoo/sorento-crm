@@ -279,6 +279,19 @@ function fileLine(row: GridRow, kind: LineFileKind): QuotationLine | null {
 
 // ------------------------------------------------------------------------------ cells
 
+/**
+ * The REMARK column: "Non-cancellable" for a bulky item (the server decides and stores it on the
+ * line, so a line not saved yet shows nothing until it is). Blank otherwise.
+ */
+function RemarkCell({ row }: CellContext<GridRow, unknown>) {
+  if (!row.original.staged.line?.is_non_cancellable) return null;
+  return (
+    <Badge variant="warning" appearance="light" size="sm" className="whitespace-normal text-start leading-tight">
+      Non-cancellable
+    </Badge>
+  );
+}
+
 function ItemCell({ row }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const notes = grid.itemNotes(row.original);
@@ -1230,6 +1243,18 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     enableResizing: false,
     enableHiding: false,
     meta: { headerTitle: 'Quantities', draggable: false },
+  },
+  {
+    id: 'remark',
+    accessorFn: (row) => Boolean(row.staged.line?.is_non_cancellable),
+    header: 'Remark',
+    cell: RemarkCell,
+    size: 104,
+    minSize: 84,
+    meta: {
+      headerTitle: 'Remark',
+      cellClassName: `${NARROW} align-top`,
+    },
   },
   {
     id: 'total',
