@@ -77,6 +77,19 @@ no approval state when none is needed; History entries on both; quotation source
 Vitest: action present for editors only, dialog disables Duplicate until a party is picked, posts the pick, header
 shows Copied from, History sheet renders an event entry without Restore.
 
+## Decisions made in build (review round 1)
+
+- Letter, closing and terms are stored with their merge fields filled in, so the copy swaps the source's
+  recipient name, Attn, number and date for its own (`_swap_letter_facts`). Known limit: when the source was
+  addressed to the developer, a letter that ALSO names the developer elsewhere gets that mention swapped too.
+- Not copied: Your Ref, the signature, `source_issue_id`, and the SAVED spec sheets (SS1, SS2: frozen outputs of
+  the source); the spec sheet settings column is copied, so a new sheet is one click. The signatory name and phone
+  are copied (they prefill the Sign dialog).
+- History "Version N" counts restorable entries only; event lines carry no number.
+- The source row is locked (`SELECT ... FOR UPDATE`) before the approval is read, so a Revise cannot slip between
+  the line copy and the carry (security review S1). A carried approval writes `quotation_approval_carried` on the
+  project feed (N1).
+
 ## Assistant coverage (DoD 6-8)
 
 No new list screen (6: n/a). No `ActionDef` (7): the repo has no ActionDef registry, and a duplicate needs a party

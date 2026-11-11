@@ -9,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
 import { QuotationAttnChooser, QuotationRecipientPicker } from './QuotationRecipientPicker';
 import type {
   QuotationDocumentBody,
@@ -60,9 +59,9 @@ export function DuplicateForPartyDialog({
           />
           {partyId ? (
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-              <Label className="min-w-0 truncate" title={pick.attn_name ?? ''}>
+              <span className="min-w-0 truncate text-sm" title={pick.attn_name ?? ''}>
                 Attn: {pick.attn_name || '-'}
-              </Label>
+              </span>
               <QuotationAttnChooser
                 value={pick}
                 partyName={pick.recipient_name_snapshot ?? ''}

@@ -400,16 +400,32 @@ def list_history(db: Session, document: ProjectQuotationDocument) -> List[Dict[s
     """Newest first, numbered oldest = 1, the tag designer's "Version N"."""
     names: Dict[str, Optional[str]] = {}
     rows = _entries(db, document, with_doc=False)
-    out = [_serialize_entry(db, row, index + 1, names) for index, row in enumerate(rows)]
+    numbers = _version_numbers(rows)
+    out = [_serialize_entry(db, row, numbers[row.id], names) for row in rows]
     return list(reversed(out))
+
+
+def _version_numbers(rows: List[QuotationDocumentSnapshot]) -> Dict[Any, int]:
+    """"Version N" counts the restorable entries only: an event line (QUOTE-DUPLICATE-PARTY)
+    takes no number, so the saves read 1, 2, 3 with events between them. An event carries 0."""
+    out: Dict[Any, int] = {}
+    count = 0
+    for row in rows:
+        if row.kind == KIND_EVENT:
+            out[row.id] = 0
+            continue
+        count += 1
+        out[row.id] = count
+    return out
 
 
 def _entry_or_404(db: Session, document, entry_id: str):
     rows = _entries(db, document)
-    for index, row in enumerate(rows):
+    numbers = _version_numbers(rows)
+    for row in rows:
         # Checked against THIS document, so a known entry id cannot be read through another one.
         if str(row.id) == str(entry_id):
-            return row, index + 1, rows
+            return row, numbers[row.id], rows
     raise AppException(
         status_code=404, message="History entry not found.", code="quotation_history_not_found"
     )

@@ -860,7 +860,7 @@ def duplicate_quotation_document(
         )
         db.commit()
         db.refresh(copy)
-        return svc.serialize_document(db, copy)
+        return svc.serialize_document(db, copy, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

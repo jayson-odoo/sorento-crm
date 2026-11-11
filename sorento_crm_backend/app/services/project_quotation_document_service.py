@@ -1210,6 +1210,43 @@ def _source_ref(db: Session, document: ProjectQuotationDocument) -> str:
     return issue_no_text(document.document_no, latest) if latest is not None else document.document_no
 
 
+#: The merge fields a copy for another party must say differently (review B1).
+_PARTY_FACTS = ("recipient_name", "attn_name", "our_ref", "doc_date")
+
+
+def _swap_letter_facts(
+    db: Session, *, source: ProjectQuotationDocument, copy: ProjectQuotationDocument
+) -> None:
+    """The letter, closing and terms are stored with their {{merge fields}} already filled in, so
+    a copy would still greet the source's party, its Attn, number and date. Each of those values
+    is swapped for the copy's own, in plain and HTML-escaped form (the editor stores "&" as
+    "&amp;"). Longest first, so a value that contains another is replaced whole."""
+    import html
+
+    from app.services import project_quotation_template_service as templates
+
+    old_ctx = templates.build_document_context(db, document=source)
+    new_ctx = templates.build_document_context(db, document=copy)
+    pairs = []
+    for key in _PARTY_FACTS:
+        old = (old_ctx.get(key) or "").strip()
+        new = (new_ctx.get(key) or "").strip()
+        if old and old != new:
+            pairs.append((old, new))
+            escaped = html.escape(old, quote=False)
+            if escaped != old:
+                pairs.append((escaped, html.escape(new, quote=False)))
+    pairs.sort(key=lambda pair: len(pair[0]), reverse=True)
+    for field in TOKEN_FIELDS:
+        text = getattr(copy, field)
+        if not text:
+            continue
+        for old, new in pairs:
+            text = text.replace(old, new)
+        setattr(copy, field, text)
+    db.flush()
+
+
 def duplicate_document(
     db: Session,
     *,
@@ -1326,6 +1363,8 @@ def duplicate_document(
         if key in payload
     }
     apply_recipient_pick(db, document=copy_doc, project=project, payload=pick)
+
+    _swap_letter_facts(db, source=source, copy=copy_doc)
 
     source_ref = _source_ref(db, source)
     _form_drafts.record_event(

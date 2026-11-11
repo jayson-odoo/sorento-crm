@@ -394,6 +394,7 @@ def test_approval_carried_from_an_approved_source():
         _approve(w)
         copy = _duplicate(w)
         assert _key(db, copy) == "approved"
+        assert copy.approver_user_id == w.source.approver_user_id
         notes = _history_notes(db, copy)
         assert any(n and n.startswith("Approval carried from") and w.source.document_no in n for n in notes)
 
@@ -541,3 +542,59 @@ def test_carried_approval_is_on_the_project_feed():
         )
         mine = [r for r in rows if (r.system_payload or {}).get("document_id") == str(copy.id)]
         assert mine and w.source.document_no in (mine[0].body_text or "")
+
+
+def test_letter_names_the_new_party_not_the_source_one():
+    """Review B1: the letter, closing and terms are stored with their merge fields filled in, so
+    the copy swaps the source's To, Attn, number and date for its own."""
+    from app.services import project_quotation_template_service as templates
+
+    with blank_session() as db:
+        w = _world(db)
+        dev_contact = _contact(db, w.developer, "Ms. Test A & Ms. Test B")
+        w.source.attn_name = dev_contact.name
+        db.flush()
+        context = templates.build_document_context(db, document=w.source)
+        body = "<p>To {{recipient_name}}, Attn {{attn_name}}. Ref {{our_ref}} dated {{doc_date}}.</p>"
+        w.source.cover_letter_html = templates.render(body, context)
+        w.source.cover_closing_html = templates.render("<p>Regards, re {{our_ref}}</p>", context)
+        w.source.terms_html = templates.render("<p>Quoted to {{recipient_name}}</p>", context).replace(
+            "&", "&amp;"
+        )
+        db.flush()
+
+        copy = _duplicate(w, attn=[w.attn])
+        expected = templates.render(body, templates.build_document_context(db, document=copy))
+        assert copy.cover_letter_html == expected
+        assert w.source.recipient_name_snapshot not in copy.cover_letter_html
+        assert "Ms. Test A" not in copy.cover_letter_html
+        assert copy.document_no in copy.cover_closing_html
+        assert w.source.document_no not in copy.cover_closing_html
+        assert copy.recipient_name_snapshot in copy.terms_html
+
+
+def test_terms_and_validity_picks_are_copied():
+    """Review should-fix 2: the payment term and validity picks travel too (D4)."""
+    with blank_session() as db:
+        w = _world(db)
+        w.source.validity_value = 45
+        w.source.validity_unit = "days"
+        db.flush()
+        copy = _duplicate(w)
+        assert (copy.validity_value, copy.validity_unit, copy.payment_term_id) == (
+            45, "days", w.source.payment_term_id
+        )
+
+
+def test_event_lines_do_not_take_a_version_number():
+    """Review should-fix 1: saves stay Version 1, 2, 3 with event lines between them."""
+    from app.services import quotation_form_draft_service as drafts
+
+    with blank_session() as db:
+        w = _world(db)
+        drafts.record_save(db, document=w.source, form_state={"header": {}}, user_id=w.owner)
+        _duplicate(w)
+        drafts.record_save(db, document=w.source, form_state={"header": {}}, user_id=w.owner)
+        rows = drafts.list_history(db, w.source)
+        saved = [r["version"] for r in rows if r["kind"] == "saved"]
+        assert saved == [2, 1]
