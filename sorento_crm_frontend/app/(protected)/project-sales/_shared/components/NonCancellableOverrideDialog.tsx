@@ -35,7 +35,7 @@ export function NonCancellableOverrideDialog({
 
   return (
     <Dialog open onOpenChange={(next) => !next && onCancel()}>
-      <DialogContent className="max-h-[92vh] w-full max-w-md overflow-hidden">
+      <DialogContent className="max-h-[92dvh] w-full max-w-md overflow-hidden">
         <DialogHeader>
           <DialogTitle>Non-cancellable lines</DialogTitle>
         </DialogHeader>
@@ -46,7 +46,7 @@ export function NonCancellableOverrideDialog({
             if (canSubmit) await onOverride(trimmed);
           }}
         >
-          <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
+          <DialogBody className="max-h-[60dvh] space-y-4 overflow-y-auto">
             <ul className="space-y-1 text-sm">
               {refusal.lines.map((line, index) => (
                 <li key={`${line.label}-${index}`} className="flex justify-between gap-3">
