@@ -558,3 +558,20 @@ def test_cost_unified_a_contact_with_a_cost_user_is_not_drifted_by_the_cost_key(
     body = _read(client, contact)
     assert body["status"] == "matches", body
     assert not [i for i in body["items"] if COST in str(i.get("key") or "")], body["items"]
+
+
+def test_stored_cost_key_on_a_tag_is_never_served_and_the_served_copy_saves_back(client, db, all_perms):
+    """A tag stored before the cost key was retired still names it in the database. The list and the
+    detail serve it without the key, and a save that echoes back exactly what was served is accepted."""
+    tag = _stag(client, db, {"field_reveals": {COST: True, SELLABLE: True}})
+    listed = client.get(TAGS + "/", params={"limit": 1000})
+    assert listed.status_code == 200, listed.text
+    row = next(r for r in listed.json()["data"] if r["id"] == tag["id"])
+    assert row["settings"] == {"field_reveals": {SELLABLE: True}}
+    detail = client.get(f"{TAGS}/{tag['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["settings"] == {"field_reveals": {SELLABLE: True}}
+    assert COST not in detail.text
+    echoed = client.patch(f"{TAGS}/{tag['id']}", json={"settings": detail.json()["settings"]})
+    assert echoed.status_code == 200, echoed.text
+    assert COST not in echoed.text
