@@ -549,7 +549,7 @@ class PoLinkService:
                 self.db.delete(dup)
                 self.db.flush()
         except Exception:  # noqa: BLE001
-            logger.warning("po link: could not merge the ingest duplicate %s into %s", dup.id, keep.id)
+            logger.warning("po link: could not merge the ingest duplicate %s into %s", dup.id, keep.id, exc_info=True)
             self.db.expire_all()
             return False
         return True
