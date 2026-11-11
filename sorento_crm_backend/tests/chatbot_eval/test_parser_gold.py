@@ -1903,7 +1903,7 @@ def test_pinned_span_version_accepts_a_span_version_and_refuses_anything_else(se
 
 def test_cli_live_passes_the_text_file_the_contact_and_the_span_pin(tmp_path, monkeypatch):
     text = tmp_path / "cand.txt"
-    text.write_text("zz candidate ü\n", encoding="utf-8")
+    text.write_bytes("zz candidate ü\r\nline 2\n".encode("utf-8"))  # CRLF kept: the md5 is the file's own
     got: dict = {}
     monkeypatch.setattr(pg, "_pinned_version", lambda factory, vid: 1)
     monkeypatch.setattr(pg, "_pinned_span_version", lambda factory, vid: got.setdefault("span_checked", vid) and 3)
@@ -1913,7 +1913,7 @@ def test_cli_live_passes_the_text_file_the_contact_and_the_span_pin(tmp_path, mo
                   "--require-key-last4", "WXYZ", "--prompt-version-id", "v", "--repeats", "1",
                   "--prompt-text-file", str(text), "--contact-respond-id", "zz-contact-9", "--span-version-id", "zz-span-3"])
     assert rc == 0
-    assert got["prompt_text"] == "zz candidate ü\n", "the file's bytes, unchanged"
+    assert got["prompt_text"] == "zz candidate ü\r\nline 2\n", "the file's bytes, unchanged"
     assert got["contact_respond_id"] == "zz-contact-9" and got["span_version_id"] == "zz-span-3"
     assert got["span_checked"] == "zz-span-3", "a span pin is checked before any spend"
 

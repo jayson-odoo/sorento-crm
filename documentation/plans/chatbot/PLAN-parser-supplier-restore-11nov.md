@@ -1,7 +1,23 @@
 # PLAN: restore the supplier lines in the production-candidate parser prompt (PARSER-SUPPLIER-RESTORE)
 
-Status: built, gate passed, publish package ready for the owner (small fix track: prompt text + gold + harness + one guard
-test, no migration, no auth change). 11 Nov 2026. Package: `PROMPT-parser-supplier-restore-b1c59343.md`.
+Status: built, gate passed, reviewed READY, publish package ready for the owner. Track: small fix, grown past it (see
+"Track note"). Plan created: 2026-11-11T15:50:07+08:00. Package: `PROMPT-parser-supplier-restore-b1c59343.md`.
+
+## Track note
+
+Started as a small fix (prompt text + gold + one guard, expected well under 300 lines). It grew to about 550 changed
+lines because the gold harness could not reach the supplier path at all (`parser_gold` ran the span seam without the
+contact's visibility, without `supplier_ids`, and with no span pin), so a gate was impossible without that repair. Still
+no migration, no auth or RBAC change, no ingest surface, no screen. Kept: red-first, kill tests, one reviewer
+(security-reviewer not needed). Not added: a separate tester/coder split, since the harness change is test tooling.
+
+## Acceptance criteria
+
+- AC1: the parser candidate is 289da7e5 plus the two v71 lines right after `== LOOKUP SPANS ==`, nothing else, pinned
+  by md5 (`tests/chatbot/test_parser_supplier_restore.py`).
+- AC2: on the gate, every supplier-only row ("outstiang for taiyang" and 4 more) binds a supplier by its row id with
+  domain purchase_order on the candidate; customer-only rows stay customer; no filter_all row regresses vs 289da7e5.
+- AC3: a committed span-pass parser text without `parser.SUPPLIER_ID_ASK` fails CI (history files excepted by name).
 
 ## Problem (owner, prod Chatbot Console, 11 Nov ~16:50 MYT, parser v72 production)
 
@@ -26,8 +42,11 @@ test, no migration, no auth change). 11 Nov 2026. Package: `PROMPT-parser-suppli
   changes. The candidate is built with the migration's own frozen functions (`with_supplier_line`, `with_after_year`,
   `with_supplier_type` in `sask_0002_span_supplier.py`) so the lines are byte-identical to v71 / v3.
 - Candidate parser = 289da7e5 + the two v71 lines after the marker. Candidate span = v3 text (with_supplier_type(v2)).
-- Guard (tiny, test only): a pytest that reads the repo's production-candidate prompt file and asserts it holds
-  `parser.SUPPLIER_ID_ASK` and the span marker, so a future candidate built on a supplier-less base fails CI.
+- Guard (tiny, test only): the candidate's build and md5 are pinned, and every committed `prompt-*.txt` that runs the
+  span pass must hold `parser.SUPPLIER_ID_ASK` (the two pre-lane history files excepted by name), so a future candidate
+  built on a supplier-less base and committed here fails CI. A text pasted on the Prompts page with no committed file is
+  out of its reach; the proposal for that (the Prompts page warns before publishing a parser version that drops a gate
+  sentence the production version holds, and shows each version's md5) goes to crew, not built here.
 
 ## Steps
 

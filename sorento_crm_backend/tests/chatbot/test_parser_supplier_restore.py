@@ -62,3 +62,20 @@ def test_the_span_candidate_is_the_production_span_text_plus_the_supplier_type_l
     cand_text = cand.read_text(encoding="utf-8")
     assert cand_text == sask.with_supplier_type(base.read_text(encoding="utf-8"))
     assert sask.SUPPLIER_TYPE_LINE in cand_text.split("\n")
+
+
+#: Committed parser texts from before this lane that lack the supplier lines on purpose (history, never published again).
+_SUPPLIER_LESS_HISTORY = frozenset({"prompt-prod-v72-d29c1983.txt", "prompt-report-filter-all.txt"})
+
+
+def test_every_committed_span_pass_parser_text_keeps_the_supplier_id_sentence() -> None:
+    """Review round 1: the next prompt lane that builds its candidate on a supplier-less base (as REPORT-FILTER-ALL built
+    on v72) and commits it here fails CI instead of shipping the regression again. Texts published on the Prompts page
+    without a committed file are out of this test's reach (see the plan's guard proposal)."""
+    marker = _sask().SPAN_MARKER
+    texts = sorted(_PLANS.glob("prompt-*.txt"))
+    span_pass = [t for t in texts if marker in t.read_text(encoding="utf-8").splitlines()]
+    assert span_pass, "no committed span-pass parser text found"
+    missing = [t.name for t in span_pass if t.name not in _SUPPLIER_LESS_HISTORY
+               and parser_mod.SUPPLIER_ID_ASK not in t.read_text(encoding="utf-8")]
+    assert missing == [], f"span-pass parser texts without parser.SUPPLIER_ID_ASK: {missing}"

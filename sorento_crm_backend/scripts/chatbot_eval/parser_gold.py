@@ -15,7 +15,9 @@ usage (cwd = the backend dir of the checkout under test):
       PARSER-SUPPLIER-RESTORE: --prompt-text-file parses with that file's text in place of the pinned version's
       (in-process, never written); header and rows record the md5 of the text parsed with, so a run is pinned by
       md5. --contact-respond-id builds the lookup rows with that contact's visibility (default: a contact that
-      resolves to no one, so no Customer, Salesperson or Supplier rows); --span-version-id pins the span prompt)
+      resolves to no one, so no Customer, Salesperson or Supplier rows); --span-version-id pins the span prompt.
+      Not carried over from the engine: the contact's companies (no `Known companies:` line, no Company rows) and
+      its hidden spec keys, so a gate on a version that names those lines reads a thinner block than a live turn)
   python -m scripts.chatbot_eval.parser_gold check --gold F
       (no provider call: builds every row's user block with a bare config carrying the report ask marker,
       sessions rolled back, and checks that a row's `held` line is the block's one `Held report` line)

@@ -75,6 +75,9 @@ of crew's 0.40, ledgered.
 
 - No regression: every filter_all row B fails also fails on A, with the same kind of reason (ALL written where the gold
   wants an empty slot, or channel ALL where the gold wants null). These are 289da7e5's own open items, not this change.
+- B's 10/12 is a lower bound for the live turn: the engine can also bind a supplier the parser gave no id to
+  (`_with_span_suppliers`), and the gate's staff contact block carries no `Known companies:` line (harness gap,
+  `parser_gold.py` usage text). Neither changes A versus B.
 - sr-09 / sr-10 ("outstanding for shing soon heng", "outstanding for fullshun", both names are customer and supplier)
   read `party_side` customer on BOTH arms; the gold wants unclear. That is the PARTY_SIDE section's behaviour,
   unchanged here.
