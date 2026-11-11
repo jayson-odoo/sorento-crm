@@ -12,7 +12,7 @@ import {
   type ScreenBox,
 } from '../lib/townFormat';
 import { DEFAULT_VIEW, cameraPosition, dragView, pinchZoom, stepZoom, wheelZoom, type TownView } from '../lib/townCamera';
-import { STAGES, STATES, STATE_BY, mapXZ, siteLook, stateKeyOf, type StateDef } from '../lib/townMap';
+import { STAGES, STATES, STATE_BY, mapXZ, shopStateKey, siteLook, stateKeyOf, type StateDef } from '../lib/townMap';
 import { EASE, mulberry32, trapezoid, type SaleBeat, type Trapezoid } from '../lib/townMotion';
 import { townTip, type TipSubject } from '../lib/townTips';
 import type { TownTarget } from './TownLightbox';
@@ -70,8 +70,8 @@ const PARKED_CAP = 10;
 const SHIP_CAP = 6;
 const LATE_CAP = 12;
 const DEG = Math.PI / 180;
-const TGT = new THREE.Vector3(-2.5, 0, -2.5);
-const HOME_TGT = TGT.clone();
+/** Where the camera looks at home: the live island's centre (Shah Alam). */
+const HOME_TGT = new THREE.Vector3(-2.5, 0, -2.5);
 
 const INTRO_FROM: TownView = { yaw: DEFAULT_VIEW.yaw - 62 * DEG, tilt: 68 * DEG, zoom: 0.5 };
 const INTRO_S = 2.4;
@@ -152,6 +152,9 @@ interface Label {
 
 export function mountWorld(o: WorldOptions): WorldHandle {
   const { canvas, stage, labelLayer, renderer, snapshot, prev, beat, reduced, motion, view, clock, select, hover } = o;
+  // the camera's target is per mount and rides in the view, so a rebuild keeps a state the user flew to
+  // and a fresh mount (a new view) starts at home
+  const TGT = new THREE.Vector3(view.current.tx ?? HOME_TGT.x, 0, view.current.tz ?? HOME_TGT.z);
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0xe6eef1, 150, 340);
   const fog = scene.fog;
@@ -604,7 +607,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
         const part = (label: string, v: { amount?: string; invoice_count: number }) => `${label} ${v.amount != null ? rm0(v.amount) : count(v.invoice_count)}`;
         const line = [part('Dealers', split.dealer), part('Projects', split.project), part('Other', split.other)].join('  ·  ');
         g.fillStyle = '#f2c46d';
-        g.fillText(line + (split.dealer.amount == null ? ' invoices' : ''), 512, 352);
+        g.fillText(line, 512, 352);
       }
     }
     boardTex.needsUpdate = true;
@@ -641,9 +644,9 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   drawn.filter((s) => s.kind !== 'shop').forEach((s, k) => order.splice(Math.min(order.length, 5 + k * 10), 0, s));
   const beatKeys = new Set(beat?.shops.map((s) => s.key) ?? []);
   const prevDocs = new Map(prev?.shops.map((s) => [s.key, s.today_docs]) ?? []);
-  // TOWN-PROJECT-CITY: a shop stands in its own state; Selangor keeps the live high street (now -60..30, the
-  // project quarter takes 52..86), every other state its own street; no state = the "State not set" islet
-  const stateOf = (s: TownShop) => stateKeyOf(s.state);
+  // TOWN-PROJECT-CITY: a shop stands in its own state; Selangor keeps the live high street (now 104..214, facing the
+  // camera with north up; the project quarter takes 52..86), every other state its own street; no state = the "State not set" islet
+  const stateOf = (s: TownShop) => shopStateKey(s.state);
   const home = order.filter((s) => stateOf(s) === 'selangor');
   const A0 = 104;
   const A1 = 214;
@@ -1911,6 +1914,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     cam.position.set(TGT.x + x, TGT.y + y, TGT.z + z);
     cam.lookAt(TGT);
     cam.updateMatrixWorld();
+    if (v.tx !== TGT.x || v.tz !== TGT.z) view.current = { ...v, tx: TGT.x, tz: TGT.z };
     sun.position.set(TGT.x - 59.5, 70, TGT.z - 5.5);
     sun.target.position.copy(TGT);
     sun.target.updateMatrixWorld();

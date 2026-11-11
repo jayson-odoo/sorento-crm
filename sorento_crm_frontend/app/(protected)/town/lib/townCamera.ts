@@ -8,6 +8,9 @@ export interface TownView {
   yaw: number;
   tilt: number;
   zoom: number;
+  /** TOWN-PROJECT-CITY: where the camera looks (world x, z), when it has flown away from Shah Alam */
+  tx?: number;
+  tz?: number;
 }
 
 const DEG = Math.PI / 180;

@@ -222,7 +222,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
           <Rows
             rows={[
               ['State', row.state ?? 'State not set'],
-              ['Open projects it is on', count(row.open_projects)],
+              ['Open projects', count(row.open_projects)],
               ['Project invoices today', count(row.today_docs)],
             ]}
           />

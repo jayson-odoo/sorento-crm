@@ -1,6 +1,6 @@
 # PLAN: Town project district (TOWN-PROJECT-CITY)
 
-Status: Build - owner approved mock v2 (11 Nov 22:30); red tests then backend, frontend port. Track: full (size L: new snapshot sections, redaction, a map world).
+Status: Built - in review for crew pass (owner approved mock v2 11 Nov 22:30; reviewer + security reviewer findings applied). Track: full (size L: new snapshot sections, redaction, a map world).
 
 Trigger: owner, 11 Nov 2026 ~19:15 MYT. Show the project business beside the dealer street in Sorento Town.
 PR: foundryx-sdn-bhd/sorento-crm#2342 (`crew-lane: TOWN-PROJECT-CITY`). Mock: `mock/town-project-city-mock.html`.

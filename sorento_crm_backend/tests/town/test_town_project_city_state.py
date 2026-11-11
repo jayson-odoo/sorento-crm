@@ -189,3 +189,33 @@ def test_postcode_and_address_never_appear_in_the_snapshot(db):
         text = json.dumps(variant)
         assert not re.search(r"\b(81300|54321)\b", text)
         assert "Jalan Zzt Unik" not in text and "Skudai" not in text
+
+
+# ---------------------------------------------- review (11 Nov): the range edges, and postcode (not state) counting
+
+@pytest.mark.parametrize(
+    "pc, expected",
+    [
+        ("01000", "Perlis"), ("02999", "Perlis"), ("03000", None), ("04999", None), ("05000", "Kedah"), ("09999", "Kedah"),
+        ("14999", "Pulau Pinang"), ("15000", "Kelantan"), ("18999", "Kelantan"), ("19000", None), ("24999", "Terengganu"),
+        ("25000", "Pahang"), ("28999", "Pahang"), ("29000", None), ("36999", "Perak"), ("37000", None), ("39000", "Pahang"),
+        ("40000", "Selangor"), ("48999", "Selangor"), ("49000", "Pahang"), ("50000", "Kuala Lumpur"), ("60999", "Kuala Lumpur"),
+        ("61000", None), ("62999", "Putrajaya"), ("63000", "Selangor"), ("64999", "Selangor"), ("65000", None), ("67999", None),
+        ("68000", "Selangor"), ("69000", "Pahang"), ("70000", "Negeri Sembilan"), ("73999", "Negeri Sembilan"), ("74000", None),
+        ("75000", "Melaka"), ("78999", "Melaka"), ("79000", "Johor"), ("86999", "Johor"), ("87000", "Labuan"),
+        ("88000", "Sabah"), ("91999", "Sabah"), ("92000", None), ("93000", "Sarawak"), ("98999", "Sarawak"), ("99000", None),
+    ],
+)
+def test_state_for_postcode_at_every_range_edge(pc, expected):
+    from app.services.town.my_postcodes import state_for_postcode
+
+    assert state_for_postcode(pc) == expected
+
+
+def test_the_most_frequent_postcode_wins_not_the_most_frequent_state(db):
+    """Contract: the most frequent POSTCODE decides. Newest first 50450, 50460, 47301, 47301: two KL
+    postcodes once each, one Selangor postcode twice -> Selangor (counting states would tie 2-2 and
+    give the newest, Kuala Lumpur)."""
+    c = cust(db)
+    _orders(db, c, ["47301", "47301", "50460", "50450"])  # oldest first
+    assert _state_of(db, c)[0] == "Selangor"

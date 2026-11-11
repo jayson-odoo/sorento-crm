@@ -190,5 +190,5 @@ export function splitLine(today: TownSnapshot['today']): string | null {
   const parts = ([['Dealers', s.dealer], ['Projects', s.project], ['Other', s.other]] as const).map(([label, part]) =>
     part.amount != null ? `${label} ${rm0(part.amount)}` : `${label} ${count(part.invoice_count)}`,
   );
-  return parts.join(' · ') + (s.dealer.amount == null ? ' invoices' : '');
+  return parts.join(' · ');
 }

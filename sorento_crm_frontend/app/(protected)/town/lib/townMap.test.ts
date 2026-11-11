@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STATES, mapXZ, siteLook, stateKeyOf } from './townMap';
+import { STATES, mapXZ, shopStateKey, siteLook, stateKeyOf } from './townMap';
 
 describe('town map (TOWN-PROJECT-CITY)', () => {
   it('has one place for every my_state value plus the State not set islet', () => {
@@ -40,5 +40,11 @@ describe('town map (TOWN-PROJECT-CITY)', () => {
     expect(siteLook(site('2025-03-01', '2028-03-01'), day)).toBe('frame');
     expect(siteLook(site('2024-01-01', '2027-06-01'), day)).toBe('clad');
     expect(siteLook(site('2022-06-01', '2025-06-01'), day)).toBe('done');
+  });
+
+  it('keeps every shop of a snapshot built before the map on the Selangor high street', () => {
+    expect(shopStateKey(undefined)).toBe('selangor');
+    expect(shopStateKey(null)).toBe('notset');
+    expect(shopStateKey('Johor')).toBe('johor');
   });
 });

@@ -103,3 +103,8 @@ export function siteTimeline(site: { launch_date: string | null; delivery_date: 
   const k = Math.round(((Date.parse(day) - Date.parse(l)) / span) * 100);
   return `Launch ${MONTH(l)} · Delivery ${MONTH(d)} · ${k < 0 ? 'not launched yet' : `${Math.min(k, 100)}% of the way`}`;
 }
+
+/** A shop's map key. `state` missing altogether (a snapshot built before TOWN-PROJECT-CITY, served until the
+ * next tick, e.g. overnight) keeps the shop on Selangor's high street, as the town always drew it; `null` is
+ * a dealer whose state is not known: the "State not set" islet. */
+export const shopStateKey = (state: string | null | undefined): string => (state === undefined ? 'selangor' : stateKeyOf(state));

@@ -108,6 +108,6 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
     case 'project_lorry':
       return { title: 'Lorry to a project', detail: `Project orders to ${subject.state}` };
     case 'coaster':
-      return { title: 'Coaster to East Malaysia', detail: 'Sabah, Sarawak and Labuan orders go by sea from Port Klang' };
+      return { title: 'Coaster', detail: 'Port Klang · Sabah, Sarawak, Labuan' };
   }
 }

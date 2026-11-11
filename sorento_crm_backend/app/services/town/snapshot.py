@@ -477,30 +477,36 @@ def _states(db: Session, company_id: str, customer_ids: set) -> dict:
     need = [cid for cid in ids if out[cid] is None]
     if not need:
         return out
-    rank = sa.func.row_number().over(
-        partition_by=Order.customer_id,
-        order_by=(Order.order_date.desc().nulls_last(), Order.created_at.desc()),
-    )
+    # Per customer, its own last 20 orders (a LATERAL with LIMIT): a dealer with years of delivery
+    # orders costs 20 index rows, not its whole history.
+    who = aliased(Customer)
+    rank = sa.func.row_number().over(order_by=(Order.order_date.desc().nulls_last(), Order.created_at.desc()))
     recent = (
-        sa.select(Order.customer_id.label("cid"), Order.deliver_address.label("addr"), rank.label("rn"))
+        sa.select(Order.deliver_address.label("addr"), rank.label("rn"))
         .where(
-            Order.company_id == company_id, Order.customer_id.in_(need),
+            Order.company_id == company_id, Order.customer_id == who.id,
             Order.deleted_at.is_(None), Order.is_cancelled.is_(False),
         )
-        .subquery()
+        .order_by(Order.order_date.desc().nulls_last(), Order.created_at.desc())
+        .limit(STATE_ORDERS)
+        .lateral("recent")
     )
     rows = db.execute(
-        sa.select(recent.c.cid, recent.c.addr).where(recent.c.rn <= STATE_ORDERS).order_by(recent.c.cid, recent.c.rn)
+        sa.select(who.id, recent.c.addr)
+        .select_from(who)
+        .join(recent, sa.true())
+        .where(who.company_id == company_id, who.id.in_(need))
+        .order_by(who.id, recent.c.rn)
     ).all()
     seen: dict = {}
     for cid, address in rows:
-        state = state_for_postcode(last_postcode(address) or "")
-        if state is not None:
-            seen.setdefault(cid, []).append(state)
-    for cid, states in seen.items():
-        counts = {s: states.count(s) for s in states}
-        # `states` is newest first, so the first of the best count is the most recent on a tie.
-        out[cid] = max(dict.fromkeys(states), key=lambda s: counts[s])
+        postcode = last_postcode(address)
+        if postcode and state_for_postcode(postcode):
+            seen.setdefault(cid, []).append(postcode)
+    for cid, postcodes in seen.items():
+        counts = {pc: postcodes.count(pc) for pc in postcodes}
+        # `postcodes` is newest first, so the first of the best count is the most recent on a tie.
+        out[cid] = state_for_postcode(max(dict.fromkeys(postcodes), key=lambda pc: counts[pc]))
     return out
 
 

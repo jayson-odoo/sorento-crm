@@ -249,16 +249,16 @@ export function TownScene({
       </div>
       <div role="group" aria-label="Go to a state" className="flex gap-1.5 overflow-x-auto border-t border-border bg-background/80 px-3 py-2">
         {statesByUse(snapshot).map(({ key, name, used }) => (
-          <button
+          <Button
             key={key}
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => worldRef.current?.flyTo(key)}
-            className={`shrink-0 rounded-full border border-border px-2.5 py-0.5 text-xs font-medium hover:bg-accent ${
-              used ? 'bg-background text-foreground' : 'bg-transparent text-muted-foreground'
-            }`}
+            className={`shrink-0 rounded-full ${used ? '' : 'text-muted-foreground'}`}
           >
             {name}
-          </button>
+          </Button>
         ))}
       </div>
       <div

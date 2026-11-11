@@ -78,6 +78,7 @@ export function TownCards({
   const { today, compare, reorder, deliveries, approvals, incoming } = snapshot;
   const { bought, others } = boughtToday(snapshot);
   const pct = changePercent(snapshot);
+  const split = splitLine(today);
   const open = (target: TownTarget) => () => onOpen?.(target);
   return (
     <div className="grid gap-2.5">
@@ -102,7 +103,7 @@ export function TownCards({
             </>
           ) : null}
         </span>
-        {splitLine(today) ? <span className="col-start-2 text-xs text-muted-foreground">{splitLine(today)}</span> : null}
+        {split ? <span className="col-start-2 text-xs text-muted-foreground">{split}</span> : null}
       </Card>
       <Card
         question="Who bought today?"
