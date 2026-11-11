@@ -107,3 +107,38 @@ def test_the_public_portal_still_ignores_and_hides_the_party(world):
     assert sr_row(w, d["id"]).ship_to_party_id is None
     # ... and the portal's own submit keeps the typed Ship To (external contacts keep today's form).
     assert w.rep.portal.call("POST", f"{SR_PORTAL}/{d['id']}/submit").status_code in (200, 201)
+
+
+def test_my_requests_refuses_another_salespersons_project_and_reads_nothing_back(world):
+    """Security review B1 (slice 2): a salesperson limited to their own projects may not raise a
+    request on someone else's project through My Requests, so the ship-to party can never read that
+    project's site address or parties back. Same rule as the staff route's `_assert_own_project`."""
+    from app.models.projects import ProjectSalesProfile
+    from tests._portal_p4_sr_so_support import REP_PERMS
+    from tests._sample_request_seed import make_project
+
+    w = world
+    db = w.sc.db
+    w.rep = w.person(
+        "Limited", perms=list(REP_PERMS) + ["projects.projects.view_own", "projects.registrations.submit"]
+    )
+    project = make_project(db, w.company_id, w.other.actor.id)
+    party = _party(w, "Foreign", address=None)
+    db.add(ProjectPartyLink(project_id=project.id, role="subcontractor", party_id=party.id))
+    profile = db.get(ProjectSalesProfile, project.id) or ProjectSalesProfile(project_id=project.id)
+    profile.address = "ZZT SECRET SITE ADDRESS"
+    db.add(profile)
+    db.commit()
+    body = _body(w, project_id=project.id, project_title=None, ship_to_party_id=party.id)
+    res = w.rep.me.call("POST", SR_PORTAL, json=body)
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
+    assert "ZZT SECRET SITE ADDRESS" not in res.text
+
+    # ... nor by moving a saved draft of their own onto that project.
+    mine = w.rep.me.call("POST", SR_PORTAL, json=_body(w)).json()
+    moved = w.rep.me.call(
+        "PUT", f"{SR_PORTAL}/{mine['id']}", json={"project_id": project.id, "ship_to_party_id": party.id}
+    )
+    assert moved.status_code == 422, moved.text
+    assert "ZZT SECRET SITE ADDRESS" not in moved.text

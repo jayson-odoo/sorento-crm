@@ -201,7 +201,8 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.assert_portal_customer_allowed(
                     db, contact_id=token.contact_id, customer_id=data.get("customer_id")
                 )
-                if data.get("quotation_document_id"):
+                # Own projects only for a My Requests caller (security review B1, slice 2), as on the staff route.
+                if data.get("quotation_document_id") or getattr(token, "crm_user_id", None):
                     _assert_own_quoted_project(db, token, data.get("project_id"))
                 crm = _crm_caller(db, token)
                 req = svc.create_draft(
@@ -251,7 +252,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                     svc.assert_portal_project_allowed(
                         db, contact=PortalService(db).get_contact(token), project_id=data["project_id"]
                     )
-                if data.get("quotation_document_id"):
+                if data.get("quotation_document_id") or getattr(token, "crm_user_id", None):
                     _assert_own_quoted_project(db, token, data.get("project_id") or req.project_id)
                 # Only a CHANGED debtor is re-checked: a draft whose debtor later left the
                 # agent's book must still be saveable with the customer it already has.
