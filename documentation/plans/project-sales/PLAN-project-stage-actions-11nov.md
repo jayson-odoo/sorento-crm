@@ -98,3 +98,18 @@ The clicking user is recorded by the audit log (the request actor); `purchase_re
 - A request submitted without a date takes the submit day (Malaysia), so the tab's Requested is set.
 - Both sample request forms' Request Delivery Date use the shared DD/MM/YYYY picker.
 
+
+## Round 4 (crew pass on cc7072ca)
+
+- Staff view of a saved sponsorship form / purchase request shows "Registered project" (its code)
+  next to Project Title (`PurchaseRequestDetail.tsx`, both layouts).
+- New sponsorship / sample request pages opened from a project: the breadcrumb reads Projects >
+  Project > the form, "Project" going where Cancel goes (no dead-end list).
+- A fresh Submit (no draft saved first) no longer sends the just-created values a second time,
+  so the lines are not deleted and re-added (`SubmissionForm.handleSubmit`): no "Line X removed"
+  and no second Create in the history.
+- Not this PR, reported with file:line: the salesperson's 403 "Sample requests are not available
+  for your account" is the contact's portal form visibility (`portal_sample_request.py:38-43`),
+  and the quotation pre-fill also needs `projects.sample_requests.create`
+  (`my_requests.py:139`), both data/grants on the copy; admin Edit opens the staff form
+  (`sponsorship-forms/[id]/edit/page.tsx` -> `PurchaseRequestForm` staff branch), untouched here.

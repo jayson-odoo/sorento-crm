@@ -224,6 +224,21 @@ describe('limited user, New Sponsorship Form renders the portal form', () => {
   });
 });
 
+describe('limited user, a fresh Submit (no draft saved first)', () => {
+  it('creates once and submits without sending the same lines again (no "Line removed", no second Create)', async () => {
+    mountForm(LIMITED);
+    fireEvent.click(await screen.findByRole('button', { name: /^Submit/ }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+    const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
+    const confirm = dialog && Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
+    if (confirm) fireEvent.click(confirm);
+    const submits = () => urls((c) => c.method === 'POST' && /^\/api\/v1\/my-requests\/submissions\/sponsorship_form\/[^/]+\/submit$/.test(c.url));
+    await waitFor(() => expect(submits().length).toBe(1));
+    expect(urls((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/submissions/sponsorship_form')).toHaveLength(1);
+    expect(submits()[0].body ?? null).toBeNull();
+  });
+});
+
 describe('limited user, Sponsorship Form specifics', () => {
   it('has Delivery address, Total project value and Sponsor subject from /lookups/sets/procurement_sponsor_subject', async () => {
     mountForm(LIMITED);

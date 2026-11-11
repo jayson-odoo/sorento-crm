@@ -25,6 +25,17 @@ export default async function NewSampleRequestPage({
     <Container>
       <PageHeader
         title="New Sample Request"
+        // From a project, the trail leads back to it, where Cancel goes; the list it would
+        // otherwise name can be one this user may not open (PROJECT-STAGE-ACTIONS).
+        crumbs={
+          project_id
+            ? [
+                { title: 'Projects', path: '/project-sales/pipeline' },
+                { title: 'Project', path: backHref },
+                { title: 'New Sample Request' },
+              ]
+            : undefined
+        }
         actions={
           <Button variant="outline" asChild>
             <Link href={backHref}>Cancel</Link>

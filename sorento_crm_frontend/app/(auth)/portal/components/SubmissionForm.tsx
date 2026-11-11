@@ -1226,13 +1226,19 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
       // the attachment flush after it failed must update that row, not
       // create a second one (#482).
       let id = effectiveId;
+      let justCreated = false;
       if (!id) {
         const saved = await client.saveDraft(kind, cleanedFields, cleanedProducts);
         id = saved.id;
         setCreatedSubmissionId(saved.id);
+        justCreated = true;
       }
       await flushPendingFiles(id);
-      await client.submitDraft(kind, id, cleanedFields, cleanedProducts);
+      // A form created a moment ago in this same click already holds these values: sending them
+      // again replaced its lines with copies of themselves, which the history read as "Line X
+      // removed" and a second Create (PROJECT-STAGE-ACTIONS, crew pass).
+      if (justCreated) await client.submitDraft(kind, id);
+      else await client.submitDraft(kind, id, cleanedFields, cleanedProducts);
       toast.success(VERB_DONE[verb]);
       router.replace(homeHref);
     } catch (e) {

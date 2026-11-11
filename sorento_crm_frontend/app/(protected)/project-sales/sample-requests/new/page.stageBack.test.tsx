@@ -30,4 +30,11 @@ describe('New sample request header Cancel', () => {
       '/project-sales/sample-requests',
     );
   });
+
+  it('from a project, the trail leads back to the project, never to a list the user may not open', async () => {
+    await renderPage({ project_id: 'p1' });
+    const crumb = screen.getByRole('link', { name: 'Project' });
+    expect(crumb.getAttribute('href')).toBe('/project-sales/p1?tab=sample-requests');
+    expect(screen.getByRole('link', { name: 'Projects' }).getAttribute('href')).toBe('/project-sales/pipeline');
+  });
 });

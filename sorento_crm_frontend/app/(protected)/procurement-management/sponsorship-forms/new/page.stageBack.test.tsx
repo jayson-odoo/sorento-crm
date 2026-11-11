@@ -48,4 +48,11 @@ describe('New sponsorship form', () => {
     );
     expect(formProps.current.successRedirectUrl).toBe('/procurement-management/sponsorship-forms');
   });
+
+  it('from a project, the trail leads back to the project, never to a list the user may not open', async () => {
+    await renderPage({ project_id: 'p1' });
+    const crumb = screen.getByRole('link', { name: 'Project' });
+    expect(crumb.getAttribute('href')).toBe('/project-sales/p1?tab=sponsorships');
+    expect(screen.getByRole('link', { name: 'Projects' }).getAttribute('href')).toBe('/project-sales/pipeline');
+  });
 });

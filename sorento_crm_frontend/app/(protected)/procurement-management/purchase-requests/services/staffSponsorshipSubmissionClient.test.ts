@@ -73,6 +73,13 @@ describe('staff sponsorship client', () => {
     expect((apiFetch.mock.calls[1][1] as RequestInit).method).toBe('POST');
   });
 
+  it('a submit right after its create sends nothing twice: only the staff submit', async () => {
+    apiFetch.mockResolvedValueOnce(json({ id: 'sf-1', status: 'submitted' }));
+    await createStaffSponsorshipClient(project).submitDraft('sponsorship_form', 'sf-1');
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/v1/procurement/purchase-requests/sf-1/submit');
+  });
+
   it('a refused line keeps its line reference, so the form can say "Line 1: ..."', async () => {
     apiFetch.mockResolvedValueOnce(
       json({ message: 'Unit price is required.', detail: 'line:0', code: 'SPONSORSHIP_UNIT_PRICE_REQUIRED' }, 422),

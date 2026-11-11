@@ -1304,6 +1304,11 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
+                  {/* The registered project the form is linked to, by its code (never the id). */}
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Registered project</p>
+                    <p className="font-medium">{request.project_code || ' - '}</p>
+                  </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
                     <p className="font-medium">{request.purpose || ' - '}</p>
@@ -1458,6 +1463,11 @@ function StaffPurchaseRequestDetail({
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
+                  </div>
+                  {/* The registered project the form is linked to, by its code (never the id). */}
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Registered project</p>
+                    <p className="font-medium">{request.project_code || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Total Project Value</p>
