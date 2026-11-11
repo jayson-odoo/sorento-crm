@@ -15,7 +15,8 @@ real AutoCount run, done by lane AC-E2E-DB3).
   idempotency key as before.
 
 - AC-3a Every SS write call (link, unlink, change halves, relink, relocate, resume) carries `X-Request-ID`,
-  `X-Actor-User-Id` (the CRM user id) and `X-Actor-Name` (the user's name), from both screens.
+  `X-Acting-User-Id` (the CRM user id) and `X-Acting-User-Name` (the user's display name, percent-encoded with
+  `urllib.parse.quote(name, safe="")`), one request id per press, from both screens (AC-DB1-READY, SS plan 63).
 - AC-3b Every SS write the CRM makes writes one audit EVENT `scm.po_line.crm_link_write` on the PO line, with the
   pressing user as actor and `request_id`, `operation_id`, action, outcome, SO number + line and qty in
   `new_values`, rolled up to the PO header.

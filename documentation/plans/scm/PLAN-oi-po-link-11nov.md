@@ -82,9 +82,9 @@ Order Inquiry (main 110e494f):
    success locks, an unknown answer keeps its key so the retry replays.
 
 6. **Actor trace (crew addition, owner: every db1 write traced to the person).** `PoLinkService(db, scope,
-   actor={id, name})`: every SS write call carries `X-Request-ID` (the press's request id, already sent) plus
-   `X-Actor-User-Id` / `X-Actor-Name` (header names provisional until lane AC-DB1-READY's crew-note; one constant
-   to change). Each write also stores one audit EVENT `scm.po_line.crm_link_write` on the PO line (actor = the
+   actor={id, name})`: every SS write call carries `X-Request-ID` (the press's request id, already sent) plus `X-Acting-User-Id` (CRM user id) and `X-Acting-User-Name` (display name, `urllib.parse.quote(name, safe="")`),
+   names fixed by lane AC-DB1-READY (SS plan 63; all optional on the SS side, never refused). Sent by
+   `FoundryxAutocountClient.write`, the only SS write path in the CRM (`grep autocount/documents` finds no other). Each write also stores one audit EVENT `scm.po_line.crm_link_write` on the PO line (actor = the
    pressing user, `new_values` = action, outcome, SO number/line, qty, `request_id`, `operation_id`), rolled up to
    the PO header like the ingest's link events (`po_link_history.py`).
 7. **Batch op shape (PO-LINK-BATCH crew-note 6799080814, provisional):** `POST po-links/batch`
