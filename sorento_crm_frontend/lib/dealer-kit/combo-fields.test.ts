@@ -506,7 +506,15 @@ describe('Combo merge tokens (AC-4.2)', () => {
   it('leave the existing fields and their order alone', () => {
     const existing = mergeFieldCatalog([])
       // PS-SPEC-SHEET's group is new, after Combo; the price tag fields before it are unchanged.
-      .filter((field) => !['Combo', 'Combo positions', 'Spec sheet'].includes(field.group as string))
+      .filter((field) => !['Combo', 'Combo positions', 'Spec sheet', 'Accessories'].includes(field.group as string))
+      // SPEC-SHEET-DESIGNER-PARITY B3: the spec sheet line variables join the Line group; their
+      // own placement is pinned in merge-fields.test.tsx, the older fields' order stays here.
+      .filter(
+        (field) =>
+          !['line.description', 'line.uom', 'line.technical_spec', 'line.notes', 'line.item_label'].includes(
+            field.path,
+          ),
+      )
       .map((field) => field.path);
     expect(existing).toEqual([
       'product.code',
