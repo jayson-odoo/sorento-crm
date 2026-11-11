@@ -1,6 +1,6 @@
 # PLAN: Town project district (TOWN-PROJECT-CITY)
 
-Status: Plan - card v2.2 + mock v2 (Malaysia map on the live engine) posted for owner sign-off. Track: full (size L: new snapshot sections, redaction, a map world).
+Status: Build - owner approved mock v2 (11 Nov 22:30); red tests then backend, frontend port. Track: full (size L: new snapshot sections, redaction, a map world).
 
 Trigger: owner, 11 Nov 2026 ~19:15 MYT. Show the project business beside the dealer street in Sorento Town.
 PR: foundryx-sdn-bhd/sorento-crm#2342 (`crew-lane: TOWN-PROJECT-CITY`). Mock: `mock/town-project-city-mock.html`.
@@ -173,6 +173,50 @@ Board (full): "Sold today RM 48,200.00 / Dealers RM 39,900.00 · Projects RM 6,1
     `townWorld.ts` itself, with the state table in `town/lib/townMap.ts`.
 - v1 (superseded): `mock/town-project-city-mock.html` + `mock/town-project-city/` (hand-drawn map; owner: visual regressed).
 - v0 (superseded): `mock/town-project-city-mock-v0-single-island.html`.
+
+## Phase 2 contract (owner approved mock v2, 11 Nov 22:30; build target = mock v2 3a36a88d + card v2.2)
+
+Snapshot schema stays 1 (additive fields; an older snapshot simply lacks them). All of it is built in the tick
+(`build_snapshot`), never per viewer.
+
+- `today.split`: `{"dealer": {...}, "project": {...}, "other": {...}}`, each `{"amount": "0.00", "invoice_count": int}`
+  over today's posted documents by `inv.document_sales_type()`: `dealer` = DEALER, `project` = PROJECT, `other` =
+  every other value (OTHER, SET_APART, MIXED, TYPE_NOT_SET, NO_SALES_ORDER). `amount` = signed sum (credit notes
+  negative), `invoice_count` = non-credit-note documents. The three amounts add up to `today.amount` exactly and the
+  three counts to `today.invoice_count`. Same query as `_today_and_compare` (filtered sums, no new scan).
+- `shops[].state` and `trading_houses.rows[].state`: a `my_state` value (`"Selangor"`, `"Kuala Lumpur"`,
+  `"Pulau Pinang"`, `"Negeri Sembilan"`, ...) or `null`. Rule: `customers.region` when it equals a `my_state` value
+  (case-insensitive, trimmed); else the postcode rule: the customer's last 20 `orders` (delivery orders) with
+  `deleted_at IS NULL AND NOT is_cancelled`, newest first by `order_date` then `created_at`; from each
+  `deliver_address` take the LAST 5-digit group (`(?<!\d)\d{5}(?!\d)`); the most frequent postcode wins (tie:
+  the most recent); state = `app/services/town/my_postcodes.py` `state_for_postcode(pc)` (static range table,
+  source cited in the module); none -> `null`. One query for all drawn customers per tick. The postcode and the
+  address never enter the snapshot.
+- `projects`: `{"open_count": int, "more": int, "dormant": int, "sites": [...]}` over the company's projects with
+  `approval_state IS NULL OR = 'approved'`. `open_count` = outcome open; `dormant` = outcome dormant (count only);
+  lost and won never appear. `sites`: up to 30 open projects, estimated value desc (NULL last), then
+  `project_code`, then id. Each site: `key` (project id), `name` (`name` or `title`), `code` (`project_code`),
+  `stage` (status key: identified / registered / specified / quoted / tendering / po_received, or null),
+  `final_negotiation` (`is_critical`), `state` (`sales_profile.state` matched case-insensitively to a `my_state`
+  value, else null), `launch_date`, `delivery_date` (`expected_delivery_from`, else `expected_delivery_to`; ISO or
+  null), `estimated_value` (2 dp string or null). `more` = `open_count - len(sites)`.
+- `trading_houses`: `{"more": int, "rows": [...]}`: customers that are the `customer_id` of a party linked with role
+  `trading_house` (`projects.party_links`) to at least one open, approved/staff project. Up to 12, by
+  `open_projects` desc then customer code. Row: `key` (customer id), `name` (customer name), `state` (as shops),
+  `open_projects` (distinct open projects), `today_docs` (today's posted non-credit documents of that customer with
+  sales type PROJECT). `more` = total - len(rows).
+- `deliveries.project_orders`: due/overdue sales orders (the existing `_deliveries` rule) with `demand_class =
+  'project'`; `deliveries.project_states`: up to 3 `{"state": <my_state value or null>, "orders": int}` for those
+  orders, earliest due first, the state from the order's customer by the rule above.
+- Redacted variant (`redact`): `today.split.*.amount` dropped; sites lose `name`, `code`, `estimated_value` and get
+  opaque keys; sites ordered by kind of hash (not by value), like shops; trading-house rows lose `name`, opaque keys.
+  Counts, stage, state, dates stay.
+- Wallboard (`strip_names`): sites lose `name`, `code`, `estimated_value`; trading houses lose `name`; keys opaque;
+  amounts follow the viewer's variant as today.
+- Frontend: the mock v2 patches land in `townWorld.ts` itself; the state table + map helpers in
+  `town/lib/townMap.ts` (`STATES`, `stateKeyOf(name)`, `mapXZ`); lightbox targets `site`, `trading_house`,
+  `projects`; the sales card shows the split line; TownScene gets the state chips and the whole-map button; legend
+  entries per mock v2.
 
 ## Phase plan (after sign-off)
 
