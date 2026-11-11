@@ -78,7 +78,7 @@ def test_a_queue_outage_marks_the_pptx_row_failed(monkeypatch):
         sheet = _sheet(db, c)
         download = spec.request_export(db, sheet, user_id=c["owner"], fmt="pptx")
         assert download.status == "failed"
-        assert "redis is down" in (download.error_message or "")
+        assert "redis is down" in (download.error or "")
 
 
 def test_the_public_print_payload_answers_a_pptx_download_too(monkeypatch):
