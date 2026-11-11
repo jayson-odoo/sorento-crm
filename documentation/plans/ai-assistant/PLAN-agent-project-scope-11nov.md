@@ -23,10 +23,19 @@ No leaking path found on main. Every project read the agent can reach applies th
   `crm_resolve` has no project kind.
 Verified over the real MCP server + backend as a view_own user (own project only) and as admin (all).
 `own_scope` treats a user holding BOTH `view` and `view_own` as unlimited (`app/services/own_scope.py:3-5`).
-Open: the #2337 turn trace and the test salesperson's roles (crew-ask on the PR).
+Crew evidence (dev DB, trace 282dec26): role `salesperson` there holds `projects.projects.view` AND `.view_own`
+(both added 9 Nov), so the user is not limited and the app shows them all 16: no scoping leak. Crew ruling: ship the
+pinning tests, and fix the real bug: "which of my projects ..." sent `owner_user_ids: "<name>"`, was refused
+(ids come from crm_resolve), crm_resolve was not offered, so the agent listed every project.
+
+## Fix (AC-5)
+`crm_projects_list` takes `owner_user_ids: "me"` at the agent seam: `_swap_self` in
+`app/services/chatbot/agent/tools.py` replaces it with the asker's own user id before the id check, and the
+schema the model sees says so. Any other value keeps the id check. Who should hold `projects.projects.view` is
+a role setting for the owner (crew asks separately).
 
 ## Tests
-`sorento_crm_backend/tests/chatbot/agent/test_agent_project_scope.py`: 13 tests, green on main; with the list filter
+`sorento_crm_backend/tests/chatbot/agent/test_agent_project_scope.py`: 13 scoping tests green on main, plus 9 AC-5 tests (red on main); with the list filter
 and the router guard removed, 8 go red (kill test).
 
 ## Test list

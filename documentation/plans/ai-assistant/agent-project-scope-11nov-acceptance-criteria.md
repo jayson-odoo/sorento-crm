@@ -4,3 +4,4 @@
 - AC-2 The same user asking about a project they cannot open in the app gets "not found", never its facts.
 - AC-3 An admin (or a holder of `projects.projects.view`) gets the same answers as before.
 - AC-4 Removing the filter turns a test red.
+- AC-5 "My projects" (any phrasing naming the asker) is answered by filtering on the asker's own user id, with no resolve round: the agent may send `owner_user_ids: "me"`; a name or an id the turn never showed is still refused.

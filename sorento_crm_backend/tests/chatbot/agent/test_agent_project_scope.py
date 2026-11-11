@@ -135,3 +135,72 @@ def test_ac4_without_the_list_filter_the_salesperson_would_see_everything(world,
 
     monkeypatch.setattr(route, "_visible_to", lambda db, user: None)
     assert {r["id"] for r in _ours(_list(world, world.sales), world.all_ids)} == world.all_ids
+
+
+# --- AC-5: "my projects" needs no resolve round ---------------------------------------------------
+# Crew trace 282dec26 (11 Nov): "which of my projects have quotations" sent `owner_user_ids: "Eric Ng"`, was
+# refused ("takes ids from crm_resolve"), and crm_resolve was not among the tools offered, so the agent listed
+# every project instead. `"me"` names the asker; the seam swaps in their own user id before the call.
+LIST = "crm_projects_list"
+
+
+def _list_catalog() -> dict:
+    props = {k: {"type": "string"} for k in ("contact_id", "space_id", "limit", "owner_user_ids", "project_ids")}
+    props["owner_user_ids"]["description"] = "Owner user UUIDs."
+    return {LIST: {"description": LIST, "inputSchema": {"type": "object", "properties": props}}}
+
+
+def _dispatch(world, args):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rec = Recorder(result={"data": [], "pagination": {"total": 0}})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(
+            world.db, make_ctx(world.sales), LIST, dict(args), call=rec, catalog=_list_catalog(), timeout=5.0
+        )
+    return out, rec
+
+
+@pytest.mark.parametrize("value", ["me", "Me", ["me"], '["me"]'])
+def test_ac5_owner_me_is_sent_as_the_askers_own_user_id(world, value):
+    out, rec = _dispatch(world, {"owner_user_ids": value})
+    assert out.status != "invalid", out.message
+    assert len(rec.calls) == 1
+    assert rec.calls[0][1]["owner_user_ids"] == [world.sales]
+
+
+def test_ac5_me_beside_an_id_never_shown_is_still_refused(world):
+    out, rec = _dispatch(world, {"owner_user_ids": ["me", world.owner]})
+    assert out.status == "invalid"
+    assert rec.calls == []
+
+
+def test_ac5_a_name_is_still_refused(world):
+    out, rec = _dispatch(world, {"owner_user_ids": "Eric Ng"})
+    assert out.status == "invalid"
+    assert rec.calls == []
+
+
+def test_ac5_the_model_is_told_it_may_write_me(world):
+    from app.services.chatbot.agent import tools as agent_tools
+
+    schema = agent_tools.tool_schemas([agent_tools.REGISTRY[LIST]], _list_catalog())[0]
+    hint = schema["function"]["parameters"]["properties"]["owner_user_ids"]["description"]
+    assert '"me"' in hint
+
+
+def test_ac5_my_projects_over_the_route_are_the_askers_own(world):
+    """What the swapped id reads: a full-view holder asking for theirs gets theirs, not every project."""
+    body = _list(world, world.owner, owner_user_ids=world.owner)
+    assert {r["id"] for r in _ours(body, world.all_ids)} == {p.id for p in world.theirs}
+
+
+def test_ac5_the_hint_is_added_once_and_the_catalogue_is_untouched(world):
+    from app.services.chatbot.agent import tools as agent_tools
+
+    cat = _list_catalog()
+    for _ in range(2):
+        schema = agent_tools.tool_schemas([agent_tools.REGISTRY[LIST]], cat)[0]
+    assert schema["function"]["parameters"]["properties"]["owner_user_ids"]["description"].count('"me"') == 1
+    assert cat[LIST]["inputSchema"]["properties"]["owner_user_ids"]["description"] == "Owner user UUIDs."
