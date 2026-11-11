@@ -42,7 +42,7 @@ export function useTraceDrawer(initialTurnId: string | null = null, onClose?: ()
           <SheetTitle>Trace</SheetTitle>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4">
-          <TraceView messageId={open.id} />
+          <TraceView messageId={open.id} stacked />
         </div>
       </SheetContent>
     </Sheet>

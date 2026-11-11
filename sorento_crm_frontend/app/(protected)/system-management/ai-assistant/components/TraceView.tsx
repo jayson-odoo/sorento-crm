@@ -91,7 +91,7 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
   );
 }
 
-function SpanInspector({ span }: { span: TraceSpan }) {
+function SpanInspector({ span, stacked }: { span: TraceSpan; stacked?: boolean }) {
   const isLLM = span.span_kind === 'LLM';
   const isTool = span.span_kind === 'TOOL' || span.span_kind === 'GUARDRAIL';
   const isRetriever = span.span_kind === 'RETRIEVER';
@@ -142,7 +142,7 @@ function SpanInspector({ span }: { span: TraceSpan }) {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-3 lg:flex-row">
+      <div className={cn('flex flex-col gap-3', !stacked && 'lg:flex-row')} data-testid="trace-span-io">
         <JsonPanel
           title="Input"
           value={
@@ -242,7 +242,11 @@ function TraceWaterfall({
   );
 }
 
-export function TraceView({ messageId }: { messageId: string }) {
+/**
+ * `stacked`: one column at every width. The side drawer passes it, because the screen-width `lg:`
+ * breakpoint would otherwise split its ~672px panel into two columns too narrow to read.
+ */
+export function TraceView({ messageId, stacked = false }: { messageId: string; stacked?: boolean }) {
   const traceQuery = useQueryTrace(messageId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
@@ -343,7 +347,7 @@ export function TraceView({ messageId }: { messageId: string }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className={cn('grid gap-4', !stacked && 'lg:grid-cols-2')} data-testid="trace-panels">
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle className="text-sm">Pipeline waterfall</CardTitle>
@@ -364,7 +368,7 @@ export function TraceView({ messageId }: { messageId: string }) {
           </CardHeader>
           <CardContent>
             {selected ? (
-              <SpanInspector span={selected} />
+              <SpanInspector span={selected} stacked={stacked} />
             ) : (
               <p className="text-sm text-muted-foreground">Select a node to inspect its input and output.</p>
             )}
