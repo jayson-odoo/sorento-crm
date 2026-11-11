@@ -117,7 +117,8 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_incoming_stock_by_product", "procurement.packing_lists.view", None),
     ("crm_incoming_stock_shipments", "procurement.packing_lists.view", None),
     ("crm_procurement_grn_summary", "procurement.grn.view", "purchase_orders.placed"),
-    ("crm_procurement_po_last_cost_list", "scm.purchase_orders.view", "purchase_orders.cost"),
+    # SUPPLIER-COST-ACCESS: PO cost is for purchasing and management.
+    ("crm_procurement_po_last_cost_list", "products.cost.view", "purchase_orders.cost"),
     ("crm_procurement_po_placed_list", "scm.purchase_orders.view", "purchase_orders.placed"),
     ("crm_procurement_spo_allocations_last_receipt_list", "procurement.spo_allocations.view", "purchase_orders.placed"),
     ("crm_order_management_orders_by_product_list", "order_management.orders.view", None),

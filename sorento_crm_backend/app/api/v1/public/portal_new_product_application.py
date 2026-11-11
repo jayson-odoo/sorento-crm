@@ -382,7 +382,7 @@ def register_new_product_application_routes(
     ):
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
-            content, filename = npa_xlsx.to_xlsx(db, _own(db, token, application_id))
+            content, filename = npa_xlsx.to_xlsx(db, _own(db, token, application_id), portal=True)
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

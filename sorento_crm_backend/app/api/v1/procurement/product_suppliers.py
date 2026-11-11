@@ -5,6 +5,7 @@ from typing import Optional
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, require_permission
+from app.services.cost_access import require_cost_view
 from app.services.procurement_service import ProductSupplierService
 from app.schemas.procurement import (
     ProductSupplierCostCreate,
@@ -23,7 +24,9 @@ PS_ADD_PERM = "procurement.product_suppliers.add"
 PS_EDIT_PERM = "procurement.product_suppliers.edit"
 PS_DELETE_PERM = "procurement.product_suppliers.delete"
 
-router = APIRouter()
+# SUPPLIER-COST-ACCESS: every link carries the supplier and its unit cost, so the whole router
+# also needs `products.cost.view` (purchasing + management), on top of each route's own slug.
+router = APIRouter(dependencies=[Depends(require_cost_view(get_current_user))])
 
 
 @router.get("/", response_model=ListResponse[ProductSupplierResponse])

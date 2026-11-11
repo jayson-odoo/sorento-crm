@@ -442,7 +442,9 @@ const STAFF_SIDEBAR: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
+        // SUPPLIER-COST-ACCESS: every row is a supplier unit cost; the API also needs
+        // `procurement.product_suppliers.view`, which every holder of this one has.
+        permission: 'products.cost.view',
       },
       {
         title: 'Cost Price Uploads',
@@ -2120,7 +2122,9 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
+        // SUPPLIER-COST-ACCESS: every row is a supplier unit cost; the API also needs
+        // `procurement.product_suppliers.view`, which every holder of this one has.
+        permission: 'products.cost.view',
       },
       {
         title: 'Cost Price Uploads',

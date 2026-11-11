@@ -9,6 +9,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -96,9 +97,27 @@ describe('S1: the Suppliers tab is gated on procurement.product_suppliers.view',
     expect(screen.queryByRole('tab', { name: /Suppliers/i })).not.toBeInTheDocument();
   });
 
-  it('renders the Suppliers tab for a caller with the permission', () => {
+  it('renders the Suppliers tab for a caller with the permission and the cost permission', () => {
     grantedPerms.granted.add('procurement.product_suppliers.view');
+    grantedPerms.granted.add('products.cost.view');
     render(<ProductForm />);
     expect(screen.getByRole('tab', { name: /Suppliers/i })).toBeInTheDocument();
+  });
+
+  it('SUPPLIER-COST-ACCESS: no Suppliers tab and no Cost Price input without products.cost.view', async () => {
+    // A sales role today holds the product-suppliers slug through the cpc1 sweep.
+    grantedPerms.granted.add('procurement.product_suppliers.view');
+    render(<ProductForm />);
+    expect(screen.queryByRole('tab', { name: /Suppliers/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: /Pricing/i }));
+    expect(screen.getByText('Invoice Price')).toBeInTheDocument();
+    expect(screen.queryByText('Cost Price')).not.toBeInTheDocument();
+  });
+
+  it('SUPPLIER-COST-ACCESS: the Cost Price input is there with products.cost.view', async () => {
+    grantedPerms.granted.add('products.cost.view');
+    render(<ProductForm />);
+    await userEvent.click(screen.getByRole('tab', { name: /Pricing/i }));
+    expect(screen.getByText('Cost Price')).toBeInTheDocument();
   });
 });

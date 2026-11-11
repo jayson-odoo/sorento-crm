@@ -70,11 +70,19 @@ describe('S1: the Costs tab (Prices before round 6 R5) is gated on procurement.p
     expect(screen.queryByRole('tab', { name: 'Costs' })).not.toBeInTheDocument();
   });
 
-  it('renders the Costs tab for a caller with the permission', () => {
-    grantedPerms.granted = new Set(['procurement.product_suppliers.view']);
+  it('renders the Costs tab for a caller with the permission and the cost permission', () => {
+    grantedPerms.granted = new Set(['procurement.product_suppliers.view', 'products.cost.view']);
     useSupplier.mockReturnValue({ data: SUPPLIER, isLoading: false });
     renderDetail();
 
     expect(screen.getByRole('tab', { name: 'Costs' })).toBeInTheDocument();
+  });
+
+  it('SUPPLIER-COST-ACCESS: no Costs tab without products.cost.view', () => {
+    grantedPerms.granted = new Set(['procurement.product_suppliers.view']);
+    useSupplier.mockReturnValue({ data: SUPPLIER, isLoading: false });
+    renderDetail();
+
+    expect(screen.queryByRole('tab', { name: 'Costs' })).not.toBeInTheDocument();
   });
 });

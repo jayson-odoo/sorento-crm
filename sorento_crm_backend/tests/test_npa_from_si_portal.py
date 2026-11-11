@@ -180,7 +180,8 @@ def test_portal_from_an_si_saves_without_product_rows_and_sees_the_typed_new_cod
         p.db.flush()
     detail = _as(p, p.granted).get(f"{BASE}/{d['id']}").json()
     assert detail["new_product_code"] == "ZZT-NEW-1"
-    assert detail["cost_price"] == "12.00"
+    # SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost is never shown to a dealer.
+    assert "cost_price" not in detail
 
 
 def test_portal_suggestion_never_carries_another_applications_remark(portal):
