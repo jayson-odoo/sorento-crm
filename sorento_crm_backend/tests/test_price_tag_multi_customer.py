@@ -246,3 +246,35 @@ def test_an_edit_needs_no_reason_and_is_still_recorded(db):
     assert edit["reason"] is None
     assert edit["label"] == "Edit 1"
     assert all("Revision" not in entry["label"] for entry in history)
+
+
+def test_the_revise_route_takes_an_empty_reason_for_a_price_tag_edit():
+    """The form posts `reason: ""` through the portal route (owner hand test 11 Nov)."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from tests._pg_fixture import blank_session
+    from tests.test_portal_price_tag_revise import _PORTAL_BASE, _persisted_token
+
+    with blank_session() as session:
+
+        def _override_get_db():
+            yield session
+
+        app.dependency_overrides[get_db] = _override_get_db
+        try:
+            with TestClient(app) as c:
+                contact, product_id, row = _setup(session)
+                res = c.post(
+                    f"{_PORTAL_BASE}/submissions/price_tag_request/{row.id}/revise",
+                    headers={"X-Portal-Token": _persisted_token(session, contact)},
+                    json={
+                        "reason": "",
+                        "expected_revision_no": 0,
+                        "fields": {"customers": [_A]},
+                        "products": [{"product_id": product_id, "quantity": 1}],
+                    },
+                )
+        finally:
+            app.dependency_overrides.clear()
+    assert res.status_code == 200, res.text
