@@ -5,14 +5,14 @@ PRICETAG-REQUEST-LAYOUT (plan documentation/plans/dealer-kit/PLAN-pricetag-reque
 `debtor_code` / `debtor_name` by the model. Idempotent (`IF NOT EXISTS`), additive only.
 
 Revision ID: ptag_0022_request_customers
-Revises: combo_0001_part_labels
+Revises: sca_0001_products_cost_view
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "ptag_0022_request_customers"
-down_revision = "combo_0001_part_labels"
+down_revision = "sca_0001_products_cost_view"
 branch_labels = None
 depends_on = None
 
