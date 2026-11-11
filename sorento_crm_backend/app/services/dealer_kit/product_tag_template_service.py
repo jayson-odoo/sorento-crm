@@ -35,7 +35,7 @@ from __future__ import annotations
 import uuid
 from typing import Iterable, Optional
 
-from sqlalchemy import and_, false, func
+from sqlalchemy import and_, false, func, or_
 from sqlalchemy.orm import Query, Session
 
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
@@ -755,31 +755,86 @@ def linked_product_ids(db: Session, template_id: str) -> list[str]:
     return [row.id for row in rows]
 
 
+_PRODUCT_FILTER_KEYS = ("brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids")
+
+
+def _raw(filters: dict, key: str) -> list:
+    return [v for v in (filters.get(key) or []) if v]
+
+
+def _wants_products(filters: dict) -> bool:
+    """The product part runs when any product filter was sent, or when nothing at all was (so the
+    empty filter is still refused by `_bulk_products_query`)."""
+    return any(_raw(filters, key) for key in _PRODUCT_FILTER_KEYS) or not _raw(filters, "combo_ids")
+
+
+def _scoped_combo_ids(db: Session, raw_ids: list) -> list[str]:
+    """The picked combos this session can see (scoped through the host product); junk and
+    foreign ids drop out."""
+    ids = _clean_ids(raw_ids)
+    if not ids:
+        return []
+    rows = (
+        _scoped(db, Product)
+        .join(ProductCombo, ProductCombo.host_product_id == Product.id)
+        .filter(ProductCombo.id.in_(ids))
+        .with_entities(ProductCombo.id)
+        .all()
+    )
+    return [row.id for row in rows]
+
+
+def _fit_reasons(db: Session, template: TagTemplate, combo_ids: list[str]) -> dict[str, Optional[str]]:
+    """combo id -> why the template cannot print it (None when it can). A template with no
+    published document has no needs yet and fits every combo, as in `_require_fit`; a plain or
+    main-only template fits every combo (owner ruling 5 Nov, #2205, in `fit_reason`)."""
+    version = template.published_version
+    if version is None or not combo_ids:
+        return {}
+    needs = template_needs(version.doc)
+    combos = db.query(ProductCombo).filter(ProductCombo.id.in_(combo_ids)).all()
+    return {combo.id: fit_reason(needs, combo_shape(combo)) for combo in combos}
+
+
+def _linked_combo_set(db: Session, template_id: str, combo_ids: list[str]) -> set[str]:
+    if not combo_ids:
+        return set()
+    return {
+        row.combo_id
+        for row in db.query(ComboTagTemplate.combo_id).filter(
+            ComboTagTemplate.template_id == template_id,
+            ComboTagTemplate.combo_id.in_(combo_ids),
+        )
+    }
+
+
 def bulk_preview(db: Session, template_id: str, filters: dict) -> dict:
     template = _template_or_404(db, template_id)
-    product_ids = [row.id for row in _bulk_products_query(db, filters).with_entities(Product.id)]
-    already = 0
-    if product_ids:
-        already = (
-            db.query(ProductTagTemplate)
-            .filter(
-                ProductTagTemplate.template_id == template.id,
-                ProductTagTemplate.product_id.in_(product_ids),
+    matched = already = 0
+    if _wants_products(filters):
+        product_ids = [row.id for row in _bulk_products_query(db, filters).with_entities(Product.id)]
+        matched += len(product_ids)
+        if product_ids:
+            already += (
+                db.query(ProductTagTemplate)
+                .filter(
+                    ProductTagTemplate.template_id == template.id,
+                    ProductTagTemplate.product_id.in_(product_ids),
+                )
+                .count()
             )
-            .count()
-        )
-    return {"matched": len(product_ids), "already_linked": already}
+    combo_ids = _scoped_combo_ids(db, _raw(filters, "combo_ids"))
+    matched += len(combo_ids)
+    already += len(_linked_combo_set(db, template.id, combo_ids))
+    return {"matched": matched, "already_linked": already}
 
 
-def bulk_assign(
-    db: Session, template_id: str, filters: dict, action: str, *, user_id: Optional[str]
-) -> dict:
-    """Add the template to every matching product that lacks it, or remove it
-    from every matching product that has it. Answers ``{changed}``."""
-    template = _template_or_404(db, template_id)
+def _bulk_assign_products(
+    db: Session, template: TagTemplate, filters: dict, action: str, user_id: Optional[str]
+) -> int:
     product_ids = [row.id for row in _bulk_products_query(db, filters).with_entities(Product.id)]
     if not product_ids:
-        return {"changed": 0}
+        return 0
     linked = {
         row.product_id
         for row in db.query(ProductTagTemplate.product_id).filter(
@@ -789,7 +844,7 @@ def bulk_assign(
     }
     if action == "remove":
         if not linked:
-            return {"changed": 0}
+            return 0
         changed = (
             db.query(ProductTagTemplate)
             .filter(
@@ -802,7 +857,7 @@ def bulk_assign(
         # Same as the product page's unlink: the removed template's defaults go with it, and a
         # product left with one template has it as its saved default for the types it fits.
         _lone_link_is_default(db, ProductTagTemplate, "product_id", list(linked))
-        return {"changed": changed}
+        return changed
     missing = [pid for pid in product_ids if pid not in linked]
     # A bulk add never changes a default the product already shows, saved or implicit.
     _freeze_shown_defaults(db, ProductTagTemplate, "product_id", missing)
@@ -813,7 +868,130 @@ def bulk_assign(
     db.flush()
     # ...and a product whose first link this was has it as its default.
     _lone_link_is_default(db, ProductTagTemplate, "product_id", missing)
-    return {"changed": len(missing)}
+    return len(missing)
+
+
+def _bulk_assign_combos(
+    db: Session, template: TagTemplate, raw_ids: list, action: str, user_id: Optional[str]
+) -> tuple[int, int]:
+    """(changed, skipped) for the picked combos, on the combo page's own rows. Same default rules
+    as products; a combo the template cannot print is skipped, never linked."""
+    combo_ids = _scoped_combo_ids(db, raw_ids)
+    linked = _linked_combo_set(db, template.id, combo_ids)
+    if action == "remove":
+        if not linked:
+            return 0, 0
+        changed = (
+            db.query(ComboTagTemplate)
+            .filter(
+                ComboTagTemplate.template_id == template.id,
+                ComboTagTemplate.combo_id.in_(list(linked)),
+            )
+            .delete(synchronize_session=False)
+        )
+        db.flush()
+        _lone_link_is_default(db, ComboTagTemplate, "combo_id", list(linked))
+        return changed, 0
+    missing = [cid for cid in combo_ids if cid not in linked]
+    reasons = _fit_reasons(db, template, missing)
+    fitting = [cid for cid in missing if not reasons.get(cid)]
+    _freeze_shown_defaults(db, ComboTagTemplate, "combo_id", fitting)
+    db.add_all(
+        ComboTagTemplate(combo_id=cid, template_id=template.id, created_by=user_id)
+        for cid in fitting
+    )
+    db.flush()
+    _lone_link_is_default(db, ComboTagTemplate, "combo_id", fitting)
+    return len(fitting), len(missing) - len(fitting)
+
+
+def bulk_assign(
+    db: Session, template_id: str, filters: dict, action: str, *, user_id: Optional[str]
+) -> dict:
+    """Add the template to every matching product (and picked combo) that lacks it, or remove it
+    from every one that has it. Answers ``{changed}``, plus ``skipped`` when picked combos could
+    not print with the template."""
+    template = _template_or_404(db, template_id)
+    changed = skipped = 0
+    if _wants_products(filters):
+        changed += _bulk_assign_products(db, template, filters, action, user_id)
+    raw_combos = _raw(filters, "combo_ids")
+    if raw_combos:
+        combo_changed, skipped = _bulk_assign_combos(db, template, raw_combos, action, user_id)
+        changed += combo_changed
+    return {"changed": changed, **({"skipped": skipped} if skipped else {})}
+
+
+def linked_combo_ids(db: Session, template_id: str) -> list[str]:
+    """Ids of this company's combos that use the template (the designer's combo ticks)."""
+    template = _template_or_404(db, template_id)
+    rows = (
+        _scoped(db, Product)
+        .join(ProductCombo, ProductCombo.host_product_id == Product.id)
+        .join(ComboTagTemplate, ComboTagTemplate.combo_id == ProductCombo.id)
+        .filter(ComboTagTemplate.template_id == template.id)
+        .with_entities(ProductCombo.id)
+        .all()
+    )
+    return [row.id for row in rows]
+
+
+def combo_rows(
+    db: Session,
+    template_id: str,
+    *,
+    query: Optional[str],
+    category_ids: Iterable,
+    brand_ids: Iterable,
+    linked: bool,
+    page: int,
+    limit: int,
+) -> dict:
+    """The combos the designer's Products view lists: matched on the combo name or the host's
+    code, narrowed by the host's category / brand, each with why the template cannot print it."""
+    template = _template_or_404(db, template_id)
+    q = _scoped(db, Product).join(ProductCombo, ProductCombo.host_product_id == Product.id)
+    if query and query.strip():
+        needle = f"%{query.strip()}%"
+        q = q.filter(or_(ProductCombo.name.ilike(needle), Product.product_code.ilike(needle)))
+    category_ids = _clean_ids(category_ids)
+    if category_ids:
+        q = q.filter(Product.category_id.in_(category_ids))
+    brand_ids = _clean_ids(brand_ids)
+    if brand_ids:
+        q = q.filter(Product.brand_id.in_(brand_ids))
+    if linked:
+        q = q.filter(
+            db.query(ComboTagTemplate.id)
+            .filter(
+                ComboTagTemplate.combo_id == ProductCombo.id,
+                ComboTagTemplate.template_id == template.id,
+            )
+            .exists()
+        )
+    total = q.count()
+    pairs = (
+        q.with_entities(ProductCombo, Product)
+        .order_by(Product.product_code, ProductCombo.name, ProductCombo.id)
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    reasons = _fit_reasons(db, template, [combo.id for combo, _host in pairs])
+    data = [
+        {
+            "id": combo.id,
+            "name": combo.name,
+            "host_product_id": host.id,
+            "host_code": host.product_code,
+            "host_name": host.product_name,
+            "category_name": host.category.category_name if host.category else None,
+            "brand_name": host.brand.brand_name if host.brand else None,
+            "fit_reason": reasons.get(combo.id),
+        }
+        for combo, host in pairs
+    ]
+    return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}}
 
 
 # ---------------------------------------------------------------------------

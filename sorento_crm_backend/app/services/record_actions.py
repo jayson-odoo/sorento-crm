@@ -1811,7 +1811,10 @@ def _unassign_tag_template_products(db: Session, payload: dict):
         _entity_id(payload),
         {
             key: payload.get(key) or []
-            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids")
+            for key in (
+                "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids",
+                "combo_ids",
+            )
         },
         "remove",
         user_id=payload.get("requested_by_id"),

@@ -217,7 +217,9 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
 
         from app.schemas.price_tag import TemplateAssignFilter
 
-        keys = ("brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids")
+        keys = (
+            "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids", "combo_ids",
+        )
         try:
             TemplateAssignFilter.model_validate(
                 {key: (payload or {})[key] for key in keys if (payload or {}).get(key) is not None}
