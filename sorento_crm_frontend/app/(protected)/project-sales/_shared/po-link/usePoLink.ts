@@ -2,7 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
-import { getPoLinkSwitch, type ResumePoLinkInput } from './poLinkService';
+// The switch read goes through the Stock Debt service's re-export: its drill tests mock it there.
+import { getPoLinkSwitch } from '../../stock-debt/services/stockDebtSnapshotService';
+import type { ResumePoLinkInput } from './poLinkService';
 import type { PoLinkTarget } from './poLink.types';
 
 /** What AutoCount can do now and the open PO lines of the product. Read only while the menu or
