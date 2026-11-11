@@ -14,7 +14,7 @@ of `products.cost.view`.
 Contract: documentation/plans/products/CONTRACT-product-costing.md section 2.
 
 Revision ID: pc_0001_product_costing
-Revises: combo_0001_part_labels
+Revises: sca_0001_products_cost_view
 """
 import uuid
 from datetime import datetime
@@ -24,7 +24,7 @@ from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "pc_0001_product_costing"
-down_revision = "combo_0001_part_labels"
+down_revision = "sca_0001_products_cost_view"
 branch_labels = None
 depends_on = None
 
