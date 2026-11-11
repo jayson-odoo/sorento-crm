@@ -1,6 +1,6 @@
 # PLAN: COST-ACCESS-UNIFIED - one cost-visibility rule everywhere
 
-Status: Plan (size M, permission change; security-reviewer required). Behaviour card pending owner answers.
+Status: Build complete, in review / hand test (track M, permission change; security-reviewer done, PR #2354).
 
 Owner go (12 Nov, chat): "I agree the cost access should be centralized and unified."
 
@@ -63,3 +63,10 @@ pytest, Postgres fixture: AC-1..AC-9, plus updates to existing tests that pin th
 - AI/chatbot: "states only what the data holds", refusal wording unchanged.
 - Lists: Cost column still sorts on the server; filter still multi-value-safe (yes/no).
 - Data: no automatic joining by name (link is the explicit `users.respond_contact_id`).
+
+## Progress
+- Red tests e24d2d82 (60) and 9614699b (8, tag settings); code c8d92c17, 8f9e05a5, 67098dd1.
+- Reviewer: tag settings blocker fixed in 67098dd1; kill tests pass. Security review: no blockers.
+- Browser pass PASS at 1280 and 375 on 1f39f8e8.
+- Pre-existing, out of scope: agent `eligible_contact` ignores workspace on a shared respond.io id;
+  30s RBAC cache delays a role revoke on WhatsApp.
