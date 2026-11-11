@@ -21,8 +21,8 @@ import type {
 
 /**
  * The letterhead, laid out the way the customer reads it on the printed quotation: the refs
- * that get quoted back on the right, who it is to on the left. The line naming the job is not
- * repeated here as a read: the record header above the card already shows it (#1335).
+ * that get quoted back on the right, who it is to on the left. The line naming the job is the
+ * Project row: the record card above shows only the project's short name (QUOTE-HEADER-TIDY).
  *
  * Every field here ARRIVES derived - recipient from the project's party, subject from the project
  * title, ref from the numbering rule. The screen shows them rather than asking for them, which

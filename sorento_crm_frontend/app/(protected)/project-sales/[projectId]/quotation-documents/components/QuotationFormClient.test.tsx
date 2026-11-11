@@ -2100,6 +2100,20 @@ describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT
     expect(recomputeQuotationVersion).not.toHaveBeenCalled();
   });
 
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the record card names the project by its short name;
+  // the full title is the Header's own Project title field below it.
+  it('F7: the record card reads the project short name, not the full title', async () => {
+    const savedTitle = 'Menara Test';
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
+    renderForm('d1');
+
+    const header = await screen.findByTestId('record-header-card');
+    expect(await within(header).findByText('Menara Ujian')).toBeInTheDocument();
+    const field = await screen.findByLabelText('Project title');
+    expect(field).toHaveValue(savedTitle);
+    expect(within(header).queryByText(savedTitle)).toBeNull();
+  });
+
   it('F6: a new proposal has no record card yet (nothing numbered, no version)', async () => {
     renderForm();
     await screen.findByRole('textbox', { name: 'Your Ref' });

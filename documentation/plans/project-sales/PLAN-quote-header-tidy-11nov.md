@@ -1,6 +1,6 @@
 # PLAN: QUOTE-HEADER-TIDY (one Issued by, short name in the record card, title in Header, view folds)
 
-Status: in build (small fix track: FE only, no migration, no auth/RBAC change, no new ingest).
+Status: built, in review (small fix track: FE only, no migration, no auth/RBAC change, no new ingest).
 UAC: `quote-header-tidy-acceptance-criteria.md` alongside. Lane: QUOTE-HEADER-TIDY.
 
 ## Owner feedback (11 Nov 2026 ~15:10 MYT), verbatim
