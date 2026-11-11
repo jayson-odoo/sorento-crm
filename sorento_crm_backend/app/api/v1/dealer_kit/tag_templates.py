@@ -549,6 +549,7 @@ def list_template_combo_ids(
     return product_tag_template_service.linked_combo_ids(db, template_id)
 
 
+# ai: not-for-assistant picker feed for the template designer's Products dialog; the assistant reads combos through the product's own combo data
 @router.get("/{template_id}/combos", response_model=TemplateComboListOut)
 def list_template_combos(
     template_id: str,
