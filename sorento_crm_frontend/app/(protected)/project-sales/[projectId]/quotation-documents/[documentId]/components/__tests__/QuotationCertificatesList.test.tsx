@@ -7,7 +7,7 @@
  *              returning `{ data, isLoading, error, refetch }`; `data` = `{ can_edit, can_edit_defaults, items: Row[] }`.
  *   List       `PanelDataGrid`; scheme, number, a validity badge, and marked text that carries the count and the
  *              state in words ("2 rows, found").
- *   Toolbar    "Download certificates PDF"; "Add certificate" only when `can_edit`.
+ *   Toolbar    "Download certificates PDF" (Actions menu); "Add certificate" only when `can_add`.
  *   Empty      heading "No certificates" and the hint "None of the quoted products has a certificate on file."
  *   Remove     the row menu deferred action `quotation_certificate.remove` (entity type `quotation_certificate`,
  *              entity id = the document id, payload `{ certificate_id }`): no confirm dialog.
@@ -98,6 +98,14 @@ function ok(items: unknown[], canEdit = true) {
     error: null,
     refetch: vi.fn(),
   });
+}
+
+/** Download certificates PDF lives in the toolbar's Actions menu (CERT-TAB-UX, 375px). */
+async function findDownloadItem() {
+  const trigger = await screen.findByRole('button', { name: /^actions$/i });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+  return screen.findByRole('menuitem', { name: /download certificates pdf/i });
 }
 
 function renderList() {
@@ -197,8 +205,8 @@ describe('QuotationCertificatesList', () => {
   it('shows the download and add buttons for an editor', async () => {
     ok([row()]);
     renderList();
-    expect(await screen.findByRole('button', { name: /download certificates pdf/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /add certificate/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /add certificate/i })).toBeInTheDocument();
+    expect(await findDownloadItem()).toBeInTheDocument();
   });
 
   it('hides Add certificate when the viewer cannot edit', async () => {
@@ -218,7 +226,7 @@ describe('QuotationCertificatesList', () => {
     renderList();
     await screen.findByText('ZZT-0119');
     expect(screen.queryByRole('button', { name: /add certificate/i })).toBeNull();
-    expect(screen.getByRole('button', { name: /download certificates pdf/i })).toBeInTheDocument();
+    expect(await findDownloadItem()).toBeInTheDocument();
   });
 
   it('shows neither the empty state nor rows while loading', () => {
@@ -245,7 +253,7 @@ describe('QuotationCertificatesList', () => {
     ok([row()]);
     renderList();
     await screen.findByText('ZZT-0119');
-    const trigger = screen.getAllByRole('button', { name: /actions/i })[0];
+    const trigger = screen.getByRole('button', { name: 'PPS ZZT-0119 actions' });
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: /remove/i }));

@@ -475,6 +475,9 @@ export function QuotationCertificatesList({
                 </div>
               ),
             }}
+            // In the Actions menu, not a second text button: two text buttons beside the
+            // search clipped Add certificate at 375px, and the owner asked for fewer buttons.
+            secondaryActionsAsMenu
             secondaryActions={[
               {
                 key: 'download-certificates-pdf',
