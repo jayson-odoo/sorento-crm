@@ -41,6 +41,7 @@ from app.models.projects import (
 )
 from app.services import project_pricing_service as pricing
 from app.services import quotation_matrix as matrix
+from app.services import non_cancellable_service as non_cancellable
 from app.services.error_handler import AppException
 from app.utils.tag_rich_text import plain_text, sanitise_description
 
@@ -456,6 +457,7 @@ def copy_line(
         unit_type=line.unit_type,
         line_total=line.line_total,
         is_non_standard=line.is_non_standard,
+        is_non_cancellable=bool(line.is_non_cancellable),
         floor_value_applied=line.floor_value_applied,
         floor_level_applied=line.floor_level_applied,
         is_below_floor=line.is_below_floor,
@@ -714,6 +716,7 @@ def _apply_guardrails(
     product_set: Optional[ProductSet] = None,
     membership: Optional["pricing.SeriesMembership"] = None,
     series_pricing: Optional[Dict[str, tuple]] = None,
+    non_cancellable_setting: Optional["non_cancellable.SeriesNonCancellable"] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recompute both alerts for one line. Returns a breach event, or None.
 
@@ -726,6 +729,14 @@ def _apply_guardrails(
     version so the category walk and the product read happen once rather than per line.
     ``series_pricing`` is its twin for the money (T5) and is passed for the same reason.
     """
+    # NON-CANCELLABLE-ITEMS: stored on save with the other flags, from the scope's series.
+    non_cancellable.apply_to_line(
+        db,
+        line=line,
+        series_id=quotation.series_id,
+        product=product,
+        setting=non_cancellable_setting,
+    )
     if line.is_section:
         # A heading row is never priced, so never flagged (PROPOSAL-FORM-COLLAPSE).
         line.is_non_standard = line.is_below_floor = line.is_discounted = False
@@ -1164,6 +1175,7 @@ def _write_section(
     line.is_non_standard = False
     line.is_below_floor = False
     line.is_discounted = False
+    line.is_non_cancellable = False
     setattr(line, _BREACH_ATTR, [])
     db.flush()
     return line
@@ -1380,6 +1392,7 @@ def recompute_version(
     # Expanded once for the whole version rather than per line (S18, and T5 for the money).
     membership = pricing.series_membership(db, quotation.series_id)
     series_pricing = pricing.series_pricing_map(db, quotation.series_id)
+    nc_setting = non_cancellable.series_setting(db, quotation.series_id)
 
     report = {
         "version_id": version.id,
@@ -1412,6 +1425,7 @@ def recompute_version(
             line.floor_value_applied,
             line.floor_level_applied,
             bool(line.is_discounted),
+            bool(line.is_non_cancellable),
         )
         event = _apply_guardrails(
             db,
@@ -1420,6 +1434,7 @@ def recompute_version(
             product=products.get(line.product_id or ""),
             membership=membership,
             series_pricing=series_pricing,
+            non_cancellable_setting=nc_setting,
         )
         if event:
             report["breach_events"].append(event)
@@ -1430,6 +1445,7 @@ def recompute_version(
             line.floor_value_applied,
             line.floor_level_applied,
             bool(line.is_discounted),
+            bool(line.is_non_cancellable),
         )
         if before == after:
             continue
@@ -1730,6 +1746,7 @@ def serialize_lines(
             "band_label": line.band_label,
             "is_section": bool(line.is_section),
             "is_non_standard": line.is_non_standard,
+            "is_non_cancellable": bool(line.is_non_cancellable),
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,
             "is_below_floor": line.is_below_floor,

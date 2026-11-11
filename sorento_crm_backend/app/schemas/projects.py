@@ -1588,6 +1588,9 @@ class ProjectQuotationLineResponse(BaseModel):
     is_section: bool = False
 
     is_non_standard: bool = False
+    # NON-CANCELLABLE-ITEMS: stored on save from the scope's series; printed under the
+    # description on screen and in the PDF.
+    is_non_cancellable: bool = False
     # The floor IN FORCE WHEN PRICED (AC-E7). A later policy change never rewrites it.
     floor_value_applied: Optional[Decimal] = None
     floor_level_applied: Optional[str] = None
