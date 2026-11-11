@@ -305,23 +305,23 @@ export function useQuotationDocumentActions({
           }}
         />
       ) : null}
-      {duplicating ? (
-        <DuplicateForPartyDialog
-          open={duplicating}
-          onOpenChange={setDuplicating}
-          projectId={projectId}
-          isSaving={mutations.duplicate.isPending}
-          onConfirm={async (body) => {
-            try {
-              const copy = await mutations.duplicate.mutateAsync({ id: document.id, body });
-              setDuplicating(false);
-              router.push(`/project-sales/${projectId}/quotation-documents/${copy.id}`);
-            } catch {
-              // The mutation toasted the reason; the dialog stays open.
-            }
-          }}
-        />
-      ) : null}
+      {/* Always mounted, toggled by `open` like the Sign dialog: one mounted on the menu's own
+          close is dismissed by that same close (browser pass, 11 Nov). */}
+      <DuplicateForPartyDialog
+        open={duplicating}
+        onOpenChange={setDuplicating}
+        projectId={projectId}
+        isSaving={mutations.duplicate.isPending}
+        onConfirm={async (body) => {
+          try {
+            const copy = await mutations.duplicate.mutateAsync({ id: document.id, body });
+            setDuplicating(false);
+            router.push(`/project-sales/${projectId}/quotation-documents/${copy.id}`);
+          } catch {
+            // The mutation toasted the reason; the dialog stays open.
+          }
+        }}
+      />
       <QuotationWhatsAppDialog
         projectId={projectId}
         document={document}
