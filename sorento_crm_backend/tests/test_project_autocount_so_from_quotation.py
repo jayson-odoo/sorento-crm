@@ -133,3 +133,67 @@ def test_no_link_when_autocount_holds_no_row_for_the_item(api, fake_ss):
     lines = _create(client, fake_ss, world)
 
     assert "fromQuotation" not in lines[0]
+
+
+def test_two_rows_of_one_item_link_by_the_quotation_lines_place(api, fake_ss):
+    """Review S4: the quotation's second line of an item links to AutoCount's second row of it
+    (the order the quotation was sent in), never the first unused row in SO order."""
+    from app.models.projects import ProjectQuotationLine
+
+    client, db, world = api
+    qt = _quotation_in_autocount(db, world)
+    first = db.query(ProjectQuotationLine).filter(ProjectQuotationLine.id == world.line1.quotation_line_id).one()
+    second = ProjectQuotationLine(
+        id=str(__import__("uuid").uuid4()), company_id=world.company_id, version_id=qt.version.id,
+        product_id=first.product_id, product_code_snapshot=first.product_code_snapshot,
+        description_snapshot="Same item, other price", unit_price=Decimal("9.00"), quantity=Decimal("5"),
+        uom="UNIT", line_total=Decimal("45.00"), sort_order=(first.sort_order or 0) + 1,
+    )
+    db.add(second)
+    db.flush()
+    world.line1.quotation_line_id = second.id
+    db.commit()
+    code = world.product.product_code
+    _ac_quotation(fake_ss, world, [
+        detail(9002, code, "200", "12.00", "BRW-BB", None, 1),
+        detail(9003, code, "5", "9.00", "BRW-BB", None, 2),
+    ])
+
+    lines = _create(client, fake_ss, world)
+
+    assert lines[0]["fromQuotation"] == {"docNo": "QT-000042", "dtlKey": 9003}
+
+
+def test_no_link_when_autocount_holds_fewer_rows_of_the_item_than_its_place(api, fake_ss):
+    from app.models.projects import ProjectQuotationLine
+
+    client, db, world = api
+    qt = _quotation_in_autocount(db, world)
+    first = db.query(ProjectQuotationLine).filter(ProjectQuotationLine.id == world.line1.quotation_line_id).one()
+    second = ProjectQuotationLine(
+        id=str(__import__("uuid").uuid4()), company_id=world.company_id, version_id=qt.version.id,
+        product_id=first.product_id, product_code_snapshot=first.product_code_snapshot,
+        description_snapshot="Same item", unit_price=Decimal("9.00"), quantity=Decimal("5"),
+        uom="UNIT", line_total=Decimal("45.00"), sort_order=(first.sort_order or 0) + 1,
+    )
+    db.add(second)
+    db.flush()
+    world.line1.quotation_line_id = second.id
+    db.commit()
+    _ac_quotation(fake_ss, world, [detail(9002, world.product.product_code, "200", "12.00", "BRW-BB", None, 1)])
+
+    lines = _create(client, fake_ss, world)
+
+    assert "fromQuotation" not in lines[0], "never two SO lines against one quotation row by default"
+
+
+def test_a_malformed_stored_quotation_key_never_blocks_the_create(api, fake_ss):
+    """Review S5."""
+    client, db, world = api
+    qt = _quotation_in_autocount(db, world)
+    qt.document.autocount_doc_key = "7001/../x"
+    db.commit()
+
+    lines = _create(client, fake_ss, world)
+
+    assert "fromQuotation" not in lines[0]

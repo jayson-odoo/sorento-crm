@@ -173,9 +173,21 @@ def _released(answer: Dict[str, Any]) -> bool:
     VENDOR_REFUSED, or a 4xx SS answered without an outcome. A timeout, a lost reply, a 5xx, a
     202, VENDOR_ERROR or a mismatch is unknown and keeps it."""
     if answer.get("outcome") == "gateway_error":
-        status = answer.get("status")
-        return isinstance(status, int) and 400 <= status < 500 and answer.get("errorCode") != "UNREACHABLE"
+        # A flat answer SS gave before any write: bad request, no auth / not set up, no such
+        # route, invalid. A flat 408 / 409 / 429 means unknown or try later, so the key is kept.
+        if answer.get("errorCode") == "NOT_CONFIGURED":
+            return True
+        return answer.get("status") in (400, 401, 403, 404, 422)
     return is_definite_refusal(answer)
+
+
+def _landed(answer: Dict[str, Any]) -> bool:
+    """A create SS wrote but could not verify as sent (mismatch, needs_attention): the document
+    exists, so it is linked and never re-sent (review S3)."""
+    if answer.get("outcome") not in ("mismatch", "needs_attention"):
+        return False
+    document = answer.get("document") or {}
+    return answer.get("docKey") is not None or document.get("DocKey") is not None
 
 
 HELD_TEXT = "AutoCount still holds an earlier press of this change. Check it in AutoCount, then press again."
@@ -358,35 +370,48 @@ class ProjectAutocountWriteService:
         self._log_unlanded(key, answer)
         return answer
 
-    def _create(self, record: Any, base_key: str, path: str, body: Dict[str, Any]):
+    def _create(self, record: Any, base_key: str, path: str, body: Dict[str, Any], meta: Optional[dict] = None):
         """A create, the one write that could land twice (owner, 11 Nov).
 
-        Only a confirmed success uses up a key. Before the call the exact key and body are
-        written to the record (write-ahead); a refusal releases them, so the next press sends the
-        current body under a fresh key; an unknown outcome keeps them, and the next press first
-        re-sends that exact key and body, so SS answers with what it stored for our reference
-        (done: link it, no duplicate; refused: release and send the current body at once).
-        Returns (answer, the body that answer belongs to)."""
+        Only a confirmed success uses up a key. Before the call the exact key and body (plus
+        `meta`, what the body was built from) are written to the record and committed
+        (write-ahead); a refusal releases them, so the next press sends the current body under a
+        fresh key; an unknown outcome keeps them, and the next press first re-sends that exact key
+        and body, so SS answers with what it stored for our reference (done: link it, no
+        duplicate; refused: release and send the current body at once). The record is locked
+        first, so two overlapping presses never pick two keys (review B2): the second waits for
+        the first's commit and re-sends the same key.
+
+        Returns (answer, the body that answer belongs to, the meta stored with it), or
+        (None, body, None) when another press already linked the record.
+        """
+        model = type(record)
+        record = (
+            self.db.query(model).filter(model.id == record.id).with_for_update().populate_existing().one()
+        )
+        if record.autocount_doc_key:
+            return None, body, None
         pending = record.autocount_pending_create
         if pending:
             answer = self._call(
                 lambda c: c.write(path, pending["body"], idempotency_key=pending["key"])
             )
             self._log_unlanded(pending["key"], answer)
-            if self._is_done(answer) or not _released(answer):
-                if self._is_done(answer):
-                    record.autocount_pending_create = None
-                    self.db.flush()
-                return answer, pending["body"]
+            if self._is_done(answer) or _landed(answer):
+                record.autocount_pending_create = None
+                self.db.flush()
+                return answer, pending["body"], pending.get("meta")
+            if not _released(answer):
+                return answer, pending["body"], pending.get("meta")
         key = _fresh_key(base_key)
-        record.autocount_pending_create = {"key": key, "body": body}
+        record.autocount_pending_create = {"key": key, "body": body, "meta": meta or {}}
         self.db.commit()  # write-ahead: a press that dies mid-call is still asked for next time
         answer = self._call(lambda c: c.write(path, body, idempotency_key=key))
         self._log_unlanded(key, answer)
-        if self._is_done(answer) or _released(answer):
+        if self._is_done(answer) or _landed(answer) or _released(answer):
             record.autocount_pending_create = None
             self.db.flush()
-        return answer, body
+        return answer, body, meta or {}
 
     def company_code(self, company_id: Optional[str]) -> str:
         company = self.db.query(Company).filter(Company.id == company_id).first() if company_id else None
@@ -715,9 +740,11 @@ class ProjectAutocountWriteService:
             .join(ProjectQuotationIssueScope, ProjectQuotationIssueScope.issue_id == ProjectQuotationIssue.id)
             .filter(
                 ProjectQuotationIssueScope.version_id == line.version_id,
+                ProjectQuotationDocument.kind == "quotation",
                 ProjectQuotationDocument.autocount_doc_key.isnot(None),
                 ProjectQuotationDocument.autocount_cancelled_at.is_(None),
             )
+            .order_by(ProjectQuotationIssue.issue_no.desc(), ProjectQuotationDocument.id)
             .first()
         )
 
@@ -729,14 +756,21 @@ class ProjectAutocountWriteService:
         in the same book (R8); a failed read or no matching row leaves the line unlinked."""
         company = body["companyCode"]
         rows_of: Dict[str, List[dict]] = {}
-        used: set = set()
         for line, wire in zip(self._order_lines(order), body["lines"]):
             if not line.quotation_line_id:
                 continue
-            document = self._quotation_document_of(line.quotation_line_id)
+            quoted = (
+                self.db.query(ProjectQuotationLine)
+                .filter(ProjectQuotationLine.id == line.quotation_line_id)
+                .first()
+            )
+            document = self._quotation_document_of(line.quotation_line_id) if quoted else None
             if document is None or (document.autocount_book or "") != book:
                 continue
-            key = _safe_key(document.autocount_doc_key)
+            try:
+                key = _safe_key(document.autocount_doc_key)
+            except AppException:
+                continue  # a malformed stored key never blocks the create (review S5)
             if key not in rows_of:
                 try:
                     held = self._gateway().read_document("quotations", key, company)
@@ -744,14 +778,23 @@ class ProjectAutocountWriteService:
                     logger.warning("autocount SO %s: quotation %s could not be read; no link", order.id, key)
                     held = {}
                 rows_of[key] = list(((held.get("document") or held).get("Details")) or [])
-            same_item = [r for r in rows_of[key] if (r.get("ItemCode") or "") == wire["itemCode"]]
-            row = next((r for r in same_item if (key, r.get("DtlKey")) not in used), None) or (
-                same_item[0] if same_item else None
+            # Review S4: the quotation went to AutoCount in its line order, so the quotation
+            # line's place among its own lines of this item is its place among AutoCount's rows
+            # of the item. No row at that place: no link (never two lines on one row by default).
+            siblings = (
+                self.db.query(ProjectQuotationLine.id)
+                .filter(
+                    ProjectQuotationLine.version_id == quoted.version_id,
+                    ProjectQuotationLine.product_code_snapshot == quoted.product_code_snapshot,
+                )
+                .order_by(ProjectQuotationLine.sort_order.asc(), ProjectQuotationLine.id.asc())
+                .all()
             )
-            if row is None or row.get("DtlKey") is None:
+            place = [s_id for (s_id,) in siblings].index(quoted.id)
+            same_item = [r for r in rows_of[key] if (r.get("ItemCode") or "") == wire["itemCode"]]
+            if place >= len(same_item) or same_item[place].get("DtlKey") is None:
                 continue
-            used.add((key, row.get("DtlKey")))
-            wire["fromQuotation"] = {"docNo": document.autocount_doc_no, "dtlKey": row.get("DtlKey")}
+            wire["fromQuotation"] = {"docNo": document.autocount_doc_no, "dtlKey": same_item[place].get("DtlKey")}
 
     def create_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         order = self._draft.get_order(pso_id)
@@ -780,15 +823,21 @@ class ProjectAutocountWriteService:
         if not book:
             return self._no_book_answer(order.company_id)
         self._add_quotation_links(order, body, book)
-        answer, sent = self._create(order, f"crm-pso-{order.id}-create", "documents/sales-orders", body)
+        answer, sent, _meta = self._create(order, f"crm-pso-{order.id}-create", "documents/sales-orders", body)
+        if answer is None:  # another press linked it meanwhile
+            doc_no = order.autocount_doc_no or order.provisional_ref
+            return self._blank("done", f"{doc_no} is already in AutoCount.", order.autocount_doc_no)
         result = self._interpret(answer, verb="created", debtor=sent["header"]["debtorCode"])
-        if self._is_done(answer):
+        if self._is_done(answer) or _landed(answer):
             document = answer.get("document") or {}
-            order.autocount_doc_no = result["doc_no"]
+            order.autocount_doc_no = answer.get("docNo") or document.get("DocNo") or result["doc_no"]
             order.autocount_doc_key = self._key_of(answer)
             order.autocount_book = book
             order.autocount_last_modified = document.get("LastModified")
             self.db.flush()
+            if self._is_done(answer) and sent["lines"] != body["lines"]:
+                # Review B1: an earlier press's saved body landed, not today's lines.
+                result["message"] += ". AutoCount holds the lines as they were at the earlier press"
         return result
 
     # ------------------------------------------------------------ sales order: update
@@ -970,7 +1019,8 @@ class ProjectAutocountWriteService:
                 code="ac_not_in_autocount",
             )
         if order.autocount_cancelled_at is not None:
-            raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
+            # A second cancel is a no-op that says so (review S1, as a second create does).
+            return self._blank("done", ALREADY_CANCELLED, order.autocount_doc_no)
         doc_key = _safe_key(doc_key)
         self._require_book(self._order_book(order), self.read_capabilities(order.company_id)[1])
         cap = self.capabilities(order.company_id)["sales_orders"]["cancel_doc"]
@@ -1112,22 +1162,38 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(document.company_id)[1]
         if not book:
             return self._no_book_answer(document.company_id)
-        answer, _sent = self._create(
-            document, f"crm-qt-{document.id}-{issue.id}-create", "documents/quotations", body
+        answer, _sent, meta = self._create(
+            document,
+            f"crm-qt-{document.id}-{issue.id}-create",
+            "documents/quotations",
+            body,
+            meta={"issue_id": issue.id, "issue_no": issue.issue_no},
         )
+        if answer is None:  # another press linked it meanwhile
+            doc_no = document.autocount_doc_no or document.document_no
+            return self._blank("done", f"{doc_no} is already in AutoCount.", document.autocount_doc_no)
         result = self._interpret(answer, verb="created", debtor=debtor)
-        if self._is_done(answer):
-            self._store_sent(document, issue, answer)
+        if self._is_done(answer) or _landed(answer):
+            # Review B1: the revision AutoCount holds is the one the SENT body was built from (a
+            # replayed earlier press), so a newer revision still shows as needing an Update.
+            # Review S3: a create AutoCount wrote but SS could not verify is linked, not marked sent.
+            sent_issue_id = (meta or {}).get("issue_id") or issue.id
+            self._store_sent(document, sent_issue_id if self._is_done(answer) else None, answer)
             document.autocount_book = book
             result["skipped"] = payload.skipped
             result["exploded"] = payload.exploded
+            if self._is_done(answer) and sent_issue_id != issue.id:
+                result["message"] = (
+                    f"{result['doc_no']} created in AutoCount from R{(meta or {}).get('issue_no')} "
+                    f"(an earlier press). Press Update in AutoCount to send R{issue.issue_no}."
+                )
         return result
 
-    def _store_sent(self, document, issue, answer: Dict[str, Any]) -> None:
+    def _store_sent(self, document, issue_id: Optional[str], answer: Dict[str, Any]) -> None:
         document.autocount_doc_no = answer.get("docNo") or (answer.get("document") or {}).get("DocNo") or document.autocount_doc_no
         document.autocount_doc_key = self._key_of(answer) or document.autocount_doc_key
         document.autocount_last_modified = (answer.get("document") or {}).get("LastModified")
-        document.autocount_issue_id = issue.id
+        document.autocount_issue_id = issue_id
         self.db.flush()
 
     def _update_quotation(self, document, issue, payload, company, remark):
@@ -1238,7 +1304,7 @@ class ProjectAutocountWriteService:
             answer = self._send(
                 f"{base_key}-edit",
                 lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
-                )
+            )
             answer = self._done_if_only_mirrored_remarks_ignored(answer)
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
@@ -1351,7 +1417,8 @@ class ProjectAutocountWriteService:
                 status_code=409, message="This quotation is not in AutoCount.", code="ac_not_in_autocount"
             )
         if document.autocount_cancelled_at is not None:
-            raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
+            # A second cancel is a no-op that says so (review S1, as a second create does).
+            return self._blank("done", ALREADY_CANCELLED, document.autocount_doc_no)
         key = _safe_key(document.autocount_doc_key)
         self._require_book(document.autocount_book, self.read_capabilities(document.company_id)[1])
         cap = self.capabilities(document.company_id)["quotations"]["cancel_doc"]

@@ -314,7 +314,7 @@ def _cancel_on(fake_ss):
     fake_ss.answers[("GET", CAPS)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
 
 
-def test_a_second_so_cancel_is_409_already_cancelled_with_no_call(so_api, fake_ss):
+def test_a_second_so_cancel_is_a_no_op_saying_already_cancelled_with_no_call(so_api, fake_ss):
     client, db, world = so_api
     put_in_autocount(db, world)
     db.commit()
@@ -326,11 +326,12 @@ def test_a_second_so_cancel_is_409_already_cancelled_with_no_call(so_api, fake_s
 
     again = client.post(url)
 
-    assert again.status_code == 409 and again.json()["message"] == "Already cancelled in AutoCount."
+    # Review S1 (owner retry ruling): a second cancel answers done, as a second create does.
+    assert again.status_code == 200 and again.json()["message"] == "Already cancelled in AutoCount."
     assert len(fake_ss.calls) == calls
 
 
-def test_a_second_quotation_cancel_is_409_already_cancelled_with_no_call(qt_api, fake_ss):
+def test_a_second_quotation_cancel_is_a_no_op_saying_already_cancelled_with_no_call(qt_api, fake_ss):
     client, db, world = qt_api
     world.document.autocount_doc_no, world.document.autocount_doc_key = "QT000777", "5001"
     world.document.autocount_book = BOOK
@@ -344,7 +345,8 @@ def test_a_second_quotation_cancel_is_409_already_cancelled_with_no_call(qt_api,
 
     again = client.post(_qt_urls(world)["cancel"])
 
-    assert again.status_code == 409 and again.json()["message"] == "Already cancelled in AutoCount."
+    # Review S1 (owner retry ruling): a second cancel answers done, as a second create does.
+    assert again.status_code == 200 and again.json()["message"] == "Already cancelled in AutoCount."
     assert len(fake_ss.calls) == calls
 
 

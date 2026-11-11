@@ -283,5 +283,105 @@ def test_the_pending_create_is_written_before_the_call(qt_api, fake_ss, monkeypa
     client.post(_qt_url(world))
 
     assert seen["commits"] >= 1, "committed before the call"
-    assert seen["pending"] == {"key": seen["key"], "body": seen["pending"]["body"]}
+    assert seen["pending"]["key"] == seen["key"] and seen["pending"]["body"]
     assert seen["key"].startswith(f"crm-qt-{world.document.id}")
+
+
+# =========================================================================== review round (12 Nov)
+
+
+def test_a_replayed_create_of_an_earlier_revision_is_recorded_as_that_revision(qt_api, fake_ss):
+    """Review B1: a press that never reached SS is replayed later; SS then creates the SAVED body
+    (R1). The CRM records R1, so the document shows "needs update" and Update sends R2."""
+    client, db, world = qt_api
+
+    def down(_request):
+        raise httpx.ConnectError("down")
+
+    fake_ss.answers[("POST", QT_PATH)] = down
+    assert client.post(_qt_url(world)).json()["outcome"] == "unreachable"
+    issue2 = add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    fake_ss.answers[("POST", QT_PATH)] = _created(world)
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "done", body
+    sent = json.loads(fake_ss.to("POST", QT_PATH)[-1].content)
+    assert sent["header"]["remark1"].endswith("(R1)")
+    assert "R1" in body["message"] and "Update" in body["message"], body["message"]
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == world.issue.id, "AutoCount holds R1"
+    assert world.document.autocount_issue_id != issue2.id
+
+
+def test_a_create_locks_its_record_before_reading_the_pending_key(qt_api, fake_ss, monkeypatch):
+    """Review B2: two overlapping presses must not each pick a fresh key; the second waits for the
+    first's write-ahead commit (row lock), then re-sends that same key."""
+    from sqlalchemy.orm import Query
+
+    locked = []
+    original = Query.with_for_update
+
+    def spy(self, *args, **kwargs):
+        locked.append(self.column_descriptions[0]["entity"].__name__)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", spy)
+    client, _db, world = qt_api
+    fake_ss.answers[("POST", QT_PATH)] = _created(world)
+
+    client.post(_qt_url(world))
+
+    assert "ProjectQuotationDocument" in locked
+
+
+def test_cancelling_again_is_a_no_op_that_says_so(so_api, fake_ss):
+    """Review S1: a second cancel answers done (as a second create does), so Try again over several
+    ticked orders walks past the ones already cancelled."""
+    from tests._ac_write_support import BOOK, CAPS_PATH, DOC_KEY, caps_with, put_in_autocount
+
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("POST", f"{SO_CREATE_PATH}/{DOC_KEY}/cancel")] = (200, done_body())
+    url = f"{BASE}/sales-orders/{world.order.id}/autocount/cancel"
+    assert client.post(url).json()["outcome"] == "done"
+    calls = len(fake_ss.writes())
+
+    again = client.post(url)
+
+    assert again.status_code == 200, again.text
+    assert again.json()["outcome"] == "done"
+    assert again.json()["message"] == "Already cancelled in AutoCount."
+    assert len(fake_ss.writes()) == calls
+
+
+@pytest.mark.parametrize("status,released", [(422, True), (401, True), (409, False), (429, False), (408, False)])
+def test_only_a_flat_4xx_that_means_no_write_releases_a_create(qt_api, fake_ss, status, released):
+    """Review S2: a flat 409 / 408 / 429 means unknown or try later, so the key is kept."""
+    client, db, world = qt_api
+    fake_ss.answers[("POST", QT_PATH)] = (status, {"code": "X", "message": "flat"})
+    client.post(_qt_url(world))
+    db.refresh(world.document)
+
+    assert (world.document.autocount_pending_create is None) is released
+
+
+def test_a_create_answered_mismatch_with_a_doc_key_is_linked_and_shown(qt_api, fake_ss):
+    """Review S3: the document exists, so it is linked (never re-sent forever); the issue is not
+    marked sent, so the next press goes as an Update that corrects it."""
+    client, db, world = qt_api
+    answer = done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world))
+    answer.update({"outcome": "mismatch", "errorCode": "ROWS_DROPPED", "message": "a row was dropped"})
+    fake_ss.answers[("POST", QT_PATH)] = (502, answer)
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "mismatch"
+    db.refresh(world.document)
+    assert world.document.autocount_doc_key == str(QT_KEY)
+    assert world.document.autocount_doc_no == "QT000777"
+    assert world.document.autocount_pending_create is None
+    assert world.document.autocount_issue_id is None, "not what was meant: Update corrects it"
