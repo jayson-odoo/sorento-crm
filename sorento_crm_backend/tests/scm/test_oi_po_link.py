@@ -720,3 +720,12 @@ def test_a_malformed_id_in_a_body_is_a_422_and_nothing_is_sent(scm_app, fake_ss)
     resp = w["c"].post(f"{OI}/po-link/unlink", json={"row_ids": _ids(w, "a"), "po_line_ids": ["x"]})
     assert resp.status_code == 422
     assert fake_ss.calls == []
+
+
+def test_the_worklist_says_which_rows_are_in_autocount(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    listing = w["c"].get(OI, params={"query": w["marker"], "limit": 100})
+    assert listing.status_code == 200, listing.text
+    by_id = {r["id"]: r for r in listing.json()["data"]}
+    flags = {k: by_id[w["rows"][k].id]["in_autocount"] for k in ("a", "b", "c", "none")}
+    assert flags == {"a": True, "b": True, "c": True, "none": False}

@@ -964,6 +964,9 @@ _COLUMNS = (
     # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): off the SAME `SalesOrderLine`
     # outer join the location fallback already uses - no second join for this.
     _LINE_CANCELLED.label("line_cancelled"),
+    # OI-PO-LINK: the row's SO line carries an AutoCount ref (`{db}:{DocKey}:{DtlKey}`), so the
+    # PO link can act on it. Same outer join, no extra read.
+    case((func.btrim(SalesOrderLine.source_ref).op("~")(r"^[^:]+:[0-9]+:[0-9]+$"), True), else_=False).label("in_autocount"),
     _ACK_USER.name.label("acknowledged_by_name"),
     OrderInquiryRow.ack_override.label("ack_override"),
     OrderInquiryRow.ack_override_at.label("ack_override_at"),
@@ -2735,6 +2738,7 @@ class OrderInquiryWorklistService:
             # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true only when the line
             # itself is cancelled - `closed` and `open` both read false.
             "line_cancelled": bool(row.line_cancelled),
+            "in_autocount": bool(row.in_autocount),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             # AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises`
