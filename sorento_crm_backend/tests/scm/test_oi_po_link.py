@@ -601,6 +601,6 @@ def test_unlink_merges_the_freed_qty_into_the_existing_free_row_of_the_same_po(s
         .all()
     )
     on_b = [l for l in open_lines if l.source_ref == b_ref]
-    assert len(on_b) == 1
+    assert len(on_b) == 1, [(l.source_ref, l.qty_ordered, l.line_status, l.from_so_line_ref) for l in db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == w["po"].id)]
     assert on_b[0].qty_ordered == Decimal("10") and on_b[0].from_so_line_ref is None
     assert not [l for l in open_lines if l.source_ref == a_ref and l.from_so_line_ref]
