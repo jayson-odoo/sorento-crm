@@ -9,8 +9,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -40,7 +41,11 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { SampleRequestError } from '@/types/sampleRequest';
+import {
+  SampleRequestError,
+  type SampleRequestDetail,
+  type SampleRequestWrite,
+} from '@/types/sampleRequest';
 import {
   DELIVERY_MODE_LABELS,
   GOODS_FROM_LABELS,
@@ -61,12 +66,14 @@ import {
 import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
-import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
+import * as portalSampleRequest from '@/app/(auth)/portal/lib/sample-request-service';
+import { clientService, useSubmissionClient } from '@/app/(auth)/portal/lib/submission-client';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { useProject, usePartyContacts, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import { ProjectPartyPicker } from '../../_shared/components/ProjectPartyPicker';
 import { PartyContactsDialog } from '../../_shared/components/PartyContactsDialog';
 import type { PartyContact } from '../../_shared/types/project.types';
@@ -118,62 +125,90 @@ interface SampleRequestFormProps {
 }
 
 /**
- * A salesperson limited to their own sample requests (PORTAL-P4-REQUESTS R3, form parity) creates
- * and edits in the portal's own form, through My Requests; everyone else the staff form, unchanged.
+ * Every server call the form makes, so one form serves two callers (SAMPLE-REQUEST-V2 slice 2,
+ * owner Q1 a): staff through the CRM routes (the default), and a salesperson limited to their own
+ * sample requests through My Requests (`useOwnSampleRequestApi`), whose rows stay theirs, their
+ * customers their own debtors and their projects their own. The party and contact pickers use the
+ * CRM's own party routes in both cases (they answer by the caller's grants and project scope).
+ */
+export interface SampleRequestFormApi {
+  getRequest: (id: string) => Promise<SampleRequestDetail>;
+  create: (body: SampleRequestWrite) => Promise<SampleRequestDetail>;
+  update: (id: string, body: SampleRequestWrite) => Promise<SampleRequestDetail>;
+  submit: (id: string) => Promise<SampleRequestDetail>;
+  lookupCustomers: (q: string) => Promise<CustomerLookupItem[]>;
+  searchProjects: (q: string) => Promise<{ value: string; label: string }[]>;
+  searchProducts: typeof searchSampleRequestProducts;
+  getPrefill: typeof getSampleRequestQuotationPrefill;
+}
+
+/** The My Requests calls, from the portal's own service over the CRM session (`MyRequestClientProvider`). */
+function useOwnSampleRequestApi(): SampleRequestFormApi {
+  const client = useSubmissionClient();
+  return useMemo(() => {
+    const svc = clientService(client, 'sampleRequest', portalSampleRequest);
+    return {
+      getRequest: svc.getSampleRequest,
+      create: svc.createSampleRequest,
+      update: svc.updateSampleRequest,
+      submit: svc.submitSampleRequest,
+      lookupCustomers: async (q) =>
+        (await svc.lookupSampleRequestCustomers(q)).map((c) => ({
+          customer_id: c.customer_id,
+          customer_code: c.customer_code,
+          debtor_name: c.debtor_name,
+          debtor_type: null,
+          sales_type: null,
+        })),
+      searchProjects: async (q) =>
+        (await client.lookupProjects(q)).map((o) => ({
+          value: o.id,
+          label: `${projectCodeLabel(o)} - ${projectDisplayName(o)}`,
+        })),
+      searchProducts: svc.searchSampleRequestProducts as typeof searchSampleRequestProducts,
+      getPrefill: svc.getSampleRequestQuotationPrefill as typeof getSampleRequestQuotationPrefill,
+    };
+  }, [client]);
+}
+
+function OwnSampleRequestForm(props: SampleRequestFormProps) {
+  const api = useOwnSampleRequestApi();
+  return <StaffSampleRequestForm {...props} api={api} />;
+}
+
+/**
+ * One form for everyone (SAMPLE-REQUEST-V2 slice 2, owner Q1 a: one experience from registration
+ * on). A salesperson limited to their own sample requests writes through My Requests, so their
+ * rows stay theirs (PORTAL-P4-REQUESTS R3); everyone else through the CRM routes.
  */
 export default function SampleRequestForm(props: SampleRequestFormProps) {
   const { limited } = useRequestScope('sample_request');
   if (limited) {
-    return props.requestId ? (
+    return (
       <MyRequestClientProvider>
-        <PortalSampleRequestForm requestId={props.requestId} />
+        <OwnSampleRequestForm {...props} />
       </MyRequestClientProvider>
-    ) : (
-      <NewOwnSampleRequest projectId={props.projectId} />
     );
   }
   return <StaffSampleRequestForm {...props} />;
 }
 
-/**
- * A new one of their own. A project's stage action (`?project_id=`) starts it with that project
- * (owner ruling (a)), seeded as the portal's own "Registered project" picker sets it when the
- * project is picked (its onChange, `app/(auth)/portal/components/SampleRequestForm.tsx:334-339`):
- * the id and the "code - title" label, no customer. The form waits for the project so the seed is
- * there on first paint; a project they cannot read starts an empty form.
- */
-function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
-  const { data: project, isLoading } = useProject(projectId);
-  const initialValues = useMemo<Partial<FormState> | undefined>(
-    () =>
-      project
-        ? {
-            project_id: project.id,
-            project_label: `${projectCodeLabel(project)} - ${project.title}`,
-          }
-        : undefined,
-    [project],
-  );
-  if (projectId && isLoading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <LoaderCircleIcon className="size-6 animate-spin" />
-      </div>
-    );
-  }
-  return (
-    <MyRequestClientProvider>
-      <PortalSampleRequestForm initialValues={initialValues} />
-    </MyRequestClientProvider>
-  );
-}
-
-
-function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps) {
+function StaffSampleRequestForm({
+  requestId,
+  projectId,
+  api,
+}: SampleRequestFormProps & { api?: SampleRequestFormApi }) {
   const router = useRouter();
   const origin = useReviewOriginHref();
   const { create, update, submit } = useSampleRequestMutations();
-  const existing = useSampleRequestQuery(requestId ?? null);
+  const staffExisting = useSampleRequestQuery(api ? null : (requestId ?? null));
+  const ownExisting = useQuery({
+    queryKey: ['my-request', 'sample_request', requestId],
+    queryFn: () => (api as SampleRequestFormApi).getRequest(requestId as string),
+    enabled: Boolean(api && requestId),
+  });
+  const existing = api ? ownExisting : staffExisting;
+  const [apiBusy, setApiBusy] = useState(false);
   const { data: switches } = useSampleRequestSwitches();
   const canEditParties = useHasPermission('projects.parties.edit');
   const roleLabel = usePartyRoleLabel();
@@ -204,9 +239,10 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   const searchProductsForRequest = useCallback(
     (q: string) => {
       const source = productSource(sourceDoc, sourceIssue);
-      return source ? searchSampleRequestProducts(q, source) : searchSampleRequestProducts(q);
+      const search = api?.searchProducts ?? searchSampleRequestProducts;
+      return source ? search(q, source) : search(q);
     },
-    [sourceDoc, sourceIssue],
+    [sourceDoc, sourceIssue, api],
   );
   // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE, owner Q6 a); a draft
   // never refills.
@@ -215,7 +251,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     projectId: state.project_id,
     state,
     patch,
-    fetchPrefill: getSampleRequestQuotationPrefill,
+    fetchPrefill: api?.getPrefill ?? getSampleRequestQuotationPrefill,
   });
 
   useEffect(() => {
@@ -257,13 +293,24 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     setServerMessage(message);
   };
 
-  const saving = create.isPending || update.isPending || submit.isPending;
+  const saving = apiBusy || create.isPending || update.isPending || submit.isPending;
 
   const save = async () => {
     const body = staffPayloadFromState(state);
+    if (api) return requestId ? api.update(requestId, body) : api.create(body);
     return requestId
       ? update.mutateAsync({ id: requestId, data: body })
       : create.mutateAsync(body);
+  };
+  const submitSaved = (id: string) => (api ? api.submit(id) : submit.mutateAsync(id));
+  /** The My Requests path has no mutation hook: hold the buttons while it runs. */
+  const busy = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    setApiBusy(true);
+    try {
+      return await fn();
+    } finally {
+      setApiBusy(false);
+    }
   };
 
   const handleSaveDraft = async () => {
@@ -272,7 +319,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     setErrors(numberProblems);
     if (Object.keys(numberProblems).length > 0) return;
     try {
-      await save();
+      await busy(save);
       toast.success('Draft saved');
       leave(BASE_PATH);
     } catch (e) {
@@ -302,8 +349,8 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   const handleSubmit = async () => {
     setServerMessage(null);
     try {
-      const saved = await save();
-      const done = await submit.mutateAsync(saved.id);
+      const saved = await busy(save);
+      const done = await busy(() => submitSaved(saved.id));
       toast.success(`Sample request ${done?.request_no ?? saved.request_no} submitted`);
       setPreviewOpen(false);
       leave(BASE_PATH);
@@ -389,7 +436,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
                   patch({ customer_id: '', customer_label: '', customer_name: '' });
                 }
               }}
-              fetchOptions={lookupCustomersForRequest}
+              fetchOptions={api?.lookupCustomers ?? lookupCustomersForRequest}
               optionValue={(o) => o.debtor_name}
               optionLabel={(o) => o.debtor_name}
               optionMeta={(o) => o.customer_code}
@@ -430,8 +477,14 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
                     ? { value: state.project_id, label: state.project_label }
                     : undefined
                 }
-                fetchOptions={(query, pageIndex) => searchProjectsForLink(query, pageIndex + 1)}
-                paginated
+                fetchOptions={(query, pageIndex) =>
+                  api
+                    ? pageIndex === 0
+                      ? api.searchProjects(query)
+                      : Promise.resolve([])
+                    : searchProjectsForLink(query, pageIndex + 1)
+                }
+                paginated={!api}
                 pageSize={25}
                 clearable
                 truncateTriggerLabel
