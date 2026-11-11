@@ -227,6 +227,9 @@ export interface ReaderPageProps {
   onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
   /** Ctrl/Cmd+Z / Shift+Z / Y on this page: the host's per-page undo. Stable, like `onPatch`. */
   onHistory: (key: string, step: -1 | 1) => void;
+  /** Any press on this page (left or right button, empty spot included): it becomes the page a
+   *  paste or shortcut acts on. Stable, like `onPatch`. */
+  onPressPage: (key: string) => void;
   controllerRefFor: (
     key: string,
   ) => React.MutableRefObject<EmbeddedController | null>;
@@ -293,6 +296,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   onSelectLayer,
   onLayersReport,
   onHistory,
+  onPressPage,
   controllerRefFor,
 }: ReaderPageProps) {
   const isCover = page.key === COVER;
@@ -534,6 +538,8 @@ export const ReaderPage = React.memo(function ReaderPage({
         // The observed box: one fixed-size placeholder per page.
         data-testid={`spec-page-${page.key}`}
         data-page-key={page.key}
+        // Capture: before the canvas handles the press, so the paste / shortcut target is set first.
+        onPointerDownCapture={() => onPressPage(page.key)}
         className={`relative overflow-hidden rounded-sm border bg-white shadow-sm ${
           current ? 'border-primary' : 'border-border'
         }`}

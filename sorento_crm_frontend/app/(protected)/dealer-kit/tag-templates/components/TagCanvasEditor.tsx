@@ -451,6 +451,11 @@ const CROP_HANDLE_SIZE_PX = 8;
 
 const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
+/** A start position so a box of `size` starting there stays inside `0..limit` (mm). */
+function clampInto(start: number, size: number, limit: number): number {
+  return Math.max(0, Math.min(start, limit - size));
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -3382,6 +3387,8 @@ export function TagCanvasEditor({
    * preventDefault - the trigger needs this event, and the trigger is what
    * stops the browser's own menu.
    */
+  /** Where the context menu was opened, in mm: a menu Paste lands there ("paste here"). */
+  const menuPointRef = useRef<{ x_mm: number; y_mm: number } | null>(null);
   const handleStageContextMenu = useCallback(
     (e: React.MouseEvent) => {
       const content = stageRef.current?.getContent();
@@ -3391,6 +3398,7 @@ export function TagCanvasEditor({
             return stageToMm(view, e.clientX - rect.left, e.clientY - rect.top);
           })()
         : null;
+      menuPointRef.current = point;
       // Every layer box under the pointer, top first, and the layer Konva actually drew there:
       // a frame drawn over the text (transparent inside) does not win a hit on the text below it.
       const hits = point ? layersAt(layers, point.x_mm, point.y_mm, entered) : [];
@@ -3437,7 +3445,7 @@ export function TagCanvasEditor({
     });
   }, [layers, selectionRoots, docId]);
 
-  const handlePaste = useCallback(() => {
+  const handlePaste = useCallback((at?: { x_mm: number; y_mm: number } | null) => {
     if (!clipboard || clipboard.layers.length === 0) return;
     // Same doc (or neither side names one, as in a bare test render): offset
     // like a duplicate, as before. A DIFFERENT doc - a copy carried across
@@ -3452,8 +3460,20 @@ export function TagCanvasEditor({
       maxZ,
     );
     if (cloned.layers.length === 0) return;
-    commit([...layers, ...cloned.layers], new Set(cloned.ids));
-  }, [clipboard, layers, maxZ, commit, docId]);
+    // A menu Paste: the copied layers' top-left corner goes to the click point, kept on the canvas.
+    const placed = at
+      ? (() => {
+          const minX = Math.min(...cloned.layers.map((l) => l.x_mm));
+          const minY = Math.min(...cloned.layers.map((l) => l.y_mm));
+          const maxX = Math.max(...cloned.layers.map((l) => l.x_mm + l.width_mm));
+          const maxY = Math.max(...cloned.layers.map((l) => l.y_mm + l.height_mm));
+          const x = clampInto(at.x_mm, maxX - minX, doc.width_mm);
+          const y = clampInto(at.y_mm, maxY - minY, doc.height_mm);
+          return cloned.layers.map((l) => ({ ...l, x_mm: l.x_mm - minX + x, y_mm: l.y_mm - minY + y }));
+        })()
+      : cloned.layers;
+    commit([...layers, ...placed], new Set(cloned.ids));
+  }, [clipboard, layers, maxZ, commit, docId, doc.width_mm, doc.height_mm]);
 
   const handleCut = useCallback(() => {
     handleCopy();
@@ -3887,7 +3907,7 @@ export function TagCanvasEditor({
    * Ctrl+Z takes it back.
    */
   const handlePasteImage = useCallback(
-    async (file: File) => {
+    async (file: File, at?: { x_mm: number; y_mm: number } | null) => {
       const problem = pastedImageProblem(file);
       if (problem) {
         toast.error(problem);
@@ -3916,10 +3936,16 @@ export function TagCanvasEditor({
             next = prev.map((l) => (l.id === target.id ? { ...l, props } : l));
           } else {
             const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
+            const fitted = fitPastedImage(natural, canvas);
+            // A menu Paste: the picture's corner at the click point, pulled back to stay on the canvas.
+            if (at) {
+              fitted.x_mm = clampInto(at.x_mm, fitted.width_mm, canvas.width_mm);
+              fitted.y_mm = clampInto(at.y_mm, fitted.height_mm, canvas.height_mm);
+            }
             const layer: TagLayer = {
               id: layerId,
               type: 'image',
-              ...fitPastedImage(natural, canvas),
+              ...fitted,
               rotation_deg: 0,
               z_index: z,
               locked: false,
@@ -3948,11 +3974,16 @@ export function TagCanvasEditor({
 
   /** Pasted text from another app: a new text layer holding it, centred. */
   const handlePasteText = useCallback(
-    (text: string) => {
+    (text: string, at?: { x_mm: number; y_mm: number } | null) => {
       const lineCount = text.split('\n').length;
       const width = Math.min(doc.width_mm, 80);
       const height = Math.min(doc.height_mm, Math.max(10, lineCount * 6));
-      addLayer({ ...makeBaseLayer('text', width, height), props: { ...defaultTextProps(), text } });
+      const base = makeBaseLayer('text', width, height);
+      if (at) {
+        base.x_mm = clampInto(at.x_mm, width, doc.width_mm);
+        base.y_mm = clampInto(at.y_mm, height, doc.height_mm);
+      }
+      addLayer({ ...base, props: { ...defaultTextProps(), text } });
     },
     [addLayer, makeBaseLayer, doc.width_mm, doc.height_mm],
   );
@@ -4030,13 +4061,15 @@ export function TagCanvasEditor({
    * own copied layers paste as layers. No system clipboard to read: the editor's copied layers.
    */
   const handleMenuPaste = useCallback(async () => {
+    // Read before awaiting: the point belongs to THIS menu.
+    const at = menuPointRef.current;
     const copied = getTagClipboard();
     const copiedText = copied && copied.layers.length > 0 ? copiedLayersText(copied.layers) : null;
     const data = await readSystemClipboard();
     const intent = classifyPaste(data, copiedText);
-    if (intent.kind === 'layers') handlePaste();
-    else if (intent.kind === 'image') await handlePasteImage(intent.file);
-    else if (intent.kind === 'text') handlePasteText(intent.text);
+    if (intent.kind === 'layers') handlePaste(at);
+    else if (intent.kind === 'image') await handlePasteImage(intent.file, at);
+    else if (intent.kind === 'text') handlePasteText(intent.text, at);
   }, [handlePaste, handlePasteImage, handlePasteText]);
   const menuPasteDisabled = Boolean(embedded?.readOnly);
 

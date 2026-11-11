@@ -212,6 +212,7 @@ type FakeProps = {
     onSelect: (id: string | null) => void;
     layers?: Record<string, unknown>[];
     readOnly?: boolean;
+    active?: boolean;
     onEditField?: (layerId: string) => void;
     controllerRef: { current: unknown };
   };
@@ -267,6 +268,7 @@ vi.mock(
         <div
           data-testid={`live-canvas-${key}`}
           data-readonly={props.embedded.readOnly ? 'yes' : 'no'}
+          data-active={props.embedded.active ? 'yes' : 'no'}
           data-layers={layers.map((l) => l.id).join(',')}
         >
           <button type="button" onClick={() => props.embedded.onSelect('logo')}>
@@ -531,6 +533,68 @@ describe('selection and the inspector', () => {
       'data-page-key',
       'k5',
     );
+  });
+});
+
+describe('which page a paste or shortcut acts on (crew pass on #2331)', () => {
+  const activeOf = (key: string) =>
+    screen.getByTestId(`live-canvas-${key}`).getAttribute('data-active');
+
+  it('the page the user last pressed on, not the one scrolled into view or holding an old selection', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+
+    fireEvent.click(within(screen.getByTestId('live-canvas-k5')).getByText('select k5'));
+    await screen.findByTestId('inspector');
+    expect(activeOf('k5')).toBe('yes');
+
+    // An empty spot on another page: that page is now the target, and k5's selection goes.
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k6'));
+    await waitFor(() => expect(activeOf('k6')).toBe('yes'));
+    expect(activeOf('k5')).toBe('no');
+    expect(activeOf('k4')).toBe('no');
+    expect(screen.queryByTestId('inspector')).toBeNull();
+  });
+
+  it('a pressed page that shows a still picture becomes a live canvas and the target', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6', 'k7', 'k8']);
+    await screen.findByTestId('live-canvas-k6');
+    expect(screen.queryByTestId('live-canvas-k8')).toBeNull();
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k8'));
+    await screen.findByTestId('live-canvas-k8');
+    expect(activeOf('k8')).toBe('yes');
+  });
+
+  it('Undo follows the pressed page, not the page edited last somewhere else', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k5')).getByText('nudge k5'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Undo' })).not.toBeDisabled(),
+    );
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k6'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled(),
+    );
+  });
+
+  it('a right-click makes its page the target too', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k4');
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k4'), { button: 2 });
+    await waitFor(() => expect(activeOf('k4')).toBe('yes'));
+    expect(activeOf('k5')).toBe('no');
   });
 });
 
