@@ -10,6 +10,8 @@ import {
   changeOrderInquiryPoLines,
   getOrderInquiryPoLinkOptions,
   linkOrderInquiryPoLines,
+  relocateOrderInquiryPoLine,
+  resumeOrderInquiryPoLink,
   unlinkOrderInquiryPoLines,
 } from '../../_shared/services/orderInquiryService';
 
@@ -41,6 +43,8 @@ export function OiPoLinkHost({
         link: (lines) => linkOrderInquiryPoLines(rowIds, lines),
         unlink: (ids) => unlinkOrderInquiryPoLines(rowIds, ids),
         change: (changes) => changeOrderInquiryPoLines(rowIds, changes),
+        relocate: (poLineId) => relocateOrderInquiryPoLine(rowIds, poLineId),
+        resume: (input) => resumeOrderInquiryPoLink(rowIds, input),
       },
     }),
     [rowIds],
@@ -64,17 +68,24 @@ export function OiPoLinkHost({
       : item.reason;
   }, [data, kind]);
 
+  // The first read decides whether the popup opens at all. Once it is up (and after a write
+  // re-reads the options) it stays: the result cards must not vanish because the re-read
+  // failed or AutoCount's capabilities changed.
+  const [shown, setShown] = React.useState(false);
   React.useEffect(() => {
+    if (shown) return;
     if (options.error) {
       toast.error((options.error as Error).message);
       onClose();
     } else if (blocked) {
       toast.error(blocked);
       onClose();
+    } else if (data) {
+      setShown(true);
     }
-  }, [options.error, blocked, onClose]);
+  }, [shown, options.error, blocked, data, onClose]);
 
-  if (!data || blocked) return null;
+  if (!data || (blocked && !shown)) return null;
   return (
     <PoLinkDialog
       mode={kind}

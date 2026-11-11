@@ -588,6 +588,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /** The row's sales order line is in AutoCount, so Link to PO can act on it. */
+  in_autocount?: boolean;
   /**
    * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
    * read-only expand; empty when the line is not split.

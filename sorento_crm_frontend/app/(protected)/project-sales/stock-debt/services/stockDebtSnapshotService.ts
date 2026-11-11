@@ -10,6 +10,9 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { MyDownload } from '@/services/myDownloadsService';
 import { stockDebtFilterBody } from './stockDebtService';
+import { postJson } from '../../_shared/po-link/poLinkService';
+
+export { getPoLinkSwitch, relocatePoLine, resumePoLink } from '../../_shared/po-link/poLinkService';
 import type { StockDebtExportParams } from './stockDebtService';
 import type { StockDebtExportSplit } from '../types/stockDebt.types';
 import type {
@@ -133,21 +136,10 @@ export async function exportSnapshot(
 // All need `projects.stock_debt.link_po`; every write goes to AutoCount through the Shared
 // Service and answers per line what AutoCount said.
 
-const PO_LINK_BASE = '/api/v1/project-sales/stock-debt/po-link';
-
 function poLinkUrl(id: string, rowId: string, tail = ''): string {
   return `${BASE}/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}/po-link${tail}`;
 }
 
-async function postJson<T>(url: string, body: unknown, fallback: string): Promise<T> {
-  const res = await apiFetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await extractApiError(res, fallback));
-  return (await res.json()) as T;
-}
 
 export async function getPoLinkOptions(id: string, rowId: string): Promise<PoLinkOptions> {
   const res = await apiFetch(poLinkUrl(id, rowId));
@@ -191,31 +183,4 @@ export async function changePoLines(
   changes: Array<{ sales_order_line_id: string; po_line_id: string }>,
 ): Promise<{ results: PoLinkResult[] }> {
   return postJson(poLinkUrl(id, rowId, '/change'), { changes }, 'Failed to change the PO');
-}
-
-/** Move a linked PO line to its sales order line's location. */
-export async function relocatePoLine(poLineId: string): Promise<PoLinkResult> {
-  return postJson(`${PO_LINK_BASE}/relocate`, { po_line_id: poLineId }, 'Failed to move the PO line');
-}
-
-/** Ask the Shared Service to finish an operation it stopped (it re-reads AutoCount first). */
-export async function resumePoLink(input: {
-  operationId: string;
-  poLineId: string;
-  salesOrderLineId: string | null;
-}): Promise<PoLinkResult> {
-  return postJson(
-    `${PO_LINK_BASE}/operations/${encodeURIComponent(input.operationId)}/resume`,
-    { po_line_id: input.poLineId, sales_order_line_id: input.salesOrderLineId },
-    'Failed to resume',
-  );
-}
-
-/** Whether "AutoCount links from Stock Debt" is on (System Settings, owner 5 Nov), read off
- *  the app-config projection every signed-in user may read. Off: no PO actions at all. */
-export async function getPoLinkSwitch(): Promise<boolean> {
-  const res = await apiFetch('/api/user-management/settings/app-config');
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load settings'));
-  const body = (await res.json()) as { stock_debt_po_link_enabled?: boolean };
-  return body.stock_debt_po_link_enabled === true;
 }

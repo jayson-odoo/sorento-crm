@@ -4,6 +4,8 @@ import type { MyDownload } from '@/services/myDownloadsService';
 import type { RecordHistoryEvent } from '@/types/recordHistory.types';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import type { OiPoLinkOptions, PoLinkAnswer } from '../po-link/poLink.types';
+import type { ResumePoLinkInput } from '../po-link/poLinkService';
+import type { PoLinkResult } from '../../stock-debt/types/stockDebtSnapshot.types';
 import type {
   AcknowledgeResult,
   AutoPlaceRequest,
@@ -1032,4 +1034,16 @@ export function changeOrderInquiryPoLines(
   changes: Array<{ sales_order_line_id: string; po_line_id: string }>,
 ): Promise<PoLinkAnswer> {
   return postPoLink('change', { row_ids: rowIds, changes }, 'Failed to change the PO');
+}
+
+export function relocateOrderInquiryPoLine(rowIds: string[], poLineId: string): Promise<PoLinkResult> {
+  return postPoLink('relocate', { row_ids: rowIds, po_line_id: poLineId }, 'Failed to move the PO line');
+}
+
+export function resumeOrderInquiryPoLink(rowIds: string[], input: ResumePoLinkInput): Promise<PoLinkResult> {
+  return postPoLink(
+    `operations/${encodeURIComponent(input.operationId)}/resume`,
+    { row_ids: rowIds, po_line_id: input.poLineId, sales_order_line_id: input.salesOrderLineId },
+    'Failed to resume',
+  );
 }

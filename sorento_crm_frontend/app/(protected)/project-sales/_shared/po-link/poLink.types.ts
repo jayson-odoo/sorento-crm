@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
+import type { ResumePoLinkInput } from './poLinkService';
 import type {
   PoLinkOptions,
   PoLinkResult,
@@ -28,6 +29,8 @@ export interface PoLinkTarget {
     link: (lines: Array<{ sales_order_line_id: string; po_line_id: string; qty: number }>) => Promise<PoLinkAnswer>;
     unlink: (poLineIds: string[]) => Promise<PoLinkAnswer>;
     change: (changes: Array<{ sales_order_line_id: string; po_line_id: string }>) => Promise<PoLinkAnswer>;
+    relocate: (poLineId: string) => Promise<PoLinkResult>;
+    resume: (input: ResumePoLinkInput) => Promise<PoLinkResult>;
     relink?: (moves: Array<{ po_line_id: string; to_sales_order_line_id: string }>) => Promise<PoLinkAnswer>;
   };
   /** Read the screen's own data again after any write. */

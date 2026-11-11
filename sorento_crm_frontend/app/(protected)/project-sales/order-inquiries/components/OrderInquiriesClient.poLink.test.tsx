@@ -345,3 +345,33 @@ describe('Right-click a row: the row actions are there', () => {
     expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
   });
 });
+
+describe('AC-12 the count says how many ticked rows are in AutoCount', () => {
+  it('reads "2 of 3" when one ticked row has no AutoCount sales order line, and greys out at 0 with the reason', async () => {
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([
+        { ...ROW_1, in_autocount: true },
+        { ...ROW_2, in_autocount: true },
+        { ...ROW_3, in_autocount: false },
+      ] as OrderInquiryWorklistRow[]),
+    );
+    await ready();
+    tick('SO-P1');
+    tick('SO-P2');
+    tick('SO-P3');
+    openActionsMenu();
+    expect(await screen.findByRole('menuitem', { name: 'Link to PO... (2 of 3)' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Unlink from PO... (2 of 3)' })).toBeInTheDocument();
+  });
+
+  it('is disabled with "Not in AutoCount yet" when no ticked row is in AutoCount', async () => {
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([{ ...ROW_1, in_autocount: false }, ROW_2, ROW_3] as OrderInquiryWorklistRow[]),
+    );
+    await ready();
+    tick('SO-P1');
+    openActionsMenu();
+    const item = await screen.findByRole('menuitem', { name: 'Link to PO... (0 of 1)' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+  });
+});

@@ -2,11 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
-import {
-  getPoLinkSwitch,
-  relocatePoLine,
-  resumePoLink,
-} from '../../stock-debt/services/stockDebtSnapshotService';
+import { getPoLinkSwitch, type ResumePoLinkInput } from './poLinkService';
 import type { PoLinkTarget } from './poLink.types';
 
 /** What AutoCount can do now and the open PO lines of the product. Read only while the menu or
@@ -55,12 +51,12 @@ export function usePoLinkMutations(target: PoLinkTarget) {
       onError,
     }),
     relocate: useMutation({
-      mutationFn: (poLineId: string) => relocatePoLine(poLineId),
+      mutationFn: (poLineId: string) => target.api.relocate(poLineId),
       onSuccess: refresh,
       onError,
     }),
     resume: useMutation({
-      mutationFn: (input: Parameters<typeof resumePoLink>[0]) => resumePoLink(input),
+      mutationFn: (input: ResumePoLinkInput) => target.api.resume(input),
       onSuccess: refresh,
       onError,
     }),

@@ -1198,12 +1198,16 @@ export function OrderInquiriesClient({
   );
   // OI-PO-LINK: Link to PO / Change PO / Unlink from PO for the ticked rows, one product at a time.
   const tickedProducts = new Set(selectedRows.map((row) => row.product_id ?? row.item_code));
+  // Rows with no AutoCount sales order line cannot be linked: the count says "2 of 3".
+  const poLinkEligible = selectedRows.filter((row) => row.in_autocount !== false).length;
   const poLinkWhyNot =
     selectedRows.length === 0
       ? 'Tick the rows to link to a PO.'
-      : tickedProducts.size > 1
-        ? 'Tick rows of one product.'
-        : undefined;
+      : poLinkEligible === 0
+        ? 'Not in AutoCount yet'
+        : tickedProducts.size > 1
+          ? 'Tick rows of one product.'
+          : undefined;
   const poLinkItems = (
     [
       ['po-link', 'link', 'Link to PO...', Link2],
@@ -1212,7 +1216,7 @@ export function OrderInquiriesClient({
     ] as const
   ).map(([key, kind, base, icon]) => ({
     key,
-    label: countLabel(base, selectedRows.length, selectedRows.length),
+    label: countLabel(base, poLinkEligible, selectedRows.length),
     icon,
     disabled: Boolean(poLinkWhyNot),
     disabledReason: poLinkWhyNot,

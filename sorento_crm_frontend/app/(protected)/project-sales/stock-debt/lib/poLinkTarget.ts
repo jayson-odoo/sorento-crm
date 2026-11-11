@@ -3,6 +3,8 @@ import {
   changePoLines,
   getPoLinkOptions,
   linkPoLines,
+  relocatePoLine,
+  resumePoLink,
   relinkPoLines,
   unlinkPoLines,
 } from '../services/stockDebtSnapshotService';
@@ -17,6 +19,8 @@ export function snapshotPoLinkTarget(snapshotId: string, rowId: string): PoLinkT
       link: (lines) => linkPoLines(snapshotId, rowId, lines),
       unlink: (ids) => unlinkPoLines(snapshotId, rowId, ids),
       change: (changes) => changePoLines(snapshotId, rowId, changes),
+      relocate: (poLineId) => relocatePoLine(poLineId),
+      resume: (input) => resumePoLink(input),
       relink: (moves) => relinkPoLines(snapshotId, rowId, moves),
     },
     refresh: (queryClient) => {
