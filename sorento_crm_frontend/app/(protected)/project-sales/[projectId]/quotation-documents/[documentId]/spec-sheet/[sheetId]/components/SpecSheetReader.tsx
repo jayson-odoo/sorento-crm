@@ -824,14 +824,25 @@ export function SpecSheetReader({
                 </Button>
               )
             ) : (
-              <Button
-                size="sm"
-                disabled={exportPdf.isPending}
-                onClick={() => exportPdf.mutate(sheetId)}
-              >
-                <FileDown className="size-4" aria-hidden />
-                Export PDF
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  disabled={exportPdf.isPending}
+                  onClick={() => exportPdf.mutate({ sheetId, format: 'pdf' })}
+                >
+                  <FileDown className="size-4" aria-hidden />
+                  Export PDF
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={exportPdf.isPending}
+                  onClick={() => exportPdf.mutate({ sheetId, format: 'pptx' })}
+                >
+                  <FileDown className="size-4" aria-hidden />
+                  Export PowerPoint
+                </Button>
+              </>
             )
           }
         />

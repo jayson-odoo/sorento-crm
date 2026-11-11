@@ -311,15 +311,16 @@ def export_spec_sheet(
     document_id: str,
     sheet_id: str,
     current_user: dict = Depends(require_any_permission_with_api_key(READ)),
+    format: Annotated[str, Query(pattern="^(pdf|pptx)$")] = "pdf",
     db: Session = Depends(get_db),
 ):
-    """Queue the PDF; it appears in My Downloads when it is ready."""
+    """Queue the PDF (or ``format=pptx`` for a PowerPoint deck); it appears in My Downloads when ready."""
     from app.schemas.download import DownloadResponse
 
     try:
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
-        download = spec.request_export(db, sheet, user_id=str(current_user["id"]))
+        download = spec.request_export(db, sheet, user_id=str(current_user["id"]), fmt=format)
         db.commit()
         return DownloadResponse.model_validate(download)
     except Exception as exc:

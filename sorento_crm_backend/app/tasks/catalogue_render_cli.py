@@ -2,6 +2,11 @@
 
     python -m app.tasks.catalogue_render_cli <url> <out.pdf> [--landscape] [--paper A4]
         [--width-mm W --height-mm H]
+    python -m app.tasks.catalogue_render_cli <url> <out.json> --layout
+
+``--layout`` writes the print page's resolved layers (``window.__tagSheetLayout``, for the spec
+sheet PowerPoint export) instead of a PDF. Pictures are turned into ``data:`` URLs INSIDE the page,
+so the worker never fetches a URL itself.
 
 RQ forks a work-horse per job, and driving Playwright's sync API inside that
 fork segfaults on macOS (signal 11) - the browser launch does not survive a
@@ -82,10 +87,64 @@ def render(
     return len(pdf_bytes)
 
 
+# Runs in the page: each picture the layout names becomes a data URL (or is dropped). Only the URLs
+# the print page itself already loaded are touched; the worker process fetches nothing.
+_INLINE_IMAGES_JS = """
+async (layout) => {
+  const MAX = 25 * 1024 * 1024;
+  const toData = (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  for (const page of layout.pages || []) {
+    for (const layer of page.layers || []) {
+      if (layer.kind !== 'image') continue;
+      const url = layer.url;
+      if (typeof url === 'string' && url.startsWith('data:')) continue;
+      try {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        if (!response.ok || !blob.type.startsWith('image/') || blob.size > MAX) throw new Error('skip');
+        layer.url = await toData(blob);
+      } catch (e) {
+        layer.url = null;
+      }
+    }
+  }
+  return layout;
+}
+"""
+
+
+def render_layout(url: str, out_path: str) -> int:
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(args=["--no-sandbox"])
+        try:
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=READY_TIMEOUT_MS)
+            page.wait_for_selector(READY_SELECTOR, timeout=READY_TIMEOUT_MS)
+            layout = page.evaluate("window.__tagSheetLayout")
+            if not layout:
+                raise RuntimeError("the print page did not expose its layout")
+            layout = page.evaluate(_INLINE_IMAGES_JS, layout)
+        finally:
+            browser.close()
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(layout, handle)
+    return len(layout.get("pages") or [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render a print page to PDF")
     parser.add_argument("url")
     parser.add_argument("out")
+    parser.add_argument("--layout", action="store_true", help="write the page layout JSON instead of a PDF")
     parser.add_argument("--landscape", action="store_true")
     parser.add_argument("--paper", default="A4")
     # Both or neither: an explicit page size in millimetres, in place of the paper name.
@@ -97,6 +156,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.width_mm is not None and args.height_mm is not None
         else None
     )
+
+    if args.layout:
+        try:
+            print(render_layout(args.url, args.out))
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"render failed: {exc}", file=sys.stderr)
+            return 1
 
     try:
         written = render(

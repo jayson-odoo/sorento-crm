@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type {
   ImpositionConfig,
@@ -1241,6 +1241,101 @@ function SheetRenderer({
 // Main renderer
 // ---------------------------------------------------------------------------
 
+/**
+ * B5: the resolved layers of every page, for the PowerPoint worker (`window.__tagSheetLayout`).
+ * Text has its merge fields applied; a table carries its laid-out cells and border edges; a
+ * picture carries the URL this page already loaded (the worker's browser turns it into bytes).
+ * Kinds a deck cannot express yet are left out.
+ */
+function buildLayoutExport(
+  doc: TagSheetDoc,
+  resolvedData: Record<string, ResolvedLineData>,
+  media: TagSheetMedia,
+) {
+  const pages = doc.sheets.map((sheet) => {
+    const layers: Record<string, unknown>[] = [];
+    for (const tag of sheet.tags) {
+      const resolved = resolvedData[tag.request_tag_id] ?? null;
+      const binding = bindingOf(resolved);
+      const sorted = [...tag.layers]
+        .filter((l) => l.visible !== false)
+        .filter((l) => layerShownFor(l, binding))
+        .sort((a, b) => a.z_index - b.z_index);
+      for (const layer of sorted) {
+        const props = layer.props;
+        const box = {
+          x_mm: tag.x_mm + layer.x_mm,
+          y_mm: tag.y_mm + layer.y_mm,
+          width_mm: layer.width_mm,
+          height_mm: layer.height_mm,
+          rotation_deg: layer.rotation_deg || 0,
+        };
+        if (props.kind === 'text') {
+          layers.push({
+            kind: 'text',
+            ...box,
+            text: layerText(layer, binding, 'print'),
+            fontFamily: props.fontFamily,
+            fontSize: props.fontSize,
+            bold: (props.fontWeight ?? 400) >= 600,
+            italic: Boolean(props.italic),
+            underline: Boolean(props.underline),
+            color: props.color,
+            align: props.align,
+          });
+        } else if (props.kind === 'image' || (props.kind === 'product_slot' && props.fieldKey === 'product_image')) {
+          const url = imageUrlFor(layer, media, resolved);
+          if (url) layers.push({ kind: 'image', ...box, url, fit: props.kind === 'image' ? props.fit : 'contain' });
+        } else if (props.kind === 'shape') {
+          layers.push({
+            kind: 'shape',
+            ...box,
+            shape: props.shape,
+            fill: props.fill,
+            stroke: props.stroke,
+            strokeWidth: props.strokeWidth,
+            cornerRadius: props.cornerRadius,
+          });
+        } else if (props.kind === 'table') {
+          const laid = resolveTableText(props, (text) => renderMergeFields(text, binding, 'print', layer));
+          const layout = tableLayout(laid, layer.width_mm, tableMeasure(laid));
+          layers.push({
+            kind: 'table',
+            ...box,
+            height_mm: layout.height_mm,
+            columns_mm: layout.columnWidths_mm,
+            rows_mm: layout.rowHeights_mm,
+            fontFamily: laid.fontFamily,
+            fontSize: laid.fontSize,
+            color: laid.color,
+            align: laid.align,
+            verticalAlign: laid.verticalAlign,
+            cells: layout.cells.map((c) => ({
+              row: c.row,
+              col: c.col,
+              rowSpan: Math.max(1, c.cell.rowSpan ?? 1),
+              colSpan: Math.max(1, c.cell.colSpan ?? 1),
+              text: c.text,
+              fill: c.cell.fill ?? null,
+              padding_mm: c.cell.padding_mm ?? 1,
+            })),
+            edges: layout.edges.map((e) => ({
+              x1_mm: e.x1_mm,
+              y1_mm: e.y1_mm,
+              x2_mm: e.x2_mm,
+              y2_mm: e.y2_mm,
+              color: e.color,
+              width_mm: e.width_mm,
+            })),
+          });
+        }
+      }
+    }
+    return { layers };
+  });
+  return { page_mm: [doc.imposition.page_width_mm, doc.imposition.page_height_mm], pages };
+}
+
 export default function TagSheetRenderer({
   doc,
   resolvedData,
@@ -1252,6 +1347,16 @@ export default function TagSheetRenderer({
 }: TagSheetRendererProps) {
   const imposition = doc.imposition;
   const media: TagSheetMedia = { assets, images, featureIcons };
+
+  // B5: the PowerPoint worker reads this once the page is up; a thumbnail preview does not set it.
+  useEffect(() => {
+    if (preview || typeof window === 'undefined') return;
+    (window as unknown as { __tagSheetLayout?: unknown }).__tagSheetLayout = buildLayoutExport(
+      doc,
+      resolvedData,
+      { assets, images, featureIcons },
+    );
+  }, [doc, resolvedData, assets, images, featureIcons, preview]);
 
   if (preview) {
     return (

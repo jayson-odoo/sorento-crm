@@ -376,9 +376,10 @@ export async function queueSpecSheetPdf(
   projectId: string,
   documentId: string,
   sheetId: string,
+  format: 'pdf' | 'pptx' = 'pdf',
 ): Promise<QueuedDownload> {
   return read(
-    await apiFetch(url(projectId, documentId, `/${sheetId}/export`), {
+    await apiFetch(url(projectId, documentId, `/${sheetId}/export?format=${format}`), {
       method: 'POST',
     }),
     'Could not queue the spec sheet',

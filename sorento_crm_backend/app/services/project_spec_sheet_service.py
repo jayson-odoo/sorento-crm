@@ -2097,17 +2097,23 @@ def detail_view(
 # ----------------------------------------------------------------------------- export
 
 
-def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str):
-    """Check it can print, then queue the render; the file lands in My Downloads."""
+EXPORT_FORMATS = ("pdf", "pptx")
+
+
+def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str, fmt: str = "pdf"):
+    """Check it can print, then queue the render; the file lands in My Downloads. ``fmt`` is the
+    PDF (default) or a PowerPoint deck; both ride the same download kind, the extension says which."""
     from app.services.download_service import DownloadService
     from app.services.queue_service import enqueue_job
-    from app.tasks.dealer_kit_export_tasks import generate_spec_sheet_pdf
+    from app.tasks.dealer_kit_export_tasks import generate_spec_sheet_pdf, generate_spec_sheet_pptx
 
+    if fmt not in EXPORT_FORMATS:
+        raise AppException(status_code=422, message="Unknown export format.", code="spec_sheet_export_format")
     document = _document_of(db, sheet)
     # Refuse NOW what would fail in the worker: a gone template, or templates of two sizes.
     _pinned(db, sheet)
     number = _doc_fields(db, document, sheet)["quotation_no"]
-    filename = f"spec-sheet-{number}-{label_of(sheet)}.pdf"
+    filename = f"spec-sheet-{number}-{label_of(sheet)}.{fmt}"
 
     downloads = DownloadService(db)
     download = downloads.create(
@@ -2121,7 +2127,7 @@ def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str):
     db.flush()
     try:
         enqueue_job(
-            generate_spec_sheet_pdf,
+            generate_spec_sheet_pptx if fmt == "pptx" else generate_spec_sheet_pdf,
             str(download.id),
             queue_name="catalogue_render",
             job_timeout=900,
