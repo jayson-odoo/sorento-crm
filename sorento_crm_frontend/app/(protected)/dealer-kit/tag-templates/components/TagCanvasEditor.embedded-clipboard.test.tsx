@@ -396,6 +396,20 @@ describe('context menu Paste reads the system clipboard (both designers)', () =>
     expect(image.x_mm).toBeGreaterThan(40);
   });
 
+  it('copied words pasted from the menu land at the click point, kept inside the page', async () => {
+    stubClipboardRead([{ types: ['text/plain'], get: () => new Blob(['Promo'], { type: 'text/plain' }) }]);
+    const state: Record<string, TagLayer[]> = {};
+    render(<TwoPages state={state} active="a" />);
+    const stageHost = screen
+      .getByTestId('page-a')
+      .querySelector('[data-konva="stage"]')!.parentElement!.parentElement!;
+    // (120, 80) px = (60, 40) mm; the new 80 mm wide text box is pulled back to x 20 to fit.
+    fireEvent.contextMenu(stageHost, { clientX: 120, clientY: 80 });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Paste/ }));
+    await waitFor(() => expect(state.a).toHaveLength(2));
+    expect(state.a[1]).toMatchObject({ type: 'text', x_mm: 20, y_mm: 40 });
+  });
+
   it('the same menu on an active spec sheet page pastes onto that page', async () => {
     stubClipboardRead([{ types: ['text/plain'], get: () => new Blob(['Promo'], { type: 'text/plain' }) }]);
     const state: Record<string, TagLayer[]> = {};

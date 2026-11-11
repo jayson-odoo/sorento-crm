@@ -48,4 +48,21 @@ describe('useSheetEditing undo after a new edit', () => {
     act(() => result.current.redo('k'));
     expect(result.current.externalOf('k')?.map((l) => l.id)).toEqual(['a', 'c']);
   });
+
+  it('a canvas remounting after an undo (page left and came back) keeps redo and adds no step', () => {
+    const { result } = renderHook(() => useSheetEditing('p', 'd', 's'));
+    const base = [layer('a')];
+    act(() => result.current.report('k', base, base));
+    act(() => result.current.report('k', base, [layer('a'), layer('b')]));
+    act(() => result.current.undo('k'));
+    const handed = result.current.externalOf('k')!;
+    act(() => result.current.report('k', base, handed));
+    // The page drops out of the live window and comes back: the new canvas starts from the
+    // payload (base) and then adopts the host's layers.
+    act(() => result.current.report('k', base, base));
+    act(() => result.current.report('k', base, handed));
+
+    expect(result.current.canRedo('k')).toBe(true);
+    expect(result.current.canUndo('k')).toBe(false);
+  });
 });

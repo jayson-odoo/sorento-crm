@@ -189,6 +189,14 @@ export function SpecSheetReader({
     pageKey: string;
     layerId: string;
   } | null>(null);
+  // The page the user last pressed on (left or right button, empty spot included): a paste or
+  // shortcut goes there, not to the page scrolled into view nor to one still holding an old
+  // selection off-screen (crew pass on #2331). Pressing a page clears another page's selection.
+  const [pressedKey, setPressedKey] = React.useState<string | null>(null);
+  const onPressPage = React.useCallback((key: string) => {
+    setPressedKey(key);
+    setSelection((prev) => (prev && prev.pageKey !== key ? null : prev));
+  }, []);
   const [applyMode, setApplyMode] = React.useState<ApplyMode>('page');
   // Bumped when the server replaced other pages' layers (Apply to every page): live canvases restart.
   // Per page, so the page the apply started from keeps its canvas (its selection, undo and any
@@ -415,13 +423,14 @@ export function SpecSheetReader({
       drawn.set(page.key, picture);
     }
   }
-  // The first few of those are live designers (the page being worked on first); only an editor
-  // gets them, a reader keeps pictures.
+  // The first few of those are live designers (the page being worked on first, then the page last
+  // pressed on); only an editor gets them, a reader keeps pictures.
   const liveKeys = new Set<string>();
   if (detail?.can_edit) {
     const order = [...drawn.keys()];
     if (selection && drawn.has(selection.pageKey))
       liveKeys.add(selection.pageKey);
+    if (pressedKey && drawn.has(pressedKey)) liveKeys.add(pressedKey);
     for (const key of order) {
       if (liveKeys.size >= LIVE_MAX) break;
       liveKeys.add(key);
@@ -537,19 +546,17 @@ export function SpecSheetReader({
   const selectedLayer = selection
     ? (selectedLayers.find((l) => l.id === selection.layerId) ?? null)
     : null;
-  const targetKey = selection?.pageKey ?? editing.lastKey() ?? null;
-  // The page the keyboard and clipboard act on: the page the user last pressed on (a click on an
-  // empty spot included, or a right-click), not the page scrolled into view nor one still holding
-  // an old selection off-screen (crew pass on #2331). Pressing a page clears another page's
-  // selection, so the two never point at different pages.
-  const [pressedKey, setPressedKey] = React.useState<string | null>(null);
-  const onPressPage = React.useCallback((key: string) => {
-    setPressedKey(key);
-    setSelection((prev) => (prev && prev.pageKey !== key ? null : prev));
-  }, []);
-  const inputKey = pressedKey ?? selection?.pageKey ?? activeKey;
+  // A pressed page counts while it is a live canvas; scrolled out of the drawn window, it no longer
+  // decides where a paste or an undo goes.
+  const pressedLive = pressedKey && liveKeys.has(pressedKey) ? pressedKey : null;
+  // Undo / Redo (buttons and keys) step the selected page, else the live page last pressed on,
+  // else the page edited last: the same page a paste goes to.
+  const targetKey = selection?.pageKey ?? pressedLive ?? editing.lastKey() ?? null;
+  // The page the clipboard and shortcuts act on: the pressed page while it is a live canvas,
+  // else (scrolled out of the drawn window) the selected page, else the page being read.
+  const inputKey = pressedLive ?? selection?.pageKey ?? activeKey;
   // Keyboard undo from a page's canvas does exactly what the Undo / Redo buttons do: it steps
-  // `targetKey` (the selected page, else the page edited last), whichever canvas heard the key.
+  // `targetKey` (see above), whichever canvas heard the key.
   // Stable for the memoised pages; it reads the latest `editing` and target through a ref.
   const historyRef = React.useRef({ editing, targetKey });
   historyRef.current = { editing, targetKey };

@@ -515,6 +515,34 @@ describe('which page a paste or shortcut acts on (crew pass on #2331)', () => {
     expect(screen.queryByTestId('inspector')).toBeNull();
   });
 
+  it('a pressed page that shows a still picture becomes a live canvas and the target', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6', 'k7', 'k8']);
+    await screen.findByTestId('live-canvas-k6');
+    expect(screen.queryByTestId('live-canvas-k8')).toBeNull();
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k8'));
+    await screen.findByTestId('live-canvas-k8');
+    expect(activeOf('k8')).toBe('yes');
+  });
+
+  it('Undo follows the pressed page, not the page edited last somewhere else', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k5')).getByText('nudge k5'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Undo' })).not.toBeDisabled(),
+    );
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k6'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled(),
+    );
+  });
+
   it('a right-click makes its page the target too', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
