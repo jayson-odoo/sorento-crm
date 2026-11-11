@@ -3,42 +3,25 @@
 import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
-import {
-  usePartiesOnProject,
-  usePartyContacts,
-  usePartyMutations,
-  usePartyRoleLabel,
-  usePartyRoles,
-} from '../../../_shared/hooks/useProjects';
-import { listParties } from '../../../_shared/services/projectService';
+import { usePartyContacts, usePartyRoleLabel } from '../../../_shared/hooks/useProjects';
 import type { QuotationDocumentBody } from '../../../_shared/services/quotationDocumentService';
-import { PARTY_ROLE_DEVELOPER } from '../../../_shared/lib/partyRoles';
+import {
+  ProjectPartyPicker,
+  usePartyRoleOnProject,
+  type KnownParty,
+} from '../../../_shared/components/ProjectPartyPicker';
 import { PartyContactsDialog } from '../../../_shared/components/PartyContactsDialog';
 import type { PartyContact } from '../../../_shared/types/project.types';
 import { formatPhone } from '../../../_shared/lib/phoneDisplay';
 
-/** What the picker knows about a party it offered, to autoload the TO block from it. */
-type KnownParty = {
-  id: string;
-  name: string;
-  partyType: string;
-  address?: string | null;
-  phone?: string | null;
-  email?: string | null;
-  fax?: string | null;
-  /** Address / phone / email were read (a names-only search leaves them unknown). */
-  detailed: boolean;
-};
-
 /**
  * The proposal / quotation "To" chosen from the parties (PROJECT-PARTY-ROLES PR 2, owner addition
- * 2, 10 Nov, mock v4 screen 4). The project's parties come first; any other party of the company,
- * or a new one, can be picked and is linked to the project on Save in the role picked here.
- * Picking autoloads name, address (the party's, else the project's site address), phone and email;
- * every field stays editable. Fixed once revision A is issued (owner Q5 a).
+ * 2, 10 Nov, mock v4 screen 4), on the shared `ProjectPartyPicker`. The project's parties come
+ * first; any other party of the company, or a new one, can be picked and is linked to the project
+ * on Save in the role picked here. Picking autoloads name, address (the party's, else the project's
+ * site address), phone and email; every field stays editable. Fixed once revision A is issued
+ * (owner Q5 a).
  */
 export function QuotationRecipientPicker({
   projectId,
@@ -55,93 +38,15 @@ export function QuotationRecipientPicker({
   locked: boolean;
   onChange: (patch: QuotationDocumentBody) => void;
 }) {
-  const onProject = usePartiesOnProject(projectId);
-  const roles = usePartyRoles();
   const roleLabel = usePartyRoleLabel();
-  const canCreateParty = useHasPermission('projects.parties.edit');
-  const { create: createParty, update: updateParty } = usePartyMutations();
-  const known = React.useRef<Record<string, KnownParty>>({});
-  // Parties made on the spot here: their usual role follows the role picked under "Add as".
-  const createdHere = React.useRef<Set<string>>(new Set());
-
-  const onProjectRows = React.useMemo(() => onProject.data ?? [], [onProject.data]);
-  // The role each party plays on THIS project, read fresh each render (a party can leave it).
-  const roleOnProject = React.useMemo(() => {
-    const out = new Map<string, string>();
-    for (const row of onProjectRows) if (!out.has(row.party_id)) out.set(row.party_id, row.role);
-    return out;
-  }, [onProjectRows]);
-  const fromProject = React.useCallback(
-    (row: (typeof onProjectRows)[number]): KnownParty => ({
-      id: row.party_id,
-      name: row.name,
-      partyType: row.party_type,
-      address: row.address,
-      phone: row.phone,
-      email: row.email,
-      fax: row.fax,
-      detailed: true,
-    }),
-    [],
-  );
-
   const partyId = value.recipient_party_id ?? '';
-  const pickedRow = onProjectRows.find((row) => row.party_id === partyId);
-  const picked = partyId ? (pickedRow ? fromProject(pickedRow) : known.current[partyId]) : undefined;
-  const pickedRole = partyId ? roleOnProject.get(partyId) : undefined;
-  const onProjectIds = new Set(onProjectRows.map((row) => row.party_id));
-  const needsRole = Boolean(partyId) && onProject.isSuccess && !onProjectIds.has(partyId);
+  const pickedRole = usePartyRoleOnProject(projectId, partyId);
 
-  const fetchOptions = React.useCallback(
-    async (query: string) => {
-      const q = query.trim().toLowerCase();
-      const mine = onProjectRows
-        .filter((row) => !q || row.name.toLowerCase().includes(q))
-        .filter((row, i, all) => all.findIndex((r) => r.party_id === row.party_id) === i)
-        // One line per option (owner hand test 10 Nov): the group says where it is, no subtitle.
-        .map((row) => ({ value: row.party_id, label: row.name, group: 'On this project' }));
-      const result = await listParties({ query: query || undefined, limit: 20 });
-      const ids = new Set(onProjectRows.map((row) => row.party_id));
-      for (const party of result.data) {
-        known.current[party.id] = {
-          id: party.id,
-          name: party.name,
-          partyType: party.party_type,
-          address: party.address,
-          phone: party.phone,
-          email: party.email,
-          fax: party.fax,
-          // A caller without the parties view grant gets names only: nothing else is known.
-          detailed: 'address' in party || 'phone' in party,
-        };
-      }
-      const others = result.data
-        .filter((party) => !ids.has(party.id))
-        .map((party) => ({ value: party.id, label: party.name, group: 'Other parties' }));
-      return [...mine, ...others];
-    },
-    [onProjectRows],
-  );
-
-  /** Every role a party not on the project may be added in: active, developer excepted, and a
-   * one-party role only while the project has nobody in it. */
-  const roleOptions = (roles.data ?? [])
-    .filter(
-      (role) =>
-        role.is_active &&
-        role.value !== PARTY_ROLE_DEVELOPER &&
-        (role.allows_many || !onProjectRows.some((row) => row.role === role.value)),
-    )
-    .map((role) => ({ value: role.value, label: role.label }));
-
-  function pick(party: KnownParty | null) {
+  function pick(party: KnownParty | null, role: string | null) {
     if (!party) {
       onChange({ recipient_party_id: null, recipient_role: null, attn_contact_ids: [] });
       return;
     }
-    const role =
-      roleOnProject.get(party.id) ??
-      (roleOptions.some((r) => r.value === party.partyType) ? party.partyType : null);
     // Unknown details go as null: the save leaves them out and the server fills them from the
     // party, so a guess (the site address) never stands in for the party's own address.
     onChange({
@@ -169,84 +74,17 @@ export function QuotationRecipientPicker({
   }
 
   return (
-    <div className="min-w-0 space-y-1.5">
-      <Label htmlFor="quotation-recipient-party">Party</Label>
-      <SearchableSelect
-        id="quotation-recipient-party"
-        value={partyId}
-        onChange={(next) => {
-          if (!next) pick(null);
-        }}
-        onOptionChange={(option) => {
-          if (!option) return pick(null);
-          const row = onProjectRows.find((r) => r.party_id === option.value);
-          pick(row ? fromProject(row) : (known.current[option.value] ?? null));
-        }}
-        fetchOptions={fetchOptions}
-        selectedOption={
-          partyId
-            ? {
-                value: partyId,
-                label: picked?.name ?? value.recipient_name_snapshot ?? '',
-              }
-            : undefined
-        }
-        clearable
-        placeholder="Search parties"
-        emptyMessage="No parties found"
-        createOption={
-          canCreateParty
-            ? {
-                label: (query: string) => <span>Add &ldquo;{query}&rdquo; as a new party</span>,
-                onCreate: async (query: string) => {
-                  // A new party's usual role is the first role it can be added in; the role
-                  // picked below is what it plays on this project.
-                  const type = roleOptions[0]?.value;
-                  if (!type) return;
-                  try {
-                    const party = await createParty.mutateAsync({ name: query.trim(), party_type: type });
-                    const row: KnownParty = {
-                      id: party.id,
-                      name: party.name,
-                      partyType: party.party_type,
-                      address: party.address,
-                      phone: party.phone,
-                      email: party.email,
-                      detailed: true,
-                    };
-                    known.current[party.id] = row;
-                    if (party.party_type === type) createdHere.current.add(party.id);
-                    pick(row);
-                  } catch {
-                    // toasted by the mutation
-                  }
-                },
-              }
-            : undefined
-        }
-      />
-      {needsRole && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-primary">
-          <span>Not on this project yet. Add as</span>
-          <div className="w-48">
-            <SearchableSelect
-              id="quotation-recipient-role"
-              value={value.recipient_role ?? ''}
-              onChange={(role) => {
-                onChange({ recipient_role: role || null });
-                // A party made here takes the role it is first added in as its usual role
-                // (card rule B), not whichever role the list happened to start with.
-                if (role && createdHere.current.has(partyId)) {
-                  updateParty.mutate({ id: partyId, body: { party_type: role } });
-                }
-              }}
-              options={roleOptions}
-              placeholder="Pick a role"
-            />
-          </div>
-        </div>
-      )}
-    </div>
+    <ProjectPartyPicker
+      projectId={projectId}
+      id="quotation-recipient-party"
+      roleSelectId="quotation-recipient-role"
+      label="Party"
+      partyId={partyId}
+      role={value.recipient_role}
+      fallbackName={value.recipient_name_snapshot}
+      onPick={pick}
+      onRoleChange={(role) => onChange({ recipient_role: role })}
+    />
   );
 }
 
