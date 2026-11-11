@@ -521,3 +521,51 @@ def test_a_create_whose_key_ss_holds_is_never_re_sent_under_another_key(qt_api, 
 
     assert body["outcome"] == "refused"
     assert len(fake_ss.to("POST", "/api/v1/autocount/documents/quotations")) == 1
+
+
+# =========================================================================== B15: AutoCount's own refusal of a create
+
+
+@pytest.fixture
+def attempts(monkeypatch):
+    from app.services import project_autocount_write_service as svc
+    from tests.test_project_autocount_idem_keys import DictStore
+
+    s = DictStore()
+    monkeypatch.setattr(svc, "attempt_store", lambda: s)
+    return s
+
+
+def test_a_create_autocount_refused_goes_under_a_new_key_after_the_fix(qt_api, fake_ss, attempts):
+    """AC-E2E-DB3 B15 (db3, 11 Nov): AutoCount refused a create (vendor_error / VENDOR_REFUSED,
+    a unit not in its master file), the unit was fixed, and every later press answered
+    IDEMPOTENCY_CONFLICT. VENDOR_REFUSED is AutoCount saying no with nothing written (SS plan 57),
+    so the next press takes a new attempt key."""
+    from app.services.autocount_idempotency import attempt_key
+
+    client, db, world = qt_api
+    path = "/api/v1/autocount/documents/quotations"
+    refused = refused_body("VENDOR_REFUSED", "itemCode and uom do not exist in its master file", outcome="vendor_error")
+    fake_ss.answers[("POST", path)] = (502, refused)
+    first = client.post(_qt_url(world)).json()
+    assert first["outcome"] != "done"
+
+    fake_ss.answers[("POST", path)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world)))
+    second = client.post(_qt_url(world)).json()
+
+    assert second["outcome"] == "done", second
+    base = f"crm-qt-{world.document.id}-{world.issue.id}-create"
+    keys = [r.headers["Idempotency-Key"] for r in fake_ss.to("POST", path)]
+    assert keys == [base, attempt_key(base, 1)]
+
+
+def test_a_bare_vendor_error_keeps_the_key(qt_api, fake_ss, attempts):
+    """VENDOR_ERROR is a failure with no text: it may have landed, so a retry only replays."""
+    client, db, world = qt_api
+    path = "/api/v1/autocount/documents/quotations"
+    fake_ss.answers[("POST", path)] = (502, refused_body("VENDOR_ERROR", "", outcome="vendor_error"))
+    client.post(_qt_url(world))
+    client.post(_qt_url(world))
+
+    keys = [r.headers["Idempotency-Key"] for r in fake_ss.to("POST", path)]
+    assert len(set(keys)) == 1, keys
