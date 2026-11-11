@@ -5,6 +5,8 @@ import * as React from 'react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { InspectorPanel } from '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
+import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import type {
@@ -50,6 +52,17 @@ export function ReaderInspector({
   const writesOverride = Boolean(
     textLayer && (textLayer.slot_binding || textLayer.text_override != null),
   );
+  // The Inspector's rich Content box (a formatted text), so Insert field lands at its caret,
+  // inside the formatting, exactly as in the template designer: the dialog then never shows the
+  // layer's markup, it hands back only the field (crew pass on #2331).
+  const contentEditorRef = React.useRef<Editor | null>(null);
+  const onContentEditorReady = React.useCallback((editor: Editor) => {
+    contentEditorRef.current = editor;
+  }, []);
+  const contentEditor = () => {
+    const editor = contentEditorRef.current;
+    return editor && !editor.isDestroyed ? editor : null;
+  };
   const textValue =
     textLayer && textLayer.props.kind === 'text'
       ? (textLayer.text_override ?? textLayer.props.text ?? '')
@@ -79,6 +92,11 @@ export function ReaderInspector({
   const insert = (text: string) => {
     setInsertOpen(false);
     if (!textLayer) return;
+    const editor = contentEditor();
+    if (editor) {
+      insertMergeFieldText(editor, text);
+      return;
+    }
     if (writesOverride) onUpdate(textLayer.id, { text_override: text });
     else onUpdateProps(textLayer.id, { text } as Partial<TagLayerProps>);
   };
@@ -120,11 +138,12 @@ export function ReaderInspector({
           specSheet
           specKeys={library.specKeys}
           onInsertField={textLayer ? () => setInsertOpen(true) : undefined}
+          onContentEditorReady={onContentEditorReady}
         />
       </div>
       <InsertFieldDialog
         open={insertOpen && textLayer !== null}
-        value={textValue}
+        value={insertOpen && contentEditor() ? '' : textValue}
         data={null}
         specKeys={library.specKeys}
         onCancel={() => setInsertOpen(false)}
