@@ -3539,6 +3539,52 @@ describe('QuotationVersionEditor Undo / Redo', () => {
     expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
   });
 
+  it('two separate edits of one rate are two Undo steps (leaving the field ends a step)', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '175.00' })]);
+    await renderEditing();
+    const rate = screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' });
+    fireEvent.focus(rate);
+    fireEvent.change(rate, { target: { value: '199' } });
+    fireEvent.blur(rate);
+    fireEvent.focus(rate);
+    fireEvent.change(rate, { target: { value: '188' } });
+    fireEvent.blur(rate);
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '188' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '199' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '175.00' }));
+  });
+
+  it('Cmd/Ctrl+Z works after clicking an empty part of the grid (focus on the page body)', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    fireEvent.keyDown(document.body, { key: 'z', metaKey: true, shiftKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+  });
+
+  it('Cmd/Ctrl+Z on a control outside the grid is not the grid\'s', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    try {
+      await renderEditing();
+      await chooseMenuItem('A-1', 'Remove line');
+      await waitFor(() => expect(ids()).toEqual(['l2']));
+      outside.focus();
+      fireEvent.keyDown(outside, { key: 'z', ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(ids()).toEqual(['l2']);
+    } finally {
+      outside.remove();
+    }
+  });
+
   it('a product pick is its own step after typing', async () => {
     listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
     await renderEditing();

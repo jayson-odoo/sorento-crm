@@ -2513,10 +2513,26 @@ describe('QuotationDocumentClient banner count opens the lines it counts', () =>
     renderScreen();
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
 
+    // jsdom has no layout; the call itself is the claim (crew pass: lines below the fold).
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
     fireEvent.click(await screen.findByRole('button', { name: 'One line is' }));
 
     // Guard House opens, filtered: only the discounted line shows, under its own number.
     expect(await screen.findByText('Discounted one')).toBeInTheDocument();
+    // ...and the lines are brought into view, or a tap below the fold looks like nothing happened.
+    // The area strip AND the lines under it, not just the active tab inside its own strip.
+    await waitFor(() =>
+      expect(
+        scrolled.mock.instances.some((el) => {
+          const node = el as unknown as HTMLElement;
+          return (
+            node.contains(screen.getByRole('tab', { name: /Guard House/ })) &&
+            node.contains(screen.getByText('Discounted one'))
+          );
+        }),
+      ).toBe(true),
+    );
     await waitFor(() => expect(screen.queryByText('Clean one')).toBeNull());
     expect(screen.getByRole('tab', { name: /Guard House/ })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getAllByText('Below default price').length).toBeGreaterThan(0);
