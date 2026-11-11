@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Town Malaysia map</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Tokens mirror sorento_crm_frontend/css/config.reui.css (light + dark). Fork of town-project-city-mock-v0-single-island.html; TOWN-PROJECT-CITY card v2: the Town as a stylised map of Malaysia. */
+:root {
+  --background: #ffffff; --foreground: #09090b; --card: #ffffff; --popover: #ffffff;
+  --primary: #3b82f6; --primary-foreground: #ffffff;
+  --muted: #f4f4f5; --muted-foreground: #71717a;
+  --border: oklch(94% 0.004 286.32); --destructive: #dc2626;
+  --success: #15803d; --warning: #a16207;
+  --radius: 0.5rem; --ease-standard: cubic-bezier(0.2, 0, 0, 1); --duration-base: 200ms;
+  --material-regular: color-mix(in oklab, var(--background) 80%, transparent);
+  --material-edge: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --lit: #f59e0b; --low: #dc2626; --deliver: #2563eb; --approve: #7c3aed; --port: #0e7490; --trading: #51657f;
+  --st-identified: #9ca3af; --st-registered: #2563eb; --st-specified: #0d9488; --st-quoted: #f59e0b; --st-tendering: #ea580c; --st-po: #16a34a;
+}
+:root.dark {
+  --background: #09090b; --foreground: #fafafa; --card: #18181b; --popover: #18181b;
+  --primary: #2563eb; --muted: #27272a; --muted-foreground: #a1a1aa; --border: #27272a;
+  --success: #4ade80; --warning: #facc15;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); font-size: 14px; }
+.page { max-width: 1440px; margin: 0 auto; padding: 16px; }
+.header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.header h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin: 0; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 0.75rem; }
+.chip.sample { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.chip.late { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.btn { font: inherit; border-radius: var(--radius); padding: 7px 14px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
+.btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+.split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 14px; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.colhead { font-size: 0.75rem; font-weight: 600; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
+.stage { position: relative; height: min(70vh, 660px); min-height: 440px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; background: linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%); }
+:root.night .stage { background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%); }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#scene.over { cursor: pointer; } #scene.dragging { cursor: grabbing; }
+.float { position: absolute; background: var(--material-regular); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--material-edge); border-radius: var(--radius); box-shadow: 0 4px 16px rgb(0 0 0 / 0.08); }
+.hud { left: 10px; top: 10px; padding: 7px 9px; font-size: 0.6875rem; display: grid; gap: 4px; max-width: 250px; }
+.hud .cols { display: grid; grid-template-columns: auto auto; gap: 3px 10px; }
+.hud .note { color: var(--muted-foreground); font-size: 0.65rem; }
+.hud i.shp { clip-path: polygon(50% 0, 100% 40%, 100% 100%, 0 100%, 0 40%); border-radius: 0; }
+.legendBtn { display: none; left: 10px; top: 10px; padding: 5px 10px; font: inherit; font-size: 0.75rem; font-weight: 600; color: var(--foreground); cursor: pointer; }
+.hud div { display: flex; align-items: center; gap: 7px; }
+.hud i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+.hud .key { display: grid; grid-template-columns: repeat(3, auto); gap: 2px 8px; padding-left: 0; color: var(--muted-foreground); font-size: 0.6875rem; }
+.hud .key span { display: inline-flex; align-items: center; gap: 4px; } .hud .key b { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.hud hr { border: 0; border-top: 1px solid var(--material-edge); margin: 2px 0; width: 100%; }
+.seg2 { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.seg2 button { font: inherit; border: 0; background: var(--card); color: var(--foreground); padding: 4px 10px; cursor: pointer; }
+.seg2 button + button { border-left: 1px solid var(--border); } .seg2 button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.card .split3 { margin-top: 4px; font-size: 0.75rem; color: var(--muted-foreground); }
+.hint { left: 50%; bottom: 60px; transform: translateX(-50%); padding: 8px 14px; font-weight: 600; pointer-events: none; transition: opacity 400ms var(--ease-standard); white-space: nowrap; }
+.hint.gone { opacity: 0; }
+.closed { top: 10px; left: 50%; transform: translateX(-50%); padding: 6px 14px; font-weight: 600; display: none; }
+:root.night .closed { display: block; }
+/* hover tooltip: Radix tooltip look (bg-popover, border, text-xs, shadow-md) */
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--popover); color: var(--foreground); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font-size: 0.75rem; line-height: 1.35; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); white-space: nowrap; display: none; transform: translate(-50%, calc(-100% - 12px)); }
+.tip b { font-weight: 600; } .tip .sub { color: var(--muted-foreground); }
+.tip.on { display: block; }
+/* camera controls: icon buttons, bottom-right */
+.camctl { right: 10px; bottom: 10px; display: flex; gap: 4px; padding: 4px; }
+.ib { width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--foreground); cursor: pointer; display: grid; place-items: center; }
+.ib:hover { background: var(--muted); } .ib svg { width: 16px; height: 16px; }
+.tiltmeter { right: 10px; bottom: 56px; padding: 6px 8px; font-size: 0.6875rem; color: var(--muted-foreground); display: grid; gap: 3px; justify-items: center; }
+.tiltmeter .track { position: relative; width: 4px; height: 70px; border-radius: 2px; background: var(--muted); }
+.tiltmeter .knob { position: absolute; left: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--primary); }
+/* lightbox: Dialog look (centred, overlay, close X, Esc / outside click) */
+.overlay { position: fixed; inset: 0; z-index: 50; background: rgb(0 0 0 / 0.3); backdrop-filter: blur(4px); display: none; place-items: center; padding: 16px; }
+.overlay.open { display: grid; }
+.dialog { position: relative; width: 100%; max-width: 32rem; max-height: calc(100dvh - 32px); overflow: auto; background: var(--background); border: 1px solid var(--border); border-radius: 0.75rem; box-shadow: 0 20px 40px rgb(0 0 0 / 0.18); padding: 20px; animation: pop 200ms var(--ease-standard); }
+.dialog.wide { max-width: 44rem; }
+@keyframes pop { from { opacity: 0; transform: scale(0.96); } }
+.dialog h2 { margin: 0 0 2px; font-size: 1.0625rem; font-weight: 600; padding-right: 28px; }
+.dialog .meta { color: var(--muted-foreground); font-size: 0.8125rem; margin-bottom: 12px; }
+.dialog table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.dialog th { text-align: left; font-weight: 600; color: var(--muted-foreground); font-size: 0.75rem; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.dialog td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
+.dialog td.num, .dialog th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+.dialog .close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border: 0; background: transparent; font-size: 20px; cursor: pointer; color: var(--muted-foreground); border-radius: 6px; }
+.dialog .close:hover { background: var(--muted); }
+.dialog .empty { text-align: center; padding: 22px 0 8px; } .dialog .empty h3 { margin: 0; font-size: 0.9375rem; } .dialog .empty p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 0.8125rem; }
+.dialog .seg { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tablewrap { overflow-x: auto; }
+.bar { height: 6px; border-radius: 3px; background: var(--muted); overflow: hidden; margin-top: 3px; }
+.bar > i { display: block; height: 100%; }
+.cards { display: grid; gap: 10px; }
+.card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card); display: grid; grid-template-columns: 34px 1fr; gap: 2px 10px; align-items: start; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.card .ic { grid-row: span 3; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: #fff; font-weight: 700; }
+.card .q { font-size: 0.75rem; color: var(--muted-foreground); }
+.card .v { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
+.card .s { font-size: 0.8125rem; color: var(--muted-foreground); }
+.card ul { margin: 6px 0 0; padding: 0; list-style: none; font-size: 0.8125rem; display: grid; gap: 3px; }
+.card li { display: flex; justify-content: space-between; gap: 8px; }
+.card li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up { color: var(--success); font-weight: 600; } .down { color: var(--destructive); font-weight: 600; }
+.mockbar { margin-top: 14px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 0.8125rem; color: var(--muted-foreground); }
+.mockbar label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.mockbar select { font: inherit; }
+.notice { margin: 10px 0 0; font-size: 0.75rem; color: var(--muted-foreground); }
+section.map { margin-top: 22px; }
+section.map h2 { font-size: 1.125rem; margin: 0 0 8px; }
+.scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.map table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.8125rem; }
+.map th, .map td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.map th { background: var(--muted); font-weight: 600; }
+.map code { font-size: 0.75rem; background: var(--muted); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 640px) { .stage { height: 64vh; } .hud { display: none; top: 46px; } .hud.open { display: grid; } .legendBtn { display: block; } .dialog .sm-hide { display: none; } .dialog td { white-space: nowrap; } }
+</style>
+<script type="importmap">{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.min.js"}}</script>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <h1>Town</h1>
+      <span class="chip" id="asof"></span>
+      <span class="chip" id="company"></span>
+    </div>
+    <button class="btn primary" id="wallboardBtn">Wallboard</button>
+  </div>
+
+  <div class="split">
+    <div>
+      <p class="colhead">3D town</p>
+      <div class="stage" id="stage">
+        <canvas id="scene" aria-label="Town"></canvas>
+        <div class="tip" id="tip" role="tooltip"></div>
+        <div class="float closed">Closed for the day</div>
+        <div class="float hint" id="hint">Drag to turn and tilt</div>
+        <button class="float legendBtn" id="legendBtn" aria-expanded="false">Legend</button>
+        <div class="float hud" id="legend" aria-label="Legend">
+          <div class="cols">
+            <div><i class="shp" style="background:#d6d3d1"></i>Dealer shop</div><div><i class="shp" style="background:var(--lit)"></i>Lit = bought today</div>
+            <div><i style="background:#e6dccb;border-radius:1px"></i>Stall</div><div><i style="background:var(--trading)"></i>Trading house</div>
+            <div><i style="background:#d6c3a2"></i>Project site</div><div><i style="background:#f3efe6;border:1px solid #cbd5e1"></i>HQ, Shah Alam</div>
+            <div><i style="background:var(--deliver)"></i>Lorry</div><div><i style="background:#0f766e"></i>Coaster ship</div>
+          </div>
+          <div class="key" aria-label="Site flag = our sales stage">
+            <span><b style="background:var(--st-identified)"></b>Identified</span><span><b style="background:var(--st-registered)"></b>Registered</span><span><b style="background:var(--st-specified)"></b>Spec In</span>
+            <span><b style="background:var(--st-quoted)"></b>Quoted</span><span><b style="background:var(--st-tendering)"></b>Tendering</span><span><b style="background:var(--st-po)"></b>PO Received</span>
+            <span style="grid-column:span 3"><b style="background:var(--low);border-radius:0;clip-path:polygon(0 0,100% 50%,0 100%)"></b>Pennant = final negotiation</span>
+          </div>
+          <div class="note">Site building = its own timeline; flag = our sales stage</div>
+        </div>
+        <div class="float tiltmeter" id="tiltmeter" aria-hidden="true"><span>Top</span><div class="track"><i class="knob" id="knob"></i></div><span>Street</span></div>
+        <div class="float camctl">
+          <button class="ib" id="motionBtn" aria-label="Pause motion" title="Pause motion"><svg id="motionIcon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
+          <button class="ib" id="zoomOut" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+          <button class="ib" id="zoomIn" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="ib" id="resetView" aria-label="Reset view" title="Reset view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="colhead">2D view (same snapshot; the fallback when 3D is off)</p>
+      <div class="cards" id="cards"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" id="dialog"><button class="close" aria-label="Close" id="dlgClose">&times;</button><div id="dlgBody"></div></div></div>
+
+  <div class="mockbar">
+    <b>Mock controls (not in the product):</b>
+    <label>Time of day <input type="range" id="tHour" min="7" max="23" step="0.25" value="15"> <span id="hourOut">15:00</span></label><input type="checkbox" id="tNight" hidden>
+    <span>Viewer <span class="seg2" role="group" aria-label="Viewer"><button id="vFull" aria-pressed="true">Full</button><button id="vRedact" aria-pressed="false">No amounts</button><button id="vWall" aria-pressed="false">Wallboard</button></span></span><input type="checkbox" id="tRedact" hidden>
+    <label><input type="checkbox" id="tDark"> Dark theme</label>
+    <label>Shipments <select id="tShip"><option value="normal">like SRT dev: 29 incoming, 70 late</option><option value="none">none</option><option value="many">sample: 140 incoming, 0 late</option></select></label>
+    <input type="checkbox" id="tTouch" hidden>
+    <span id="calls"></span>
+  </div>
+  <p class="notice" id="dataNotice"></p>
+
+  <section class="map">
+    <h2>TOWN-PROJECT-CITY, element to component map</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Element</th><th>Behaviour</th><th>Reuses (repo path)</th><th>Snapshot data</th></tr></thead>
+      <tbody>
+        <tr><td>Split board</td><td>Under "Sold today": three columns Dealers / Projects / Other that add up to the total. No amounts variant: invoice counts. Same three rows in the sales lightbox and the first card.</td><td><code>townWorld.ts</code> scoreboard canvas <code>drawBoard()</code> (one more row, same fonts and colours); <code>TownLightbox.tsx</code> <code>body()</code> case <code>'sales'</code> + <code>Rows</code>; <code>TownCards.tsx</code> sales <code>Card</code></td><td><code>today.split.{dealer,project,other}.{amount,invoice_count}</code> (amount absent on the redacted variant)</td></tr>
+        <tr><td>District island + bridge</td><td>A second island at the end of the existing bridge (287 degrees); its main street; the default view zooms out 20% and recentres so both islands and the port fit.</td><td><code>townWorld.ts</code> island (<code>rIsland</code>, <code>slab</code>), bridge block (<code>BRIDGE_D</code>, shortened to land on the island), <code>radialRoad</code>, <code>dashLine</code>; camera <code>resize()</code> <code>baseDist</code> fit + <code>lib/townCamera.ts</code> <code>DEFAULT_VIEW</code></td><td>none</td></tr>
+        <tr><td>Project site</td><td>One per open project, up to 30. The building follows the project's own timeline: plain plot (dates not set), fenced plot with board (before launch), groundworks, frame + tower crane, cladding + crane, finished. Never the sales stage.</td><td><code>townWorld.ts</code> <code>P()</code> / <code>merge()</code> geometry, one <code>inst()</code> InstancedMesh per look (6 looks), rise on intro via <code>riseDelay</code>/<code>applyRise</code></td><td><code>projects.sites[].{key, look, progress}</code> (look computed server-side from <code>launch_date</code> + <code>expected_delivery_from</code>/<code>_to</code>)</td></tr>
+        <tr><td>Site gate flag + pennant</td><td>Small flag coloured by our sales stage (6 rungs); red pennant above it = final negotiation (<code>is_critical</code>).</td><td><code>townWorld.ts</code> <code>makeFlag(x, y, z, color)</code> (smaller), waving in the existing flag loop</td><td><code>projects.sites[].stage</code>, <code>.final_negotiation</code></td></tr>
+        <tr><td>Trading house tower</td><td>Tall, flat-roofed, slate-blue glass block on the district waterfront, up to 12; lit (warm windows + light pool) when it has a Project-type invoice today.</td><td><code>townWorld.ts</code> <code>P()</code>/<code>merge()</code> + <code>inst()</code>; lit = the shop light: <code>WIN.litDay</code>/<code>litNight</code>, <code>lightShop()</code>, <code>addPool()</code> light pool</td><td><code>trading_houses.rows[].{key, open_projects, today_docs}</code>, <code>name</code> on the full variant only; <code>trading_houses.more</code></td></tr>
+        <tr><td>Gate sign</td><td>"+N more projects · +N dormant" at the bridge landing; click opens the district list.</td><td><code>townWorld.ts</code> <code>addLabel()</code> pill (fixed), new <code>DOT</code>/<code>TONE</code> slate entry</td><td><code>projects.more</code>, <code>projects.dormant</code></td></tr>
+        <tr><td>Lorries</td><td>Project-type orders cross the bridge to the district gate (never to one site); dealer orders to their shop as today; out-of-town orders leave by the port road instead of the bridge. Depot label "12 to deliver · 3 projects".</td><td><code>townWorld.ts</code> <code>centreline()</code> (exit by <code>PA</code> instead of <code>BRIDGE_D</code>, plus a bridge route), <code>animLorries</code>; depot <code>addLabel</code></td><td><code>deliveries.project_orders</code>; <code>deliveries.customers[].kind</code> = <code>project</code> for a project lorry</td></tr>
+        <tr><td>Site lightbox</td><td>Name and code, Stage, Final negotiation, State, Timeline ("Launch Mar 2025 · Delivery Mar 2028 · 55% of the way"), Estimated value, "Open project" (<code>/project-sales/{id}</code>). No amounts / Wallboard: no name, code, value or link.</td><td><code>TownLightbox.tsx</code> new <code>TownTarget</code> <code>{ kind: 'site'; key }</code>, <code>body()</code> case + <code>Rows</code> + <code>link()</code>; stage dot = <code>components/ui/badge.tsx</code></td><td><code>projects.sites[]</code> (<code>name</code>, <code>code</code>, <code>estimated_value</code>, <code>id</code> on the full variant only; opaque <code>key</code> otherwise)</td></tr>
+        <tr><td>Trading house lightbox</td><td>Name (full only), open projects it is on (names on full only), project invoices today.</td><td><code>TownLightbox.tsx</code> <code>{ kind: 'trading_house'; key }</code> + <code>Rows</code></td><td><code>trading_houses.rows[]</code></td></tr>
+        <tr><td>Hover tips</td><td>Site: title + "stage · look"; tower: title + "bought today · on N open projects"; full names only on the full variant.</td><td><code>lib/townTips.ts</code> <code>townTip()</code> new <code>TipSubject</code> kinds</td><td>as above</td></tr>
+        <tr><td>Legend</td><td>"Office block = trading house, lit = bought today"; "Project site: building = its own timeline" + the 6 flag colours and the pennant.</td><td>legend in <code>TownScene.tsx</code> (same <code>i</code> swatch rows)</td><td>none</td></tr>
+        <tr><td>Seventh card</td><td>"What projects are open?" opens the district list (also the no-WebGL path).</td><td><code>TownCards.tsx</code> <code>Card</code></td><td><code>projects.open_count</code>, <code>projects.dormant</code>, <code>trading_houses.rows[].today_docs</code></td></tr>
+        <tr><td>Variant switch (mock only)</td><td>Full / No amounts / Wallboard: what each viewer is sent. Not in the product.</td><td>mock control</td><td><code>redact()</code> / <code>strip_names()</code> in <code>app/services/town/snapshot.py</code></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</div>
+<script id="town-data" type="application/json">{"schema": 1, "company": "Demo Company", "day": "2026-11-03", "as_of": "2026-11-03T22:00:00+08:00", "data_as_of": "2026-11-04T10:24:00+08:00", "phase": "day", "today": {"amount": "513912.31", "invoice_count": 227, "credit_note_count": 1, "customer_count": 114, "dealer_customer_count": 96, "split": {"dealer": {"amount": "322758.80", "invoice_count": 180}, "project": {"amount": "141200.00", "invoice_count": 31}, "other": {"amount": "49953.51", "invoice_count": 16}}}, "shops": [{"key": "DEMO-001", "code": "DEMO-001", "name": "Dealer A01 Sdn Bhd", "account_label": null, "kind": "shop", "rank": 1, "ninety_day_amount": "1056208.79", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-002", "code": "DEMO-002", "name": "Dealer B02 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 2, "ninety_day_amount": "628494.41", "today_amount": null, "today_docs": null, "state": "kl"}, {"key": "DEMO-003", "code": "DEMO-003", "name": "Dealer C03 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 3, "ninety_day_amount": "724495.55", "today_amount": "9589.40", "today_docs": 10, "state": "selangor"}, {"key": "DEMO-004", "code": "DEMO-004", "name": "Dealer D04 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 4, "ninety_day_amount": "566084.18", "today_amount": null, "today_docs": null, "state": "johor"}, {"key": "DEMO-005", "code": "DEMO-005", "name": "Dealer E05 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 5, "ninety_day_amount": "392515.11", "today_amount": null, "today_docs": null, "state": "penang"}, {"key": "DEMO-006", "code": "DEMO-006", "name": "Dealer F06 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 6, "ninety_day_amount": "210309.31", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-007", "code": "DEMO-007", "name": "Dealer G07 Sdn Bhd", "account_label": null, "kind": "shop", "rank": 7, "ninety_day_amount": "297459.18", "today_amount": "5120.00", "today_docs": 1, "state": "kl"}, {"key": "DEMO-008", "code": "DEMO-008", "name": "Dealer H08 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 8, "ninety_day_amount": "176557.28", "today_amount": null, "today_docs": null, "state": "perak"}, {"key": "DEMO-009", "code": "DEMO-009", "name": "Dealer I09 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 9, "ninety_day_amount": "238537.48", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-010", "code": "DEMO-010", "name": "Dealer J10 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 10, "ninety_day_amount": "163384.00", "today_amount": null, "today_docs": null, "state": "johor"}, {"key": "DEMO-011", "code": "DEMO-011", "name": "Dealer K11 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "shop", "rank": 11, "ninety_day_amount": "156037.36", "today_amount": null, "today_docs": null, "state": "kl"}, {"key": "DEMO-012", "code": "DEMO-012", "name": "Dealer L12 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 12, "ninety_day_amount": "213681.09", "today_amount": "3480.50", "today_docs": 2, "state": "penang"}, {"key": "DEMO-013", "code": "DEMO-013", "name": "Dealer M13 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 13, "ninety_day_amount": "275417.24", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-014", "code": "DEMO-014", "name": "Dealer N14 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 14, "ninety_day_amount": "150860.98", "today_amount": null, "today_docs": null, "state": "perak"}, {"key": "DEMO-015", "code": "DEMO-015", "name": "Dealer O15 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 15, "ninety_day_amount": "165229.42", "today_amount": null, "today_docs": null, "state": "ns"}, {"key": "DEMO-016", "code": "DEMO-016", "name": "Dealer P16 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 16, "ninety_day_amount": "225315.89", "today_amount": null, "today_docs": null, "state": "kl"}, {"key": "DEMO-017", "code": "DEMO-017", "name": "Dealer Q17 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 17, "ninety_day_amount": "276325.34", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-018", "code": "DEMO-018", "name": "Dealer R18 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 18, "ninety_day_amount": "214379.17", "today_amount": null, "today_docs": null, "state": "johor"}, {"key": "DEMO-019", "code": "DEMO-019", "name": "Dealer S19 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 19, "ninety_day_amount": "180577.99", "today_amount": null, "today_docs": null, "state": "melaka"}, {"key": "DEMO-020", "code": "DEMO-020", "name": "Dealer T20 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 20, "ninety_day_amount": "246255.08", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-021", "code": "DEMO-021", "name": "Dealer U21 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 21, "ninety_day_amount": "108533.31", "today_amount": "2960.00", "today_docs": 1, "state": "sabah"}, {"key": "DEMO-022", "code": "DEMO-022", "name": "Dealer V22 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 22, "ninety_day_amount": "216804.13", "today_amount": null, "today_docs": null, "state": "kedah"}, {"key": "DEMO-023", "code": "DEMO-023", "name": "Dealer W23 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 23, "ninety_day_amount": "133100.64", "today_amount": null, "today_docs": null, "state": "penang"}, {"key": "DEMO-024", "code": "DEMO-024", "name": "Dealer X24 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 24, "ninety_day_amount": "114254.89", "today_amount": null, "today_docs": null, "state": "kl"}, {"key": "DEMO-025", "code": "DEMO-025", "name": "Dealer Y25 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 25, "ninety_day_amount": "109596.40", "today_amount": null, "today_docs": null, "state": "pahang"}, {"key": "DEMO-026", "code": "DEMO-026", "name": "Dealer Z26 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 26, "ninety_day_amount": "132540.33", "today_amount": null, "today_docs": null, "state": "selangor"}, {"key": "DEMO-027", "code": "DEMO-027", "name": "Dealer A27 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 27, "ninety_day_amount": "188015.12", "today_amount": null, "today_docs": null, "state": "perak"}, {"key": "DEMO-028", "code": "DEMO-028", "name": "Dealer B28 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 28, "ninety_day_amount": "111443.34", "today_amount": null, "today_docs": null, "state": "sarawak"}, {"key": "DEMO-029", "code": "DEMO-029", "name": "Dealer C29 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 29, "ninety_day_amount": "158226.90", "today_amount": "1150.00", "today_docs": 1, "state": null}, {"key": "DEMO-030", "code": "DEMO-030", "name": "Dealer D30 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 30, "ninety_day_amount": "164686.18", "today_amount": "24269.29", "today_docs": 3, "state": "johor"}, {"key": "DEMO-031", "code": "DEMO-031", "name": "Dealer E31 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "12822.63", "today_docs": 2, "state": "selangor"}, {"key": "DEMO-032", "code": "DEMO-032", "name": "Dealer F32 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "7867.97", "today_docs": 2, "state": "johor"}, {"key": "DEMO-033", "code": "DEMO-033", "name": "Dealer G33 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "7398.45", "today_docs": 4, "state": "perak"}], "warehouses": [{"pool": "WH01", "on_hand": 971213, "locations": [{"code": "WH01-01", "on_hand": 963400}, {"code": "WH01-02", "on_hand": 109727}, {"code": "WH01-03", "on_hand": 47442}, {"code": "WH01-04", "on_hand": 51047}, {"code": "WH01-05", "on_hand": 13927}, {"code": "WH01-06", "on_hand": 3404}, {"code": "WH01-07", "on_hand": 3982}, {"code": "WH01-08", "on_hand": 3200}, {"code": "WH01-09", "on_hand": 2216}, {"code": "WH01-10", "on_hand": 1207}, {"code": "WH01-11", "on_hand": 571}, {"code": "WH01-12", "on_hand": 945}, {"code": "WH01-13", "on_hand": 41}, {"code": "WH01-14", "on_hand": 0}, {"code": "WH01-15", "on_hand": 0}]}, {"pool": "WH02", "on_hand": 114132, "locations": [{"code": "WH02-01", "on_hand": 125396}, {"code": "WH02-02", "on_hand": 11627}, {"code": "WH02-03", "on_hand": 6383}, {"code": "WH02-04", "on_hand": 6162}, {"code": "WH02-05", "on_hand": 1860}, {"code": "WH02-06", "on_hand": 408}, {"code": "WH02-07", "on_hand": 169}, {"code": "WH02-08", "on_hand": 150}, {"code": "WH02-09", "on_hand": 75}, {"code": "WH02-10", "on_hand": 59}, {"code": "WH02-11", "on_hand": 0}]}, {"pool": "WH03", "on_hand": 174002, "locations": [{"code": "WH03-01", "on_hand": 144462}, {"code": "WH03-02", "on_hand": 14555}, {"code": "WH03-03", "on_hand": 13166}, {"code": "WH03-04", "on_hand": 1246}, {"code": "WH03-05", "on_hand": 1327}, {"code": "WH03-06", "on_hand": 300}, {"code": "WH03-07", "on_hand": 163}, {"code": "WH03-08", "on_hand": 120}, {"code": "WH03-09", "on_hand": 70}, {"code": "WH03-10", "on_hand": 73}, {"code": "WH03-11", "on_hand": 29}, {"code": "WH03-12", "on_hand": 0}]}, {"pool": "WH04", "on_hand": 70397, "locations": [{"code": "WH04-01", "on_hand": 41732}, {"code": "WH04-02", "on_hand": 4556}, {"code": "WH04-03", "on_hand": 4117}, {"code": "WH04-04", "on_hand": 1235}, {"code": "WH04-05", "on_hand": 432}, {"code": "WH04-06", "on_hand": 360}, {"code": "WH04-07", "on_hand": 400}, {"code": "WH04-08", "on_hand": 252}, {"code": "WH04-09", "on_hand": 79}, {"code": "WH04-10", "on_hand": 23}, {"code": "WH04-11", "on_hand": 7}, {"code": "WH04-12", "on_hand": 0}]}, {"pool": "WH05", "on_hand": 2948, "locations": [{"code": "WH05-01", "on_hand": 3032}]}, {"pool": "WH06", "on_hand": 1452, "locations": [{"code": "WH06-01", "on_hand": 1645}]}, {"pool": "WH07", "on_hand": 551, "locations": [{"code": "WH07-01", "on_hand": 813}]}, {"pool": "WH08", "on_hand": 107, "locations": [{"code": "WH08-01", "on_hand": 56}, {"code": "WH08-02", "on_hand": 0}, {"code": "WH08-03", "on_hand": 0}, {"code": "WH08-04", "on_hand": 0}, {"code": "WH08-05", "on_hand": 0}, {"code": "WH08-06", "on_hand": 0}, {"code": "WH08-07", "on_hand": 0}, {"code": "WH08-08", "on_hand": 0}]}, {"pool": "WH09", "on_hand": 5, "locations": [{"code": "WH09-01", "on_hand": 5}]}, {"pool": "WH10", "on_hand": 0, "locations": [{"code": "WH10-01", "on_hand": 0}]}, {"pool": "WH11", "on_hand": 0, "locations": [{"code": "WH11-01", "on_hand": 0}]}, {"pool": "WH12", "on_hand": 0, "locations": [{"code": "WH12-01", "on_hand": 0}]}], "reorder": {"below_count": 1527, "set_count": 11467, "examples": [{"code": "PRD-0001", "level": 200, "available": 40}, {"code": "PRD-0002", "level": 600, "available": 484}, {"code": "PRD-0003", "level": 150, "available": 38}]}, "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0}, "masked": true, "compare": {"label": "Tue 27 Oct", "last_week_amount": "468000.00"}, "deliveries": {"to_deliver": 12, "project_orders": 3}, "samples": ["compare"], "projects": {"open_count": 26, "more": 14, "dormant": 3, "sites": [{"key": "p4", "name": "Menara Delta", "code": "P-0104", "stage": "po_received", "final_negotiation": false, "state": "selangor", "launch_date": "2022-06-01", "delivery_date": "2025-06-01", "estimated_value": "3000000.00"}, {"key": "p7", "name": "Kondo Golf", "code": "P-0107", "stage": "tendering", "final_negotiation": true, "state": "kl", "launch_date": "2025-09-01", "delivery_date": "2028-09-01", "estimated_value": "2100000.00"}, {"key": "p8", "name": "Menara India", "code": "P-0108", "stage": "identified", "final_negotiation": false, "state": "kl", "launch_date": "2024-01-01", "delivery_date": "2027-06-01", "estimated_value": "1750000.00"}, {"key": "p1", "name": "Residensi Alpha", "code": "P-0101", "stage": "quoted", "final_negotiation": false, "state": "johor", "launch_date": "2025-03-01", "delivery_date": "2028-03-01", "estimated_value": "1200000.00"}, {"key": "p12", "name": "Bukit Mike", "code": "P-0112", "stage": "identified", "final_negotiation": false, "state": "selangor", "launch_date": null, "delivery_date": null, "estimated_value": "950000.00"}, {"key": "p6", "name": "Pangsapuri Foxtrot", "code": "P-0106", "stage": "specified", "final_negotiation": false, "state": "johor", "launch_date": "2026-06-01", "delivery_date": "2029-06-01", "estimated_value": "880000.00"}, {"key": "p13", "name": "Plaza November", "code": "P-0113", "stage": "po_received", "final_negotiation": false, "state": null, "launch_date": "2026-03-01", "delivery_date": "2029-03-01", "estimated_value": "700000.00"}, {"key": "p2", "name": "Hotel Bravo", "code": "P-0102", "stage": "tendering", "final_negotiation": true, "state": "selangor", "launch_date": null, "delivery_date": "2026-06-01", "estimated_value": "640000.00"}, {"key": "p10", "name": "Vista Kilo", "code": "P-0110", "stage": "quoted", "final_negotiation": false, "state": "penang", "launch_date": "2023-01-01", "delivery_date": "2026-10-01", "estimated_value": "560000.00"}, {"key": "p9", "name": "Taman Juliet", "code": "P-0109", "stage": "registered", "final_negotiation": false, "state": "perak", "launch_date": "2024-06-01", "delivery_date": "2027-03-01", "estimated_value": "420000.00"}, {"key": "p11", "name": "Lima Heights", "code": "P-0111", "stage": "specified", "final_negotiation": false, "state": "sabah", "launch_date": "2026-08-01", "delivery_date": "2029-02-01", "estimated_value": "300000.00"}, {"key": "p3", "name": "Taman Charlie", "code": "P-0103", "stage": "registered", "final_negotiation": false, "state": "sarawak", "launch_date": "2027-01-01", "delivery_date": "2030-01-01", "estimated_value": null}]}, "trading_houses": {"more": 2, "rows": [{"key": "t1", "name": "TH Alpha Trading", "state": "selangor", "open_projects": 4, "today_docs": 2, "sites": ["p4", "p12", "p2", "p1"]}, {"key": "t2", "name": "TH Bravo Supply", "state": "selangor", "open_projects": 3, "today_docs": 0, "sites": ["p2", "p8", "p10"]}, {"key": "t3", "name": "TH Charlie Trading", "state": "kl", "open_projects": 3, "today_docs": 1, "sites": ["p6", "p7", "p11"]}, {"key": "t4", "name": "TH Delta Trading", "state": "johor", "open_projects": 2, "today_docs": 0, "sites": ["p1", "p6"]}, {"key": "t5", "name": "TH Echo Supply", "state": null, "open_projects": 1, "today_docs": 0, "sites": ["p13"]}]}}</script>
+<script type="module">
+const DATA = JSON.parse(document.getElementById('town-data').textContent);
+const root = document.documentElement;
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+const state = { redact: false, wallboard: false, night: false, ship: 'normal', touch: false, motion: !reducedMotion, hour: 15 };
+const rm = (s) => 'RM ' + Number(s).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const rm0 = (s) => 'RM ' + Math.round(Number(s)).toLocaleString('en-MY');
+const n = (v) => Number(v).toLocaleString('en-MY');
+const short = (name) => name.replace(/\s*(SDN\.?\s*BHD\.?|ENTERPRISE|MARKETING|TRADING|\(M\))/gi, '').replace(/\s+/g, ' ').trim();
+const shopLabel = (s) => state.redact ? 'Dealer' : state.wallboard ? (s.rank ? `Shop #${s.rank}` : 'Dealer') : short(s.name);
+const shopToday = (s) => state.redact || state.wallboard || !s.today_amount ? `${s.today_docs || 0} invoice${s.today_docs === 1 ? '' : 's'} today` : `${rm0(s.today_amount)} today`;
+const T = DATA.today, C = DATA.compare, D = DATA.deliveries, A = DATA.approvals, R = DATA.reorder;
+const bought = DATA.shops.filter(s => s.today_docs);
+const othersToday = Math.max(0, (T.dealer_customer_count || 0) - bought.length);
+const pct = C ? (Number(T.amount) - Number(C.last_week_amount)) / Number(C.last_week_amount) * 100 : null;
+const sample = new Set(DATA.samples || []);
+
+/* ---------------- TOWN-PROJECT-CITY: the project district (all names, codes, values and dates invented) ---------------- */
+const SPLIT = T.split, PJ = DATA.projects, TH = DATA.trading_houses;
+const STAGES = { identified: ['Identified', 0x9ca3af, '--st-identified'], registered: ['Registered', 0x2563eb, '--st-registered'], specified: ['Spec In', 0x0d9488, '--st-specified'],
+  quoted: ['Quoted', 0xf59e0b, '--st-quoted'], tendering: ['Tendering', 0xea580c, '--st-tendering'], po_received: ['PO Received', 0x16a34a, '--st-po'] };
+const TODAY = new Date('2026-11-03T00:00:00');
+const fmtMonth = (s) => new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+// The look comes from the project's OWN timeline, never from our sales stage (owner, 11 Nov; card rule 4).
+function siteLook(p) {
+  if (!p.launch_date || !p.delivery_date) return { look: 'plain', k: null };
+  const l = new Date(p.launch_date + 'T00:00:00'), d = new Date(p.delivery_date + 'T00:00:00');
+  if (d <= l) return { look: 'plain', k: null };
+  const k = (TODAY - l) / (d - l);
+  return { look: k < 0 ? 'before' : k < 0.25 ? 'ground' : k < 0.6 ? 'frame' : k < 0.95 ? 'clad' : 'done', k };
+}
+const LOOK_WORDS = { plain: 'plain plot, dates not set', before: 'fenced plot, not started', ground: 'groundworks', frame: 'frame going up', clad: 'cladding, crane still up', done: 'finished' };
+function timeline(p) {
+  const { look, k } = siteLook(p);
+  if (look === 'plain') return `${p.launch_date ? 'Launch ' + fmtMonth(p.launch_date) : 'No launch date'} · ${p.delivery_date ? 'Delivery ' + fmtMonth(p.delivery_date) : 'no delivery date'}`;
+  const tail = look === 'before' ? 'not started' : k >= 1 ? 'delivery date passed' : `${Math.round(k * 100)}% of the way`;
+  return `Launch ${fmtMonth(p.launch_date)} · Delivery ${fmtMonth(p.delivery_date)} · ${tail}`;
+}
+const hideNames = () => state.redact || state.wallboard;
+const siteTitle = (p) => hideNames() ? 'Project site' : `${p.name} · ${p.code}`;
+const thTitle = (t) => hideNames() ? 'Trading house' : t.name;
+const stateName = (k) => ({ perlis: 'Perlis', kedah: 'Kedah', penang: 'Pulau Pinang', perak: 'Perak', kelantan: 'Kelantan', terengganu: 'Terengganu', pahang: 'Pahang', selangor: 'Selangor', kl: 'Kuala Lumpur', putrajaya: 'Putrajaya', ns: 'Negeri Sembilan', melaka: 'Melaka', johor: 'Johor', sarawak: 'Sarawak', sabah: 'Sabah', labuan: 'Labuan' }[k] || 'State not set');
+const stageChip = (p) => `<span class="dot" style="background:var(${STAGES[p.stage][2]})"></span>${STAGES[p.stage][0]}`;
+const splitText = () => state.redact
+  ? `Dealers ${n(SPLIT.dealer.invoice_count)} · Projects ${n(SPLIT.project.invoice_count)} · Other ${n(SPLIT.other.invoice_count)} invoices`
+  : `Dealers ${rm0(SPLIT.dealer.amount)} · Projects ${rm0(SPLIT.project.amount)} · Other ${rm0(SPLIT.other.amount)}`;
+const gateText = () => `+${n(PJ.more)} more projects · +${n(PJ.dormant)} dormant`;
+let STATE_INFO = null; // filled by the scene: counts per state (dealers, bought today, sites, trading houses)
+const deliverText = () => `${D ? n(D.to_deliver) : '-'} to deliver · ${n(D?.project_orders || 0)} projects`;
+
+/* ---------------- incoming shipments (SAMPLE until the crew data request is answered) ---------------- */
+const DAY = new Date('2026-11-03T00:00:00');
+const addDays = (d, k) => { const x = new Date(d); x.setDate(x.getDate() + k); return x; };
+const iso = (d) => d.toISOString().slice(0, 10);
+const fmtDay = (s) => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric', month: 'short' }) : 'No ETA';
+function makeIncoming(kind) {
+  // Owner, 10 Nov: two states only. INCOMING = ETA not passed (or no ETA); LATE = ETA passed. No windows.
+  if (kind === 'none') return { incoming: 0, late: 0, total: 0, next_eta: null, shipments: [] };
+  const [nIn, nLate] = kind === 'many' ? [140, 0] : [29, 70];
+  const row = (i, o) => ({ shipment_number: `SHP-${String(2601 + i).padStart(5, '0')}`, container: `CNTR${String(4410000 + i * 37).padStart(7, '0')}`,
+    supplier: `Supplier ${String.fromCharCode(65 + (i % 9))}`, eta: o == null ? null : iso(addDays(DAY, o)), products: 4 + (i * 7) % 38, quantity: 300 + (i * 977) % 5200, late: o != null && o < 0 });
+  const inc = Array.from({ length: nIn }, (_, i) => row(i, i >= nIn - 2 ? null : Math.floor(i * 0.9))); // ETA ascending, no ETA last
+  const late = Array.from({ length: nLate }, (_, i) => row(nIn + i, -1 - Math.floor(i * 2.1)));      // most recently late first
+  return { incoming: nIn, late: nLate, total: nIn + nLate, next_eta: inc.find(r => r.eta)?.eta ?? null, shipments: [...inc.slice(0, 30), ...late.slice(0, 30)] };
+}
+let IN = makeIncoming('normal');
+const supplierOf = (r) => state.redact || state.wallboard ? '' : r.supplier;
+const portSign = () => IN.incoming ? `Incoming: ${n(IN.incoming)}` : 'Incoming: none';
+const portSub = () => IN.total ? `${n(IN.incoming)} incoming${IN.late ? ` · ${n(IN.late)} late` : ''}` : 'Nothing on the way';
+
+document.getElementById('asof').textContent = 'Tue 3 Nov 2026 · data as of 4 Nov, 10:24';
+document.getElementById('company').textContent = DATA.company;
+document.getElementById('dataNotice').textContent = (DATA.masked
+  ? 'Masked copy: names, codes and figures are scrambled. '
+  : 'Real dev data. ')
+  + 'Malaysia map (TOWN-PROJECT-CITY card v2): a schematic, not to scale. Every dealer, project, trading house, state assignment, value and date is invented; shipment, lorry and coaster figures too. '
+  + 'Drag up and down to tilt, scroll to zoom, the round arrow resets the view.';
+
+/* ---------------- 2D cards ---------------- */
+function renderCards() {
+  const S = (k) => sample.has(k) ? ' <span class="chip sample">sample</span>' : '';
+  const vs = pct == null ? '' : `<span class="${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%</span> vs ${C.label}${S('compare')}`;
+  document.getElementById('cards').innerHTML = `
+    <button class="card" data-k="sales"><div class="ic" style="background:#0f766e">RM</div><div class="q">How much did we sell today?</div>
+      <div class="v">${state.redact ? n(T.invoice_count) + ' invoices' : rm(T.amount)}</div><div class="s">${state.redact ? '' : n(T.invoice_count) + ' invoices · '}${vs}</div><div class="split3">${splitText()}</div></button>
+    <button class="card" data-k="bought"><div class="ic" style="background:var(--lit)">${bought.length + othersToday}</div><div class="q">Who bought today?</div>
+      <div class="v">${n(T.dealer_customer_count || bought.length)} dealers</div>
+      <ul>${bought.slice(0, 5).map(s => `<li><span>${shopLabel(s)}</span><span>${state.redact || state.wallboard || !s.today_amount ? s.today_docs + ' inv' : rm0(s.today_amount)}</span></li>`).join('')}</ul></button>
+    <button class="card" data-k="low"><div class="ic" style="background:var(--low)">!</div><div class="q">What stock is low?</div>
+      <div class="v">${n(R.below_count)} products</div><div class="s">below reorder level</div></button>
+    <button class="card" data-k="deliver"><div class="ic" style="background:var(--deliver)">${D ? D.to_deliver : '-'}</div><div class="q">What must go out?</div>
+      <div class="v">${D ? n(D.to_deliver) + ' to deliver' : '-'}${S('deliveries')}</div><div class="s">sales orders due · ${n(D?.project_orders || 0)} for projects</div></button>
+    <button class="card" data-k="district"><div class="ic" style="background:var(--trading)">${PJ.open_count > 99 ? '99+' : PJ.open_count}</div><div class="q">What projects are open?</div>
+      <div class="v">${n(PJ.open_count)} open projects</div><div class="s">${n(TH.rows.filter(t => t.today_docs).length)} trading houses bought today · ${n(PJ.dormant)} dormant</div></button>
+    <button class="card" data-k="approve"><div class="ic" style="background:var(--approve)">${A.total}</div><div class="q">What needs a decision?</div>
+      <div class="v">${A.total ? A.total + ' waiting' : 'All clear'}</div><div class="s">${A.purchase_requests} purchase request${A.purchase_requests === 1 ? '' : 's'} · ${A.quotation_documents} quotations</div></button>
+    <button class="card" data-k="port"><div class="ic" style="background:var(--port)">${IN.incoming > 99 ? '99+' : IN.incoming}</div><div class="q">What is coming in?</div>
+      <div class="v">${IN.incoming ? n(IN.incoming) + ' incoming' : IN.total ? 'None incoming' : 'Nothing on the way'}${IN.late ? ` <span class="chip late">${n(IN.late)} late</span>` : ''}</div>
+      <div class="s">${IN.next_eta ? `next ETA ${fmtDay(IN.next_eta)}` : 'from overseas suppliers'}</div></button>`;
+  document.querySelectorAll('.card').forEach(c => c.onclick = () => open[c.dataset.k]());
+}
+
+/* ---------------- lightbox (shared by both views) ---------------- */
+const overlay = document.getElementById('overlay'), dialog = document.getElementById('dialog'), dlgBody = document.getElementById('dlgBody');
+let lastFocus = null;
+const closeBox = () => { overlay.classList.remove('open'); lastFocus?.focus?.(); };
+document.getElementById('dlgClose').onclick = closeBox;
+overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeBox(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('open')) closeBox(); });
+const show = (html, wide = false) => {
+  lastFocus = document.activeElement; hideTip(); hideHint();
+  dlgBody.innerHTML = html.replace('<h2>', '<h2 id="dlgTitle">'); dialog.classList.toggle('wide', wide);
+  overlay.classList.add('open'); document.getElementById('dlgClose').focus();
+};
+const btn = (t) => `<p style="margin:14px 0 0"><button class="btn">${t}</button></p>`;
+const open = {
+  sales: () => show(`<h2>Today's sales</h2><div class="meta">Same figure as the sales report</div><table>
+      ${state.redact ? '' : `<tr><td>Invoiced today</td><td class="num">${rm(T.amount)}</td></tr>`}
+      <tr><td>Invoices</td><td class="num">${n(T.invoice_count)}</td></tr><tr><td>Credit notes</td><td class="num">${n(T.credit_note_count)}</td></tr>
+      <tr><td>Customers</td><td class="num">${n(T.customer_count)}</td></tr>
+      ${['dealer', 'project', 'other'].map(k => `<tr><td>${{ dealer: 'Dealers', project: 'Projects', other: 'Other' }[k]}</td><td class="num">${state.redact ? n(SPLIT[k].invoice_count) + ' invoices' : rm(SPLIT[k].amount)}</td></tr>`).join('')}
+      ${C && !state.redact ? `<tr><td>vs all of ${C.label}</td><td class="num">${rm(C.last_week_amount)}</td></tr>` : ''}</table>${state.redact ? '' : btn('Open sales report')}`),
+  bought: () => show(`<h2>Bought today</h2><div class="meta">${n(T.dealer_customer_count || bought.length)} dealers invoiced today</div><table>
+      ${bought.map(s => `<tr><td>${shopLabel(s)}</td><td class="num">${state.redact || state.wallboard || !s.today_amount ? s.today_docs + ' inv' : rm(s.today_amount)}</td></tr>`).join('')}
+      ${othersToday ? `<tr><td>+ ${othersToday} more dealers</td><td></td></tr>` : ''}</table>`),
+  shop: (s) => show(`<h2>${shopLabel(s)}</h2><div class="meta">${s.today_docs ? 'Bought today' : 'No invoice today'}${s.rank && !state.redact ? ' · rank ' + s.rank + ' of 30 (90 days)' : ''}</div><table>
+      <tr><td>Invoices today</td><td class="num">${s.today_docs || 0}</td></tr>
+      ${state.redact || state.wallboard || !s.today_amount ? '' : `<tr><td>Invoiced today</td><td class="num">${rm(s.today_amount)}</td></tr>`}
+      ${state.redact || state.wallboard || !s.ninety_day_amount ? '' : `<tr><td>Last 90 days</td><td class="num">${rm(s.ninety_day_amount)}</td></tr>`}</table>
+      ${state.redact ? '' : btn('Open invoices')}`),
+  low: () => show(`<h2>${n(R.below_count)} products low</h2><div class="meta">below their reorder level, of ${n(R.set_count)} with a level</div>${btn('Open reorder planning')}`),
+  deliver: () => show(`<h2>${D ? n(D.to_deliver) : '-'} to deliver</h2><div class="meta">Sales orders due today or overdue</div><table>
+      <tr><td>For dealers and other customers</td><td class="num">${n(D.to_deliver - (D.project_orders || 0))}</td></tr><tr><td>For projects</td><td class="num">${n(D.project_orders || 0)}</td></tr></table>${btn('Open sales orders')}`),
+  site: (p) => show(`<h2>${siteTitle(p)}</h2><div class="meta">${STAGES[p.stage][0]}${p.final_negotiation ? ' · final negotiation' : ''}</div><table>
+      <tr><td>Stage</td><td class="num">${stageChip(p)}</td></tr>
+      <tr><td>Final negotiation</td><td class="num">${p.final_negotiation ? 'Yes' : 'No'}</td></tr>
+      <tr><td>State</td><td class="num">${stateName(p.state)}</td></tr>
+      <tr><td>Timeline</td><td class="num">${timeline(p)}</td></tr>
+      ${hideNames() ? '' : `<tr><td>Estimated value</td><td class="num">${p.estimated_value ? rm(p.estimated_value) : 'Not set'}</td></tr>`}</table>
+      ${hideNames() ? '' : btn('Open project')}`),
+  trading: (t) => show(`<h2>${thTitle(t)}</h2><div class="meta">${t.today_docs ? 'Bought today' : 'No project invoice today'}</div><table>
+      <tr><td>Open projects it is on</td><td class="num">${n(t.open_projects)}</td></tr>
+      ${hideNames() ? '' : t.sites.map(k => PJ.sites.find(p => p.key === k)).filter(Boolean).map(p => `<tr><td style="padding-left:12px;color:var(--muted-foreground)">${p.name} · ${p.code}</td><td class="num">${stageChip(p)}</td></tr>`).join('')}
+      <tr><td>Project invoices today</td><td class="num">${n(t.today_docs)}</td></tr></table>`),
+  state: (k) => { const i = STATE_INFO(k); show(`<h2>${i.name}</h2><div class="meta">${i.name}: ${n(i.dealers)} dealer${i.dealers === 1 ? '' : 's'} (${n(i.bought)} bought today) · ${n(i.sites)} project site${i.sites === 1 ? '' : 's'} · ${n(i.towers)} trading house${i.towers === 1 ? '' : 's'}</div><table>
+      <tr><td>Dealers</td><td class="num">${n(i.dealers)}</td></tr><tr><td>Bought today</td><td class="num">${n(i.bought)}</td></tr>
+      <tr><td>Project sites</td><td class="num">${n(i.sites)}</td></tr><tr><td>Trading houses</td><td class="num">${n(i.towers)}</td></tr></table>`); },
+  district: () => show(`<h2>${n(PJ.open_count)} open projects</h2><div class="meta">${n(PJ.sites.length)} on the map · +${n(PJ.more)} more · ${n(PJ.dormant)} dormant, not shown</div><div class="tablewrap"><table>
+      <thead><tr>${hideNames() ? '' : '<th>Project</th>'}<th>Stage</th><th>Site</th></tr></thead><tbody>
+      ${PJ.sites.map(p => `<tr>${hideNames() ? '' : `<td>${p.name}</td>`}<td style="white-space:nowrap">${stageChip(p)}${p.final_negotiation ? ' <span class="chip late">final</span>' : ''}</td><td>${LOOK_WORDS[siteLook(p).look]}</td></tr>`).join('')}
+      <tr><td colspan="${hideNames() ? 2 : 3}" style="color:var(--muted-foreground)">+ ${n(PJ.more)} more projects</td></tr></tbody></table></div>${hideNames() ? '' : btn('Open projects')}`, true),
+  approve: () => show(`<h2>Approvals</h2><div class="meta">${A.total ? A.total + ' waiting for a decision' : 'All clear'}</div><table>
+      <tr><td>Purchase requests</td><td class="num">${A.purchase_requests}</td></tr><tr><td>Quotation documents</td><td class="num">${A.quotation_documents}</td></tr></table>${btn('Open purchase requests')}`),
+  port: () => {
+    if (!IN.total) return show(`<h2>Incoming shipments</h2><div class="empty"><h3>Nothing on the way</h3><p>No open shipment from an overseas supplier.</p></div>${btn('Open packing lists')}`);
+    const sup = !(state.redact || state.wallboard);
+    const cols = sup ? 6 : 5;
+    const rowsOf = (list) => list.map(r => `<tr><td>${r.shipment_number}</td><td class="sm-hide">${r.container}</td>${sup ? `<td>${r.supplier}</td>` : ''}
+      <td style="white-space:nowrap">${fmtDay(r.eta)}</td><td class="num sm-hide">${r.products}</td><td class="num">${n(r.quantity)}</td></tr>`).join('');
+    const section = (title, list, count, isLate) => count ? `<tr><th colspan="${cols}" style="padding-top:14px;color:var(--foreground)">${title} ${isLate ? `<span class="chip late">${n(count)}</span>` : `<span class="chip">${n(count)}</span>`}</th></tr>${rowsOf(list)}
+      ${count > list.length ? `<tr><td colspan="${cols}" style="color:var(--muted-foreground)">+ ${n(count - list.length)} more</td></tr>` : ''}` : '';
+    const inc = IN.shipments.filter(r => !r.late), late = IN.shipments.filter(r => r.late);
+    show(`<h2>Incoming shipments</h2><div class="meta">Open shipments from overseas suppliers</div>
+      <div class="tablewrap"><table><thead><tr><th>Shipment</th><th class="sm-hide">Container</th>${sup ? '<th>Supplier</th>' : ''}<th>ETA</th><th class="num sm-hide">Products</th><th class="num">Qty</th></tr></thead><tbody>
+      ${section('Incoming, by ETA', inc, IN.incoming, false)}${section('Late, ETA passed, not received', late, IN.late, true)}</tbody></table></div>${btn('Open packing lists')}`, true);
+  },
+};
+let hintTimer = setTimeout(hideHint, 6000);
+function hideHint() { clearTimeout(hintTimer); document.getElementById('hint').classList.add('gone'); }
+
+/* ---------------- tooltip ---------------- */
+const tip = document.getElementById('tip');
+let tipFor = null; // the object + instance the tooltip shows
+function showTip(text, sub, x, y, touch) {
+  tip.innerHTML = `<b>${text}</b>${sub ? `<div class="sub">${sub}</div>` : ''}`;
+  const stage = document.getElementById('stage').getBoundingClientRect();
+  tip.classList.add('on'); tip.classList.toggle('touch', !!touch);
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(Math.max(x, w / 2 + 6), stage.width - w / 2 - 6) + 'px';
+  tip.style.top = Math.max(y, h + 18) + 'px';
+}
+function hideTip() { tip.classList.remove('on'); tipFor = null; }
+
+/* ---------------- the scene: a stylised map of Malaysia in a shallow sea ---------------- */
+let THREE; try { THREE = await import('three'); } catch { THREE = null; }
+const canvas = document.getElementById('scene');
+const webgl = THREE && (() => { try { return !!canvas.getContext('webgl2'); } catch { return false; } })();
+let api = webgl ? buildScene() : null;
+if (!api) document.getElementById('stage').innerHTML = '<div style="padding:24px;color:var(--muted-foreground)">3D is not available on this device; the 2D view beside shows the same answers.</div>';
+
+function buildScene() {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  const scene = new THREE.Scene(); const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 700);
+  // camera: north up (the camera stands to the south), tilt and zoom as before
+  const DEG = Math.PI / 180, YAW0 = Math.PI / 2, EL0 = 56 * DEG, Z0 = 1, EL_MIN = 20 * DEG, EL_MAX = 85 * DEG, Z_MIN = 0.8, Z_MAX = 5, RADIUS = 160;
+  let yaw = YAW0, el = EL0, zoom = Z0, dirty = true; let boardExtra = 0, boardInv = 0;
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const knob = document.getElementById('knob');
+  let LOOK = new THREE.Vector3(0, 0, 0), FIT = { w: 80, d: 54 };
+  const labels = [];
+  const placeCam = () => {
+    cam.position.set(LOOK.x + Math.cos(yaw) * Math.cos(el) * RADIUS, LOOK.y + Math.sin(el) * RADIUS, LOOK.z + Math.sin(yaw) * Math.cos(el) * RADIUS);
+    cam.lookAt(LOOK); cam.zoom = zoom; cam.updateProjectionMatrix(); fitLabels();
+    knob.style.top = (64 * (1 - (el - EL_MIN) / (EL_MAX - EL_MIN)) - 2) + 'px'; dirty = true; hideTip();
+  };
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false); const a = w / h;
+    // one camera fits the whole map (East Malaysia included) at the default tilt
+    const z = Math.max(FIT.d * Math.sin(EL0) / 2 + 5, (FIT.w / 2 + 2) / a);
+    cam.left = -z * a; cam.right = z * a; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix(); fitLabels(); dirty = true;
+  }
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xb6c2b0, 2.0); scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(-30, 60, 40); scene.add(sun);
+
+  const col = (h) => new THREE.Color(h);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), E = new THREE.Euler();
+  function part(geo, color, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0) {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0)), new THREE.Vector3(sx, sy, sz)));
+    const c = col(color), k = g.attributes.position.count, arr = new Float32Array(k * 3);
+    for (let i = 0; i < k; i++) arr.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3)); g.deleteAttribute('uv'); return g;
+  }
+  function merge(parts) { const out = new THREE.BufferGeometry(); ['position', 'normal', 'color'].forEach(key => { const arr = new Float32Array(parts.reduce((s, p) => s + p.attributes[key].array.length, 0)); let o = 0; parts.forEach(p => { arr.set(p.attributes[key].array, o); o += p.attributes[key].array.length; }); out.setAttribute(key, new THREE.BufferAttribute(arr, 3)); }); return out; }
+  const BOX = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const CYL = (r1, r2, h, s = 16) => new THREE.CylinderGeometry(r1, r2, h, s).translate(0, h / 2, 0);
+  const PRISM = (() => { const g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.rotateZ(Math.PI / 2); g.rotateX(Math.PI / 2); g.rotateY(Math.PI / 2); g.translate(0, 0.25, 0); return g; })();
+  const mat = () => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const pickables = [];
+  const facing = (dx, dz) => Math.atan2(dx, dz); // ry that turns a local +z front toward (dx, dz)
+
+  /* labels: DOM-pill look drawn on a sprite, kept at a constant size on screen (like the live DOM pills) */
+  function label(text, x, y, z, bg = 'rgba(255,255,255,0.95)', fg = '#111827', px = 11, opts = {}) {
+    const c = document.createElement('canvas'); const g0 = c.getContext('2d'); g0.font = '600 52px Inter, sans-serif';
+    c.width = Math.ceil(g0.measureText(text).width + 64); c.height = 96; const g = c.getContext('2d');
+    if (bg) { g.fillStyle = bg; g.beginPath(); g.roundRect(3, 3, c.width - 6, 90, 45); g.fill(); }
+    g.fillStyle = fg; g.font = '600 52px Inter, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    if (!bg) { g.lineWidth = 10; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineJoin = 'round'; g.strokeText(text, c.width / 2, 50); }
+    g.fillText(text, c.width / 2, 50);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false })); sp.renderOrder = opts.order ?? 10;
+    if (opts.center) sp.center.set(...opts.center);
+    sp.userData.px = [c.width * px / 52, c.height * px / 52]; sp.position.set(x, y, z); scene.add(sp); labels.push(sp); fitOne(sp); return sp;
+  }
+  const upp = () => (cam.top - cam.bottom) / (zoom * Math.max(1, canvas.clientHeight)); // world units per screen pixel
+  const fitOne = (sp) => { const u = upp(); sp.scale.set(sp.userData.px[0] * u, sp.userData.px[1] * u, 1); };
+  function fitLabels() { labels.forEach(fitOne); dirty = true; }
+  const dropLabel = (sp) => { scene.remove(sp); const i = labels.indexOf(sp); if (i >= 0) labels.splice(i, 1); sp.material.map.dispose(); sp.material.dispose(); };
+
+  /* ======== the map: a static polygon table (lon, lat), transformed to a schematic ========
+     Peninsular Malaysia at 10 units a degree, with Selangor and Kuala Lumpur blown up around Shah Alam (HQ gets room);
+     East Malaysia at 3.3 units a degree, pulled closer across the South China Sea. Not to scale, on purpose. */
+  const SP = 10, WK = 1.7, WS = 7.5, SA = [101.52, 3.07], EX = 25, SE = 3.3;
+  const sa0 = [(SA[0] - 102.2) * SP, (SA[1] - 3.9) * SP];
+  function geo(lon, lat) {
+    if (lon < 106) {
+      let x = (lon - 102.2) * SP, y = (lat - 3.9) * SP; const dx = x - sa0[0], dy = y - sa0[1];
+      const w = WK * Math.exp(-(dx * dx + dy * dy) / (WS * WS)); x += dx * w; y += dy * w; return [x, -y];
+    }
+    return [EX + (lon - 109.6) * SE, -(lat - 3.6) * SE];
+  }
+  const circle = (lon, lat, r, n = 14, sy = 1) => Array.from({ length: n }, (_, i) => [lon + Math.cos(i / n * 2 * Math.PI) * r, lat + Math.sin(i / n * 2 * Math.PI) * r * sy]);
+  // shared border points, so neighbouring states meet exactly
+  const J = {
+    P1: [100.13, 6.70], P2: [100.38, 6.72], P3: [100.40, 6.42], P4: [100.22, 6.30], K1: [100.36, 5.62], PG4: [100.52, 5.62], PG3: [100.56, 5.20], PG2: [100.40, 5.12],
+    T1: [100.65, 6.50], J1: [101.05, 5.85], KP: [100.80, 5.40], J2: [101.60, 5.72], J5: [101.70, 4.70], J4: [101.62, 3.66], J3: [100.85, 3.85],
+    KC: [102.12, 6.22], KT: [102.55, 5.85], KTi: [102.40, 5.10], J6: [102.35, 4.60], TP1: [102.65, 4.50], TP2: [103.00, 4.22], TPc: [103.45, 4.20],
+    SPa: [101.88, 3.48], J8: [102.00, 3.10], SN1: [101.85, 2.85], SNc: [101.80, 2.55], J7: [102.60, 2.75], PJ1: [102.90, 2.80], PJ2: [103.20, 2.60], PJc: [103.60, 2.62],
+    NM1: [102.05, 2.42], NM2: [102.35, 2.45], NMJ: [102.55, 2.30], MJc: [102.60, 2.05],
+  };
+  const STATES = [
+    { key: 'perlis', name: 'Perlis', poly: ['P1', 'P2', 'P3', 'P4'], at: [100.27, 6.52] },
+    { key: 'kedah', name: 'Kedah', poly: ['P4', 'P3', 'T1', 'J1', 'KP', 'PG3', 'PG4', 'K1'], at: [100.62, 6.0] },
+    { key: 'penang', name: 'Pulau Pinang', poly: ['K1', 'PG4', 'PG3', 'PG2'], extra: [circle(100.12, 5.38, 0.2, 14)], at: [100.12, 5.38] },
+    { key: 'perak', name: 'Perak', poly: ['PG2', 'PG3', 'KP', 'J1', 'J2', 'J5', 'J4', 'J3', [100.62, 4.32], [100.55, 4.75]], at: [101.15, 4.75] },
+    { key: 'kelantan', name: 'Kelantan', poly: ['J2', [101.90, 5.95], 'KC', 'KT', 'KTi', 'J6', [101.95, 4.55], 'J5'], at: [102.0, 5.35] },
+    { key: 'terengganu', name: 'Terengganu', poly: ['KT', [103.10, 5.35], [103.40, 4.78], 'TPc', 'TP2', 'TP1', 'J6', 'KTi'], at: [102.95, 4.85] },
+    { key: 'pahang', name: 'Pahang', poly: ['J5', [101.95, 4.55], 'J6', 'TP1', 'TP2', 'TPc', [103.45, 3.60], [103.45, 3.00], 'PJc', 'PJ2', 'PJ1', 'J7', 'J8', 'SPa', 'J4'], at: [102.75, 3.75] },
+    { key: 'selangor', name: 'Selangor', poly: ['J3', 'J4', 'SPa', 'J8', 'SN1', 'SNc', [101.55, 2.72], [101.30, 2.92], [101.22, 3.20], [101.05, 3.55]], at: [101.25, 3.5] },
+    { key: 'ns', name: 'Negeri Sembilan', poly: ['SNc', 'SN1', 'J8', 'J7', 'NMJ', 'NM2', 'NM1'], at: [102.2, 2.72] },
+    { key: 'melaka', name: 'Melaka', poly: ['NM1', 'NM2', 'NMJ', 'MJc', [102.25, 2.15]], at: [102.3, 2.28] },
+    { key: 'johor', name: 'Johor', poly: ['MJc', 'NMJ', 'J7', 'PJ1', 'PJ2', 'PJc', [103.85, 2.25], [104.15, 1.85], [104.28, 1.42], [103.75, 1.43], [103.50, 1.28], [103.35, 1.50], [102.90, 1.85]], at: [103.3, 2.2] },
+    { key: 'kl', name: 'Kuala Lumpur', poly: circle(101.82, 3.2, 0.13, 16), raised: 0.18, at: [101.82, 3.2] },
+    { key: 'putrajaya', name: 'Putrajaya', poly: circle(101.72, 2.93, 0.05, 10), raised: 0.18, at: [101.72, 2.93], small: true },
+    { key: 'sarawak', name: 'Sarawak', poly: [[109.65, 2.08], [110.35, 1.62], [111.1, 1.5], [111.25, 2.45], [111.9, 2.85], [113.05, 3.2], [114.0, 4.4], [114.6, 4.0], [115.0, 4.6], [115.4, 4.95], [115.7, 4.2], [115.2, 3.0], [114.9, 2.3], [114.6, 1.6], [113.6, 1.25], [112.5, 1.5], [111.8, 1.1], [110.5, 1.0]], at: [112.7, 2.15] },
+    { key: 'sabah', name: 'Sabah', poly: [[115.4, 4.95], [115.6, 5.4], [116.0, 6.0], [116.7, 6.95], [116.85, 7.0], [117.3, 6.6], [117.7, 5.9], [118.1, 5.85], [119.25, 5.35], [118.6, 4.95], [118.1, 4.35], [117.6, 4.15], [116.7, 4.35], [115.7, 4.2]], at: [117.2, 4.9] },
+    { key: 'labuan', name: 'Labuan', poly: circle(115.05, 5.55, 0.12, 10), at: [115.05, 5.55], small: true },
+  ];
+  // the "State not set" islet sits in the Strait just off Shah Alam / Port Klang (world coordinates, not a state)
+  const NS_ISLE = { key: 'notset', name: 'State not set', centre: [-30.5, 5.5], r: 4.6 };
+  const pt = (p) => typeof p === 'string' ? J[p] : p;
+  const tints = [0xd6e7cb, 0xdcebcf, 0xd2e4c6, 0xe0ecd2, 0xd9e9cc, 0xcfe2c4];
+  const stateTop = {}, stateMesh = {};
+  const LAND = 0.5;
+  function polyWorld(poly) { return poly.map(p => geo(...pt(p))); }
+  function extrude(ptsW, h, colour) {
+    const shape = new THREE.Shape(ptsW.map(([x, z]) => new THREE.Vector2(x, -z)));
+    const g = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false }); g.rotateX(-Math.PI / 2);
+    return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: colour, flatShading: true }));
+  }
+  const edgeCount = new Map(), edges = [];
+  const ek = (a, b) => [a, b].map(p => p.map(v => v.toFixed(2)).join(',')).sort().join('|');
+  const outlines = [];
+  STATES.forEach((s, i) => {
+    const polys = [polyWorld(s.poly), ...(s.extra || []).map(polyWorld)];
+    const h = LAND + (s.raised || 0) + (i % 3) * 0.04; stateTop[s.key] = h;
+    polys.forEach((P, j) => {
+      const m = extrude(P, h, tints[i % tints.length]); scene.add(m); if (!j) stateMesh[s.key] = m;
+      pickables.push([m, () => open.state(s.key), () => stateTip(s.key)]);
+      outlines.push([P, h]);
+      if (!s.raised) P.forEach((a, k) => { const b = P[(k + 1) % P.length]; const key = ek(a, b); edgeCount.set(key, (edgeCount.get(key) || 0) + 1); edges.push([a, b]); });
+    });
+  });
+  { // the islet
+    const [cx, cz] = NS_ISLE.centre; const P = Array.from({ length: 16 }, (_, i) => { const a = i / 16 * 2 * Math.PI; const r = NS_ISLE.r * (1 + 0.08 * Math.sin(3 * a)); return [cx + Math.cos(a) * r, cz + Math.sin(a) * r * 0.8]; });
+    const m = extrude(P, LAND, 0xe4e7dc); scene.add(m); stateTop.notset = LAND; stateMesh.notset = m;
+    pickables.push([m, () => open.state('notset'), () => stateTip('notset')]); outlines.push([P, LAND]);
+    P.forEach((a, k) => { const b = P[(k + 1) % P.length]; edgeCount.set(ek(a, b), 1); edges.push([a, b]); });
+  }
+  // thin pale state borders on top, beach + foam along every coast (edges no other state shares)
+  const border = []; outlines.forEach(([P, h]) => P.forEach((a, k) => { const b = P[(k + 1) % P.length]; border.push(a[0], h + 0.02, a[1], b[0], h + 0.02, b[1]); }));
+  const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.Float32BufferAttribute(border, 3));
+  scene.add(new THREE.LineSegments(bg, new THREE.LineBasicMaterial({ color: 0xf8f5ec, transparent: true, opacity: 0.9 })));
+  const beachParts = [];
+  edges.forEach(([a, b]) => {
+    if (edgeCount.get(ek(a, b)) !== 1) return;
+    const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz); if (L < 0.01) return;
+    beachParts.push(part(BOX, 0xf0e3c4, (a[0] + b[0]) / 2, -0.25, (a[1] + b[1]) / 2, 1.5, 0.45, L, facing(dx, dz)));
+    beachParts.push(part(BOX, 0xe9f7fb, (a[0] + b[0]) / 2, -0.29, (a[1] + b[1]) / 2, 2.6, 0.04, L + 0.3, facing(dx, dz)));
+    beachParts.push(part(CYL(0.75, 0.75, 0.45, 10), 0xf0e3c4, a[0], -0.25, a[1]), part(CYL(1.3, 1.3, 0.04, 10), 0xe9f7fb, a[0], -0.29, a[1]));
+  });
+  scene.add(new THREE.Mesh(merge(beachParts), mat()));
+
+  // the shallow sea, fading into haze at the far edge
+  const bb = new THREE.Box3(); outlines.forEach(([P]) => P.forEach(([x, z]) => bb.expandByPoint(V.set(x, 0, z))));
+  FIT = { w: bb.max.x - bb.min.x, d: bb.max.z - bb.min.z };
+  LOOK = new THREE.Vector3((bb.min.x + bb.max.x) / 2, 1.5, (bb.min.z + bb.max.z) / 2 - 1.5);
+  const seaG = new THREE.PlaneGeometry(420, 420, 60, 60); seaG.rotateX(-Math.PI / 2);
+  const seaC = new Float32Array(seaG.attributes.position.count * 3);
+  for (let i = 0; i < seaG.attributes.position.count; i++) {
+    const x = seaG.attributes.position.getX(i) + LOOK.x, z = seaG.attributes.position.getZ(i) + LOOK.z;
+    const d = Math.max(0, Math.hypot((x - LOOK.x) / 1.6, z - LOOK.z) - 30); const k = Math.min(1, d / 60);
+    const c = col(0x9edcef).lerp(col(0xeaf4f8), k); seaC.set([c.r, c.g, c.b], i * 3);
+  }
+  seaG.setAttribute('color', new THREE.BufferAttribute(seaC, 3));
+  const sea = new THREE.Mesh(seaG, new THREE.MeshLambertMaterial({ vertexColors: true })); sea.position.set(LOOK.x, -0.32, LOOK.z); scene.add(sea);
+
+  // state name labels (fine on the wallboard): plain text, no pill
+  const stateLabels = [];
+  STATES.forEach(s => { const [x, z] = geo(...s.at); stateLabels.push(label(s.name, x, stateTop[s.key] + 0.3, z, null, '#4b5d50', s.small ? 8.5 : 10, { order: 6 })); });
+  label('State not set', NS_ISLE.centre[0], LAND + 0.3, NS_ISLE.centre[1] + 3.2, null, '#6b7280', 10, { order: 6 });
+
+  /* ======== counts per state (for the state lightbox and the lit-count pills) ======== */
+  const stateKey = (k) => k || 'notset';
+  const dealersBy = {}, sitesBy = {}, towersBy = {};
+  DATA.shops.forEach(s => (dealersBy[stateKey(s.state)] ||= []).push(s));
+  PJ.sites.forEach(p => (sitesBy[stateKey(p.state)] ||= []).push(p));
+  TH.rows.forEach(t => (towersBy[stateKey(t.state)] ||= []).push(t));
+  STATE_INFO = (k) => ({ name: k === 'notset' ? 'State not set' : STATES.find(s => s.key === k).name, dealers: (dealersBy[k] || []).length, bought: (dealersBy[k] || []).filter(s => s.today_docs).length, sites: (sitesBy[k] || []).length, towers: (towersBy[k] || []).length });
+  function stateTip(k) { const i = STATE_INFO(k); return [i.name, `${i.dealers} dealer${i.dealers === 1 ? '' : 's'}${i.bought ? ` (${i.bought} bought today)` : ''} · ${i.sites} project site${i.sites === 1 ? '' : 's'} · ${i.towers} trading house${i.towers === 1 ? '' : 's'}`]; }
+
+  /* ======== where things stand: per state, a dealer street, a project quarter and the trading houses ======== */
+  // anchors in world units (x east, z south); Selangor and KL hand-placed around HQ
+  const W2 = (lon, lat, dx = 0, dz = 0) => { const [x, z] = geo(lon, lat); return [x + dx, z + dz]; };
+  const H = W2(101.52, 3.07);
+  const PLACE = {
+    selangor: { street: W2(101.42, 3.42), quarter: W2(101.62, 2.85, 0.5, 0.5), towers: W2(101.36, 3.62) },
+    kl: { street: W2(101.82, 3.2, 0, -1.9), quarter: W2(101.82, 3.2, -0.6, 1.6), towers: W2(101.82, 3.2, 3.1, 0.2) },
+    johor: { street: W2(103.25, 1.95), quarter: W2(103.7, 1.75, 0, 0.2), towers: W2(102.95, 2.2, 0, 0.6) },
+    penang: { street: W2(100.12, 5.38, 0, 0.2), quarter: W2(100.47, 5.36) },
+    perak: { street: W2(100.95, 4.45), quarter: W2(101.25, 4.05) },
+    kedah: { street: W2(100.62, 6.0, 0, 1.4) }, ns: { street: W2(102.2, 2.72, 0, 1.4) }, melaka: { street: W2(102.3, 2.28, 0, 0.9) },
+    pahang: { street: W2(102.75, 3.75, 0, 1.6) }, sabah: { street: W2(116.4, 5.75), quarter: W2(117.6, 5.2) },
+    sarawak: { street: W2(110.45, 1.75, 0, -0.6), quarter: W2(112.9, 2.7) },
+    notset: { street: [NS_ISLE.centre[0] - 2.2, NS_ISLE.centre[1] - 0.4], quarter: [NS_ISLE.centre[0] + 1.6, NS_ISLE.centre[1] - 0.6], towers: [NS_ISLE.centre[0] - 0.2, NS_ISLE.centre[1] - 2.6] },
+  };
+  const topOf = (k) => stateTop[k] ?? LAND;
+
+  // HQ at Shah Alam: plaza, approvals office, warehouses, depot; Port Klang just beside it on the coast
+  const hqY = topOf('selangor');
+  const plaza = new THREE.Mesh(merge([part(CYL(2.0, 2.0, 0.06, 24), 0xf3efe6), part(CYL(0.9, 0.9, 0.09, 16), 0xe1d6c2), part(CYL(0.12, 0.14, 2.6, 8), 0x475569, -0.2, 0, 0.3)]), mat());
+  plaza.position.set(H[0], hqY, H[1]); scene.add(plaza);
+  const [ox, oz] = [H[0] + 1.4, H[1] - 2.3];
+  const office = new THREE.Mesh(merge([part(BOX, 0xf5f3ff, 0, 0, 0, 1.8, 1.6, 1.5), part(BOX, 0xddd6fe, 0, 1.6, 0, 1.95, 0.15, 1.65), part(BOX, 0xc4b5fd, 0, 0.02, 0.77, 0.5, 0.8, 0.03)]), mat());
+  office.position.set(ox, hqY, oz); scene.add(office);
+  const aTip = () => ['Approvals office', A.total ? `${A.purchase_requests} purchase requests · ${A.quotation_documents} quotations waiting` : 'All clear'];
+  pickables.push([office, () => open.approve(), aTip]);
+  const wh = DATA.warehouses.slice(0, 3);
+  const barrel = new THREE.CylinderGeometry(1, 1, 1, 14, 1, false, 0, Math.PI); barrel.rotateZ(Math.PI / 2); barrel.rotateY(Math.PI / 2);
+  const whSlot = wh.map((w, i) => ({ w, x: H[0] + 2.6 + i * 2.1, z: H[1] - 0.2 }));
+  const whMesh = new THREE.InstancedMesh(merge([part(BOX, 0xe2e8f0, 0, 0, 0, 1.9, 0.8, 1.4), part(barrel, 0x94a3b8, 0, 0.8, 0, 0.95, 0.4, 0.7, Math.PI / 2), part(BOX, 0xcbd5e1, 0, 0.02, 0.71, 1.0, 0.55, 0.03)]), mat(), whSlot.length);
+  whSlot.forEach((o, i) => { M.compose(V.set(o.x, hqY, o.z), Q.identity(), S.set(1, 1, 1)); whMesh.setMatrixAt(i, M); }); scene.add(whMesh);
+  pickables.push([whMesh, () => open.low(), (i) => [`Warehouse ${wh[i].pool}`, `${n(wh[i].on_hand)} on hand · ${n(R.below_count)} products low overall`]]);
+  const [dx, dz] = [H[0] + 1.0, H[1] + 2.1];
+  const depot = new THREE.Mesh(merge([part(BOX, 0xe0e7ff, 0, 0, 0, 2.8, 1.1, 1.6), part(BOX, 0x3d6fd6, 0, 1.1, 0, 2.95, 0.14, 1.75), part(BOX, 0x6c7886, 0, 0.02, 0.81, 1.4, 0.85, 0.03)]), mat());
+  depot.position.set(dx, hqY, dz); scene.add(depot);
+  const dTip = () => ['Depot', `${D ? n(D.to_deliver) : '-'} sales orders to deliver, ${n(D?.project_orders || 0)} of them for projects`];
+  pickables.push([depot, () => open.deliver(), dTip]);
+
+  /* the scoreboard: the v0 split board, drawn on a canvas; a billboard over the Strait west of HQ, on a pole to the plaza */
+  const board = document.createElement('canvas'); board.width = 1024; board.height = 520;
+  const boardTex = new THREE.CanvasTexture(board); boardTex.anisotropy = 4;
+  function drawBoard() {
+    const g = board.getContext('2d'); g.clearRect(0, 0, 1024, 520);
+    g.fillStyle = state.night ? '#0b1220' : '#0f172a'; g.beginPath(); g.roundRect(0, 0, 1024, 520, 40); g.fill();
+    g.fillStyle = '#94a3b8'; g.font = '600 56px Inter, sans-serif'; g.textAlign = 'center'; g.fillText(state.night ? 'CLOSED FOR THE DAY' : 'SOLD TODAY', 512, 80);
+    g.fillStyle = '#ffffff'; g.font = '700 132px Inter, sans-serif'; g.fillText(state.redact ? n(T.invoice_count + boardInv) + ' invoices' : rm0(Number(T.amount) + boardExtra), 512, 214);
+    g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 4; g.beginPath(); g.moveTo(60, 258); g.lineTo(964, 258); g.stroke();
+    [['DEALERS', 'dealer', '#fbbf24'], ['PROJECTS', 'project', '#9fb6d3'], ['OTHER', 'other', '#94a3b8']].forEach(([cap, k, dot], i) => {
+      const x = 176 + i * 336; g.font = '600 46px Inter, sans-serif'; const w = g.measureText(cap).width;
+      g.fillStyle = dot; g.beginPath(); g.arc(x - w / 2 - 6, 312, 13, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#94a3b8'; g.fillText(cap, x + 14, 328);
+      g.fillStyle = '#f1f5f9'; g.font = '700 70px Inter, sans-serif';
+      g.fillText(state.redact ? n(SPLIT[k].invoice_count + (k === 'dealer' ? boardInv : 0)) : rm0(Number(SPLIT[k].amount) + (k === 'dealer' ? boardExtra : 0)), x, 412);
+    });
+    g.font = '600 46px Inter, sans-serif'; g.fillStyle = '#cbd5e1';
+    g.fillText((state.redact ? 'invoices   ' : n(T.invoice_count + boardInv) + ' invoices   ') + (pct == null ? '' : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}% vs ${C.label}`), 512, 486);
+    boardTex.needsUpdate = true; dirty = true;
+  }
+  drawBoard();
+  const boardSp = new THREE.Sprite(new THREE.SpriteMaterial({ map: boardTex, depthTest: false })); boardSp.renderOrder = 12; boardSp.center.set(1, 0);
+  const boardAt = [H[0] - 7.5, H[1] - 0.5]; boardSp.position.set(boardAt[0], hqY + 2.0, boardAt[1]);
+  const boardPx = () => canvas.clientWidth < 640 ? 150 : 210;
+  boardSp.userData.px = null; scene.add(boardSp);
+  const fitBoard = () => { const u = upp(), w = boardPx(); boardSp.scale.set(w * u, w * 520 / 1024 * u, 1); };
+  const fitLabels0 = fitLabels; fitLabels = () => { fitLabels0(); fitBoard(); };
+  const boardPole = new THREE.Mesh(merge([part(BOX, 0x64748b, 0, 0, 0, 0.12, 0.12, 1)]), mat());
+  { const ddx = H[0] - 0.2 - boardAt[0], ddz = H[1] + 0.3 - boardAt[1], L = Math.hypot(ddx, ddz); boardPole.geometry = merge([part(BOX, 0x94a3b8, 0, 0, 0, 0.1, 0.06, L)]); boardPole.position.set((H[0] - 0.2 + boardAt[0]) / 2, hqY + 2.0, (H[1] + 0.3 + boardAt[1]) / 2); boardPole.rotation.y = facing(ddx, ddz); }
+  scene.add(boardPole);
+  pickables.push([boardSp, () => open.sales(), () => ["Today's sales", splitText()]]);
+
+  /* ======== dealer shops (cream pitched roofs, amber = bought today) and stalls, on a short street in their state ======== */
+  const shopGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 1.4, 0.8, 1.2), part(PRISM, 0xffffff, 0, 0.8, 0, 1.6, 0.8, 1.35), part(BOX, 0xffffff, 0, 0.42, 0.68, 1.3, 0.06, 0.35, 0, -0.4)]);
+  const stallGeo = merge([part(BOX, 0xe6dccb, 0, 0, 0, 1.1, 0.45, 0.7), ...[-0.5, 0.5].flatMap(x => [-0.3, 0.3].map(z => part(BOX, 0x8b6b4f, x, 0, z, 0.06, 1.0, 0.06))), part(BOX, 0xffffff, 0, 1.0, 0, 1.25, 0.08, 0.85)]);
+  const roadParts = [];
+  const slot = [];
+  const stateKeys = [...new Set(DATA.shops.map(s => stateKey(s.state)))];
+  stateKeys.forEach(k => {
+    const list = DATA.shops.filter(s => stateKey(s.state) === k).sort((a, b) => (a.kind === 'shop' ? 0 : 1) - (b.kind === 'shop' ? 0 : 1) || (a.rank ?? 99) - (b.rank ?? 99));
+    const at0 = PLACE[k]?.street; if (!at0) return; const y = topOf(k);
+    const cols = Math.ceil(list.length / 2), L = cols * 1.75 + 0.6;
+    roadParts.push(part(BOX, 0xd8d1c4, at0[0], y, at0[1], L, 0.05, 0.75));
+    list.forEach((s, i) => {
+      const c = Math.floor(i / 2), north = i % 2 === 0; const x = at0[0] - (cols - 1) * 0.875 + c * 1.75, z = at0[1] + (north ? -1.05 : 1.05);
+      slot.push({ s, k, x, y, z, ry: north ? 0 : Math.PI, lit: !!s.today_docs, stall: s.kind !== 'shop', h: s.kind === 'shop' ? 1 + (s.rank ? (30 - s.rank) / 30 * 0.8 : 0.3) : 1 });
+    });
+  });
+  const shopSlots = slot.filter(o => !o.stall), stallSlots = slot.filter(o => o.stall);
+  const shopMesh = new THREE.InstancedMesh(shopGeo, new THREE.MeshLambertMaterial({ flatShading: true }), Math.max(1, shopSlots.length));
+  const stallMesh = new THREE.InstancedMesh(stallGeo, new THREE.MeshLambertMaterial({ flatShading: true, vertexColors: true }), Math.max(1, stallSlots.length));
+  const placeSlots = (mesh, list, rise = 1) => list.forEach((o, i) => { M.compose(V.set(o.x, o.y, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(rise, rise * o.h, rise)); mesh.setMatrixAt(i, M); });
+  placeSlots(shopMesh, shopSlots); placeSlots(stallMesh, stallSlots);
+  shopSlots.forEach((o, i) => shopMesh.setColorAt(i, col(o.lit ? 0xfbbf24 : 0xd6d3d1)));
+  stallSlots.forEach((o, i) => stallMesh.setColorAt(i, col(o.lit ? 0xfbbf24 : 0xd6d3d1)));
+  scene.add(shopMesh, stallMesh);
+  pickables.push([shopMesh, (i) => open.shop(shopSlots[i].s), (i) => [shopLabel(shopSlots[i].s), shopSlots[i].s.today_docs ? shopToday(shopSlots[i].s) : 'No invoice today']]);
+  pickables.push([stallMesh, (i) => open.shop(stallSlots[i].s), (i) => [shopLabel(stallSlots[i].s) + ' (stall)', shopToday(stallSlots[i].s)]]);
+  // lit counts per state: the one number the map shows for dealers at the default zoom
+  const litPills = [];
+  function drawLitPills() {
+    litPills.forEach(dropLabel); litPills.length = 0;
+    stateKeys.forEach(k => { const c = slot.filter(o => o.k === k && o.lit).length; const at0 = PLACE[k]?.street; if (!c || !at0) return;
+      litPills.push(label(`${c} bought today`, at0[0], topOf(k) + 2.6, at0[1] - 0.6, 'rgba(255,251,235,0.97)', '#92400e', 10)); });
+    if (othersToday) { const [x, z] = W2(102.75, 3.75, 0, -2.6); litPills.push(label(`+${othersToday} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 10)); }
+    dirty = true;
+  }
+  drawLitPills();
+
+  /* ======== project quarters: v0 site looks (own timeline) + v0 gate flag (our sales stage) + pennant ======== */
+  const CRANE = (h) => [part(BOX, 0x64748b, 1.15, 0, -1.15, 0.22, h, 0.22), part(BOX, 0xf1f5f9, 0.2, h, -1.15, 4.4, 0.18, 0.22), part(BOX, 0x64748b, 2.7, h - 0.25, -1.15, 0.7, 0.45, 0.45), part(BOX, 0x334155, 1.15, h - 0.6, -0.95, 0.4, 0.4, 0.3)];
+  const FENCE = () => [part(BOX, 0xe5e7eb, 0, 0, -1.55, 3.1, 0.45, 0.06), part(BOX, 0xe5e7eb, -1.55, 0, 0, 0.06, 0.45, 3.1), part(BOX, 0xe5e7eb, 1.55, 0, 0, 0.06, 0.45, 3.1), part(BOX, 0xe5e7eb, 0.75, 0, 1.55, 1.6, 0.45, 0.06), part(BOX, 0xe5e7eb, -1.3, 0, 1.55, 0.5, 0.45, 0.06)];
+  const BANDS = (w, h0, h1, step, c) => { const out = []; for (let y = h0; y < h1 - 0.2; y += step) out.push(part(BOX, c, 0, y, 0, w + 0.04, 0.32, w + 0.04)); return out; };
+  const BOARD = (x, z, panel, band) => [part(BOX, 0x475569, x - 0.5, 0, z, 0.08, 1.15, 0.08), part(BOX, 0x475569, x + 0.5, 0, z, 0.08, 1.15, 0.08), part(BOX, panel, x, 0.6, z, 1.5, 0.8, 0.07), part(BOX, band, x, 1.18, z + 0.01, 1.5, 0.2, 0.07)];
+  function siteGeo(look) {
+    const parts = [];
+    if (look === 'plain') parts.push( // NEW: a tidy prepared plot, ready for whoever sets the dates
+      part(BOX, 0xd6c3a2, 0, 0, 0, 3.1, 0.08, 3.1), part(BOX, 0xf8fafc, 0, 0, -1.58, 3.2, 0.12, 0.08), part(BOX, 0xf8fafc, 0, 0, 1.58, 3.2, 0.12, 0.08), part(BOX, 0xf8fafc, -1.58, 0, 0, 0.08, 0.12, 3.2), part(BOX, 0xf8fafc, 1.58, 0, 0, 0.08, 0.12, 3.2),
+      ...[[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.6], [0.9, 0.6]].map(([x, z]) => part(BOX, 0xef4444, x, 0.08, z, 0.07, 0.4, 0.07)),
+      part(BOX, 0xffffff, -1.58, 0, -0.2, 0.08, 0.75, 2.6), part(BOX, 0x2563eb, -1.6, 0.48, -0.2, 0.08, 0.16, 2.6),
+      part(BOX, 0xe2e8f0, 0.95, 0.08, -1.0, 1.0, 0.6, 0.6), part(BOX, 0x94a3b8, 0.95, 0.68, -1.0, 1.1, 0.07, 0.7), part(BOX, 0x7fa0bf, 0.95, 0.33, -0.69, 0.35, 0.22, 0.02),
+      ...BOARD(0.2, 1.25, 0xffffff, 0x2563eb));
+    if (look === 'before') parts.push( // launching: the footprint is marked out, the board says it is coming
+      part(BOX, 0xc8b69a, 0, 0, 0, 3.2, 0.05, 3.2), ...FENCE(),
+      part(BOX, 0xf8fafc, 0, 0.05, -0.85, 2.0, 0.02, 0.07), part(BOX, 0xf8fafc, 0, 0.05, 0.75, 2.0, 0.02, 0.07), part(BOX, 0xf8fafc, -1.0, 0.05, -0.05, 0.07, 0.02, 1.67), part(BOX, 0xf8fafc, 1.0, 0.05, -0.05, 0.07, 0.02, 1.67),
+      ...BOARD(0.2, 1.2, 0xfef3c7, 0xf59e0b));
+    if (look === 'ground') parts.push(part(BOX, 0xc8b69a, 0, 0, 0, 3.2, 0.05, 3.2), ...FENCE(), part(BOX, 0x9ca3af, -0.2, 0, -0.3, 2.2, 0.22, 2.0), part(BOX, 0x334155, 0.85, 0.02, 0.85, 0.9, 0.22, 0.65), part(BOX, 0xcfa54a, 0.85, 0.24, 0.85, 0.75, 0.42, 0.55), part(BOX, 0xcfa54a, 0.55, 0.62, 0.55, 0.14, 0.14, 1.1, 0.6, 0.5));
+    if (look === 'frame') { parts.push(part(BOX, 0xc8b69a, 0, 0, 0, 3.2, 0.05, 3.2), part(BOX, 0x9ca3af, 0, 0, 0, 2.6, 0.22, 2.6)); for (const [x, z] of [[-1.15, -1.15], [1.15, -1.15], [-1.15, 1.15], [1.15, 1.15], [0, -1.15], [0, 1.15]]) parts.push(part(BOX, 0x94a3b8, x, 0.2, z, 0.14, 3.6, 0.14)); for (let y = 1.1; y < 3.9; y += 1.1) parts.push(part(BOX, 0xb4bcc6, 0, y, 0, 2.5, 0.1, 2.5)); parts.push(...CRANE(6.2)); }
+    if (look === 'clad') parts.push(part(BOX, 0xc8b69a, 0, 0, 0, 3.2, 0.05, 3.2), part(BOX, 0xe7e2d6, 0, 0, 0, 2.5, 3.6, 2.5), ...BANDS(2.5, 0.5, 3.6, 1.0, 0x7fa0bf), ...[-1.15, 1.15].flatMap(x => [-1.15, 1.15].map(z => part(BOX, 0x94a3b8, x, 3.6, z, 0.14, 1.0, 0.14))), part(BOX, 0xb4bcc6, 0, 4.5, 0, 2.5, 0.1, 2.5), ...CRANE(6.6));
+    if (look === 'done') parts.push(part(BOX, 0xc8b69a, 0, 0, 0, 3.2, 0.05, 3.2), part(BOX, 0xf3efe6, 0, 0, 0, 2.6, 4.6, 2.6), ...BANDS(2.6, 0.55, 4.6, 0.95, 0x8aa6c1), part(BOX, 0xd6d0c4, 0, 4.6, 0, 2.75, 0.22, 2.75), part(BOX, 0x86c17a, 1.25, 0, 1.3, 0.5, 0.6, 0.5));
+    return merge(parts);
+  }
+  const SITE_K = 0.55; // a site plot on the map
+  const pennantGeo = (() => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0.32, 0, 0.5, 0.16, 0], 3)); g.computeVertexNormals(); return g; })();
+  const siteFlagGeo = new THREE.PlaneGeometry(0.7, 0.42, 6, 1).translate(0.35, 0, 0);
+  const siteFlags = [], sites = [], quarterGate = {};
+  Object.keys(sitesBy).forEach(k => {
+    const list = sitesBy[k], at0 = PLACE[k]?.quarter; if (!at0) return; const y = topOf(k), step = 3.2 * SITE_K + 0.35;
+    quarterGate[k] = [at0[0] - (list.length / 2) * step - 0.3, at0[1] + 1.1];
+    roadParts.push(part(BOX, 0xd8d1c4, at0[0] - 0.2, y, at0[1] + 1.15, list.length * step + 0.6, 0.05, 0.5));
+    list.forEach((p, i) => {
+      const x = at0[0] - (list.length - 1) * step / 2 + i * step, z = at0[1]; const look = siteLook(p).look;
+      const m = new THREE.Mesh(siteGeo(look), mat()); m.position.set(x, y, z); m.scale.setScalar(SITE_K); scene.add(m);
+      const fx = x - 1.5 * SITE_K, fz = z + 1.7 * SITE_K;
+      const pole = new THREE.Mesh(merge([part(CYL(0.035, 0.035, p.final_negotiation ? 1.75 : 1.35, 6), 0x64748b)]), mat()); pole.position.set(fx, y, fz); scene.add(pole);
+      const f = new THREE.Mesh(siteFlagGeo.clone(), new THREE.MeshLambertMaterial({ color: STAGES[p.stage][1], side: THREE.DoubleSide, flatShading: true })); f.position.set(fx, y + 1.13, fz); scene.add(f); siteFlags.push(f);
+      if (p.final_negotiation) { const pn = new THREE.Mesh(pennantGeo, new THREE.MeshBasicMaterial({ color: 0xdc2626, side: THREE.DoubleSide })); pn.position.set(fx, y + 1.42, fz); scene.add(pn); }
+      const tipOf = () => [siteTitle(p), `${STAGES[p.stage][0]}${p.final_negotiation ? ', final negotiation' : ''} · ${LOOK_WORDS[look]}`];
+      pickables.push([m, () => open.site(p), tipOf], [f, () => open.site(p), tipOf]);
+      sites.push({ p, m, x, y, z, look });
+    });
+  });
+
+  /* ======== trading houses: the v0 slate-blue glass towers, in the customer's state; lit = a Project-type invoice today ======== */
+  const towers = [];
+  Object.keys(towersBy).forEach(k => {
+    const list = towersBy[k], at0 = PLACE[k]?.towers; if (!at0) return; const y = topOf(k);
+    list.forEach((t, i) => {
+      const x = at0[0] + (i - (list.length - 1) / 2) * 1.7, z = at0[1], h = 3.6 + ((i + k.length) % 3) * 0.6, lit = t.today_docs > 0;
+      const parts = [part(BOX, 0x51657f, 0, 0, 0, 1.3, h, 1.3), part(BOX, 0x3d4d63, 0, h, 0, 1.4, 0.16, 1.4), part(BOX, 0x8b9bb0, 0.25, h + 0.16, -0.2, 0.4, 0.24, 0.4), part(BOX, 0x2f3b4c, 0, 0, 0.66, 0.45, 0.5, 0.03)];
+      for (let yy = 0.7; yy < h - 0.25; yy += 0.45) parts.push(part(BOX, lit ? 0xffcd70 : 0x9fb6cf, 0, yy, 0, 1.33, 0.2, 1.33));
+      const m = new THREE.Mesh(merge(parts), mat()); m.position.set(x, y, z); scene.add(m);
+      pickables.push([m, () => open.trading(t), () => [thTitle(t), `${lit ? 'Bought today' : 'No project invoice today'} · on ${t.open_projects} open project${t.open_projects === 1 ? '' : 's'}`]]);
+      towers.push({ t, m, x, y, z, h, lit });
+    });
+  });
+  scene.add(new THREE.Mesh(merge(roadParts), mat()));
+
+  /* ======== the highway spine (west-coast north-south, a branch to the east coast) and the Penang bridge ======== */
+  const CHAIN = {
+    north: [[101.42, 3.45], [101.12, 3.9], [101.0, 4.35], [100.75, 4.85], [100.5, 5.35], [100.55, 5.95], [100.3, 6.45]],
+    south: [[101.75, 2.82], [102.05, 2.65], [102.3, 2.38], [102.85, 2.05], [103.6, 1.62]],
+    east: [[101.82, 3.2], [102.4, 3.5], [103.25, 3.75], [103.15, 4.6], [102.6, 5.3], [102.15, 5.85]],
+  };
+  const HUB = { perlis: ['north', 6], kedah: ['north', 5], penang: ['north', 4], perak: ['north', 2], ns: ['south', 1], melaka: ['south', 2], johor: ['south', 4], kl: ['east', 0], pahang: ['east', 2], terengganu: ['east', 4], kelantan: ['east', 5] };
+  const chainW = Object.fromEntries(Object.entries(CHAIN).map(([k, v]) => [k, v.map(p => geo(...p))]));
+  const hwParts = [];
+  const hwY = (x, z) => 0.62;
+  Object.values(chainW).forEach(pts => [[H[0], H[1]], ...pts].forEach((a, i, arr) => { const b = arr[i + 1]; if (!b) return; const ddx = b[0] - a[0], ddz = b[1] - a[1], L = Math.hypot(ddx, ddz);
+    hwParts.push(part(BOX, 0xbfb6a6, (a[0] + b[0]) / 2, LAND + 0.13, (a[1] + b[1]) / 2, 0.5, 0.05, L + 0.4, facing(ddx, ddz)), part(BOX, 0xfbfaf6, (a[0] + b[0]) / 2, LAND + 0.15, (a[1] + b[1]) / 2, 0.06, 0.05, L, facing(ddx, ddz))); }));
+  { const a = chainW.north[4], b = PLACE.penang.street; const ddx = b[0] - a[0], ddz = b[1] - a[1], L = Math.hypot(ddx, ddz); hwParts.push(part(BOX, 0xbfb6a6, (a[0] + b[0]) / 2, LAND + 0.05, (a[1] + b[1]) / 2, 0.45, 0.12, L, facing(ddx, ddz))); }
+  const highway = new THREE.Mesh(merge(hwParts), mat()); scene.add(highway);
+
+  /* ======== Port Klang (v5 port, scaled down): quay + crane, late containers, ships at anchor in the Strait, a ship that docks ======== */
+  const PK = W2(101.31, 2.93, -0.9, 0.6);
+  const port = new THREE.Group(); port.position.set(PK[0], 0, PK[1]); port.rotation.y = Math.PI / 2; port.scale.setScalar(0.5); scene.add(port);
+  // port local frame: +x along the coast (north), +z inland (east), -z out to sea (west)
+  const quay = new THREE.Mesh(merge([part(BOX, 0xcbd5e1, 0, -0.4, 0, 11, 1.4, 4.2), part(BOX, 0x94a3b8, 0, 1.0, -1.9, 11, 0.12, 0.4), part(BOX, 0x0e7490, 4.3, 1.0, 1.2, 0.35, 5.2, 0.35), part(BOX, 0x0e7490, 2.6, 5.9, 1.2, 3.8, 0.35, 0.35)]), mat());
+  port.add(quay);
+  const portTip = () => ['Port Klang', portSub() + (IN.next_eta ? ` · next ETA ${fmtDay(IN.next_eta)}` : '')];
+  pickables.push([quay, () => open.port(), portTip]);
+  const boxGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 1.9, 0.8, 0.8), part(BOX, 0x000000, 0, 0.8, 0, 1.92, 0.04, 0.82)]);
+  const contMesh = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial({ flatShading: true }), 12); port.add(contMesh);
+  const hullGeo = merge([part(BOX, 0x1e3a5f, 0, -0.5, 0, 6, 0.9, 1.9), part(PRISM, 0x1e3a5f, 3.4, -0.5, 0, 0.9, 0.9, 1.9, 0), part(BOX, 0xf8fafc, -2.1, 0.4, 0, 1.3, 1.1, 1.5), part(BOX, 0xf97316, 0.4, 0.4, 0, 1.4, 0.6, 1.5), part(BOX, 0x0ea5e9, 1.9, 0.4, 0, 1.4, 0.6, 1.5)]);
+  const shipMesh = new THREE.InstancedMesh(hullGeo, mat(), 6); port.add(shipMesh); shipMesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 80);
+  let portSignSprite = null, lateSprite = null; const shipRows = { boxes: [], ships: [] }; const shipBase = [];
+  const PW = (x, y, z) => port.localToWorld(new THREE.Vector3(x, y, z));
+  function drawPort() {
+    port.updateMatrixWorld();
+    const quayRows = IN.shipments.filter(r => r.late), seaRows = IN.shipments.filter(r => !r.late);
+    const nBox = Math.min(12, IN.late), nShip = Math.min(6, IN.incoming); shipBase.length = 0;
+    shipRows.boxes = quayRows.slice(0, nBox); shipRows.ships = seaRows.slice(0, nShip);
+    for (let i = 0; i < nBox; i++) { const layer = Math.floor(i / 6), k = i % 6; M.compose(V.set(-3.4 + (k % 3) * 2.05, 1.0 + 0.8 * layer, k < 3 ? -0.3 : 0.6), Q.identity(), S.set(1, 1, 1)); contMesh.setMatrixAt(i, M); contMesh.setColorAt(i, col(i % 2 ? 0xdc2626 : 0xb91c1c)); }
+    contMesh.count = nBox; contMesh.instanceMatrix.needsUpdate = true; if (contMesh.instanceColor) contMesh.instanceColor.needsUpdate = true;
+    for (let i = 0; i < nShip; i++) { const x = -14 + (i % 3) * 9 + (i >= 3 ? 4 : 0), z = -12 - (i >= 3 ? 7 : 0) - (i % 2) * 1.5; shipBase.push({ x, z, ry: 0.3 + i * 0.4 }); M.compose(V.set(x, 0, z), Q.setFromEuler(E.set(0, 0.3 + i * 0.4, 0)), S.setScalar(1)); shipMesh.setMatrixAt(i, M); }
+    shipMesh.count = nShip; shipMesh.instanceMatrix.needsUpdate = true;
+    if (portSignSprite) dropLabel(portSignSprite); if (lateSprite) { dropLabel(lateSprite); lateSprite = null; }
+    const ps = PW(0, 7, 0); portSignSprite = label(portSign(), ps.x - 1.5, ps.y, ps.z + 1.2, '#0e7490', '#ffffff', 10);
+    portSignSprite.userData.port = true;
+    for (let i = pickables.length - 1; i >= 0; i--) if (pickables[i][0].userData.port === true) pickables.splice(i, 1);
+    pickables.push([portSignSprite, () => open.port(), portTip]);
+    if (IN.late) { const ls = PW(0, 2.4, 0); lateSprite = label(`${IN.late} late`, ls.x - 1.5, ls.y, ls.z + 2.6, '#dc2626', '#ffffff', 9.5); lateSprite.userData.port = true; pickables.push([lateSprite, () => open.port(), () => ['Late shipments', `${n(IN.late)} past their ETA, not yet received`]]); }
+    dirty = true;
+  }
+  pickables.push([contMesh, () => open.port(), (i) => { const r = shipRows.boxes[i]; return r ? [`${r.shipment_number} · late`, `ETA ${fmtDay(r.eta)} · ${r.products} products${supplierOf(r) ? ' · ' + supplierOf(r) : ''}`] : portTip(); }]);
+  pickables.push([shipMesh, () => open.port(), (i) => { const r = shipRows.ships[i]; return r ? [`${r.shipment_number} in the Strait`, `ETA ${fmtDay(r.eta)} · ${r.products} products${supplierOf(r) ? ' · ' + supplierOf(r) : ''}`] : portTip(); }]);
+  drawPort();
+
+  // HQ labels: low stock, approvals, to deliver, and the one "+N more" sign
+  const bang = label(`! ${n(R.below_count)} low`, H[0] + 4.7, hqY + 2.3, H[1] - 0.2, '#dc2626', '#ffffff', 10);
+  pickables.push([bang, () => open.low(), () => ['Low stock', `${n(R.below_count)} products below reorder level`]]);
+  const badge = label(A.total ? `Approvals ${A.total}` : 'Approvals: all clear', ox, hqY + 2.6, oz, A.total ? '#7c3aed' : '#dcfce7', A.total ? '#ffffff' : '#166534', 10); pickables.push([badge, () => open.approve(), aTip]);
+  const dsign = label(deliverText(), dx + 0.6, hqY + 1.9, dz + 0.9, '#1d4ed8', '#ffffff', 10); pickables.push([dsign, () => open.deliver(), dTip]);
+  const gate = label(gateText(), H[0] - 1.6, hqY + 0.6, H[1] + 4.4, '#51657f', '#ffffff', 10);
+  pickables.push([gate, () => open.district(), () => ['Projects', `${n(PJ.open_count)} open · ${n(PJ.sites.length)} on the map · ${n(PJ.dormant)} dormant not shown`]]);
+
+  // trees on the empty states, so plain land still reads as land
+  const treeGeo = merge([part(CYL(0.1, 0.13, 0.5, 6), 0xa16207), part(new THREE.IcosahedronGeometry(0.55, 1).translate(0, 0.9, 0), 0x86c17a)]);
+  const treeAt = [[100.3, 6.55], [101.75, 5.1], [102.2, 4.95], [102.6, 5.5], [102.9, 4.5], [103.2, 5.0], [102.3, 3.3], [103.1, 3.2], [102.8, 2.4], [113.8, 2.5], [111.8, 2.1], [114.6, 3.0], [118.2, 5.4], [116.6, 5.0]].map(([lo, la]) => [...geo(lo, la), 0]);
+  treeAt.forEach(t => { t[2] = t[0] < EX - 3 ? LAND + 0.04 : LAND + 0.04; });
+  const trees = new THREE.InstancedMesh(treeGeo, mat(), treeAt.length);
+  treeAt.forEach(([x, z, y], i) => { M.compose(V.set(x, y, z), Q.identity(), S.setScalar(1)); trees.setMatrixAt(i, M); }); scene.add(trees);
+
+  /* ---------------- motion (v5 clock): lorries, a coaster ship, ships at anchor, a docking ship, halos, pops ---------------- */
+  const ease = (u) => u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+  const easeOut = (u) => 1 - Math.pow(1 - u, 3);
+  const easeOutBack = (u) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2); };
+  const litSlots = slot.filter(o => o.lit);
+  const glowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'); const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64); gr.addColorStop(0, 'rgba(253,224,71,0.95)'); gr.addColorStop(0.45, 'rgba(251,191,36,0.4)'); gr.addColorStop(1, 'rgba(251,191,36,0)'); g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
+  const halos = [...litSlots.map(o => ({ x: o.x, y: o.y + 0.9, z: o.z, s: 2.4, o })), ...towers.filter(o => o.lit).map(o => ({ x: o.x, y: o.y + o.h * 0.6, z: o.z, s: 3.0, o: null }))].map((o, k) => {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.4 })); sp.scale.setScalar(o.s); sp.position.set(o.x, o.y, o.z); sp.renderOrder = 4; scene.add(sp); return { sp, o: o.o, s: o.s, phase: k * 1.7, flash: 0 };
+  });
+  const flashShop = (o) => { const h = halos.find(h => h.o === o); if (h) h.flash = 1; };
+  function animHalos(t, dt) { halos.forEach(h => { h.flash = Math.max(0, h.flash - dt * 0.9); const b = Math.sin(t * 1.3 + h.phase); h.sp.material.opacity = (state.hour >= 19 ? 0.6 : 0.34) + 0.16 * b + 0.55 * h.flash; h.sp.scale.setScalar(h.s * (1 + 0.08 * b + 0.5 * easeOut(h.flash))); }); }
+
+  // routes: depot -> HQ -> along the spine to the state's junction -> the shop, or the project quarter gate (never a site)
+  function path(pts) { const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return { pts, cum, len: cum[cum.length - 1] }; }
+  function along(r, dist) { let i = 1; while (i < r.cum.length - 1 && r.cum[i] < dist) i++; const a = r.pts[i - 1], b = r.pts[i], seg = (r.cum[i] - r.cum[i - 1]) || 1, u = clamp((dist - r.cum[i - 1]) / seg, 0, 1); return { x: a[0] + (b[0] - a[0]) * u, z: a[1] + (b[1] - a[1]) * u, dx: b[0] - a[0], dz: b[1] - a[1] }; }
+  const roadRoute = (k, end) => { const h = HUB[k]; const via = h ? chainW[h[0]].slice(0, h[1] + 1) : []; return path([[dx, dz + 0.8], [H[0], H[1] + 1.2], ...via, end]); };
+  const lorryGeo = merge([part(BOX, 0xffffff, 0.35, 0.22, 0, 1.4, 0.95, 0.85), part(BOX, 0x2563eb, -0.7, 0.22, 0, 0.6, 0.75, 0.82), ...[-0.65, 0.6].flatMap(x => [-0.42, 0.42].map(z => part(CYL(0.2, 0.2, 0.12, 10), 0x1f2937, x, 0.2, z, 1, 1, 1, 0, Math.PI / 2)))]);
+  const lorryN = Math.min(10, D ? D.to_deliver : 0);
+  const lorries = new THREE.InstancedMesh(lorryGeo, mat(), Math.max(1, lorryN)); lorries.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 200);
+  const SPEED = 4.0, WAIT_AT = 2.4, WAIT_HOME = 3.0;
+  const trip = (r, o, kind, label2, k) => { const leg = r.len / SPEED; return { r, o, kind, label2, leg, cycle: 2 * leg + WAIT_AT + WAIT_HOME, offset: k * 3.7, at: false }; };
+  const trips = [];
+  ['penang', 'johor', 'kl'].forEach((k, i) => { const o = litSlots.find(s => s.k === k); if (o) trips.push(trip(roadRoute(k, [o.x, o.z + (o.ry ? -0.6 : 0.6)]), o, 'shop', shopLabel(o.s), i)); });
+  ['johor', 'perak'].slice(0, D?.project_orders || 0).forEach((k, i) => { if (quarterGate[k]) trips.push(trip(roadRoute(k, quarterGate[k]), null, 'project', STATE_INFO(k).name, 3 + i)); });
+  trips.push(trip(roadRoute('kelantan', geo(102.1, 5.75)), null, 'out', 'Kelantan', 5));
+  for (let i = 0; i < lorryN; i++) { M.compose(V.set(dx - 1.1 + (i % 5) * 0.55, hqY, dz + 1.25 + Math.floor(i / 5) * 0.6), Q.setFromEuler(E.set(0, Math.PI / 2, 0)), S.setScalar(0.42)); lorries.setMatrixAt(i, M); }
+  lorries.count = lorryN; scene.add(lorries);
+  function animLorries(t) {
+    trips.forEach((tr, i) => {
+      const c = (t + tr.offset) % tr.cycle; let p, back = false, atIt = false;
+      if (c < tr.leg) p = along(tr.r, tr.r.len * ease(c / tr.leg)); else if (c < tr.leg + WAIT_AT) { p = along(tr.r, tr.r.len); atIt = true; }
+      else if (c < 2 * tr.leg + WAIT_AT) { back = true; p = along(tr.r, tr.r.len * (1 - ease((c - tr.leg - WAIT_AT) / tr.leg))); } else { back = true; p = along(tr.r, 0); }
+      if (atIt && !tr.at && tr.o) flashShop(tr.o); tr.at = atIt;
+      const ddx = back ? -p.dx : p.dx, ddz = back ? -p.dz : p.dz, L = Math.hypot(ddx, ddz) || 1;
+      V.set(p.x + (ddz / L) * 0.22, LAND + 0.2, p.z - (ddx / L) * 0.22);
+      M.compose(V, Q.setFromEuler(E.set(0, Math.atan2(ddz, -ddx), 0)), S.setScalar(0.42)); lorries.setMatrixAt(i, M);
+    });
+    if (trips.length) lorries.instanceMatrix.needsUpdate = true;
+  }
+  pickables.push([lorries, () => open.deliver(), (i) => { const tr = trips[i]; if (!tr) return ['Lorry at the depot', `${D ? n(D.to_deliver) : '-'} sales orders to deliver`];
+    if (tr.kind === 'project') return [`Lorry to the ${tr.label2} project quarter`, 'a project-type sales order (sample route)'];
+    if (tr.kind === 'out') return [`Lorry to ${tr.label2}`, 'a customer with no shop on the map'];
+    return ['Lorry out on delivery', `to ${tr.label2} (sample route)`]; }]);
+
+  // the coaster: Port Klang, down the Strait, round Johor, across the South China Sea to Kuching and Kota Kinabalu
+  const coasterPts = [PW(-2, 0, -4), ...[[100.95, 2.6], [101.9, 1.75], [103.0, 1.05], [104.1, 1.0], [104.6, 1.45]].map(p => geo(...p)), geo(109.9, 1.15), geo(110.35, 1.4), geo(111.4, 2.9), geo(113.0, 3.65), geo(114.2, 4.85), geo(115.3, 5.75), geo(115.95, 6.15)]
+    .map(p => p.isVector3 ? [p.x, p.z] : p);
+  const coasterR = path(coasterPts);
+  const coaster = new THREE.Mesh(merge([part(BOX, 0x0f766e, 0, -0.3, 0, 3.2, 0.7, 1.1), part(PRISM, 0x0f766e, 1.85, -0.3, 0, 0.6, 0.7, 1.1), part(BOX, 0xf8fafc, -1.1, 0.4, 0, 0.8, 0.7, 0.9), part(BOX, 0xf59e0b, 0.3, 0.4, 0, 0.8, 0.45, 0.85), part(BOX, 0x2563eb, 1.15, 0.4, 0, 0.8, 0.45, 0.85)]), mat());
+  coaster.scale.setScalar(0.7); scene.add(coaster);
+  pickables.push([coaster, () => open.deliver(), () => ['Coaster ship', 'Port Klang to Sabah, Sarawak and Labuan (sample route)']]);
+  const C_SPEED = 7, C_WAIT = 3, cLeg = coasterR.len / C_SPEED, cCycle = 2 * cLeg + 2 * C_WAIT;
+  function animCoaster(t) {
+    const c = t % cCycle; let p, back = false;
+    if (c < cLeg) p = along(coasterR, coasterR.len * ease(c / cLeg)); else if (c < cLeg + C_WAIT) p = along(coasterR, coasterR.len);
+    else if (c < 2 * cLeg + C_WAIT) { back = true; p = along(coasterR, coasterR.len * (1 - ease((c - cLeg - C_WAIT) / cLeg))); } else p = along(coasterR, 0);
+    const ddx = back ? -p.dx : p.dx, ddz = back ? -p.dz : p.dz;
+    coaster.position.set(p.x, 0.05 * Math.sin(t * 1.4), p.z); coaster.rotation.set(0.03 * Math.sin(t * 1.1), Math.atan2(-ddz, ddx), 0);
+  }
+
+  // ships at anchor bob; one ship docks every 24 s and the crane lifts two containers (port local frame)
+  function animShips(t) { shipBase.forEach((b, i) => { M.compose(V.set(b.x, 0.12 * Math.sin(t * 1.3 + i), b.z), Q.setFromEuler(E.set(0.04 * Math.sin(t * 1.1 + i * 2), b.ry, 0.03 * Math.sin(t * 0.9 + i))), S.setScalar(1)); shipMesh.setMatrixAt(i, M); }); if (shipBase.length) shipMesh.instanceMatrix.needsUpdate = true; }
+  const berth = new THREE.Vector3(0, 0, -3.6), far = new THREE.Vector3(-18, 0, -12), ctrl = new THREE.Vector3(-7, 0, -4.2);
+  const dockShip = new THREE.Mesh(hullGeo, mat()); port.add(dockShip);
+  pickables.push([dockShip, () => open.port(), () => ['Ship unloading at Port Klang', IN.next_eta ? `next ETA ${fmtDay(IN.next_eta)}` : 'Nothing on the way']]);
+  const lift = new THREE.Mesh(merge([part(BOX, 0xf97316, 0, 0, 0, 1.9, 0.8, 0.8)]), mat()); port.add(lift);
+  const bez = (s) => far.clone().multiplyScalar((1 - s) * (1 - s)).add(ctrl.clone().multiplyScalar(2 * s * (1 - s))).add(berth.clone().multiplyScalar(s * s));
+  const bezT = (s) => far.clone().multiplyScalar(-2 * (1 - s)).add(ctrl.clone().multiplyScalar(2 - 4 * s)).add(berth.clone().multiplyScalar(2 * s));
+  const drop = [new THREE.Vector3(3.1, 1.0, 0.2), new THREE.Vector3(3.1, 1.8, 0.2)];
+  function animDock(t) {
+    const on = IN.total > 0; dockShip.visible = on; lift.visible = false; if (!on) return;
+    const c = t % 24; let s, outbound = false;
+    if (c < 8) s = easeOut(c / 8); else if (c < 16) s = 1; else if (c < 22) { s = 1 - ease((c - 16) / 6); outbound = true; } else s = 0;
+    const p = bez(s), d = bezT(clamp(s, 0.001, 0.999)); if (outbound) d.negate();
+    dockShip.position.set(p.x, 0.1 * Math.sin(t * 1.3), p.z); dockShip.rotation.set(0.03 * Math.sin(t * 1.1), Math.atan2(-d.z, d.x), 0); dockShip.visible = c < 22.5;
+    for (const [k, t0] of [[0, 8.6], [1, 12.2]]) { const v = (c - t0) / 3.2; if (v < 0 || v > 1) continue; const w = ease(v); const to = drop[k];
+      lift.visible = true; lift.position.set(berth.x + (to.x - berth.x) * w, 0.9 + (to.y - 0.9) * w + 3.6 * Math.sin(Math.PI * w), berth.z + (to.z - berth.z) * w); }
+  }
+  function animSiteFlags(t) { siteFlags.forEach((f, k) => { const p = f.geometry.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i); p.setZ(i, 0.1 * x * Math.sin(x * 6 - t * 3.5 + k)); } p.needsUpdate = true; }); }
+
+  // a new invoice: a small receipt pops above a lit shop and the board counts up
+  const pops = []; let nextPop = 3.2, boardAnim = null;
+  function spawnPop(t) {
+    if (!litSlots.length) return; const o = litSlots[Math.floor(Math.random() * litSlots.length)], amt = 800 + Math.round(Math.random() * 9000);
+    const sp = label(state.redact || state.wallboard ? '+1 invoice' : `+ ${rm0(amt)}`, o.x, o.y + 1.8, o.z, '#fef3c7', '#92400e', 9.5);
+    sp.material.opacity = 0; pops.push({ sp, t0: t, y0: o.y + 1.8 }); flashShop(o); boardAnim = { from: boardExtra, to: boardExtra + amt, t0: t + 0.7 };
+  }
+  function animPops(t) {
+    if (t > nextPop) { spawnPop(t); nextPop = t + 7 + Math.random() * 4; }
+    for (let i = pops.length - 1; i >= 0; i--) { const p = pops[i], u = (t - p.t0) / 2.6; if (u >= 1) { dropLabel(p.sp); pops.splice(i, 1); continue; }
+      p.sp.position.y = p.y0 + 1.6 * easeOut(u); p.sp.material.opacity = u < 0.12 ? u / 0.12 : u > 0.7 ? 1 - (u - 0.7) / 0.3 : 1; }
+    if (boardAnim && t >= boardAnim.t0) { const u = Math.min(1, (t - boardAnim.t0) / 0.9); const was = Math.round(boardExtra); boardExtra = boardAnim.from + (boardAnim.to - boardAnim.from) * easeOut(u); if (u >= 1) { boardAnim = null; boardInv++; } if (Math.round(boardExtra) !== was || u >= 1) drawBoard(); }
+  }
+  // entrance: buildings rise, labels fade in last
+  const intro = { done: !state.motion };
+  function animIntro(t) {
+    if (intro.done) return; const k = (t0) => Math.max(0.001, easeOutBack(clamp((t - t0) / 0.6, 0, 1)));
+    placeSlots(shopMesh, shopSlots, k(0.2)); placeSlots(stallMesh, stallSlots, k(0.25)); shopMesh.instanceMatrix.needsUpdate = stallMesh.instanceMatrix.needsUpdate = true;
+    sites.forEach((o, i) => o.m.scale.setScalar(SITE_K * k(0.35 + i * 0.04))); towers.forEach((o, i) => o.m.scale.setScalar(k(0.5 + i * 0.06)));
+    for (const m of [depot, office, plaza]) m.scale.setScalar(k(0.1));
+    const a = clamp((t - 1.2) / 0.5, 0, 1); labels.forEach(sp => { sp.material.opacity = a; }); boardSp.material.opacity = a;
+    if (t > 1.9) intro.done = true;
+  }
+  function animate(t, dt) { animIntro(t); animHalos(t, dt); animLorries(t); animCoaster(t); animPops(t); animShips(t); animDock(t); animSiteFlags(t); }
+
+  // time of day: light and sky follow the hour (warm at 18:00, blue night after 20:00)
+  const stageEl = document.getElementById('stage');
+  const mix = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k)); const rgb = (c) => `rgb(${c.join(',')})`;
+  function setHour(h) {
+    state.hour = h;
+    const day = Math.max(0, Math.sin(Math.PI * (h - 6) / 14)), warm = Math.max(0, 1 - Math.abs(h - 18) / 1.8), nightK = clamp((h - 19) / 2, 0, 1);
+    hemi.intensity = 0.55 + 1.45 * day; sun.intensity = 0.2 + 1.1 * day; sun.color.setRGB(1, 1 - 0.22 * warm, 1 - 0.45 * warm);
+    let top = mix([248, 250, 252], [254, 215, 170], warm), bot = mix([238, 246, 255], [253, 230, 210], warm); top = mix(top, [15, 23, 42], nightK); bot = mix(bot, [30, 41, 59], nightK);
+    stageEl.style.background = `linear-gradient(180deg, ${rgb(top)} 0%, ${rgb(bot)} 100%)`;
+    const night = h >= 20; shopSlots.forEach((o, i) => shopMesh.setColorAt(i, col(o.lit ? (night ? 0xfde68a : 0xfbbf24) : (night ? 0x57534e : 0xd6d3d1)))); shopMesh.instanceColor.needsUpdate = true;
+    sea.material.color.setScalar(1 - 0.6 * nightK); dirty = true;
+  }
+
+  let last = 0, clock = 0;
+  function frame(now) {
+    requestAnimationFrame(frame); if (document.hidden) { last = now; return; }
+    if (now - last < 33) return; const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (state.motion) { clock += dt; animate(clock, dt); dirty = true; }
+    if (!dirty) return; renderer.render(scene, cam); dirty = false;
+    document.getElementById('calls').textContent = `draw calls: ${renderer.info.render.calls} · tilt ${(el / DEG).toFixed(0)}° · zoom ${zoom.toFixed(2)}x · motion ${state.motion ? 'on' : 'off'}${reducedMotion ? ' (reduced motion)' : ''}`;
+  }
+  new ResizeObserver(resize).observe(canvas); resize(); placeCam(); requestAnimationFrame(frame);
+  if (!state.motion) { animLorries(4); animCoaster(cLeg * 0.55); animShips(0); animDock(12); }
+
+  // input (v5): drag X turns, drag Y tilts, wheel / pinch zooms, hover tooltip, click opens the lightbox
+  const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let drag = null; const touches = new Map(); let pinch = null;
+  const pick = (cx, cy) => {
+    const r = canvas.getBoundingClientRect(); ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ptr, cam); const hits = ray.intersectObjects(pickables.map(p => p[0]).filter(o => o.visible !== false && (!o.isInstancedMesh || o.count > 0)), false);
+    if (!hits.length) return null; const p = pickables.find(p => p[0] === hits[0].object); return p ? { p, i: hits[0].instanceId ?? 0, x: cx - r.left, y: cy - r.top } : null;
+  };
+  canvas.addEventListener('pointerdown', (e) => { touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (touches.size === 2) { const [a, b] = [...touches.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom }; drag = null; return; } drag = { x: e.clientX, y: e.clientY, yaw, el, moved: false }; });
+  window.addEventListener('pointermove', (e) => {
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touches.size === 2) { const [a, b] = [...touches.values()]; zoom = clamp(pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d, Z_MIN, Z_MAX); placeCam(); return; }
+    if (drag) { const dxp = e.clientX - drag.x, dyp = e.clientY - drag.y; if (Math.hypot(dxp, dyp) > 4) { drag.moved = true; canvas.classList.add('dragging'); } if (drag.moved) { yaw = drag.yaw - dxp * 0.006; el = clamp(drag.el + dyp * 0.005, EL_MIN, EL_MAX); placeCam(); } return; }
+    if (e.target !== canvas || e.pointerType === 'touch' || state.touch) return;
+    const hit = pick(e.clientX, e.clientY); canvas.classList.toggle('over', !!hit); if (!hit) return hideTip();
+    const [t, s] = hit.p[2](hit.i); showTip(t, s, hit.x, hit.y, false); tipFor = { o: hit.p[0], i: hit.i };
+  });
+  canvas.addEventListener('pointerleave', () => { if (!drag && !state.touch) hideTip(); canvas.classList.remove('over'); });
+  window.addEventListener('pointerup', (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; const moved = drag && drag.moved; drag = null; canvas.classList.remove('dragging'); if (moved || e.target !== canvas) return; const hit = pick(e.clientX, e.clientY); if (!hit) return hideTip(); hit.p[1](hit.i); });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoom = clamp(zoom * Math.exp(-e.deltaY * 0.0015), Z_MIN, Z_MAX); placeCam(); }, { passive: false });
+  document.getElementById('zoomIn').onclick = () => { zoom = clamp(zoom * 1.25, Z_MIN, Z_MAX); placeCam(); };
+  document.getElementById('zoomOut').onclick = () => { zoom = clamp(zoom / 1.25, Z_MIN, Z_MAX); placeCam(); };
+  document.getElementById('resetView').onclick = () => { yaw = YAW0; el = EL0; zoom = Z0; placeCam(); };
+  return {
+    refresh() { drawBoard(); drawLitPills(); drawPort(); }, setHour, intro, sites, towers,
+    setNight(on) { hemi.intensity = on ? 0.55 : 2.0; sun.intensity = on ? 0.2 : 1.3; dirty = true; },
+    view(y, e, z) { yaw = y ?? yaw; el = e != null ? e * DEG : el; zoom = z ?? zoom; placeCam(); },
+    tipAt(name) {
+      const o = name === 'site' ? sites.find(s => s.p.key === 'p1') : name === 'tower' ? towers[0] : null; if (!o) return;
+      const p = new THREE.Vector3(o.x, o.y + (name === 'tower' ? o.h : 2), o.z).project(cam); const r = canvas.getBoundingClientRect();
+      const pk = pickables.find(q => q[0] === o.m); const [t, s] = pk[2](0); showTip(t, s, (p.x + 1) / 2 * r.width, (1 - p.y) / 2 * r.height, false);
+    },
+  };
+}
+
+/* ---------------- controls ---------------- */
+const tHour = document.getElementById('tHour'), tNight = document.getElementById('tNight'), tRedact = document.getElementById('tRedact'), tDark = document.getElementById('tDark'), tShip = document.getElementById('tShip'), tTouch = document.getElementById('tTouch');
+function sync() {
+  const h = Number(tHour.value); document.getElementById('hourOut').textContent = `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
+  state.night = h >= 22; state.redact = tRedact.checked; state.touch = tTouch.checked;
+  if (state.ship !== tShip.value) { state.ship = tShip.value; IN = makeIncoming(state.ship); }
+  root.classList.toggle('night', state.night); root.classList.toggle('dark', tDark.checked);
+  renderCards(); closeBox(); hideTip(); if (api) { api.setNight(state.night); api.setHour(h); api.refresh(); }
+}
+[tNight, tRedact, tDark, tShip, tTouch].forEach(el => el.addEventListener('change', sync)); tHour.addEventListener('input', sync);
+const motionBtn = document.getElementById('motionBtn');
+function setMotion(on) { state.motion = on; motionBtn.setAttribute('aria-label', on ? 'Pause motion' : 'Play motion'); motionBtn.title = on ? 'Pause motion' : 'Play motion';
+  document.getElementById('motionIcon').innerHTML = on ? '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>' : '<path d="M7 5l12 7-12 7z"/>'; }
+motionBtn.onclick = () => setMotion(!state.motion); setMotion(state.motion);
+// TOWN-PROJECT-CITY: one switch for the three variants the server sends (full, redacted) or the page derives (wallboard)
+function setVariant(v) {
+  tRedact.checked = v === 'redact'; state.wallboard = v === 'wall';
+  document.getElementById('wallboardBtn').textContent = state.wallboard ? 'Exit wallboard' : 'Wallboard';
+  [['vFull', 'full'], ['vRedact', 'redact'], ['vWall', 'wall']].forEach(([id, k]) => document.getElementById(id).setAttribute('aria-pressed', String(k === v)));
+  sync();
+}
+document.getElementById('vFull').onclick = () => setVariant('full');
+document.getElementById('vRedact').onclick = () => setVariant('redact');
+document.getElementById('vWall').onclick = () => setVariant('wall');
+document.getElementById('wallboardBtn').onclick = () => setVariant(state.wallboard ? 'full' : 'wall');
+sync();
+document.getElementById('legendBtn').onclick = (e) => { const on = document.getElementById('legend').classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', String(on)); };
+window.__mock = { open, DATA, api, setVariant, setShip: (k) => { tShip.value = k; sync(); }, hideHint, setHour: (h) => { tHour.value = h; sync(); }, setMotion };
+</script>
+</body>
+</html>
