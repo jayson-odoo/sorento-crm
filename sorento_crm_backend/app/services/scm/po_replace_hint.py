@@ -38,13 +38,15 @@ def _so(value: Optional[str]) -> Optional[str]:
 
 
 def remember(old_ref: str, *, qty: Any, from_so_ref: Optional[str]) -> None:
-    """The row `old_ref` is about to be replaced by a row of `qty` linked to `from_so_ref`."""
+    """The row `old_ref` is about to be replaced by a row of `qty` linked to `from_so_ref`.
+    `qty=None` means any qty (a batch: lines AutoCount skips leave the free row bigger than the
+    request implies)."""
     store = idem.attempt_store()
     if store is None:
         return
     try:
         store.set(f"{_PREFIX}{old_ref.strip()}",
-                  json.dumps({"qty": _qty(qty), "so": _so(from_so_ref)}), ex=_TTL_SECONDS)
+                  json.dumps({"qty": None if qty is None else _qty(qty), "so": _so(from_so_ref)}), ex=_TTL_SECONDS)
     except Exception:  # noqa: BLE001
         logger.warning("po link: could not record the replace hint")
         idem.store_failed()
@@ -81,6 +83,6 @@ def lookup(refs: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def matches(hint: Dict[str, Any], values: Dict[str, Any]) -> bool:
-    return hint.get("qty") == _qty(values.get("qty_ordered")) and hint.get("so") == _so(
+    return hint.get("qty") in (None, _qty(values.get("qty_ordered"))) and hint.get("so") == _so(
         values.get("from_so_line_ref")
     )

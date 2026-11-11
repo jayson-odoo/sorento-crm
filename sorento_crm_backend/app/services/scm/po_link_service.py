@@ -719,9 +719,9 @@ class PoLinkService:
         "ITEM_MISMATCH": "the PO line is a different item",
         "UOM_MISMATCH": "the PO line uses a different unit",
         "DOC_CANCELLED": "the sales order is cancelled",
-        "QTY_ABOVE_OUTSTANDING": "it needs less than that now",
+        "QTY_ABOVE_OUTSTANDING": "the sales order line needs less than that now",
         "QTY_INVALID": "the quantity is not valid",
-        "QTY_ABOVE_FREE": "the PO line has less free",
+        "QTY_ABOVE_FREE": "the PO line does not have that much free",
     }
 
     def _send_group(self, po_line, po, members: List[Tuple]) -> List[Dict[str, Any]]:
@@ -745,14 +745,21 @@ class PoLinkService:
             body["docDate"] = po.issue_date.isoformat()
         row_qty = Decimal(str(po_line.qty_ordered or 0))
         total = sum((m[4] for m in members), Decimal("0"))
-        if total < row_qty:  # split: the row keeps the rest and its own link
-            po_replace_hint.remember(po_line.source_ref, qty=row_qty - total, from_so_ref=po_line.from_so_line_ref)
-        elif len(members) == 1:  # whole row: the row itself moves onto the SO line
+        if total >= row_qty and len(members) == 1:  # whole row: the row itself moves onto the SO line
             po_replace_hint.remember(po_line.source_ref, qty=row_qty, from_so_ref=members[0][0].source_ref)
+        else:
+            # The free row keeps the rest, unlinked: its qty is unknown until the answer (lines
+            # AutoCount skips stay on it), and the ingest pushes DURING the call.
+            po_replace_hint.remember(po_line.source_ref, qty=None, from_so_ref=po_line.from_so_line_ref)
         answer = self._send_intent("po-links/batch", body, po_line)
-        if answer.get("outcome") == "vendor_error" and answer.get("errorCode") in ("NOT_FOUND", "NOT_CONFIGURED"):
-            # The gateway reads a 404 (route missing) as NOT_CONFIGURED; a really unconfigured
-            # connection fails the per-line write the same way.
+        if (
+            answer.get("outcome") == "vendor_error"
+            and answer.get("errorCode") == "NOT_CONFIGURED"
+            and not answer.get("operationId")
+        ):
+            # The client itself raised: the gateway reads a missing route (404) as NOT_CONFIGURED
+            # and there is no operation. An answer SS gave with an outcome may have touched
+            # AutoCount, so it is never retried per line under new keys.
             return [self._send_link(*member) for member in members]  # SS without the batch route
 
         done = answer.get("outcome") == "done"
@@ -761,7 +768,11 @@ class PoLinkService:
         per_line = done or answer.get("errorCode") == "ALL_LINKS_SKIPPED"
         so_refs = {_keys(m[0].source_ref)[2]: m[0].source_ref.strip() for m in members}
         linked_by_dtl = (self._apply_safely(answer, po_line, so_refs) if done else None) or {}
-        taken = {int(l.get("soDtlKey")) for l in (answer.get("links") or []) if str(l.get("soDtlKey", "")).isdigit()}
+        asked = {_keys(m[0].source_ref)[2]: m[4] for m in members}
+        taken = {
+            int(l["soDtlKey"]): Decimal(str(l["qty"])) if l.get("qty") is not None else asked.get(int(l["soDtlKey"]), Decimal("0"))
+            for l in (answer.get("links") or []) if str(l.get("soDtlKey", "")).isdigit()
+        }
         skipped = {
             int(k.get("soDtlKey")): str(k.get("code") or "")
             for k in (answer.get("skipped") or []) if str(k.get("soDtlKey", "")).isdigit()
@@ -779,13 +790,13 @@ class PoLinkService:
                     **answer, "outcome": "skipped", "errorCode": None, "warnings": [],
                     "message": f"{so_label} was not linked: {why}.",
                 }
+            # What SS linked, not what was asked (it may take less).
+            line_qty = taken.get(dtl, qty) if done else qty
             results.append(self._result(
-                line_answer, so_line=so_line, so=so, po_line=po_line, po=po, qty=_num(qty),
+                line_answer, so_line=so_line, so=so, po_line=po_line, po=po, qty=_num(line_qty),
                 company_code=company_code, linked_line=linked_by_dtl.get(dtl),
             ))
-            self._log_write("link", line_answer, po_line, so_line, so, qty)
-        if is_definite_refusal(answer):
-            po_replace_hint.forget(po_line.source_ref)
+            self._log_write("link", line_answer, po_line, so_line, so, line_qty)
         return results
 
     def _send_link(self, so_line, so, po_line, po, qty: Decimal) -> Dict[str, Any]:
