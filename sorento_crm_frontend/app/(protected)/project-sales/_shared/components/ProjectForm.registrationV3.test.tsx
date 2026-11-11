@@ -343,7 +343,11 @@ async function pickMany(label: string | RegExp, optionName: string) {
 async function tickContact(name: string) {
   fireEvent.click(await screen.findByRole('button', { name: 'Add contacts' }));
   const dialog = await screen.findByRole('dialog');
-  fireEvent.click(await within(dialog).findByLabelText(name));
+  // The popup's picker is SearchableMultiSelect, whose stand-in above lists "pick <name>" buttons;
+  // a party's only contact is preselected, so it may already be picked.
+  await waitFor(() => expect(within(dialog).queryByText('Loading contacts')).toBeNull());
+  const pick = within(dialog).queryByRole('button', { name: `pick ${name}` });
+  if (pick) fireEvent.click(pick);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
 }
 
