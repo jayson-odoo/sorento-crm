@@ -1,6 +1,6 @@
 # PLAN: project quote line tools (duplicate line, below-default badge, line filter)
 
-Status: Review (built; reviewer + cloud browser pass running). Small fix track by diff (no migration, no auth/RBAC change, no new ingest surface;
+Status: Merge-ready pending owner hand test (reviewer READY, cloud browser pass PASS at 1280 and 375). Small fix track by diff (no migration, no auth/RBAC change, no new ingest surface;
 one read-only field added to an existing verdict response). Lane PROJECT-QUOTE-LINE-TOOLS.
 UAC: `project-quote-line-tools-acceptance-criteria.md`.
 
