@@ -51,6 +51,10 @@ vi.mock('../lib/portal-client', () => ({
   fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
 }));
 
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -111,6 +115,7 @@ vi.mock('./AIExtractDialog', () => ({
   },
 }));
 
+import { chooseUpload } from '@/test-utils';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const REAL = {
@@ -153,7 +158,7 @@ beforeEach(() => {
 });
 
 function openSalesOrderSection() {
-  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+  chooseUpload();
 }
 
 async function mountAndExtract(products: Record<string, unknown>[]) {

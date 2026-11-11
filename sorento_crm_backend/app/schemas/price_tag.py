@@ -275,6 +275,60 @@ class PriceTagRequestLineResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PriceTagRequestCustomer(BaseModel):
+    """One customer a request prints for (PRICETAG-REQUEST-LAYOUT). ``code`` is the debtor code
+    when the pick came from the debtor lookup."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: Optional[str] = Field(None, max_length=100)
+    name: str = Field(..., max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("A customer needs a name.")
+        return v
+
+
+def _distinct_customers(customers):
+    """Each customer once, first pick wins its place (by code, else by name)."""
+    if customers is None:
+        return None
+    seen: set[str] = set()
+    kept = []
+    for customer in customers:
+        key = (customer.code or "").strip().lower() or f"name:{customer.name.lower()}"
+        if key not in seen:
+            seen.add(key)
+            kept.append(customer)
+    return kept
+
+
+def _customers_or_debtor(customers, debtor_code, debtor_name):
+    """A request saved before ``customers`` existed reads as its one debtor."""
+    if customers is not None:
+        return customers
+    if (debtor_name or "").strip():
+        return [PriceTagRequestCustomer(code=debtor_code, name=debtor_name)]
+    return []
+
+
+def customers_from_payload(value) -> Optional[list[dict]]:
+    """``customers`` from a raw dict (the revise path, which never runs through a Pydantic body):
+    the same rules as the request schemas - a name each, each once, at most 50."""
+    from pydantic import TypeAdapter
+
+    if value is None:
+        return None
+    parsed = TypeAdapter(
+        Annotated[list[PriceTagRequestCustomer], Field(max_length=50)]
+    ).validate_python(value)
+    return [c.model_dump() for c in _distinct_customers(parsed)]
+
+
 class PriceTagRequestCreate(BaseModel):
     """What the portal posts when it saves a draft (D48a).
 
@@ -304,6 +358,15 @@ class PriceTagRequestCreate(BaseModel):
     debtor_name: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # PRICETAG-REQUEST-LAYOUT: every customer, in pick order; declared AFTER the debtor pair so
+    # the model's mirror (first customer -> debtor pair) is the last write when both are sent.
+    customers: Optional[list[PriceTagRequestCustomer]] = Field(None, max_length=50)
+
+    @field_validator("customers")
+    @classmethod
+    def _each_customer_once(cls, v):
+        return _distinct_customers(v)
+
     # Header price mode (D5, r7): 'selling' requires a promotion, enforced on
     # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
     # before it has a promotion, same as it may have no debtor yet).
@@ -337,6 +400,15 @@ class PriceTagRequestUpdate(BaseModel):
     debtor_name: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # PRICETAG-REQUEST-LAYOUT: every customer, in pick order; declared AFTER the debtor pair so
+    # the model's mirror (first customer -> debtor pair) is the last write when both are sent.
+    customers: Optional[list[PriceTagRequestCustomer]] = Field(None, max_length=50)
+
+    @field_validator("customers")
+    @classmethod
+    def _each_customer_once(cls, v):
+        return _distinct_customers(v)
+
     # NOT Optional: the column is NOT NULL, and `price_mode: null` used to
     # reach `setattr(req, "price_mode", None)` in the route (`exclude_unset`
     # only drops an OMITTED field, not one explicitly sent as null) and 500
@@ -417,6 +489,14 @@ class PriceTagRequestAttachment(BaseModel):
 
 class PriceTagRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    # PRICETAG-REQUEST-LAYOUT: never null on the wire; an older request reads as its one debtor.
+    customers: Optional[list[PriceTagRequestCustomer]] = None
+
+    @model_validator(mode="after")
+    def _customers_fallback(self):
+        self.customers = _customers_or_debtor(self.customers, self.debtor_code, self.debtor_name)
+        return self
 
     id: str
     contact_id: str
@@ -502,6 +582,14 @@ class PriceTagRequestResponse(BaseModel):
 
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    # PRICETAG-REQUEST-LAYOUT: never null on the wire; an older request reads as its one debtor.
+    customers: Optional[list[PriceTagRequestCustomer]] = None
+
+    @model_validator(mode="after")
+    def _customers_fallback(self):
+        self.customers = _customers_or_debtor(self.customers, self.debtor_code, self.debtor_name)
+        return self
 
     id: str
     contact_id: str
