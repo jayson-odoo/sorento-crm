@@ -74,9 +74,8 @@ CI result waits for the orchestrator to say so, it does not poll the PR itself. 
 removes the label again the moment it fires, so the operator recipe to re-run CI against a new
 head is always `gh pr edit <n> --add-label ci`, never leaving the label sitting on the PR.
 
-The `[skip ci]` convention for intermediate commits (a commit message containing it skips creating
-a run for that push) stays in place as belt and braces - it costs nothing now that pushes to a PR
-do not trigger runs on their own, and it still matters for pushes to `main`.
+Workers never put a CI-skip marker in a commit message: crew manages the `ci` label, and a push to
+a PR starts no run on its own.
 
 A `ci`-labelled PR run is `Changed areas` plus one `PR gate` job, **fast checks only**
 (CI-CLOUD-GATE, owner 4 Nov 2026): main's head merged in, the alembic head, PII, Outline-guide

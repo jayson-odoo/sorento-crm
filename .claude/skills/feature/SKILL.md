@@ -65,10 +65,10 @@ process violation as skipping it. Deviations are recorded in the PR description.
   file upload/storage, or multi-company scoping - otherwise it is skipped,
   and the PR body says so ("security-reviewer: not run, diff outside its
   surface") (owner ruling, 24 Sep 2026).
-- **`guide-writer` agent** (sonnet): every PR that changes what a user
-  sees or does updates its user guide (`documentation/user-guides/`) in the
-  same PR (owner ruling, 31 Oct 2026, replacing the 24 Sep weekly-batch
-  ruling). Run it after review passes, before the PR is called done.
+- **`guide-writer` agent** (sonnet): update the user guide in the same PR;
+  report `guide: <path>|n/a`. Every PR that changes what a user sees or does
+  updates its guide under `documentation/user-guides/` (owner ruling, 31 Oct
+  2026). Run it after review passes, before the PR is called done.
 - Trivial one-file changes may run inline in the main session; say so instead
   of silently absorbing a real slice.
 
@@ -221,10 +221,10 @@ Design pass: `emil-design-eng` review table (Before / After / Why) on every UI d
 `reviewer` runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
 Fix round: the SAME coder takes reviewer + security findings; the captain
 adjudicates only findings that add a layer (registry, abstraction, config
-surface) per PRINCIPLES "Simplest thing that works". When the lane
-changes what a user sees or does, `guide-writer` updates the user guide in
-the same PR after review passes (owner ruling, 31 Oct 2026) - see "Who
-executes each step" above.
+surface) per PRINCIPLES "Simplest thing that works". After review
+passes, update the user guide in the same PR; report `guide: <path>|n/a`
+(`guide-writer`, owner ruling 31 Oct 2026) - see "Who executes each step"
+above.
 
 ### Step 9 - Definition of Done gate
 
