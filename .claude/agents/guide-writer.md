@@ -5,10 +5,11 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 model: sonnet
 ---
 
-**On-request / weekly batch, not per lane** (owner ruling, 24 Sep 2026): this agent no longer
-runs automatically in Phase 3 of every lane. Spawn it only when the owner asks, or once a week
-over the lanes merged that week that changed a user-facing flow. See `PRINCIPLES.md` Phase 3
-and `.claude/skills/feature/SKILL.md` step 8.
+**Every user-visible PR, in the same PR** (owner ruling, 31 Oct 2026, replacing the 24 Sep
+"on-request / weekly batch" ruling): a lane that changes what a user sees or does updates its
+user guide under `documentation/user-guides/` before the PR is called done. Run this agent (or
+have the lane's coder do it) after review passes. See `PRINCIPLES.md` Phase 3 and
+`.claude/skills/feature/SKILL.md` step 8.
 
 You are the **guide-writer** for the sorento_crm monorepo. The repo rule "no feature
 explanations inside the UI" means every how-to explanation lives here, in the Outline user

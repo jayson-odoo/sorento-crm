@@ -65,11 +65,10 @@ process violation as skipping it. Deviations are recorded in the PR description.
   file upload/storage, or multi-company scoping - otherwise it is skipped,
   and the PR body says so ("security-reviewer: not run, diff outside its
   surface") (owner ruling, 24 Sep 2026).
-- **`guide-writer` agent** (sonnet) is retired from the per-lane pipeline
-  (owner ruling, 24 Sep 2026): it no longer runs after every lane's review.
-  Outline user-guide updates (`documentation/user-guides/`) are batched -
-  run `guide-writer` only when the owner asks, or once a week over the
-  lanes merged that week that changed a user-facing flow.
+- **`guide-writer` agent** (sonnet): update the user guide in the same PR;
+  report `guide: <path>|n/a`. Every PR that changes what a user sees or does
+  updates its guide under `documentation/user-guides/` (owner ruling, 31 Oct
+  2026). Run it after review passes, before the PR is called done.
 - Trivial one-file changes may run inline in the main session; say so instead
   of silently absorbing a real slice.
 
@@ -186,7 +185,8 @@ phase only**, and it calls `/tdd` internally.
 
 Tests land here, never deferred to Phase 3: pytest, vitest, and per user flow a
 real-clicks FE→BE→DB walk, but **no new Playwright spec**: a recorded
-agent-browser evidence run stands in, per CLAUDE.md "Persisted Playwright spec".
+agent-browser evidence run stands in, per `documentation/agents/browser-verification.md`
+section 2 "Persisted Playwright spec".
 Re-verify live against the running stack.
 
 Backend tests run on **Postgres only, never sqlite**.
@@ -221,9 +221,10 @@ Design pass: `emil-design-eng` review table (Before / After / Why) on every UI d
 `reviewer` runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
 Fix round: the SAME coder takes reviewer + security findings; the captain
 adjudicates only findings that add a layer (registry, abstraction, config
-surface) per PRINCIPLES "Simplest thing that works". `guide-writer` no
-longer runs per lane here (owner ruling, 24 Sep 2026) - see "Who executes
-each step" above; the PR opens straight after review passes.
+surface) per PRINCIPLES "Simplest thing that works". After review
+passes, update the user guide in the same PR; report `guide: <path>|n/a`
+(`guide-writer`, owner ruling 31 Oct 2026) - see "Who executes each step"
+above.
 
 ### Step 9 - Definition of Done gate
 
@@ -291,7 +292,7 @@ to also drop `node_modules` and `venv` from lanes you are done with.
 | 8 security review | built-in `/security-review` checklist | `security-reviewer` agent, parallel with reviewer |
 | 8 browser verification | agent-browser, once per lane | `tester` agent, parallel with reviewer |
 | 8 review design | `emil-design-eng`, `review-animations` (motion diffs only) | `reviewer` agent |
-| user guide (on-request/weekly, not per lane) | Outline sync (`documentation/user-guides/README.md`, `SYNC.md`) | `guide-writer` agent |
+| user guide (same PR, every user-visible lane) | Outline sync (`documentation/user-guides/README.md`, `SYNC.md`) | `guide-writer` agent |
 | new FE dependency | `pick-ui-library` | `coder` agent, worktree |
 | bugs | `/triage` then `/diagnosing-bugs` | `triage` agent (inbound issues) + main session |
 | periodic | `/improve-codebase-architecture`, `/codebase-design`, `improve-animations` | main session |
@@ -303,7 +304,7 @@ to also drop `node_modules` and `venv` from lanes you are done with.
 - `PRINCIPLES.md` - the binding contract this skill executes
 - `documentation/reference/DESIGN-LANGUAGE.md` - tokens, motion presets, primitives roster
 - `CLAUDE.md` - repo conventions, dev sessions, architecture
-- `LESSONS-LEARNT.md` - the gotcha log (88 entries); read before debugging anything non-obvious
+- `LESSONS-LEARNT.md` - the gotcha log; read before debugging anything non-obvious
 - `CONTEXT-MAP.md` - glossaries
 - `documentation/agents/` - issue tracker, triage labels, domain doc rules,
   session handoff (`/handoff` + `/resume-handoff`, the autocompact replacement)

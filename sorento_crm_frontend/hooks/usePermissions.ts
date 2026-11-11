@@ -2,24 +2,12 @@
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSession } from 'next-auth/react';
+import { useSessionOrSignedOut } from '@/hooks/useSessionOrSignedOut';
 import { fetchMyPermissions } from '@/lib/permissions-service';
 
 const PERMISSIONS_QUERY_KEY = ['my-permissions'];
 const NO_PERMISSIONS: string[] = [];
 
-/**
- * `useSession()`, read as signed out where no SessionProvider wraps the tree instead of throwing,
- * so a component that only branches on a slug renders in isolation (FormComments reads the context
- * for the same reason). Under the app shell a provider is always there and nothing changes.
- */
-function useSessionOrSignedOut(): Pick<ReturnType<typeof useSession>, 'data' | 'status'> {
-  try {
-    return useSession();
-  } catch {
-    return { data: null, status: 'unauthenticated' };
-  }
-}
 
 export function usePermissions() {
   const { status } = useSessionOrSignedOut();

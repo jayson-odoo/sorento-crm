@@ -2008,3 +2008,227 @@ def test_the_catalogue_index_is_memoised_per_company(seeded):
 
     other = service._catalogue_index(other_company)
     assert other[0] is not first[0]
+
+
+# ------------------------------------------- PO-EXTRACT-LIST-FIX (11 Nov 2026)
+#
+# A real 22-page customer PO failed outright with "This document could not be read:
+# 'list' object has no attribute 'get'": the reader answered ONE page (page 5) as a
+# top-level JSON array holding one page object, `persist_pages` called `.get` on it, the
+# raise escaped `run_extraction`, and the task's last-resort write put Python's own
+# sentence on screen. Synthetic pages only below; the customer's file is never used.
+
+
+def _page_json(*line_nos: int) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "header": {"po_number": None, "po_date": "01/11/2026"},
+            "lines": [
+                {
+                    "no": n,
+                    "stock_code": f"ZZT-CODE-{n}",
+                    "description": f"ZZT item {n}",
+                    "qty": 2,
+                    "uom": "PCS",
+                    "unit_price": 10.5,
+                    "amount": 21.0,
+                    "struck_through": False,
+                }
+                for n in line_nos
+            ],
+            "annotations": [],
+        }
+    )
+
+
+class _RecordingReader:
+    """A reader answering page N with ``answers[N - 1]`` and keeping every call's kwargs."""
+
+    name = "stub"
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.kwargs = []
+
+    def chat(self, messages, **kwargs):
+        import re as _re
+
+        page_no = int(_re.search(r"page (\d+) of", messages[0]["content"]).group(1))
+        self.kwargs.append(kwargs)
+        return ChatResult(
+            content=self.answers[page_no - 1], prompt_tokens=1, completion_tokens=1, total_tokens=2
+        )
+
+
+def _read_with(monkeypatch, reader, page_total: int) -> None:
+    monkeypatch.setattr(
+        ProjectPOExtractionService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [
+            RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(page_total)
+        ],
+    )
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: reader)
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 1, raising=False)
+
+
+_PYTHON_WORDS = ("ZZT-internal", "'list'", "attribute", "object has no", "Traceback", "Error")
+
+
+def _assert_plain(message) -> None:
+    assert message, "a failure must say something the user can act on"
+    for word in _PYTHON_WORDS:
+        assert word not in message, f"{word!r} reached the screen: {message!r}"
+
+
+def test_one_page_answered_as_an_array_still_reads_the_whole_document(seeded, monkeypatch):
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-ARRAY-ONE"))
+    reader = _RecordingReader([_page_json(1, 2), f"[{_page_json(3)}]", _page_json(4)])
+    _read_with(monkeypatch, reader, 3)
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == STATE_DONE
+    assert summary["failed_pages"] == []
+    assert summary["line_count"] == 4
+    db.refresh(version)
+    assert version.extraction_error is None
+
+
+def test_a_page_answered_as_several_objects_fails_that_page_and_keeps_the_rest(
+    seeded, monkeypatch
+):
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-ARRAY-TWO"))
+    reader = _RecordingReader(
+        [_page_json(1), f"[{_page_json(2)}, {_page_json(3)}]", _page_json(4)]
+    )
+    _read_with(monkeypatch, reader, 3)
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == STATE_DONE
+    assert summary["failed_pages"] == [2]
+    assert summary["line_count"] == 2
+    db.refresh(version)
+    _assert_plain(version.extraction_error)
+
+
+def _walk_objects(node):
+    if isinstance(node, dict):
+        kinds = node.get("type")
+        if kinds == "object" or (isinstance(kinds, list) and "object" in kinds):
+            yield node
+        for key in ("properties",):
+            for child in (node.get(key) or {}).values():
+                yield from _walk_objects(child)
+        if "items" in node:
+            yield from _walk_objects(node["items"])
+
+
+def test_the_po_reader_asks_for_one_page_object_by_schema(seeded, monkeypatch):
+    """The cause, fixed at the source: JSON mode lets a model answer an array, a schema
+    does not. The schema mirrors the `po_extractor` prompt's own page shape, and is
+    strict-mode valid (OpenAI refuses a strict schema whose objects leave a property out
+    of ``required`` or allow extra ones)."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-SCHEMA"))
+    reader = _RecordingReader([_page_json(1)])
+    _read_with(monkeypatch, reader, 1)
+
+    service.run_extraction(str(version.id))
+
+    schema = reader.kwargs[0].get("json_schema")
+    assert schema is not None, "the PO reader still asks in JSON mode only"
+    assert schema["type"] == "object"
+    assert set(schema["required"]) == {"header", "lines", "annotations"}
+    props = schema["properties"]
+    assert set(props["header"]["properties"]) == {
+        "po_number", "po_date", "term", "sales_person", "cust_order_no", "remark",
+    }
+    assert set(props["lines"]["items"]["properties"]) == {
+        "no", "stock_code", "description", "qty", "uom", "unit_price", "amount",
+        "struck_through", "struck_parts",
+    }
+    assert set(props["annotations"]["items"]["properties"]) == {
+        "text", "date", "refers_to_items", "meaning", "kind", "proposed_code",
+        "successor_po_number",
+    }
+    for obj in _walk_objects(schema):
+        assert obj.get("additionalProperties") is False
+        assert set(obj.get("required") or []) == set(obj.get("properties") or {})
+
+
+@pytest.mark.parametrize("where", ["document", "reader", "persist"])
+def test_a_failure_anywhere_in_the_read_shows_a_plain_sentence(seeded, monkeypatch, where):
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, f"PO-PLAIN-{where}"))
+    _read_with(monkeypatch, _RecordingReader([_page_json(1)]), 1)
+
+    def boom(*args, **kwargs):
+        raise AttributeError("ZZT-internal 'list' object has no attribute 'get'")
+
+    if where == "document":
+        monkeypatch.setattr(ProjectPOExtractionService, "_document_bytes", boom)
+    elif where == "reader":
+        monkeypatch.setattr(document_extraction, "_render_pages_rich", boom)
+    else:
+        monkeypatch.setattr(ProjectPOExtractionService, "persist_pages", boom)
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == "failed"
+    db.refresh(version)
+    assert version.extraction_state == "failed"
+    _assert_plain(version.extraction_error)
+
+
+def test_the_last_resort_failure_write_never_shows_python(seeded):
+    from app.tasks.project_document_tasks import _mark_failed
+
+    db, project, owner = seeded
+    version = _version(db, _po(db, project, owner, "PO-LAST-RESORT"))
+    db.commit()
+
+    _mark_failed(
+        db, ProjectPOVersion, str(version.id),
+        AttributeError("ZZT-internal 'list' object has no attribute 'get'"),
+    )
+
+    db.refresh(version)
+    assert version.extraction_state == "failed"
+    _assert_plain(version.extraction_error)
+
+
+def test_a_refusal_after_the_read_keeps_its_own_sentence(seeded, monkeypatch):
+    """An ``AppException`` already carries a sentence written for the user (the PO was
+    removed mid-read, say); the persist guard passes it on rather than replacing it."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-REFUSAL"))
+    _read_with(monkeypatch, _RecordingReader([_page_json(1)]), 1)
+
+    def refuse(*args, **kwargs):
+        raise AppException(
+            status_code=404, message="ZZT this purchase order was removed.", code="zzt_gone"
+        )
+
+    monkeypatch.setattr(ProjectPOExtractionService, "persist_pages", refuse)
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == "failed"
+    db.refresh(version)
+    assert version.extraction_error == "ZZT this purchase order was removed."

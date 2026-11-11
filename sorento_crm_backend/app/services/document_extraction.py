@@ -231,6 +231,31 @@ def _parse_json(text: str) -> dict:
     return json.loads(body)
 
 
+def _one_page_object(parsed: object) -> tuple[Optional[dict], Optional[str]]:
+    """The page answer as the one object ``PageResult.data`` promises, or why it is not.
+
+    JSON mode guarantees JSON, not an object. Measured 11 Nov 2026 on a 22-page customer
+    PO (gemini-3.5-flash, json_object mode): page 5 came back as a top-level array
+    holding one page object, and every reader downstream calls ``.get`` on ``data``. An
+    array holding exactly one object is that object. Anything else fails THIS page with
+    a sentence and the rest of the document is still read; nothing is guessed, because of
+    two readings of one page, which one is the page is not ours to pick.
+    """
+    if isinstance(parsed, dict):
+        return parsed, None
+    if parsed == []:
+        # Nothing on the page, said as an array: the same answer as ``{}``.
+        return {}, None
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        return parsed[0], None
+    if isinstance(parsed, list) and len(parsed) > 1 and all(isinstance(i, dict) for i in parsed):
+        return None, (
+            f"the reader returned {len(parsed)} separate readings for this page, so none "
+            "of them was used"
+        )
+    return None, "the reader's answer for this page was not in the expected form"
+
+
 def _assistant_config(db: Session):
     """The AI assistant config row, or ``None`` when the install has never saved one.
 
@@ -361,6 +386,7 @@ def extract_document(
     prompt_key: str,
     model: Optional[str] = None,
     on_page: Optional[Callable[[PageResult], None]] = None,
+    json_schema: Optional[dict] = None,
 ) -> ExtractionResult:
     """Run ``prompt_key`` over every page of the document, ``document_ai_page_concurrency``
     pages at a time.
@@ -378,6 +404,11 @@ def extract_document(
     session without that session ever crossing a thread boundary. It fires in whatever
     order pages finish, which is fine for a progress counter; ``ExtractionResult.pages``
     below is always reassembled in page order regardless.
+
+    ``json_schema`` is the page shape the caller's prompt asks for, sent as structured
+    output so the model cannot answer anything but that object; without one the page is
+    read in plain JSON mode. Either way an answer that is not one object fails only its
+    own page (``_one_page_object``).
 
     The key is resolved through the shared ``resolve_api_key`` ladder against the
     AI assistant config row, for the provider ``document_ai_provider`` names: the
@@ -419,16 +450,24 @@ def extract_document(
                 template, declared_vars,
                 page_no=index, page_count=page_total, page_text=rendered.text or "",
             )
+            shape: dict = (
+                {"json_schema": json_schema, "json_schema_name": "document_page"}
+                if json_schema is not None
+                else {"response_format": {"type": "json_object"}}
+            )
             answer = provider.chat(
                 [{"role": "user", "content": prompt}],
                 images=[ImagePart(mime=rendered.image_mime, data_b64=rendered.image_b64)],
                 temperature=0,
-                response_format={"type": "json_object"},
+                **shape,
             )
             page.prompt_tokens = answer.prompt_tokens
             page.completion_tokens = answer.completion_tokens
             page.cached_tokens = int(getattr(answer, "cached_tokens", 0) or 0)
-            page.data = _parse_json(answer.content)
+            page.data, page.error = _one_page_object(_parse_json(answer.content))
+            if page.error:
+                page.raw_text = (answer.content or "")[:2000]
+                logger.warning("extraction failed on page %s: %s", index, page.error)
         except json.JSONDecodeError:
             page.error = "the model's answer was not valid JSON"
             page.raw_text = (answer.content or "")[:2000]
