@@ -1,6 +1,6 @@
 # PLAN: Town project district (TOWN-PROJECT-CITY)
 
-Status: Plan - card v2.2 + Malaysia-map mock posted for owner sign-off. Track: full (size L: new snapshot sections, redaction, a map world).
+Status: Plan - card v2.2 + mock v2 (Malaysia map on the live engine) posted for owner sign-off. Track: full (size L: new snapshot sections, redaction, a map world).
 
 Trigger: owner, 11 Nov 2026 ~19:15 MYT. Show the project business beside the dealer street in Sorento Town.
 PR: foundryx-sdn-bhd/sorento-crm#2342 (`crew-lane: TOWN-PROJECT-CITY`). Mock: `mock/town-project-city-mock.html`.
@@ -156,16 +156,23 @@ Board (full): "Sold today RM 48,200.00 / Dealers RM 39,900.00 · Projects RM 6,1
 
 ## Mock
 
-- `mock/town-project-city-mock.html`: the Malaysia-map Town (card v2.2), one self-contained page (three.js from the
-  jsDelivr CDN, as the v5 mock). Mock controls under the stage: time of day, viewer Full / No amounts / Wallboard,
-  dark theme, shipment volume. Every dealer, project, trading house, value and date in it is invented; the shop spread
-  follows the dev shape (Selangor 16, Johor 6, KL 3, one each in Kedah, Pahang, Sarawak, Negeri Sembilan, Pulau
-  Pinang) plus 3 stalls, 12 sites, 5 trading houses and a "State not set" islet.
-- Screenshots in `mock/town-project-city/`: `1280.png`, `375.png` (full page), `lightbox-site.png`,
-  `wallboard-1280.png`, `zoom-selangor.png` (HQ, Selangor street, tidy no-dates plot), `zoom-johor.png` (frame +
-  crane, groundworks, trading tower, lorry).
-- Element -> component map: the table at the bottom of the mock page.
-- v1 (single island) kept as `mock/town-project-city-mock-v0-single-island.html`.
+- **v2 (current, 12 Nov):** `mock/town-project-city-mock-v2.html`, one self-contained page built on the LIVE Town
+  engine. Owner on v1: "the quality of the visual regress ady", so v2 forks the live
+  `sorento_crm_frontend/app/(protected)/town/components/townWorld.ts` instead of drawing with mock primitives:
+  `mock/town-project-city-v2/build.sh` copies the live file and applies `patches/patch1..4.py` (map frame and state
+  islands with the live slab / beach / foam, causeways = the live bridge, shops moved to their state's street,
+  sites and trading towers in the live materials, trees, lorry routes over the causeways, the coaster ship, state
+  pills and fly-to, the board's split line, map-aware labels), then bundles it with the app's own Tailwind CSS.
+  - Default view = Shah Alam (Selangor) at exactly the live scale, north up (Port Klang on the left); Selangor's
+    dealers face the camera; other states are islands reached by a state pill or chip (fly-to), zoom, or the
+    whole-map button; reset returns to Shah Alam.
+  - Evidence in `mock/town-project-city-v2/shots/`: `side-by-side-1280.png` (live Town vs mock v2, same stage size,
+    both rendered from the real engine in the sandbox), `v2-1280.png`, `v2-375.png`, `v2-all.png` (whole map),
+    `v2-johor.png` (a state at street level), `v2-lightbox-site.png`, `v2-wallboard.png`.
+  - The engine fork is mock-only (`documentation/`, not built by the app). The build would make the same changes in
+    `townWorld.ts` itself, with the state table in `town/lib/townMap.ts`.
+- v1 (superseded): `mock/town-project-city-mock.html` + `mock/town-project-city/` (hand-drawn map; owner: visual regressed).
+- v0 (superseded): `mock/town-project-city-mock-v0-single-island.html`.
 
 ## Phase plan (after sign-off)
 
