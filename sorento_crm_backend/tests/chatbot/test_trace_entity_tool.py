@@ -128,6 +128,15 @@ def test_resolve_event_has_no_uuid_in_it():
     assert "u-A1" not in repr(event)
 
 
+def test_resolve_event_reads_the_and_mode_shape():
+    """AND mode (what a live stock check on one code answers): `tokens` + `intersection`."""
+    payload = {"resolved": {"match_mode": "and", "tokens": ["srtwc286"], "intersection": [_m("SRTWC286", "and")]}}
+    event = trace_mod.resolve_event(payload, unplaced={}, not_checked={})
+    assert event["words"] == [
+        {"word": "srtwc286", "codes": ["SRTWC286"], "more": 0, "tiers": ["and"], "kinds": ["product"], "ambiguous": False}
+    ]
+
+
 def test_resolve_event_is_none_with_nothing_to_say():
     assert trace_mod.resolve_event(None, unplaced={}, not_checked={}) is None
     assert trace_mod.resolve_event({"resolved": {"resolutions": []}}, unplaced={}, not_checked={}) is None

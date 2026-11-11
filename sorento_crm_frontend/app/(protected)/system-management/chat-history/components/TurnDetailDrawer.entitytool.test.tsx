@@ -97,6 +97,7 @@ describe('TRACE-ENTITY-TOOL Entity match', () => {
     expect(section).toHaveTextContent('SRTWC286');
     expect(section).toHaveTextContent('exact');
     expect(section).toHaveTextContent('+4 more');
+    expect(section).toHaveTextContent('starts with');
     expect(screen.getByTestId('entity-match-unplaced')).toHaveTextContent('zzq');
   });
 

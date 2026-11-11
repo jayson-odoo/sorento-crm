@@ -711,6 +711,17 @@ function FocusSection({ focus }: { focus: TurnDetailFocus[] }) {
   );
 }
 
+/** The resolver's `match_tier` values (`entity_resolver.ResolvedEntity`), in words. */
+const TIER_WORDS: Record<string, string> = {
+  exact: 'exact',
+  prefix: 'starts with',
+  substring: 'contains',
+  and: 'all words',
+  embedding: 'by meaning',
+  head_code: 'head code',
+  spec_search: 'by spec',
+};
+
 function EntityMatchSection({ entityMatch }: { entityMatch: EntityMatch | null }) {
   if (!entityMatch) return <Empty>No code lookup this turn.</Empty>;
   const { words, unplaced, not_checked: notChecked } = entityMatch;
@@ -732,7 +743,7 @@ function EntityMatchSection({ entityMatch }: { entityMatch: EntityMatch | null }
               )}
               {w.tiers.map((t) => (
                 <Badge key={t} variant="secondary" size="sm">
-                  {t.replace(/_/g, ' ')}
+                  {TIER_WORDS[t] ?? t.replace(/_/g, ' ')}
                 </Badge>
               ))}
               {w.ambiguous && (

@@ -427,16 +427,29 @@ def resolve_event(
     ceiling). Codes only, never a row id. None when the resolver had nothing to report.
     """
     resolved = (payload or {}).get("resolved") if isinstance(payload, dict) else None
-    resolutions = resolved.get("resolutions") if isinstance(resolved, dict) else None
+    resolved = resolved if isinstance(resolved, dict) else {}
+    # The resolver answers in two shapes (`turn_runtime.spec_tier_matched` reads both): per
+    # token (`resolutions[*].matches`), or, in AND mode, every token at once (`tokens` plus
+    # the rows matching all of them, `intersection`). AND mode is one row: the words together.
+    groups: list[tuple[str, list[Any], bool]] = []
+    if isinstance(resolved.get("intersection"), list):
+        tokens = [str(t) for t in resolved.get("tokens") or [] if t]
+        if tokens:
+            groups.append((" ".join(tokens), resolved["intersection"], False))
+    else:
+        for resolution in resolved.get("resolutions") or []:
+            if isinstance(resolution, dict):
+                groups.append(
+                    (str(resolution.get("token") or ""), resolution.get("matches") or [], bool(resolution.get("ambiguous")))
+                )
     words: list[dict[str, Any]] = []
-    for resolution in resolutions if isinstance(resolutions, list) else []:
-        if not isinstance(resolution, dict):
-            continue
-        matches = [m for m in resolution.get("matches") or [] if isinstance(m, dict)]
+    for word, matches, ambiguous in groups:
         codes: list[str] = []
         tiers: list[str] = []
         kinds: list[str] = []
         for match in matches:
+            if not isinstance(match, dict):
+                continue
             code = str(match.get("canonical_code") or "").strip()
             if code and code not in codes:
                 codes.append(code)
@@ -445,12 +458,12 @@ def resolve_event(
                     bucket.append(str(value))
         words.append(
             {
-                "word": str(resolution.get("token") or ""),
+                "word": word,
                 "codes": codes[:RESOLVE_CODE_CAP],
                 "more": max(0, len(codes) - RESOLVE_CODE_CAP),
                 "tiers": tiers,
                 "kinds": kinds,
-                "ambiguous": bool(resolution.get("ambiguous")),
+                "ambiguous": ambiguous,
             }
         )
     event = {
