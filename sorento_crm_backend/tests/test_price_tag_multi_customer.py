@@ -295,3 +295,39 @@ def test_a_stale_edit_is_refused_without_calling_it_a_revision(db):
     assert refused.value.status_code == 409
     assert "revis" not in str(refused.value.detail if hasattr(refused.value, "detail") else refused.value).lower()
     assert "revis" not in str(refused.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Crew browser pass, owner round: History must show the customer change. Snapshots stored the
+# list as Python repr text, so the diff saw no change and View full form showed the raw text.
+# ---------------------------------------------------------------------------
+
+
+def test_an_edit_snapshot_stores_customers_as_a_list_and_history_names_the_change(db):
+    from app.services.portal_revision_service import PortalRevisionService
+
+    contact, product_id, row = _setup(db)
+    service = PortalRevisionService(db)
+    token = _seed_token(contact)
+    first = {"customers": [_A, _B], "products": [{"product_id": product_id, "quantity": 1}]}
+    service.revise(token, "price_tag_request", str(row.id), first, "", 0)
+    second = {"customers": [_A, _B, _C], "products": [{"product_id": product_id, "quantity": 3}]}
+    service.revise(token, "price_tag_request", str(row.id), second, "", 1)
+    history = service.list_revisions("price_tag_request", str(row.id))
+    edit = history[-1]
+    assert edit["snapshot"]["customers"] == [_A, _B, _C]
+    change = [c for c in edit["changes"] if c["field"] == "customers"]
+    assert change and change[0]["to"] == f"{_A['name']}, {_B['name']}, {_C['name']}"
+    assert change[0]["from"] == f"{_A['name']}, {_B['name']}"
+    shown = {f["field"]: f["display"] for f in edit["snapshot_fields"]}
+    assert shown["customers"] == f"{_A['name']}, {_B['name']}, {_C['name']}"
+
+
+def test_a_snapshot_saved_as_repr_text_still_reads_as_names():
+    """Rows written before the fix hold `str(list)`; read them safely (no eval)."""
+    from app.services.portal_revision_service import _customer_names
+
+    old = {"customers": str([_A, _B])}
+    assert _customer_names(old) == f"{_A['name']}, {_B['name']}"
+    assert _customer_names({"customers": "__import__('os').system('true')"}) is None
+    assert _customer_names({"customers": "not a list", "debtor_name": "ZZT X"}) is None

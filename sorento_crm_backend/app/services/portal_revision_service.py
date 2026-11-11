@@ -798,6 +798,12 @@ def _jsonable(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, (str, int, float, bool)):
         return value
+    # A JSON column (a price tag request's `customers`) stays a JSON list/object; `str()` on
+    # it stored Python repr text the diff could not compare (crew browser pass, 11 Nov).
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
     return str(value)
 
 
@@ -2215,8 +2221,29 @@ def _customer_names(snapshot: dict) -> Optional[str]:
     customers = snapshot.get("customers")
     if customers is None:
         return snapshot.get("debtor_name") or None
+    if isinstance(customers, str):
+        customers = _parse_stored_customers(customers)
+    if not isinstance(customers, list):
+        return None
     names = [str(c.get("name") or "").strip() for c in customers if isinstance(c, dict)]
     return ", ".join(n for n in names if n) or None
+
+
+def _parse_stored_customers(text: str) -> Any:
+    """A snapshot written before `_jsonable` kept lists holds the list's Python repr. Read it
+    as JSON or as a Python literal (``ast.literal_eval`` evaluates literals only, never code);
+    anything else reads as nothing."""
+    import ast
+    import json
+
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError, MemoryError, RecursionError, TypeError):
+        return None
 
 
 def _diff_lines(previous: Any, current: Any) -> list[dict]:
