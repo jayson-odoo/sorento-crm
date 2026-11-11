@@ -17,11 +17,14 @@ Two ways it is enforced:
 """
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 COST_VIEW_PERM = "products.cost.view"
 
@@ -52,6 +55,72 @@ def can_view_cost(db: Session, user_id: Optional[str]) -> bool:
     from app.services.user_service import UserPermissionService
 
     return UserPermissionService(db).check_user_has_permission(str(user_id), COST_VIEW_PERM)
+
+
+def contact_ids_who_can_view_cost(db: Session, contact_pks: Iterable[Optional[str]]) -> set[str]:
+    """COST-ACCESS-UNIFIED: the subset of ``contact_pks`` that may see cost. A contact sees cost iff
+    its linked user (`users.respond_contact_id`) is ACTIVE and holds `products.cost.view`
+    (admin and superadmin bypass, via `can_view_cost`). Fails closed: any error gives an empty set."""
+    ids = sorted({str(c) for c in contact_pks if c})
+    if not ids:
+        return set()
+    try:
+        from app.models.base import company_scope
+        from app.models.user import User, UserStatus
+
+        with company_scope(db, None):
+            rows = (
+                db.query(User.id, User.respond_contact_id)
+                .filter(User.respond_contact_id.in_(ids), User.status == UserStatus.ACTIVE.value)
+                .all()
+            )
+        return {str(contact) for user_id, contact in rows if can_view_cost(db, str(user_id))}
+    except Exception:
+        logger.warning("contact cost visibility lookup failed; treating as hidden", exc_info=True)
+        return set()
+
+
+def contact_can_view_cost(db: Session, contact_pk: Optional[str]) -> bool:
+    """The ONE answer to "may this contact see cost" (COST-ACCESS-UNIFIED)."""
+    if not contact_pk:
+        return False
+    return str(contact_pk) in contact_ids_who_can_view_cost(db, [contact_pk])
+
+
+def contact_cost_visible_expr():
+    """SQL form of `contact_can_view_cost` for the Contacts list filter and sort: a correlated
+    EXISTS on `RespondContact.id` that mirrors the Python rule (active linked user AND (role slug
+    superadmin/admin OR a role holding `products.cost.view`))."""
+    from sqlalchemy import exists, or_, select
+
+    from app.models.access import RespondContact
+    from app.models.user import (
+        User,
+        UserPermission,
+        UserRole,
+        UserRoleAssignment,
+        UserRolePermission,
+        UserStatus,
+    )
+
+    bypass = exists(
+        select(UserRoleAssignment.id)
+        .join(UserRole, UserRole.id == UserRoleAssignment.role_id)
+        .where(UserRoleAssignment.user_id == User.id, UserRole.slug.in_(("superadmin", "admin")))
+    )
+    holds = exists(
+        select(UserRoleAssignment.id)
+        .join(UserRolePermission, UserRolePermission.role_id == UserRoleAssignment.role_id)
+        .join(UserPermission, UserPermission.id == UserRolePermission.permission_id)
+        .where(UserRoleAssignment.user_id == User.id, UserPermission.slug == COST_VIEW_PERM)
+    )
+    return exists(
+        select(User.id).where(
+            User.respond_contact_id == RespondContact.id,
+            User.status == UserStatus.ACTIVE.value,
+            or_(bypass, holds),
+        )
+    )
 
 
 def holds_cost_view(db: Session, current_user: Optional[dict]) -> bool:
