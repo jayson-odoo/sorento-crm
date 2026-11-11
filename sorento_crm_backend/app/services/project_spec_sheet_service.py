@@ -682,13 +682,12 @@ def _document_of(db: Session, sheet: ProjectQuotationSpecSheet) -> ProjectQuotat
 
 
 def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict:
-    from app.models.user import User
     from app.services.project_quotation_document_service import quotation_no
+    from app.services.project_quotation_template_service import prepared_by_user
 
     project = db.query(Project).filter(Project.id == document.project_id).first()
-    owner = None
-    if project is not None and project.owner_user_id:
-        owner = db.query(User).filter(User.id == project.owner_user_id).first()
+    # Prepared By is the document's creator (owner ruling 11 Nov 2026, compliance).
+    preparer = prepared_by_user(db, document)
     issue = db.get(ProjectQuotationIssue, sheet.issue_id) if sheet.issue_id else None
     number = (
         quotation_no(document.document_no, issue.issue_no, issue.revision_label)
@@ -706,10 +705,8 @@ def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict
         "quotation_no": number,
         # Q2 (a): the customer's own ref when there is one, else ours.
         "ref": your_ref or number,
-        "prepared_by": (document.signatory_name or (owner.name if owner else "") or "").strip(),
-        "prepared_by_phone": (
-            document.signatory_phone or (getattr(owner, "contact_number", None) if owner else "") or ""
-        ).strip(),
+        "prepared_by": ((preparer.name if preparer else "") or "").strip(),
+        "prepared_by_phone": ((preparer.contact_number if preparer else "") or "").strip(),
         "date": fmt_date(issued, naive_is_utc=False) if issued else "",
     }
 

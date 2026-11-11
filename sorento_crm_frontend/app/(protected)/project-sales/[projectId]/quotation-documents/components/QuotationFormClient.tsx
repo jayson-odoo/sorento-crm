@@ -14,6 +14,7 @@ import { FormSection } from '@/components/common/FormSection';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useEffectiveUserName } from '@/hooks/useEffectiveUserId';
 import { toast } from '@/lib/toast';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
@@ -297,6 +298,7 @@ export function QuotationFormClient({
   // for a new proposal the person's own private one, unnumbered until the first Save (Q2).
   const opened = useQuotationFormDraftOpen(projectId, routeDocumentId ?? null);
   const project = useProject(projectId);
+  const preparedBy = useEffectiveUserName();
   const saved = useQuotationDocument(projectId, documentId);
   const quotations = useQuotations(isEdit ? projectId : undefined);
   const mutations = useQuotationDocumentMutations(projectId, documentId);
@@ -1068,7 +1070,9 @@ export function QuotationFormClient({
                 document={shownDocument}
                 liveGrandTotal={liveTotal}
                 details={details}
-                preparedBy={project.data?.owner_name ?? null}
+                // Prepared By is the document's creator: on a new one, whoever is creating it
+                // (owner ruling 11 Nov 2026); a saved one carries its own prepared_by.
+                preparedBy={preparedBy}
                 onChange={(patch) => {
                   setDirty(true);
                   setHeader((previous) => ({ ...(previous ?? {}), ...patch }));

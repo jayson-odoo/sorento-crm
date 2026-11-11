@@ -1279,11 +1279,10 @@ def _customer_decision(latest: Optional[ProjectQuotationIssue]) -> Optional[str]
 
 
 def _prepared_by(db: Session, document: ProjectQuotationDocument) -> Optional[str]:
-    """The project's salesperson, the same name the cover page prints."""
-    from app.services.project_quotation_template_service import salesperson_of
+    """The document's creator, the same name the cover page prints (owner ruling 11 Nov 2026)."""
+    from app.services.project_quotation_template_service import prepared_by_of
 
-    project = db.query(Project).filter(Project.id == document.project_id).first()
-    return salesperson_of(db, project, document)
+    return prepared_by_of(db, document)
 
 
 def _kind_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
