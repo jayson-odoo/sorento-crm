@@ -14,7 +14,7 @@
  */
 
 import { useMemo } from 'react';
-import { tableFontMm, tableLayout, tableMeasure, TABLE_SIDES } from '@/lib/dealer-kit/table-layout';
+import { tableFontMm, tableLayout, tableMeasure } from '@/lib/dealer-kit/table-layout';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type {
@@ -273,12 +273,6 @@ function TableContent({
         const w = mm2px(c.width_mm, scale);
         const h = mm2px(c.height_mm, scale);
         const pad = mm2px(c.cell.padding_mm ?? 1, scale);
-        const lines: Record<(typeof TABLE_SIDES)[number], number[]> = {
-          top: [x, y, x + w, y],
-          right: [x + w, y, x + w, y + h],
-          bottom: [x, y + h, x + w, y + h],
-          left: [x, y, x, y + h],
-        };
         return (
           <Group key={`${c.row}-${c.col}`}>
             {c.cell.fill ? <Rect x={x} y={y} width={w} height={h} fill={c.cell.fill} listening={false} /> : null}
@@ -299,21 +293,19 @@ function TableContent({
                 listening={false}
               />
             ) : null}
-            {TABLE_SIDES.map((side) => {
-              const spec = c.cell.border?.[side];
-              return spec && spec.width_mm > 0 ? (
-                <Line
-                  key={side}
-                  points={lines[side]}
-                  stroke={spec.color}
-                  strokeWidth={mm2px(spec.width_mm, scale)}
-                  listening={false}
-                />
-              ) : null;
-            })}
           </Group>
         );
       })}
+      {layout.edges.map((e) => (
+        <Line
+          key={`${e.orientation}-${e.line}-${e.index}`}
+          points={[mm2px(e.x1_mm, scale), mm2px(e.y1_mm, scale), mm2px(e.x2_mm, scale), mm2px(e.y2_mm, scale)]}
+          stroke={e.color}
+          strokeWidth={mm2px(e.width_mm, scale)}
+          lineCap="square"
+          listening={false}
+        />
+      ))}
     </>
   );
 }

@@ -96,7 +96,6 @@ import {
   tableFontMm,
   tableLayout,
   tableMeasure,
-  TABLE_SIDES,
 } from '@/lib/dealer-kit/table-layout';
 import { layerFeatureIcons } from '@/lib/dealer-kit/product-block';
 
@@ -1340,16 +1339,6 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
       }}
     >
       {layout.cells.map((c) => {
-        const border: CSSProperties = {};
-        for (const side of TABLE_SIDES) {
-          const spec = c.cell.border?.[side];
-          const name = side[0].toUpperCase() + side.slice(1);
-          Object.assign(border, {
-            [`border${name}Style`]: spec && spec.width_mm > 0 ? 'solid' : 'none',
-            [`border${name}Width`]: spec ? `${spec.width_mm}mm` : 0,
-            [`border${name}Color`]: spec?.color,
-          });
-        }
         return (
           <div
             key={`${c.row}-${c.col}`}
@@ -1369,11 +1358,30 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
               whiteSpace: 'pre-wrap',
               overflowWrap: 'anywhere',
               lineHeight: 1.2,
-              ...border,
             }}
           >
             {c.text}
           </div>
+        );
+      })}
+      {layout.edges.map((e) => {
+        // A shared border is one line; it straddles the grid line, and each end reaches half a
+        // width past it so the corners close.
+        const half = e.width_mm / 2;
+        const horizontal = e.orientation === 'h';
+        return (
+          <div
+            key={`${e.orientation}-${e.line}-${e.index}`}
+            data-testid={`table-edge-${e.orientation}-${e.line}-${e.index}`}
+            style={{
+              position: 'absolute',
+              left: `${horizontal ? e.x1_mm - half : e.x1_mm - half}mm`,
+              top: `${horizontal ? e.y1_mm - half : e.y1_mm - half}mm`,
+              width: `${horizontal ? e.x2_mm - e.x1_mm + e.width_mm : e.width_mm}mm`,
+              height: `${horizontal ? e.width_mm : e.y2_mm - e.y1_mm + e.width_mm}mm`,
+              backgroundColor: e.color,
+            }}
+          />
         );
       })}
     </div>

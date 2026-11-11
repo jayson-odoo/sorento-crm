@@ -100,9 +100,10 @@ describe('TagSheetRenderer, table layer', () => {
     expect(screen.getByTestId('table-cell-0-1').textContent).not.toContain('{{');
   });
 
-  it('draws a cell border in its own colour', () => {
+  it('draws a cell border in its own colour, once', () => {
     renderIt(docWith());
-    expect(screen.getByTestId('table-cell-0-1')).toHaveStyle({ borderTopColor: '#ff0000' });
+    // Borders are drawn once per grid edge: the top edge above column 1 is red.
+    expect(screen.getByTestId('table-edge-h-0-1')).toHaveStyle({ backgroundColor: '#ff0000' });
   });
 
   it('emits one element per laid-out cell and none for a merged-away cell', () => {

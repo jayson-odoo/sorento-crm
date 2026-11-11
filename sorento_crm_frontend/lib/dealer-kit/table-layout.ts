@@ -72,8 +72,24 @@ export interface LaidOutCell {
   cell: TableCell;
 }
 
+/** One unit of a grid line, drawn once however many cells share it. */
+export interface TableEdge {
+  orientation: 'h' | 'v';
+  /** The grid line (0..rows for 'h', 0..columns for 'v') and the cell index along it. */
+  line: number;
+  index: number;
+  x1_mm: number;
+  y1_mm: number;
+  x2_mm: number;
+  y2_mm: number;
+  color: string;
+  width_mm: number;
+}
+
 export interface TableLayout {
   cells: LaidOutCell[];
+  /** Borders, resolved once per grid edge (see `resolveEdges`). */
+  edges: TableEdge[];
   rowHeights_mm: number[];
   columnWidths_mm: number[];
   height_mm: number;
@@ -125,7 +141,10 @@ export function tableLayout(props: TableLayerProps, layerWidth_mm: number, measu
 
   const xs = columnWidths.map((_, i) => columnWidths.slice(0, i).reduce((a, b) => a + b, 0));
   const ys = rowHeights.map((_, i) => rowHeights.slice(0, i).reduce((a, b) => a + b, 0));
+  const totalWidth = columnWidths.reduce((a, b) => a + b, 0);
+  const totalHeight = rowHeights.reduce((a, b) => a + b, 0);
   return {
+    edges: resolveEdges(props, [...xs, totalWidth], [...ys, totalHeight]),
     cells: anchors.map((a) => ({
       row: a.r,
       col: a.c,
@@ -140,6 +159,58 @@ export function tableLayout(props: TableLayerProps, layerWidth_mm: number, measu
     columnWidths_mm: columnWidths,
     height_mm: ys.length ? ys[ys.length - 1] + rowHeights[rowHeights.length - 1] : 0,
   };
+}
+
+/** The anchor cell that owns every grid cell (itself, or the merge that covers it). */
+function ownerGrid(props: TableLayerProps): { r: number; c: number }[][] {
+  const grid = props.rows.map((_, r) => props.columns.map((__, c) => ({ r, c })));
+  const covered = coveredSet(props);
+  props.cells.forEach((row, r) =>
+    row.forEach((cell, c) => {
+      if (covered.has(`${r}:${c}`)) return;
+      const rs = Math.min(span(cell.rowSpan), props.rows.length - r);
+      const cs = Math.min(span(cell.colSpan), props.columns.length - c);
+      for (let i = 0; i < rs; i += 1) for (let j = 0; j < cs; j += 1) grid[r + i][c + j] = { r, c };
+    }),
+  );
+  return grid;
+}
+
+/**
+ * Every grid edge once. An inner edge takes the cell above's bottom (or the left cell's right) when
+ * that cell names one, else the other cell's top (left); an outer edge takes its own cell's side;
+ * width 0 is no line; nothing is drawn inside a merge. Canvas and print both draw these segments.
+ */
+function resolveEdges(props: TableLayerProps, xs: number[], ys: number[]): TableEdge[] {
+  const owners = ownerGrid(props);
+  const rows = props.rows.length;
+  const cols = props.columns.length;
+  const border = (o: { r: number; c: number } | null, side: TableSide) => (o ? props.cells[o.r][o.c].border?.[side] : undefined);
+  const pick = (first?: TableBorderSide, second?: TableBorderSide) => first ?? second;
+  const edges: TableEdge[] = [];
+  for (let line = 0; line <= rows; line += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const above = line > 0 ? owners[line - 1][col] : null;
+      const below = line < rows ? owners[line][col] : null;
+      if (above && below && above.r === below.r && above.c === below.c) continue;
+      const spec = pick(border(above, 'bottom'), border(below, 'top'));
+      if (spec && spec.width_mm > 0) {
+        edges.push({ orientation: 'h', line, index: col, x1_mm: xs[col], y1_mm: ys[line], x2_mm: xs[col + 1], y2_mm: ys[line], color: spec.color, width_mm: spec.width_mm });
+      }
+    }
+  }
+  for (let line = 0; line <= cols; line += 1) {
+    for (let row = 0; row < rows; row += 1) {
+      const left = line > 0 ? owners[row][line - 1] : null;
+      const right = line < cols ? owners[row][line] : null;
+      if (left && right && left.r === right.r && left.c === right.c) continue;
+      const spec = pick(border(left, 'right'), border(right, 'left'));
+      if (spec && spec.width_mm > 0) {
+        edges.push({ orientation: 'v', line, index: row, x1_mm: xs[line], y1_mm: ys[row], x2_mm: xs[line], y2_mm: ys[row + 1], color: spec.color, width_mm: spec.width_mm });
+      }
+    }
+  }
+  return edges;
 }
 
 /** The laid-out cell under a point inside the layer (mm), or null. */

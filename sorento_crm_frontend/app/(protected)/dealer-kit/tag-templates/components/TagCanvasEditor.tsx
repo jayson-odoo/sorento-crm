@@ -1602,9 +1602,25 @@ export function TagCanvasEditor({
     });
   }, []);
 
+  /** B4: the table cell last clicked, right-clicked (or picked in the Inspector): the menu and the cell
+   *  section of the Inspector act on it. */
+  const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
+  // The pointer reads the stage, which is declared below the click handler.
+  const pointerMmRef = useRef<() => { x_mm: number; y_mm: number } | null>(() => null);
   const handleCanvasSelect = useCallback(
     (rawId: string, additive: boolean) => {
       const id = resolveTarget(rawId);
+      // B4: a click on a table cell makes that cell the Inspector's current one.
+      const clicked = layers.find((l) => l.id === id);
+      const point = pointerMmRef.current();
+      if (clicked && clicked.props.kind === 'table' && point) {
+        const found = cellAt(
+          tableLayout(clicked.props, clicked.width_mm, tableMeasure(clicked.props)),
+          point.x_mm - clicked.x_mm,
+          point.y_mm - clicked.y_mm,
+        );
+        if (found) setTableCell({ layerId: id, row: found.row, col: found.col });
+      }
       setSelectedGuideId(null);
       // A press on the box (not on its header handle, which stops the event) selects the box again.
       setHeaderSelId(null);
@@ -1621,13 +1637,14 @@ export function TagCanvasEditor({
         return new Set([id]);
       });
     },
-    [resolveTarget],
+    [resolveTarget, layers],
   );
 
   const pointerMm = useCallback(() => {
     const point = stageRef.current?.getPointerPosition();
     return point ? stageToMm(view, point.x, point.y) : null;
   }, [view]);
+  pointerMmRef.current = pointerMm;
 
   /**
    * A layer's own hover state (S6, D10) - not yet resolved to a BLOCK, which
@@ -3409,9 +3426,6 @@ export function TagCanvasEditor({
    */
   /** Where the context menu was opened, in mm: a menu Paste lands there ("paste here"). */
   const menuPointRef = useRef<{ x_mm: number; y_mm: number } | null>(null);
-  /** B4: the table cell last right-clicked (or picked in the Inspector): the menu and the cell
-   *  section of the Inspector act on it. */
-  const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
   const handleStageContextMenu = useCallback(
     (e: React.MouseEvent) => {
       const content = stageRef.current?.getContent();
