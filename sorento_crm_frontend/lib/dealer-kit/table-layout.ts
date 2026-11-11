@@ -312,6 +312,45 @@ function ownerOf(props: TableLayerProps, r: number, c: number): { r: number; c: 
 }
 
 /**
+ * Set one side (or 'all') of a cell's border AND the facing side of every neighbour across that
+ * edge, so the drawn shared edge (`resolveEdges` takes the upper / left cell first) always shows
+ * what was edited. A merged anchor writes along its full span.
+ */
+export function setCellBorder(
+  props: TableLayerProps,
+  row: number,
+  col: number,
+  side: TableSide | 'all',
+  border: TableBorderSide,
+): TableLayerProps {
+  const at = ownerOf(props, row, col);
+  const anchor = props.cells[at.r][at.c];
+  const rs = Math.min(span(anchor.rowSpan), props.rows.length - at.r);
+  const cs = Math.min(span(anchor.colSpan), props.columns.length - at.c);
+  const cells = props.cells.map((r) => r.map((cell) => ({ ...cell })));
+  const write = (r: number, c: number, key: TableSide) => {
+    cells[r][c] = { ...cells[r][c], border: { ...(cells[r][c].border ?? {}), [key]: { ...border } } };
+  };
+  const opposite: Record<TableSide, TableSide> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+  for (const key of side === 'all' ? SIDES : [side]) {
+    write(at.r, at.c, key);
+    const along = key === 'top' || key === 'bottom' ? cs : rs;
+    const seen = new Set<string>();
+    for (let i = 0; i < along; i += 1) {
+      const nr = key === 'top' ? at.r - 1 : key === 'bottom' ? at.r + rs : at.r + i;
+      const nc = key === 'left' ? at.c - 1 : key === 'right' ? at.c + cs : at.c + i;
+      if (nr < 0 || nc < 0 || nr >= props.rows.length || nc >= props.columns.length) continue;
+      const owner = ownerOf(props, nr, nc);
+      const id = `${owner.r}:${owner.c}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      write(owner.r, owner.c, opposite[key]);
+    }
+  }
+  return { ...props, cells };
+}
+
+/**
  * Merge the cell range into its top-left cell, which keeps the joined text (row-major, one per
  * line). A range that cuts an existing merge grows to cover it.
  */

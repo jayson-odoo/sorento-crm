@@ -14,6 +14,7 @@ import type {
   FeatureIconsLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import { setCellBorder } from '@/lib/dealer-kit/table-layout';
 import {
   accessoryBoxLayout,
   accessoryHeaderStyle,
@@ -1300,19 +1301,19 @@ function TableInspector({
   const row = Math.min(cellAt.row, props.rows.length - 1);
   const col = Math.min(cellAt.col, props.columns.length - 1);
   const cell = props.cells[row][col];
-  const sides = side === 'all' ? (['top', 'right', 'bottom', 'left'] as const) : ([side] as ('top' | 'right' | 'bottom' | 'left')[]);
-  const shown = cell.border?.[sides[0]] ?? { color: '#000000', width_mm: 0 };
+  const shown = cell.border?.[side === 'all' ? 'top' : (side as 'top' | 'right' | 'bottom' | 'left')] ?? {
+    color: '#000000',
+    width_mm: 0,
+  };
 
   const patchCell = (changes: Partial<(typeof props.cells)[number][number]>) =>
     onChange({
       ...props,
       cells: props.cells.map((cells, r) => cells.map((c, i) => (r === row && i === col ? { ...c, ...changes } : c))),
     });
-  const patchBorder = (changes: Partial<{ color: string; width_mm: number }>) => {
-    const border = { ...(cell.border ?? {}) };
-    for (const s of sides) border[s] = { ...(border[s] ?? { color: '#000000', width_mm: 0.2 }), ...changes };
-    patchCell({ border });
-  };
+  // Both sides of a shared edge are written, so the drawn line shows what was edited.
+  const patchBorder = (changes: Partial<{ color: string; width_mm: number }>) =>
+    onChange(setCellBorder(props, row, col, side as 'all' | 'top' | 'right' | 'bottom' | 'left', { ...shown, ...changes }));
 
   return (
     <section>
