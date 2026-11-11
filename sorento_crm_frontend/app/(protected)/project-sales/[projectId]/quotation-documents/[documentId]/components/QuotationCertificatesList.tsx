@@ -280,8 +280,8 @@ export function QuotationCertificatesList({
             {row.original.certificate_number}
           </span>
         ),
-        size: 200,
-        minSize: 140,
+        size: 150,
+        minSize: 110,
         meta: { headerTitle: 'Certificate' },
       },
       {
@@ -296,8 +296,8 @@ export function QuotationCertificatesList({
             {row.original.scheme}
           </span>
         ),
-        size: 90,
-        minSize: 70,
+        size: 80,
+        minSize: 64,
         meta: { headerTitle: 'Scheme' },
       },
       {
@@ -321,8 +321,8 @@ export function QuotationCertificatesList({
             </span>
           );
         },
-        size: 190,
-        minSize: 150,
+        size: 170,
+        minSize: 140,
         meta: { headerTitle: 'Valid until' },
       },
       {
@@ -340,8 +340,8 @@ export function QuotationCertificatesList({
             </span>
           );
         },
-        size: 240,
-        minSize: 140,
+        size: 200,
+        minSize: 120,
         meta: { headerTitle: 'Quoted products' },
       },
       {
@@ -363,8 +363,8 @@ export function QuotationCertificatesList({
             </span>
           );
         },
-        size: 170,
-        minSize: 130,
+        size: 140,
+        minSize: 110,
         meta: { headerTitle: 'Rows marked' },
       },
       {
@@ -372,8 +372,8 @@ export function QuotationCertificatesList({
         accessorFn: (row) => SOURCE_LABEL[row.source],
         header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
         cell: ({ row }) => <span className="block truncate">{SOURCE_LABEL[row.original.source]}</span>,
-        size: 90,
-        minSize: 70,
+        size: 80,
+        minSize: 64,
         meta: { headerTitle: 'Source' },
       },
       {

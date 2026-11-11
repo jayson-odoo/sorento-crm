@@ -58,7 +58,7 @@ export function BoxOverlay({
   editable: boolean;
   drawing: boolean;
   selected: number | null;
-  /** The box "Go to box" just jumped to; drawn with a pulse until the caller clears it. */
+  /** The box "Go to box" just jumped to; outlined until the caller clears it. */
   flashed?: number | null;
   drawProductId?: string | null;
   onSelect: (index: number | null) => void;
@@ -159,7 +159,8 @@ export function BoxOverlay({
               'absolute border-2 border-rose-600 bg-rose-500/10',
               editable && !drawing && 'pointer-events-auto cursor-move touch-none',
               selected === index && 'ring-2 ring-primary/60',
-              flashed === index && 'animate-pulse ring-4 ring-amber-400',
+              // Static, no animation: it follows a keyboard action and must respect reduced motion.
+              flashed === index && 'ring-4 ring-warning',
             )}
             style={boxToStyle(box)}
             onPointerDown={(event) => {

@@ -56,6 +56,22 @@ export function boxOrder(boxes: PageBox[], productId?: string): number[] {
     .map(({ index }) => index);
 }
 
+/**
+ * Centre a box inside the PDF viewer's own scroller. Not `scrollIntoView`: that also scrolls the
+ * window, which pushed the page header (and its Save CTA) off screen on open.
+ */
+export function revealInViewer(node: HTMLElement) {
+  let scroller = node.parentElement;
+  while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) {
+    scroller = scroller.parentElement;
+  }
+  if (!scroller || scroller === document.body || scroller === document.documentElement) return;
+  const view = scroller.getBoundingClientRect();
+  const box = node.getBoundingClientRect();
+  scroller.scrollTop += box.top - view.top - (view.height - box.height) / 2;
+  scroller.scrollLeft += box.left - view.left - (view.width - box.width) / 2;
+}
+
 /** How long a box stays outlined after "Go to box". */
 const FLASH_MS = 1600;
 
@@ -167,20 +183,32 @@ export function CertificateReader({
 
   // "Go to box": bring the box into the middle of the viewer and outline it for a moment. The
   // pages (and their boxes) exist only once the file has loaded, so a jump asked for on open
-  // waits for its box to appear.
-  const goToBox = React.useCallback((index: number) => {
-    setFlashed(index);
-    let tries = 0;
-    const seek = () => {
-      const node = rootRef.current?.querySelector<HTMLElement>(`[data-box-index="${index}"]`);
-      if (node) {
-        node.scrollIntoView?.({ block: 'center', inline: 'center' });
-        return;
-      }
-      if (tries++ < 100) window.setTimeout(seek, 100);
-    };
-    seek();
+  // waits for its box; the outline starts when the box is found, not when the jump was asked.
+  // A new jump or leaving the page cancels a jump still waiting.
+  const seekTimer = React.useRef<number | null>(null);
+  const cancelSeek = React.useCallback(() => {
+    if (seekTimer.current !== null) window.clearTimeout(seekTimer.current);
+    seekTimer.current = null;
   }, []);
+  React.useEffect(() => cancelSeek, [cancelSeek]);
+  const goToBox = React.useCallback(
+    (index: number) => {
+      cancelSeek();
+      let tries = 0;
+      const seek = () => {
+        seekTimer.current = null;
+        const node = rootRef.current?.querySelector<HTMLElement>(`[data-box-index="${index}"]`);
+        if (node) {
+          revealInViewer(node);
+          setFlashed(index);
+          return;
+        }
+        if (tries++ < 100) seekTimer.current = window.setTimeout(seek, 100);
+      };
+      seek();
+    },
+    [cancelSeek],
+  );
 
   React.useEffect(() => {
     if (flashed === null) return;
@@ -211,6 +239,8 @@ export function CertificateReader({
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      // A box's right-click menu owns its keys: Delete there must not remove a box under it.
+      if (target?.closest?.('[role="menu"]')) return;
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
         removeAt(selected);
@@ -411,8 +441,7 @@ export function CertificateReader({
                 </ToggleGroup>
               </div>
               {detail.box_source === 'quote' && (
-              <div className="flex flex-wrap items-center gap-2">
-                {(
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -423,8 +452,7 @@ export function CertificateReader({
                   >
                     Use default boxes
                   </Button>
-                )}
-              </div>
+                </div>
               )}
               <div className="flex items-center gap-2">
                 <Checkbox

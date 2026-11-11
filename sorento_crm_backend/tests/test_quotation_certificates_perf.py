@@ -1,7 +1,7 @@
 """CERT-TAB-UX: the Certification tab list stays fast at the owner's quote size (34 certificates).
 
 Owner, 11 Nov 2026: "the loading of certification quite long". Measured on this seed before the fix
-(see PLAN-cert-tab-ux-11nov.md "Findings"): the warm list ran one SELECT per certificate for its
+(see PLAN-cert-tab-ux-11nov.md "Findings": 79 statements, 94 ms): the warm list ran one SELECT per certificate for its
 current revision, one per revision for its attachment and one per certificate whose product had no
 code yet, so the statement count grew with the list. These tests pin a bound that does not.
 """
@@ -50,11 +50,8 @@ class _Counter:
     def __exit__(self, *exc):
         event.remove(self.engine, "before_cursor_execute", self._hit)
 
-    def _hit(self, conn, cursor, statement, *args, **kwargs):
+    def _hit(self, *args, **kwargs):
         self.count += 1
-        import os
-        if os.getenv("CERT_PERF_SQL"):
-            print("SQL:", " ".join(statement.split())[:160])
 
 
 def test_perf_warm_list_reads_no_file_and_a_bounded_number_of_statements(files, reads):
@@ -87,3 +84,27 @@ def test_perf_the_list_route_is_not_queued_behind_exports():
     from app.api.v1.projects import quotation_certificates as routes
 
     assert getattr(routes.list_certificates, "heavy", False) is False
+
+
+def test_perf_a_cold_list_holds_one_file_at_a_time(files, monkeypatch):
+    """Why the list may drop `@heavy`: a first look reads each file, resolves its row and lets the
+    bytes go before the next, so one list never holds every file of the quote at once."""
+    from app.services import quotation_certificate_service as svc
+
+    held: list[int] = []
+    groups: list = []
+    original = svc._row
+
+    def spy(db, group, quoted, markers):
+        groups.append(group)
+        out = original(db, group, quoted, markers)
+        held.append(sum(1 for g in groups if isinstance(g._file, (bytes, bytearray))))
+        return out
+
+    monkeypatch.setattr(svc, "_row", spy)
+    with blank_session() as db:
+        c = _draft(db)
+        _seed(db, c, files)
+        with _api(db, c) as client:
+            assert len(_items(client, c)) == SIZE
+    assert held and max(held) == 1, held

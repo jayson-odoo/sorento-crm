@@ -328,6 +328,51 @@ describe('QuotationCertificatesList', () => {
   });
 });
 
+describe('QuotationCertificatesList filters (CERT-TAB-UX)', () => {
+  async function pick(filter: string, option: string) {
+    const trigger = screen.getByRole('button', { name: /^filters/i });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+    const combo = await screen.findByRole('combobox', { name: filter });
+    fireEvent.click(combo);
+    fireEvent.click(await screen.findByRole('option', { name: option }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  }
+
+  const rows = () => [
+    row({ certificate_id: 'c1', certificate_number: 'ZZT-A1', scheme: 'PPS', marked: { count: 1, state: 'found' } }),
+    row({ certificate_id: 'c2', certificate_number: 'ZZT-A2', scheme: 'SPAN', marked: { count: 0, state: 'not_found' } }),
+    row({
+      certificate_id: 'c3',
+      certificate_number: 'ZZT-A3',
+      scheme: 'PPS',
+      verified: false,
+      marked: { count: 0, state: 'not_on_certificate' },
+    }),
+    row({ certificate_id: 'c4', certificate_number: 'ZZT-A4', scheme: 'PPS', source: 'manual', marked: { count: 0, state: 'no_text' } }),
+  ];
+
+  const shown = () => ['ZZT-A1', 'ZZT-A2', 'ZZT-A3', 'ZZT-A4'].filter((n) => screen.queryByText(n));
+
+  it('Rows marked: Code not found keeps not_found and the greyed not_on_certificate rows', async () => {
+    ok(rows());
+    renderList();
+    await screen.findByText('ZZT-A1');
+    await pick('Rows marked', 'Code not found');
+    await waitFor(() => expect(shown()).toEqual(['ZZT-A2', 'ZZT-A3']));
+  });
+
+  it('Scheme and Source narrow the rows together', async () => {
+    ok(rows());
+    renderList();
+    await screen.findByText('ZZT-A1');
+    await pick('Scheme', 'PPS');
+    await waitFor(() => expect(shown()).toEqual(['ZZT-A1', 'ZZT-A3', 'ZZT-A4']));
+    await pick('Source', 'Added');
+    await waitFor(() => expect(shown()).toEqual(['ZZT-A4']));
+  });
+});
+
 describe('Rows marked filter buckets (owner, 11 Nov 2026)', () => {
   it('offers exactly Marked, Edited, Code not found, Code needed, No text, No file', async () => {
     const { MARKED_FILTERS } = await import('../../../../../_shared/lib/quotationCertificateDisplay');

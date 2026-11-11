@@ -58,7 +58,7 @@ vi.mock('@/app/(protected)/project-sales/_shared/hooks/useQuotationCertificates'
   }),
 }));
 
-import { CertificateReader, boxOrder } from '../CertificateReader';
+import { CertificateReader, boxOrder, revealInViewer } from '../CertificateReader';
 
 const box = (over: Record<string, unknown> = {}) => ({
   page: 1,
@@ -143,7 +143,6 @@ const boxesOnPage = () => document.querySelectorAll('[data-box-index]');
 beforeEach(() => {
   saveBoxes.mutate.mockReset();
   detailQuery.mockReset();
-  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe('CertificateReader (CERT-TAB-UX)', () => {
@@ -174,6 +173,29 @@ describe('CertificateReader (CERT-TAB-UX)', () => {
     fireEvent.contextMenu(boxesOnPage()[1] as HTMLElement);
     fireEvent.click(await screen.findByRole('menuitem', { name: /delete/i }));
     await waitFor(() => expect(boxesOnPage()).toHaveLength(1));
+  });
+
+  it('a Delete key while a box menu is open removes nothing under the menu', async () => {
+    renderReader(detail({ boxes: [box({ y: 0.1 }), box({ y: 0.3 }), box({ y: 0.5 })] }));
+    fireEvent.contextMenu(boxesOnPage()[0] as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: /delete/i });
+    fireEvent.keyDown(item, { key: 'Delete' });
+    expect(boxesOnPage()).toHaveLength(3);
+    fireEvent.click(item);
+    await waitFor(() => expect(boxesOnPage()).toHaveLength(2));
+  });
+
+  it('Delete on a focused box removes that box, not the selected one', () => {
+    renderReader(detail({ boxes: [box({ y: 0.1 }), box({ y: 0.3, product_id: 'prod-2' })] }));
+    const [a, b] = Array.from(boxesOnPage()) as HTMLElement[];
+    fireEvent.pointerDown(a, { button: 0, clientX: 1, clientY: 1 });
+    fireEvent.pointerUp(a);
+    b.focus();
+    fireEvent.keyDown(b, { key: 'Delete' });
+    const left = Array.from(boxesOnPage()) as HTMLElement[];
+    expect(left).toHaveLength(1);
+    // Box a (y 0.1, top 10%) is the one left.
+    expect(left[0].style.top).toBe('10%');
   });
 
   it('offers no menu and no delete when the viewer cannot edit', () => {
@@ -207,7 +229,6 @@ describe('CertificateReader (CERT-TAB-UX)', () => {
     // boxes[1] (y 0.2) reads before boxes[0] (y 0.6).
     await waitFor(() => expect(document.querySelector('[data-flashed]')).not.toBeNull());
     expect(document.querySelector('[data-flashed]')?.getAttribute('data-box-index')).toBe('1');
-    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
   });
 
   it('jumps to a product box in one click and outlines it', async () => {
@@ -235,5 +256,22 @@ describe('boxOrder', () => {
     expect(boxOrder(boxes)).toEqual([2, 1, 0]);
     expect(boxOrder(boxes, 'prod-1')).toEqual([1, 0]);
     expect(boxOrder(boxes, 'prod-9')).toEqual([]);
+  });
+});
+
+describe('revealInViewer', () => {
+  it('scrolls the nearest scrolling ancestor, never the window', () => {
+    const scroller = document.createElement('div');
+    scroller.style.overflowY = 'auto';
+    const node = document.createElement('div');
+    scroller.appendChild(node);
+    document.body.appendChild(scroller);
+    scroller.getBoundingClientRect = () => ({ top: 0, left: 0, height: 400, width: 600 }) as DOMRect;
+    node.getBoundingClientRect = () => ({ top: 900, left: 0, height: 20, width: 600 }) as DOMRect;
+    const windowScroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    revealInViewer(node);
+    expect(scroller.scrollTop).toBe(900 - 190);
+    expect(windowScroll).not.toHaveBeenCalled();
+    scroller.remove();
   });
 });

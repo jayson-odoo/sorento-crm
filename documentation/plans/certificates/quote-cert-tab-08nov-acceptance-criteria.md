@@ -81,12 +81,15 @@ coverage rows in the certificate detail payload gain `model_code`.
 `Row` = `{certificate_id (the row's representative, CERT-15), also_filed_as: [{certificate_id, scheme, certificate_number}], scheme, certificate_number, title, certifying_body, valid_until,
 validity_state ("valid"|"expiring"|"expired"|"unknown"), source ("auto"|"manual"),
 products: [{product_id, product_code}], marked: {count: int, state: "found"|"edited"|"none"|
-"no_text"|"not_found"|"no_file"|"suggested"|"code_needed"}, send_to_customer: bool (effective), has_file: bool}`.
+"no_text"|"not_found"|"no_file"|"code_needed"|"not_on_certificate"}, send_to_customer: bool (effective), has_file: bool}`.
 
 `Detail` = `Row` + `{revision_id, page_count|null, has_text, can_edit, can_edit_defaults,
 box_source ("quote"|"default"), boxes: [Box], products: [{product_id, product_code,
 coverage_id, model_code, model_code_source ("ai"|"manual"|null), code_used, number_only: bool,
-state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
+state ("found"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
+
+CERT-TAB-UX (owner, 11 Nov 2026): the `suggested` state is gone from both unions; a box found by an
+`ai` code is `found` ("Marked" on screen). See `PLAN-cert-tab-ux-11nov.md`.
 
 ### Rules
 
@@ -107,8 +110,8 @@ state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
   A manual-added certificate covering no quoted product has no boxes.
 - CERT-5 `marked.state` (first that applies): `no_file` (current revision has no attachment), `edited`
   (a person drew boxes, so a scan with boxes reads edited), `no_text` (scan),
-  `suggested` (count > 0 and any box from an
-  `ai` code), `found` (count > 0), `code_needed` (a covered product has no code), `not_found`
+  `found` (count > 0, whether the code was typed or read by the system; `suggested` was dropped by
+  CERT-TAB-UX, 11 Nov 2026), `code_needed` (a covered product has no code), `not_found`
   (text PDF, products present, zero hits), `none` (no quoted product covered).
 - CERT-6 PUT boxes `scope=quote` writes the override for the current revision (any quote editor).
   `scope=default` needs `master_data.certificates.edit` (403 otherwise), requires every box to carry
@@ -135,11 +138,11 @@ state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
   the first read stores `model_code = suggest_code(...)`, `model_code_source = 'ai'`. The ingest
   (`_link_via_certificate`, `app/api/v1/external/product_attachments.py:217`) stores the printed
   `requested_code` of each matched product the same way unless `via == prefix` or the row already
-  has a `manual` code (never overwritten). A product whose code is `ai` shows `state = suggested`
-  when its boxes are found. PATCH coverage `{model_code}` (typed) and `{"confirm": true}` (keep the
+  has a `manual` code (never overwritten). A product whose code is `ai` shows `state = found`
+  ("Marked") when its boxes are found (CERT-TAB-UX, 11 Nov 2026; was `suggested`). PATCH coverage `{model_code}` (typed) and `{"confirm": true}` (keep the
   suggested text) both set `model_code_source = 'manual'`; both need `master_data.certificates.edit`.
   Suggested boxes ARE sent to the customer, drawn like confirmed ones (owner 8 Nov, sub-question (i));
-  the tab flags "Suggested, check" before sending.
+  the tab no longer flags them (CERT-TAB-UX, 11 Nov 2026: the red box is the check).
 - CERT-15 Dedupe by file: certificates on the list whose current revision's file is the same
   (`attachments.file_hash` equal, else same `attachment_id`) form ONE Row. Representative = valid
   before expired, then latest `valid_until`, then scheme, number; the others go in `also_filed_as`.
