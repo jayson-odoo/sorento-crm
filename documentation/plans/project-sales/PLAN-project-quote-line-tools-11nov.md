@@ -106,6 +106,16 @@ Non-standard / Below default price.
 - Leaving a field ends its Undo step: two separate edits of one rate are two steps; keystrokes
   within one edit stay one step.
 
+## Crew re-pass (11 Nov 2026)
+
+- A real mouse click on the grid background focuses the layout's `<main tabIndex={-1}>`, not the
+  body: the Undo / Redo keys are taken from inside the grid or from any container around it (an
+  element that contains the grid), never from a control elsewhere on the page.
+- The banner-link scroll clears the fixed top bar: scroll margin is the layout's own
+  `--header-height` (70 px, 60 px on a phone) plus the impersonation banner, not a fixed 1rem.
+- User guide: `documentation/user-guides/project-sales-rep/work-a-project-quotation.md` (Flags,
+  the two pills, banner links, Duplicate line, Remove at once, Undo / Redo).
+
 ## Edge cases
 
 - Combo / set line: duplicated as a set line (same set, same complete-set text); the server freezes
