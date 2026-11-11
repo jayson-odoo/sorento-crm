@@ -71,6 +71,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { usePoLinkSwitch } from '../../_shared/po-link/usePoLink';
 import type { PoLinkKind } from '../../_shared/po-link/poLinkWording';
 import { OiPoLinkHost } from './OiPoLinkHost';
+import { OiRowMenu } from './OiRowMenu';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
@@ -390,7 +391,9 @@ export function OrderInquiriesClient({
   const holdsLinkPo = useHasPermission(LINK_PO_PERMISSION);
   const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
   const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
-  const [poDialog, setPoDialog] = React.useState<PoLinkKind | null>(null);
+  const [poDialog, setPoDialog] = React.useState<{ kind: PoLinkKind; rowIds: string[] } | null>(null);
+  // The row a right-click landed on (OI-PO-LINK): the menu acts on that one row.
+  const [menuRowId, setMenuRowId] = React.useState<string | null>(null);
   const { linkNow, acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
   const [linkingSelected, setLinkingSelected] = React.useState(false);
@@ -1213,7 +1216,7 @@ export function OrderInquiriesClient({
     icon,
     disabled: Boolean(poLinkWhyNot),
     disabledReason: poLinkWhyNot,
-    onClick: () => setPoDialog(kind),
+    onClick: () => setPoDialog({ kind, rowIds: selectedRows.map((row) => row.id) }),
   }));
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
@@ -2312,6 +2315,11 @@ export function OrderInquiriesClient({
           )}
         </div>
       ) : (
+        <OiRowMenu
+          enabled={canLinkPo}
+          onRow={setMenuRowId}
+          onPick={(kind) => menuRowId && setPoDialog({ kind, rowIds: [menuRowId] })}
+        >
         <DataGrid
           table={table}
           recordCount={total}
@@ -2332,6 +2340,7 @@ export function OrderInquiriesClient({
           rowClassName={(row) =>
             row.redirected_to_pool || row.line_cancelled ? 'opacity-60' : undefined
           }
+          rowAttributes={(row) => ({ 'data-oi-row-id': row.id })}
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">
@@ -2375,6 +2384,7 @@ export function OrderInquiriesClient({
             </CardFooter>
           </Card>
         </DataGrid>
+        </OiRowMenu>
       )}
 
       <AutoLinkOrderInquiryDialog
@@ -2482,8 +2492,8 @@ export function OrderInquiriesClient({
       </AlertDialog>
       {poDialog ? (
         <OiPoLinkHost
-          kind={poDialog}
-          rowIds={selectedRows.map((row) => row.id)}
+          kind={poDialog.kind}
+          rowIds={poDialog.rowIds}
           onClose={() => {
             setPoDialog(null);
             void list.refetch();
