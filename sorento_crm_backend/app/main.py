@@ -232,9 +232,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     validation_logger.error(f"Validation error: {logged_errors}")
     validation_logger.error(f"Request URL: {redact_url(str(request.url))}")
     validation_logger.error(f"Request method: {request.method}")
+    errors = exc.errors()
+    for error in errors:
+        # A body of NaN / Infinity echoes back as the error's `input`, which JSON cannot carry:
+        # without this the refusal itself would be a 500.
+        value = error.get("input")
+        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+            error["input"] = str(value)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": jsonable_encoder(exc.errors())}
+        content={"detail": jsonable_encoder(errors)}
     )
 
 # Triggers eligibility registrations side-effects.
