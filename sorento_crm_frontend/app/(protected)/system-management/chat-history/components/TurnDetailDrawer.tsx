@@ -77,7 +77,7 @@ export function TurnDetailDrawer({
               Could not load this turn. Reload to try again.
             </p>
           )}
-          {turn && <Sections detail={turn.trace_detail} />}
+          {turn && <Sections key={turn.id} detail={turn.trace_detail} />}
         </div>
       </SheetContent>
     </Sheet>
@@ -751,6 +751,8 @@ const TIER_WORDS: Record<string, string> = {
   embedding: 'by meaning',
   head_code: 'head code',
   spec_search: 'by spec',
+  trgm: 'close spelling',
+  span: 'phrase',
 };
 
 function EntityMatchSection({ entityMatch }: { entityMatch: EntityMatch | null }) {

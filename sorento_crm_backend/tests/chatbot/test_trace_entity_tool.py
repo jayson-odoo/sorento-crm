@@ -168,3 +168,47 @@ def test_order_says_neighbours_were_checked_only_with_a_session():
     queued = {"stage": "queued", "status": "ok", "ms": 1, "summary": "", "facts": {"ticket": 3, "wait_ms": 5}, "raw": {}}
     order = compose_trace_detail(_row(queued))["order"]
     assert order["neighbours_checked"] is False
+
+
+def _stored_turn(db, *, contact: str, minute: int, text: str, ticket: int):
+    from app.models.chatbot_turn import ChatbotTurn
+
+    row = ChatbotTurn(
+        contact_respond_id=contact, message_id=f"zzt-tet-{contact}-{minute}", envelope={
+            "message": {"message": {"message": {"type": "text", "text": text}}}
+        },
+        is_test=True, status="done", stage="sent", attempt=1,
+        trace=[{"stage": "queued", "status": "ok", "ms": 1, "summary": "", "raw": {},
+                "facts": {"ticket": ticket, "wait_ms": 4}}],
+        created_at=NOW.replace(minute=minute),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_order_with_a_session_and_no_neighbour_says_neighbours_were_checked(session_factory):
+    """Reviewer should-fix: the `True` half of AC-4. A lone turn read WITH a session: both
+    neighbours looked up, none exists, so the drawer says first / latest message."""
+    db = session_factory()
+    try:
+        row = _stored_turn(db, contact="ZZT-tet-lone", minute=1, text="srtwc286", ticket=1)
+        order = compose_trace_detail(row, db)["order"]
+        assert order == {"ticket": 1, "wait_ms": 4, "previous": None, "next": None, "neighbours_checked": True}
+    finally:
+        db.close()
+
+
+def test_order_with_a_session_names_the_neighbours(session_factory):
+    db = session_factory()
+    try:
+        first = _stored_turn(db, contact="ZZT-tet-three", minute=1, text="hi", ticket=1)
+        middle = _stored_turn(db, contact="ZZT-tet-three", minute=2, text="srtwc286", ticket=2)
+        _stored_turn(db, contact="ZZT-tet-three", minute=3, text="thanks", ticket=3)
+        order = compose_trace_detail(middle, db)["order"]
+        assert order["neighbours_checked"] is True
+        assert order["previous"]["message"] == "hi"
+        assert order["next"]["message"] == "thanks"
+        assert compose_trace_detail(first, db)["order"]["previous"] is None
+    finally:
+        db.close()

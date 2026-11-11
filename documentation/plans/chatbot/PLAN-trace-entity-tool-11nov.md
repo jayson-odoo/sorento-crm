@@ -1,6 +1,6 @@
 # PLAN: TRACE-ENTITY-TOOL - every chatbot turn trace shows the matched entity and the tool used
 
-Status: in build (small fix track: under ~300 lines, no migration, no auth/RBAC, no new ingest surface)
+Status: in review, PR #2344 (small fix track: under ~300 lines, no migration, no auth/RBAC, no new ingest surface)
 
 ## Why
 
