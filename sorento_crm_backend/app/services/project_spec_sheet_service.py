@@ -1644,7 +1644,9 @@ def _check_layer(layer: Any) -> None:
     if props is not None:
         if not isinstance(props, dict):
             raise _invalid_layer("A layer's properties are malformed.")
-        if layer.get("type") == "table":
+        # Either marker: a layer of another type can still carry table props (the pptx export reads
+        # props), so both are checked.
+        if layer.get("type") == "table" or props.get("kind") == "table":
             from app.utils.table_layer_check import table_props_problem
 
             problem = table_props_problem(props)

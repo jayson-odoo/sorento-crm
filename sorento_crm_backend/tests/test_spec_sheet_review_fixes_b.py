@@ -208,3 +208,20 @@ def test_a_declared_oversize_body_is_not_read():
             return Response()
 
     assert fetch_image_with_cap(Request(), "https://x/big.png") is None
+
+
+def test_table_props_on_a_layer_of_another_type_are_checked_too():
+    """Security nit: the check is keyed on the props as well as the layer type."""
+    from app.utils.table_layer_check import doc_table_problem
+
+    layer = {
+        "id": "t",
+        "type": "shape",
+        "props": {
+            "kind": "table",
+            "columns": [{"width_mm": 10}],
+            "rows": [{"height_mm": 5}],
+            "cells": [[{"text": "x", "fill": "url(//10.0.0.5/x)"}]],
+        },
+    }
+    assert doc_table_problem({"layers": [layer]}) is not None

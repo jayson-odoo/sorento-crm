@@ -53,7 +53,11 @@ def doc_table_problem(doc: Any) -> str | None:
     """The first table problem among a template document's layers; a document with none is fine."""
     layers = doc.get("layers") if isinstance(doc, dict) else None
     for layer in layers if isinstance(layers, list) else []:
-        if isinstance(layer, dict) and layer.get("type") == "table":
+        props = layer.get("props") if isinstance(layer, dict) else None
+        is_table = isinstance(layer, dict) and (
+            layer.get("type") == "table" or (isinstance(props, dict) and props.get("kind") == "table")
+        )
+        if is_table:
             problem = table_props_problem(layer.get("props"))
             if problem:
                 return problem
