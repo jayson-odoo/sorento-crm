@@ -96,6 +96,7 @@ No new list screen (6: n/a). No `ActionDef` (7): the repo has no ActionDef regis
 and Attn picked on screen. Trigger to add one: the first quotation write the assistant gets. No gold eval file for
 project-sales actions exists to extend (8: n/a).
 
-## Owner questions left open (crew-ask on #2340)
+## Owner questions (crew-ask on #2340), answered
 
-Q1 a quotation source copies as a proposal (built). Q2 the signature is not copied (built).
+Answered by the owner 11 Nov ~19:20: Q1 (a) "duplicate is actually proposal yeah", a quotation source copies as a
+proposal for the new party; Q2 (a) "signature is not copied yeah", the copy is signed again. Both match the build.
