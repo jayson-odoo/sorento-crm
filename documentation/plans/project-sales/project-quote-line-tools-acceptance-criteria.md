@@ -27,3 +27,9 @@ Plan: `PLAN-project-quote-line-tools-11nov.md`.
   price, below the default price) is a link: it sets the filter to that flag and opens the first
   area tab holding such a line. The sentence reads exactly as the server's `approval_reasons`.
 - AC-12 The filter stays on when switching area tabs, on the read page and on the form page.
+- AC-13 Remove line (row menu, right-click, row trash icon) removes the line at once, with no
+  struck-through row; Undo restores it in place.
+- AC-14 Edit mode has Undo / Redo (toolbar buttons, Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z) over every
+  line change, from the price tag designer's shared history (`hooks/useUndoHistory.ts`); a run of
+  keystrokes in one field is one step; inside a text field the field's own text undo applies.
+- AC-15 The red Rate pill reads "Below minimum price RM x".

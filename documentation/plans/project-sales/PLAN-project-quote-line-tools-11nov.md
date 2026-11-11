@@ -81,6 +81,21 @@ Non-standard / Below default price.
 - Q3 yes: the filter stays on across area tabs. It is held by the page (document context on the
   read page, `FormLines` on the form page), not by the per-scope editor.
 
+## Owner hand test round (11 Nov 2026 ~18:30)
+
+- Remove line removes the line at once: no struck-through "Removed on save" row (the form now
+  autosaves, so there is nothing to stage). Undo is the way back.
+- Undo / Redo on the lines editor in edit mode: two toolbar buttons, Cmd/Ctrl+Z and
+  Shift+Cmd/Ctrl+Z (Ctrl+Y too), the price tag designer's keys. The history is the designer's
+  own, shared rather than copied: `useCanvasHistory` became the generic `hooks/useUndoHistory.ts`
+  (plus `merge` and `reset`), and `useCanvasHistory` is now that hook typed to the layers. A run
+  of keystrokes in one field of one row is one step; a product pick is its own step, and a set's
+  fill joins its pick. Inside a text field the field keeps its own text undo (the designer's
+  rule). A change the grid did not make (a column change, a restored or discarded draft) starts
+  the history afresh, so Undo never brings back cells under columns that no longer exist. The
+  history lives with the grid, so it starts empty in each edit session and on each area tab.
+- The red pill reads "Below minimum price RM x", the Flags filter's words.
+
 ## Edge cases
 
 - Combo / set line: duplicated as a set line (same set, same complete-set text); the server freezes

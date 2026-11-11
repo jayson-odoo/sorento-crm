@@ -48,7 +48,7 @@ export interface LineFacts {
   /**
    * Below the default price but NOT below the minimum price: the approval banner's "priced below
    * the default price" clause exactly (`reasons_text`, discounted minus below floor). A line below
-   * the minimum price carries the Minimum price pill and the banner's other clause instead.
+   * the minimum price carries the Below minimum price pill and the banner's other clause instead.
    */
   belowDefault: boolean;
 }
@@ -93,7 +93,7 @@ export function storedLineFacts(line: QuotationLine): LineFacts {
  * price** is judged the same way, by the save's default-price rule.
  *
  * Two cells read it (owner meeting, 29 Oct): Non-standard stays in the Product cell, the floor
- * sits under the price in the Rate cell and reads "Minimum price RM x". Both ask the same query
+ * sits under the price in the Rate cell and reads "Below minimum price RM x". Both ask the same query
  * key, so React Query asks the server once.
  */
 function useLineFacts(
@@ -181,7 +181,7 @@ export function LineFlags({
         <Badge
           variant="secondary"
           // Wraps in the narrow Product column instead of spilling into the next cell, as the
-          // Minimum price pill does.
+          // Below minimum price pill does.
           className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
           title="Outside the series this scope is quoted from"
         >
@@ -194,7 +194,7 @@ export function LineFlags({
         <Badge
           variant="secondary"
           // Wraps in the narrow Product column instead of spilling into the next cell, as the
-          // Minimum price pill does.
+          // Below minimum price pill does.
           className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
           title="Priced below the default price: this quotation needs a manager's approval"
         >
@@ -207,7 +207,7 @@ export function LineFlags({
 }
 
 /**
- * The Rate cell's flag, under the price: "Minimum price RM x". Where the floor was set is the
+ * The Rate cell's flag, under the price: "Below minimum price RM x". Where the floor was set is the
  * badge's tooltip only; the owner removed the printed "Set on ..." line (1 Nov 2026).
  */
 export function MinimumPriceFlag({
@@ -231,16 +231,17 @@ export function MinimumPriceFlag({
   );
 }
 
-/** The "Minimum price RM x" pill itself, shared with a customer's suggested price in review. */
+/** The "Below minimum price RM x" pill itself, shared with a customer's suggested price in review. */
 export function MinimumPriceBadge({ value, title }: { value: string | null; title?: string }) {
   return (
-    // No icon and tight padding: the Rate cell is narrow, and "Minimum" must fit on a line.
+    // No icon and tight padding: the Rate cell is narrow; the pill wraps rather than clips.
     <Badge
       variant="destructive"
       className="h-auto whitespace-normal rounded-md px-1.5 py-0.5 text-start text-2xs leading-tight"
       title={title}
     >
-      {value ? `Minimum price ${formatMyr(value)}` : 'Minimum price'}
+      {/* The Flags filter's own words (owner hand test, 11 Nov): one term for one fact. */}
+      {value ? `Below minimum price ${formatMyr(value)}` : 'Below minimum price'}
     </Badge>
   );
 }

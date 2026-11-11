@@ -11,7 +11,7 @@ import {
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
+import { ChevronDown, Columns3, MoreHorizontal, Plus, Redo2, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import type { Editor } from '@tiptap/react';
@@ -21,6 +21,7 @@ import { RichDescription } from '@/components/common/RichDescription';
 import { richOneLine, richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { toast } from '@/lib/toast';
 import { useDeferredDeleteSeconds } from '@/hooks/useDeferredDeleteSeconds';
+import { useUndoHistory } from '@/hooks/useUndoHistory';
 import { DEFAULT_DEFERRED_DELETE_SECONDS } from '@/services/deferredWindowService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -133,6 +134,24 @@ interface GridRow {
 type MenuAction = 'below' | 'section' | 'remove' | 'duplicate';
 
 /**
+ * How an edit lands in the Undo history: `auto` folds a run of keystrokes into one field of one
+ * row into a single step; `new` is always its own step (a product pick); `merge` joins the step
+ * before it (the fill a set pick loads a moment later).
+ */
+type EditStep = 'auto' | 'new' | 'merge';
+
+/** A text field owns its own Cmd/Ctrl+Z (the price tag designer's rule): the grid's waits. */
+function isTextField(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  if (el.isContentEditable || el.closest('[contenteditable="true"]')) return true;
+  if (el.tagName === 'TEXTAREA') return true;
+  if (el.tagName !== 'INPUT') return false;
+  const type = (el as HTMLInputElement).type;
+  return !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(type);
+}
+
+/**
  * The product picker on a row takes the caret (Duplicate line). Found by its label, whose text is
  * "Product on ...", so it does not depend on the column order a user has saved.
  */
@@ -200,7 +219,7 @@ interface GridContextValue {
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
   total: string | null;
-  update: (key: string, patch: LineDraft) => void;
+  update: (key: string, patch: LineDraft, step?: EditStep) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
   toggleRemoved: (key: string) => void;
   /**
@@ -1440,24 +1459,114 @@ export function QuotationLinesGrid({
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
 
-  const commit = React.useCallback(
+  /**
+   * Undo / Redo (owner hand test, 11 Nov: "just need to have an undo / redo function, see can
+   * reuse our price tag template designer"): the designer's own history, shared
+   * (`@/hooks/useUndoHistory`, also behind `useCanvasHistory`), over the staged lines. The grid
+   * remounts per edit session, so a session starts with nothing to undo.
+   */
+  const history = useUndoHistory<StagedQuotationLine[]>(lines);
+  /** What the grid last staged, by value: anything else arriving is a change from outside. */
+  const lastStaged = React.useRef(JSON.stringify(lines));
+  /** The row and fields the last keystroke edited, so a run of them is one step. */
+  const lastEdit = React.useRef<{ key: string; fields: string } | null>(null);
+  // A change the grid did not make (a column change reshaping the cells, a restored or discarded
+  // form draft) replaces the lines underneath the history: Undo would bring back a state the
+  // rest of the page no longer matches, so the history starts again from here.
+  const historyReset = history.reset;
+  React.useEffect(() => {
+    const now = JSON.stringify(lines);
+    if (now === lastStaged.current) return;
+    lastStaged.current = now;
+    lastEdit.current = null;
+    historyReset(lines);
+  }, [historyReset, lines]);
+
+  const stage = React.useCallback(
     (next: StagedQuotationLine[]) => {
       linesRef.current = next;
+      lastStaged.current = JSON.stringify(next);
       onStage?.(next);
     },
     [onStage],
   );
 
+  const pushHistory = history.pushState;
+  const commit = React.useCallback(
+    (next: StagedQuotationLine[], merge = false) => {
+      if (!merge) lastEdit.current = null;
+      pushHistory(next, { merge });
+      stage(next);
+    },
+    [pushHistory, stage],
+  );
+
   const update = React.useCallback(
-    (key: string, patch: LineDraft) =>
-      commit(
-        linesRef.current.map((line) =>
-          line.key === key
-            ? { ...line, draft: { ...line.draft, ...patch } }
-            : line,
-        ),
-      ),
+    (key: string, patch: LineDraft, step: EditStep = 'auto') => {
+      const fields = Object.keys(patch).sort().join(',');
+      const merge =
+        step === 'merge' ||
+        (step === 'auto' &&
+          lastEdit.current?.key === key &&
+          lastEdit.current.fields === fields);
+      const next = linesRef.current.map((line) =>
+        line.key === key ? { ...line, draft: { ...line.draft, ...patch } } : line,
+      );
+      commit(next, merge);
+      lastEdit.current = step === 'new' ? null : { key, fields };
+    },
     [commit],
+  );
+
+  const historyUndo = history.undo;
+  const historyRedo = history.redo;
+  const undo = React.useCallback(() => {
+    const restored = historyUndo();
+    if (!restored) return;
+    lastEdit.current = null;
+    stage(restored);
+  }, [historyUndo, stage]);
+  const redo = React.useCallback(() => {
+    const restored = historyRedo();
+    if (!restored) return;
+    lastEdit.current = null;
+    stage(restored);
+  }, [historyRedo, stage]);
+
+  /** Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z and Ctrl+Y on the grid, the designer's keys. */
+  const onHistoryKey = React.useCallback(
+    (event: React.KeyboardEvent) => {
+      if (!editing || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (isTextField(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+      } else if (key === 'y' && !event.shiftKey) {
+        event.preventDefault();
+        redo();
+      }
+    },
+    [editing, redo, undo],
+  );
+
+  /**
+   * Remove takes the line out at once (owner, 11 Nov: "when remove line then is remove already,
+   * dont need to stage it cause now we always save"); Undo is the way back. A row an older
+   * autosaved draft still holds as removed is restored the old way.
+   */
+  const removeLine = React.useCallback(
+    (key: string) => {
+      const held = linesRef.current.find((line) => line.key === key);
+      if (!held) return;
+      if (held.removed) {
+        onToggleRemoved?.(key);
+        return;
+      }
+      commit(linesRef.current.filter((line) => line.key !== key));
+    },
+    [commit, onToggleRemoved],
   );
 
   const selectProduct = React.useCallback(
@@ -1481,25 +1590,33 @@ export function QuotationLinesGrid({
         : {};
       if (changed) freshCopies.current.delete(key);
       if (!option) {
-        update(key, {
-          product_id: '',
-          product_set_id: '',
-          [PICKED_CODE_KEY]: '',
-          ...(held.draft.product_set_id ? { complete_set: '' } : {}),
-          ...clearPicks,
-        });
+        update(
+          key,
+          {
+            product_id: '',
+            product_set_id: '',
+            [PICKED_CODE_KEY]: '',
+            ...(held.draft.product_set_id ? { complete_set: '' } : {}),
+            ...clearPicks,
+          },
+          'new',
+        );
         return;
       }
       if (isSetOption(option.value)) {
         const setId = option.value.slice(SET_OPTION_PREFIX.length);
-        update(key, {
-          product_id: '',
-          product_set_id: setId,
-          // The option's label IS the code (sets and products alike).
-          [PICKED_CODE_KEY]: option.label,
-          uom: 'SET',
-          ...clearPicks,
-        });
+        update(
+          key,
+          {
+            product_id: '',
+            product_set_id: setId,
+            // The option's label IS the code (sets and products alike).
+            [PICKED_CODE_KEY]: option.label,
+            uom: 'SET',
+            ...clearPicks,
+          },
+          'new',
+        );
         // The parts, brand, price and Complete set need the set's detail; applied only if the
         // row still names this set when it arrives.
         void fillFromSet?.(setId)
@@ -1508,21 +1625,30 @@ export function QuotationLinesGrid({
             if (now?.draft.product_set_id !== setId) return;
             // A typed brand is never overwritten by the set's.
             const { brand_snapshot: brand, ...rest } = filled;
-            update(key, (now.draft.brand_snapshot ?? '').trim() ? rest : { ...rest, brand_snapshot: brand ?? '' });
+            // Part of the pick: one Undo takes back the set and its fill together.
+            update(
+              key,
+              (now.draft.brand_snapshot ?? '').trim() ? rest : { ...rest, brand_snapshot: brand ?? '' },
+              'merge',
+            );
           })
           .catch(() => toast.error('Could not load that set'));
         return;
       }
-      update(key, {
-        product_id: option.value,
-        product_set_id: '',
-        [PICKED_CODE_KEY]: option.label,
-        // Off a set, its parts text no longer describes the line.
-        ...(held.draft.product_set_id ? { complete_set: '' } : {}),
-        // Before the fill: a fresh copy's blank rate must not overwrite the series price it puts.
-        ...clearPicks,
-        ...fillFromProduct(option),
-      });
+      update(
+        key,
+        {
+          product_id: option.value,
+          product_set_id: '',
+          [PICKED_CODE_KEY]: option.label,
+          // Off a set, its parts text no longer describes the line.
+          ...(held.draft.product_set_id ? { complete_set: '' } : {}),
+          // Before the fill: a fresh copy's blank rate must not overwrite the series price it puts.
+          ...clearPicks,
+          ...fillFromProduct(option),
+        },
+        'new',
+      );
     },
     [fillFromProduct, fillFromSet, update],
   );
@@ -1611,7 +1737,7 @@ export function QuotationLinesGrid({
           return heading.key;
         }
         case 'remove':
-          onToggleRemoved?.(key);
+          removeLine(key);
           return null;
         case 'duplicate': {
           const source = current[index];
@@ -1637,7 +1763,7 @@ export function QuotationLinesGrid({
         }
       }
     },
-    [commit, instanceKey, newHeading, newLine, onToggleRemoved],
+    [commit, instanceKey, newHeading, newLine, removeLine],
   );
 
   const handleRowDragEnd = React.useCallback(
@@ -1796,7 +1922,7 @@ export function QuotationLinesGrid({
       total,
       update,
       selectProduct,
-      toggleRemoved: (key) => onToggleRemoved?.(key),
+      toggleRemoved: removeLine,
       act,
       closeEmptyBand,
       headingLabelOf,
@@ -1816,8 +1942,8 @@ export function QuotationLinesGrid({
       itemNotes,
       labelOf,
       markVisited,
-      onToggleRemoved,
       onUomRetry,
+      removeLine,
       openPreview,
       quotationId,
       resolveProduct,
@@ -2178,7 +2304,8 @@ export function QuotationLinesGrid({
   return (
     <GridContext.Provider value={context}>
      <MatrixGridProvider value={matrixContext}>
-      <div className="min-w-0 space-y-2">
+      {/* Undo / Redo keys reach the grid from anywhere inside it except a text field. */}
+      <div className="min-w-0 space-y-2" onKeyDown={onHistoryKey}>
         <DataGrid
           table={table}
           recordCount={visibleRows.length}
@@ -2204,6 +2331,34 @@ export function QuotationLinesGrid({
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {toolbar}
             <div className="flex flex-wrap items-center gap-2 sm:ms-auto">
+              {editing && (
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Undo"
+                    title="Undo (Ctrl+Z / Cmd+Z)"
+                    disabled={!history.canUndo}
+                    onClick={undo}
+                  >
+                    <Undo2 className="size-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Redo"
+                    title="Redo (Shift+Ctrl+Z / Shift+Cmd+Z)"
+                    disabled={!history.canRedo}
+                    onClick={redo}
+                  >
+                    <Redo2 className="size-4" />
+                  </Button>
+                </div>
+              )}
               {columnsEditable && copySources.length > 0 && (
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
