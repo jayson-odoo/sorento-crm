@@ -66,6 +66,7 @@ vi.mock('@/services/pendingActionService', () => ({
 }));
 
 const service = vi.hoisted(() => ({
+  getCostingCurrencies: vi.fn(),
   getExchangeRates: vi.fn(),
   createExchangeRate: vi.fn(),
   updateExchangeRate: vi.fn(),
@@ -85,9 +86,9 @@ const CostingSettingsDialog = ((dialogModule as Record<string, unknown>).Costing
 
 const RATES = {
   data: [
-    { id: 'r3', currency: 'RMB', rate_to_base: 0.613497, units_per_base: 1.63, effective_from: '2026-12-01', note: 'Q4 budget', status: 'scheduled' },
-    { id: 'r2', currency: 'RMB', rate_to_base: 0.625, units_per_base: 1.6, effective_from: '2026-11-01', note: 'Workbook rate', status: 'in_force' },
-    { id: 'r1', currency: 'RMB', rate_to_base: 0.617284, units_per_base: 1.62, effective_from: '2026-09-01', note: null, status: 'past' },
+    { id: 'r3', currency: 'CNY', rate_to_base: 0.613497, units_per_base: 1.63, effective_from: '2026-12-01', note: 'Q4 budget', status: 'scheduled' },
+    { id: 'r2', currency: 'CNY', rate_to_base: 0.625, units_per_base: 1.6, effective_from: '2026-11-01', note: 'Workbook rate', status: 'in_force' },
+    { id: 'r1', currency: 'CNY', rate_to_base: 0.617284, units_per_base: 1.62, effective_from: '2026-09-01', note: null, status: 'past' },
     { id: 'u1', currency: 'USD', rate_to_base: 4.4, units_per_base: 0.2273, effective_from: '2026-11-01', note: null, status: 'in_force' },
   ],
 };
@@ -112,6 +113,7 @@ const type = (label: string, value: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   perms.granted = new Set(['products.cost.view', 'products.party_costing.manage', 'scm.config.manage']);
+  service.getCostingCurrencies.mockResolvedValue({ data: ['CNY', 'EUR', 'GBP', 'USD'] });
   service.getExchangeRates.mockResolvedValue(RATES);
   service.createExchangeRate.mockResolvedValue({ id: 'new' });
   service.updateExchangeRate.mockResolvedValue({ id: 'r2' });
@@ -157,17 +159,38 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
     expect(screen.getAllByText('Past').length).toBeGreaterThan(0);
   });
 
+  it('offers Currency as a pick-list fed by the server, not a text box', async () => {
+    mount();
+    await screen.findByText('Workbook rate');
+    const field = screen.getByLabelText('Currency');
+    expect(field.tagName).toBe('SELECT');
+    await waitFor(() =>
+      expect(Array.from((field as HTMLSelectElement).options).map((o) => o.value).filter(Boolean)).toEqual([
+        'CNY', 'EUR', 'GBP', 'USD',
+      ]),
+    );
+    expect(service.getCostingCurrencies).toHaveBeenCalled();
+  });
+
+  it('falls back to the upload currencies when the list cannot be read', async () => {
+    service.getCostingCurrencies.mockRejectedValue(new Error('down'));
+    mount();
+    await screen.findByText('Workbook rate');
+    const field = screen.getByLabelText('Currency') as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(field.options).map((o) => o.value).filter(Boolean)).toEqual(['CNY', 'USD', 'EUR']));
+  });
+
   it('adds a rate typed as Units per MYR 1 (the default) and sends units_per_base only', async () => {
     mount();
     await screen.findByText('Workbook rate');
     expect((screen.getByRole('radio', { name: 'Units per MYR 1' }) as HTMLInputElement).checked).toBe(true);
-    type('Currency', 'RMB');
+    type('Currency', 'CNY');
     type('Effective from', '2026-12-15');
     type('Rate', '1.65');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
     await waitFor(() => expect(service.createExchangeRate).toHaveBeenCalledTimes(1));
     const body = service.createExchangeRate.mock.calls[0][0];
-    expect(body).toMatchObject({ currency: 'RMB', effective_from: '2026-12-15', units_per_base: 1.65 });
+    expect(body).toMatchObject({ currency: 'CNY', effective_from: '2026-12-15', units_per_base: 1.65 });
     expect(body).not.toHaveProperty('rate_to_base');
   });
 
@@ -189,7 +212,7 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
   it('refuses a zero rate before calling the server', async () => {
     mount();
     await screen.findByText('Workbook rate');
-    type('Currency', 'RMB');
+    type('Currency', 'CNY');
     type('Effective from', '2026-12-15');
     type('Rate', '0');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
@@ -198,10 +221,10 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
   });
 
   it('shows the server message when the same currency and date already exist (409)', async () => {
-    service.createExchangeRate.mockRejectedValue(new Error('A rate for RMB on 2026-11-01 already exists'));
+    service.createExchangeRate.mockRejectedValue(new Error('A rate for CNY on 2026-11-01 already exists'));
     mount();
     await screen.findByText('Workbook rate');
-    type('Currency', 'RMB');
+    type('Currency', 'CNY');
     type('Effective from', '2026-11-01');
     type('Rate', '1.6');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));

@@ -2,7 +2,8 @@
 
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCostingHistory } from '../hooks/useCosting';
-import { METHOD_LABEL, money, shortDate, TRANSPORT_LABEL } from '../lib/format';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { METHOD_LABEL, money, TRANSPORT_LABEL } from '../lib/format';
 import type { CostMethod, HistoryEntry, TransportMode } from '../types/costing.types';
 
 const FIELD_LABEL: Record<string, string> = {
@@ -57,7 +58,7 @@ export function CostingHistoryDialog({
                 <li key={`${e.changed_at}-${e.field}-${i}`} className="flex flex-col gap-0.5 px-3 py-2 text-sm">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                     <span className="font-medium">{e.user_name}</span>
-                    <span className="text-xs text-muted-foreground">{shortDate(e.changed_at)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTimeInMalaysia(e.changed_at)}</span>
                   </div>
                   <div className="min-w-0 break-words">
                     {FIELD_LABEL[e.field] ?? e.field}: {shown(e.field, e.old)} to {shown(e.field, e.new)}

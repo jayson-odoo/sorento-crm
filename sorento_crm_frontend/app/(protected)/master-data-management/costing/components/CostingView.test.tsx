@@ -267,11 +267,11 @@ describe('Party view (AC-CG-02, AC-CG-04)', () => {
     }
   });
 
-  it('shows the workbook row: RMB 34.50, 1.6, 1.10, + RM 8.00, 31.72, 34.26, list 79.00, margin 130.61%', async () => {
+  it('shows the workbook row: CNY 34.50, 1.6, 1.10, + RM 8.00, 31.72, 34.26, list 79.00, margin 130.61%', async () => {
     mount();
     await screen.findByText('CGB9032B');
     const tr = rowOf('CGB9032B');
-    expect(within(tr).getByText('RMB 34.50')).toBeTruthy();
+    expect(within(tr).getByText('CNY 34.50')).toBeTruthy();
     expect(within(tr).getByText(/^1\.6\d*$/)).toBeTruthy();
     expect(within(tr).getByText('1.10')).toBeTruthy();
     expect(within(tr).getByText('+ RM 8.00')).toBeTruthy();
@@ -449,6 +449,29 @@ describe('Clearing the party (D3)', () => {
     mount();
     await screen.findByText('CGB9032B');
     expect(screen.queryByRole('button', { name: 'Clear party' })).toBeNull();
+  });
+});
+
+describe('Leaving the party view (round 3)', () => {
+  it('logs no "column does not exist" after sorting by Margin and going back to Company standard', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    url.search = 'party=cust-1';
+    service.getCostingRows.mockResolvedValue(partyEnvelope());
+    const { rerender } = mount();
+    await screen.findByText('CGB9032B');
+    fireEvent.click(screen.getByRole('button', { name: 'Margin' }));
+    await waitFor(() => expect(lastParams().sort).toBe('margin_pct'));
+
+    url.search = '';
+    service.getCostingRows.mockResolvedValue(standardEnvelope());
+    rerender(<QueryClientProvider client={new QueryClient()}><CostingView /></QueryClientProvider>);
+    await waitFor(() => expect(headers()).toEqual(STANDARD_HEADERS));
+    const logged = [...errors.mock.calls, ...warns.mock.calls].map((c) => c.map(String).join(' '));
+    expect(logged.filter((m) => /does not exist/.test(m))).toEqual([]);
+    expect(service.getCostingRows.mock.calls.at(-1)![0].sort).toBeUndefined();
+    errors.mockRestore();
+    warns.mockRestore();
   });
 });
 

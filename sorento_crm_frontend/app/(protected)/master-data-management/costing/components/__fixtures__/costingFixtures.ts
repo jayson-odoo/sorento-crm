@@ -1,7 +1,7 @@
 /**
  * Shared fixtures for the Costing page tests (lane PRODUCT-COSTING, Phase 2 red tests).
  * Shapes are CONTRACT-product-costing.md section 4.1 (Row, Party, response envelope), with the
- * owner's workbook figures: WB 245 / CGB9032B, RMB 34.50, rate 1.6, SST 1.10, + RM 8, landing
+ * owner's workbook figures: WB 245 / CGB9032B, CNY 34.50, rate 1.6, SST 1.10, + RM 8, landing
  * 31.71875, Bath Plus (304-R017) at 8% -> final 34.25625, margin 130.61%.
  */
 
@@ -29,7 +29,7 @@ const BASE: Dict = {
   list_price: 79,
   supplier_id: 's-a',
   supplier_code: 'SUP-A01',
-  currency: 'RMB',
+  currency: 'CNY',
   unit_cost: 34.5,
   rate_to_base: 0.625,
   units_per_base: 1.6,
@@ -187,8 +187,8 @@ export function standardEnvelope(rows?: Dict[], over: Dict = {}) {
 
 export const SUPPLIERS = {
   data: [
-    { supplier_id: 's-a', supplier_code: 'SUP-A01', supplier_name: 'Supplier A', is_primary: true, lead_time_days: 45, currency: 'RMB', unit_cost: 34.5, landing: 31.71875, final: 34.25625, markup_pct: 8, margin_pct: 130.61, reasons: [] },
-    { supplier_id: 's-b', supplier_code: 'SUP-B07', supplier_name: 'Supplier B', is_primary: false, lead_time_days: 60, currency: 'RMB', unit_cost: 38, landing: 34.125, final: 36.855, markup_pct: 8, margin_pct: 114.35, reasons: [] },
+    { supplier_id: 's-a', supplier_code: 'SUP-A01', supplier_name: 'Supplier A', is_primary: true, lead_time_days: 45, currency: 'CNY', unit_cost: 34.5, landing: 31.71875, final: 34.25625, markup_pct: 8, margin_pct: 130.61, reasons: [] },
+    { supplier_id: 's-b', supplier_code: 'SUP-B07', supplier_name: 'Supplier B', is_primary: false, lead_time_days: 60, currency: 'CNY', unit_cost: 38, landing: 34.125, final: 36.855, markup_pct: 8, margin_pct: 114.35, reasons: [] },
     { supplier_id: 's-l', supplier_code: 'SUP-L02', supplier_name: 'Supplier L', is_primary: false, lead_time_days: 7, currency: 'MYR', unit_cost: 42, landing: 54.2, final: 58.536, markup_pct: 8, margin_pct: 34.96, reasons: [] },
   ],
 };

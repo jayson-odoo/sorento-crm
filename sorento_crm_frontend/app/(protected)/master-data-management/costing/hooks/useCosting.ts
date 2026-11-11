@@ -7,6 +7,7 @@ import {
   exportCosting,
   getCategoryRules,
   getCostingRowHistory,
+  getCostingCurrencies,
   getCostingRows,
   getCostingRowSuppliers,
   getCostingSettings,
@@ -32,6 +33,7 @@ export const COSTING_SUPPLIERS_KEY = ['costing-suppliers'] as const;
 export const COSTING_HISTORY_KEY = ['costing-history'] as const;
 export const COSTING_SETTINGS_KEY = ['costing-settings'] as const;
 export const COSTING_RULES_KEY = ['costing-category-rules'] as const;
+export const COSTING_CURRENCIES_KEY = ['costing-currencies'] as const;
 export const COSTING_RATES_KEY = ['costing-exchange-rates'] as const;
 export const COSTING_PARTY_KEY = ['costing-party'] as const;
 
@@ -116,6 +118,10 @@ export function useSaveCategoryRule() {
       void qc.invalidateQueries({ queryKey: COSTING_ROWS_KEY });
     },
   });
+}
+
+export function useCostingCurrencies(enabled = true) {
+  return useQuery({ queryKey: COSTING_CURRENCIES_KEY, queryFn: getCostingCurrencies, enabled, retry: false });
 }
 
 export function useExchangeRates(enabled = true) {

@@ -526,7 +526,10 @@ function CostingPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [historyRow, setHistoryRow] = useState<{ id: string; code: string } | null>(null);
 
-  const sortKey = sorting[0] ? SERVER_SORT[sorting[0].id] : undefined;
+  // Margin exists only in the party view: a sort on it never outlives that column.
+  const querySorting = sorting.filter((x) => x.id !== 'margin' || !!partyId);
+  const sortKey = querySorting[0] ? SERVER_SORT[querySorting[0].id] : undefined;
+  const sortDesc = !!querySorting[0]?.desc;
   const rowsParams = useMemo<CostingRowsParams>(
     () => ({
       ...(partyId ? { party_id: partyId } : {}),
@@ -538,9 +541,9 @@ function CostingPage() {
       ...(asOf ? { as_of: asOf } : {}),
       page: pagination.pageIndex + 1,
       limit: pagination.pageSize,
-      ...(sortKey ? { sort: sortKey, dir: sorting[0]?.desc ? ('desc' as const) : ('asc' as const) } : {}),
+      ...(sortKey ? { sort: sortKey, dir: sortDesc ? ('desc' as const) : ('asc' as const) } : {}),
     }),
-    [partyId, debouncedSearch, category, brand, method, hasCost, asOf, pagination, sortKey, sorting],
+    [partyId, debouncedSearch, category, brand, method, hasCost, asOf, pagination, sortKey, sortDesc],
   );
 
   const { data, isLoading, isFetching, isPlaceholderData, isError, error } = useCostingRows(rowsParams);
@@ -568,6 +571,9 @@ function CostingPage() {
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
     setExpanded({});
   }, [filterKey]);
+  useEffect(() => {
+    if (view !== 'party') setSorting((all) => (all.some((x) => x.id === 'margin') ? all.filter((x) => x.id !== 'margin') : all));
+  }, [view]);
   // A different party is a different set of mark-ups: leave edit rather than carry drafts over.
   useEffect(() => {
     setEditing(false);
@@ -689,6 +695,7 @@ function CostingPage() {
       },
       {
         id: 'category',
+        accessorFn: (r) => r.category_name,
         ...sortable('category', 'Category'),
         cell: ({ row }) => <TextCell value={row.original.category_name} />,
         size: 130,
@@ -696,6 +703,7 @@ function CostingPage() {
       },
       {
         id: 'code',
+        accessorFn: (r) => r.product_code,
         ...sortable('code', 'Code'),
         cell: ({ row }) => <TextCell value={row.original.product_code} className="font-medium" />,
         size: 120,
@@ -751,6 +759,7 @@ function CostingPage() {
       },
       {
         id: 'landing',
+        accessorFn: (r) => r.landing,
         ...sortable('landing', 'Landing (RM)'),
         cell: ({ row }) => <LandingCell row={row.original} />,
         size: 130,
@@ -765,6 +774,7 @@ function CostingPage() {
       },
       {
         id: 'markup',
+        accessorFn: (r) => r.markup_pct,
         ...sortable('markup', 'Mark-up'),
         cell: ({ row }) => <MarkupCell row={row.original} />,
         size: 120,
@@ -772,6 +782,7 @@ function CostingPage() {
       },
       {
         id: 'final',
+        accessorFn: (r) => r.final,
         ...sortable('final', 'Final (RM)'),
         cell: ({ row }) => <FinalCell row={row.original} />,
         size: 120,
@@ -789,6 +800,7 @@ function CostingPage() {
     if (view === 'party') {
       cols.push({
         id: 'margin',
+        accessorFn: (r) => r.margin_pct,
         ...sortable('margin', 'Margin'),
         cell: ({ row }) => <MarginCell row={row.original} />,
         size: 100,
@@ -812,7 +824,7 @@ function CostingPage() {
     data: rows,
     getRowId: (row) => row.product_id,
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
-    state: { pagination, sorting, expanded },
+    state: { pagination, sorting: sorting.filter((x) => x.id !== 'margin' || view === 'party'), expanded },
     manualPagination: true,
     manualSorting: true,
     onPaginationChange: setPagination,
@@ -945,7 +957,10 @@ function CostingPage() {
           >
             <Card>
               <CardHeader className="block">
+                {/* Keyed by view: the toolbar memoises the grid's columns on the table object, which
+                    never changes, so a Margin that has gone would stay in its lists. */}
                 <DataGridListToolbar
+                  key={view}
                   table={table}
                   searchSlot={
                     <ListSearchInput

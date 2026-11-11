@@ -21,12 +21,14 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { FOREIGN_CURRENCY_CODES } from '@/lib/currencies';
 import { toast } from '@/lib/toast';
 import {
   COSTING_RATES_KEY,
   COSTING_ROWS_KEY,
   useCategoryRules,
   useCostingSettings,
+  useCostingCurrencies,
   useCreateExchangeRate,
   useExchangeRates,
   useSaveCategoryRule,
@@ -70,6 +72,13 @@ function positive(raw: string): number | null {
 
 function RateForm() {
   const create = useCreateExchangeRate();
+  // A pick-list, never free text: the codes the cost lists use, falling back to the upload's own
+  // when the list cannot be read.
+  const { data: known } = useCostingCurrencies();
+  const currencyOptions = (known?.data?.length ? known.data : FOREIGN_CURRENCY_CODES).map((code) => ({
+    value: code,
+    label: code,
+  }));
   const [currency, setCurrency] = useState('');
   const [from, setFrom] = useState('');
   const [basis, setBasis] = useState<'units' | 'myr'>('units');
@@ -79,7 +88,7 @@ function RateForm() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const code = currency.trim().toUpperCase();
+    const code = currency;
     const value = positive(rate);
     if (!code || !from) {
       setProblem('Enter a currency and the date it starts.');
@@ -112,12 +121,13 @@ function RateForm() {
           <Label htmlFor="costing-rate-currency" className="text-xs text-muted-foreground">
             Currency
           </Label>
-          <Input
+          <SearchableSelect
             id="costing-rate-currency"
+            aria-label="Currency"
             value={currency}
-            maxLength={3}
-            onChange={(e) => setCurrency(e.target.value)}
-            className="uppercase"
+            onChange={setCurrency}
+            options={currencyOptions}
+            placeholder="Currency"
           />
         </div>
         <div className="flex flex-col gap-1">

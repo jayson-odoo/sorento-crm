@@ -203,7 +203,7 @@ describe('entering and leaving edit', () => {
     mount();
     await startEdit();
     const tr = rowOf('CGB9032B');
-    expect(within(tr).getByText('RMB 34.50')).toBeTruthy();
+    expect(within(tr).getByText('CNY 34.50')).toBeTruthy();
     expect(within(tr).getByText('1.10')).toBeTruthy();
     expect(screen.queryByLabelText('Cost for CGB9032B')).toBeNull();
     expect(screen.queryByLabelText('Rate for CGB9032B')).toBeNull();

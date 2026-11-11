@@ -141,6 +141,11 @@ export async function saveCategoryRule(
   );
 }
 
+/** The currencies a rate may be set for: the upload's own and any a cost row already uses. */
+export async function getCostingCurrencies(): Promise<{ data: string[] }> {
+  return read(await apiFetch(`${BASE}/currencies`), 'Failed to load the currencies');
+}
+
 export async function getExchangeRates(currency?: string): Promise<{ data: ExchangeRate[] }> {
   const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
   return read(await apiFetch(`${BASE}/exchange-rates${query}`), 'Failed to load the exchange rates');
