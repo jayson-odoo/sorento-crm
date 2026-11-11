@@ -35,7 +35,7 @@ import { useExportChatHistory } from './hooks/useChatHistory';
 import { useFailedChatbotContacts } from './hooks/useChatbotTurns';
 import { stageLabel } from './turnPresentation';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
-import { TurnDetailDrawer } from './components/TurnDetailDrawer';
+import { useTraceDrawer } from './components/TraceDrawer';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { stripWhatsAppMarkup } from '@/lib/whatsappText';
 import type {
@@ -94,9 +94,10 @@ export default function ChatHistoryPage() {
   // that can never hold it (browser pass 2, step 3).
   const searchParams = useSearchParams();
   const linkedTurnId = searchParams.get('turn');
-  const [tracedTurnId, setTracedTurnId] = useState<string | null>(linkedTurnId);
+  const { openTrace, traceDrawer } = useTraceDrawer(linkedTurnId);
   useEffect(() => {
-    setTracedTurnId(linkedTurnId);
+    openTrace(linkedTurnId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the link changes
   }, [linkedTurnId]);
 
   const range: ChatHistoryFilters = useMemo(
@@ -456,10 +457,7 @@ export default function ChatHistoryPage() {
       </Container>
 
       <ChatThreadDrawer row={selected} onOpenChange={(open) => !open && setSelected(null)} />
-      <TurnDetailDrawer
-        turnId={tracedTurnId}
-        onOpenChange={(open) => !open && setTracedTurnId(null)}
-      />
+      {traceDrawer}
     </>
   );
 }
