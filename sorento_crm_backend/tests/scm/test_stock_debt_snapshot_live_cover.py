@@ -93,8 +93,12 @@ def test_a_move_after_the_snapshot_pins_the_other_line_instead(scm_app, fake_ss)
     w = _world(scm_app, fake_ss)
     db = w["db"]
     w["po_line"].from_so_line_ref = w["so_line"].source_ref
-    _o, other = _demand(db, w["product"], w["mwh"], qty=30, required_date=_months_ahead(1),
-                        so_number=f"{w['marker']}-SO2")
+    other_so, other = _demand(db, w["product"], w["mwh"], qty=30, required_date=_months_ahead(1),
+                              so_number=f"{w['marker']}-SO2")
+    # A PO line's S/O resolves at document level (`book_sales_orders_by_ref`).
+    other_so.source_system = "autocount"
+    other_so.source_ref = f"{DB}:11999"
+    other.source_system = "autocount"
     other.source_ref = f"{DB}:11999:12001"
     db.flush()
     c = w["c"]
@@ -124,18 +128,20 @@ def test_quantities_stay_frozen_and_short_is_frozen_outstanding_less_live_cover(
 
     w["so_line"].qty_delivered = Decimal("20")
     w["db"].flush()
+    # The fake AutoCount answers with a 120 row linked to the line (`_done_split`).
     fake_ss.answers["/api/v1/autocount/po-links"] = _done_split
-    # Partial link: 60 of the 100 still outstanding today.
     w["c"].post(_url(w, "/link"), json={"lines": [
-        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 60},
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 100},
     ]})
 
     after = _drill(w)[w["so_line"].id]
+    # Frozen: the line's quantities as saved.
     assert after["open_qty"] == 120 and after["qty_delivered"] == before["qty_delivered"]
+    # Live: today's outstanding (Now), and the cover the walk gives today's 100.
     assert after["now"]["open_qty"] == 100
-    # Whatever covers the line today, Short reads against the FROZEN 120.
-    assert after["short_qty"] == max(0, 120 - after["assigned_qty"]) or after["status"] == "late"
-    assert 0 <= after["short_qty"] <= 120
+    assert after["status"] == "pinned" and after["assigned_qty"] == 100
+    # Mixed: frozen outstanding 120 less the 100 that covers it in time today.
+    assert after["short_qty"] == 20
 
 
 def test_a_line_gone_from_the_book_keeps_its_frozen_cover(scm_app, fake_ss):
