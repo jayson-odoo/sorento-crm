@@ -58,7 +58,8 @@ def _assert_own_quoted_project(db: Session, token: PortalToken, project_id: Opti
     pre-fill route applies, which the company-wide portal project rule alone does not."""
     from app.services import own_scope
 
-    user_id = _linked_user_id(db, token.contact_id)
+    # A My Requests caller names its signed-in user; a portal contact its linked one.
+    user_id = getattr(token, "crm_user_id", None) or _linked_user_id(db, token.contact_id)
     if not (project_id and user_id):
         return
     if own_scope.user_is_limited(
