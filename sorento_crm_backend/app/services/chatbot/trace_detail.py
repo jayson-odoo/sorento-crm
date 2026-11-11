@@ -728,9 +728,61 @@ def _span_extract(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+_ROUND_FIELDS = (
+    "kind_of_call", "model", "ms", "prompt_tokens", "completion_tokens", "cached_tokens", "reasoning_tokens",
+    "stop", "called", "tools_offered", "tool_schema_chars", "message_chars",
+)
+_TOOL_FIELDS = ("name", "args", "status", "ms", "rows", "result_chars", "more", "detail")
+_CONTEXT_FIELDS = (
+    "prompt_key", "prompt_version", "system_chars", "context_before", "context_before_chars", "context_after",
+    "context_after_chars", "history_messages", "history_summary", "history_chars", "file_text_chars", "images",
+    "tools", "tool_schema_chars",
+)
+
+
+def _agent(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """AGENT-PANEL-FIXES D: an agent turn's rounds, thinking, tool calls and the context it sent, from the
+    `agent_round` / `agent_reasoning` / `agent_tool` / `agent_context` records `agent/loop.py` writes. None for a
+    turn the agent did not run (the bot pipeline's stages are the whole story there)."""
+    rounds = _kind_records(records, "agent_round")
+    tools = _kind_records(records, "agent_tool")
+    context = _kind_records(records, "agent_context")
+    if not (rounds or tools or context or _kind_records(records, "agent_provider_failed")):
+        return None
+
+    def pick(record: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+        return {f: record.get(f) for f in fields}
+
+    shown_rounds = [{"n": i + 1, **pick(r, _ROUND_FIELDS)} for i, r in enumerate(rounds)]
+
+    def total(field: str) -> int:
+        return sum(int(r.get(field) or 0) for r in rounds)
+
+    plans = _kind_records(records, "agent_plan")
+    return {
+        "rounds": shown_rounds,
+        "reasoning": [
+            {"round": r.get("round"), "kind_of_call": r.get("kind_of_call"), "text": r.get("text") or ""}
+            for r in _kind_records(records, "agent_reasoning")
+        ],
+        "tools": [pick(t, _TOOL_FIELDS) for t in tools],
+        "plan": (plans[-1].get("parts") or []) if plans else [],
+        "context": pick(context[-1], _CONTEXT_FIELDS) if context else None,
+        "failures": [{"error_class": f.get("error_class")} for f in _kind_records(records, "agent_provider_failed")],
+        "totals": {
+            "calls": len(rounds),
+            "ms": total("ms"),
+            "prompt_tokens": total("prompt_tokens"),
+            "completion_tokens": total("completion_tokens"),
+            "cached_tokens": total("cached_tokens"),
+        },
+    }
+
+
 def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any]:
     records = _records(row)
     return {
+        "agent": _agent(records),
         "stages": _stages(records),
         "parse": _parse(records),
         "decay": _decay(records),
