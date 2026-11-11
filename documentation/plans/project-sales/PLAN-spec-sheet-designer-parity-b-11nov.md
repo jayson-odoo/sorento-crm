@@ -73,3 +73,34 @@ pattern). Backend layer validation accepts `table` (`test_s1_every_layer_type...
 B1 -> B2 -> B3 -> B4 -> B5. Each: pytest for the backend fields/routes/migration, vitest for
 resolver/layout/editor, then reviewer + security (uploads unchanged; new export route RBAC =
 the PDF export's) + cloud browser pass at 1280 and 375.
+
+## Re-based on main (11 Nov ~22:00): PR #2349 replaces #2336
+
+#2331 was squash-merged (c3169d9c). Slice B's net change was applied as one commit on main
+(branch `claude/spec-sheet-designer-parity-b2-2sv9bf`, PR #2349). Two items added by the owner's
+slice A hand test:
+
+## B6. Page toolbar on the spec sheet (owner hand test, 11 Nov)
+
+The spec sheet page top bar gets the price tag designer's add-element toolbar: the shared
+`CanvasToolbar` (`dealer-kit/tag-templates/components/CanvasToolbar.tsx`), not a copy. Tools
+offered on a spec sheet page: Text, Image, Shape, Table, Accessories box, Badge (the ones that
+make sense on a quotation page; Product / Set / Alternatives / Price badge / Barcode stay off,
+their props are already optional or become optional), plus Undo / Redo / Delete / Duplicate /
+Group / Ungroup, which act on the page the user last pressed (the paste target rule).
+- The tools add to that page's canvas through the embedded controller (`EmbeddedController`
+  gains the editor's own add handlers), so a new element is placed and selected exactly as in
+  the template designer, and the page autosaves it as a page edit. The template is untouched.
+- Dialogs the add handlers open (image / asset picker) render in embedded mode too.
+- "Every page": with Apply to = Every page, an added element is added to every page of the sheet
+  through the server (a new apply-all operation `add`, beside the existing move / restyle of an
+  existing layer id); pages the server changed restart their canvases, as apply-all does today.
+
+## B7. Reset to template keeps the old layers (older bug)
+
+`ResetPageButton` takes `onReset` but `ReaderPage` never passes one: after "Reset to template"
+the server drops the page override, but the reader keeps that page's draft, undo history and
+live canvas layers, and the next edit saves the old layers back. Fix: on the reset's commit the
+reader forgets that page's draft and history and restarts its canvas from the refreshed payload
+(the same restart apply-all uses). Red test: edit, reset, edit again -> the save carries the
+template's layers plus only the new edit.
