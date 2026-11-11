@@ -3368,6 +3368,31 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     expect(await screen.findByRole('option', { name: /Non-standard.*0/ })).toBeInTheDocument();
   });
 
+  it('AC-8: opening an edit session (drafts rebuilt, same values) pins nothing', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
+    ]);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const tree = (editing: boolean) => (
+      <QueryClientProvider client={client}>
+        <Harness projectOverrides={{}} editing={editing} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(false));
+    await screen.findByText('A-2');
+    await chooseFlag('Below default price');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByText('A-2')).toBeNull());
+    // Edit: the session seeds every row afresh from the saved lines.
+    rerender(tree(true));
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+    await screen.findByRole('textbox', { name: 'Qty on A-1' });
+    expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull();
+  });
+
   it('AC-8: the Flags filter narrows the lines, keeps their numbers, and counts each option', async () => {
     listQuotationLines.mockResolvedValue(FLAGGED_LINES);
     renderEditor();

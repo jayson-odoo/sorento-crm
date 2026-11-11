@@ -709,7 +709,9 @@ export function QuotationVersionEditor({
    * Worked out during render, so the input being typed into is never unmounted.
    */
   const flagsKey = chosenFlags.join(',');
-  const touched = React.useRef<{ flags: string; keys: Set<string>; drafts: Map<string, unknown> }>({
+  // Drafts compared by VALUE: seeding an edit session or a Save rebuilds every draft object
+  // without anybody typing, and that must not pin every row.
+  const touched = React.useRef<{ flags: string; keys: Set<string>; drafts: Map<string, string> }>({
     flags: flagsKey,
     keys: new Set(),
     drafts: new Map(),
@@ -722,8 +724,9 @@ export function QuotationVersionEditor({
     const known = held.drafts.size > 0;
     gridLines.forEach((line) => {
       const before = held.drafts.get(line.key);
-      if (flagsKey && known && before !== line.draft) held.keys.add(line.key);
-      held.drafts.set(line.key, line.draft);
+      const now = JSON.stringify(line.draft);
+      if (flagsKey && known && before !== now) held.keys.add(line.key);
+      held.drafts.set(line.key, now);
     });
   }
   const pinned = touched.current.keys;
