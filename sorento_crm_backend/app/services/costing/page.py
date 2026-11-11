@@ -131,12 +131,22 @@ def _sql_query(db: Session, rq: RowsQuery, profile, default_method: str):
     return query
 
 
+def selling_price(value) -> Optional[Decimal]:
+    """The AutoCount list price when there is one: null and 0 both mean "no selling price" (0 is how
+    AutoCount holds "not set"), and a mark-up or margin against it would read -100 %. ONE rule for the
+    rows and the supplier expand."""
+    if value is None:
+        return None
+    price = Decimal(value)
+    return price if price > 0 else None
+
+
 def _assemble(base, basis_row: dict, profile) -> dict:
     """One internal Row from the product columns and its cost basis."""
     (pid, code, name, cat_id, cat_name, brand_id, brand_name, list_price, *party_cols) = base
     pid = str(pid)
     # No selling price: null or 0 (AutoCount holds 0 for "not set"). Never a -100% mark-up.
-    list_price = Decimal(list_price) if list_price is not None and Decimal(list_price) > 0 else None
+    list_price = selling_price(list_price)
     landing = basis_row["landing"]
     reasons = list(basis_row["reasons"])
     if landing is not None and list_price is None:
@@ -238,8 +248,9 @@ def list_rows(db: Session, rq: RowsQuery, today: date) -> dict:
             rows = [r for r in rows if r["landing"] is not None]
         elif narrow == "none":
             rows = [r for r in rows if r["landing"] is None]
-        if rq.sort in COMPUTED_SORTS:
-            rows = _sorted(rows, rq.sort, rq.direction)
+        # Costed rows come back in code order: apply the asked order here, SQL-sortable keys too
+        # (a Cost filter must not drop a sort on Name, Category, List price or Code descending).
+        rows = _sorted(rows, rq.sort, rq.direction)
         total = len(rows)
         if rq.limit is not None:
             start = (rq.page - 1) * rq.limit
@@ -284,7 +295,7 @@ def supplier_rows(db: Session, product_id: str, party_id: Optional[str], as_of: 
         party_service.get_customer(db, party_id)
     ctx = basis.load_context(db, {str(product.id): product.category_id}, as_of=as_of, party_customer_id=party_id)
     mode, value, _source = basis.resolve_transport(ctx, str(product.id))
-    list_price = Decimal(product.list_price) if product.list_price is not None else None
+    list_price = selling_price(product.list_price)
 
     markup = None
     if party_id and ctx.profile is not None:
@@ -320,7 +331,10 @@ def supplier_rows(db: Session, product_id: str, party_id: Optional[str], as_of: 
             "lead_time_days": link.lead_time_days,
             "currency": ev["currency"], "unit_cost": _f6(ev["unit_cost"]), "landing": _f6(landing),
             "final": _f6(final), "markup_pct": _f6(m), "margin_pct": _f6(margin),
-            "reasons": serialize_reasons([ev["reason"]] if ev["reason"] else []),
+            "reasons": serialize_reasons(
+                ([ev["reason"]] if ev["reason"] else [])
+                + ([{"code": "no_list_price"}] if landing is not None and list_price is None else [])
+            ),
         })
     return out
 

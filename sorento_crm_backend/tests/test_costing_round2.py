@@ -390,6 +390,9 @@ def test_r5_every_column_sorts_on_the_server_with_unknowns_last(costing_env, key
     e.override(w.tap, cost_method="average")
     e.override(w.sink, transport_mode="add", transport_value="3")
     e.party_product(w.customer, w.acc)  # a costless row in the party view
+    zero = e.item("ZERO-PRICE", category=w.cat_taps, list_price="0")  # priced 0: no selling price
+    e.cost_link(zero, w.sup_a, cost="10", currency="CNY", primary=True)
+    e.party_product(w.customer, zero)
     e.db.commit()
     party = key == "margin_pct"
     r = e.rows(as_of="2026-11-11", sort=key, dir=direction, limit=100, **({"party_id": w.customer.id} if party else {}))
@@ -476,3 +479,38 @@ def test_r5_the_customer_select_finds_a_party_by_name_or_code(costing_env, query
     r = e.client.get("/api/v1/order-management/customers/select", params={"query": query, "limit": 50})
     assert r.status_code == 200, r.text
     assert "304-R017" in [c["customer_code"] for c in r.json()["data"]]
+
+
+# ------------------------------------------------------------------ round 5 review
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("cost", ["has", "none"])
+@pytest.mark.parametrize("key", ["product_code", "product_name", "category_name", "list_price"])
+def test_r5_a_cost_filter_keeps_the_plain_sorts(costing_env, key, cost, direction):
+    e, w = _setup(costing_env)
+    zero = e.item("ZERO-PRICE2", category=w.cat_taps, list_price="0")  # unknown price sorts last
+    e.cost_link(zero, w.sup_a, cost="10", currency="CNY", primary=True)
+    e.db.commit()
+    r = e.rows(as_of="2026-11-11", sort=key, dir=direction, cost=cost, limit=100)
+    assert r.status_code == 200, r.text
+    values = [_sort_key_of(key)(row) for row in r.json()["data"]]
+    assert len(values) >= 2
+    known = [v for v in values if v is not None]
+    assert values == known + [None] * (len(values) - len(known)), (key, cost, direction, values)
+    assert known == sorted(known, reverse=direction == "desc"), (key, cost, direction, known)
+
+
+def test_r5_the_supplier_expand_of_a_product_priced_zero_has_no_markup_final_or_margin(costing_env):
+    e, w = _setup(costing_env)
+    zero = e.item("ZERO-PRICE3", category=w.cat_taps, list_price="0")
+    e.cost_link(zero, w.sup_a, cost="120", currency="CNY", primary=True)
+    e.party_product(w.customer, zero)
+    e.db.commit()
+    for params in ({}, {"party_id": w.customer.id}):
+        row = e.get(f"/rows/{zero.id}/suppliers", as_of="2026-11-11", **params).json()["data"][0]
+        assert row["landing"] == A(88.275, abs=1e-6)
+        assert row["margin_pct"] is None
+        if not params:
+            assert row["markup_pct"] is None and row["final"] is None
+        assert "no_list_price" in [x["code"] for x in row["reasons"]]
