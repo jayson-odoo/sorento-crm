@@ -225,6 +225,8 @@ export interface PriceTagRequestSummary {
   debtor_code: string | null;
   /** Null while the portal request is still a draft (D48a). */
   debtor_name: string | null;
+  /** PRICETAG-REQUEST-LAYOUT: every customer; the first is the debtor pair above. */
+  customers?: { code: string | null; name: string }[];
   needed_by_date: string | null;
   notes: string | null;
   /** Defaults to 'list' server-side; absent on a request created before r7. */
