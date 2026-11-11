@@ -30,6 +30,9 @@ EVENT_CHANGE = "scm.po_line.book_so_change"
 #: upper bound (the line's earliest AutoCount claim, else its created_at), not the moment.
 EVENT_SEEN = "scm.po_line.book_so_seen"
 
+#: A write the CRM sent to AutoCount for a PO line, by the user who pressed it (OI-PO-LINK).
+EVENT_CRM_WRITE = "scm.po_line.crm_link_write"
+
 _ENTITY = "purchase_order_lines"
 _ROOT = "purchase_orders"
 
@@ -84,6 +87,47 @@ def record_changes(
             root_entity_id=str(purchase_order_id),
             skip_flush=True,
         )
+
+
+def record_crm_write(
+    db: Session,
+    po_line: Any,
+    purchase_order_id: str,
+    *,
+    actor: Optional[dict],
+    request_id: str,
+    action: str,
+    outcome: Optional[str],
+    operation_id: Optional[str],
+    so_number: Optional[str],
+    so_line_no: Optional[int],
+    qty: Any,
+) -> None:
+    """One EVENT per write sent to AutoCount, success or failure. Never fails the request."""
+    try:
+        audit_service.log_audit(
+            db,
+            _ENTITY,
+            str(po_line.id),
+            "EVENT",
+            event=EVENT_CRM_WRITE,
+            user_id=(actor or {}).get("id"),
+            new_values={
+                "request_id": request_id,
+                "operation_id": operation_id,
+                "action": action,
+                "outcome": outcome,
+                "so_number": so_number,
+                "so_line_no": so_line_no,
+                "qty": qty,
+            },
+            company_id=str(po_line.company_id) if po_line.company_id else None,
+            root_entity_type=_ROOT,
+            root_entity_id=str(purchase_order_id),
+            skip_flush=True,
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("po link: could not record the write event for %s", getattr(po_line, "id", None))
 
 
 def latest_by_line(db: Session, line_ids: Iterable[str]) -> dict[str, dict]:

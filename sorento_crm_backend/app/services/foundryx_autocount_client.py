@@ -17,6 +17,7 @@ the committed fixtures, so nothing here ever needs a live FoundryX to be exercis
 from __future__ import annotations
 
 import time
+from urllib.parse import quote
 from typing import Any, Optional
 
 import httpx
@@ -238,7 +239,7 @@ class FoundryxAutocountClient:
 
     def write(
         self, path: str, body: dict, *, idempotency_key: Optional[str] = None,
-        request_id: Optional[str] = None,
+        request_id: Optional[str] = None, actor: Optional[dict] = None,
     ) -> dict:
         """``POST`` one write route (``/po-links``, ``/po-links/unlink``,
         ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``).
@@ -249,6 +250,12 @@ class FoundryxAutocountClient:
             headers["Idempotency-Key"] = idempotency_key
         if request_id:
             headers["X-Request-ID"] = request_id
+        if actor and actor.get("id"):
+            # Who pressed it (SS plan 63, optional on their side): the id, and the name
+            # percent-encoded because a header is ASCII.
+            headers["X-Acting-User-Id"] = str(actor["id"])
+            if actor.get("name"):
+                headers["X-Acting-User-Name"] = quote(str(actor["name"]), safe="")
         try:
             with self._client(_WRITE_TIMEOUT_SECONDS) as client:
                 response = client.post(f"/api/v1/autocount/{path}", headers=headers, json=body)

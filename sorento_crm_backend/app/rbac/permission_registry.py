@@ -701,10 +701,10 @@ PERMISSION_REGISTRY.extend([
     },
     {
         "slug": "projects.stock_debt.link_po",
-        "name": "Link PO lines from Stock Debt",
+        "name": "Link PO lines in AutoCount (Stock Debt, Order Inquiries)",
         "description": (
-            "Link, unlink or move a purchase order line to a sales order line from a Stock "
-            "Debt snapshot. Writes to AutoCount."
+            "Link, unlink, change or move a purchase order line to a sales order line from a "
+            "Stock Debt snapshot or from ticked Order Inquiry rows. Writes to AutoCount."
         ),
     },
     {

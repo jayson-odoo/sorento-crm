@@ -196,6 +196,10 @@ POST /order-inquiries/export/pdf
 POST /order-inquiries/handover-resend/preview
 POST /order-inquiries/handover-resend/send
 POST /order-inquiries/link-now
+POST /order-inquiries/po-link/change
+POST /order-inquiries/po-link/link
+POST /order-inquiries/po-link/options
+POST /order-inquiries/po-link/unlink
 POST /order-inquiries/reject
 POST /order-inquiries/reserve-notices/parked/preview
 POST /order-inquiries/reserve-notices/parked/send

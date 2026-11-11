@@ -245,6 +245,44 @@ class PoResumeIn(BaseModel):
     sales_order_line_id: Optional[str] = None
 
 
+class OiPoLinkRowsIn(BaseModel):
+    """Order Inquiry PO link (OI-PO-LINK): the ticked rows the press is for."""
+    row_ids: List[str] = Field(min_length=1, max_length=200)
+
+
+class OiPoLinkLinkIn(OiPoLinkRowsIn, PoLinkIn):
+    pass
+
+
+class OiPoUnlinkIn(OiPoLinkRowsIn, PoUnlinkIn):
+    pass
+
+
+class OiPoChangeIn(OiPoLinkRowsIn, PoChangeIn):
+    pass
+
+
+class OiPoLinkLine(BaseModel):
+    """One distinct SO line of the ticked rows, as the dialog draws it."""
+    sales_order_line_id: str
+    so_number: str
+    line_no: Optional[int] = None
+    open_qty: float = 0.0
+    po_links: List[SnapshotLinePoLink] = []
+    now: SnapshotLineNow
+
+
+class OiPoLinkSkipped(BaseModel):
+    inquiry_no: Optional[str] = None
+    item_code: Optional[str] = None
+    reason: str
+
+
+class OiPoLinkOptions(PoLinkOptions):
+    lines: List[OiPoLinkLine]
+    skipped: List[OiPoLinkSkipped] = []
+
+
 class PoLinkResult(BaseModel):
     sales_order_line_id: Optional[str] = None
     so_number: Optional[str] = None

@@ -26,6 +26,14 @@ from app.dependencies import (
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.download import DownloadResponse
+from app.schemas.stock_debt_snapshot import (
+    OiPoChangeIn,
+    OiPoLinkLinkIn,
+    OiPoLinkOptions,
+    OiPoLinkRowsIn,
+    OiPoUnlinkIn,
+    PoLinkResults,
+)
 from app.schemas.project_order_inquiry import (
     AcknowledgeResult,
     AcknowledgeRowsRequest,
@@ -1793,6 +1801,106 @@ def place_order_inquiry_row_on_po(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# --------------------------------------------------------------- PO link (OI-PO-LINK)
+#
+# The Stock Debt link function, driven from ticked Order Inquiry rows (`PoLinkService` with
+# `scope_for_oi_rows`). Same permission and the same Settings switch as Stock Debt.
+
+LINK_PO = "projects.stock_debt.link_po"
+
+
+def _oi_link_scope(db: Session, row_ids: list[str]):
+    from app.services.scm.po_link_service import scope_for_oi_rows
+
+    for row_id in row_ids:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+    return scope_for_oi_rows(db, row_ids)
+
+
+def _oi_rebook(db: Session, row_ids: list[str], out: dict, current_user: dict) -> None:
+    """After any `done` write: the AutoCount book step for exactly the ticked rows, so the PO
+    column shows the link now (the same call `auto-place` makes with `row_ids`)."""
+    db.commit()  # AutoCount already changed: keep the read-back whatever the re-run does
+    if any(r.get("outcome") == "done" for r in out.get("results", [])):
+        try:
+            ProjectOrderInquiryService(db).auto_place_for_products(
+                None,
+                actor_user_id=current_user["id"],
+                trigger="worklist",
+                row_ids=row_ids,
+                redeal_drafts=True,
+                include_awaiting=True,
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("oi po link: the book step re-run failed")
+            db.rollback()
+
+
+@router.post("/order-inquiries/po-link/options", response_model=OiPoLinkOptions)
+def oi_po_link_options(
+    payload: OiPoLinkRowsIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    from app.api.v1.projects.stock_debt_snapshots import _require_switch
+    from app.services.scm.po_link_service import PoLinkService, actor_of
+
+    _require_switch(db)
+    try:
+        scope = _oi_link_scope(db, payload.row_ids)
+        service = PoLinkService(db, scope, actor_of(db, current_user))
+        return {**service.options(), "lines": service.lines(), "skipped": scope.skipped}
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+def _oi_po_link_write(db: Session, current_user: dict, row_ids: list[str], call):
+    from app.api.v1.projects.stock_debt_snapshots import _require_switch
+    from app.services.scm.po_link_service import PoLinkService, actor_of
+
+    _require_switch(db)
+    try:
+        scope = _oi_link_scope(db, row_ids)
+        out = call(PoLinkService(db, scope, actor_of(db, current_user)))
+        _oi_rebook(db, row_ids, out, current_user)
+        return out
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/po-link/link", response_model=PoLinkResults)
+def oi_po_link_link(
+    payload: OiPoLinkLinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.link([l.model_dump() for l in payload.lines])
+    )
+
+
+@router.post("/order-inquiries/po-link/unlink", response_model=PoLinkResults)
+def oi_po_link_unlink(
+    payload: OiPoUnlinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    return _oi_po_link_write(db, current_user, payload.row_ids, lambda s: s.unlink(payload.po_line_ids))
+
+
+@router.post("/order-inquiries/po-link/change", response_model=PoLinkResults)
+def oi_po_link_change(
+    payload: OiPoChangeIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.change([c.model_dump() for c in payload.changes])
+    )
 
 
 @router.post("/order-inquiries/auto-place", response_model=AutoPlaceResult)
