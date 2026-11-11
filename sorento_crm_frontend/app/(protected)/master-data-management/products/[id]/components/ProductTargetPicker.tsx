@@ -55,6 +55,7 @@ import type { Product, ProductApiResponse } from '../../types/product.types';
 export const MAX_COPY_TARGETS = 500;
 
 const SOURCE_REASON = 'This is the product being copied from';
+const ADDED_REASON = 'Already added';
 
 export function plural(count: number, noun: string): string {
   const many = noun.endsWith('y') ? `${noun.slice(0, -1)}ies` : `${noun}s`;
@@ -62,18 +63,27 @@ export function plural(count: number, noun: string): string {
 }
 
 /** The confirm step's statement of the cap (#2280 hand-test leftover: say it plainly). */
-export function CopyCapNote() {
+export function CopyCapNote({ children }: { children?: ReactNode } = {}) {
   return (
     <p className="text-sm text-muted-foreground" data-testid="copy-cap-note">
-      One copy takes at most {MAX_COPY_TARGETS.toLocaleString('en-US')}{' '}
-      products.
+      {children ?? (
+        <>
+          One copy takes at most {MAX_COPY_TARGETS.toLocaleString('en-US')}{' '}
+          products.
+        </>
+      )}
     </p>
   );
 }
 
 export interface ProductTargetPickerOptions {
-  /** A product that can never be ticked (the copy source). */
+  /** A product that can never be ticked (the copy source). Optional: Costing's Add products has none. */
   excludeProductId?: string;
+  /**
+   * Products the caller already holds (a party's list): a disabled tick box marked "Already added",
+   * never in `picked`, skipped by "Select all N records". Also takes the second argument below.
+   */
+  alreadyAddedIds?: string[];
   /** Ticks to start from, applied once, the first time it is defined. */
   initialSelection?: string[];
   /** Extra products-list params, e.g. `tag_template_id`. A change is a new result set. */
@@ -100,15 +110,20 @@ export interface ProductTargetPickerOptions {
   rowName?: (row: Product) => string;
 }
 
-export function useProductTargetPicker(source: string | ProductTargetPickerOptions): {
+export function useProductTargetPicker(
+  source?: string | ProductTargetPickerOptions,
+  extra?: { alreadyAddedIds?: string[] },
+): {
   picked: string[];
   overCap: boolean;
   cappedFrom: number | null;
   grid: ReactNode;
 } {
   const options: ProductTargetPickerOptions =
-    typeof source === 'string' ? { excludeProductId: source } : source;
+    typeof source === 'string' ? { excludeProductId: source } : (source ?? {});
   const sourceProductId = options.excludeProductId ?? '';
+  const addedKey = (extra?.alreadyAddedIds ?? options.alreadyAddedIds ?? []).join(',');
+  const alreadyAdded = useMemo(() => new Set(addedKey ? addedKey.split(',') : []), [addedKey]);
   const {
     initialSelection,
     extraParams,
@@ -189,7 +204,11 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     ? customQuery
     : productsQuery;
   const blockedReason = (row: Product): string | undefined =>
-    row.id === sourceProductId ? SOURCE_REASON : rowDisabledReason?.(row);
+    row.id === sourceProductId
+      ? SOURCE_REASON
+      : alreadyAdded.has(row.id)
+        ? ADDED_REASON
+        : rowDisabledReason?.(row);
   const rows = useMemo(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
 
@@ -216,6 +235,11 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
             {(rowHint ? rowHint(row.original) : row.original.is_discontinued ? 'Discontinued' : undefined) ? (
               <span className="ms-1.5 text-xs font-normal text-muted-foreground">
                 {rowHint ? rowHint(row.original) : 'Discontinued'}
+              </span>
+            ) : null}
+            {alreadyAdded.has(row.original.id) && row.original.id !== sourceProductId ? (
+              <span className="ms-1.5 text-xs font-normal text-muted-foreground">
+                {ADDED_REASON}
               </span>
             ) : null}
           </div>
@@ -286,7 +310,7 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sourceProductId, rowDisabledReason, rowHint, rowName, fetchRows],
+    [sourceProductId, alreadyAdded, rowDisabledReason, rowHint, rowName, fetchRows],
   );
 
   const table = useReactTable({
@@ -323,9 +347,9 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
   const picked = useMemo(
     () =>
       Object.keys(rowSelection).filter(
-        (id) => rowSelection[id] && id !== sourceProductId,
+        (id) => rowSelection[id] && id !== sourceProductId && !alreadyAdded.has(id),
       ),
-    [rowSelection, sourceProductId],
+    [rowSelection, sourceProductId, alreadyAdded],
   );
   const overCap = picked.length > MAX_COPY_TARGETS;
 
