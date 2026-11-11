@@ -11,11 +11,12 @@ from __future__ import annotations
 import logging
 import math
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models.certificate import Certificate, CertificateProduct
+from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.product import Product
 from app.models.projects import (
     ProjectQuotationDocument,
@@ -37,6 +38,37 @@ from app.services.error_handler import AppException
 logger = logging.getLogger(__name__)
 
 MAX_BOXES = 200
+# CERT-TAB-UX (crew pass, 11 Nov): a file missing from storage is remembered for its revision and
+# not fetched again by the list until this long has passed (each miss cost ~150 ms on every load).
+# One hour, not a day: storage wraps every failure (a timeout too) as one error, so a passing hiccup
+# must not leave "No file" on a certificate for long. The box editor and issuing always re-read.
+MISS_RETRY = timedelta(hours=1)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _miss_fresh(cache: dict) -> bool:
+    try:
+        checked = datetime.fromisoformat(str(cache.get("checked_at")))
+    except (TypeError, ValueError):
+        return False
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=timezone.utc)
+    return _utcnow() - checked < MISS_RETRY
+
+
+def _remember_miss(db: Session, cp: CertificateProduct, revision_id: Optional[str]) -> None:
+    cp.boxes = {
+        "revision_id": revision_id,
+        "code": cp.model_code,
+        "source": "auto",
+        "missing": True,
+        "checked_at": _utcnow().isoformat(),
+        "boxes": [],
+    }
+    db.info["qcert_dirty"] = True
 SCOPE_QUOTE = "quote"
 SCOPE_DEFAULT = "default"
 
@@ -116,6 +148,7 @@ class _Group:
         self._has_text: Optional[bool] = None
         self._page_count: Optional[int] = None
         self.unreadable = False  # a file is on record but the object could not be read
+        self.asked_storage = False  # this request called storage for the file (a miss may be stamped)
 
     @property
     def rev(self):
@@ -130,6 +163,7 @@ class _Group:
 
     def file(self, db: Session) -> Optional[bytes]:
         if self._file is False:
+            self.asked_storage = True
             self._file = None
             att = self.attachment
             if att is not None:
@@ -142,6 +176,11 @@ class _Group:
                 if self._file is None:
                     self.unreadable = True
         return self._file
+
+    def release(self) -> None:
+        """Drop the file bytes (read again on demand); `unreadable` is kept."""
+        if not self.unreadable:
+            self._file = False
 
     def learn(self, cache: Optional[dict]) -> None:
         """Take the text flag and page count a current cache already knows, so no read is needed."""
@@ -165,6 +204,12 @@ class _Group:
         return self._has_text
 
 
+def _with_file():
+    """CERT-TAB-UX: load each certificate's current revision and its attachment in two queries,
+    not two per certificate (79 statements on a 34-certificate quote before, 13 after)."""
+    return selectinload(Certificate.current_revision).selectinload(CertificateRevision.attachment)
+
+
 def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Group]:
     derived: Dict[str, Certificate] = {}
     coverage: Dict[str, List[CertificateProduct]] = {}
@@ -173,6 +218,7 @@ def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Gro
             db.query(CertificateProduct, Certificate)
             .join(Certificate, Certificate.id == CertificateProduct.certificate_id)
             .filter(CertificateProduct.product_id.in_(list(quoted)), Certificate.status == "active")
+            .options(_with_file())
             .all()
         )
         for cp, cert in rows:
@@ -181,7 +227,8 @@ def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Gro
     manual_ids = [cid for cid, m in markers.items() if m.included and m.source == "manual" and cid not in derived]
     certs: Dict[str, Certificate] = dict(derived)
     if manual_ids:
-        for cert in db.query(Certificate).filter(Certificate.id.in_(manual_ids), Certificate.status == "active"):
+        manual = db.query(Certificate).options(_with_file())
+        for cert in manual.filter(Certificate.id.in_(manual_ids), Certificate.status == "active"):
             certs[str(cert.id)] = cert
     certs = {cid: c for cid, c in certs.items() if not (cid in markers and not markers[cid].included)}
     if not certs:
@@ -261,14 +308,20 @@ def _merge_rows(boxes: List[dict]) -> List[dict]:
     return out
 
 
-def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_added: bool = False) -> Dict[str, Any]:
-    """CERT-3/4/5/14: the products' codes and states, the boxes in force and the marked state."""
+def _resolve(
+    db: Session, group: _Group, quoted: Dict[str, str], marker, hand_added: bool = False, trust_miss: bool = True
+) -> Dict[str, Any]:
+    """CERT-3/4/5/14: the products' codes and states, the boxes in force and the marked state.
+
+    `trust_miss`: the list takes a remembered missing file at its word and never calls storage for
+    it; the box editor (`detail`) passes False and reads the file itself, so a file that is back
+    is seen and the miss forgotten."""
     rev = group.rev
     rev_id = str(rev.id) if rev is not None else None
     override = marker.boxes if marker is not None and marker.boxes and rev_id and marker.boxes.get("revision_id") == rev_id else None
     products: List[dict] = []
     all_boxes: List[dict] = []
-    any_manual = any_ai_box = any_needed = False
+    any_manual = any_needed = False
 
     for pid, (cp, owner) in sorted(group.coverage.items(), key=lambda kv: quoted.get(kv[0], "")):
         owner_rev = owner.current_revision
@@ -288,6 +341,16 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
             continue
         cache = cp.boxes if isinstance(cp.boxes, dict) else None
         current = bool(cache) and cache.get("revision_id") == owner_rev_id
+        if current and cache.get("missing"):
+            # Trusted only while this request has not read the file: bytes read a moment ago for
+            # another product win over a remembered miss.
+            if trust_miss and _miss_fresh(cache) and group._file is False:
+                # The whole file counts as gone for this read, so no other product reads it either
+                # and the row cannot be half "no file" and half marked.
+                group.unreadable = True
+                group._file = None
+                continue
+            cache, current = None, False
         manual_cache = current and cache.get("source") == "manual"
         if current:
             group.learn(cache)
@@ -296,6 +359,8 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
             # (a suggestion, or the negative result) so no later read parses the file again.
             data = group.file(db)
             if data is None:
+                if group.unreadable and group.asked_storage:
+                    _remember_miss(db, cp, owner_rev_id)
                 continue
             has_text = group.has_text(db)
             suggestion = pdfs.suggest_code(data, quoted.get(pid, "")) if has_text else None
@@ -335,6 +400,8 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
             else:
                 data = group.file(db)
                 if data is None:
+                    if group.unreadable and group.asked_storage:
+                        _remember_miss(db, cp, owner_rev_id)
                     continue
                 found = pdfs.find_boxes(data, code)
                 has_text = found["has_text"]
@@ -352,8 +419,9 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
             if not has_text:
                 entry["state"] = "no_text"
             elif boxes:
-                entry["state"] = "suggested" if cp.model_code_source == "ai" else "found"
-                any_ai_box = any_ai_box or cp.model_code_source == "ai"
+                # CERT-TAB-UX (owner, 11 Nov): a box found by a guessed (`ai`) code is just marked;
+                # there is no separate "Suggested, check" state. The pencil still fixes a wrong code.
+                entry["state"] = "found"
             else:
                 entry["state"] = "not_found"
         all_boxes.extend(boxes)
@@ -363,6 +431,7 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
     else:
         boxes, source = _merge_rows(all_boxes), SCOPE_DEFAULT
     count = len(boxes)
+    _unmark_boxless(products, boxes)
 
     if group.attachment is None or group.unreadable:
         state = "no_file"
@@ -375,8 +444,6 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
         or (any(p["code_used"] for p in products) and all(p["state"] == "no_text" for p in products if p["code_used"]))
     ):
         state = "no_text"
-    elif count > 0 and any_ai_box:
-        state = "suggested"
     elif count > 0:
         state = "found"
     elif any_needed:
@@ -402,6 +469,23 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
     }
 
 
+def _unmark_boxless(products: List[dict], boxes: List[dict]) -> None:
+    """CERT-TAB-UX (crew pass, 11 Nov): a product's state follows the boxes in force. A product
+    marked by its code whose box was deleted (for this quote, or as its default) reads `unmarked`.
+    A box that names no product (drawn for this quote) may be any product's, so then none is."""
+    named: set[str] = set()
+    for box in boxes:
+        ids = [str(i) for i in (box.get("product_ids") or []) if i]
+        if box.get("product_id"):
+            ids.append(str(box["product_id"]))
+        if not ids:
+            return
+        named.update(ids)
+    for product in products:
+        if product["state"] in ("found", "edited") and product["product_id"] not in named:
+            product["state"] = "unmarked"
+
+
 # ----------------------------------------------------------------------------- rows
 
 
@@ -415,11 +499,11 @@ def _effective_send(marker, validity: str, has_file: bool, verified: bool = True
     return validity != "expired" and has_file
 
 
-def _row(db: Session, group: _Group, quoted, markers) -> Dict[str, Any]:
+def _row(db: Session, group: _Group, quoted, markers, trust_miss: bool = True) -> Dict[str, Any]:
     cert, rev = group.rep, group.rev
     marker = markers.get(str(cert.id))
     hand_added = str(cert.id) not in group.derived and marker is not None
-    resolved = _resolve(db, group, quoted, marker, hand_added)
+    resolved = _resolve(db, group, quoted, marker, hand_added, trust_miss)
     validity = _validity(cert)
     has_file = group.attachment is not None
     return {
@@ -450,7 +534,10 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def list_rows(db: Session, document) -> List[Dict[str, Any]]:
     quoted, markers, groups = _context(db, document)
-    rows = [_row(db, g, quoted, markers) for g in groups]
+    rows = []
+    for group in groups:
+        rows.append(_row(db, group, quoted, markers))
+        group.release()  # a first look reads files one at a time, never all of them at once
     rows.sort(key=lambda r: not r["verified"])  # stable: verified first, scheme and number kept
     db.flush()
     return [_public(r) for r in rows]
@@ -467,7 +554,7 @@ def get_row(db: Session, document, certificate_id: str) -> Dict[str, Any]:
 def detail(db: Session, document, certificate_id: str) -> Dict[str, Any]:
     quoted, markers, groups = _context(db, document)
     group = _find_group(groups, certificate_id)
-    row = _row(db, group, quoted, markers)
+    row = _row(db, group, quoted, markers, trust_miss=False)
     resolved = row["_resolved"]
     out = _public(row)
     out.update(
@@ -603,7 +690,20 @@ def validate_boxes(boxes: List[dict], page_count: Optional[int] = None) -> List[
             except (TypeError, ValueError):
                 raise _invalid()
             product_id = str(product_id)
-        clean.append({"page": page, "x": x, "y": y, "w": w, "h": h, "product_id": product_id})
+        item = {"page": page, "x": x, "y": y, "w": w, "h": h, "product_id": product_id}
+        # A box merged from several products keeps them (CERT-TAB-UX), so a quote-only save still
+        # knows which products each box marks.
+        product_ids = box.get("product_ids") or []
+        if product_ids:
+            if not isinstance(product_ids, list) or len(product_ids) > 50:
+                raise _invalid()
+            try:
+                if any(len(str(i)) > 36 for i in product_ids):
+                    raise ValueError
+                item["product_ids"] = [str(uuid.UUID(str(i))) for i in product_ids]
+            except (TypeError, ValueError):
+                raise _invalid()
+        clean.append(item)
     return clean
 
 
@@ -666,7 +766,9 @@ def drop_quote_boxes(db: Session, document, certificate_id: str) -> Dict[str, An
 
 def _sendable(db: Session, document) -> List[tuple[_Group, Dict[str, Any]]]:
     quoted, markers, groups = _context(db, document)
-    pairs = [(group, _row(db, group, quoted, markers)) for group in groups]
+    # Issuing and exporting read the files themselves: a miss the list remembered is not trusted,
+    # or a file that is back would be frozen into an issue with no boxes.
+    pairs = [(group, _row(db, group, quoted, markers, trust_miss=False)) for group in groups]
     pairs.sort(key=lambda pair: not pair[1]["verified"])
     return [(group, row) for group, row in pairs if row["send_to_customer"]]
 
