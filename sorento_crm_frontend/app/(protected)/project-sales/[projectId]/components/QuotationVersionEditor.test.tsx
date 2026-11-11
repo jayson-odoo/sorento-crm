@@ -3221,18 +3221,34 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     expect(body[2].description).toBe(body[1].description);
   });
 
-  it('AC-2: a grid scope\'s copy carries every area quantity', async () => {
-    const cells = { k1: '2', k2: '5' };
+  it('AC-2: a grid scope\'s copy carries every area quantity, in every column group', async () => {
+    const columns = [
+      { key: 'a', label: 'Type A - 1 BH', cols: [{ key: 'a1', label: 'Kitchen' }, { key: 'a2', label: 'Yard' }] },
+      { key: 'b', label: 'Type B - 2 BH', cols: [{ key: 'b1', label: 'Kitchen' }, { key: 'b2', label: 'Balcony' }] },
+    ];
+    const cells = { a1: '2.00', a2: '5.00', b1: '1.00', b2: '3.00' };
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
     listQuotationLines.mockResolvedValue([
-      line({ id: 'l1', product_code: 'A-1', quantity: '7.00', qty_cells: cells, sort_order: 0 }),
+      line({ id: 'l1', product_code: 'A-1', quantity: '11.00', qty_cells: cells, sort_order: 0 }),
     ]);
     await renderEditing();
     await chooseMenuItem('A-1', 'Duplicate line');
+
+    const body = stagedBody();
+    expect(body).toHaveLength(2);
+    expect(body[1]).not.toHaveProperty('id');
+    expect(body[1].qty_cells).toEqual(body[0].qty_cells);
+    expect(Object.keys(body[1].qty_cells ?? {}).sort()).toEqual(['a1', 'a2', 'b1', 'b2']);
+    expect(body[1].quantity).toBe(body[0].quantity);
+    // Everything else on the draft too, but the two keys the copy sets on purpose.
     const staged = session?.scopes[QUOTATION.id]?.lines ?? [];
-    expect(staged).toHaveLength(2);
-    const { picked_code: _pickedCode, band_label: _band, ...copy } = staged[1].draft;
-    const { picked_code: _pc, band_label: _b, ...source } = staged[0].draft;
-    expect(copy).toEqual(source);
+    const without = (draft: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(draft).filter(([key]) => key !== 'picked_code' && key !== 'band_label'),
+      );
+    expect(without(staged[1].draft)).toEqual(without(staged[0].draft));
   });
 
   it('AC-4: the copy\'s first new product fills like a new line: its own text and a blank rate', async () => {
