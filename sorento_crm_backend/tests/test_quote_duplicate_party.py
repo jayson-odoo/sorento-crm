@@ -577,13 +577,25 @@ def test_terms_and_validity_picks_are_copied():
     """Review should-fix 2: the payment term and validity picks travel too (D4)."""
     with blank_session() as db:
         w = _world(db)
+        from app.models.payment_term import PaymentTerm
+        from app.services import project_quotation_service as quotes
+
+        term = PaymentTerm(company_id=w.company_id, term_code=f"ZZT-{_uid()[:6]}")
+        db.add(term)
+        db.flush()
+        w.source.payment_term_id = term.id
         w.source.validity_value = 45
         w.source.validity_unit = "days"
+        quotes.current_version(db, w.scope_a.id).matrix_columns = [{"key": "zzt", "label": "Block A"}]
         db.flush()
         copy = _duplicate(w)
-        assert (copy.validity_value, copy.validity_unit, copy.payment_term_id) == (
-            45, "days", w.source.payment_term_id
+        assert (copy.validity_value, copy.validity_unit, copy.payment_term_id) == (45, "days", term.id)
+        copied_scope = (
+            db.query(ProjectQuotation)
+            .filter(ProjectQuotation.document_id == copy.id, ProjectQuotation.scope_label == w.scope_a.scope_label)
+            .one()
         )
+        assert quotes.current_version(db, copied_scope.id).matrix_columns == [{"key": "zzt", "label": "Block A"}]
 
 
 def test_event_lines_do_not_take_a_version_number():
