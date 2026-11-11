@@ -96,6 +96,16 @@ Non-standard / Below default price.
   history lives with the grid, so it starts empty in each edit session and on each area tab.
 - The red pill reads "Below minimum price RM x", the Flags filter's words.
 
+## Crew pass on the hand-test round (11 Nov 2026)
+
+- A banner count link also scrolls the area strip and its lines into view (they sit below the
+  fold at 1440 and on a phone, so a tap looked like nothing happened). Asked through the document
+  context (`linesScrollRequest` / `consumeLinesScroll`) so a later ordinary visit does not jump.
+- Undo / Redo keys are listened for on the document while editing, taken only from inside the
+  grid or from the page body (a click on an empty part of the grid leaves focus on the body).
+- Leaving a field ends its Undo step: two separate edits of one rate are two steps; keystrokes
+  within one edit stay one step.
+
 ## Edge cases
 
 - Combo / set line: duplicated as a set line (same set, same complete-set text); the server freezes
