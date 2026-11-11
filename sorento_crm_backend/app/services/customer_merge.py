@@ -687,6 +687,25 @@ def _merge_group(
                 "AND s.company_id IS NOT DISTINCT FROM t.company_id)",
                 {"r": rid, "s": survivor},
             )
+        # PRODUCT-COSTING (AC-PC-10): a customer has one costing profile, keyed by the customer,
+        # so the survivor's wins and the retired one is dropped (kept in the map); a retired
+        # product the survivor already lists is dropped too, and the rest move with the
+        # generic repoint below, keeping their row mark-up.
+        profiles = tables.get("customer_costing_profiles")
+        if profiles and db.execute(
+            text(f"SELECT 1 FROM {profiles} WHERE customer_id = :s"), {"s": survivor}
+        ).first():
+            dropped += _drop_where(db, profiles, "t.customer_id = :r", {"r": rid})
+        costing_products = tables.get("customer_costing_products")
+        if costing_products:
+            dropped += _drop_where(
+                db,
+                costing_products,
+                f"t.customer_id = :r AND EXISTS (SELECT 1 FROM {costing_products} s "
+                "WHERE s.customer_id = :s AND s.product_id = t.product_id "
+                "AND s.company_id IS NOT DISTINCT FROM t.company_id)",
+                {"r": rid, "s": survivor},
+            )
         aliases = tables.get("customer_aliases")
         if aliases:
             dropped += _drop_where(
