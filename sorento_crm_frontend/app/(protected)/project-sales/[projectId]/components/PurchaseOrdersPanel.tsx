@@ -109,7 +109,13 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const latest = React.useRef({ searchParams, router, projectId: project.id });
   latest.current = { searchParams, router, projectId: project.id };
   React.useEffect(() => {
-    if (!uploadRequested || uploadHandled.current) return;
+    // Re-armed once the param is gone, so a second PO received on the same open tab opens it
+    // again; StrictMode's second run happens while the param is still there, so it stays once.
+    if (!uploadRequested) {
+      uploadHandled.current = false;
+      return;
+    }
+    if (uploadHandled.current) return;
     uploadHandled.current = true;
     if (canUpload) setUploadingFor({ po: null });
     const { searchParams: params, router: nav, projectId } = latest.current;

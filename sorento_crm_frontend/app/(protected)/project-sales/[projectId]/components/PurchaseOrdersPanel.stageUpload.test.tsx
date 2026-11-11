@@ -126,6 +126,38 @@ describe('PurchaseOrdersPanel opened by the PO received stage button', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
+  it('under StrictMode it still opens once and replaces the URL once', () => {
+    params = new URLSearchParams('tab=orders&upload=po');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <PurchaseOrdersPanel project={project()} />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+    expect(screen.getAllByRole('dialog', { name: 'Upload a customer PO' })).toHaveLength(1);
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it('a second PO received on the same open tab opens it again', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <PurchaseOrdersPanel project={project()} />
+      </QueryClientProvider>
+    );
+    params = new URLSearchParams('tab=orders&upload=po');
+    const view = render(tree());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    params = new URLSearchParams('tab=orders');
+    view.rerender(tree());
+    params = new URLSearchParams('tab=orders&upload=po');
+    view.rerender(tree());
+    expect(screen.getByRole('dialog', { name: 'Upload a customer PO' })).toBeTruthy();
+    expect(replace).toHaveBeenCalledTimes(2);
+  });
+
   it('opens nothing without the param', () => {
     params = new URLSearchParams('tab=orders');
     renderPanel();

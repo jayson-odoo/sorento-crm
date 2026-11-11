@@ -598,15 +598,22 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   // so a contact-hidden field cannot survive in one of them (AC-F4).
   // A field the form was started with is shown even when the contact rule hides it: a
   // sponsorship form opened from a project shows that project to everyone (PROJECT-STAGE-ACTIONS).
+  // Keyed on the seeded NAMES, not the object, so a caller's new initialValues object never
+  // re-seeds the form and wipes what was typed.
+  const seededNames = Object.entries(initialValues?.fields ?? {})
+    .filter(([, value]) => Boolean(value))
+    .map(([name]) => name)
+    .join(',');
   const fieldDefs = useMemo(
-    () =>
-      FIELDS[kind].filter((f) =>
+    () => {
+      const seeded = new Set(seededNames ? seededNames.split(',') : []);
+      return FIELDS[kind].filter((f) =>
         f.showWhenContact
-          ? f.showWhenContact(contact) ||
-            (!submissionId && Boolean(initialValues?.fields?.[f.name]))
+          ? f.showWhenContact(contact) || (!submissionId && seeded.has(f.name))
           : true,
-      ),
-    [kind, contact, submissionId, initialValues],
+      );
+    },
+    [kind, contact, submissionId, seededNames],
   );
   const showLines = HAS_LINES.includes(kind);
   // The id to save/flush against: the route param when one exists, else
