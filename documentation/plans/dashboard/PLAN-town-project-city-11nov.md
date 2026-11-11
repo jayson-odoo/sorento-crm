@@ -27,16 +27,19 @@ PR: foundryx-sdn-bhd/sorento-crm#2342 (`crew-lane: TOWN-PROJECT-CITY`). Mock: `m
 - Crew data fact (dev copy to 06 Nov): 1 of 1,650 project-type sales orders in 90 days links to a CRM project. So
   NOTHING here is per-project sales, and `project_label` text is never used.
 
-- **Where a dealer is (for the map).** The only location AutoCount sends for a debtor is `Debtor.AreaCode`, stored as
-  `customers.region` (`models/order.py:159-161`, canonical field `schemas/canonical_masters.py:179-185`): free text, no
-  reference table, written whenever sent. `customers.billing_address` (JSONB, `models/order.py`) is never written by
-  the import (`services/customer_import_service.py:99`, NEVER_WRITTEN) and `customers.country` holds no state.
-  There is no other state column on customers. How many dealers have a usable `region`, and what spellings it holds,
-  is NOT measurable in this sandbox (no dev data): asked of crew (card question Q6).
+- **Where a dealer is (for the map).** `customers.region` (AutoCount `Debtor.AreaCode`, `models/order.py:159-161`)
+  is EMPTY for 100% of 3,164 dealers on the dev copy (crew, 11 Nov; the masters feed never wrote it), and
+  `billing_address` / customer addresses are empty too. What is filled: `orders.deliver_address`
+  (`models/order.py:488`, AutoCount delivery orders, indexed by `ix_orders_customer_id`) for 2,153 dealers (68%),
+  2,129 of them with a 5-digit postcode. Decision (crew/owner Q6): a dealer's state = the state of the most
+  frequent postcode over its last 20 delivery orders, through an official Malaysian postcode-range -> state
+  reference table (geography lookup, not record name matching). `customers.region` resolved through `my_state` wins
+  when the feed ever fills it.
 - **Where a project is.** `sales_profile.state` (`models/projects.py:432-433`), free text filled from the editable
   lookup set `my_state` (seeded with the 13 states + Kuala Lumpur, Labuan, Putrajaya,
   `alembic/versions/prreg_0001_project_registrations.py:62-79`). `LookupResolverService.resolve("my_state", raw)`
-  (`services/lookup_resolver.py:29`) already turns a typed spelling into a set value; the Town reuses it.
+  (`services/lookup_resolver.py:29`) matches a typed value to a set value. The set has 16 options and no aliases
+  (crew, dev copy), so a project's state is an exact (case-insensitive) match or nothing.
 
 ## Owner answers (11 Nov ~19:58 MYT)
 
@@ -61,7 +64,7 @@ strike it). Q5 (a).
    from each invoice's sales type, so a + b + c = X exactly, credit notes with their sign. Without `sales.reports.view`
    no RM anywhere (server-side): "Dealers 26 · Projects 3 · Other 2 invoices". Same three rows in the sales lightbox.
 4. **Dealers by state.** The same 30 shops and the stalls as today (ranking, caps and lit rule unchanged) are placed on
-   a short high street inside their state, from `customers.region` resolved to a `my_state` value (rule 9). A
+   a short high street inside their state (rule 9). A
    state's street holds as many shops as it has; empty states are plain land.
 5. **Project sites by state.** One site per open project (outcome open, approved or staff registration), cap 30: full
    viewers get the top 30 by estimated value (blank last, ties by code), redacted viewers the same 30 in hashed
@@ -78,10 +81,14 @@ strike it). Q5 (a).
 8. **Trading houses = slate-blue glass towers**, flat-roofed, unlike the cream pitched-roof shops; own legend entry.
    One per customer linked as `trading_house` on an open site (party with a `customer_id`), cap 12 by number of open
    projects then code; placed in that customer's state like a dealer. Lit on a posted Project-type invoice today (Q5 a).
-9. **State resolution and "State not set".** A dealer or trading house uses `customers.region`, a site uses
-   `sales_profile.state`; each is resolved to a `my_state` value with `LookupResolverService` (exact value or a
-   known alias in the set). Anything blank or unresolved goes to a small **"State not set"** islet just off Shah
-   Alam, so it is visible and fixable, never guessed. No address text or name is parsed for a state.
+9. **State resolution and "State not set".** Dealers and trading houses (both customers): `customers.region` through
+   `my_state` if set, else the postcode rule: take the last 20 non-deleted, non-cancelled delivery orders of the
+   customer, pull the 5-digit postcode out of `deliver_address`, keep the most frequent one (tie: the most recent),
+   map it to a state through the postcode-range table `app/services/town/my_postcodes.py` (a static reference table
+   with its source cited, KL / Putrajaya / Labuan included, the few shared prefixes such as 68xxx decided by range).
+   Projects: `sales_profile.state` matched to a `my_state` value. Anything left without a state goes to a small
+   **"State not set"** islet just off Shah Alam: visible and fixable, never guessed. No name is ever matched; the
+   postcode and the address never leave the snapshot job (only the resolved state is stored).
 10. **Lost and dormant disappear** at the next tick (~5 minutes); dormant is counted on the HQ sign "+3 dormant" (Q4).
 11. **Click.** A site opens its lightbox (name, code, stage, final negotiation, state, timeline, estimated value,
     "Open project" to `/project-sales/{id}`; redacted: stage, state, timeline only). A trading house: name (full only),
@@ -96,55 +103,53 @@ strike it). Q5 (a).
     flags, looks and lit state stay.
 14. **Cost.** Per tick: open projects + profile + status (one query), trading-house links + today's project-type
     buyers (one query), one extra filtered sum in the today query, `demand_class` in the deliveries group, and
-    `region` read alongside the dealer rows already fetched. State resolution runs once per distinct spelling per
-    tick (a few dozen values). Nothing per viewer.
+    one indexed query over `orders` for the drawn customers only (30 shops + today's stalls + 12 trading houses,
+    last 20 delivery orders each), memoised per customer per day in Redis beside the ranking. Nothing per viewer.
 
 ### Examples (names masked, fake but stable; shapes from the schema, the sandbox has no dev data)
 
 | Thing | Data | On the map |
 | --- | --- | --- |
-| Dealer "D-Alpha" | region "SELANGOR" -> Selangor, bought today | lit shop on the Selangor street near HQ |
-| Dealer "D-Bravo" | region "JB" -> unresolved (no alias) | shop on the "State not set" islet |
+| Dealer "D-Alpha" | region empty; last 20 DOs: 40150 x14, 47301 x6 -> 40150 -> Selangor; bought today | lit shop on the Selangor street near HQ |
+| Dealer "D-Bravo" | region empty; DOs with no postcode | shop on the "State not set" islet |
+| Dealer "D-Charlie" | DOs: 81300 x9 -> Johor | shop on the Johor street |
 | Project "Residensi Alpha" P-0101 | Quoted, state "Johor", Mar 2025 -> Mar 2028 | amber flag, frame + crane (~55%), Johor project quarter |
 | Project "Hotel Bravo" P-0102 | Tendering + critical, state "Sabah", no launch date | orange flag + red pennant, tidy prepared plot, Sabah |
 | Project "Taman Charlie" P-0103 | Registered, state blank, launch Jan 2027 | blue flag, "Launching" footprint, "State not set" islet |
-| Trading house "TH-Alpha" | customer region "Kuala Lumpur", project invoice today | lit tower in Kuala Lumpur |
+| Trading house "TH-Alpha" | DO postcode 50450 -> Kuala Lumpur, project invoice today | lit tower in Kuala Lumpur |
 | Due order, project type, customer in Sarawak | - | coaster ship Port Klang -> Sarawak project quarter |
 
 Board (full): "Sold today RM 48,200.00 / Dealers RM 39,900.00 · Projects RM 6,100.00 · Other RM 2,200.00".
 
 ### Edge cases
 
-- Everything lands on "State not set" (region never sent): the map still works; the islet becomes the busiest place,
-  which is the honest signal to fill AreaCode. The islet grows a second street rather than overflowing.
+- Many dealers on "State not set" (about a third of all dealers have no delivery address): the map still works; the
+  islet grows a second street rather than overflowing, and it is the honest signal of who has no address.
+- A dealer that delivers to two states (a branch): the most frequent postcode wins, one shop, one state.
+- A postcode outside every range (typo "4015"): ignored; the next most frequent valid one counts.
+- A self-collect dealer (no delivery orders): "State not set".
 - A state with many shops (Selangor, KL): its street wraps into two rows; the schematic map gives it room.
-- `region` holding a non-state value (a sales area like "NORTH" or "EAST COAST"): unresolved -> "State not set" unless
-  the owner adds it as an alias (Q6).
+- A project state typed outside the lookup (older free text): no match -> "State not set".
 - A trading house that is also a top-30 dealer: shop and tower both, same state, each lit by its own sales type.
 - KL / Putrajaya projects: their own enclave, not Selangor.
 - No open projects: no project quarters; HQ sign "No open projects".
 - Snapshot built before this ships (no state fields): drawn on the old single-island layout until the first new
   tick a few minutes later, so the town never flashes every shop onto the "State not set" islet.
 
-### Questions
+### Decided
 
-6. **Dealer location source.** `customers.region` (AutoCount AreaCode) is the only candidate. Crew, please run on the
-   dev copy (read-only):
-   `SELECT region, count(*) FROM customers c WHERE EXISTS (SELECT 1 FROM sales_orders s WHERE s.customer_id = c.id AND s.demand_class = 'retail') GROUP BY 1 ORDER BY 2 DESC;`
-   Options (a) resolve region through `my_state` (+ aliases the owner adds to that lookup set), unresolved -> "State
-   not set"; (b) add a `state` column on customers that sales admin fills by hand. Recommendation: **(a)** if most
-   dealers resolve; it needs no new field and the islet shows exactly who to fix. Switch to (b) only if AreaCode turns
-   out to be sales areas rather than states.
-7. **East Malaysia deliveries.** (a) a coaster ship from Port Klang; (b) lorries drive off the map edge.
-   Recommendation: **(a)**: it is how the goods actually travel.
+- Q6 (crew + owner, 11 Nov): dealer state from the delivery-order postcode as rule 9; `customers.region` via
+  `my_state` preferred when filled. Top-30 coverage on dev: measured by crew with the query in the PR comment
+  (result recorded here when posted).
+- Q7 (a): Sabah, Sarawak and Labuan orders go by coaster ship from Port Klang.
 
 ## Phase plan (after sign-off)
 
 1. Mock sign-off: `mock/town-project-city-mock.html` (v2, the map). v1 single island kept as
    `mock/town-project-city-mock-v0-single-island.html`.
 2. Red tests first: `today.split`; `projects.sites` (open only, approved only, cap 30 + more, dormant count, lost gone,
-   look from timeline, flag from status, `state` resolved); `trading_houses` (cap 12, lit on project-type invoice,
-   state); shops carry `state`; unresolved -> `null` (drawn on "State not set"); deliveries split by `demand_class`
+   look from timeline, flag from status, `state` matched); `trading_houses` (cap 12, lit on project-type invoice,
+   state); shops carry `state` (region first, then postcode mode of last 20 DOs, range table incl. edges); unresolved -> `null` (drawn on "State not set"); deliveries split by `demand_class`
    with a destination state; redaction (no value/name/code/id, hashed order, opaque keys) and wallboard strip; vitest
    for the board line, state placement helper, lightbox targets `site` / `trading_house` / `state`, legend.
 3. Backend snapshot sections, then the map world in `townWorld.ts` (state polygons in `town/lib/townMap.ts`), then
