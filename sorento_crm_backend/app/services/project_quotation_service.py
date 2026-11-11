@@ -691,19 +691,43 @@ def line_default_price(
     (``QuotationVersionEditor.fillFromProduct`` / ``fillFromSet``). None when neither is known:
     a price with nothing to compare against is not a discount.
     """
+    return default_price_for(
+        db,
+        series_id=quotation.series_id,
+        product_id=line.product_id,
+        product_set_id=line.product_set_id,
+        list_price=line.list_price_snapshot,
+        series_pricing=series_pricing,
+    )
+
+
+def default_price_for(
+    db: Session,
+    *,
+    series_id: Optional[str],
+    product_id: Optional[str],
+    product_set_id: Optional[str],
+    list_price: Any,
+    series_pricing: Optional[Dict[str, tuple]] = None,
+) -> Optional[Decimal]:
+    """The default-price rule itself, for a saved line and for a draft judged live
+    (PROJECT-QUOTE-LINE-TOOLS): the series' selling price for the product or set, else
+    ``list_price``. One function, so the "Below default price" pill and the stored
+    ``is_discounted`` that feeds the approval banner cannot disagree.
+    """
     stated = None
-    if quotation.series_id:
-        if line.product_set_id:
-            row = pricing.series_set_pricing_map(db, quotation.series_id).get(line.product_set_id)
+    if series_id:
+        if product_set_id:
+            row = pricing.series_set_pricing_map(db, series_id).get(product_set_id)
         else:
             rows = (
                 series_pricing
                 if series_pricing is not None
-                else pricing.series_pricing_map(db, quotation.series_id)
+                else pricing.series_pricing_map(db, series_id)
             )
-            row = rows.get(line.product_id) if line.product_id else None
+            row = rows.get(product_id) if product_id else None
         stated = row[0] if row else None
-    value = stated if stated is not None else line.list_price_snapshot
+    value = stated if stated is not None else list_price
     return Decimal(value) if value is not None else None
 
 

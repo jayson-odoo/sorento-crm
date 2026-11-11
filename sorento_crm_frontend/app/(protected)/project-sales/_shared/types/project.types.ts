@@ -891,6 +891,8 @@ export interface QuotationLine {
   floor_value_applied?: string | null;
   floor_level_applied?: FloorLevel | null;
   is_below_floor: boolean;
+  /** Priced below its default price when saved (PS-QUOTE-RULES R1): what the banner counts. */
+  is_discounted?: boolean;
 
   sort_order: number;
   notes?: string | null;
@@ -1145,6 +1147,8 @@ export function importJobPhase(status: string): 'running' | 'done' | 'dead' {
 export interface QuotationLineVerdict {
   is_non_standard: boolean;
   is_below_floor: boolean;
+  /** Below the default price (series price, else list price), by the save's own rule. */
+  is_discounted?: boolean;
   floor_value: string | null;
   floor_level: string | null;
 }

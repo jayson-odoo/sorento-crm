@@ -37,6 +37,13 @@ vi.mock('@/app/(protected)/system-management/chat-history/components/TurnDetailD
     ) : null,
 }));
 
+// TRACE-SIDEBAR: an old (non-routed) reply's View trace opens its AI trace in a side drawer too.
+vi.mock('@/app/(protected)/system-management/ai-assistant/components/TraceView', () => ({
+  TraceView: ({ messageId, stacked }: { messageId: string; stacked?: boolean }) => (
+    <div data-testid="message-trace-stub" data-message={messageId} data-stacked={String(stacked === true)} />
+  ),
+}));
+
 let currentSearchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
@@ -474,16 +481,20 @@ describe('AIAssistantBubble: cards for everyone, the trace for admins (AC-22, AC
     expect(screen.queryByTestId('turn-detail-drawer-stub')).toBeNull();
   });
 
-  it('keeps the usage trace link on an old reply, for an admin', async () => {
+  it('opens an old reply\'s AI trace in the side drawer, for an admin: no link, no new tab (TRACE-SIDEBAR)', async () => {
     grantAdmin();
     await openThread([
       user(),
       { id: 'm-old', role: 'assistant', content: 'ZZT old', created_at: '2026-10-30T09:00:05Z', metadata_json: {} },
     ]);
 
-    expect(screen.getByTestId('bubble-view-trace').getAttribute('href')).toBe(
-      '/system-management/ai-assistant/usage/trace/m-old',
-    );
+    const trigger = screen.getByTestId('bubble-view-trace');
+    expect(trigger.tagName).toBe('BUTTON');
+    expect(trigger.getAttribute('href')).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByTestId('message-trace-stub').getAttribute('data-message')).toBe('m-old');
+    expect(screen.getByTestId('message-trace-stub').getAttribute('data-stacked')).toBe('true');
+    expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
   });
 });
 

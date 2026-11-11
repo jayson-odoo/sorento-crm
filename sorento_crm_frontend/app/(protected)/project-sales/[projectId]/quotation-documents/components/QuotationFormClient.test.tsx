@@ -680,12 +680,21 @@ describe('QuotationFormClient create', () => {
       ),
     );
 
+    // Remove takes the line out at once through the same stage handler (owner hand test 11 Nov:
+    // no struck-through row; Undo is the way back).
     fireEvent.click(within(card).getByRole('button', { name: 'Remove line 1' }));
-    expect(toggleRemovedSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/^new-scope:/),
-      expect.any(String),
+    await waitFor(() =>
+      expect(stageScopeSpy).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^new-scope:/),
+        [
+          expect.objectContaining({
+            draft: expect.objectContaining({ band_label: 'OPTIONAL ITEMS' }),
+          }),
+          expect.objectContaining({ id: null }),
+        ],
+      ),
     );
-    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    expect(within(card).queryByText('Removed on save')).toBeNull();
     expect(createQuotationDocument).not.toHaveBeenCalled();
     expect(replaceQuotationLines).not.toHaveBeenCalled();
   });
@@ -947,13 +956,13 @@ describe('QuotationFormClient edit', () => {
     });
   });
 
-  it('AC-QF071: a line removed on the form is struck through and left out of the PATCH', async () => {
+  it('AC-QF071: a line removed on the form leaves at once and is left out of the PATCH', async () => {
     renderForm('d1');
     const card = await openSavedLines();
 
     fireEvent.click(within(card).getByRole('button', { name: 'Remove SRT-WC-01' }));
-    expect(toggleRemovedSpy).toHaveBeenCalledWith('q1', 'l1');
-    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    await waitFor(() => expect(stageScopeSpy).toHaveBeenLastCalledWith('q1', []));
+    expect(within(card).queryByText('Removed on save')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));

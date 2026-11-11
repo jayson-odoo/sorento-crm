@@ -293,13 +293,29 @@ def _judge_line(
         )
         if product_set is None and not series_id:
             in_series = True
+        list_price = (
+            product_set_service.resolve_set_price(product_set).resolved
+            if product_set is not None
+            else None
+        )
         floor = (
             pricing.resolve_set_floor(
                 db,
                 company_id=acting_company_id(db),
                 product_set=product_set,
-                list_price=product_set_service.resolve_set_price(product_set).resolved,
+                list_price=list_price,
                 series_id=series_id,
+            )
+            if product_set is not None
+            else None
+        )
+        default = (
+            svc.default_price_for(
+                db,
+                series_id=series_id,
+                product_id=None,
+                product_set_id=product_set.id,
+                list_price=list_price,
             )
             if product_set is not None
             else None
@@ -314,10 +330,24 @@ def _judge_line(
         floor = pricing.resolve_floor(
             db, company_id=acting_company_id(db), product=product, series_id=series_id
         )
+        # The save snapshots the product's list price on every write (`_snapshot_product`), so
+        # the product's own list price is what a saved line is compared against too.
+        default = (
+            svc.default_price_for(
+                db,
+                series_id=series_id,
+                product_id=product.id,
+                product_set_id=None,
+                list_price=product.list_price,
+            )
+            if product is not None
+            else None
+        )
     below = bool(floor and price is not None and price < floor.value)
     return {
         "is_non_standard": not in_series,
         "is_below_floor": below,
+        "is_discounted": bool(default is not None and price is not None and price < default),
         "floor_value": floor.value if floor else None,
         "floor_level": floor.level if floor else None,
     }
