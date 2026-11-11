@@ -370,6 +370,9 @@ def test_removing_a_confirmed_non_cancellable_line_needs_an_override(world, monk
         quotes.delete_line(db, version=version, line=line, user_id=owner)
     assert refused.value.status_code == 409
     assert refused.value.code == "non_cancellable_line"
+    # "53.00" from the column reads "53" on screen, the same as the "0" it goes to.
+    assert refused.value.detail["details"]["lines"][0]["from_qty"] == "53"
+    assert refused.value.detail["details"]["lines"][0]["to_qty"] == "0"
 
     with pytest.raises(AppException) as forbidden:
         quotes.delete_line(

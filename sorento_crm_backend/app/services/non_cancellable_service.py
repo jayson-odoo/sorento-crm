@@ -525,7 +525,7 @@ def _refusal(reductions: Sequence[Reduction], *, can_override: bool) -> AppExcep
         details={
             "can_override": can_override,
             "lines": [
-                {"label": r.label, "from_qty": r.from_qty, "to_qty": r.to_qty}
+                {"label": r.label, "from_qty": _qty_or_none(r.from_qty), "to_qty": _qty_or_none(r.to_qty)}
                 for r in reductions
             ],
         },
@@ -581,8 +581,8 @@ def assert_may_reduce(
             new_values={
                 "action": action,
                 "line": r.label,
-                "from_qty": r.from_qty,
-                "to_qty": r.to_qty,
+                "from_qty": _qty_or_none(r.from_qty),
+                "to_qty": _qty_or_none(r.to_qty),
             },
             description=f"Non-cancellable override ({action}): {r.label}",
             company_id=company_id,
@@ -590,6 +590,11 @@ def assert_may_reduce(
 
 
 # --------------------------------------------------------------- AutoCount alert
+
+
+def _qty_or_none(value: Any) -> Optional[str]:
+    """"53.00" and "53" read the same on screen: "53"."""
+    return None if value is None else _qty(value)
 
 
 def _qty(value: Any) -> str:
