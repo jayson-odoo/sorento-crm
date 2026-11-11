@@ -991,8 +991,11 @@ function CostingPage() {
                   key={view}
                   table={table}
                   searchSlot={
-                    <div data-testid="costing-search-slot" className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-                      <div className="w-full sm:w-72">
+                    <div
+                      data-testid="costing-search-slot"
+                      className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap"
+                    >
+                      <div className="w-full sm:w-56">
                         <SearchableSelect
                           id="costing-party"
                           aria-label="Party"
@@ -1001,6 +1004,7 @@ function CostingPage() {
                           fetchOptions={fetchParties}
                           paginated
                           clearable
+                          truncateTriggerLabel
                           placeholder="Company standard"
                           selectedOption={
                             party
@@ -1011,7 +1015,7 @@ function CostingPage() {
                       </div>
                       <DatePicker
                         ariaLabel="As of"
-                        className="w-full sm:w-40"
+                        className="w-full gap-1 sm:w-40"
                         value={parseDateInput(asOf || resolvedAsOf || '')}
                         onChange={(d) => writeUrl({ as_of: d ? formatLocalDateToYyyyMmDd(d) : '' })}
                       />
@@ -1020,7 +1024,7 @@ function CostingPage() {
                         onChange={setSearchText}
                         isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
                         placeholder="Search code or name"
-                        className="w-full sm:w-64"
+                        className="w-full sm:w-48"
                       />
                     </div>
                   }
