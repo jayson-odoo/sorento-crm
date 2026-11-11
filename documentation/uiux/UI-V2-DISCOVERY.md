@@ -487,11 +487,14 @@ See `UI-V2-PLAN.md` (revision 2) for the full program. In short:
 
 ## 7. Open questions
 
+**Decided 11 Nov 2026 (owner, about 14:00 MYT): Q1-Q5 = D6-D10, all as recommended, applied "wholistically and
+generally" (one shared token or component each, plan section 13). Q6 and Q7 stand as assumed in plan section 13.**
+
 | # | Question | Why it matters | Recommendation |
 | --- | --- | --- | --- |
 | Q1 | Default blue: keep `blue-500` exactly for filled buttons, or the AA-safe step the generator picks (`#246bdd`, 5.0:1)? | `blue-500` with white text is 3.7:1, below AA for 14 px text | AA-safe step: same hue, readable |
 | Q2 | R7 "dialog / lightbox over side panels": retire every right-side Sheet on desktop (44 files), with bottom sheets only on the phone? | The owner once called a lightbox a "side panel (lightbox)" | Yes: dialogs and lightboxes on desktop, bottom sheets on the phone |
-| Q3 | Phone list cards: one generic card layout derived from each list's columns (ID + status, then the next two columns), for every list? | 177 lists; per-list design would be the largest single cost | Generic for all, hand-tuned for the journey lists |
+| Q3 | Phone list cards: one generic card layout derived from each list's columns (ID + status, then the next two columns), for every list? | 177 lists; per-list design would be the largest single cost | Generic for all lists (decided D8: no per-list tuning) |
 | Q4 | Selected toggles: keep the primary fill (TOGGLE-SELECTED rule) or use the soft tint with primary text? | The primary fill makes 2-3 filled controls per page and hides the one CTA (W4, 37 pages) | Soft tint |
 | Q5 | May phase 0 add a page-view record (route pattern, user, viewport class, time to first data; 90-day retention)? | Without it the waves are ordered by guesswork; it is also the performance gate | Yes |
 | Q6 | Theme ownership: company brand set by an admin plus each user's light/dark, or a per-user brand too? | Storage and settings screens | Company brand + user mode; no per-user brand until asked |

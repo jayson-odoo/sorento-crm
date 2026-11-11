@@ -1,11 +1,12 @@
 # UI v2: the program
 
-Status: revision 2 (with discovery findings), proposed, awaiting owner review (lane UI-V2-PLAN, research and design only, no app code).
+Status: revision 3, decisions D1-D10 answered by the owner; awaiting plan approval to start phase 0 (lane UI-V2-PLAN, research and design only, no app code).
 
 | Rev | Date | Change |
 | --- | --- | --- |
 | 1 | 10 Nov 2026 | First plan |
 | 2 | 11 Nov 2026 | Reworked after the owner's D1-D5 answers (about 00:00) and the discovery round (`UI-V2-DISCOVERY.md`, owner about 00:10) |
+| 3 | 11 Nov 2026 | Owner answers D6-D10 (all option a, about 14:00 MYT) and the ruling "accordance to the playbook, wholistically and generally": rules R15-R16, decision log (section 13), per-phase exit criteria (section 10) |
 
 **Companion files:**
 - `UI-V2-DISCOVERY.md`: findings, evidence, journeys, references.
@@ -27,6 +28,7 @@ The playbook gap audit is `documentation/uiux/playbook-uiux-audit.md` (PR #2322,
 | D4 | "for the phone, we should follow the playbook" | The phone follows the Foundryx playbook text (`SKILL.md`, section 8): stacked cards, a condensing top bar, a floating main action, a floating selection bar, browser-style tabs for two-panel pages, one system banner. No bottom navigation bar (the playbook has none). Desktop keeps one line per row |
 | D5 | "a new version rollout. The user can go back ... previous version and new version. But I need it to be very good before I even release to live. So this one should be a very long and detailed thing." | v2 is a complete parallel version behind a per-user version switch (section 6). Nothing reaches staff until every phase has passed its exit criteria and the owner has used v2 as their daily UI (sections 10, 12) |
 | - | Discovery round: "need more thinking, more exploring, more investigating before we make the coding" | The program starts with evidence (telemetry, fixtures, capture tooling) and owner-only use, and is long by design |
+| D6-D10 | All option (a) (11 Nov, about 14:00 MYT): "need to be accordance to the playbook and do things wholistically and generally" | Every rule follows the playbook; each decision lands as ONE shared token, component or layout pattern applied system-wide (R15, R16, section 13) |
 
 ## 1. Goals, non-goals, release bar
 
@@ -66,7 +68,7 @@ The playbook gap audit is `documentation/uiux/playbook-uiux-audit.md` (PR #2322,
 | R4 | Every dropdown filter multi-select | same | `FilterChip` accepts only multi; inventory test for single-select in list toolbars (34 files today) |
 | R5 | Grid selection like Odoo: shift/drag ranges, "Select all N" | `PLAN-grid-drag-select.md:7-8` | `data-grid-range-select.ts` (exists) + select-all-N (v2) |
 | R6 | Right-click row menus, no row icons | crew memory, owner | `DataGridRowMenu`; replaces D15's "..." column (`DESIGN-LANGUAGE.md:186`) |
-| R7 | Minimal UI; dialog or lightbox over side panels; no bloat | `CARD-project-party-roles-10nov.md:178`, commit `03be747b` | Inventory test for `SheetContent` (44 files); exact scope is open question Q2 |
+| R7 | Minimal UI; dialog or lightbox over side panels; no bloat | `CARD-project-party-roles-10nov.md:178`, commit `03be747b` | Inventory test for `SheetContent` (44 files) reaching zero on desktop; decided D7 |
 | R8 | Record header like OI: number + badge inline, one subtitle, actions right | owner | `RecordHeader` (v2) |
 | R9 | CRM forms = portal forms (same component) | owner | `components/v2/forms/` shared by portal and CRM |
 | R10 | History is a standard tab on every record | `PLAN-standard-history-10nov.md:11-12` | `HistoryTab`; checklist item D-8 |
@@ -74,8 +76,10 @@ The playbook gap audit is `documentation/uiux/playbook-uiux-audit.md` (PR #2322,
 | R12 | Brand colour selectable; Sorento blue default (D1) | owner 11 Nov | Theme system (section 5) |
 | R13 | Reuse the same component; no second implementation | `PLAN-standard-history-10nov.md:5-6` | Section 9 replacement map; reviewer checklist |
 | R14 | Plain words for errors; nothing stuck | `NEVER-STUCK-UI.md:4`, `PLAN-po-schedule-redesign-24sep.md:108` | `StateView`; never-stuck smoke |
+| R15 | **Playbook conformance.** Every UI rule follows the Foundryx playbook (`skills/foundryx-playbook-uiux/SKILL.md`). The ONLY deviations are the owner rules R1-R14 and the playbook rows section 8.1 marks as owner-overridden (P5 pulse, P8 desktop Smart view, P17 motion timings) plus `AUDIT` section 6 Q1-Q5; nothing else may deviate, and a new deviation needs an owner ruling recorded here first | owner 11 Nov ("accordance to the playbook") | Reviewer checklist item; section 8.1 is the deviation register |
+| R16 | **Holistic and general.** Every decision lands as ONE shared token, component or layout pattern applied system-wide, owned by `components/v2/*`, `lib/theme/*` or the v2 shell. No per-page one-offs, no per-list designs, no local styling to work around a shared component (fix the shared component instead) | owner 11 Nov ("do things wholistically and generally") | Inventory tests per decision (section 13); reviewer rejects a page-local variant |
 
-Phase 0 writes R1-R14 into `documentation/reference/DESIGN-LANGUAGE.md` and `PR-CHECKLIST.md`, so a reviewer can
+Phase 0 writes R1-R16 into `documentation/reference/DESIGN-LANGUAGE.md` and `PR-CHECKLIST.md`, so a reviewer can
 hold a PR to them. Today 9 of them are not written anywhere a reviewer reads (`UI-V2-DISCOVERY.md` 3.2).
 
 ## 3. Principles
@@ -195,7 +199,7 @@ produce an unreadable button. `css/design-tokens.test.ts` asserts every preset i
 
 | Preset | Input | Note |
 | --- | --- | --- |
-| **Sorento Blue (default)** | hue of `#3b82f6` | Same hue as today; the filled button uses the AA step (`#2563eb`-equivalent, 5.2:1). Exact `#3b82f6` kept only if the owner rejects that (open question Q1) |
+| **Sorento Blue (default)** | hue of `#3b82f6` | Same hue as today; the filled button uses the generator's AA step, `#246bdd` with white text (5.0:1), decided D6 |
 | Sorento Red | `#b44d2e` | The dealer-kit brand swatch (`components/common/ColorPicker.tsx:30`) |
 | Teal | `#0f766e` | |
 | Graphite | `#3f3f46` | Monochrome; the generator picks the AA grey |
@@ -327,7 +331,7 @@ four pass.
 | X-12 | Breadcrumb = the sidebar path (not rooted at "Dashboards"); its last crumb equals the page title; no "Back to ..." button beside it (discovery W3: 22 mismatches) |
 | X-13 | No native `type="date"` / `datetime-local` input (60 files today draw the browser's locale, discovery W9) |
 | X-14 | Empty state = heading + hint, no button, no feature explanation (discovery W4, W6) |
-| X-15 | Selected toggles and segments use the soft tint, never the primary fill, so the one filled control is the CTA (pending Q4) |
+| X-15 | Selected toggles and segments use the soft tint, never the primary fill, so the one filled control is the CTA (decided D9) |
 
 ### 7.1 List (L)
 
@@ -541,7 +545,7 @@ Counts are non-test files, measured on `main` at `6e6657e2` (`rg -l` over `app c
 | Dates | 11 helpers + 34 local + date-fns `format` in 17 + `toLocale*String` in 75 | `lib/format/date.ts` | old helpers |
 | Upload | `FileDropzone` 38, `AttachmentDropzone` 3, `ResponseAttachmentDropzone` 2, `FileUploadZone` 0, raw `type="file"` 15 | `FileDropzone` v2 (per-file rows, retry, paste) | the others |
 | Image | `AttachmentImage` 3, raw `<img>` 203 files, `AttachmentPreviewModal` 28, `PdfViewer` 4 + dead `PDFViewer`/`FilePreviewModal` | `AttachmentImage` + `AttachmentPreviewModal` (one pipeline) | dead viewers |
-| Side panel | `ui/sheet` 44, `ui/dialog` 353, `ui/drawer` 4 | `Dialog` (desktop), vaul `Drawer` (phone sheets) | content Sheets (scope per Q2) |
+| Side panel | `ui/sheet` 44, `ui/dialog` 353, `ui/drawer` 4 | `Dialog` (desktop), vaul `Drawer` (phone sheets) | all 44 content Sheets on desktop (decided D7) |
 | Tabs / toggles | 98 `TabsList` (87 line, 10 pill, 1 button); hand-built toggles | `Tabs` line; `components/v2/ViewToggle.tsx` | hand-built toggles |
 | Charts | recharts 4, apexcharts 8 (5 demo) | recharts via `components/ui/chart.tsx` | apexcharts |
 | Tooltip | `ui/tooltip` 35; native `title` on about 1,446 elements | `Tooltip` (playbook style) on icon buttons | `title` on icon buttons |
@@ -600,16 +604,16 @@ walkthrough on the crew test copy, the gates in section 11 green for everything 
 
 | Phase | Scope | Exit criteria | Effort |
 | --- | --- | --- | --- |
-| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar (condensing on the phone), floating action, system banner, nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 and native date inputs (allowlists that only shrink). (j) Small-fix lane, can ship before v2: `handle_not_found` takes a human label instead of a model class name (`sorento_crm_backend/app/services/error_handler.py:36-42`, 17 call sites) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested | 15-20 |
-| **1 List archetype** | `GridToolbar`, `FilterChip`, `FacetChips`, `SelectionBar` + select-all-N (backend bulk-by-filter where missing), `RowMenu`, `PhoneCardList`, `StateView`; reference screen: OI list | L-1..L-9 and X-1..X-11 on the OI list in 4 variants; component suites green; owner sign-off on the reference | 10-14 |
-| **2 Detail archetype** | `RecordHeader`, `WaitingOn`, `RecordMeta`, `HistoryTab` (one backend shape), `ConfirmDialog`, status tone maps; reference screens: OI detail, quotation document view | D-1..D-9 on both references; History tab works for every entity that has audit rows | 10-14 |
+| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar (condensing on the phone), floating action, system banner, nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 and native date inputs (allowlists that only shrink). (j) Small-fix lane, can ship before v2: `handle_not_found` takes a human label instead of a model class name (`sorento_crm_backend/app/services/error_handler.py:36-42`, 17 call sites) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested. **Decisions:** D6 the Sorento Blue preset resolves `--primary` to `#246bdd` through the theme generator only (no hard-coded hex; token test asserts it and AA in both modes); D9 ONE toggle/segment style in `components/ui/toggle-group.tsx` + `tabs.tsx` + `components/v2/ViewToggle.tsx` (soft tint, primary text) and `DESIGN-LANGUAGE.md` TOGGLE-SELECTED rewritten to match; D10 ONE page-view hook mounted once in the v2 shell (`components/v2/shell/usePageView.ts`), never called from a page, with `ui_page_views` rows arriving for every route; D7 ONE lightbox pattern (`components/v2/Lightbox.tsx` on `Dialog`, plus vaul `Drawer` below 720 px) published with its capture page; R15/R16 written into `DESIGN-LANGUAGE.md` and `PR-CHECKLIST.md` | 15-20 |
+| **1 List archetype** | `GridToolbar`, `FilterChip`, `FacetChips`, `SelectionBar` + select-all-N (backend bulk-by-filter where missing), `RowMenu`, `PhoneCardList`, `StateView`; reference screen: OI list | L-1..L-9, M-1..M-8 and X-1..X-15 on the OI list in 4 variants; component suites green; owner sign-off on the reference. **D8:** ONE `PhoneCardList` derives every card from the list's own column definitions (ID + status line, then the columns not marked `phoneHidden` as "Label : value"); a list may set `phoneHidden` on its columns and nothing else; an inventory test fails any per-list card component. P15 (phone filter bar) can close only once the full playbook Filtering text is in | 10-14 |
+| **2 Detail archetype** | `RecordHeader`, `WaitingOn`, `RecordMeta`, `HistoryTab` (one backend shape), `ConfirmDialog`, status tone maps; reference screens: OI detail, quotation document view | D-1..D-9 on both references; History tab works for every entity that has audit rows; **D7:** history, previews and side details on both references open in the shared `Lightbox` (desktop) / `Drawer` (phone), with no `SheetContent` left in either | 10-14 |
 | **3 Form archetype** | `components/v2/forms` shared with the portal, `BlockedReason`, `AutosaveIndicator`, `DatePicker` everywhere, `FileDropzone` v2, image pipeline; reference screens: quotation editor, price tag request (portal + CRM) | F-1..F-7 on both; the portal renders the same component | 10-14 |
 | **4 Settings, dashboard, wizard** | `SettingsNav/Section/Row`, `UnsavedChangesBar`, recharts-only dashboard kit, `Wizard`; reference screens: System Settings, one dashboard, GRN import | S, B, W checklists on each reference | 8-12 |
-| **5 Area waves A-F** | Every remaining page per area (4.2), built from the archetype kit; journey fixes from discovery (two primaries, gear-hidden next steps, tab budget, stacked dialogs, export toast) | Per area: every page passes its checklist in 4 variants; journeys in that area walked end to end in v2 by the owner; no "v2 worse than v1" items open | 90-120 (about 387 pages; most are thin lists and details on the kit) |
+| **5 Area waves A-F** | Every remaining page per area (4.2), built from the archetype kit; journey fixes from discovery (two primaries, gear-hidden next steps, tab budget, stacked dialogs, export toast) | Per area: every page passes its checklist in 4 variants; journeys in that area walked end to end in v2 by the owner; no "v2 worse than v1" items open; **holistic gate (R16):** in the area, 0 `SheetContent` on desktop (D7), 0 per-list phone cards (D8), 0 locally styled toggles (D9), 0 page-level page-view calls (D10), 0 hard-coded brand hex (D6), and every deviation from the playbook traceable to a section 8.1 row (R15) | 90-120 (about 387 pages; most are thin lists and details on the kit) |
 | **6 Owner daily use** | The owner (and crew test accounts) use v2 as the daily UI; polish lanes from their notes | 2+ weeks with no open regression; telemetry shows v2 time-to-data <= v1 on the top 20 routes | 8-15 (polish) |
 | **7 Pilot** | `ui.v2.preview` to a pilot role (one team per main journey) | 2 weeks; switch-back rate and reasons reviewed; fixes shipped | 5-10 |
 | **8 Release** | v2 available to all, default for new sign-ins; users can go back | 4 weeks; switch-back rate low and falling; no open severity-1 | 3-5 |
-| **9 Sunset v1** | Announce a date; remove v1 presentation, `<Versioned>`, `users.ui_version`, the Metronic demos, dead components, apexcharts, date helper re-exports | v1 code deleted; inventory allowlists at zero or justified | 8-12 |
+| **9 Sunset v1** | Announce a date; remove v1 presentation, `<Versioned>`, `users.ui_version`, the Metronic demos, dead components, apexcharts, date helper re-exports | v1 code deleted; inventory allowlists at zero or justified; the D6-D10 inventory tests (Sheets, per-list cards, toggle styles, page-view calls, brand hex) at zero with no allowlist | 8-12 |
 
 **Total:** about 170-240 agent-days. Phases 1-4 can overlap after phase 0 (they share no files). Area waves can run
 two at a time.
@@ -673,17 +677,37 @@ exit, then by the owner on the crew test copy. They are recorded as evidence run
 | Owner time for walkthroughs becomes the bottleneck | Medium | Phase exits batch the walkthrough; crew pre-checks with captures |
 | Visual baselines churn on unrelated changes | Medium | Fixture data is fixed; per-route approval; threshold tuned in phase 0 |
 
-## 13. Decisions for the owner
+## 13. Decision log
 
-Five decisions are filed in the crew report (see `UI-V2-DISCOVERY.md` section 7 for all seven open questions).
-Until answered, the plan assumes the recommendation:
+All ten decisions are answered. D6-D10 were answered on 11 Nov 2026 (about 14:00 MYT), all option (a), with the
+ruling: "need to be accordance to the playbook and do things wholistically and generally" (R15, R16).
 
-| # | Decision | Assumed |
+**Holistic rule (R16):** each decision lands as ONE shared token, component or layout pattern, applied system-wide.
+The "One shared thing" column names it, and the "Guard" column names the check that stops a per-page variant.
+
+| # | Decision | Answer | One shared thing | Guard | Lands in |
+| --- | --- | --- | --- | --- | --- |
+| D1 | Brand colour | Keep Sorento blue as default; brand selectable (presets + custom), light and dark | Theme generator `lib/theme/generate.ts` + presets `lib/theme/presets.ts`; tokens only | Token tests; ESLint ban on raw palette / hex in feature code | Phase 0 |
+| D2 | Dark mode | Set up now; checked properly in every phase | Same tokens, `.dark` values generated | Every phase exit: captures and axe in dark | Every phase |
+| D3 | Density | Keep today's (44 px rows, 14 px text, 40 px header) | `--row-h` token = today's values | Capture diff on row and header heights | Phase 0 |
+| D4 | Phone | Follow the playbook | Section 8.1 rules P1-P17 in the v2 shell and archetype components | Checklist M-1..M-8 | Phases 0-5 |
+| D5 | Rollout | Complete parallel version, per-user switch, owner first, nothing live until very good | `<Versioned>`, `users.ui_version`, `ui.v2.preview`, kill switch | Phase exits; release bar (section 1) | Phases 0-9 |
+| D6 | Default blue for filled buttons | (a) The AA-safe step of today's hue | The Sorento Blue preset in the theme generator: `--primary` = `#246bdd` (5.0:1 with white), `--primary-hover` one step darker; dark mode from the same generator | Token test pins the value and AA in both modes; no component may name a blue | Phase 0 |
+| D7 | Side panels | (a) Retire all 44 right-side Sheets on desktop; bottom sheets only on the phone | ONE pattern: `components/v2/Lightbox.tsx` (a `Dialog` sized for content: history, preview, side detail) on desktop, vaul `Drawer` below 720 px | Inventory test: `SheetContent` allowlist (44 today) only shrinks, zero per area at its wave exit, zero at sunset | Phase 0 (pattern), phases 2-5 (migration) |
+| D8 | Phone list cards | (a) One generic card from each list's columns, for every list | ONE component: `components/v2/grid/PhoneCardList.tsx`, driven by the DataGrid column definitions; the only per-list input is `phoneHidden` on a column | Inventory test fails any other card component under `app/`; the "tuned for journey lists" part of the recommendation is dropped: the journey lists get the same generic card | Phase 1 |
+| D9 | Selected toggles | (a) Soft tint with primary text, so the only filled control is the CTA | ONE style in `components/ui/toggle-group.tsx`, `components/ui/tabs.tsx` (pill variant) and `components/v2/ViewToggle.tsx`; `DESIGN-LANGUAGE.md` TOGGLE-SELECTED rewritten | Inventory test for `bg-primary` on a selected toggle; the walk's filled-control count per page | Phase 0 |
+| D10 | Page-view telemetry | (a) Route pattern, user, viewport class, time to first data; 90-day retention | ONE hook in the v2 shell (`components/v2/shell/usePageView.ts`, mounted once) and one table `ui_page_views` | Inventory test: no page imports the hook; the shell mounts it once | Phase 0 |
+
+**Assumed, not asked** (they follow the R16 rule and stay as written unless the owner says otherwise):
+- **Theme ownership:** company brand set by an admin; light/dark per user (section 5.4).
+- **Rows per page:** 25 everywhere, user can change, remembered per list.
+
+### 13.1 The truncated playbook passages
+
+Three passages arrived cut off in the paste (section 8). Only one blocks anything:
+
+| Passage | What it governs in v2 | Blocks |
 | --- | --- | --- |
-| Q1 | Default blue for filled buttons | The AA-safe step of today's hue |
-| Q2 | Retire right-side Sheets on desktop | Yes; dialogs and lightboxes on desktop, bottom sheets on the phone |
-| Q3 | Phone list cards | One generic card from each list's columns, tuned for journey lists |
-| Q4 | Selected toggles | Soft tint, not the primary fill |
-| Q5 | Page-view telemetry in phase 0 | Yes |
-| Q6 | Theme ownership | Company brand by an admin, light/dark per user |
-| Q7 | Rows per page | 25 everywhere, user can change |
+| Lists, Smart view: "...if even that doesn't fit, the" | Desktop Smart view, not adopted (owner rule R2; desktop is Table view only). Phones show cards always (P8), which arrived complete | Nothing |
+| Columns panel: "...and keeps them the same wh" | Per-view column sets (Smart vs Table). v2 has one view on desktop, so one column set (already saved per user) | Nothing |
+| Filtering: only the condensing-top-bar sub-bullets arrived | The phone filter bar (P15) | The phone half of the phase 1 exit (P15 / M-checklist on the OI list) cannot close until the full text is in. Phase 0 and the desktop work are not blocked |
