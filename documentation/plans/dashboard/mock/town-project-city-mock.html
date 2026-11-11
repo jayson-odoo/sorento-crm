@@ -57,7 +57,7 @@ html, body { margin: 0; background: var(--background); color: var(--foreground);
 .seg2 button { font: inherit; border: 0; background: var(--card); color: var(--foreground); padding: 4px 10px; cursor: pointer; }
 .seg2 button + button { border-left: 1px solid var(--border); } .seg2 button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 1px; }
-.card .split3 { margin-top: 4px; font-size: 0.75rem; color: var(--muted-foreground); }
+.card .split3 { grid-column: 2; margin-top: 4px; font-size: 0.75rem; color: var(--muted-foreground); }
 .hint { left: 50%; bottom: 60px; transform: translateX(-50%); padding: 8px 14px; font-weight: 600; pointer-events: none; transition: opacity 400ms var(--ease-standard); white-space: nowrap; }
 .hint.gone { opacity: 0; }
 .closed { top: 10px; left: 50%; transform: translateX(-50%); padding: 6px 14px; font-weight: 600; display: none; }
@@ -106,7 +106,7 @@ html, body { margin: 0; background: var(--background); color: var(--foreground);
 .mockbar label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .mockbar select { font: inherit; }
 .notice { margin: 10px 0 0; font-size: 0.75rem; color: var(--muted-foreground); }
-section.map { margin-top: 22px; }
+section.map { margin-top: 22px; overflow-x: auto; }
 section.map h2 { font-size: 1.125rem; margin: 0 0 8px; }
 .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
 .map table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.8125rem; }

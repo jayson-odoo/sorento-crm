@@ -1,6 +1,6 @@
 # PLAN: Town project district (TOWN-PROJECT-CITY)
 
-Status: Plan - owner answered card v1 (11 Nov 19:58); card v2 (Malaysia map) + mock in progress. Track: full (size L: new snapshot sections, redaction, a map world).
+Status: Plan - card v2.2 + Malaysia-map mock posted for owner sign-off. Track: full (size L: new snapshot sections, redaction, a map world).
 
 Trigger: owner, 11 Nov 2026 ~19:15 MYT. Show the project business beside the dealer street in Sorento Town.
 PR: foundryx-sdn-bhd/sorento-crm#2342 (`crew-lane: TOWN-PROJECT-CITY`). Mock: `mock/town-project-city-mock.html`.
@@ -153,6 +153,19 @@ Board (full): "Sold today RM 48,200.00 / Dealers RM 39,900.00 · Projects RM 6,1
   (`sales_order_lines.line_total`, as `agent_class_service.py:348`), not by invoiced sales; the real top 30 may
   differ by a few shops. The hand-test re-checks the count on the real snapshot.
 - Q7 (a): Sabah, Sarawak and Labuan orders go by coaster ship from Port Klang.
+
+## Mock
+
+- `mock/town-project-city-mock.html`: the Malaysia-map Town (card v2.2), one self-contained page (three.js from the
+  jsDelivr CDN, as the v5 mock). Mock controls under the stage: time of day, viewer Full / No amounts / Wallboard,
+  dark theme, shipment volume. Every dealer, project, trading house, value and date in it is invented; the shop spread
+  follows the dev shape (Selangor 16, Johor 6, KL 3, one each in Kedah, Pahang, Sarawak, Negeri Sembilan, Pulau
+  Pinang) plus 3 stalls, 12 sites, 5 trading houses and a "State not set" islet.
+- Screenshots in `mock/town-project-city/`: `1280.png`, `375.png` (full page), `lightbox-site.png`,
+  `wallboard-1280.png`, `zoom-selangor.png` (HQ, Selangor street, tidy no-dates plot), `zoom-johor.png` (frame +
+  crane, groundworks, trading tower, lorry).
+- Element -> component map: the table at the bottom of the mock page.
+- v1 (single island) kept as `mock/town-project-city-mock-v0-single-island.html`.
 
 ## Phase plan (after sign-off)
 
