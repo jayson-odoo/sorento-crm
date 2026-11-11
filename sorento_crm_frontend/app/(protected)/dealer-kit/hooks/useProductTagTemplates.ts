@@ -11,6 +11,7 @@ import {
   assignTemplate,
   assignTemplateToProducts,
   isPriceTagFamily,
+  listTemplateComboIds,
   listTemplateProductIds,
   listComboTagTemplates,
   listProductTagTemplates,
@@ -130,14 +131,36 @@ export function useTemplateProductIds(
   });
 }
 
-/** Link the template to the picked products; the toast is the caller's, after the whole Save. */
+/** The combos that use a template (owner hand test 11 Nov), read fresh like the products. */
+export const templateComboIdsKey = (templateId: string) =>
+  ['tag-template-combo-ids', templateId] as const;
+
+export function useTemplateComboIds(
+  templateId: string,
+  enabled = true,
+  { fresh = false }: { fresh?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: templateComboIdsKey(templateId),
+    queryFn: () => listTemplateComboIds(templateId),
+    enabled: enabled && !!templateId,
+    ...(fresh ? { refetchOnMount: 'always' as const } : {}),
+  });
+}
+
+/** Link the template to the picked products and combos; the toast is the caller's. */
 export function useLinkTemplateProducts(templateId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (productIds: string[]) => assignTemplateToProducts(templateId, productIds),
+    mutationFn: ({ productIds, comboIds }: { productIds: string[]; comboIds: string[] }) =>
+      comboIds.length
+        ? assignTemplateToProducts(templateId, productIds, comboIds)
+        : assignTemplateToProducts(templateId, productIds),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['product-tag-templates'] });
+      void queryClient.invalidateQueries({ queryKey: ['combo-tag-templates'] });
       void queryClient.invalidateQueries({ queryKey: templateProductIdsKey(templateId) });
+      void queryClient.invalidateQueries({ queryKey: templateComboIdsKey(templateId) });
     },
     onError: (error: Error) => toast.error(error.message),
   });

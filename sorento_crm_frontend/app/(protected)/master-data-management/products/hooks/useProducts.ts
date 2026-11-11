@@ -33,9 +33,10 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 /**
  * Hook for fetching products list with pagination, sorting, and filtering
  */
-export function useProducts(params: GetProductsParams) {
+export function useProducts(params: GetProductsParams, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
+    enabled,
     queryKey: [
       'products',
       params.pageIndex,

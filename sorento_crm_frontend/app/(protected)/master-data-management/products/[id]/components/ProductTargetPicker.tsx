@@ -16,6 +16,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   ColumnDef,
   PaginationState,
@@ -47,7 +49,7 @@ import { useProductCategorySelectQuery } from '../../../shared/hooks/use-product
 import { useBrandSelectQuery } from '../../../shared/hooks/use-brand-select-query';
 import { useProducts } from '../../hooks/useProducts';
 import { getProducts, type GetProductsParams } from '../../services/productService';
-import type { Product } from '../../types/product.types';
+import type { Product, ProductApiResponse } from '../../types/product.types';
 
 /** The server's cap on one copy (target_product_ids max_length on both copy endpoints). */
 export const MAX_COPY_TARGETS = 500;
@@ -83,6 +85,17 @@ export interface ProductTargetPickerOptions {
    * undoes that Select all, and any other Clear goes back to `initialSelection`, never to nothing.
    */
   mergeSelectAll?: boolean;
+  /**
+   * Another row source in the same grid (the template designer's combos), shaped as products:
+   * used for the page and for "Select all" instead of the products list. `sourceKey` keeps its
+   * cache apart and makes a switch a new result set.
+   */
+  fetchRows?: (params: GetProductsParams) => Promise<ProductApiResponse>;
+  sourceKey?: string;
+  /** A row that cannot be ticked, and why (shown on its checkbox); "Select all" skips it. */
+  rowDisabledReason?: (row: Product) => string | undefined;
+  /** A grey hint after the code (default: "Discontinued" for a discontinued product). */
+  rowHint?: (row: Product) => string | undefined;
 }
 
 export function useProductTargetPicker(source: string | ProductTargetPickerOptions): {
@@ -94,8 +107,17 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
   const options: ProductTargetPickerOptions =
     typeof source === 'string' ? { excludeProductId: source } : source;
   const sourceProductId = options.excludeProductId ?? '';
-  const { initialSelection, extraParams, extraFilter, mergeSelectAll = false } = options;
-  const extraKey = JSON.stringify(extraParams ?? {});
+  const {
+    initialSelection,
+    extraParams,
+    extraFilter,
+    mergeSelectAll = false,
+    fetchRows,
+    sourceKey = 'products',
+    rowDisabledReason,
+    rowHint,
+  } = options;
+  const extraKey = JSON.stringify({ extra: extraParams ?? {}, source: sourceKey });
   const search = useDebouncedSearch('');
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [brandIds, setBrandIds] = useState<string[]>([]);
@@ -137,7 +159,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
       category_id: joinMulti(categoryIds) || undefined,
       brand_id: joinMulti(brandIds) || undefined,
       status: 'active' as const,
-      ...(JSON.parse(extraKey) as Partial<GetProductsParams>),
+      // From the serialised key, so a caller's fresh object each render is not a new result set.
+      ...(JSON.parse(extraKey).extra as Partial<GetProductsParams>),
     }),
     [pagination, sorting, search.debouncedValue, categoryIds, brandIds, extraKey],
   );
@@ -152,17 +175,26 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
   }, [search.debouncedValue, categoryIds, brandIds, extraKey]);
 
-  const { data, isLoading, isFetching, isPlaceholderData } =
-    useProducts(params);
+  const productsQuery = useProducts(params, { enabled: !fetchRows });
+  const customQuery = useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: ['product-target-picker', sourceKey, params],
+    queryFn: () => (fetchRows as NonNullable<typeof fetchRows>)(params),
+    enabled: !!fetchRows,
+  });
+  const { data, isLoading, isFetching, isPlaceholderData } = fetchRows
+    ? customQuery
+    : productsQuery;
+  const blockedReason = (row: Product): string | undefined =>
+    row.id === sourceProductId ? SOURCE_REASON : rowDisabledReason?.(row);
   const rows = useMemo(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
 
   const columns = useMemo<ColumnDef<Product>[]>(
     () => [
       buildSelectColumn<Product>({
-        enableRow: (row) => row.original.id !== sourceProductId,
-        disabledReason: (row) =>
-          row.original.id === sourceProductId ? SOURCE_REASON : undefined,
+        enableRow: (row) => !blockedReason(row.original),
+        disabledReason: (row) => blockedReason(row.original),
         rowLabel: (row) => `Select ${row.original.product_code}`,
       }),
       {
@@ -178,9 +210,9 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
           >
             {row.original.product_code}
             {/* Owner, 7 Nov: a discontinued product stays pickable, with a grey hint. */}
-            {row.original.is_discontinued ? (
+            {(rowHint ? rowHint(row.original) : row.original.is_discontinued ? 'Discontinued' : undefined) ? (
               <span className="ms-1.5 text-xs font-normal text-muted-foreground">
-                Discontinued
+                {rowHint ? rowHint(row.original) : 'Discontinued'}
               </span>
             ) : null}
           </div>
@@ -248,7 +280,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
         enableSorting: true,
       },
     ],
-    [sourceProductId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sourceProductId, rowDisabledReason, rowHint],
   );
 
   const table = useReactTable({
@@ -268,7 +301,7 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
-    enableRowSelection: (row) => row.original.id !== sourceProductId,
+    enableRowSelection: (row) => !blockedReason(row.original),
   });
 
   // Ticks survive paging and filtering, so the picked set is the selection state, not the page.
@@ -285,15 +318,13 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     const mine = ++matchingSeq.current;
     setMatchingPending(true);
     try {
-      const res = await getProducts({
+      const res = await (fetchRows ?? getProducts)({
         ...params,
         pageIndex: 0,
         pageSize: MAX_COPY_TARGETS + 1,
       });
       if (matchingSeq.current !== mine) return;
-      const eligible = res.data
-        .map((p) => p.id)
-        .filter((id) => id !== sourceProductId);
+      const eligible = res.data.filter((p) => !blockedReason(p)).map((p) => p.id);
       const ids = eligible.slice(0, MAX_COPY_TARGETS);
       setMatchingTotal(
         eligible.length > MAX_COPY_TARGETS ? res.pagination.total : null,

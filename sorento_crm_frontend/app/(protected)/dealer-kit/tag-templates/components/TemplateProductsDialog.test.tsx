@@ -10,6 +10,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const links = vi.hoisted(() => ({
   listTemplateProductIds: vi.fn(),
+  listTemplateComboIds: vi.fn(),
+  listTemplateCombos: vi.fn(),
   assignTemplateToProducts: vi.fn(),
 }));
 const products = vi.hoisted(() => ({ getProducts: vi.fn() }));
@@ -55,6 +57,16 @@ const row = (id: string, code: string) => ({
   product_name: `ZZT ${code}`,
   is_active: true,
 });
+const combo = (id: string, hostCode: string, name: string, fitReason: string | null = null) => ({
+  id,
+  name,
+  host_product_id: `host-${id}`,
+  host_code: hostCode,
+  host_name: `ZZT ${hostCode}`,
+  category_name: 'ZZT Kitchen Sink',
+  brand_name: 'ZZT Sorento',
+  fit_reason: fitReason,
+});
 const PAGE = [row('p1', 'SRTKS-7040-WH'), row('p2', 'SRTKS-7848-SS'), row('p3', 'SRTKS-8050-BK')];
 
 function mount(onOpenChange = vi.fn(), warm?: string[]) {
@@ -80,6 +92,15 @@ beforeEach(() => {
   deferred.input = null;
   deferred.isPending = false;
   links.listTemplateProductIds.mockResolvedValue(['p1', 'p2']);
+  links.listTemplateComboIds.mockResolvedValue([]);
+  links.listTemplateCombos.mockResolvedValue({
+    data: [
+      combo('c1', 'SRTKS-7040-WH', 'Sink + tap'),
+      combo('c2', 'SRTKS-8050-BK', 'Sink + waste kit'),
+      combo('c3', 'SRTKS-1160-GR', 'Sink + tap + rack', 'Needs 3 fixed parts; this combo has 2'),
+    ],
+    pagination: { total: 3, page: 1, limit: 25 },
+  });
   links.assignTemplateToProducts.mockResolvedValue({ changed: 1 });
   products.getProducts.mockResolvedValue({ data: PAGE, pagination: { total: 3, page: 1, limit: 25 } });
 });
@@ -211,7 +232,7 @@ describe('TemplateProductsDialog', () => {
     await waitFor(async () => expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true));
     // Radix opens on pointerdown, not click (same as SalesOrdersList.transferable.test.tsx).
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), { ctrlKey: false, button: 0 });
-    fireEvent.click(await screen.findByText('Show: all products'));
+    fireEvent.click(await screen.findByText('Show: all'));
     fireEvent.click(await screen.findByRole('option', { name: 'Uses this template' }));
     await waitFor(() =>
       expect(products.getProducts).toHaveBeenLastCalledWith(
@@ -245,5 +266,54 @@ describe('TemplateProductsDialog', () => {
     await waitFor(() => expect(links.listTemplateProductIds).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByText('2 use this template')).toBeTruthy());
     expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true);
+  });
+
+  describe('combos (owner hand test 11 Nov)', () => {
+    beforeEach(() => {
+      links.listTemplateComboIds.mockResolvedValue(['c1']);
+    });
+
+    async function showCombos() {
+      await waitFor(() => expect(screen.getByText('3 use this template')).toBeTruthy());
+      fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), { ctrlKey: false, button: 0 });
+      fireEvent.click(await screen.findByText('Type: Products'));
+      fireEvent.click(await screen.findByRole('option', { name: 'Combos' }));
+      // Close the Filters popover (its trigger toggles on pointerdown): while it is open the
+      // grid is hidden from the a11y tree.
+      const trigger = document.querySelector<HTMLElement>('button[aria-label^="Filters"]');
+      fireEvent.pointerDown(trigger as HTMLElement, { ctrlKey: false, button: 0 });
+      await waitFor(() => expect(screen.queryByText('Type: Combos')).toBeNull());
+    }
+    const comboBox = (code: string) => screen.findByRole('checkbox', { name: `Select ${code}` });
+
+    it('the same view lists combos, with the linked ones ticked and counted', async () => {
+      mount();
+      await showCombos();
+      await waitFor(async () => expect(isTicked(await comboBox('SRTKS-7040-WH'))).toBe(true));
+      expect(isTicked(await comboBox('SRTKS-8050-BK'))).toBe(false);
+      expect(screen.getByText('Sink + waste kit')).toBeTruthy();
+      expect(links.listTemplateCombos).toHaveBeenCalledWith(T, expect.objectContaining({ pageIndex: 0 }));
+      expect(screen.queryByRole('tablist')).toBeNull();
+    });
+
+    it('a combo the template cannot print cannot be ticked, and says why', async () => {
+      mount();
+      await showCombos();
+      const box = await comboBox('SRTKS-1160-GR');
+      expect(box.hasAttribute('disabled') || box.getAttribute('data-disabled') !== null).toBe(true);
+      expect(screen.getByTitle('Needs 3 fixed parts; this combo has 2')).toBeTruthy();
+    });
+
+    it('ticking a combo links it on Save; unticking a linked one parks its removal', async () => {
+      mount();
+      await showCombos();
+      await waitFor(async () => expect(isTicked(await comboBox('SRTKS-7040-WH'))).toBe(true));
+      fireEvent.click(await comboBox('SRTKS-8050-BK'));
+      fireEvent.click(await comboBox('SRTKS-7040-WH'));
+      expect(screen.getByText('3 use this template after Save: 1 added, 1 removed')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(links.assignTemplateToProducts).toHaveBeenCalledWith(T, [], ['c2']));
+      await waitFor(() => expect(deferred.start).toHaveBeenCalledWith({ combo_ids: ['c1'] }));
+    });
   });
 });
