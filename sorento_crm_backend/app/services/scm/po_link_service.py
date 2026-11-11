@@ -341,12 +341,15 @@ class PoLinkService:
 
     def lines(self) -> List[Dict[str, Any]]:
         """The scope's SO lines as the dialog draws them (Order Inquiry has no snapshot to read them from)."""
-        pairs = (
-            self.db.query(SalesOrderLine, SalesOrder)
+        triples = (
+            self.db.query(SalesOrderLine, SalesOrder, Warehouse.warehouse_code)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .filter(SalesOrderLine.id.in_(sorted(self.scope.so_line_ids)))
             .all()
         )
+        pairs = [(line, order) for line, order, _c in triples]
+        locations = {str(line.id): code for line, _o, code in triples}
         links = po_links_for(self.db, [str(l.id) for l, _o in pairs])
         out = []
         for line, order in sorted(pairs, key=lambda p: (p[1].so_number, p[0].line_no or 0)):
@@ -358,6 +361,8 @@ class PoLinkService:
                 "so_number": order.so_number,
                 "line_no": line.line_no,
                 "open_qty": open_qty,
+                "location_code": locations.get(str(line.id)),
+                "delivery_date": _iso(line.required_date),
                 "po_links": po_links,
                 "now": {"so_status": "open", "open_qty": open_qty, "po_links": po_links},
             })

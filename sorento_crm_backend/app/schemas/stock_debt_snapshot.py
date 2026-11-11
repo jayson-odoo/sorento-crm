@@ -276,6 +276,8 @@ class OiPoLinkLine(BaseModel):
     so_number: str
     line_no: Optional[int] = None
     open_qty: float = 0.0
+    location_code: Optional[str] = None
+    delivery_date: Optional[DateType] = None
     po_links: List[SnapshotLinePoLink] = []
     now: SnapshotLineNow
 
