@@ -410,3 +410,29 @@ def test_a_cleared_address_is_cleared_and_then_blocks_submit(world):
     sub = _submit(w, d["id"])
     assert sub.status_code == 422, sub.text
     assert sub.json()["details"]["field"] == "ship_to_address"
+
+
+def test_an_owner_without_the_project_edit_grant_cannot_add_a_party(world):
+    """Security round 2: the project page's own routes also ask `projects.projects.edit`."""
+    w = world
+    w.perms[w.sales].discard("projects.projects.edit")
+    party = _party(w.db, "Delta Interior Works", party_type="subcontractor")
+    res = _create(w, ship_to_party_id=party.id, ship_to_role="subcontractor")
+    assert res.status_code == 403, res.text
+    assert w.db.query(ProjectPartyLink).filter(ProjectPartyLink.party_id == party.id).count() == 0
+
+
+def test_a_non_editor_cannot_add_a_party_by_updating_a_saved_draft(world):
+    """Security round 2 nit: the gate runs on the draft's own project, without a resent project_id."""
+    w = world
+    on_project = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, on_project)
+    d = w.api.as_(w.sales_b).post(SR, json=_body(w, ship_to_party_id=on_project.id))
+    assert d.status_code == 201, d.text
+    newcomer = _party(w.db, "Delta Interior Works", party_type="subcontractor")
+    res = w.api.as_(w.sales_b).put(
+        f"{SR}/{d.json()['id']}",
+        json={"ship_to_party_id": newcomer.id, "ship_to_role": "subcontractor"},
+    )
+    assert res.status_code == 403, res.text
+    assert w.db.query(ProjectPartyLink).filter(ProjectPartyLink.party_id == newcomer.id).count() == 0

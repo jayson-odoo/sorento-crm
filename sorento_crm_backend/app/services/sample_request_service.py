@@ -563,7 +563,8 @@ def _apply_ship_to(
     def can_edit_project() -> bool:
         from app.services.project_service import assert_can_write_project
 
-        if not actor_user_id:
+        # The project page's routes ask the edit grant at the route as well (security round 2).
+        if not actor_user_id or "projects.projects.edit" not in granted:
             return False
         try:
             assert_can_write_project(db, project, actor_user_id, granted)
