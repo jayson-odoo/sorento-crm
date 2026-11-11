@@ -413,6 +413,8 @@ def product_tag_data(
         # S4: staff-authored tag copy. Absent (None) renders nothing (Q5) -
         # no fallback to spec_lines/description.
         "price_tag_description": product.price_tag_description or None,
+        # SPEC-SHEET-DESIGNER-PARITY: the plain catalogue description, for {{product.description}}.
+        "description": product.description or None,
         "images": gallery_images(db, product, viewer) if with_images else [],
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,
@@ -785,6 +787,8 @@ def _part_row(
         "currency": data["currency"],
         # AC-S4-4: this part's OWN product's tag copy, not the host's.
         "price_tag_description": data["price_tag_description"],
+        # {{product.description}} on a part: this part's OWN product's catalogue description.
+        "description": data.get("description"),
         # PRICETAG-ACCESSORIES: a layer pointed at this position reads this product's own list.
         "accessories": data.get("accessories") or [],
         "accessory_box_style": data.get("accessory_box_style"),
@@ -1049,6 +1053,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "barcode": barcode,
                 "currency": data["currency"],
                 "price_tag_description": price_tag_description,
+                # {{product.description}}: the line product's catalogue description (None on a set).
+                "description": data.get("description"),
             }
         )
 
@@ -1467,6 +1473,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             # A set has no price_tag_description of its own - same rule as
             # barcode above (S7).
             "price_tag_description": None,
+            "description": None,
             "set_members": _set_member_text(data["members"]),
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
@@ -1492,6 +1499,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "images": _combo_lead_image(db, line, data["images"]),
             "barcode": data["barcode"],
             "price_tag_description": data["price_tag_description"],
+            "description": data.get("description"),
             "set_members": "",
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
