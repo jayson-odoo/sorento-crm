@@ -74,6 +74,13 @@ Order Inquiry (main 110e494f):
    for exactly the ticked rows (`auto-place` with `row_ids`), so the PO column shows the link without a manual
    "Link selected".
 
+5. **Batch per PO line (crew addition, owner 22:55: faster, lighter AutoCount writes).** The shared service groups
+   the validated lines by PO line and sends ONE Shared Service batch operation per PO line (PO row + N
+   `(SO row, qty)`), shape from lane PO-LINK-BATCH's crew-note. Until that SS op is merged, the same grouping
+   function sends the current per-line write for each member (one switch-over point, `_send_group`), so the
+   follow-up is one small change. Retry rule kept: a refusal releases (Try again = new attempt), only a confirmed
+   success locks, an unknown answer keeps its key so the retry replays.
+
 ### Frontend
 1. Move `PoLinkDialog.tsx`, `poLinkWording.ts` and the po-link hooks to `project-sales/_shared/po-link/`. The dialog
    takes a `PoLinkTarget` (`{ key, api: { options, link, unlink, change, relink? } }`) and lines in a shared
