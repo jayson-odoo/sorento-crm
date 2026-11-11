@@ -1794,16 +1794,21 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
-  it('E8: the approval banner states the situation and holds no buttons', async () => {
+  it('E8: the approval banner states the situation; its only buttons are the line-count links', async () => {
     granted = new Set(['projects.quotations.approve']);
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(belowFloor('pending_approval'));
     renderScreen();
 
-    const sentence = await screen.findByText(/2 lines are priced below minimum price/i);
-    const banner = sentence.closest('div.rounded-lg') as HTMLElement;
+    // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov): a count opens the lines it counts. No action
+    // button joins the banner; every action stays the header's one primary slot.
+    const link = await screen.findByRole('button', { name: '2 lines are' });
+    const banner = link.closest('div.rounded-lg') as HTMLElement;
     expect(banner).not.toBeNull();
-    expect(within(banner).queryByRole('button')).toBeNull();
+    expect(banner.textContent).toMatch(/2 lines are priced below the minimum price/);
+    expect(within(banner).getAllByRole('button').map((el) => el.textContent)).toEqual([
+      '2 lines are',
+    ]);
   });
 
   it.each([
@@ -2624,5 +2629,83 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Recheck alerts' }));
     await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledTimes(2));
     expect(recomputeQuotationVersion.mock.calls.map((call) => call[0]).sort()).toEqual(['v2', 'w2']);
+  });
+});
+
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026, Q1 + Q3): a banner count filters the lines to the
+// ones it counts and opens the first area holding one; the filter stays on across area tabs.
+describe('QuotationDocumentClient banner count opens the lines it counts', () => {
+  it('filters to Below default price and opens the first area with such a line', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        requires_approval: true,
+        approval_status_key: 'draft',
+        approval_status_id: 's-draft',
+        discounted_line_count: 1,
+        approval_reasons: 'One line is priced below the default price',
+        scopes: [
+          scope(),
+          scope({ id: 'q2', scope_label: 'Guard House', sort_order: 2, current_version_id: 'v9' }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation(),
+      quotation({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+    ]);
+    listQuotationVersions.mockImplementation((quotationId: string) =>
+      Promise.resolve(
+        quotationId === 'q2'
+          ? [version({ id: 'v9', quotation_id: 'q2', version_no: 1 })]
+          : [version()],
+      ),
+    );
+    listQuotationLines.mockImplementation((versionId: string) =>
+      Promise.resolve(
+        versionId === 'v9'
+          ? [
+              line({ id: 'g1', version_id: 'v9', product_id: 'p-a', product_code: 'GH-CLEAN', description: 'Clean one' }),
+              line({ id: 'g2', version_id: 'v9', product_id: 'p-b', product_code: 'GH-DISC', description: 'Discounted one', is_discounted: true, sort_order: 1 }),
+            ]
+          : [line({ product_id: 'p-wc' })],
+      ),
+    );
+    renderScreen();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    // jsdom has no layout; the call itself is the claim (crew pass: lines below the fold).
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    fireEvent.click(await screen.findByRole('button', { name: 'One line is' }));
+
+    // Guard House opens, filtered: only the discounted line shows, under its own number.
+    expect(await screen.findByText('Discounted one')).toBeInTheDocument();
+    // ...and the lines are brought into view, or a tap below the fold looks like nothing happened.
+    // Clear of the fixed top bar (60 px on a phone): scrolled to sit below the header's own
+    // height, not a fixed 1rem (crew re-pass at 375 px: the tabs landed under the bar).
+    const strip = screen.getByRole('tab', { name: /Guard House/ }).closest('[class*="scroll-mt"]');
+    expect(strip?.className).toContain('var(--header-height');
+    // The area strip AND the lines under it, not just the active tab inside its own strip.
+    await waitFor(() =>
+      expect(
+        scrolled.mock.instances.some((el) => {
+          const node = el as unknown as HTMLElement;
+          return (
+            node.contains(screen.getByRole('tab', { name: /Guard House/ })) &&
+            node.contains(screen.getByText('Discounted one'))
+          );
+        }),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByText('Clean one')).toBeNull());
+    expect(screen.getByRole('tab', { name: /Guard House/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByText('Below default price').length).toBeGreaterThan(0);
+
+    // Q3: back on Townhouse the filter is still on, so its clean line is hidden there too.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Townhouse/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /Townhouse/ })).toHaveAttribute('aria-selected', 'true'),
+    );
+    expect(await screen.findByText('No line matches these flags.')).toBeInTheDocument();
   });
 });
