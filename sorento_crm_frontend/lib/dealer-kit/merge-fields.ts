@@ -228,7 +228,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'doc.prepared_by', label: 'Prepared by', group: 'Spec sheet' },
   { path: 'doc.prepared_by_phone', label: 'Prepared by phone', group: 'Spec sheet' },
   { path: 'doc.date', label: 'Date', group: 'Spec sheet' },
-  { path: 'doc.subject_title', label: 'Subject', group: 'Spec sheet' },
+  { path: 'doc.subject_title', label: 'Subject title', group: 'Spec sheet' },
   { path: 'doc.attn', label: 'Attn', group: 'Spec sheet' },
   { path: 'doc.recipient', label: 'Recipient', group: 'Spec sheet' },
   { path: 'doc.project_code', label: 'Project code', group: 'Spec sheet' },
@@ -377,7 +377,7 @@ function resolvePath(
   if (path.startsWith('doc.')) {
     const field = path.slice('doc.'.length);
     if (!DOC_FIELDS.has(field) || data.kind !== 'line' || !data.line.doc) return null;
-    return data.line.doc[field as keyof typeof data.line.doc] ?? '';
+    return String(data.line.doc[field as keyof typeof data.line.doc] ?? '');
   }
 
   if (path in LINE_TEXT_FIELDS) {

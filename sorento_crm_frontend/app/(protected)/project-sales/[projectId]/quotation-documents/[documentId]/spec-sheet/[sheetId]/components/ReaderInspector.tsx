@@ -4,6 +4,7 @@ import * as React from 'react';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { InspectorPanel } from '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel';
+import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import type {
@@ -40,6 +41,8 @@ export function ReaderInspector({
   onApplyAll: (layerId: string, changes: ApplyAllChanges) => void;
 }) {
   const library = useKitLibrary();
+  const [insertOpen, setInsertOpen] = React.useState(false);
+  const textLayer = layer && layer.props.kind === 'text' ? layer : null;
 
   const onUpdate = React.useCallback(
     (id: string, changes: Partial<TagLayer>) => {
@@ -98,8 +101,20 @@ export function ReaderInspector({
           fontOptions={library.fontOptions}
           specSheet
           specKeys={library.specKeys}
+          onInsertField={textLayer ? () => setInsertOpen(true) : undefined}
         />
       </div>
+      <InsertFieldDialog
+        open={insertOpen && textLayer !== null}
+        value={textLayer && textLayer.props.kind === 'text' ? (textLayer.text_override ?? textLayer.props.text ?? '') : ''}
+        data={null}
+        specKeys={library.specKeys}
+        onCancel={() => setInsertOpen(false)}
+        onDone={(text) => {
+          setInsertOpen(false);
+          if (textLayer) onUpdateProps(textLayer.id, { text });
+        }}
+      />
     </div>
   );
 }
