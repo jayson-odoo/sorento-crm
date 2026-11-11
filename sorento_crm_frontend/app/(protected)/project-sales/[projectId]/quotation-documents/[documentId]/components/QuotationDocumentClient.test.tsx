@@ -2681,6 +2681,10 @@ describe('QuotationDocumentClient banner count opens the lines it counts', () =>
     // Guard House opens, filtered: only the discounted line shows, under its own number.
     expect(await screen.findByText('Discounted one')).toBeInTheDocument();
     // ...and the lines are brought into view, or a tap below the fold looks like nothing happened.
+    // Clear of the fixed top bar (60 px on a phone): scrolled to sit below the header's own
+    // height, not a fixed 1rem (crew re-pass at 375 px: the tabs landed under the bar).
+    const strip = screen.getByRole('tab', { name: /Guard House/ }).closest('[class*="scroll-mt"]');
+    expect(strip?.className).toContain('var(--header-height');
     // The area strip AND the lines under it, not just the active tab inside its own strip.
     await waitFor(() =>
       expect(

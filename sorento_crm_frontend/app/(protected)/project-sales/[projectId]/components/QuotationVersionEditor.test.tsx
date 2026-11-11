@@ -3568,6 +3568,40 @@ describe('QuotationVersionEditor Undo / Redo', () => {
     await waitFor(() => expect(ids()).toEqual(['l2']));
   });
 
+  it('Cmd/Ctrl+Z works after a REAL click on the grid background, which focuses the page <main>', async () => {
+    // Crew re-pass: the app layout's <main id="main" tabIndex={-1}> takes focus on a mouse click
+    // on any non-control area, so focus is on a container AROUND the grid, not the body.
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    const main = document.createElement('main');
+    main.id = 'main';
+    main.tabIndex = -1;
+    document.body.appendChild(main);
+    try {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <Harness projectOverrides={{}} editing />
+        </QueryClientProvider>,
+        { container: main.appendChild(document.createElement('div')) },
+      );
+      await screen.findByRole('button', { name: /Add a line/i });
+      await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+      await chooseMenuItem('A-1', 'Remove line');
+      await waitFor(() => expect(ids()).toEqual(['l2']));
+
+      const user = userEvent.setup();
+      // A click on a plain cell area: focus moves to the nearest focusable ancestor, <main>.
+      await user.click(screen.getByRole('table').querySelector('tfoot') ?? screen.getByRole('table'));
+      expect(document.activeElement).toBe(main);
+      await user.keyboard('{Control>}z{/Control}');
+      await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    } finally {
+      main.remove();
+    }
+  });
+
   it('Cmd/Ctrl+Z on a control outside the grid is not the grid\'s', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     const outside = document.createElement('button');

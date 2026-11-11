@@ -1546,9 +1546,13 @@ export function QuotationLinesGrid({
     if (!editing) return;
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.defaultPrevented) return;
+      // Inside the grid, or on something AROUND it: a mouse click on a plain area focuses the
+      // nearest focusable container (the layout's <main tabIndex=-1>, crew re-pass) or the body.
+      // A control elsewhere on the page never contains the grid, so its keys stay its own.
       const target = event.target as Node | null;
-      const onBody = target === document.body || target === document.documentElement;
-      if (!onBody && !(target && wrapperRef.current?.contains(target))) return;
+      const wrapper = wrapperRef.current;
+      if (!target || !wrapper) return;
+      if (!wrapper.contains(target) && !target.contains(wrapper)) return;
       if (isTextField(event.target)) return;
       const key = event.key.toLowerCase();
       if (key === 'z') {

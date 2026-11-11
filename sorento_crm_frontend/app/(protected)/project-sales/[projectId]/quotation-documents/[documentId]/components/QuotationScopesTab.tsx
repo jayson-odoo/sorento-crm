@@ -104,7 +104,12 @@ export function QuotationScopesTab() {
   }
 
   return (
-    <div ref={linesRef} className="scroll-mt-4 space-y-5">
+    // Scrolled to sit just below the fixed top bar (70 px, 60 px on a phone) and the
+    // impersonation banner when it shows, not under them (crew re-pass at 375 px).
+    <div
+      ref={linesRef}
+      className="scroll-mt-[calc(var(--header-height,70px)+var(--impersonation-banner-height,0px)+0.75rem)] space-y-5"
+    >
       <QuotationScopeTabs
         scopes={scopes}
         activeScopeId={activeScope?.id ?? ''}
