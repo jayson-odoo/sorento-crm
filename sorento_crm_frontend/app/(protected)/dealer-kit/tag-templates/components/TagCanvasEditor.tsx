@@ -1612,7 +1612,7 @@ export function TagCanvasEditor({
       const id = resolveTarget(rawId);
       // B4: a click on a table cell makes that cell the Inspector's current one.
       const clicked = layers.find((l) => l.id === id);
-      const point = pointerMmRef.current();
+      const point = clicked && clicked.props.kind === 'table' ? pointerMmRef.current() : null;
       if (clicked && clicked.props.kind === 'table' && point) {
         const found = cellAt(
           tableLayout(clicked.props, clicked.width_mm, tableMeasure(clicked.props)),
