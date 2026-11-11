@@ -1478,6 +1478,8 @@ class ProductTagData(BaseModel):
     # spec_lines/description. Declared here or `response_model` drops it
     # without a word - see `ResolvedLineData.data_changes`'s own note.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.

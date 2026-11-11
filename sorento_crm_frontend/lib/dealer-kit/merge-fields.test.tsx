@@ -897,3 +897,26 @@ describe('renderMergeFields - spec.material pass-through (AC-S3-5)', () => {
     expect(renderMergeFields('{{spec.material}}', data, 'print')).toBe('Stainless Steel');
   });
 });
+
+describe('{{product.description}} (SPEC-SHEET-DESIGNER-PARITY A4)', () => {
+  it('is offered in the Product group of Insert field', () => {
+    const field = mergeFieldCatalog([]).find((f) => f.path === 'product.description');
+    expect(field).toMatchObject({ group: 'Product', label: 'Description' });
+  });
+
+  it('prints the product plain description', () => {
+    expect(
+      renderMergeFields('{{product.description}}', product({ description: 'Wall hung WC, rimless' }), 'print'),
+    ).toBe('Wall hung WC, rimless');
+  });
+
+  it('prints the line description on a spec sheet page', () => {
+    expect(
+      renderMergeFields('{{product.description}}', line({ description: 'Close coupled WC' }), 'print'),
+    ).toBe('Close coupled WC');
+  });
+
+  it('prints empty, never the token, on a row frozen before the field existed', () => {
+    expect(renderMergeFields('{{product.description}}', line(), 'print')).toBe('');
+  });
+});

@@ -413,6 +413,8 @@ def product_tag_data(
         # S4: staff-authored tag copy. Absent (None) renders nothing (Q5) -
         # no fallback to spec_lines/description.
         "price_tag_description": product.price_tag_description or None,
+        # SPEC-SHEET-DESIGNER-PARITY: the plain catalogue description, for {{product.description}}.
+        "description": product.description or None,
         "images": gallery_images(db, product, viewer) if with_images else [],
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,

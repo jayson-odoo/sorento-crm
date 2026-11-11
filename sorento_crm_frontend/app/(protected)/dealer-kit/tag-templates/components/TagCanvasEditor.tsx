@@ -223,6 +223,7 @@ import {
   fitPastedImage,
   pastedImageProblem,
   readImageSize,
+  readSystemClipboard,
 } from '@/lib/dealer-kit/clipboard-paste';
 import { uploadAsset } from '../../services/assetService';
 import { InlineTextEditor } from './InlineTextEditor';
@@ -456,8 +457,10 @@ const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 /**
  * What the spec sheet reader drives on a canvas it embeds (SPEC-SHEET-V2 F4).
  * Embedded means: only the Konva stage, drawn at `pxPerMm` with no pan or zoom of its own, no
- * Layers / Inspector / toolbar / save bar / dialogs, no keyboard or clipboard shortcuts, no
- * rulers. The host owns selection, the Inspector, undo and saving.
+ * Layers / Inspector / toolbar / save bar / dialogs, no rulers. The host owns selection, the
+ * Inspector, undo and saving. Keyboard and clipboard shortcuts (copy, cut, paste, duplicate,
+ * delete, nudge) answer on the ONE canvas the host marks `active`, the same handlers the
+ * template editor runs (SPEC-SHEET-DESIGNER-PARITY), so a paste never lands on several pages.
  */
 export interface EmbeddedController {
   updateLayer: (id: string, changes: Partial<TagLayer>) => void;
@@ -484,6 +487,14 @@ export interface EmbeddedMode {
    * field box) and answers true; otherwise the canvas opens in-place typing on that layer.
    */
   onEditField?: (layerId: string) => boolean;
+  /**
+   * The page the keyboard and clipboard act on: the page holding the selection, else the page
+   * being read. Every other embedded canvas leaves shortcuts and paste alone. A read-only canvas
+   * never answers them.
+   */
+  active?: boolean;
+  /** Ctrl/Cmd+Z (`-1`) and Shift+Ctrl/Cmd+Z or Ctrl/Cmd+Y (`1`) on the active page: the host's undo. */
+  onHistory?: (step: -1 | 1) => void;
 }
 
 interface TagCanvasEditorProps {
@@ -679,6 +690,10 @@ export function TagCanvasEditor({
   const [viewState, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
   // Embedded: the host's scale, no pan. Otherwise the editor's own pan and zoom.
   const embeddedPxPerMm = embedded?.pxPerMm;
+  /** Keyboard + clipboard shortcuts: always in the editors, on the active page when embedded. */
+  const shortcutsLive = !embedded || (Boolean(embedded.active) && !embedded.readOnly);
+  const embeddedHistoryRef = useRef(embedded?.onHistory);
+  embeddedHistoryRef.current = embedded?.onHistory;
   const view = useMemo<CanvasView>(
     () =>
       embeddedPxPerMm !== undefined
@@ -3530,8 +3545,9 @@ export function TagCanvasEditor({
   }, []);
 
   useEffect(() => {
-    // Embedded: the reader owns shortcuts (undo, redo); several canvases must not all answer.
-    if (embeddedPxPerMm !== undefined) return;
+    // Embedded: only the page the reader marks active answers; several canvases must not all.
+    if (!shortcutsLive) return;
+    const isEmbedded = embeddedPxPerMm !== undefined;
     const handler = (e: KeyboardEvent) => {
       // The listener is on `window`, so `e.target` is only ever right when
       // the control that has focus is also what dispatched the event. A
@@ -3590,7 +3606,7 @@ export function TagCanvasEditor({
 
       if (isInput) return;
 
-      if (e.key === ' ' && !modifier) {
+      if (e.key === ' ' && !modifier && !isEmbedded) {
         e.preventDefault();
         setSpaceHeld(true);
         return;
@@ -3703,6 +3719,9 @@ export function TagCanvasEditor({
         setEditingPointsId(editingPoints ? null : cornerHandleLayer.id);
         return;
       }
+      // An embedded page has no tools, pan or zoom of its own: the reader scrolls and zooms.
+      if (isEmbedded && !modifier && /^[vVhH]$/.test(e.key)) return;
+      if (isEmbedded && modifier && (e.key === '0' || e.key === '1')) return;
       if (!modifier && (e.key === 'v' || e.key === 'V')) {
         setTool('select');
         return;
@@ -3736,17 +3755,23 @@ export function TagCanvasEditor({
         e.preventDefault();
         deleteSelectedLayers();
       }
-      if (e.key === 'z' && modifier && !e.shiftKey) {
+      // Embedded: the host keeps the page's undo history, so the keys go to it.
+      const historyStep = (step: -1 | 1) => {
+        if (isEmbedded) embeddedHistoryRef.current?.(step);
+        else if (step < 0) handleUndo();
+        else handleRedo();
+      };
+      if ((e.key === 'z' || e.key === 'Z') && modifier && !e.shiftKey) {
         e.preventDefault();
-        handleUndo();
+        historyStep(-1);
       }
-      if (e.key === 'z' && modifier && e.shiftKey) {
+      if ((e.key === 'z' || e.key === 'Z') && modifier && e.shiftKey) {
         e.preventDefault();
-        handleRedo();
+        historyStep(1);
       }
       if (e.key === 'y' && modifier) {
         e.preventDefault();
-        handleRedo();
+        historyStep(1);
       }
       if (e.key === 'd' && modifier) {
         e.preventDefault();
@@ -3808,6 +3833,7 @@ export function TagCanvasEditor({
     };
   }, [
     embeddedPxPerMm,
+    shortcutsLive,
     selectedIds,
     selectedGuideId,
     editingLayerId,
@@ -3923,7 +3949,8 @@ export function TagCanvasEditor({
   );
 
   useEffect(() => {
-    if (embeddedPxPerMm !== undefined) return;
+    // Embedded: only the active page takes a paste (the same reason as the keydown above).
+    if (!shortcutsLive) return;
     /** Focus is somewhere typing belongs, or in a dialog other than the editor's own. */
     const elsewhere = (target: EventTarget | null): boolean => {
       if (editingLayerId) return true;
@@ -3985,7 +4012,24 @@ export function TagCanvasEditor({
       window.removeEventListener('cut', onCopyOrCut);
       window.removeEventListener('paste', onPaste);
     };
-  }, [embeddedPxPerMm, editingLayerId, handlePaste, handlePasteImage, handlePasteText]);
+  }, [shortcutsLive, editingLayerId, handlePaste, handlePasteImage, handlePasteText]);
+
+  /**
+   * The context menu's Paste. A menu click carries no clipboard of its own, so the system
+   * clipboard is read (the browser may ask for permission once) and classified exactly as a
+   * Ctrl+V would be: a screenshot becomes an image layer, copied words a text layer, the editor's
+   * own copied layers paste as layers. No system clipboard to read: the editor's copied layers.
+   */
+  const handleMenuPaste = useCallback(async () => {
+    const copied = getTagClipboard();
+    const copiedText = copied && copied.layers.length > 0 ? copiedLayersText(copied.layers) : null;
+    const data = await readSystemClipboard();
+    const intent = classifyPaste(data, copiedText);
+    if (intent.kind === 'layers') handlePaste();
+    else if (intent.kind === 'image') await handlePasteImage(intent.file);
+    else if (intent.kind === 'text') handlePasteText(intent.text);
+  }, [handlePaste, handlePasteImage, handlePasteText]);
+  const menuPasteDisabled = Boolean(embedded?.readOnly);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
   useEffect(() => {
@@ -5235,7 +5279,7 @@ export function TagCanvasEditor({
                   Copy
                   <ContextMenuShortcut>{shortcutLabel('C', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
-                <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
+                <ContextMenuItem onSelect={() => void handleMenuPaste()} disabled={menuPasteDisabled}>
                   <ClipboardPaste />
                   Paste
                   <ContextMenuShortcut>{shortcutLabel('V', mac)}</ContextMenuShortcut>
@@ -5323,7 +5367,7 @@ export function TagCanvasEditor({
               </>
             ) : (
               <>
-                <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
+                <ContextMenuItem onSelect={() => void handleMenuPaste()} disabled={menuPasteDisabled}>
                   <ClipboardPaste />
                   Paste
                   <ContextMenuShortcut>{shortcutLabel('V', mac)}</ContextMenuShortcut>

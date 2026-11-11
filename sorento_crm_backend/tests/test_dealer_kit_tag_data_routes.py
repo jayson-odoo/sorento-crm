@@ -370,6 +370,8 @@ def test_product_tag_data_keeps_every_field(api):
         # request line) can resolve `{{product.price_tag_description}}`
         # the same way the canvas already does off a line binding.
         "price_tag_description",
+        # SPEC-SHEET-DESIGNER-PARITY: `products.description` for {{product.description}}.
+        "description",
         # PRICETAG-ACCESSORIES: the product's own accessory list (an Ala Carte tag prints it).
         "accessories",
         "accessory_box_style",
@@ -397,6 +399,7 @@ def test_product_tag_data_keeps_every_field(api):
     # AC-A12: `currency` rides the wire - `response_model` drops an
     # undeclared field silently.
     assert body["currency"] == "MYR"
+    assert body["description"] == "One line\nAnother line"
 
 
 def test_unknown_product_is_404(api):

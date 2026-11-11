@@ -177,6 +177,8 @@ export interface ReaderPageProps {
   externalLayers: TagLayer[] | undefined;
   /** Whether this is the page being read: its actions show without hovering. */
   current: boolean;
+  /** The page the keyboard and clipboard act on (copy, cut, paste, duplicate, undo). */
+  active: boolean;
   /** Medium urls for the page being worked on (the strip keeps thumbnails). */
   sharp: {
     images: Record<string, string>;
@@ -191,6 +193,8 @@ export interface ReaderPageProps {
   onPatch: (key: string, change: Partial<SpecSheetPage>) => void;
   onSelectLayer: (key: string, layerId: string | null) => void;
   onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
+  /** Ctrl/Cmd+Z / Shift+Z / Y on this page: the host's per-page undo. Stable, like `onPatch`. */
+  onHistory: (key: string, step: -1 | 1) => void;
   controllerRefFor: (
     key: string,
   ) => React.MutableRefObject<EmbeddedController | null>;
@@ -247,6 +251,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   draftLayers,
   externalLayers,
   current,
+  active,
   sharp,
   canEdit,
   pages,
@@ -255,6 +260,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   onPatch,
   onSelectLayer,
   onLayersReport,
+  onHistory,
   controllerRefFor,
 }: ReaderPageProps) {
   const isCover = page.key === COVER;
@@ -327,6 +333,8 @@ export const ReaderPage = React.memo(function ReaderPage({
       layers: externalLayers,
       controllerRef,
       readOnly: !canEdit,
+      active,
+      onHistory: (step: -1 | 1) => onHistory(page.key, step),
       // A double-click on AREA / COMMENT / marker opens its box; a single click selects it.
       onEditField: (layerId: string) => {
         const layer = layersRef.current?.find((l) => l.id === layerId);
@@ -344,6 +352,8 @@ export const ReaderPage = React.memo(function ReaderPage({
       externalLayers,
       controllerRef,
       canEdit,
+      active,
+      onHistory,
       isCover,
     ],
   );
