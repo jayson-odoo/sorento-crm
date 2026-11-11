@@ -318,10 +318,12 @@ def create_purchase_request(
         raise handle_internal_error(str(e))
 
 
+# No revision fence: the form saves its latest values a moment before this call, and only a staff
+# draft (never a revisable, submitted form) gets here. The fenced set is mirrored by the frontend
+# (lib/revision-fence.ts), so a route joins it only with a reason.
 @router.post(
     "/{request_id}/submit",
     response_model=PurchaseRequestHeaderResponse,
-    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
 )
 def submit_purchase_request(
     request_id: str,

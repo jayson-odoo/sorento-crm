@@ -67,7 +67,6 @@ export function useHrefWithListState(path: string, appendListState = true): stri
     if (!appendListState) return '';
     const params = new URLSearchParams(searchParams.toString());
     params.delete('tab');
-    params.delete(BACK_PARAM);
     for (const key of [...params.keys()]) if (isDetailViewKey(key)) params.delete(key);
     return params.toString();
   }, [appendListState, searchParams]);

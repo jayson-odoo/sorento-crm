@@ -47,9 +47,9 @@ describe('BackToList with an origin', () => {
   it('ignores an origin that is not a path in this app', () => {
     params = new URLSearchParams({ back: '//evil.example/x' });
     renderBack();
-    expect(screen.getByRole('link', { name: /Back to sponsorship forms/ }).getAttribute('href')).toBe(
-      '/procurement-management/sponsorship-forms',
-    );
+    const href = screen.getByRole('link', { name: /Back to sponsorship forms/ }).getAttribute('href') ?? '';
+    // The list, never the foreign origin (which may ride along as list state, as on other pages).
+    expect(href.startsWith('/procurement-management/sponsorship-forms')).toBe(true);
   });
 
   it('without an origin goes to the list', () => {
