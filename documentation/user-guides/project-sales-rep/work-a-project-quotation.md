@@ -69,6 +69,39 @@ lines, on the **Header** tab under the letterhead. Reading a proposal and **New 
   that was already sent to the customer, and for a saved scope when you do not have the right to
   delete one.
 
+## Send the same proposal to another party (Duplicate for another party)
+
+Use this when another party on the project (for example the main contractor or the architect)
+needs the same lines and prices. Each party gets its own proposal, with its own number, sends and
+counter-sign link. A party that needs different prices also starts here: duplicate, then change
+the copy.
+
+1. Open the proposal, press the gear (**Proposal actions**) and choose **Duplicate for another
+   party**. On the project's **Proposals** tab the same item is on the row's **...** menu.
+2. In **Party**, pick the party. The project's own parties are listed first. If the party has one
+   contact, Attn fills with it; otherwise press **Choose contacts**.
+3. Press **Duplicate**. The copy opens.
+
+What the copy holds:
+
+* A new number, the picked party as **To** with its Attn, today's date, and you as **Prepared By**.
+* Every scope, line, quantity and price, the cover letter, closing, terms, payment terms,
+  validity, spec sheet settings and Certification choices. The cover letter names the new party,
+  its Attn and the new number.
+* Not copied: **Your Ref**, the signature (sign the copy before you send it) and saved spec
+  sheets.
+* Duplicating the project's quotation makes a **proposal** for the new party, because a project
+  has one quotation.
+
+Approval: if the original was approved by a manager and its lines have not changed since, the
+copy opens **Approved** with no new request. Change a price on the copy and it needs its own
+approval, as usual.
+
+Where you can see it: the copy's header shows **Copied from** with a link to the original. History
+on the copy shows "Copied from ..." (and "Approval carried from ..." when the approval came with
+it); History on the original shows "Duplicated for ... as ...". The project's **Activity** tab
+shows "... copied from ... for ...".
+
 ## Won, Lost and Re-open (the project's outcome)
 
 A project has one outcome: **Open**, **Won** or **Lost**. Scopes do not have their own.

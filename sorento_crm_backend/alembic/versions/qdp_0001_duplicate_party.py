@@ -1,6 +1,6 @@
 """QUOTE-DUPLICATE-PARTY: a proposal copied for another party, and History event lines.
 
-Plan: documentation/plans/project-sales/PLAN-quote-duplicate-party-11nov.md.
+Plan: documentation/plans/_archive/project-sales/PLAN-quote-duplicate-party-11nov.md.
 
 - ``projects.quotation_documents.copied_from_document_id``: the document this one was duplicated
   from (the "Copied from" link). Its own column, not ``source_issue_id``, which means "the

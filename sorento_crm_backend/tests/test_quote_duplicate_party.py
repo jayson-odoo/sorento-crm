@@ -1,6 +1,6 @@
 """QUOTE-DUPLICATE-PARTY (red-first): "Duplicate for another party" on a proposal / quotation.
 
-Plan: documentation/plans/project-sales/PLAN-quote-duplicate-party-11nov.md. UAC D1-D11 in
+Plan: documentation/plans/_archive/project-sales/PLAN-quote-duplicate-party-11nov.md. UAC D1-D11 in
 quote-duplicate-party-11nov-acceptance-criteria.md (ids in each docstring).
 
 Postgres only, via ``blank_session``. Every name is invented (public repo).
