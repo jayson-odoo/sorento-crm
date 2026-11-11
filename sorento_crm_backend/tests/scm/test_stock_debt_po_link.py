@@ -78,6 +78,32 @@ def fake_ss(monkeypatch):
     return fake
 
 
+class MemoryStore:
+    """Stands in for Redis (`get` / `set(ex=)`): the bodies are fixed AutoCount keys, so a real
+    shared Redis would carry a refusal from one test, or one run, into the next."""
+
+    def __init__(self):
+        self.data: dict = {}
+
+    def get(self, name):
+        return self.data.get(name)
+
+    def set(self, name, value, ex=None):
+        self.data[name] = str(value).encode()  # Redis answers bytes
+        return True
+
+
+@pytest.fixture(autouse=True)
+def refusal_store(monkeypatch):
+    from app.services import autocount_idempotency as idem
+    from app.services.scm import stock_debt_po_link_service as svc
+
+    store = MemoryStore()
+    monkeypatch.setattr(idem, "_down_until", 0.0)
+    monkeypatch.setattr(svc, "attempt_store", lambda: store)
+    return store
+
+
 # --------------------------------------------------------------------------- seeding
 
 
@@ -512,6 +538,139 @@ def test_the_same_intent_sends_the_same_idempotency_key(scm_app, fake_ss):
     assert fake_ss.headers("/api/v1/autocount/po-links")[2].get("Idempotency-Key") != keys[0]
 
 
+# --------------------------------------------------------------------------- retry after a refusal
+# STOCKDEBT-LINK-IDEM-KEY (AC-E2E-DB3 B3, 6 Nov): the Shared Service stores every answer under the
+# key and replays it for the same key + body. The body is only CRM keys and qty, so a refusal fixed
+# on the AutoCount side (blank PurchaseAgent, SS #225) was replayed to every later press, forever.
+
+_REFUSED = (422, {
+    "operationId": "op-r", "outcome": "refused", "errorCode": "FIELD_REQUIRED",
+    "message": "PurchaseAgent is required.", "warnings": [], "document": None,
+})
+
+
+def _keys_sent(fake_ss, path="/api/v1/autocount/po-links"):
+    return [h.get("Idempotency-Key") for h in fake_ss.headers(path)]
+
+
+def _link_item(w, qty=120):
+    return {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": qty}
+
+
+def test_a_retry_after_a_refusal_is_a_new_attempt(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    (first,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert first["outcome"] == "refused"
+    # Fixed in AutoCount; the same body is pressed again and is NOT the refused key.
+    fake_ss.answers["/api/v1/autocount/po-links"] = _done_split
+    (second,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert second["outcome"] == "done"
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k2 and k1 != k2
+
+
+def test_every_refusal_moves_the_next_press_on(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    for _ in range(3):
+        w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    keys = _keys_sent(fake_ss)
+    assert len(keys) == 3 and len(set(keys)) == 3
+
+
+@pytest.mark.parametrize("answer", [
+    (504, {"code": "TIMEOUT", "message": "slow"}),
+    (202, {"operationId": "op-p", "outcome": "pending_verification", "errorCode": None, "message": ""}),
+    (502, {"operationId": "op-n", "outcome": "needs_attention", "errorCode": "VENDOR_ERROR", "message": ""}),
+    (502, {"operationId": "op-v", "outcome": "vendor_error", "errorCode": "VENDOR_ERROR", "message": ""}),
+    # Another press with this key is still running: not a refusal of the intent.
+    (409, {"operationId": None, "outcome": "refused", "errorCode": "IDEMPOTENCY_IN_PROGRESS", "message": ""}),
+    (409, {"operationId": None, "outcome": "refused", "errorCode": "IDEMPOTENCY_CONFLICT", "message": ""}),
+])
+def test_an_unconfirmed_answer_keeps_the_key(scm_app, fake_ss, answer):
+    """AutoCount may already hold the split: the retry must replay, never split the row twice."""
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = answer
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k1 == k2
+
+
+def test_a_refusal_does_not_move_another_intent_on(scm_app, fake_ss):
+    """Only the refused intent gets a new attempt: another qty keeps its own first key."""
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = (504, {"code": "TIMEOUT", "message": "slow"})
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w, 100)]})
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w, 120)]})
+    fake_ss.answers["/api/v1/autocount/po-links"] = (504, {"code": "TIMEOUT", "message": "slow"})
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w, 100)]})
+    k100, _k120, k100_again = _keys_sent(fake_ss)
+    assert k100 == k100_again
+
+
+def test_unlink_and_relink_retry_after_a_refusal(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    unlink = "/api/v1/autocount/po-links/unlink"
+    fake_ss.answers[unlink] = _REFUSED
+    w["c"].post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]})
+    w["c"].post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]})
+    k1, k2 = _keys_sent(fake_ss, unlink)
+    assert k1 and k2 and k1 != k2
+
+    _o, other = _demand(w["db"], w["product"], w["mwh"], qty=50, required_date=_months_ahead(1),
+                        so_number=f"{w['marker']}-SO2")
+    other.source_ref = f"{DB}:11988:11991"
+    w["db"].flush()
+    relink = "/api/v1/autocount/po-links/relink"
+    fake_ss.answers[relink] = _REFUSED
+    sid = w["c"].post(SNAP, json={"name": "relink", "filters": {"query": w["marker"], "only_debt": False}}).json()["id"]
+    row_id = next(r["row_id"] for r in w["c"].get(f"{SNAP}/{sid}/rows", params={"limit": 200}).json()["data"]
+                  if r["product_code"] == f"{w['marker']}-A")
+    move = {"moves": [{"po_line_id": w["po_line"].id, "to_sales_order_line_id": other.id}]}
+    w["c"].post(f"{SNAP}/{sid}/rows/{row_id}/po-link/relink", json=move)
+    w["c"].post(f"{SNAP}/{sid}/rows/{row_id}/po-link/relink", json=move)
+    r1, r2 = _keys_sent(fake_ss, relink)
+    assert r1 and r2 and r1 != r2
+
+
+def test_no_refusal_store_falls_back_to_the_intent_key(scm_app, fake_ss, monkeypatch):
+    """Redis down: the link still goes, on the plain intent key (never a fresh key per press)."""
+    from app.services.scm import stock_debt_po_link_service as svc
+
+    class Down:
+        def get(self, name):
+            raise ConnectionError("redis down")
+
+        def set(self, name, value, ex=None):
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(svc, "attempt_store", lambda: Down())
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    for _ in range(2):
+        resp = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["results"][0]["outcome"] == "refused"
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k1 == k2
+
+
+def test_the_attempt_key_helper():
+    """The shareable helper (AC-QTSO-CRM can call it): attempt 0 is the base key unchanged."""
+    from app.services.autocount_idempotency import attempt_key
+
+    assert attempt_key("abc", 0) == "abc"
+    assert attempt_key("abc", 1) != "abc"
+    assert attempt_key("abc", 1) == attempt_key("abc", 1)
+    assert attempt_key("abc", 1) != attempt_key("abc", 2)
+    assert len(attempt_key("x" * 64, 7)) <= 64
+
+
 def test_one_request_cannot_link_more_than_the_po_line_has_free(scm_app, fake_ss):
     w = _world(scm_app, fake_ss)
     _o, other = _demand(w["db"], w["product"], w["mwh"], qty=400, required_date=_months_ahead(1),
@@ -692,3 +851,22 @@ def test_the_switch_ships_off_and_is_readable_without_settings_access(scm_app, f
     assert cfg.json()["stock_debt_po_link_enabled"] is False
     _switch(w["db"], True)
     assert w["c"].get("/api/v1/user-management/settings/app-config").json()["stock_debt_po_link_enabled"] is True
+
+
+def test_a_failing_store_is_skipped_for_a_while(monkeypatch):
+    """Redis down: one timeout, then the rest of the request (every other line) skips it."""
+    from app.services import autocount_idempotency as idem
+
+    calls = []
+
+    class Down:
+        def get(self, name):
+            calls.append(name)
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(idem, "_client", lambda: Down())
+    monkeypatch.setattr(idem, "_down_until", 0.0)
+    refused = {"outcome": "refused", "errorCode": "FIELD_REQUIRED"}
+    for _ in range(3):
+        assert idem.send_with_attempts(idem.attempt_store(), "base", lambda key: refused) == refused
+    assert len(calls) == 1
