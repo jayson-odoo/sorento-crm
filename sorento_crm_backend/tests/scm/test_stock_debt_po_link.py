@@ -1347,3 +1347,20 @@ def test_b13_a_push_without_from_so_line_ref_leaves_the_link(scm_app, fake_ss):
     }])
     (line,) = _lines_of(w)
     assert line.from_so_line_ref == w["so_line"].source_ref
+
+
+def test_a_link_write_carries_the_request_id_and_the_person_who_pressed(scm_app, fake_ss):
+    """SS plan 63 (lane AC-DB1-READY): every PO link write carries X-Request-ID,
+    X-Acting-User-Id and X-Acting-User-Name."""
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _done_split
+    w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 120},
+    ]})
+
+    sent = [r for r in fake_ss.calls if r.url.path.endswith("/po-links")]
+    assert sent
+    for request in sent:
+        assert request.headers.get("X-Request-ID")
+        assert request.headers.get("X-Acting-User-Id")
+        assert request.headers.get("X-Acting-User-Name")

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -45,6 +46,7 @@ from app.models.projects import (
     ProjectQuotationLine,
 )
 from app.services.error_handler import AppException
+from app.services import audit_service
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.autocount_idempotency import is_definite_refusal
 from app.services.project_quotation_service import line_text
@@ -329,6 +331,10 @@ class ProjectAutocountWriteService:
     def __init__(self, db: Session, client: Optional[FoundryxAutocountClient] = None):
         self.db = db
         self._client = client
+        # Owner, 12 Nov: every AutoCount write traced to the person. One id per press (the
+        # service is built per request); every write of the press carries it and the actor.
+        self.request_id = uuid.uuid4().hex
+        self._actor: Optional[dict] = None
         self._draft = ProjectSODraftService(db)
 
     # ------------------------------------------------------------ gateway
@@ -336,7 +342,7 @@ class ProjectAutocountWriteService:
     def _gateway(self) -> FoundryxAutocountClient:
         if self._client is None:
             self._client = FoundryxAutocountClient(self.db)
-        return self._client
+        return self._client.trace_writes(self.request_id, self._actor)
 
     def _call(self, fn) -> Dict[str, Any]:
         """Run one gateway call; a gateway failure becomes an answer the dialog can show."""
@@ -351,6 +357,24 @@ class ProjectAutocountWriteService:
             }
 
     def _log_unlanded(self, key: str, answer: Dict[str, Any]) -> None:
+        """Store the write call with the person who pressed (owner, 12 Nov), and log one line when
+        it did not land."""
+        document = answer.get("document") or {}
+        audit_service.log_audit(
+            self.db,
+            "autocount_write",
+            self.request_id,
+            "EVENT",
+            event="autocount_write",
+            user_id=(self._actor or {}).get("id"),
+            new_values={
+                "request_id": self.request_id,
+                "idempotency_key": key,
+                "outcome": str(answer.get("outcome"))[:40],
+                "error_code": str(answer.get("errorCode"))[:64] if answer.get("errorCode") else None,
+                "doc_no": answer.get("docNo") or document.get("DocNo"),
+            },
+        )
         if answer.get("outcome") not in _DONE:
             # One line per write that did not land, so a refusal on a live stack can be read back.
             logger.warning(
@@ -819,6 +843,7 @@ class ProjectAutocountWriteService:
             wire["fromQuotation"] = {"docNo": document.autocount_doc_no, "dtlKey": same_item[place].get("DtlKey")}
 
     def create_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
+        self._actor = actor
         order = self._draft.get_order(pso_id)
         if order.autocount_doc_no or self._draft.autocount_doc_key(order):
             # A second press after a success is a no-op that shows the document (owner, 11 Nov).
@@ -865,6 +890,7 @@ class ProjectAutocountWriteService:
     # ------------------------------------------------------------ sales order: update
 
     def update_sales_order(self, amendment_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
+        self._actor = actor
         amendment = self.db.query(SOAmendment).filter(SOAmendment.id == amendment_id).first()
         if amendment is None:
             raise AppException(
@@ -1032,6 +1058,7 @@ class ProjectAutocountWriteService:
     # ------------------------------------------------------------ sales order: cancel
 
     def cancel_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
+        self._actor = actor
         order = self._draft.get_order(pso_id)
         doc_key, _own_book, adopted = self._draft.autocount_key_info(order)
         if not doc_key:
@@ -1120,6 +1147,7 @@ class ProjectAutocountWriteService:
 
     def send_quotation(self, document_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         """Create when the document has no AutoCount key, else update (R5: accepted issues only)."""
+        self._actor = actor
         document = self._document(document_id)
         issue = self._latest_issue(document)
         if document.kind != "quotation" or issue is None or issue.accepted_at is None:
@@ -1433,6 +1461,7 @@ class ProjectAutocountWriteService:
         return _trim_sentence(answer.get("message")) or "no reason given"
 
     def cancel_quotation(self, document_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
+        self._actor = actor
         document = self._document(document_id)
         if not document.autocount_doc_key:
             raise AppException(

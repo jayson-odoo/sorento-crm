@@ -144,8 +144,10 @@ def po_links_for(db: Session, so_line_ids: Sequence[str]) -> Dict[str, List[Dict
 
 
 class StockDebtPoLinkService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, actor: Optional[dict] = None):
         self.db = db
+        # SS plan 63: every write carries the person who pressed (X-Acting-User-*).
+        self.actor = actor
         # One per press (the service is built per request): every SS write of it carries this.
         self.request_id = uuid.uuid4().hex
 
@@ -372,7 +374,7 @@ class StockDebtPoLinkService:
 
     def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
         try:
-            return FoundryxAutocountClient(self.db).write(
+            return FoundryxAutocountClient(self.db).trace_writes(self.request_id, self.actor).write(
                 path, body, idempotency_key=key, request_id=self.request_id
             )
         except FoundryxPullError as exc:

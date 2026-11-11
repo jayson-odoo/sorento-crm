@@ -302,3 +302,12 @@ AutoCount links per ROW (FromDocType QT, FromDocNo, FromDocDtlKey; never on the 
 document in AutoCount, not cancelled, in the same book (R8). The DtlKey is that AutoCount quotation's row for the item,
 read with one GET per quotation at create time (item-code matching, an unused row first). A failed read or no matching
 row leaves the line unlinked; a partial transfer carries the link with the SO line's own qty.
+
+## Every AutoCount write traced to the person who pressed (owner via crew, 12 Nov; SS plan 63)
+
+Every SS AutoCount write call (QT create / update / cancel, SO create / amendment update / cancel, and the Stock Debt PO
+link writes incl. `write-operations/{id}/resume`) sends `X-Request-ID` (one per press, shared by all its writes),
+`X-Acting-User-Id` (the CRM user id, at most 64 chars) and `X-Acting-User-Name` (UTF-8 percent-encoded,
+`quote(name, safe="")`, at most 128 characters decoded), built in one place,
+`FoundryxAutocountClient.trace_writes`. Reads carry none. Each QT / SO write call is stored as an audit EVENT
+`autocount_write` with the user, the request id, the Idempotency-Key, the outcome and the error code.
