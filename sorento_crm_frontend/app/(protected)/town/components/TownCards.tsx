@@ -102,7 +102,7 @@ export function TownCards({
             </>
           ) : null}
         </span>
-        {splitLine(today) ? <span className="text-xs text-muted-foreground">{splitLine(today)}</span> : null}
+        {splitLine(today) ? <span className="col-start-2 text-xs text-muted-foreground">{splitLine(today)}</span> : null}
       </Card>
       <Card
         question="Who bought today?"

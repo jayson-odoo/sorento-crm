@@ -222,3 +222,31 @@ def test_real_build_through_both_variants_leaks_no_project_identity(db):
     wallboard = json.dumps(strip_names(full))
     assert "ZZT-LEAK-CODE" not in wallboard and "ZZT Leak Tower" not in wallboard
     assert "ZZT Leak Trading House" not in wallboard and "7654321" not in wallboard
+
+
+# ------------------------------------------------- security review (11 Nov): ordering must not identify rows
+
+
+def test_redacted_sites_follow_their_opaque_keys_not_the_raw_ids():
+    """An unkeyed hash of the raw project id would let anyone holding project ids rebuild the order
+    and match each site to its project: the order is the opaque keys' own (keyed, new every day)."""
+    from tests.town._town_project_seed import full_with_projects
+
+    from app.services.town.snapshot import redact
+
+    out = redact(full_with_projects(n_sites=12, n_houses=3))
+    keys = [s["key"] for s in out["projects"]["sites"]]
+    assert keys == sorted(keys)
+
+
+def test_trading_houses_go_by_their_count_then_opaque_key_never_by_customer_code():
+    from tests.town._town_project_seed import full_with_projects
+
+    from app.services.town.snapshot import redact, strip_names
+
+    snap = full_with_projects(n_sites=4, n_houses=4)
+    for row in snap["trading_houses"]["rows"]:
+        row["open_projects"] = 2
+    for variant in (redact(snap), strip_names(snap)):
+        rows = variant["trading_houses"]["rows"]
+        assert [r["key"] for r in rows] == sorted(r["key"] for r in rows)

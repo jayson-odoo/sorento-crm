@@ -192,9 +192,10 @@ def _deliveries(db: Session, company_id: str, day: date) -> dict:
         "to_deliver": int(count),
         "customers": [{"key": str(c), "name": name, "orders": int(orders)} for c, name, orders in customers],
         "project_orders": int(project_count),
-        # Customer ids here are private to the build: `build_snapshot` swaps each for its state.
+        # `_customer` is private to the build: `build_snapshot` swaps it for the customer's state and
+        # drops it, so a customer id never reaches the stored snapshot.
         "project_states": [
-            {"state": str(c) if c else None, "orders": int(orders)} for c, orders in project_customers
+            {"_customer": str(c) if c else None, "orders": int(orders)} for c, orders in project_customers
         ],
     }
 
@@ -619,7 +620,7 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         for c in deliveries["customers"]
     ]
     houses, house_ids = _trading_houses(db, company_id, day)
-    project_customers = [c["state"] for c in deliveries["project_states"] if c["state"]]
+    project_customers = [c["_customer"] for c in deliveries["project_states"] if c["_customer"]]
     # One state lookup for every customer the map draws (shops, stalls, trading houses, project
     # lorries); the raw ids are replaced here and never reach the snapshot.
     states = _states(db, company_id, shop_keys | house_ids | set(project_customers))
@@ -628,7 +629,8 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
     for row in houses["rows"]:
         row["state"] = states.get(row["key"])
     for entry in deliveries["project_states"]:
-        entry["state"] = states.get(entry["state"]) if entry["state"] else None
+        customer = entry.pop("_customer")
+        entry["state"] = states.get(customer) if customer else None
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -709,19 +711,23 @@ def _opaque_keys(out: dict) -> None:
 
 def _project_sections(out: dict, *, reorder: bool) -> None:
     """Sites and trading houses for a viewer who may not see names: no name, code or value, opaque
-    keys. `reorder` (the personal redacted variant) also puts the sites in key-hash order, not
-    value order, so the order does not leak the ranking; the wallboard keeps the order it was given."""
+    keys. `reorder` (the personal redacted variant) also puts the sites in opaque-key order, not
+    value order: keyed and new every day, so the order neither leaks the ranking nor lets anyone
+    holding project ids match a site to its project. Trading houses go by their visible count, then
+    opaque key, never by customer code (a code order would let a viewer match rows to customers)."""
     projects = out.get("projects")
     if projects:
-        if reorder:
-            projects["sites"].sort(key=lambda s: hashlib.sha1(str(s["key"]).encode()).hexdigest())
         for site in projects["sites"]:
             for key in ("name", "code", "estimated_value"):
                 site.pop(key, None)
             site["key"] = opaque_key(out, site["key"])
-    for row in (out.get("trading_houses") or {}).get("rows", []):
+        if reorder:
+            projects["sites"].sort(key=lambda s: s["key"])
+    houses = (out.get("trading_houses") or {}).get("rows", [])
+    for row in houses:
         row.pop("name", None)
         row["key"] = opaque_key(out, row["key"])
+    houses.sort(key=lambda r: (-r["open_projects"], r["key"]))
 
 
 def _drop_suppliers(out: dict) -> None:
