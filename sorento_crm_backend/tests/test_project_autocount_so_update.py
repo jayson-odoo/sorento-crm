@@ -149,7 +149,7 @@ def test_order_and_delay_rows_go_as_one_patch_with_docdate_expected_last_modifie
     assert set(by_key) == {str(DTL_1), str(DTL_2)}, "CHANGE SO NO and CANCEL BALANCE must not ride the PATCH"
     assert D(by_key[str(DTL_1)]["qty"]) == 120
     assert by_key[str(DTL_2)]["deliveryDate"] == "2027-01-07"
-    assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"
+    assert patch.headers["Idempotency-Key"].startswith(f"crm-amd-{amendment.id}-update-edit-")
     assert fake_ss.to("POST", LINES_PATH) == [], "a new product is never a row, so no add-line"
 
 
@@ -249,7 +249,7 @@ def test_a_second_press_after_done_makes_no_call_and_answers_already(api, fake_s
     assert [w["verb"] for w in second.json()["waiting"]] == ["CHANGE SO NO", "CANCEL BALANCE"]
 
 
-def test_a_refused_patch_retried_sends_the_same_key_and_body_and_marks_only_on_done(api, fake_ss):
+def test_a_refused_patch_retried_sends_the_same_body_under_a_fresh_key_and_marks_only_on_done(api, fake_ss):
     client, db, world = api
     amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss, patch=(422, refused_body("ITEM_LOCKED", "Item locked")))
@@ -261,7 +261,8 @@ def test_a_refused_patch_retried_sends_the_same_key_and_body_and_marks_only_on_d
     client.post(_url(amendment))
 
     first, second = fake_ss.to("PATCH", DOC_PATH)
-    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
+    # Owner 11 Nov: a refusal never holds the key; the retry goes under a fresh one.
+    assert first.headers["Idempotency-Key"] != second.headers["Idempotency-Key"]
     assert first.content == second.content
     db.refresh(amendment)
     assert amendment.autocount_edit_sent_at is not None

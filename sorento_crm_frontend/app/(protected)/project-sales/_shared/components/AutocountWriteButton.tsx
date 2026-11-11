@@ -59,6 +59,8 @@ export function AutocountWriteButton({
         }}
         title={label}
         result={result}
+        onRetry={press}
+        retrying={pending}
       />
     </>
   );

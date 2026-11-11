@@ -45,13 +45,19 @@ export function AutocountWriteDialog({
   onOpenChange,
   title,
   result,
+  onRetry,
+  retrying = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   result: AutocountWriteResult | null;
+  /** Runs the same action again. Shown whenever the answer is not done (owner, 11 Nov). */
+  onRetry?: () => void;
+  retrying?: boolean;
 }) {
   const done = result?.outcome === 'done';
+  const canRetry = Boolean(onRetry) && result !== null && !done && result.outcome !== 'waiting';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
@@ -133,6 +139,11 @@ export function AutocountWriteDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
+          {canRetry && (
+            <Button type="button" variant="primary" disabled={retrying} onClick={onRetry}>
+              {retrying ? 'Trying again…' : 'Try again'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

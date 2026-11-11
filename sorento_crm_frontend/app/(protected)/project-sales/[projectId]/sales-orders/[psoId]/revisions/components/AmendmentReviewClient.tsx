@@ -369,6 +369,8 @@ export function AmendmentReviewClient({
         }}
         title="Update in AutoCount"
         result={updateResult}
+        onRetry={autocountUpdate?.onUpdate}
+        retrying={updateInAutocount.isPending}
       />
     </div>
   );

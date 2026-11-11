@@ -151,7 +151,7 @@ def test_a_new_row_goes_as_one_add_line_call_in_the_gateways_line_shape(qt_api, 
     assert world.document.autocount_last_modified == "2026-11-10T09:01:00"
 
 
-def test_a_refused_added_line_keeps_the_done_patch_and_the_retry_resends_only_that_line(qt_api, fake_ss):
+def test_a_refused_added_line_keeps_the_done_patch_and_the_retry_resends_only_that_line_under_a_fresh_key(qt_api, fake_ss):
     client, db, world = qt_api
     issue2 = _issue2(db, world)
     p_new = _add_new_line(db, world)
@@ -173,7 +173,7 @@ def test_a_refused_added_line_keeps_the_done_patch_and_the_retry_resends_only_th
     assert client.post(_qt_url(world)).json()["outcome"] == "done"
     assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1
     first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
-    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
+    assert first.headers["Idempotency-Key"] != second.headers["Idempotency-Key"], "owner 11 Nov: a fresh key per press"
 
 
 # =========================================================================== quotation: remove line
@@ -195,7 +195,7 @@ def test_a_row_the_revision_no_longer_quotes_is_removed_when_delete_line_is_on(q
     assert body["waiting"] == []
     assert "ZZT-OLD-CODE" in body["message"], "the done note names the removed line"
     [delete] = fake_ss.to("POST", _qt_delete_path(4))
-    assert delete.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-delete-4"
+    assert delete.headers["Idempotency-Key"].startswith(f"crm-qt-{world.document.id}-{issue2.id}-update-delete-4-")
     assert fake_ss.body(delete)["companyCode"] == "SRT"
     writes = [r for r in fake_ss.writes() if r.method != "GET"]
     assert [r.method for r in writes] == ["PATCH", "POST"], "the edit goes first, then the removal"
@@ -392,7 +392,7 @@ def test_an_existing_so_patch_key_and_body_shape_are_unchanged(so_api, fake_ss):
 
     [patch] = fake_ss.to("PATCH", SO_DOC_PATH)
     assert fake_ss.body(patch)["expectedLastModified"] == LAST_MODIFIED
-    assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"
+    assert patch.headers["Idempotency-Key"].startswith(f"crm-amd-{amendment.id}-update-edit-")
 
 
 
@@ -456,164 +456,11 @@ def test_a_styled_line_description_goes_to_autocount_as_plain_text(qt_api, fake_
     assert sent["description"] == PLAIN_SENTENCE
 
 
-# =========================================================================== B14: a key SS holds for an older body
-
-
-def _conflict_on_base(base_suffix, then):
-    """SS holds the base key for an older body (B14: a 6 Nov edit), so it answers
-    IDEMPOTENCY_CONFLICT to it; any other key gets `then`."""
-
-    def answer(request):
-        if request.headers["Idempotency-Key"].endswith(base_suffix):
-            return (409, refused_body("IDEMPOTENCY_CONFLICT", ""))
-        return then
-
-    return answer
-
-
-def test_a_quotation_edit_whose_key_ss_holds_for_an_older_body_goes_under_a_fresh_key(qt_api, fake_ss):
-    """AC-E2E-DB3 B14 (db3, 11 Nov): an edit sets absolute values, so it can be re-sent under a
-    new key; without that every press answered IDEMPOTENCY_CONFLICT for good."""
-    client, db, world = qt_api
-    issue2 = _issue2(db, world)
-    held = _answer_qt(fake_ss, world)
-    fake_ss.answers[("PATCH", QT_DOC_PATH)] = _conflict_on_base(
-        "-update-edit",
-        (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held, last_modified="2026-11-11T12:00:00")),
-    )
-
-    body = client.post(_qt_url(world)).json()
-
-    assert body["outcome"] == "done", body
-    first, second = fake_ss.to("PATCH", QT_DOC_PATH)
-    base = f"crm-qt-{world.document.id}-{issue2.id}-update-edit"
-    assert first.headers["Idempotency-Key"] == base
-    assert second.headers["Idempotency-Key"] == f"{base}-r"
-    assert first.content == second.content
-    db.refresh(world.document)
-    assert world.document.autocount_issue_id == issue2.id
-
-
-def test_a_sales_order_edit_whose_key_ss_holds_for_an_older_body_goes_under_a_fresh_key(so_api, fake_ss):
-    client, db, world = so_api
-    put_in_autocount(db, world)
-    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")])
-    db.commit()
-    fake_ss.answers[("PATCH", SO_DOC_PATH)] = _conflict_on_base(
-        "-update-edit", (200, done_body(last_modified="2026-11-11T12:00:00"))
-    )
-
-    body = client.post(f"{BASE}/sales-orders/amendments/{amendment.id}/autocount").json()
-
-    assert body["outcome"] == "done", body
-    keys = [r.headers["Idempotency-Key"] for r in fake_ss.to("PATCH", SO_DOC_PATH)]
-    assert keys == [f"crm-amd-{amendment.id}-update-edit", f"crm-amd-{amendment.id}-update-edit-r"]
-
-
-def test_a_create_whose_key_ss_holds_is_never_re_sent_under_another_key(qt_api, fake_ss):
-    """A create could land twice under a new key, so a conflict on it stays a refusal."""
-    client, _db, world = qt_api
-    fake_ss.answers[("POST", "/api/v1/autocount/documents/quotations")] = (
-        409, refused_body("IDEMPOTENCY_CONFLICT", "")
-    )
-
-    body = client.post(_qt_url(world)).json()
-
-    assert body["outcome"] == "refused"
-    assert len(fake_ss.to("POST", "/api/v1/autocount/documents/quotations")) == 1
-
-
-# =========================================================================== B15: AutoCount's own refusal of a create
-
-
-@pytest.fixture
-def attempts(monkeypatch):
-    from app.services import project_autocount_write_service as svc
-    from tests.test_project_autocount_idem_keys import DictStore
-
-    s = DictStore()
-    monkeypatch.setattr(svc, "attempt_store", lambda: s)
-    return s
-
-
-def test_a_create_autocount_refused_goes_under_a_new_key_after_the_fix(qt_api, fake_ss, attempts):
-    """AC-E2E-DB3 B15 (db3, 11 Nov): AutoCount refused a create (vendor_error / VENDOR_REFUSED,
-    a unit not in its master file), the unit was fixed, and every later press answered
-    IDEMPOTENCY_CONFLICT. VENDOR_REFUSED is AutoCount saying no with nothing written (SS plan 57),
-    so the next press takes a new attempt key."""
-    from app.services.autocount_idempotency import attempt_key
-
-    client, db, world = qt_api
-    path = "/api/v1/autocount/documents/quotations"
-    refused = refused_body("VENDOR_REFUSED", "itemCode and uom do not exist in its master file", outcome="vendor_error")
-    fake_ss.answers[("POST", path)] = (502, refused)
-    first = client.post(_qt_url(world)).json()
-    assert first["outcome"] != "done"
-
-    fake_ss.answers[("POST", path)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world)))
-    second = client.post(_qt_url(world)).json()
-
-    assert second["outcome"] == "done", second
-    base = f"crm-qt-{world.document.id}-{world.issue.id}-create"
-    keys = [r.headers["Idempotency-Key"] for r in fake_ss.to("POST", path)]
-    assert keys == [base, attempt_key(base, 1)]
-
-
-def test_a_bare_vendor_error_keeps_the_key(qt_api, fake_ss, attempts):
-    """VENDOR_ERROR is a failure with no text: it may have landed, so a retry only replays."""
-    client, db, world = qt_api
-    path = "/api/v1/autocount/documents/quotations"
-    fake_ss.answers[("POST", path)] = (502, refused_body("VENDOR_ERROR", "", outcome="vendor_error"))
-    client.post(_qt_url(world))
-    client.post(_qt_url(world))
-
-    keys = [r.headers["Idempotency-Key"] for r in fake_ss.to("POST", path)]
-    assert len(set(keys)) == 1, keys
-
-
-def test_a_lost_answer_on_the_fresh_edit_key_never_jams_the_edit(qt_api, fake_ss, attempts):
-    """Re-review should-fix: the base key is held (B14) and the `-r` edit lands but its answer is
-    lost; the next press's body differs, so `-r` conflicts too. A conflict on the `-r` line moves
-    that line on (an edit is absolute values under a stamp check), so the edit is never stuck."""
-    import copy
-
-    import httpx
-
-    client, db, world = qt_api
-    _issue2(db, world)
-    held = _answer_qt(fake_ss, world)
-    before = copy.deepcopy(held)
-    before[0]["Qty"] = "999"  # AutoCount differs, so the edit carries a row
-    state = {"landed": False, "r_body": None}
-
-    def get(_request):
-        return (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held if state["landed"] else before))
-
-    def patch(request):
-        key = request.headers["Idempotency-Key"]
-        if key.endswith("-update-edit"):
-            return (409, refused_body("IDEMPOTENCY_CONFLICT", ""))  # held from 6 Nov
-        if state["r_body"] is None:
-            state["r_body"] = request.content
-            state["landed"] = True
-            raise httpx.ReadTimeout("answer lost")  # landed, answer lost
-        if request.content != state["r_body"] and key == state.get("r_key", key):
-            return (409, refused_body("IDEMPOTENCY_CONFLICT", ""))
-        return (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held))
-
-    def patch_tracking(request):
-        if state["r_body"] is None and not request.headers["Idempotency-Key"].endswith("-update-edit"):
-            state["r_key"] = request.headers["Idempotency-Key"]
-        return patch(request)
-
-    fake_ss.answers[("GET", QT_DOC_PATH)] = get
-    fake_ss.answers[("PATCH", QT_DOC_PATH)] = patch_tracking
-
-    first = client.post(_qt_url(world)).json()
-    second = client.post(_qt_url(world)).json()
-
-    assert first["outcome"] == "unreachable", first
-    assert second["outcome"] == "done", second
+# =========================================================================== B14 / B15
+# The held-key cases (B14: an edit key SS holds for an older body; B15: a create AutoCount refused,
+# then IDEMPOTENCY_CONFLICT for good) are covered under the owner's 11 Nov ruling by
+# `tests/test_project_autocount_retry.py`: no write but a create keeps a key across presses, and a
+# create releases its key on a refusal.
 
 
 def test_a_held_key_never_says_nothing_was_changed(qt_api, fake_ss):

@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -485,6 +486,8 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     autocount_cancelled_by = Column(String(100), nullable=True)
     # The AutoCount book the key belongs to (R8): SS's name at create, or the adopted source_ref's.
     autocount_book = Column(String(40), nullable=True)
+    # Owner 11 Nov: the key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSON(none_as_null=True), nullable=True)
     status = Column(String(24), nullable=False, server_default=SO_STATUS_DRAFT)
 
     # A parking route: the customer on the document is a convenience, the project is the

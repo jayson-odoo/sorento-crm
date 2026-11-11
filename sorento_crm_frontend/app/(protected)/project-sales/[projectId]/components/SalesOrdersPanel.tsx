@@ -658,6 +658,8 @@ export function SalesOrdersPanel({
         }}
         title="Cancel in AutoCount"
         result={cancelResult}
+        onRetry={() => void cancelSelected()}
+        retrying={cancelInAutocount.isPending}
       />
 
       {building && (

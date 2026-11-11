@@ -166,6 +166,13 @@ function QuotationAutocountActions({
         }}
         title="Cancel in AutoCount"
         result={cancelResult}
+        onRetry={() =>
+          void cancel
+            .mutateAsync(documentId)
+            .then(setCancelResult)
+            .catch(() => undefined)
+        }
+        retrying={cancel.isPending}
       />
     </>
   );

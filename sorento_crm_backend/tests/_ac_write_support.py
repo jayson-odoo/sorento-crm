@@ -241,11 +241,8 @@ def fake_ss(monkeypatch) -> FakeSS:
 
     fake = FakeSS()
     monkeypatch.setattr(client_mod, "TRANSPORT", httpx.MockTransport(fake.handler), raising=False)
-    # No Redis for the attempt counter unless a test installs a store (round 6b): every press
-    # then uses the plain base key.
-    from app.services import project_autocount_write_service as svc_mod
-
-    monkeypatch.setattr(svc_mod, "attempt_store", lambda: None)
+    # Owner ruling 11 Nov: the write service no longer keeps an attempt counter (no Redis): every
+    # write but a create takes a fresh key each press, and a create holds its key on the record.
     return fake
 
 

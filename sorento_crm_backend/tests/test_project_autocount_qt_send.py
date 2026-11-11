@@ -192,7 +192,7 @@ def test_the_idempotency_key_names_the_document_and_the_issue(api, fake_ss):
     client.post(_url(world))
 
     [request] = fake_ss.to("POST", QT_CREATE_PATH)
-    assert request.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{world.issue.id}-create"
+    assert request.headers["Idempotency-Key"].startswith(f"crm-qt-{world.document.id}-{world.issue.id}-create-")
 
 
 def test_the_result_note_names_the_skipped_line_and_the_exploded_set(api, fake_ss):
@@ -245,14 +245,16 @@ def test_a_refusal_writes_nothing_to_the_quotation(api, fake_ss):
 # --------------------------------------------------------------------------- U17: a later revision updates
 
 
-def test_the_same_issue_again_is_409_already_in_autocount_with_no_call(api, fake_ss):
+def test_the_same_issue_again_is_a_no_op_showing_the_document_with_no_call(api, fake_ss):
+    """Owner 11 Nov: a second press after a success is a no-op that shows the document."""
     client, db, world = api
     _mark_sent(db, world)
 
     response = client.post(_url(world))
 
-    assert response.status_code == 409, response.text
-    assert response.json()["message"] == ALREADY
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "done"
+    assert response.json()["message"] == "QT000777 is already in AutoCount."
     assert fake_ss.calls == []
 
 
@@ -278,7 +280,7 @@ def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, f
     assert body["companyCode"] == "SRT"
     assert "docDate" not in body and "docDate" not in body["header"]
     assert body["expectedLastModified"] == "2026-10-21T08:00:00"
-    assert patch.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-edit"
+    assert patch.headers["Idempotency-Key"].startswith(f"crm-qt-{world.document.id}-{issue2.id}-update-edit-")
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id
     assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
@@ -458,8 +460,9 @@ def test_a_retry_after_a_partial_sends_only_the_remaining_step_with_the_same_key
     assert body["outcome"] == "done"
     assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1, "the PATCH step is done and is not sent again"
     first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
-    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
-    assert first.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-lines-3"
+    # Owner 11 Nov: the refused add goes again under a fresh key; the done PATCH is not resent.
+    assert first.headers["Idempotency-Key"] != second.headers["Idempotency-Key"]
+    assert second.headers["Idempotency-Key"].startswith(f"crm-qt-{world.document.id}-{issue2.id}-update-lines-3-")
     assert first.content == second.content
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id
@@ -556,7 +559,8 @@ def test_fields_we_did_not_send_ignored_by_autocount_still_count_as_updated(api,
 
     calls = len(fake_ss.calls)
     again = client.post(_url(world))
-    assert again.status_code == 409 and again.json()["message"] == ALREADY
+    # Owner 11 Nov: a second press after a success is a no-op that shows the document.
+    assert again.status_code == 200 and again.json()["message"] == "QT000777 is already in AutoCount."
     assert len(fake_ss.calls) == calls
 
 
@@ -610,7 +614,8 @@ def test_a_press_after_a_complete_update_is_409_already_with_no_call(api, fake_s
 
     again = client.post(_url(world))
 
-    assert again.status_code == 409 and again.json()["message"] == ALREADY
+    # Owner 11 Nov: a second press after a success is a no-op that shows the document.
+    assert again.status_code == 200 and again.json()["message"] == "QT000777 is already in AutoCount."
     assert len(fake_ss.calls) == calls
 
 

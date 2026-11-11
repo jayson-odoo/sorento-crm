@@ -45,6 +45,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -1205,6 +1206,8 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
     autocount_cancelled_by = Column(String(100), nullable=True)
     autocount_book = Column(String(40), nullable=True)
+    # Owner 11 Nov: the key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSON(none_as_null=True), nullable=True)
 
     recipient_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True

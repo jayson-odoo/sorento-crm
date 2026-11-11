@@ -156,3 +156,50 @@ describe('AutocountWriteDialog', () => {
     expect(text()).toContain('Price and location copied from the quotation');
   });
 });
+
+describe('Try again (owner, 11 Nov: every error is retryable)', () => {
+  const REFUSED = {
+    ...DONE,
+    outcome: 'refused',
+    message: 'AutoCount refused: uom is required. Nothing was changed.',
+    doc_no: null,
+    lines: [],
+  };
+
+  it('shows the plain reason and a Try again that runs the action again', async () => {
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const onRetry = vi.fn();
+    render(
+      <AutocountWriteDialog open onOpenChange={() => {}} title="Create in AutoCount" result={REFUSED} onRetry={onRetry} />,
+    );
+
+    expect(screen.getByText('AutoCount refused: uom is required. Nothing was changed.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers Try again after an unknown outcome too', () => {
+    render(
+      <AutocountWriteDialog
+        open
+        onOpenChange={() => {}}
+        title="Create in AutoCount"
+        result={{ ...REFUSED, outcome: 'unreachable', message: 'Could not reach AutoCount' }}
+        onRetry={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('has no Try again once AutoCount confirmed it', () => {
+    render(<AutocountWriteDialog open onOpenChange={() => {}} title="Create in AutoCount" result={DONE} onRetry={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+  });
+
+  it('greys Try again while the retry runs', () => {
+    render(
+      <AutocountWriteDialog open onOpenChange={() => {}} title="Create in AutoCount" result={REFUSED} onRetry={() => {}} retrying />,
+    );
+    expect(screen.getByRole('button', { name: 'Trying again…' })).toBeDisabled();
+  });
+});

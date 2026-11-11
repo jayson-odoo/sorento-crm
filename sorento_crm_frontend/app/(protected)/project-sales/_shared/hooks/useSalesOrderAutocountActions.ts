@@ -34,6 +34,7 @@ export function useSalesOrderAutocountActions(
   const create = useCreateSalesOrderInAutocount();
   const cancel = useCancelSalesOrderInAutocount();
   const [result, setResult] = React.useState<AutocountWriteResult | null>(null);
+  const [last, setLast] = React.useState<'create' | 'cancel' | null>(null);
 
   const caps = capabilities.data;
   const capsLoading = capabilities.isLoading;
@@ -69,8 +70,16 @@ export function useSalesOrderAutocountActions(
     createState,
     cancelState,
     updateState,
-    runCreate: () => run(create.mutateAsync),
-    runCancel: () => run(cancel.mutateAsync),
+    runCreate: () => {
+      setLast('create');
+      run(create.mutateAsync);
+    },
+    runCancel: () => {
+      setLast('cancel');
+      run(cancel.mutateAsync);
+    },
+    /** The same action again, from the result dialog's Try again (owner, 11 Nov). */
+    retry: () => run(last === 'cancel' ? cancel.mutateAsync : create.mutateAsync),
     pending: create.isPending || cancel.isPending,
     result,
     clearResult: () => setResult(null),

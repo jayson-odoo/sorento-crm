@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -45,7 +46,7 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
-from app.services.autocount_idempotency import attempt_store, send_with_attempts
+from app.services.autocount_idempotency import is_definite_refusal
 from app.services.project_quotation_service import line_text
 from app.services.set_driver_pricing import split_set_driver_price
 from app.services.project_so_delta_service import (
@@ -163,7 +164,20 @@ def _trim_sentence(message: Optional[str]) -> str:
 _CODE_SHAPE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 
 
-_FRESH_KEY_HELD = "FRESH_EDIT_KEY_HELD"
+def _fresh_key(base: str) -> str:
+    return f"{base}-{secrets.token_hex(4)}"
+
+
+def _released(answer: Dict[str, Any]) -> bool:
+    """AutoCount or SS said no and nothing was written, so the key is free again: a refusal,
+    VENDOR_REFUSED, or a 4xx SS answered without an outcome. A timeout, a lost reply, a 5xx, a
+    202, VENDOR_ERROR or a mismatch is unknown and keeps it."""
+    if answer.get("outcome") == "gateway_error":
+        status = answer.get("status")
+        return isinstance(status, int) and 400 <= status < 500 and answer.get("errorCode") != "UNREACHABLE"
+    return is_definite_refusal(answer)
+
+
 HELD_TEXT = "AutoCount still holds an earlier press of this change. Check it in AutoCount, then press again."
 
 
@@ -317,47 +331,62 @@ class ProjectAutocountWriteService:
         try:
             return fn(self._gateway())
         except FoundryxPullError as exc:
-            return {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message}
+            return {
+                "outcome": "gateway_error",
+                "errorCode": exc.code,
+                "message": exc.message,
+                "status": exc.status,
+            }
 
-    def _send_attempts(self, base_key: str, call, *, edit: bool = False) -> Dict[str, Any]:
-        """One write under the intent's current attempt key (#2223's shared helper).
-
-        Attempt 0 is the plain `base_key`; a definite refusal moves the next press of the same
-        intent to a new key so it is not answered with the stored refusal. Anything else keeps
-        the key, so a retry can only replay."""
-        answer = send_with_attempts(
-            attempt_store(), base_key, lambda key: self._call(lambda c: call(c, key))
-        )
-        sent = base_key
-        if edit and answer.get("errorCode") == "IDEMPOTENCY_CONFLICT":
-            # AC-E2E-DB3 B14: SS holds this key for an older body (a 6 Nov edit, before the
-            # bodies changed), so it can never be replayed. An edit sets absolute values under a
-            # stamp check, so it is safe to send under its own fresh line of keys; a create or an
-            # add never is. On that line a conflict counts as a definite refusal (re-review: a
-            # lost answer there must not jam it too), so the line moves on and is asked once more.
-            sent = f"{base_key}-r"
-
-            def send_fresh(key: str) -> Dict[str, Any]:
-                got = self._call(lambda c: call(c, key))
-                if got.get("errorCode") == "IDEMPOTENCY_CONFLICT":
-                    return {**got, "outcome": "refused", "errorCode": _FRESH_KEY_HELD}
-                return got
-
-            for _ in range(2):
-                answer = send_with_attempts(attempt_store(), sent, send_fresh)
-                if answer.get("errorCode") != _FRESH_KEY_HELD:
-                    break
-            if answer.get("errorCode") == _FRESH_KEY_HELD:
-                answer = {**answer, "errorCode": "IDEMPOTENCY_CONFLICT"}
+    def _log_unlanded(self, key: str, answer: Dict[str, Any]) -> None:
         if answer.get("outcome") not in _DONE:
             # One line per write that did not land, so a refusal on a live stack can be read back.
             logger.warning(
                 "autocount write %s: outcome=%s errorCode=%s",
-                sent,
+                key,
                 str(answer.get("outcome"))[:40],
                 str(answer.get("errorCode"))[:64],
             )
+
+    def _send(self, base_key: str, call) -> Dict[str, Any]:
+        """Every write but a create, under a fresh key each press (owner, 11 Nov: a refusal must
+        never block the retry). Safe without a held key: edits send absolute values under the
+        stamp check, adds and removals are matched against the document read this press, and a
+        removal / cancel already done answers ROW_NOT_FOUND / DOC_CANCELLED."""
+        key = _fresh_key(base_key)
+        answer = self._call(lambda c: call(c, key))
+        self._log_unlanded(key, answer)
         return answer
+
+    def _create(self, record: Any, base_key: str, path: str, body: Dict[str, Any]):
+        """A create, the one write that could land twice (owner, 11 Nov).
+
+        Only a confirmed success uses up a key. Before the call the exact key and body are
+        written to the record (write-ahead); a refusal releases them, so the next press sends the
+        current body under a fresh key; an unknown outcome keeps them, and the next press first
+        re-sends that exact key and body, so SS answers with what it stored for our reference
+        (done: link it, no duplicate; refused: release and send the current body at once).
+        Returns (answer, the body that answer belongs to)."""
+        pending = record.autocount_pending_create
+        if pending:
+            answer = self._call(
+                lambda c: c.write(path, pending["body"], idempotency_key=pending["key"])
+            )
+            self._log_unlanded(pending["key"], answer)
+            if self._is_done(answer) or not _released(answer):
+                if self._is_done(answer):
+                    record.autocount_pending_create = None
+                    self.db.flush()
+                return answer, pending["body"]
+        key = _fresh_key(base_key)
+        record.autocount_pending_create = {"key": key, "body": body}
+        self.db.commit()  # write-ahead: a press that dies mid-call is still asked for next time
+        answer = self._call(lambda c: c.write(path, body, idempotency_key=key))
+        self._log_unlanded(key, answer)
+        if self._is_done(answer) or _released(answer):
+            record.autocount_pending_create = None
+            self.db.flush()
+        return answer, body
 
     def company_code(self, company_id: Optional[str]) -> str:
         company = self.db.query(Company).filter(Company.id == company_id).first() if company_id else None
@@ -520,7 +549,9 @@ class ProjectAutocountWriteService:
             return self._blank(str(outcome or "mismatch"), CANCEL_IGNORED_TEXT)
         if code == "LINE_NOT_DELETED":
             return self._blank(str(outcome or "mismatch"), LINE_NOT_DELETED_TEXT)
-        if outcome == "refused" or outcome is None:
+        if outcome == "refused" or outcome is None or code == "VENDOR_REFUSED":
+            # VENDOR_REFUSED: AutoCount itself said no, nothing written (owner 11 Nov: a plain
+            # reason, and the press can be tried again).
             return self._blank("refused", _refused_text(answer))
         # mismatch and anything else SS may add: shown as AutoCount's answer, never as done.
         return self._blank(
@@ -676,11 +707,9 @@ class ProjectAutocountWriteService:
     def create_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         order = self._draft.get_order(pso_id)
         if order.autocount_doc_no or self._draft.autocount_doc_key(order):
-            raise AppException(
-                status_code=409,
-                message=f"{order.provisional_ref} is already in AutoCount.",
-                code="ac_already_in_autocount",
-            )
+            # A second press after a success is a no-op that shows the document (owner, 11 Nov).
+            doc_no = order.autocount_doc_no or order.provisional_ref
+            return self._blank("done", f"{doc_no} is already in AutoCount.", order.autocount_doc_no)
         if order.status not in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
             raise AppException(
                 status_code=409,
@@ -701,11 +730,8 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(order.company_id)[1]
         if not book:
             return self._no_book_answer(order.company_id)
-        answer = self._send_attempts(
-            f"crm-pso-{order.id}-create",
-            lambda c, key: c.write("documents/sales-orders", body, idempotency_key=key),
-        )
-        result = self._interpret(answer, verb="created", debtor=body["header"]["debtorCode"])
+        answer, sent = self._create(order, f"crm-pso-{order.id}-create", "documents/sales-orders", body)
+        result = self._interpret(answer, verb="created", debtor=sent["header"]["debtorCode"])
         if self._is_done(answer):
             document = answer.get("document") or {}
             order.autocount_doc_no = result["doc_no"]
@@ -788,10 +814,9 @@ class ProjectAutocountWriteService:
             # SS finds the document by its own date; with none, it uses the date it staged.
             body["docDate"] = doc_date
         path = f"documents/sales-orders/{doc_key}"
-        answer = self._send_attempts(
+        answer = self._send(
             f"crm-amd-{amendment.id}-update-edit",
             lambda c, key: c.patch(path, body, idempotency_key=key),
-            edit=True,
         )
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
@@ -903,7 +928,7 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self._order_company_code(order)}
         path = f"documents/sales-orders/{doc_key}/cancel"
-        answer = self._send_attempts(
+        answer = self._send(
             f"crm-pso-{order.id}-cancel",
             lambda c, key: c.write(path, body, idempotency_key=key),
         )
@@ -978,7 +1003,9 @@ class ProjectAutocountWriteService:
         if document.kind != "quotation" or issue is None or issue.accepted_at is None:
             raise AppException(status_code=409, message=NOT_ACCEPTED, code="ac_not_accepted")
         if document.autocount_doc_key and document.autocount_issue_id == issue.id:
-            raise AppException(status_code=409, message=ALREADY, code="ac_already_sent")
+            # A second press after a success is a no-op that shows the document (owner, 11 Nov).
+            doc_no = document.autocount_doc_no or document.document_no
+            return self._blank("done", f"{doc_no} is already in AutoCount.", document.autocount_doc_no)
         if document.autocount_doc_key:
             _safe_key(document.autocount_doc_key)
             self._require_book(document.autocount_book, self.read_capabilities(document.company_id)[1])
@@ -1035,9 +1062,8 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(document.company_id)[1]
         if not book:
             return self._no_book_answer(document.company_id)
-        answer = self._send_attempts(
-            f"crm-qt-{document.id}-{issue.id}-create",
-            lambda c, key: c.write("documents/quotations", body, idempotency_key=key),
+        answer, _sent = self._create(
+            document, f"crm-qt-{document.id}-{issue.id}-create", "documents/quotations", body
         )
         result = self._interpret(answer, verb="created", debtor=debtor)
         if self._is_done(answer):
@@ -1159,11 +1185,10 @@ class ProjectAutocountWriteService:
                 body["docDate"] = doc_date
             if rows:
                 body["lines"] = rows
-            answer = self._send_attempts(
+            answer = self._send(
                 f"{base_key}-edit",
                 lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
-                edit=True,
-            )
+                )
             answer = self._done_if_only_mirrored_remarks_ignored(answer)
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
@@ -1185,7 +1210,7 @@ class ProjectAutocountWriteService:
             }
             if doc_date:
                 add_body["docDate"] = doc_date
-            answer = self._send_attempts(
+            answer = self._send(
                 f"{base_key}-lines-{place}",
                 lambda c, idem: c.write(f"documents/quotations/{key}/lines", add_body, idempotency_key=idem),
             )
@@ -1240,7 +1265,7 @@ class ProjectAutocountWriteService:
         body: Dict[str, Any] = {"companyCode": company}
         if doc_date:
             body["docDate"] = doc_date
-        return self._send_attempts(
+        return self._send(
             f"{base_key}-{dtl}",
             lambda c, idem: c.write(f"documents/{kind}/{doc_key}/lines/{dtl}/delete", body, idempotency_key=idem),
         )
@@ -1284,7 +1309,7 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self.company_code(document.company_id)}
         path = f"documents/quotations/{key}/cancel"
-        answer = self._send_attempts(
+        answer = self._send(
             f"crm-qt-{document.id}-cancel",
             lambda c, key: c.write(path, body, idempotency_key=key),
         )

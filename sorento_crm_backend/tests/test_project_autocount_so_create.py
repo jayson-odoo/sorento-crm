@@ -152,7 +152,7 @@ def test_the_idempotency_key_is_built_from_the_order_id(api, fake_ss):
     client.post(_url(world))
 
     [request] = fake_ss.to("POST", SO_CREATE_PATH)
-    assert request.headers["Idempotency-Key"] == f"crm-pso-{world.order.id}-create"
+    assert request.headers["Idempotency-Key"].startswith(f"crm-pso-{world.order.id}-create-")
     assert request.headers["X-API-Key"]
 
 
@@ -348,14 +348,17 @@ def test_an_order_with_an_unacknowledged_hard_finding_is_not_eligible(api, fake_
     assert fake_ss.calls == []
 
 
-def test_an_order_already_in_autocount_is_not_eligible(api, fake_ss):
+def test_an_order_already_in_autocount_is_a_no_op_showing_the_document(api, fake_ss):
+    """Owner 11 Nov: a second press after a success is a no-op that shows the document."""
     client, db, world = api
     put_in_autocount(db, world)
     db.commit()
 
     response = client.post(_url(world))
 
-    assert response.status_code == 409, response.text
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "done"
+    assert response.json()["message"] == "SO412345 is already in AutoCount."
     assert fake_ss.calls == []
 
 

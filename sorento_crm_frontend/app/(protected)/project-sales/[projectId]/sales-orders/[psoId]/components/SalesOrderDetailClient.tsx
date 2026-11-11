@@ -783,6 +783,8 @@ export function SalesOrderDetailClient({
         }}
         title="AutoCount"
         result={autocount.result}
+        onRetry={autocount.retry}
+        retrying={autocount.pending}
       />
 
       {publishing && (
