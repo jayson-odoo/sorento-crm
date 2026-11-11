@@ -43,7 +43,9 @@ vi.mock('@/hooks/useDeferredAction', () => ({
 vi.mock('@/components/common/DetailActionsMenu', () => ({
   DetailActionsMenu: ({ children }: { children: React.ReactNode }) => <div data-testid="gear-menu">{children}</div>,
 }));
-vi.mock('@/components/ui/dropdown-menu', () => ({
+// The design lightbox's zoom menu needs the real DropdownMenu; only the item is stood in.
+vi.mock('@/components/ui/dropdown-menu', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   DropdownMenuItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: (e: { preventDefault: () => void }) => void }) => (
     <button role="menuitem" onClick={() => onSelect?.({ preventDefault: () => {} })}>{children}</button>
   ),
@@ -65,7 +67,17 @@ const apiFetch = vi.fn(async (url: string, init?: RequestInit) => {
     return json({ ...state.detail, revision: state.revision });
   }
   if (path.startsWith('/api/v1/my-requests/submissions/price_tag_request') && method !== 'GET') return json({ ...state.detail, id: 'req-1' });
-  if (path.endsWith('/design')) return json({ detail: 'none' }, 404);
+  // A proof awaiting approval has a design (the page opens it from Preview, owner 11 Nov).
+  if (path.endsWith('/design')) {
+    return json({
+      page_id: 'page-1', version: 1, source: 'version',
+      doc: {
+        kind: 'tag_sheet', imposition: { page_width_mm: 210, page_height_mm: 297 },
+        sheets: [{ id: 'sheet-1', tags: [{ id: 'tag-1', request_tag_id: 'l-1', x_mm: 20, y_mm: 30, width_mm: 80, height_mm: 40, layers: [] }] }],
+      },
+      lines: [], assets: {}, images: {}, fonts: [],
+    });
+  }
   if (path.includes('/lookups/debtors-for-agent') || path.endsWith('/debtors')) {
     return json([{ customer_id: 'c-1', customer_code: 'D-001', customer_name: 'ZZT Dealer', debtor_code: 'D-001', debtor_name: 'ZZT Dealer', source: 'customer' }]);
   }
@@ -128,6 +140,8 @@ describe('Price Tag Request page, limited user, view', () => {
 
   it('proof ready: Approve proof POSTs .../approve, Request changes is offered, the designer is not', async () => {
     await mountDetail(LIMITED, { portal_draft_at: null, status: 'proof_ready' });
+    // Owner hand test 11 Nov: the design, and its Approve, open from the page's Preview button.
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
     fireEvent.click((await screen.findAllByRole('button', { name: /^Approve/ }))[0]);
     await waitFor(() => expect(posted('approve')).toHaveLength(1));
     expect(screen.getByLabelText(/Anything else \(optional\)/)).toBeTruthy();
