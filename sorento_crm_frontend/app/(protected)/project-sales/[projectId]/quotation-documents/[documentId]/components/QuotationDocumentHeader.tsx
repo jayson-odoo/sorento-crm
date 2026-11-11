@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useProjectQuotationVersions,
@@ -83,17 +84,52 @@ function EditField({
 
 /**
  * Who issued and when each scope's current version was opened, for the Header details (#1341,
- * owner: "this one should be in header details"). The values are per scope version and genuinely
- * differ (each scope's version is opened on its own, by whoever opened it), so a quotation with
- * more than one scope lists them grouped by scope; one scope reads as a plain pair of fields.
+ * owner: "this one should be in header details"). The values are per scope version, but the
+ * Header shows ONE pair for the document (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "don't need to
+ * be by unit here"): see `documentHeaderDetail`.
  */
 export type QuotationHeaderDetail = {
   scopeId: string;
   scopeLabel: string;
   versionNo: number;
+  isIssued: boolean;
   issuedByName: string | null;
   openedAt: string | null;
 };
+
+/**
+ * The one pair the Header shows: an issued area version wins over one that never went out, and
+ * among those the most recently opened. Null when no scope has a current version yet.
+ */
+export function documentHeaderDetail(
+  details: QuotationHeaderDetail[],
+): QuotationHeaderDetail | null {
+  const issued = details.filter((detail) => detail.isIssued);
+  const pool = issued.length > 0 ? issued : details;
+  let latest: QuotationHeaderDetail | null = null;
+  for (const detail of pool) {
+    // ISO timestamps from the same API compare correctly as strings; an unknown date loses.
+    if (!latest || (detail.openedAt ?? '') > (latest.openedAt ?? '')) latest = detail;
+  }
+  return latest;
+}
+
+/** The folded Header's one line: To, project title, Date, Total; blanks are left out. */
+export function headerSummary(document: QuotationDocument, total: string | null): string {
+  return [
+    document.recipient_name_snapshot,
+    document.subject_title,
+    document.doc_date ? formatDateInMalaysia(document.doc_date) : null,
+    formatMyrExact(total),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** The folded Lines' one line: how many scopes, and their total. */
+export function linesSummary(count: number, total: string | null): string {
+  return `${count} ${count === 1 ? 'scope' : 'scopes'} · ${formatMyrExact(total)}`;
+}
 
 /** The current version of each of this document's scopes, off the queries the page already runs. */
 export function useQuotationHeaderDetails(
@@ -117,6 +153,7 @@ export function useQuotationHeaderDetails(
         scopeId: scope.id,
         scopeLabel: scope.scope_label,
         versionNo: current.version_no,
+        isIssued: Boolean(current.is_issued),
         issuedByName: current.issued_by_name ?? null,
         openedAt: current.created_at ?? null,
       },
@@ -137,23 +174,8 @@ function DetailPair({ detail }: { detail: QuotationHeaderDetail }) {
 }
 
 function HeaderDetails({ details }: { details: QuotationHeaderDetail[] }) {
-  if (details.length === 0) return null;
-  if (details.length === 1) return <DetailPair detail={details[0]} />;
-  return (
-    <div className="space-y-2">
-      {details.map((detail) => {
-        const name = `${detail.scopeLabel} v${detail.versionNo}`;
-        return (
-          <div key={detail.scopeId} role="group" aria-label={name} className="space-y-1">
-            <p className="min-w-0 break-words text-xs font-semibold text-muted-foreground">
-              {name}
-            </p>
-            <DetailPair detail={detail} />
-          </div>
-        );
-      })}
-    </div>
-  );
+  const detail = documentHeaderDetail(details);
+  return detail ? <DetailPair detail={detail} /> : null;
 }
 
 function addressLines(address: string | null): string[] {
@@ -186,7 +208,7 @@ export function QuotationDocumentHeader({
    * changes - the number the user is watching disagrees with the number they are editing.
    */
   liveGrandTotal?: string | null;
-  /** Issued by and Opened, per scope version, for the details beside the refs. */
+  /** Issued by and Opened per scope version; the Header shows the document's one pair. */
   details?: QuotationHeaderDetail[];
   /** Fallback when the document carries no prepared_by yet (the create form). */
   preparedBy?: string | null;
@@ -391,8 +413,10 @@ export function QuotationDocumentHeader({
           </div>
         </div>
 
-        {/* The subject is only an input here. As a read it would repeat the project title the
-            record header already shows right above this card (#1335). */}
+        {/* The full project title (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "can show the project
+            title in the Header section"): the record card above shows only the short name now,
+            so the read lives here, clamped with an expand for the long legal titles. In an edit
+            session it is the input. */}
         {onChange ? (
           <div className="border-t border-border pt-4 md:col-span-2">
             {/* A wrapping textarea named for what it holds (PROPOSAL-FORM-COLLAPSE, owner
@@ -408,7 +432,24 @@ export function QuotationDocumentHeader({
               />
             </EditField>
           </div>
-        ) : null}
+        ) : (
+          <div className="min-w-0 md:col-span-2">
+            <Field
+              label="Project"
+              value={
+                document.subject_title ? (
+                  <TruncatedTextCell
+                    text={document.subject_title}
+                    lines={2}
+                    dialogTitle="Project title"
+                  />
+                ) : (
+                  '-'
+                )
+              }
+            />
+          </div>
+        )}
         {/* No Quotation Purpose: removed from the form and from every new revision (owner, 10 Nov
             2026). The column stays, so a stored value is kept but no longer shown or sent; a
             revision that already went out still reprints it as sent. */}

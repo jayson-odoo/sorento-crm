@@ -514,9 +514,12 @@ describe('QuotationDocumentClient header total', () => {
  */
 describe('QuotationDocumentClient header dedupe', () => {
   // The number and project title specs live on the Header tab below ("#1336 kept, AC-QF054").
-  it('leaves no subject read in the card, but keeps the Subject input in an edit session', () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the read is a Project row now, since the record
+  // card above shows only the short name; an edit session keeps the input.
+  it('reads the title as a Project row, and keeps the Project title input in an edit session', () => {
     const { rerender } = render(<QuotationDocumentHeader document={quotationDocument()} />);
-    expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
+    expect(screen.getByText('Project')).toBeInTheDocument();
+    expect(screen.getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
 
     rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
     expect(screen.getByLabelText('Project title')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
@@ -2337,7 +2340,8 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
     renderScreen(<QuotationHeaderTab />);
 
     const card = await headerCard();
-    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    // QUOTE-HEADER-TIDY: the record card names the project (its short name, or the title).
+    expect(within(card).getByText('Menara Test')).toBeInTheDocument();
     expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
   });
 

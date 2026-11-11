@@ -56,6 +56,7 @@ import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
 import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
+import { projectDisplayName } from '../../../../_shared/lib/projectName';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -465,11 +466,14 @@ export function QuotationDocumentClient({
           </>
         }
         subtitle={[
+          // The project's short name (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "just show project
+          // name so it doesn't clutter"; PROJECT-NAME `projects.name`, the title when none yet).
+          // The full title is the Header section's Project row.
           <TruncatedTextCell
             key="title"
-            text={record.subject_title}
+            text={projectDisplayName(project.data)}
             lines={2}
-            dialogTitle="Title"
+            dialogTitle="Project"
           />,
           record.is_issued ? (
             <QuotationViewCount key="views" projectId={projectId} document={record} />
