@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import run_turn
+from app.services.chatbot import trace as trace_mod
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
 from app.services.chatbot.contracts import BRANCH_KINDS, DIRECT_INGRESS, TurnRequest
@@ -379,27 +380,33 @@ def _trace_summary(db: Session, turn_id: str | None) -> dict[str, Any]:
         ),
         None,
     )
-    tool: str | None = None
-    args_short: dict[str, Any] | None = None
+    return {**_summarise_trace_events(events), "routing_line": routing_line(routing)}
+
+
+def _summarise_trace_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """The tool, its short args, the cross-domain rungs and the dropped reveals, off a turn's
+    trace events. TRACE-ENTITY-TOOL: the tool is the last NAMED tool event (one rule with the
+    drawer, `trace.named_tool_event`), read off the flat shape `TurnTrace.add` writes; the
+    old reader took the FIRST event's nested `payload`, which no live turn carries."""
+    tool_fields = trace_mod.named_tool_event(events)
     crossdomain_rungs: list[str] = []
     reveals_dropped: list[str] = []
     for event in events:
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-        if event["kind"] == "tool" and tool is None:
-            tool = payload.get("name")
-            args_short = {
-                k: v for k, v in (payload.get("args") or {}).items() if k not in _TRACE_ARGS_DROPPED
-            }
-        elif event["kind"] == "crossdomain":
-            crossdomain_rungs.append(str(payload.get("rung") or payload.get("tool") or ""))
-        elif event["kind"] == "reveals":
-            reveals_dropped.extend(str(d) for d in (payload.get("dropped") or []))
+        fields = trace_mod.event_fields(event)
+        if event.get("kind") == "crossdomain":
+            crossdomain_rungs.append(str(fields.get("rung") or fields.get("tool") or ""))
+        elif event.get("kind") == "reveals":
+            reveals_dropped.extend(str(d) for d in (fields.get("dropped") or []))
+    args = (tool_fields or {}).get("args")
     return {
-        "tool": tool,
-        "args_short": args_short,
+        "tool": tool_fields.get("name") if tool_fields else None,
+        "args_short": (
+            {k: v for k, v in (args if isinstance(args, dict) else {}).items() if k not in _TRACE_ARGS_DROPPED}
+            if tool_fields
+            else None
+        ),
         "crossdomain_rungs": [r for r in crossdomain_rungs if r],
         "reveals_dropped": reveals_dropped,
-        "routing_line": routing_line(routing),
     }
 
 
