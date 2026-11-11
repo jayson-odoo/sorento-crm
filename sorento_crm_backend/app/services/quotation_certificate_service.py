@@ -40,7 +40,9 @@ logger = logging.getLogger(__name__)
 MAX_BOXES = 200
 # CERT-TAB-UX (crew pass, 11 Nov): a file missing from storage is remembered for its revision and
 # not fetched again by the list until this long has passed (each miss cost ~150 ms on every load).
-MISS_RETRY = timedelta(hours=24)
+# One hour, not a day: storage wraps every failure (a timeout too) as one error, so a passing hiccup
+# must not leave "No file" on a certificate for long. The box editor and issuing always re-read.
+MISS_RETRY = timedelta(hours=1)
 
 
 def _utcnow() -> datetime:
@@ -337,7 +339,10 @@ def _resolve(
         current = bool(cache) and cache.get("revision_id") == owner_rev_id
         if current and cache.get("missing"):
             if trust_miss and _miss_fresh(cache):
+                # The whole file counts as gone for this read, so no other product reads it either
+                # and the row cannot be half "no file" and half marked.
                 group.unreadable = True
+                group._file = None
                 continue
             cache, current = None, False
         manual_cache = current and cache.get("source") == "manual"
@@ -687,7 +692,9 @@ def validate_boxes(boxes: List[dict], page_count: Optional[int] = None) -> List[
             if not isinstance(product_ids, list) or len(product_ids) > 50:
                 raise _invalid()
             try:
-                item["product_ids"] = [str(uuid.UUID(str(i))) for i in product_ids if len(str(i)) <= 36]
+                if any(len(str(i)) > 36 for i in product_ids):
+                    raise ValueError
+                item["product_ids"] = [str(uuid.UUID(str(i))) for i in product_ids]
             except (TypeError, ValueError):
                 raise _invalid()
         clean.append(item)
@@ -753,7 +760,9 @@ def drop_quote_boxes(db: Session, document, certificate_id: str) -> Dict[str, An
 
 def _sendable(db: Session, document) -> List[tuple[_Group, Dict[str, Any]]]:
     quoted, markers, groups = _context(db, document)
-    pairs = [(group, _row(db, group, quoted, markers)) for group in groups]
+    # Issuing and exporting read the files themselves: a miss the list remembered is not trusted,
+    # or a file that is back would be frozen into an issue with no boxes.
+    pairs = [(group, _row(db, group, quoted, markers, trust_miss=False)) for group in groups]
     pairs.sort(key=lambda pair: not pair[1]["verified"])
     return [(group, row) for group, row in pairs if row["send_to_customer"]]
 

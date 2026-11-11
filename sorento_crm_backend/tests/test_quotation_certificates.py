@@ -1483,3 +1483,74 @@ def test_ux_deleting_every_box_for_this_quote_unmarks_the_product(files):
             assert r.status_code == 200, r.text
             assert r.json()["products"][0]["state"] == "unmarked"
             assert _items(client, c)[0]["marked"] == {"count": 0, "state": "edited"}
+
+
+def test_ux_a_remembered_miss_never_freezes_a_snapshot_without_its_boxes(files):
+    """Reviewer round 2: issuing reads the file itself; a miss the list remembered is not trusted."""
+    from app.models.projects import ProjectQuotationDocument
+    from app.services import quotation_certificate_service as svc
+
+    pdf = _pdf("WB 1515")
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=pdf)
+        files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+        files[str(cr.att.id)] = pdf
+        db.expire_all()
+        document = db.get(ProjectQuotationDocument, c["document"].id)
+        (entry,) = svc.snapshot(db, document)
+        assert entry["attachment_id"] and len(entry["boxes"]) == 1
+
+
+def test_ux_a_trusted_miss_makes_the_whole_certificate_no_file_without_reading(files, reads):
+    """Reviewer round 2: one product's remembered miss and another's cleared cache must agree."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        pdf = files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+            files[str(cr.att.id)] = pdf
+            cr.cps[c["b"].id].boxes = None  # a code edit or an ingest clears one product's cache
+            db.commit()
+            reads.clear()
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 0, "state": "no_file"}
+            assert reads == []
+
+
+def test_ux_a_default_with_no_box_for_one_product_unmarks_only_that_product(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        with _api(db, c, DEFAULTS) as client:
+            d = _detail(client, c, cr.id)
+            keep = [b for b in d["boxes"] if b["product_id"] == c["b"].id]
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "default", "boxes": keep})
+            assert r.status_code == 200, r.text
+            by = {p["product_id"]: p["state"] for p in r.json()["products"]}
+            assert by == {c["a"].id: "unmarked", c["b"].id: "edited"}
+
+
+def test_ux_a_bad_product_ids_entry_is_422(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            bad = {**_box(), "product_ids": ["x" * 40]}
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [bad]})
+            assert r.status_code == 422, r.text

@@ -89,7 +89,7 @@ The backend `confirm` PATCH body is kept (tested, harmless) with no screen sendi
 - Speed on the dev copy: certificate files missing from storage were fetched again on every list
   load (~150 ms each) and the miss was never remembered (`_Group.file`). Now remembered on
   `certificate_products.boxes` (`missing`, `checked_at`) for the revision, retried after
-  `MISS_RETRY` (24 h); the box editor reads the file itself (`trust_miss=False`). Seeded 34 missing
+  `MISS_RETRY` (1 h; storage reports a timeout and a missing file the same way); the box editor reads the file itself (`trust_miss=False`). Seeded 34 missing
   files with 150 ms per storage read: warm list 5174 ms before, 50 ms after
   (`test_perf_a_missing_file_is_remembered_and_the_warm_list_never_calls_storage`). The FIRST look
   at a revision still reads its file once (cold: 5.2 s for 34 missing files at 150 ms); that is
