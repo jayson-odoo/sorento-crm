@@ -400,7 +400,8 @@ def _supplier_codes(rows: Sequence[LookupRow]) -> dict[str, LookupRow]:
 def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embedder | None) -> list[Resolution]:
     """One `Resolution` per span by its text. Never raises on an embedder failure (spelling and partial
     names still resolve); a `product_code` span is `skipped` (unless it is exactly a supplier's own code, fix round
-    5) and a span naming nothing is `unresolved`."""
+    5) and a span naming nothing is `unresolved`. `skipped` means "sent to the code lookup"
+    (the resolver's `resolve` trace event, TRACE-ENTITY-TOOL), and the drawer says so."""
     indexes = _prepare(rows) if rows else {}
     supplier_codes = _supplier_codes(rows) if any(s.type == "product_code" for s in spans) else {}
     live = [s.text for s in spans if s.type != "product_code" and _fold(s.text) and s.text]

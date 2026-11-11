@@ -13,6 +13,7 @@ import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { factText, shortTurnId } from '../turnPresentation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type {
+  EntityMatch,
   TurnDetail,
   TurnDetailApplyDiff,
   TurnDetailApplyDiffEntry,
@@ -92,6 +93,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Index match" testId="section-index-match">
         <IndexMatchSection indexMatch={detail.index_match ?? null} />
       </Section>
+      <Section title="Entity match" testId="section-entity-match" defaultOpen={!!detail.entity_match}>
+        <EntityMatchSection entityMatch={detail.entity_match ?? null} />
+      </Section>
       {detail.span_extract && (
         <Section title="Span pass" testId="section-span-pass">
           <SpanPassSection spanExtract={detail.span_extract} promptText={detail.prompt_text ?? null} />
@@ -115,7 +119,7 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Focus" testId="section-focus">
         <FocusSection focus={detail.focus} />
       </Section>
-      <Section title="Tool" testId="section-tool">
+      <Section title="Tool" testId="section-tool" defaultOpen={!!detail.tool}>
         <ToolSection tool={detail.tool} />
       </Section>
       <Section title="Cross-domain" testId="section-crossdomain">
@@ -627,11 +631,19 @@ function OrderSection({ order }: { order: TurnDetail['order'] }) {
       <dd>{waitedText(order)}</dd>
       <dt className="text-muted-foreground">Ran after</dt>
       <dd className="text-muted-foreground">
-        {order.previous ? orderNeighborText(order.previous) : 'Not recorded on this turn.'}
+        {order.previous
+          ? orderNeighborText(order.previous)
+          : order.neighbours_checked
+            ? 'First message in this conversation'
+            : 'Not recorded on this turn.'}
       </dd>
       <dt className="text-muted-foreground">Next</dt>
       <dd className="text-muted-foreground">
-        {order.next ? orderNeighborText(order.next) : 'Not recorded on this turn.'}
+        {order.next
+          ? orderNeighborText(order.next)
+          : order.neighbours_checked
+            ? 'No later message yet'
+            : 'Not recorded on this turn.'}
       </dd>
     </dl>
   );
@@ -696,6 +708,55 @@ function FocusSection({ focus }: { focus: TurnDetailFocus[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function EntityMatchSection({ entityMatch }: { entityMatch: EntityMatch | null }) {
+  if (!entityMatch) return <Empty>No code lookup this turn.</Empty>;
+  const { words, unplaced, not_checked: notChecked } = entityMatch;
+  return (
+    <div className="space-y-2 text-xs" data-testid="entity-match">
+      {words.length > 0 && (
+        <ul className="space-y-1.5">
+          {words.map((w, i) => (
+            <li key={`${w.word}-${i}`} className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="font-medium">{w.word}</span>
+              <span className="text-muted-foreground">&rarr;</span>
+              {w.codes.length > 0 ? (
+                <span className="min-w-0 break-words">
+                  {w.codes.join(', ')}
+                  {w.more > 0 && <span className="text-muted-foreground"> +{w.more} more</span>}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">no match</span>
+              )}
+              {w.tiers.map((t) => (
+                <Badge key={t} variant="secondary" size="sm">
+                  {t.replace(/_/g, ' ')}
+                </Badge>
+              ))}
+              {w.ambiguous && (
+                <Badge variant="warning" size="sm">
+                  more than one
+                </Badge>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {unplaced.length > 0 && (
+        <p data-testid="entity-match-unplaced">
+          <span className="text-muted-foreground">Nothing matched: </span>
+          {unplaced.join(', ')}
+        </p>
+      )}
+      {notChecked.length > 0 && (
+        <p>
+          <span className="text-muted-foreground">Not looked up: </span>
+          {notChecked.join(', ')}
+        </p>
+      )}
+    </div>
   );
 }
 

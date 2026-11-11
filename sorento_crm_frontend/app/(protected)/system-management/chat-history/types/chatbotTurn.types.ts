@@ -474,6 +474,27 @@ export interface TurnDetailOrder {
   wait_ms: number | null;
   previous: TurnDetailOrderNeighbor | null;
   next: TurnDetailOrderNeighbor | null;
+  /** TRACE-ENTITY-TOOL: true when the neighbours were looked up, so a `null` one means there is none. */
+  neighbours_checked?: boolean;
+}
+
+/** TRACE-ENTITY-TOOL: one typed word and what the code lookup matched (`trace_detail._entity_match`). */
+export interface EntityMatchWord {
+  word: string;
+  /** At most 10; `more` counts the rest. */
+  codes: string[];
+  more: number;
+  tiers: string[];
+  kinds: string[];
+  ambiguous: boolean;
+}
+
+export interface EntityMatch {
+  words: EntityMatchWord[];
+  /** Words the lookup could not place. */
+  unplaced: string[];
+  /** Words past the lookup's ceiling, never looked up. */
+  not_checked: string[];
 }
 
 /**
@@ -596,6 +617,8 @@ export interface TurnDetail {
   session: TurnDetailSession;
   /** `null` when the turn sent the full lists; absent on a trace composed before the lane shipped. */
   index_match?: IndexMatch | null;
+  /** `null` when the turn ran no code lookup; absent on a trace composed before the lane shipped. */
+  entity_match?: EntityMatch | null;
   span_extract?: SpanExtract | null;
   /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
   prompt_text?: string | null;
