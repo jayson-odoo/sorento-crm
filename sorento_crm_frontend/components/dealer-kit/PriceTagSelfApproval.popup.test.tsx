@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 const toasts = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
@@ -73,17 +73,21 @@ describe('PriceTagSelfApproval in popup mode', () => {
     expect(screen.queryByRole('button', { name: /^approve$/i })).toBeNull();
   });
 
-  it('renders nothing while closed', () => {
+  it('renders nothing while closed, even once the tag has loaded', async () => {
+    const load = preview(true);
     render(
       <PriceTagSelfApproval
         request={REQUEST as never}
-        loadPreview={preview(true) as never}
+        loadPreview={load as never}
         onApprove={vi.fn()}
         onEdit={vi.fn()}
         onEscalate={vi.fn()}
         popup={{ open: false, onOpenChange: vi.fn() }}
       />,
     );
+    await waitFor(() => expect(load).toHaveBeenCalled());
+    await act(async () => {});
+    // The lightbox stand-in draws whenever it is rendered, so any render while closed shows here.
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
