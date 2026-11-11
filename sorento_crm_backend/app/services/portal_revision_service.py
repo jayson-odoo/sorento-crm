@@ -1707,7 +1707,9 @@ class PortalRevisionService:
         # 2. The reason is the only thing this journey asks for, so it is required -
         #    any non-empty length, by explicit decision (no character floor).
         reason_text = (reason or "").strip()
-        if not reason_text:
+        # Owner hand test 11 Nov (PRICETAG-REQUEST-LAYOUT): a salesperson editing their own
+        # price tag request is editing, not revising - the form asks for no reason.
+        if not reason_text and source_entity_type != "price_tag_request":
             raise handle_unprocessable("Tell us what changed and why.")
         if len(reason_text) > REASON_MAX_LEN:
             raise handle_unprocessable(
@@ -1796,7 +1798,7 @@ class PortalRevisionService:
             kind=KIND_REVISION,
             version_no=self._next_version_no(source_entity_type, str(row.id)),
             revision_no=new_revision_no,
-            reason=reason_text,
+            reason=reason_text or None,
             contact_id=token.contact_id,
             invalidated=invalidated or None,
             voided_stages=voided_stages,
@@ -1824,6 +1826,8 @@ class PortalRevisionService:
             str(row.id),
             reason=(
                 f"Revision {new_revision_no} submitted by the contact. Reason: {reason_text}"
+                if reason_text
+                else f"Revision {new_revision_no} submitted by the contact."
             ),
         )
 
@@ -2183,6 +2187,9 @@ def _revision_label(row: PortalFormRevision) -> str:
         return "Original (reconstructed)" if row.is_reconstructed else "Original"
     if row.kind == KIND_RESUBMISSION:
         return APPEALED_LABEL
+    if row.source_entity_type == "price_tag_request":
+        # Owner hand test 11 Nov: the salesperson edits their own request; it is not a revision.
+        return f"Edit {row.revision_no}"
     return f"Revision {row.revision_no}"
 
 

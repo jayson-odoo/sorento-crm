@@ -214,3 +214,35 @@ def test_an_explicit_null_customers_keeps_list_search_working(client):
 
     listed = c.get(_BASE, params={"q": "ZZT"})
     assert listed.status_code == 200, listed.text
+
+
+# ---------------------------------------------------------------------------
+# Owner hand test 11 Nov: editing your own request is not a revision. Edit asks for no reason,
+# history still records the change, and nothing in it is called a revision.
+# ---------------------------------------------------------------------------
+
+
+def test_an_edit_needs_no_reason_and_is_still_recorded(db):
+    from app.services.portal_revision_service import PortalRevisionService
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    contact, product_id, row = _setup(db)
+    service = PortalRevisionService(db)
+    service.revise(
+        _seed_token(contact),
+        "price_tag_request",
+        str(row.id),
+        {"customers": [_A, _B], "products": [{"product_id": product_id, "quantity": 3}]},
+        "",
+        0,
+    )
+    db.expire_all()
+    fresh = PriceTagRequestService.get_request(db, str(row.id))
+    assert fresh.customers == [_A, _B]
+    assert fresh.status == "proof_ready"
+
+    history = service.list_revisions("price_tag_request", str(row.id))
+    edit = history[-1]
+    assert edit["reason"] is None
+    assert edit["label"] == "Edit 1"
+    assert all("Revision" not in entry["label"] for entry in history)
