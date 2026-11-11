@@ -38,19 +38,40 @@ def clean_currency(currency: Optional[str]) -> str:
 
 
 #: The currencies the cost-price upload offers, besides the ringgit. The pick-list always has these;
-#: any other code on a supplier cost row joins them.
+#: any other code the cost lists, supplier links or purchase orders use joins them.
 BASE_CURRENCIES = ("CNY", "USD", "EUR")
 
 
 def known_currencies(db: Session) -> list:
-    """The currencies a rate may be set for: those the cost lists and supplier links already use,
-    and the upload's own three. Upper-cased, sorted, never the ringgit."""
-    from app.models.cost_price import ProductSupplierCost
-    from app.models.procurement import ProductSupplier
+    """The currencies a rate may be set for and the pick-list offers: the upload's three, plus every
+    code on a supplier cost row, a supplier link, or a purchase-order line (the line's own currency,
+    else its order's; a removed line counts for nothing). Upper-cased, sorted, never the ringgit.
 
+    Read across ALL companies (`company_scope(db, None)`): an exchange rate is global, so a currency
+    only another company prices in is still one this company's rate table must be able to hold."""
+    from sqlalchemy import func
+
+    from app.models.base import company_scope
+    from app.models.cost_price import ProductSupplierCost
+    from app.models.procurement import ProductSupplier, PurchaseOrder, PurchaseOrderLine
+
+    po_currency = func.coalesce(PurchaseOrderLine.currency, PurchaseOrder.currency)
     codes = set(BASE_CURRENCIES)
-    for column in (ProductSupplierCost.currency, ProductSupplier.currency):
-        for (value,) in db.query(column).filter(column.isnot(None)).distinct():
+    with company_scope(db, None):
+        found = [
+            db.query(ProductSupplierCost.currency).distinct().all(),
+            db.query(ProductSupplier.currency).distinct().all(),
+            db.query(po_currency)
+            .select_from(PurchaseOrderLine)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(PurchaseOrderLine.unit_cost.isnot(None), PurchaseOrderLine.removed_unreferenced.is_(False))
+            .distinct()
+            .all(),
+        ]
+    for rows in found:
+        for (value,) in rows:
+            if value is None:
+                continue
             code = normalize_currency(value)
             if code and code != BASE_CURRENCY:
                 codes.add(code)
@@ -58,8 +79,13 @@ def known_currencies(db: Session) -> list:
 
 
 def check_known_currency(db: Session, code: str) -> None:
-    if code not in known_currencies(db):
-        raise AppException(status_code=422, message=f"Unknown currency {code}.", code="UNKNOWN_CURRENCY")
+    """A rate may be set for a known currency, or one that already has a rate row (so a code typed
+    before the pick-list stays editable). The pick-list itself offers only the known ones."""
+    if code in known_currencies(db):
+        return
+    if db.query(ExchangeRate.id).filter(ExchangeRate.currency == code).first() is not None:
+        return
+    raise AppException(status_code=422, message=f"Unknown currency {code}.", code="UNKNOWN_CURRENCY")
 
 
 def rate_from_units(units_per_base: object) -> Decimal:

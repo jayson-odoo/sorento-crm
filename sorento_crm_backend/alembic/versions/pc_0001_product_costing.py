@@ -28,7 +28,6 @@ branch_labels = None
 depends_on = None
 
 MANAGE = "products.party_costing.manage"
-COST_VIEW = "products.cost.view"
 GRANT_ROLES = ("admin", "director")
 
 UPGRADE_SQL = (

@@ -273,3 +273,81 @@ def test_r3_currencies_need_cost_view(costing_env):
     e, w = _setup(costing_env)
     e.as_user(e.user())
     assert e.get("/currencies").status_code == 403
+
+
+# ------------------------------------------------------------------ round 4: the known-currency set
+
+
+def _scm_put(e, code, rate=0.5, as_of="2026-12-01"):
+    return e.client.put(f"/api/v1/scm/config/currency-rates/{code}", json={"rate_to_base": rate, "as_of": as_of})
+
+
+def test_r4_a_currency_only_on_a_po_line_is_offered_and_gets_a_rate_on_both_routes(costing_env):
+    from datetime import date
+
+    e, w = _setup(costing_env)
+    e.po_line(w.tap, w.sup_a, po_number="PO-SGD", issue_date=date(2026, 10, 1), unit_cost="9", currency="SGD")
+    e.db.commit()
+    e.as_user(e.user("scm.config.manage", COST_VIEW))
+    assert "SGD" in e.get("/currencies").json()["data"]
+    body = {"effective_from": "2026-12-01", "rate_to_base": 3.2}
+    assert e.post("/exchange-rates", {"currency": "SGD", **body}).status_code == 201
+    assert _scm_put(e, "SGD", 3.3, "2026-12-02").status_code == 200
+
+
+def test_r4_a_currency_only_on_a_po_header_works_too(costing_env):
+    from datetime import date
+
+    e, w = _setup(costing_env)
+    e.po_line(w.tap, w.sup_a, po_number="PO-THB", issue_date=date(2026, 10, 1), unit_cost="9",
+              currency=None, po_currency="THB")
+    e.db.commit()
+    e.as_user(e.user("scm.config.manage", COST_VIEW))
+    assert "THB" in e.get("/currencies").json()["data"]
+    assert e.post("/exchange-rates", {"currency": "THB", "effective_from": "2026-12-01", "rate_to_base": 0.1}).status_code == 201
+
+
+def test_r4_a_removed_po_line_does_not_offer_its_currency(costing_env):
+    from datetime import date
+
+    e, w = _setup(costing_env)
+    e.po_line(w.tap, w.sup_a, po_number="PO-GONE", issue_date=date(2026, 10, 1), unit_cost="9",
+              currency="NOK", removed=True)
+    e.db.commit()
+    assert "NOK" not in e.get("/currencies").json()["data"]
+
+
+def test_r4_an_existing_rate_stays_editable_but_is_not_offered(costing_env):
+    e, w = _setup(costing_env)
+    row = e.rate("RMB", "0.625", __import__("datetime").date(2026, 11, 1), note="typed by hand")
+    e.db.commit()
+    e.as_user(e.user("scm.config.manage", COST_VIEW))
+    assert "RMB" not in e.get("/currencies").json()["data"]  # a rate alone offers nothing
+    assert _scm_put(e, "RMB", 0.63, "2026-11-01").status_code == 200
+    assert e.put(f"/exchange-rates/{row.id}", {"rate_to_base": 0.64}).status_code == 200
+    # a new dated row for the same currency can be added: it already has a rate
+    assert e.post("/exchange-rates", {"currency": "RMB", "effective_from": "2026-12-01", "rate_to_base": 0.65}).status_code == 201
+
+
+def test_r4_a_currency_with_no_row_anywhere_is_still_refused(costing_env):
+    e, w = _setup(costing_env)
+    e.as_user(e.user("scm.config.manage", COST_VIEW))
+    r = e.post("/exchange-rates", {"currency": "RMB", "effective_from": "2026-12-01", "rate_to_base": 0.6})
+    assert r.status_code == 422 and "Unknown currency RMB" in r.text
+    assert _scm_put(e, "RMB").status_code == 422
+
+
+def test_r4_another_companys_supplier_cost_currency_is_offered(costing_env):
+    from app.models.base import set_company_scope
+
+    e, w = _setup(costing_env)
+    set_company_scope(e.db, frozenset({e.company_b}))
+    try:
+        sup = e.source("SUP-B-CO")
+        item = e.item("OTHER-CO-1", category=e.category("OtherCoCat"), list_price="5")
+        e.cost_link(item, sup, cost="3", currency="CHF", primary=True)
+        e.db.commit()
+    finally:
+        set_company_scope(e.db, e.scope)
+    e.as_user(e.viewer())  # a company A user
+    assert "CHF" in e.get("/currencies").json()["data"]

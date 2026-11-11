@@ -306,6 +306,11 @@ def _norm(field_name: str, value):
     return value
 
 
+def _utc_iso(stamp) -> str:
+    """The audit column is naive UTC: say so; an aware value is left as it is."""
+    return (stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp).isoformat()
+
+
 def history(db: Session, product_id: str, party_id: Optional[str]) -> list:
     """Audit entries of the product's override row and, with a party, that party's row for the
     product. One entry per changed column, newest first."""
@@ -339,7 +344,7 @@ def history(db: Session, product_id: str, party_id: Optional[str]) -> list:
                 if old == new:
                     continue
                 entries.append((log.changed_at, str(log.id), {
-                    "changed_at": log.changed_at.replace(tzinfo=timezone.utc).isoformat(), "user_name": user_name or "System",
+                    "changed_at": _utc_iso(log.changed_at), "user_name": user_name or "System",
                     "field": name, "old": old, "new": new,
                 }))
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)

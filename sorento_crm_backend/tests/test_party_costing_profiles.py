@@ -282,12 +282,35 @@ def test_ac_pc_09_profile_create_and_edit_are_audited_old_to_new(costing_env):
 
 
 def test_ac_pc_09_markup_is_a_cost_audit_key_so_history_masks_it():
-    """KILL TEST 'mark-up dropped from History masking'. `COST_AUDIT_KEYS` comes from
-    SUPPLIER-COST-ACCESS (#2319, app/services/cost_access.py), which is not on this branch yet;
-    until it lands this skips, and the coder adds `markup_pct` to that set in the same change
-    that wires it (plan section 8)."""
-    cost_access = pytest.importorskip("app.services.cost_access")
-    assert "markup_pct" in cost_access.COST_AUDIT_KEYS
+    """KILL TEST 'mark-up dropped from History masking'. `COST_AUDIT_KEYS` is SUPPLIER-COST-ACCESS's
+    (#2319, app/services/cost_access.py); mark-up is on it, so the shared masking hides it."""
+    from app.services.cost_access import COST_AUDIT_KEYS, HIDDEN, mask_audit_values
+
+    assert "markup_pct" in COST_AUDIT_KEYS
+    old, new, masked = mask_audit_values({"markup_pct": "8.000"}, {"markup_pct": "12.000"})
+    assert old == {"markup_pct": HIDDEN} and new == {"markup_pct": HIDDEN} and masked == ["markup_pct"]
+
+
+def test_ac_pc_09_the_generic_audit_log_never_shows_a_markup_to_a_non_admin(costing_env):
+    """A mark-up change sits in `audit_logs`. The generic History route serves a row's history only
+    to the entity types it knows (a per-record view permission) and otherwise to audit admins: a
+    costing row is not one of the first, so a reader without `products.cost.view` (and a holder who
+    is not an admin) is refused and sees no value; an admin reads it."""
+    e, w = _manager_env(costing_env)
+    assert e.patch_rows({"party_id": w.customer.id, "changes": [{"product_id": w.jac.id, "markup_pct": 15}]}).status_code == 200
+    url = "/api/v1/audit/logs/"
+    params = {"entity_type": "customer_costing_products", "entity_id": w.pp_jac.id}
+
+    for principal in (e.user(), e.viewer()):
+        e.as_user(principal)
+        r = e.client.get(url, params=params)
+        assert r.status_code == 403, r.text
+        assert "15" not in r.text
+
+    e.as_user(e.admin())
+    r = e.client.get(url, params=params)
+    assert r.status_code == 200, r.text
+    assert any(float(x["new_values"]["markup_pct"]) == 15.0 for x in r.json()["data"] if x["action"] == "UPDATE")
 
 
 def test_ac_pc_09_a_reader_without_cost_view_gets_no_markup_from_history(costing_env):
