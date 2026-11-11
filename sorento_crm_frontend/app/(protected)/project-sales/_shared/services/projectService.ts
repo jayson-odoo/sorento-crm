@@ -1013,12 +1013,15 @@ export async function createQuotationLine(
 export async function replaceQuotationLines(
   versionId: string,
   lines: QuotationLineBulkItem[],
+  overrideReason?: string,
 ): Promise<QuotationLine[]> {
-  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines`, {
+  const query = overrideReason ? `?non_cancellable_override_reason=${encodeURIComponent(overrideReason)}` : '';
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines${query}`, {
     method: 'PUT',
     body: JSON.stringify({ lines }),
   });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the lines'));
+  // A 409 `non_cancellable_line` is a `NonCancellableRefusalError`; resend with `overrideReason`.
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to save the lines');
   const body: ListEnvelope<QuotationLine> = await response.json();
   return body.data;
 }
@@ -1045,12 +1048,14 @@ export async function updateQuotationLine(
   versionId: string,
   lineId: string,
   body: Partial<QuotationLineBody>,
+  overrideReason?: string,
 ): Promise<QuotationLine> {
-  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}`, {
+  const query = overrideReason ? `?non_cancellable_override_reason=${encodeURIComponent(overrideReason)}` : '';
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}${query}`, {
     method: 'PUT',
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the line'));
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to save the line');
   return response.json();
 }
 

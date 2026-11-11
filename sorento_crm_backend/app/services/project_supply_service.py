@@ -1456,9 +1456,15 @@ class ProjectSupplyService:
             refused = [
                 (mirror, core) for mirror, core, _r in picked if str(mirror.id) in flagged
             ]
-            reasons = {(overrides.get(str(m.id)) or "").strip() for m, _c in refused}
-            # One press, one override: every refused line must carry the same non-blank reason.
-            reason_given = next(iter(reasons)) if len(reasons) == 1 else None
+            given = {(overrides.get(str(m.id)) or "").strip() for m, _c in refused} - {""}
+            # One press, one override: the board sends the same reason on every line.
+            if len(given) > 1:
+                raise AppException(
+                    status_code=422,
+                    message="Give one override reason for the Non-cancellable lines in this press.",
+                    code="non_cancellable_override_reasons_differ",
+                )
+            reason_given = next(iter(given)) if given else None
             ref = order.autocount_doc_no or order.provisional_ref
             non_cancellable.assert_may_reduce(
                 self.db,

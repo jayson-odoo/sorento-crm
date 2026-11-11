@@ -696,6 +696,7 @@ def apply_form_scopes(
     document: ProjectQuotationDocument,
     actor_user_id: str,
     scopes: List[Dict[str, Any]],
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> List[ProjectQuotationLine]:
     """The quotation form's Save in edit mode, for the scopes (#1341).
 
@@ -734,6 +735,7 @@ def apply_form_scopes(
                     version=scope_service.current_version(db, scope.id),
                     actor_user_id=actor_user_id,
                     lines=item["lines"],
+                    non_cancellable_override_reason=non_cancellable_override_reason,
                 )
             )
     return written

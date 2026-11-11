@@ -1261,8 +1261,15 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
   });
 
   const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<QuotationLineBody> }) =>
-      updateQuotationLine(versionId, id, body),
+    mutationFn: ({
+      id,
+      body,
+      overrideReason,
+    }: {
+      id: string;
+      body: Partial<QuotationLineBody>;
+      overrideReason?: string;
+    }) => updateQuotationLine(versionId, id, body, overrideReason),
     onSuccess: (line) => {
       invalidate();
       if (line.is_below_floor) {
@@ -1271,7 +1278,9 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
         );
       }
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   const remove = useMutation({
@@ -1323,17 +1332,27 @@ export function useQuotationBulkLineMutation(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ versionId, lines }: { versionId: string; lines: QuotationLineBulkItem[] }) =>
-      replaceQuotationLines(versionId, lines),
+    mutationFn: ({
+      versionId,
+      lines,
+      overrideReason,
+    }: {
+      versionId: string;
+      lines: QuotationLineBulkItem[];
+      overrideReason?: string;
+    }) => replaceQuotationLines(versionId, lines, overrideReason),
     onSuccess: (_lines, { versionId }) => {
       queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
       queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
       queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
       queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
     },
-    // No toast: the screen raises ONE for the whole Save, and a quotation with four scopes
-    // would otherwise stack four notifications for a single button press.
-    onError: (error: Error) => toast.error(error.message),
+    // No success toast: the screen raises ONE for the whole Save, and a quotation with four
+    // scopes would otherwise stack four notifications. An overridable refusal opens the
+    // override dialog instead of a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 }
 

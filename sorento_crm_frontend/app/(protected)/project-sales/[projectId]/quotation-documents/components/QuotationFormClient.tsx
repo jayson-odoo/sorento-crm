@@ -59,6 +59,9 @@ import type {
 import { formatMyrExact, isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 
+import { NonCancellableOverrideDialog } from '../../../_shared/components/NonCancellableOverrideDialog';
+import { isOverridableRefusal } from '../../../_shared/lib/nonCancellable';
+import type { NonCancellableRefusal } from '../../../_shared/types/project.types';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
   QuotationVersionEditor,
@@ -300,6 +303,7 @@ export function QuotationFormClient({
   const saved = useQuotationDocument(projectId, documentId);
   const quotations = useQuotations(isEdit ? projectId : undefined);
   const mutations = useQuotationDocumentMutations(projectId, documentId);
+  const [overrideAsk, setOverrideAsk] = React.useState<NonCancellableRefusal | null>(null);
   // The company's letter and terms, for the create form's own tabs. Edit reads the saved text.
   const letterTemplates = useQuotationLetterTemplates(projectId, !isEdit);
   // Removing a saved scope is a hard delete: the same grant as the scope DELETE route.
@@ -777,7 +781,7 @@ export function QuotationFormClient({
    * form's state rides along as the History entry, and the server clears the draft in the same
    * commit. A new proposal nothing was typed into yet is created first, then saved.
    */
-  async function save() {
+  async function save(nonCancellableOverrideReason?: string) {
     if (!validityOk) {
       setError('Validity needs a whole number from 1 to 999 and a unit.');
       setTab('terms');
@@ -807,6 +811,9 @@ export function QuotationFormClient({
             ...(removedIds.length > 0 ? { remove_scope_ids: removedIds } : {}),
             form_state: formState,
             form_token: formToken,
+            ...(nonCancellableOverrideReason
+              ? { non_cancellable_override_reason: nonCancellableOverrideReason }
+              : {}),
           },
         });
       } else {
@@ -828,8 +835,13 @@ export function QuotationFormClient({
       // `isSaving` stays on: the form stays locked until the page has left, so nothing is typed
       // into a form that no longer saves, and Save cannot be sent twice.
       router.push(`/project-sales/${projectId}/quotation-documents/${id}`);
-    } catch {
+    } catch (error) {
       setIsSaving(false);
+      // An overridable refusal toasts nothing: the dialog asks for a reason and Save runs again.
+      if (isOverridableRefusal(error)) {
+        setOverrideAsk(error.details);
+        return;
+      }
       // The mutation toasted the server's reason; the draft keeps everything that was typed. A
       // refusal may be the draft moving to another tab: ask now rather than at the next poll.
       void autosave.checkNow();
@@ -892,6 +904,17 @@ export function QuotationFormClient({
 
   return (
     <div className="space-y-6">
+      {overrideAsk && (
+        <NonCancellableOverrideDialog
+          refusal={overrideAsk}
+          submitting={isSaving}
+          onCancel={() => setOverrideAsk(null)}
+          onOverride={async (reason) => {
+            setOverrideAsk(null);
+            await save(reason);
+          }}
+        />
+      )}
       <PageHeader
         title={title}
         crumbs={projectCrumbs(projectId, { tab: 'quotations' }, { title })}

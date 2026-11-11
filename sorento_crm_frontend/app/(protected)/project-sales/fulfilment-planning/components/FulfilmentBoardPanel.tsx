@@ -110,7 +110,7 @@ import {
   orderPartyLabels,
 } from '../../_shared/lib/fulfilmentBoard';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
-import { isOverridableRefusal } from '../../_shared/lib/nonCancellable';
+import { isOverridableRefusal, overridableRefusalOf } from '../../_shared/lib/nonCancellable';
 import { NonCancellableOverrideDialog } from '../../_shared/components/NonCancellableOverrideDialog';
 import type { NonCancellableRefusal } from '../../_shared/types/project.types';
 import type {
@@ -2058,6 +2058,12 @@ export function FulfilmentBoardPanel({
             }
           : body;
       const dry = await previewConfirmMany.mutateAsync(withOverride(built.body));
+      // An order refused for a non-cancellable line asks for a reason instead of reporting.
+      const dryRefusal = overridableRefusalOf(dry.results);
+      if (dryRefusal) {
+        setOverrideAsk({ refusal: dryRefusal, soRemarks });
+        return false;
+      }
       const answer = new Map(dry.results.map((entry) => [entry.pso_id, entry]));
       const refusals: BoardBatchResult[] = [];
       const orders = built.orders
@@ -2154,6 +2160,8 @@ export function FulfilmentBoardPanel({
         ),
       );
       setBatchResults(settleHeldBackNotes([...skipped, ...refusals, ...result.results]));
+      const postedRefusal = overridableRefusalOf(result.results);
+      if (postedRefusal) setOverrideAsk({ refusal: postedRefusal, soRemarks });
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists

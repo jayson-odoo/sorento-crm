@@ -9,6 +9,7 @@ import type {
   StagedQuotationLine,
 } from '../types/project.types';
 import type { MatrixHeader } from '../lib/quotationMatrix';
+import { refusalAwareError } from '../lib/nonCancellable';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -264,6 +265,8 @@ export type QuotationIssue = {
 };
 
 export type QuotationDocumentBody = Partial<{
+  /** The retry after a 409 `non_cancellable_line`, by a holder of the override permission. */
+  non_cancellable_override_reason: string;
   your_ref: string | null;
   doc_date: string | null;
   attn_name: string | null;
@@ -422,8 +425,8 @@ export async function updateQuotationDocument(
     `${BASE}/projects/${projectId}/quotation-documents/${documentId}`,
     { method: 'PATCH', body: JSON.stringify(body) },
   );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the quotation'));
+  // A 409 `non_cancellable_line` is a `NonCancellableRefusalError` (the override dialog).
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to save the quotation');
   return response.json();
 }
 

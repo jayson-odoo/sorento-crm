@@ -918,6 +918,35 @@ describe('QuotationFormClient edit', () => {
     );
   });
 
+  it('NON-CANCELLABLE: an overridable 409 asks for a reason and resends the same PATCH with it', async () => {
+    const { NonCancellableRefusalError } = await import('../../../_shared/lib/nonCancellable');
+    updateQuotationDocument.mockRejectedValueOnce(
+      new NonCancellableRefusalError('Non-cancellable: SRT-WC-01', {
+        can_override: true,
+        lines: [{ label: 'SRT-WC-01', from_qty: 12, to_qty: 5 }],
+      }),
+    );
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2]).not.toHaveProperty(
+      'non_cancellable_override_reason',
+    );
+    fireEvent.change(await screen.findByLabelText(/Reason/), {
+      target: { value: 'Customer agreed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Override' }));
+
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(2));
+    expect(updateQuotationDocument.mock.calls[1][2]).toMatchObject({
+      your_ref: 'NC/20',
+      non_cancellable_override_reason: 'Customer agreed',
+    });
+  });
+
   it('AC-QF071: a line removed on the form is struck through and left out of the PATCH', async () => {
     renderForm('d1');
     const card = await openSavedLines();

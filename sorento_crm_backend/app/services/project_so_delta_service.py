@@ -885,8 +885,11 @@ class ProjectSODeltaService:
             line = self._line_or_none(row.get("so_line_id"))
             if line is None:
                 continue
-            # Same default as `_apply_rows`: a missing to_value is written as 0.
-            if _dec(row.get("to_value")) < _dec(line.qty):
+            # The row's own from -> to (the product's total in its phase), not one line's qty:
+            # a model on two SO lines (30 + 23) cut 53 -> 40 is a cut although 40 > 23. A
+            # missing to_value reads 0, the same default `_apply_rows` writes.
+            before = _dec(row.get("from_value"), _dec(line.qty))
+            if _dec(row.get("to_value")) < before:
                 out.append((row, line))
         return out
 
@@ -903,7 +906,7 @@ class ProjectSODeltaService:
                 label=f"{label_ref} line {line.line_no} {row.get('product_code') or ''}".strip(),
                 entity_type="project_sales_orders",
                 entity_id=str(order.id),
-                from_qty=_qty_str(_dec(line.qty)),
+                from_qty=_qty_str(_dec(row.get("from_value"), _dec(line.qty))),
                 to_qty=_qty_str(_dec(row.get("to_value"))),
             )
             for row, line in cuts

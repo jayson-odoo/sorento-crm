@@ -3,6 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { toast } from '@/lib/toast';
+import { isOverridableRefusal } from '../lib/nonCancellable';
 import {
   ENTITY_DOWNLOADS_QUERY_KEY,
   MY_DOWNLOADS_QUERY_KEY,
@@ -217,7 +218,10 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
       invalidate();
       toast.success(`${documentNoun(document)} saved`);
     },
-    onError: (error: Error) => toast.error(error.message),
+    // An overridable non-cancellable refusal opens the form's override dialog instead.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   const remove = useMutation({

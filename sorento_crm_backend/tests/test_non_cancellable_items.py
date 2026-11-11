@@ -485,8 +485,8 @@ def test_autocount_alert_goes_only_to_cuts_of_flagged_lines(world, monkeypatch):
     from types import SimpleNamespace
 
     db = world["db"]
-    sent = []
-    monkeypatch.setattr(nc, "_notify", lambda _db, **kw: sent.append(kw) or 1)
+    queued = []
+    monkeypatch.setattr(nc, "_queue_alert", lambda _db, spec: queued.append(spec))
     monkeypatch.setattr(
         "app.services.project_notify_service.approver_user_ids",
         lambda *_a, **_k: ["mgr"],
@@ -532,15 +532,33 @@ def test_autocount_alert_goes_only_to_cuts_of_flagged_lines(world, monkeypatch):
 
     # An increase and an unchanged line raise nothing.
     assert nc.alert_autocount_reductions(db, [("core1", 53, 60), ("core1", 53, 53)], source="t") == 0
-    assert sent == []
+    assert queued == []
 
     assert nc.alert_autocount_reductions(db, [("core1", 53, 40)], source="SO book") == 1
-    assert sent[0]["user_ids"] == ["mgr"]
-    assert "SO400123" in sent[0]["title"]
-    assert "53 to 40" in sent[0]["body"]
-    assert sent[0]["dedup_key"] == "m1:non_cancellable:40"
+    assert queued[0]["user_ids"] == ["mgr"]
+    assert "SO400123" in queued[0]["title"]
+    assert "53 to 40" in queued[0]["body"]
+    assert queued[0]["dedup_key"] == "m1:non_cancellable:40"
 
     monkeypatch.setattr(nc, "so_lines_non_cancellable", lambda _db, lines: set())
-    sent.clear()
+    queued.clear()
     assert nc.alert_autocount_reductions(db, [("core1", 53, 0)], source="Cancel SO") == 0
+    assert queued == []
+
+
+def test_queued_alerts_send_only_after_commit_and_drop_on_rollback(world, monkeypatch):
+    sent = []
+    monkeypatch.setattr(nc, "_notify", lambda _db, **spec: sent.append(spec) or 1)
+    db = world["db"]
+    spec = {"user_ids": ["u"], "title": "t", "body": "b", "data": {}, "source_id": "s",
+            "dedup_key": "k"}
+
+    nc._queue_alert(db, dict(spec))
     assert sent == []
+    db.rollback()
+    db.commit()
+    assert sent == [], "a rolled-back caller sends nothing"
+
+    nc._queue_alert(db, dict(spec, dedup_key="k2"))
+    db.commit()
+    assert [s["dedup_key"] for s in sent] == ["k2"]

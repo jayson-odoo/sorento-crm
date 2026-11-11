@@ -111,6 +111,8 @@ class PlanningChangeFacts(BaseModel):
     discontinued: bool
     days_moved: int
     buy_actioned: PlanningChangeBuyActionedFact
+    #: NON-CANCELLABLE-ITEMS: the change cuts or cancels a Non-cancellable line.
+    non_cancellable: bool = False
 
 
 class PlanningChangeInquiryRow(BaseModel):

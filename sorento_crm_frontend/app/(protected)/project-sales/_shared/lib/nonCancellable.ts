@@ -46,3 +46,27 @@ export async function refusalAwareError(response: Response, fallback: string): P
   }
   return new Error(message);
 }
+
+/**
+ * The refusals a Confirm all reports per order (`ok:false` with `error_code`), merged into one
+ * overridable refusal, or null when none is overridable. confirm_many catches per order, so
+ * these never arrive as an HTTP 409.
+ */
+export function overridableRefusalOf(
+  results: ReadonlyArray<{
+    ok?: boolean;
+    error_code?: string | null;
+    error_details?: Record<string, unknown> | null;
+  }>,
+): NonCancellableRefusal | null {
+  const lines: NonCancellableRefusal['lines'] = [];
+  let found = false;
+  for (const entry of results) {
+    if (entry.ok || entry.error_code !== NON_CANCELLABLE_CODE) continue;
+    const details = entry.error_details as Partial<NonCancellableRefusal> | null | undefined;
+    if (!details?.can_override) continue;
+    found = true;
+    if (Array.isArray(details.lines)) lines.push(...details.lines);
+  }
+  return found ? { can_override: true, lines } : null;
+}

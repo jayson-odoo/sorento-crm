@@ -2770,6 +2770,10 @@ export interface SimulatedLineError {
 
 /** One order's outcome. `ok` decides which half is populated. */
 export interface ConfirmManyOrderResult {
+  /** `non_cancellable_line` when the order was refused for a non-cancellable line. */
+  error_code?: string | null;
+  /** That refusal's `{ can_override, lines: [{label, from_qty, to_qty}] }`. */
+  error_details?: Record<string, unknown> | null;
   /** Simulate confirm only: the simulation adopted this never-planned order first. */
   adopted?: boolean | null;
   /** Simulate confirm only: lines that fail when run alone. */

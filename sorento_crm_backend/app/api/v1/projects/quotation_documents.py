@@ -376,6 +376,7 @@ def update_quotation_document(
         scopes = body.pop("scopes", None)
         form_state = body.pop("form_state", None)
         form_token = body.pop("form_token", None)
+        override_reason = body.pop("non_cancellable_override_reason", None)
         # Card Q4: a view-only (older) tab cannot Save over the tab that holds the draft.
         if form_state is not None:
             _assert_holder_or_keep(
@@ -416,7 +417,11 @@ def update_quotation_document(
                 if item.get("id"):
                     validate_uuid_path(str(item["id"]), resource="Scope")
             lines = svc.apply_form_scopes(
-                db, document=document, actor_user_id=current_user["id"], scopes=scopes
+                db,
+                document=document,
+                actor_user_id=current_user["id"],
+                scopes=scopes,
+                non_cancellable_override_reason=override_reason,
             )
             for line in lines:
                 _notify_breaches(db, line, current_user["id"])

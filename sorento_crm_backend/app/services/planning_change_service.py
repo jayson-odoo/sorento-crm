@@ -59,7 +59,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session, object_session
@@ -968,6 +968,30 @@ def _board_link(so_number: str, item_code: str, when: Optional[date]) -> str:
 # ============================================================================
 
 
+def non_cancellable_cut_moves(entries: Sequence[dict], flagged_lines: Set[str]) -> List[tuple]:
+    """NON-CANCELLABLE-ITEMS: ``(core line id, before, after)`` for every entry that lowers or
+    removes a flagged line, marking those entries ``non_cancellable``.
+
+    The diff's quantities are OUTSTANDING (`qty_ordered - fulfilled` as stored, and the
+    importer writes `ordered = fulfilled + after`), so with the stored fulfilled on both
+    sides a drop here is a drop in the ordered quantity, never a delivery the CRM already
+    booked. A line the book states settled (`CLOSED`) is delivered or closed out, not cut.
+    """
+    cuts: List[tuple] = []
+    for e in entries:
+        pl = e.get("project_line")
+        if pl is None or str(pl.id) not in flagged_lines:
+            continue
+        c = e["change"]
+        if c.before is None or c.kind == CLOSED:
+            continue
+        after_qty = c.after.qty if c.after is not None else 0.0
+        if after_qty < c.before.qty:
+            e["non_cancellable"] = True
+            cuts.append((e["core_line_id"], c.before.qty, after_qty))
+    return cuts
+
+
 def build_batch(
     db: Session,
     diff: Diff,
@@ -1099,19 +1123,7 @@ def build_batch(
     flagged_lines = non_cancellable.so_lines_non_cancellable(
         db, [e["project_line"] for e in entries if e.get("project_line") is not None]
     )
-    cuts = []
-    for e in entries:
-        pl = e.get("project_line")
-        if pl is None or str(pl.id) not in flagged_lines:
-            continue
-        c = e["change"]
-        if c.before is None or c.kind == CLOSED:
-            # Nothing before (a new line), or settled: delivered is not a cancel.
-            continue
-        after_qty = c.after.qty if c.after is not None else 0.0
-        if after_qty < c.before.qty:
-            e["non_cancellable"] = True
-            cuts.append((e["core_line_id"], c.before.qty, after_qty))
+    cuts = non_cancellable_cut_moves(entries, flagged_lines)
     if cuts:
         non_cancellable.alert_autocount_reductions(
             db, cuts, source=file_name or "AutoCount order update"

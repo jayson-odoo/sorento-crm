@@ -604,10 +604,12 @@ def alert_autocount_reductions(
 ) -> int:
     """AutoCount cancelled or cut a non-cancellable line: tell the override holders.
 
-    ``moves`` are ``(core sales_order_line id, qty before, qty after)``. Best effort: the
-    ingest already committed the fact, so a notification failure only logs. Returns how many
-    lines were alerted. One notification per line and quantity, deduped, so a re-run of the
-    same ingest stays quiet.
+    ``moves`` are ``(core sales_order_line id, qty before, qty after)``. Returns how many lines
+    were queued. The notifications are SENT only after ``db`` commits, on their own session:
+    the notification service commits as it writes, and a caller still mid-transaction (the
+    planning-change build) must neither be committed early nor lose its work to a rollback
+    there. A rolled-back caller sends nothing. One notification per line and quantity,
+    deduped, so a re-run of the same ingest stays quiet. Best effort throughout.
     """
     from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
 
@@ -633,7 +635,7 @@ def alert_autocount_reductions(
             return 0
         from app.services.project_notify_service import approver_user_ids
 
-        alerted = 0
+        queued = 0
         for mirror in mirrors:
             order = (
                 db.query(ProjectSalesOrder)
@@ -650,36 +652,81 @@ def alert_autocount_reductions(
             )
             doc = order.autocount_doc_no or order.provisional_ref
             what = "cancelled" if Decimal(str(after)) <= 0 else "reduced"
-            title = f"Non-cancellable item {what} in AutoCount: {doc}"
-            body = (
-                f"{doc} line {mirror.line_no} {code or mirror.description or ''}".strip()
-                + f" went from {_qty(before)} to {_qty(after)} in AutoCount ({source}). "
-                "This item is Non-cancellable: check with the customer before it is "
-                "released."
-            )
-            _notify(
+            _queue_alert(
                 db,
-                user_ids=approver_user_ids(db, order.company_id, slug=OVERRIDE_PERMISSION),
-                title=title,
-                body=body,
-                data={
-                    "project_sales_order_id": str(order.id),
-                    "so_line_id": str(mirror.id),
-                    "so_number": doc,
-                    "item_code": code,
-                    "from_qty": _qty(before),
-                    "to_qty": _qty(after),
-                    "source": source,
-                    "link": f"/project-sales/fulfilment-planning?orders={doc}",
+                {
+                    "user_ids": approver_user_ids(
+                        db, order.company_id, slug=OVERRIDE_PERMISSION
+                    ),
+                    "title": f"Non-cancellable item {what} in AutoCount: {doc}",
+                    "body": (
+                        f"{doc} line {mirror.line_no} {code or mirror.description or ''}".strip()
+                        + f" went from {_qty(before)} to {_qty(after)} in AutoCount ({source}). "
+                        "This item is Non-cancellable: check with the customer before it is "
+                        "released."
+                    ),
+                    "data": {
+                        "project_sales_order_id": str(order.id),
+                        "so_line_id": str(mirror.id),
+                        "so_number": doc,
+                        "item_code": code,
+                        "from_qty": _qty(before),
+                        "to_qty": _qty(after),
+                        "source": source,
+                        "link": f"/project-sales/fulfilment-planning?orders={doc}",
+                    },
+                    "source_id": str(order.id),
+                    "dedup_key": f"{mirror.id}:non_cancellable:{_qty(after)}",
                 },
-                source_id=str(order.id),
-                dedup_key=f"{mirror.id}:non_cancellable:{_qty(after)}",
             )
-            alerted += 1
-        return alerted
-    except Exception as exc:  # noqa: BLE001 - the ingest already committed
+            queued += 1
+        return queued
+    except Exception as exc:  # noqa: BLE001 - an alert never fails the ingest
         logger.warning("non_cancellable.alert_failed error=%s", exc)
         return 0
+
+
+_ALERTS_KEY = "non_cancellable_alerts"
+
+
+def _queue_alert(db: Session, spec: Dict[str, Any]) -> None:
+    from sqlalchemy import event
+
+    pending = db.info.setdefault(_ALERTS_KEY, [])
+    if not pending:
+        event.listen(db, "after_commit", _send_queued, once=True)
+        event.listen(db, "after_soft_rollback", _drop_queued, once=True)
+    pending.append(spec)
+
+
+def _drop_queued(session: Session, _previous_transaction: Any) -> None:
+    session.info.pop(_ALERTS_KEY, None)
+    from sqlalchemy import event
+
+    if event.contains(session, "after_commit", _send_queued):
+        event.remove(session, "after_commit", _send_queued)
+
+
+def _send_queued(session: Session) -> None:
+    from sqlalchemy import event
+
+    if event.contains(session, "after_soft_rollback", _drop_queued):
+        event.remove(session, "after_soft_rollback", _drop_queued)
+    specs = session.info.pop(_ALERTS_KEY, None) or []
+    if not specs:
+        return
+    from app.database import SessionLocal
+
+    own = SessionLocal()
+    try:
+        for spec in specs:
+            _notify(own, **spec)
+        own.commit()
+    except Exception as exc:  # noqa: BLE001 - the caller already committed its fact
+        own.rollback()
+        logger.warning("non_cancellable.alert_send_failed error=%s", exc)
+    finally:
+        own.close()
 
 
 def _notify(
@@ -714,6 +761,8 @@ def _notify(
             sent += 1
         except Exception as exc:  # noqa: BLE001
             logger.warning("non_cancellable.alert_recipient_failed user=%s error=%s", user_id, exc)
+            if not db.is_active:
+                db.rollback()
     return sent
 
 

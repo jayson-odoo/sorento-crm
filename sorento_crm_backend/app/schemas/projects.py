@@ -2169,6 +2169,9 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationRecipientPick, ProjectQuota
         description="Saved scopes Edit quotation deletes (#1341). Refused with 422 "
         "quotation_scope_issued for a scope any version of which has been issued.",
     )
+    #: NON-CANCELLABLE-ITEMS: an override holder's reason for cutting a Non-cancellable line a
+    #: confirmed SO consumes; without it such a save is refused 409 `non_cancellable_line`.
+    non_cancellable_override_reason: Optional[str] = Field(default=None, max_length=2000)
     # QUOTE-AUTOSAVE: the form's whole state at Save. Present, the same commit writes a `saved`
     # History entry from it and clears the draft; a Save the server refuses writes neither.
     form_state: Optional[Dict[str, Any]] = Field(
