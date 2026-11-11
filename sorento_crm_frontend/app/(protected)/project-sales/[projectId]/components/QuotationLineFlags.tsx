@@ -8,7 +8,6 @@ import type {
   QuotationLine,
   QuotationLineVerdict,
 } from '../../_shared/types/project.types';
-import { formatMyr } from './QuotationsPanel';
 import { isSectionDraft, type LineDraft } from './quotationLineDraft';
 
 const FLOOR_LEVEL_LABELS: Record<string, string> = {
@@ -93,7 +92,7 @@ export function storedLineFacts(line: QuotationLine): LineFacts {
  * price** is judged the same way, by the save's default-price rule.
  *
  * Two cells read it (owner meeting, 29 Oct): Non-standard stays in the Product cell, the floor
- * sits under the price in the Rate cell and reads "Below minimum price RM x". Both ask the same query
+ * sits under the price in the Rate cell and reads "Below minimum price". Both ask the same query
  * key, so React Query asks the server once.
  */
 function useLineFacts(
@@ -207,7 +206,7 @@ export function LineFlags({
 }
 
 /**
- * The Rate cell's flag, under the price: "Below minimum price RM x". Where the floor was set is the
+ * The Rate cell's flag, under the price: "Below minimum price", no amount. Where the floor was set is the
  * badge's tooltip only; the owner removed the printed "Set on ..." line (1 Nov 2026).
  */
 export function MinimumPriceFlag({
@@ -226,43 +225,47 @@ export function MinimumPriceFlag({
 
   return (
     <div className="mt-1 text-end">
-      <MinimumPriceBadge value={floor.value} title={floor.source} />
+      <MinimumPriceBadge title={floor.source} />
     </div>
   );
 }
 
-/** The "Below minimum price RM x" pill itself, shared with a customer's suggested price in review. */
-export function MinimumPriceBadge({ value, title }: { value: string | null; title?: string }) {
+/**
+ * The "Below minimum price" pill itself. The Flags filter's own words, and no amount (owner hand
+ * test, 11 Nov: "just don't show the minimum price in the warning"); where the floor was set
+ * stays the tooltip.
+ */
+export function MinimumPriceBadge({ title }: { title?: string }) {
   return (
-    // No icon and tight padding: the Rate cell is narrow; the pill wraps rather than clips.
+    // No icon and tight padding, on one line: the Rate cell is narrow.
     <Badge
       variant="destructive"
-      className="h-auto whitespace-normal rounded-md px-1.5 py-0.5 text-start text-2xs leading-tight"
+      className="h-auto whitespace-nowrap rounded-md px-1.5 py-0.5 text-2xs leading-tight"
       title={title}
     >
-      {/* The Flags filter's own words (owner hand test, 11 Nov): one term for one fact. */}
-      {value ? `Below minimum price ${formatMyr(value)}` : 'Below minimum price'}
+      Below minimum price
     </Badge>
   );
 }
 
-type FloorFacts = { value: string | null; source: string };
+/** Where the floor was set: the pill's tooltip. The amount itself is not shown (owner, 11 Nov). */
+type FloorFacts = { source: string };
 
 const NO_FLOOR_VALUE = 'Below the minimum price for this item.';
 
 function describeVerdictFloor(verdict: QuotationLineVerdict | null): FloorFacts {
-  if (!verdict?.floor_value) return { value: null, source: NO_FLOOR_VALUE };
+  if (!verdict?.floor_value) return { source: NO_FLOOR_VALUE };
   const level = verdict.floor_level
     ? (FLOOR_LEVEL_LABELS[verdict.floor_level] ?? verdict.floor_level)
     : 'this item';
-  return { value: verdict.floor_value, source: `Set on ${level}.` };
+  return { source: `Set on ${level}.` };
 }
 
 /** Says which rule bit, so the salesperson knows whose policy to argue with. */
 function describeFloor(line: QuotationLine): FloorFacts {
-  if (!line.floor_value_applied) return { value: null, source: NO_FLOOR_VALUE };
+  if (!line.floor_value_applied) return { source: NO_FLOOR_VALUE };
   const level = line.floor_level_applied
     ? (FLOOR_LEVEL_LABELS[line.floor_level_applied] ?? line.floor_level_applied)
     : 'policy';
-  return { value: line.floor_value_applied, source: `Set on ${level}.` };
+  return { source: `Set on ${level}.` };
 }

@@ -94,7 +94,7 @@ Non-standard / Below default price.
   rule). A change the grid did not make (a column change, a restored or discarded draft) starts
   the history afresh, so Undo never brings back cells under columns that no longer exist. The
   history lives with the grid, so it starts empty in each edit session and on each area tab.
-- The red pill reads "Below minimum price RM x", the Flags filter's words.
+- The red pill reads "Below minimum price", the Flags filter's words.
 
 ## Crew pass on the hand-test round (11 Nov 2026)
 

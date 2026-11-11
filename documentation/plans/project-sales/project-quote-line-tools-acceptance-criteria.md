@@ -32,4 +32,4 @@ Plan: `PLAN-project-quote-line-tools-11nov.md`.
 - AC-14 Edit mode has Undo / Redo (toolbar buttons, Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z) over every
   line change, from the price tag designer's shared history (`hooks/useUndoHistory.ts`); a run of
   keystrokes in one field is one step; inside a text field the field's own text undo applies.
-- AC-15 The red Rate pill reads "Below minimum price RM x".
+- AC-15 The red Rate pill reads "Below minimum price".

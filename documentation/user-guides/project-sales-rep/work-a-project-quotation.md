@@ -183,7 +183,7 @@ free-text description as a line.
 
 ### Minimum price and default price, while you type
 
-* Under a line's rate, **Below minimum price RM x** appears as soon as the price you type is
+* Under a line's rate, **Below minimum price** appears as soon as the price you type is
   below the lowest price allowed for that item. It shows on a new quotation too, before the
   first save.
 * Under a line's product code, **Below default price** appears when the price is below the

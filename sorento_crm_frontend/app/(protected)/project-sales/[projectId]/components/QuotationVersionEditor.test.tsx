@@ -561,7 +561,7 @@ describe('QuotationVersionEditor', () => {
     await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
   });
 
-  it('names the rule behind a below-floor line rather than just flagging it', async () => {
+  it('flags a below-floor line under its rate', async () => {
     listQuotationLines.mockResolvedValue([
       line({
         unit_price: '400.00',
@@ -576,7 +576,7 @@ describe('QuotationVersionEditor', () => {
 
     // Owner meeting 29 Oct: the flag sits UNDER the price, in the Rate cell, and names the
     // minimum price; the product cell no longer carries it.
-    const pill = await screen.findByText('Below minimum price RM 700.00');
+    const pill = await screen.findByText('Below minimum price');
     const list = screen.getByText('List RM 1,000.00');
     expect(pill.closest('td')).toBe(list.closest('td'));
     // PRICING-UX-FIXES (owner, 1 Nov): no printed "Set on ..." line under the rate.
@@ -664,7 +664,7 @@ describe('QuotationVersionEditor', () => {
     expect(updateQuotationLine).not.toHaveBeenCalled();
   });
 
-  it('flags a price below the floor as it is typed, with the floor named', async () => {
+  it('flags a price below the floor as it is typed', async () => {
     listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
     judgeQuotationLine.mockResolvedValue({
       is_non_standard: false,
@@ -681,7 +681,7 @@ describe('QuotationVersionEditor', () => {
 
     // The minimum price is NAMED, so the refusal can be argued with rather than merely obeyed,
     // and it shows under the price being typed.
-    const pill = await screen.findByText('Below minimum price RM 94.00', {}, { timeout: 5000 });
+    const pill = await screen.findByText('Below minimum price', {}, { timeout: 5000 });
     expect(pill.closest('td')).toBe(priceInput.closest('td'));
     expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
@@ -3342,7 +3342,7 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on A-1' }), {
       target: { value: '850.00' },
     });
-    expect(await screen.findByText('Below minimum price RM 800.00', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('Below minimum price', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
     // Changing the filter lets it go: it no longer matches.
     await chooseFlag('Non-standard');
