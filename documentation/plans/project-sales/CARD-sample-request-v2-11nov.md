@@ -81,8 +81,22 @@ and join stakeholders, as `attn_contact_ids` do). No backfill.
 
 ## Real examples (dev DB)
 
-The cloud sandbox has no business data. `sample-request-v2-dev-examples.sql` (this folder) is the read-only
-crew-data-request; the mock uses a realistic case with fake names until the numbers come back:
+`sample-request-v2-dev-examples.sql` (this folder) was run read-only by crew on the dev copy
+(sorento_prod_1104, as of 4 Nov), aggregates only. **The table holds just 2 sample requests** (01/11 and 02/11/2026),
+so every request-level number below is anecdotal, not a pattern:
+
+- Per project: 2 projects with 1 request each. "Many per project" has not happened yet in data; the UI already allows it.
+- Both registered (project_id set) and both debtor customers (customer_id set): 0 unregistered, 0 typed customer.
+- Ship To typed on 2/2. Exact match to a project party 0/2, to the customer 0/2. Loose substring match: party
+  0/2, customer 1/2. So today's free text does not line up with the parties list: the reason for the change, and
+  weak evidence for Q2 (one of two loosely names the customer).
+- Fill rates (of 2): For 0, Shipping address 0, Contact name 0, Contact phone 0, Contact note 0. Nobody fills
+  "For" or the phone/note pair today, so removing them loses nothing.
+- Projects behind them: project A = 1 party, 0 with an address, 0 active contacts (the "party without address"
+  and "no contacts yet" edge cases are real, not hypothetical); project B = 3 parties, 2 with an address,
+  1 active contact (the shape example A below uses).
+
+The mock therefore uses project B's shape with fake names:
 
 - **A. Registered project, ship to a trading house.** PPF2611007 "Residensi Taman Seri Murni", customer
   NUSANTARA BUILDERS SDN BHD [A/C I] (300-N021). Parties: Developer Seri Murni Development Sdn Bhd, Trading house
