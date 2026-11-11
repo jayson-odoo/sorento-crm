@@ -89,7 +89,7 @@ import {
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
-import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
+import { isRich, parseRichText, richPlainText, safeColour } from '@/lib/dealer-kit/rich-text';
 import { renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import {
   resolveTableText,
@@ -1242,6 +1242,194 @@ function SheetRenderer({
 // ---------------------------------------------------------------------------
 
 /**
+ * B5: an Accessories box as the plain layers a deck knows (shapes, pictures, text), laid out by the
+ * SAME functions the print renderer draws it with, so the slide matches the print.
+ */
+function flattenAccessories(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  binding: TagBindingData | null,
+  baseX: number,
+  baseY: number,
+): Record<string, unknown>[] {
+  const props = layer.props;
+  if (props.kind !== 'accessories') return [];
+  const items = accessoriesOf(binding, layer);
+  const out: Record<string, unknown>[] = [];
+  const at = (x: number, y: number, w: number, h: number) => ({
+    x_mm: baseX + x,
+    y_mm: baseY + y,
+    width_mm: w,
+    height_mm: h,
+    rotation_deg: 0,
+  });
+  const rect = (r: { x_mm: number; y_mm: number; width_mm: number; height_mm: number }, fill: string, stroke = '', strokeWidth = 0, radius = 0) =>
+    out.push({
+      kind: 'shape',
+      shape: radius > 0 ? 'rounded_rect' : 'rect',
+      ...at(r.x_mm, r.y_mm, r.width_mm, r.height_mm),
+      fill,
+      stroke,
+      strokeWidth,
+      cornerRadius: radius,
+    });
+  const text = (
+    r: { x_mm: number; y_mm: number; width_mm: number; height_mm: number },
+    value: string,
+    style: { fontFamily?: string | null; fontSize: number; bold: boolean; italic?: boolean; underline?: boolean; color: string; align: string },
+  ) => {
+    if (!value) return;
+    out.push({
+      kind: 'text',
+      ...at(r.x_mm, r.y_mm, r.width_mm, r.height_mm),
+      text: value,
+      fontFamily: style.fontFamily || props.fontFamily || '',
+      fontSize: style.fontSize,
+      bold: style.bold,
+      italic: Boolean(style.italic),
+      underline: Boolean(style.underline),
+      color: style.color,
+      align: style.align,
+    });
+  };
+  const imageUrl = (item: TagAccessory) =>
+    item.image ? (media.images?.[item.image.attachment_id] ?? item.image.url) : null;
+  const headerStyle = accessoryHeaderStyle(props);
+
+  if (props.card) {
+    const box = cardBoxLayout(items.length, props, layer.width_mm, layer.height_mm);
+    if (box.shown === 0) return [];
+    const cardIcons = drawableFeatureIcons(media.featureIcons, media.assets);
+    if (box.frame) rect(box.frame, safeColour(props.fill), safeColour(props.stroke), props.strokeWidth_mm, props.cornerRadius_mm);
+    if (box.header) {
+      text(box.header, props.headerText, {
+        fontFamily: headerStyle.fontFamily,
+        fontSize: box.header.fontSize_pt,
+        bold: headerStyle.bold,
+        italic: headerStyle.italic,
+        underline: headerStyle.underline,
+        color: safeColour(headerStyle.color),
+        align: box.header.onBorder ? 'center' : headerStyle.align,
+      });
+    }
+    box.cards.forEach((card, i) => {
+      const item = items[i];
+      rect(card, safeColour(props.cardFill), '', 0, Math.min(props.cornerRadius_mm, 1.5));
+      for (const element of cardElementsFor(item, props.card!, cardIcons)) {
+        const r = {
+          x_mm: card.x_mm + element.x_mm * box.scale,
+          y_mm: card.y_mm + element.y_mm * box.scale,
+          width_mm: element.width_mm * box.scale,
+          height_mm: element.height_mm * box.scale,
+        };
+        if (element.kind === 'picture') {
+          const url = item.image ? imageUrl(item) : element.src;
+          if (url) out.push({ kind: 'image', ...at(r.x_mm, r.y_mm, r.width_mm, r.height_mm), url, fit: element.fit ?? 'contain' });
+        } else if (element.kind === 'text') {
+          const value = isRich(element.text ?? '') ? richPlainText(element.text ?? '') : (element.text ?? '');
+          const boxed = cardTextBox(element, box.scale);
+          const fitted = fitCardTextProps(cardTextProps(element, box.scale, props.fontFamily), value, boxed.text.width_mm, boxed.text.height_mm);
+          text(r, value, {
+            fontFamily: fitted.fontFamily,
+            fontSize: fitted.fontSize,
+            bold: (fitted.fontWeight ?? 400) >= 600,
+            italic: fitted.italic,
+            underline: fitted.underline,
+            color: safeColour(fitted.color, '#111827'),
+            align: fitted.align,
+          });
+        } else if (element.kind === 'shape') {
+          rect(r, element.fill ? safeColour(element.fill) : 'transparent', element.stroke ? safeColour(element.stroke) : '', element.strokeWidth_mm ?? 0, element.cornerRadius_mm ?? 0);
+        }
+      }
+    });
+    return out;
+  }
+
+  const lineCount = accessoryLineCount(items);
+  const box = accessoryBoxLayout(items.length, props, layer.width_mm, layer.height_mm, lineCount);
+  if (box.shown === 0) return [];
+  if (box.frame) rect(box.frame, safeColour(props.fill), safeColour(props.stroke), props.strokeWidth_mm, props.cornerRadius_mm);
+  if (box.header) {
+    text(box.header, props.headerText, {
+      fontFamily: headerStyle.fontFamily,
+      fontSize: box.header.fontSize_pt,
+      bold: headerStyle.bold,
+      italic: headerStyle.italic,
+      underline: headerStyle.underline,
+      color: safeColour(headerStyle.color),
+      align: box.header.onBorder ? 'center' : headerStyle.align,
+    });
+  }
+  box.cards.forEach((card, i) => {
+    const item = items[i];
+    const url = imageUrl(item);
+    const inner = accessoryCardInner(card, props, Boolean(url), lineCount);
+    const texts = accessoryCardLines(item);
+    rect(card, safeColour(props.cardFill), '', 0, Math.min(props.cornerRadius_mm, 1.5));
+    if (inner.image && url) {
+      out.push({
+        kind: 'image',
+        ...at(card.x_mm + inner.image.x_mm, card.y_mm + inner.image.y_mm, inner.image.width_mm, inner.image.height_mm),
+        url,
+        fit: 'contain',
+      });
+    }
+    inner.lines.forEach((line, n) => {
+      if (!texts[n]) return;
+      const style = accessoryLineStyle(props, n);
+      const basePt = n === 0 ? props.nameFontSize : props.specFontSize;
+      text(
+        { x_mm: card.x_mm + line.x_mm, y_mm: card.y_mm + line.y_mm, width_mm: line.width_mm, height_mm: line.height_mm },
+        texts[n],
+        {
+          fontFamily: style.fontFamily,
+          fontSize: fitLinePt(texts[n], line.width_mm, basePt, style.bold),
+          bold: style.bold,
+          italic: style.italic,
+          underline: style.underline,
+          color: safeColour(style.color),
+          align: style.align,
+        },
+      );
+    });
+  });
+  return out;
+}
+
+/** B5: a price badge as a filled box (when boxed) with its resolved words over it. */
+function flattenPriceBadge(
+  layer: TagLayer,
+  binding: TagBindingData | null,
+  box: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const props = layer.props;
+  if (props.kind !== 'price_badge') return [];
+  const parts = priceBadgeParts(props, priceBadgeInput(binding, layer));
+  const typo = priceBadgeTypography(props);
+  const out: Record<string, unknown>[] = [];
+  if (parts.boxed || props.showBox) {
+    out.push({ kind: 'shape', shape: 'rounded_rect', ...box, fill: safeColour(props.fill), stroke: '', strokeWidth: 0, cornerRadius: props.cornerRadius ?? 0 });
+  }
+  const lines = [parts.struckText, parts.plainText].filter(Boolean).join('\n');
+  if (lines) {
+    out.push({
+      kind: 'text',
+      ...box,
+      text: lines,
+      fontFamily: typo.fontFamily || 'DM Sans',
+      fontSize: typo.fontSize ?? Math.max(6, Math.min(24, Number(layer.height_mm) * 1.4)),
+      bold: (typo.fontWeight ?? 700) >= 600,
+      italic: typo.italic,
+      underline: typo.underline,
+      color: parts.boxed ? '#ffffff' : safeColour(props.textColor, '#000000'),
+      align: typo.align,
+    });
+  }
+  return out;
+}
+
+/**
  * B5: the resolved layers of every page, for the PowerPoint worker (`window.__tagSheetLayout`).
  * Text has its merge fields applied; a table carries its laid-out cells and border edges; a
  * picture carries the URL this page already loaded (the worker's browser turns it into bytes).
@@ -1296,6 +1484,10 @@ function buildLayoutExport(
             strokeWidth: props.strokeWidth,
             cornerRadius: props.cornerRadius,
           });
+        } else if (props.kind === 'accessories') {
+          layers.push(...flattenAccessories(layer, media, binding, box.x_mm, box.y_mm));
+        } else if (props.kind === 'price_badge') {
+          layers.push(...flattenPriceBadge(layer, binding, box));
         } else if (props.kind === 'table') {
           const laid = resolveTableText(props, (text) => renderMergeFields(text, binding, 'print', layer));
           const layout = tableLayout(laid, layer.width_mm, tableMeasure(laid));

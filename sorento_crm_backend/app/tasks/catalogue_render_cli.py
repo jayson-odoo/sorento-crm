@@ -5,8 +5,8 @@
     python -m app.tasks.catalogue_render_cli <url> <out.json> --layout
 
 ``--layout`` writes the print page's resolved layers (``window.__tagSheetLayout``, for the spec
-sheet PowerPoint export) instead of a PDF. Pictures are turned into ``data:`` URLs INSIDE the page,
-so the worker never fetches a URL itself.
+sheet PowerPoint export) instead of a PDF. Pictures are fetched with the browser context's request
+client (no CORS) from the URLs the page itself loaded, and returned as ``data:`` URLs.
 
 RQ forks a work-horse per job, and driving Playwright's sync API inside that
 fork segfaults on macOS (signal 11) - the browser launch does not survive a
@@ -87,34 +87,52 @@ def render(
     return len(pdf_bytes)
 
 
-# Runs in the page: each picture the layout names becomes a data URL (or is dropped). Only the URLs
-# the print page itself already loaded are touched; the worker process fetches nothing.
-_INLINE_IMAGES_JS = """
-async (layout) => {
-  const MAX = 25 * 1024 * 1024;
-  const toData = (blob) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-  for (const page of layout.pages || []) {
-    for (const layer of page.layers || []) {
-      if (layer.kind !== 'image') continue;
-      const url = layer.url;
-      if (typeof url === 'string' && url.startsWith('data:')) continue;
-      try {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        if (!response.ok || !blob.type.startsWith('image/') || blob.size > MAX) throw new Error('skip');
-        layer.url = await toData(blob);
-      } catch (e) {
-        layer.url = null;
-      }
-    }
-  }
-  return layout;
-}
+IMAGE_MAX_BYTES = 20 * 1024 * 1024
+IMAGES_TOTAL_MAX_BYTES = 200 * 1024 * 1024
+
+
+def inline_images(
+    urls,
+    fetch,
+    *,
+    per_image_max: int = IMAGE_MAX_BYTES,
+    total_max: int = IMAGES_TOTAL_MAX_BYTES,
+) -> dict:
+    """``{url: data URL}`` for the pictures worth embedding.
+
+    ``fetch(url)`` returns ``(content_type, body_bytes)`` or ``None`` (it is the browser context's
+    request client in production, which CORS does not apply to). Only ``image/*`` is kept, a picture
+    over ``per_image_max`` is skipped, and nothing is added once ``total_max`` would be passed. The
+    caller supplies only URLs the print page itself loaded, never anything from the layout.
+    """
+    import base64
+
+    out: dict = {}
+    total = 0
+    for url in dict.fromkeys(urls):
+        if url in out:
+            continue
+        try:
+            got = fetch(url)
+        except Exception:  # noqa: BLE001 - one dead picture must not lose the deck
+            continue
+        if not got:
+            continue
+        content_type, body = got
+        mime = (content_type or "").split(";")[0].strip().lower()
+        if not mime.startswith("image/") or not body or len(body) > per_image_max:
+            continue
+        if total + len(body) > total_max:
+            continue
+        total += len(body)
+        out[url] = f"data:{mime};base64,{base64.b64encode(body).decode('ascii')}"
+    return out
+
+
+_LOADED_IMAGE_SRCS_JS = """
+() => Array.from(document.querySelectorAll('img'))
+  .map((img) => img.currentSrc || img.src)
+  .filter((src) => typeof src === 'string' && /^https?:/i.test(src))
 """
 
 
@@ -132,7 +150,21 @@ def render_layout(url: str, out_path: str) -> int:
             layout = page.evaluate("window.__tagSheetLayout")
             if not layout:
                 raise RuntimeError("the print page did not expose its layout")
-            layout = page.evaluate(_INLINE_IMAGES_JS, layout)
+            loaded = page.evaluate(_LOADED_IMAGE_SRCS_JS)
+
+            def fetch(src: str):
+                response = page.context.request.get(src, timeout=60_000)
+                if not response.ok:
+                    return None
+                return response.headers.get("content-type"), response.body()
+
+            inlined = inline_images(loaded, fetch)
+            for entry in layout.get("pages") or []:
+                for layer in entry.get("layers") or []:
+                    if layer.get("kind") == "image":
+                        url = layer.get("url")
+                        if not (isinstance(url, str) and url.startswith("data:")):
+                            layer["url"] = inlined.get(url)
         finally:
             browser.close()
     with open(out_path, "w", encoding="utf-8") as handle:

@@ -7,7 +7,9 @@
 import { render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { defaultAccessoriesPropsFor } from '@/lib/dealer-kit/accessory-card';
 import type { TagLayer, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import { defaultPriceBadgeProps } from '@/lib/dealer-kit/tag-template-types';
 import TagSheetRenderer, { type ResolvedLineData } from './TagSheetRenderer';
 
 const TAG_ID = 'tag-1';
@@ -141,5 +143,49 @@ describe('window.__tagSheetLayout', () => {
     expect(red.every((e) => e.y1_mm === e.y2_mm && e.width_mm === 0.5)).toBe(true);
     // Zero-width borders draw nothing.
     expect(edges.every((e) => e.width_mm > 0)).toBe(true);
+  });
+});
+
+describe('window.__tagSheetLayout, accessories box and price badge (B5)', () => {
+  const accessoriesDoc = () => {
+    const base = DOC.sheets[0].tags[0];
+    const accessories = layer(
+      'acc',
+      'accessories',
+      { ...defaultAccessoriesPropsFor(true), headerText: 'ACCESSORIES' },
+      40,
+    );
+    const badge = layer('pb', 'price_badge', defaultPriceBadgeProps('list_only'), 120);
+    return {
+      ...DOC,
+      sheets: [{ ...DOC.sheets[0], tags: [{ ...base, layers: [{ ...accessories, width_mm: 60, height_mm: 90 }, badge] }] }],
+    } as unknown as TagSheetDoc;
+  };
+  const data = {
+    ...DATA,
+    list_price: 100,
+    accessories: [
+      { kind: 'product', id: 'a1', code: 'AV-1', name: 'Angle valve', brand: 'Acme', spec_sheet_description: 'Valve text', spec: null, image: { attachment_id: 'p1', url: 'https://img/1.png' } },
+      { kind: 'product', id: 'a2', code: 'HS-2', name: 'Hose', brand: 'Flex', spec_sheet_description: 'Hose text', spec: null, image: { attachment_id: 'p2', url: 'https://img/2.png' } },
+    ],
+  } as unknown as ResolvedLineData;
+
+  it('flattens an accessories box of 2 items into 2 pictures and the resolved card texts', async () => {
+    render(<TagSheetRenderer doc={accessoriesDoc()} resolvedData={{ [TAG_ID]: data }} assets={{}} />);
+    await waitFor(() => expect(exposed()).toBeTruthy());
+    const layers = exposed()!.pages[0].layers;
+    const images = layers.filter((l) => l.kind === 'image');
+    expect(images.map((l) => l.url)).toEqual(['https://img/1.png', 'https://img/2.png']);
+    const texts = layers.filter((l) => l.kind === 'text').map((l) => String(l.text).trim());
+    expect(texts).toEqual(expect.arrayContaining(['Acme AV-1', 'Flex HS-2', 'Valve text', 'Hose text']));
+    const title = layers.find((l) => l.kind === 'text' && String(l.text).trim() === 'Acme AV-1')!;
+    expect(title.bold).toBe(true);
+  });
+
+  it('a price badge exports its price as text', async () => {
+    render(<TagSheetRenderer doc={accessoriesDoc()} resolvedData={{ [TAG_ID]: data }} assets={{}} />);
+    await waitFor(() => expect(exposed()).toBeTruthy());
+    const texts = exposed()!.pages[0].layers.filter((l) => l.kind === 'text').map((l) => String(l.text));
+    expect(texts.some((t) => t.includes('100'))).toBe(true);
   });
 });
