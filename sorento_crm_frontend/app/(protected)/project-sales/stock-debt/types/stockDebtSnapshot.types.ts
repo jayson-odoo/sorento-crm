@@ -161,6 +161,7 @@ export type PoLinkOutcome =
   | 'refused'
   | 'mismatch'
   | 'pending_verification'
+  | 'skipped'
   | 'vendor_error'
   | 'recovered'
   | 'needs_attention';

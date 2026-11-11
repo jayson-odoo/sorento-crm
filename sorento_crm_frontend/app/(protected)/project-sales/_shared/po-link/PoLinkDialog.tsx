@@ -136,7 +136,7 @@ function ResultCard({
   const [current, setCurrent] = React.useState(result);
   const text = poLinkResultText(current, kind);
   const busy = relocate.isPending || resume.isPending || link.isPending;
-  const canRetry = Boolean(retryItem) && (current.outcome === 'refused' || current.outcome === 'vendor_error');
+  const canRetry = Boolean(retryItem) && (current.outcome === 'refused' || current.outcome === 'vendor_error' || current.outcome === 'skipped');
   return (
     <div className={cn('space-y-1 rounded-md p-3 text-sm', TONE[text.tone])} data-testid="po-link-result">
       <p className="font-semibold">{text.title}</p>

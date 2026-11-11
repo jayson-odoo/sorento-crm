@@ -63,6 +63,10 @@ function resultText(r: PoLinkResult, kind: PoLinkKind): PoLinkResultText {
     }
     return { tone: 'ok', title: DONE_TITLE[kind], text, action: null };
   }
+  if (r.outcome === 'skipped') {
+    // The Shared Service named why in plain words already; the code is never shown.
+    return { tone: 'error', title: FAIL_TITLE[kind], text: r.message || `${so} was not linked.`, action: null };
+  }
   if (r.outcome === 'needs_attention' || r.outcome === 'pending_verification') {
     return {
       tone: 'error',
