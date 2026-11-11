@@ -1888,10 +1888,8 @@ def _oi_po_link_write(db: Session, current_user: dict, row_ids: list[str], call,
         _oi_rebook(db, scope, [r.get("outcome") for r in results], current_user)
         return out
     except Exception as exc:
-        if hasattr(exc, "status_code"):
-            raise  # a refusal before anything was sent: nothing to undo
         db.rollback()
-        raise handle_internal_error(str(exc))
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.post("/order-inquiries/po-link/link", response_model=PoLinkResults)

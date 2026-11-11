@@ -550,10 +550,11 @@ class PoLinkService:
         False is returned (both lines stay, `keep` under its old ref)."""
         from app.services.dependent_probe import referrers_of
 
-        # Re-pointing the referrers is the step that can clash (a unique key on the keep line). It
-        # runs under a plain SQL savepoint: a failed statement is undone with ROLLBACK TO and the
-        # session stays usable, and no ORM transaction event fires (the ORM `begin_nested` here
-        # ended its parent savepoint through a flush-time commit hook and lost the whole merge).
+        # One ORM savepoint around the whole merge: a clash rolls back the referrer updates, the
+        # value copy and the delete together, and SQLAlchemy expires / restores the objects the
+        # savepoint touched, so the session matches the database again. Pending work is flushed
+        # first, outside it, so its own failure is never mistaken for a clash.
+        self.db.flush()
         try:
             with self.db.begin_nested():
                 for referrer, column in referrers_of(self.db, PurchaseOrderLine.__tablename__):

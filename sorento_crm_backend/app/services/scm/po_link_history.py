@@ -104,29 +104,31 @@ def record_crm_write(
     so_line_no: Optional[int],
     qty: Any,
 ) -> None:
-    """One EVENT per write sent to AutoCount, success or failure. Never fails the request."""
+    """One EVENT per write sent to AutoCount, success or failure. Never fails the request: the
+    row is written and flushed in its own savepoint, so a failed insert costs only this event
+    and leaves the caller's work and session intact."""
     try:
-        audit_service.log_audit(
-            db,
-            _ENTITY,
-            str(po_line_id),
-            "EVENT",
-            event=EVENT_CRM_WRITE,
-            user_id=(actor or {}).get("id"),
-            new_values={
-                "request_id": request_id,
-                "operation_id": operation_id,
-                "action": action,
-                "outcome": outcome,
-                "so_number": so_number,
-                "so_line_no": so_line_no,
-                "qty": qty,
-            },
-            company_id=str(company_id) if company_id else None,
-            root_entity_type=_ROOT,
-            root_entity_id=str(purchase_order_id),
-            skip_flush=True,
-        )
+        with db.begin_nested():
+            audit_service.log_audit(
+                db,
+                _ENTITY,
+                str(po_line_id),
+                "EVENT",
+                event=EVENT_CRM_WRITE,
+                user_id=(actor or {}).get("id"),
+                new_values={
+                    "request_id": request_id,
+                    "operation_id": operation_id,
+                    "action": action,
+                    "outcome": outcome,
+                    "so_number": so_number,
+                    "so_line_no": so_line_no,
+                    "qty": qty,
+                },
+                company_id=str(company_id) if company_id else None,
+                root_entity_type=_ROOT,
+                root_entity_id=str(purchase_order_id),
+            )
     except Exception:  # noqa: BLE001
         log.warning("po link: could not record the write event for %s", po_line_id)
 
