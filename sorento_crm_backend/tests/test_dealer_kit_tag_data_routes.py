@@ -370,6 +370,8 @@ def test_product_tag_data_keeps_every_field(api):
         # request line) can resolve `{{product.price_tag_description}}`
         # the same way the canvas already does off a line binding.
         "price_tag_description",
+        # SPEC-SHEET-DESIGNER-PARITY: `products.description` for {{product.description}}.
+        "description",
         # PRICETAG-ACCESSORIES: the product's own accessory list (an Ala Carte tag prints it).
         "accessories",
         "accessory_box_style",
@@ -397,6 +399,7 @@ def test_product_tag_data_keeps_every_field(api):
     # AC-A12: `currency` rides the wire - `response_model` drops an
     # undeclared field silently.
     assert body["currency"] == "MYR"
+    assert body["description"] == "One line\nAnother line"
 
 
 def test_unknown_product_is_404(api):
@@ -669,6 +672,58 @@ def test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts(
         "a PART's own price_tag_description must reach the wire too, for a "
         "layer with a subjectPart pointing at it"
     )
+
+
+def test_resolve_prices_carries_the_product_description_on_the_line_and_its_parts(api):
+    """SPEC-SHEET-DESIGNER-PARITY: {{product.description}} prints on a real request, not only
+    in the template preview - `response_model` drops an undeclared field."""
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.price_tag import PriceTagRequestLinePart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product = _product(db)
+    product.description = "Wall hung WC, rimless"
+    part_product = _product(db, list_price="0.00")
+    part_product.description = "Angle valve, chrome"
+    db.flush()
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [{"line_type": "product", "product_id": product.id, "quantity": 1}],
+        },
+    )
+    db.add(
+        PriceTagRequestLinePart(
+            id=str(uuid.uuid4()),
+            line_id=request.lines[0].id,
+            product_id=part_product.id,
+            role="accessory",
+        )
+    )
+    db.commit()
+    tag_id = request.lines[0].tags[0].id
+
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
+            json=[tag_id],
+        )
+
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    assert row["description"] == "Wall hung WC, rimless"
+    assert row["parts"][0]["description"] == "Angle valve, chrome"
 
 
 # ---------------------------------------------------------------------------

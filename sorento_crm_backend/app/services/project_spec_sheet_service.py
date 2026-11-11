@@ -548,7 +548,7 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
     from app.services.dealer_kit import tag_data_service as tags
 
     if product is None:
-        return {"dimensions": "", "spec_lines": [], "specs": [], "barcode": None}
+        return {"dimensions": "", "spec_lines": [], "specs": [], "barcode": None, "description": None}
     if product.id not in spec_cache:
         rows = spec_cache.get(_ROWS) or {}
         spec_row = rows[str(product.id)] if str(product.id) in rows else tags._spec_row(db, product)
@@ -557,6 +557,8 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
             "spec_lines": tags.spec_lines(db, product, spec_row),
             "specs": tags.product_specs(db, product, spec_row),
             "barcode": product.barcode or None,
+            # {{product.description}}: the product master's plain description.
+            "description": product.description or None,
         }
     return spec_cache[product.id]
 
@@ -740,6 +742,7 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
         "quantity": 1,
         "barcode": None,
         "price_tag_description": None,
+        "description": None,
         "drawing": None,
         "area": "",
         "comment": "",
@@ -1161,6 +1164,7 @@ def build_print_payload(
                     "images": [photo] if photo else [],
                     "drawing": _image(acc["_drawing"], urls),
                     "barcode": part_fields["barcode"],
+                    "description": part_fields["description"],
                     # A set part has no price of its own (the set line carries it); a
                     # hand-picked accessory carries its own quoted line price.
                     "list_price": acc.get("_price"),
@@ -1182,6 +1186,7 @@ def build_print_payload(
                 "images": [photo] if photo else [],
                 "drawing": _image(page["_drawing"], urls),
                 "barcode": fields["barcode"],
+                "description": fields["description"],
                 "parts": parts,
                 "own_parts": parts,
                 "area": page["area"].upper(),
