@@ -44,7 +44,7 @@ spec-sheet fork.
 `line.description`, `line.quantity`, `line.uom`, `line.technical_spec`, `line.notes`,
 `line.item_label`, `doc.subject_title`, `doc.attn`, `doc.recipient`, `doc.project_code`,
 `doc.page_no`, `doc.page_count`, `accessory.N.code|name|brand|description|spec_sheet_description|
-dimensions`. Sources: slice A card in `PLAN-spec-sheet-designer-parity-11nov.md`. Spec sheet
+dimensions`. Sources: slice A card in `_archive/project-sales/PLAN-spec-sheet-designer-parity-11nov.md`. Spec sheet
 rows carry the real quantity (today hard-coded 1, service `_blank_row`). Also: Insert field on the
 spec sheet page's own Inspector (`ReaderInspector`, absent today).
 
