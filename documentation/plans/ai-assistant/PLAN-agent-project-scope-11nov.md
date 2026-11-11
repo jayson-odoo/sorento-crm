@@ -1,6 +1,6 @@
 # PLAN: AI agent project tools scoped to what the asker can see (AGENT-PROJECT-SCOPE)
 
-Status: in progress (small fix track: expected diff under 300 lines, no migration, no new permission, no new ingest surface).
+Status: in review (small fix track: expected diff under 300 lines, no migration, no new permission, no new ingest surface).
 
 ## Trigger
 Crew browser pass on PR #2337 (11 Nov): viewing as a non-admin salesperson, the AI agent said there are
@@ -35,7 +35,7 @@ schema the model sees says so. Any other value keeps the id check. Who should ho
 a role setting for the owner (crew asks separately).
 
 ## Tests
-`sorento_crm_backend/tests/chatbot/agent/test_agent_project_scope.py`: 13 scoping tests green on main, plus 9 AC-5 tests (red on main); with the list filter
+`sorento_crm_backend/tests/chatbot/agent/test_agent_project_scope.py`: 13 scoping tests green on main, plus 11 AC-5 tests (red on main; with the `_swap_self` call removed 4 go red, with the hint removed 2, and the follow-up-id test pins that the turn's seen set survives a "me" call); with the list filter
 and the router guard removed, 8 go red (kill test).
 
 ## Test list

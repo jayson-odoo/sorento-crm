@@ -150,14 +150,15 @@ def _list_catalog() -> dict:
     return {LIST: {"description": LIST, "inputSchema": {"type": "object", "properties": props}}}
 
 
-def _dispatch(world, args):
+def _dispatch(world, args, *, seen=None, result=None):
     from app.services.chatbot.agent import tools as agent_tools
     from tests.chatbot.agent._ported_reads_support import Recorder
 
-    rec = Recorder(result={"data": [], "pagination": {"total": 0}})
+    rec = Recorder(result=result or {"data": [], "pagination": {"total": 0}})
     with panel_turn(world.sales):
         out = agent_tools.dispatch(
-            world.db, make_ctx(world.sales), LIST, dict(args), call=rec, catalog=_list_catalog(), timeout=5.0
+            world.db, make_ctx(world.sales), LIST, dict(args), call=rec, catalog=_list_catalog(), timeout=5.0,
+            seen_ids=seen,
         )
     return out, rec
 
@@ -190,10 +191,41 @@ def test_ac5_the_model_is_told_it_may_write_me(world):
     assert '"me"' in hint
 
 
-def test_ac5_my_projects_over_the_route_are_the_askers_own(world):
-    """What the swapped id reads: a full-view holder asking for theirs gets theirs, not every project."""
-    body = _list(world, world.owner, owner_user_ids=world.owner)
+def test_ac5_the_ids_a_me_listing_returns_stay_usable_for_the_next_call(world):
+    """The follow-up of "which of my projects have quotations" is a call per returned project id."""
+    seen: set[str] = set()
+    out, _ = _dispatch(
+        world, {"owner_user_ids": "me"}, seen=seen,
+        result={"data": [{"id": world.mine.id, "title": "x"}], "pagination": {"total": 1}},
+    )
+    assert out.status == "ok", out.message
+    assert world.mine.id.lower() in seen
+    follow, rec = _dispatch(world, {"project_ids": world.mine.id}, seen=seen)
+    assert follow.status != "invalid", follow.message
+    assert len(rec.calls) == 1
+
+
+def test_ac5_the_id_me_is_sent_as_reads_only_the_askers_projects(world):
+    """End to end: the owner filter the swap sends, read through the route as a full-view holder."""
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rec = Recorder(result={"data": [], "pagination": {"total": 0}})
+    with panel_turn(world.owner):
+        agent_tools.dispatch(
+            world.db, make_ctx(world.owner), LIST, {"owner_user_ids": "me"}, call=rec, catalog=_list_catalog(),
+            timeout=5.0,
+        )
+    sent = rec.calls[0][1]["owner_user_ids"]
+    body = _list(world, world.owner, owner_user_ids=",".join(sent))
     assert {r["id"] for r in _ours(body, world.all_ids)} == {p.id for p in world.theirs}
+
+
+def test_ac5_the_tool_description_says_names_are_refused_here(world):
+    from app.services.chatbot.agent import tools as agent_tools
+
+    schema = agent_tools.tool_schemas([agent_tools.REGISTRY[LIST]], _list_catalog())[0]
+    assert '"me"' in schema["function"]["description"]
 
 
 def test_ac5_the_hint_is_added_once_and_the_catalogue_is_untouched(world):

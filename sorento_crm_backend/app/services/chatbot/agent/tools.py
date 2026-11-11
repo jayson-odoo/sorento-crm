@@ -334,6 +334,7 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
             # A copy: the property dict is the cached catalogue's own (`mcp_schema_to_openai_tool` copies shallowly).
             prop = params["properties"][self_key] = dict(params["properties"][self_key])
             prop["description"] = (str(prop.get("description") or "").rstrip() + SELF_HINT).strip()
+            schema["function"]["description"] += SELF_TOOL_NOTE.format(key=self_key)
         out.append(schema)
     return out
 
@@ -771,23 +772,28 @@ def _clean_ids(args: dict) -> tuple[dict, ToolResult | None]:
 SELF_ID_ARGS: dict[str, str] = {"crm_projects_list": "owner_user_ids"}
 SELF_WORD = "me"
 SELF_HINT = ' Write "me" for the person asking ("my projects"); it is sent as their own user id.'
+#: The catalogue's description tells other callers a name is resolved for them; on this seam a name is refused.
+SELF_TOOL_NOTE = (
+    ' HERE: `{key}` takes "me" for the person asking, or ids from crm_resolve; a name is refused.'
+)
 
 
 def _is_self(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() == SELF_WORD
 
 
-def _swap_self(name: str, args: dict, ctx: Any, seen: set[str]) -> tuple[dict, set[str]]:
-    """`args` with "me" in the tool's self argument replaced by the asker's user id, and `seen` with that id
-    added (the model never sees the asker's own id). Any other value is left for `_check_ids`."""
+def _swap_self(name: str, args: dict, ctx: Any) -> tuple[dict, set[str]]:
+    """`args` with "me" in the tool's self argument replaced by the asker's user id, and that id as the one extra
+    id `_check_ids` may accept (the model never sees the asker's own id). Any other value is left for `_check_ids`.
+    The turn's own `seen` set is not replaced: the ids this call returns are collected into it."""
     key = SELF_ID_ARGS.get(name)
     if not key or key not in args or not getattr(ctx, "user_id", None):
-        return args, seen
+        return args, set()
     values = _id_args({key: args[key]}).get(key, [])
     if not any(_is_self(v) for v in values):
-        return args, seen
+        return args, set()
     me = str(ctx.user_id)
-    return {**args, key: [me if _is_self(v) else v for v in values]}, seen | {me.lower()}
+    return {**args, key: [me if _is_self(v) else v for v in values]}, {me.lower()}
 
 
 def _check_ids(args: dict, seen: set[str]) -> ToolResult | None:
@@ -1459,8 +1465,8 @@ def _dispatch_inner(
         # Owner rule: the sales basis is never defaulted (an outstanding kind is a basis of its own).
         return ToolResult("invalid", message=SALES_BASIS_MESSAGE)
 
-    args, seen = _swap_self(name, args, ctx, seen)
-    bad_id = _check_ids(args, seen)
+    args, self_ids = _swap_self(name, args, ctx)
+    bad_id = _check_ids(args, seen | self_ids)
     if bad_id is not None:
         return bad_id
 
