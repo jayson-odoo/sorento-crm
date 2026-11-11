@@ -3211,6 +3211,24 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     });
   });
 
+  it('AC-3 (S9): typing straight after Duplicate line searches the copy\'s product picker', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    await chooseMenuItem('SRT-WC-01', 'Duplicate line');
+    const picker = await waitFor(() => {
+      const pickers = screen.getAllByRole('combobox', { name: /^Product on / });
+      expect(document.activeElement).toBe(pickers[1]);
+      return pickers[1];
+    });
+    fireEvent.keyDown(picker, { key: 'S' });
+    const search = (await screen.findByPlaceholderText('Search...')) as HTMLInputElement;
+    expect(search.value).toBe('S');
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+    await waitFor(() => expect(drafts()[1]).toMatchObject({ product_id: 'p9' }));
+    expect(drafts()[0]).toMatchObject({ product_id: 'p-wc' });
+  });
+
   it('AC-1/2: the right-click Duplicate line copies the line it was opened on', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     await renderEditing();
