@@ -96,6 +96,8 @@ export interface ProductTargetPickerOptions {
   rowDisabledReason?: (row: Product) => string | undefined;
   /** A grey hint after the code (default: "Discontinued" for a discontinued product). */
   rowHint?: (row: Product) => string | undefined;
+  /** The Product Name cell (default: the name, blank when it only repeats the code). */
+  rowName?: (row: Product) => string;
 }
 
 export function useProductTargetPicker(source: string | ProductTargetPickerOptions): {
@@ -116,6 +118,7 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     sourceKey = 'products',
     rowDisabledReason,
     rowHint,
+    rowName,
   } = options;
   const extraKey = JSON.stringify({ extra: extraParams ?? {}, source: sourceKey });
   const search = useDebouncedSearch('');
@@ -229,11 +232,9 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
           <DataGridColumnHeader title="Product Name" column={column} />
         ),
         cell: ({ row }) => {
-          const name =
-            distinctName(
-              row.original.product_code,
-              row.original.product_name,
-            ) ?? '';
+          const name = rowName
+            ? rowName(row.original)
+            : (distinctName(row.original.product_code, row.original.product_name) ?? '');
           return (
             <div className="truncate text-sm" title={name}>
               {name}
@@ -285,7 +286,7 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sourceProductId, rowDisabledReason, rowHint, fetchRows],
+    [sourceProductId, rowDisabledReason, rowHint, rowName, fetchRows],
   );
 
   const table = useReactTable({

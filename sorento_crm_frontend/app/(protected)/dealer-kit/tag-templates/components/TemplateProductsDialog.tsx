@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
+import { distinctName } from '@/lib/product-display';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   MAX_COPY_TARGETS,
@@ -63,6 +64,13 @@ const comboId = (id: string) => id.slice(COMBO.length);
 
 function comboFitReason(row: Product): string | undefined {
   return (row as Partial<ComboRow>).comboFitReason ?? undefined;
+}
+
+/** A combo always shows its own name, even one named after its host's code (crew pass 9c004f0b);
+ *  a product keeps the picker's rule (blank when the name only repeats the code). */
+function rowName(row: Product): string {
+  if ((row as Partial<ComboRow>).isCombo) return row.product_name ?? '';
+  return distinctName(row.product_code, row.product_name) ?? '';
 }
 
 function rowHint(row: Product): string | undefined {
@@ -159,6 +167,7 @@ export function TemplateProductsDialog({ open, onOpenChange, templateId, templat
     sourceKey: kind === 'combo' ? `template-combos:${templateId}` : 'products',
     rowDisabledReason: comboFitReason,
     rowHint,
+    rowName,
     extraFilter: {
       activeCount: (show ? 1 : 0) + (kind === 'combo' ? 1 : 0),
       content: (

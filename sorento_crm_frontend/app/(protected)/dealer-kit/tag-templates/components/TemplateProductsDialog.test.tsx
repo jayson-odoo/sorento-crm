@@ -355,5 +355,17 @@ describe('TemplateProductsDialog', () => {
       );
       expect(isTicked(await comboBox('SRTKS-1160-GR'))).toBe(true);
     });
+
+    it('a combo named after its host code still shows its name (crew pass on 9c004f0b)', async () => {
+      links.listTemplateCombos.mockResolvedValue({
+        data: [combo('c9', 'CB2151-DIY', 'CB2151-DIY')],
+        pagination: { total: 1, page: 1, limit: 25 },
+      });
+      mount();
+      await showCombos();
+      await comboBox('CB2151-DIY');
+      // The code cell and the Product Name cell both carry it; a blank name cell left only one.
+      expect(screen.getAllByTitle('CB2151-DIY')).toHaveLength(2);
+    });
   });
 });
