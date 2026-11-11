@@ -1827,6 +1827,49 @@ def apply_to_all_pages(
     return sheet
 
 
+def add_layer_to_all_pages(
+    db: Session,
+    sheet: ProjectQuotationSpecSheet,
+    layer_id: str,
+    layer: Any,
+    user_id: Optional[str] = None,
+    origin_page_key: Optional[str] = None,
+) -> ProjectQuotationSpecSheet:
+    """B6: add ``layer`` (the client's new element, id ``layer_id``) to every printed page, each
+    under a fresh id that remembers the client id as ``source_id``. A page that already holds the
+    element (its own id, or a copy carrying that ``source_id``) is skipped, so a repeat adds nothing.
+    The reach follows ``apply_to_all_pages``: a cover origin reaches the cover only."""
+    if not isinstance(layer, dict) or not isinstance(layer.get("id"), str) or not layer["id"]:
+        raise _invalid_apply("Send the layer to add.")
+    if layer["id"] != layer_id or len(layer_id) > 120:
+        raise _invalid_apply("The layer id does not match.")
+    _check_layer(layer)
+    pinned = _pinned(db, sheet)
+    if origin_page_key is not None:
+        ensure_key(db, sheet, origin_page_key)
+    if origin_page_key == COVER_KEY:
+        entries = [(COVER_KEY, "cover")]
+    else:
+        entries = [(p["key"], p["template"]) for p in pages(db, sheet) if not p["hidden"]]
+    edits = dict(sheet.page_edits or {})
+    for key, template in entries:
+        layers = _page_layers(sheet, pinned, key, template)
+        if any(
+            isinstance(held, dict) and (held.get("id") == layer_id or held.get("source_id") == layer_id)
+            for held in layers
+        ):
+            continue
+        merged = [*layers, {**layer, "id": f"layer-{uuid.uuid4().hex[:12]}", "source_id": layer_id}]
+        _validate_page_edit(db, sheet, merged, pinned=pinned)
+        edits[key] = {"layers": merged}
+    if sum(_edit_size(v) for v in edits.values()) > PAGE_EDITS_TOTAL_MAX:
+        raise _too_large()
+    sheet.page_edits = edits
+    _stamp(sheet, user_id)
+    db.flush()
+    return sheet
+
+
 def reset_page_edit(
     db: Session, sheet: ProjectQuotationSpecSheet, key: str, user_id: Optional[str] = None
 ) -> ProjectQuotationSpecSheet:

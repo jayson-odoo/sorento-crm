@@ -2,6 +2,9 @@
 `{"op": "add", "layer": {...}, "origin_page_key": ...}` adds the layer to every page of the sheet.
 Written test-FIRST. Postgres only.
 
+Route (B6 round): the EXISTING `.../layers/{layer_id}/apply-all` takes `op: add`; the path's
+layer id is the client's new layer id. The tester's first draft used a second `.../apply-all` route.
+
 Contract: the page's effective layers (its edit, else the pinned template) plus the new layer
 under a new id derived per page; the same client `layer.id` sent again adds nothing; the layer is
 validated like a page edit (422); the existing move / restyle route is unchanged.
@@ -26,8 +29,10 @@ from .test_project_spec_sheets_v2 import (  # noqa: F401  (helpers, not tests)
 MARK = "ADDED-B6"
 
 
-def _url(c, sheet):
-    return _base(c, f"/{sheet.id}/apply-all")
+def _url(c, sheet, layer=None):
+    # The existing apply-all route: the layer id (the client's) is in the path, `op: add` in the body.
+    layer_id = (layer or {}).get("id", "client-layer")
+    return _base(c, f"/{sheet.id}/layers/{layer_id}/apply-all")
 
 
 def _added(layers):
@@ -45,7 +50,7 @@ def test_add_puts_the_layer_once_on_every_item_page_with_a_fresh_id_each():
         try:
             new = _layer(MARK)
             ok = client.post(
-                _url(c, sheet),
+                _url(c, sheet, new),
                 json={"op": "add", "layer": new, "origin_page_key": c["basin"].id},
             )
             assert ok.status_code == 200, ok.text
@@ -74,10 +79,11 @@ def test_adding_the_same_client_layer_again_adds_no_duplicate():
         sheet = _make(db, c)
         client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
         try:
-            body = {"op": "add", "layer": _layer(MARK), "origin_page_key": c["basin"].id}
-            assert client.post(_url(c, sheet), json=body).status_code == 200
+            layer = _layer(MARK)
+            body = {"op": "add", "layer": layer, "origin_page_key": c["basin"].id}
+            assert client.post(_url(c, sheet, layer), json=body).status_code == 200
             before = {k: [layer["id"] for layer in v["layers"]] for k, v in sheet.page_edits.items()}
-            again = client.post(_url(c, sheet), json=body)
+            again = client.post(_url(c, sheet, layer), json=body)
             assert again.status_code == 200, again.text
             after = {k: [layer["id"] for layer in v["layers"]] for k, v in sheet.page_edits.items()}
             assert after == before
@@ -93,8 +99,9 @@ def test_an_add_from_the_cover_reaches_the_cover_only():
         sheet = _make(db, c)
         client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
         try:
+            layer = _layer(MARK)
             ok = client.post(
-                _url(c, sheet), json={"op": "add", "layer": _layer(MARK), "origin_page_key": "cover"}
+                _url(c, sheet, layer), json={"op": "add", "layer": layer, "origin_page_key": "cover"}
             )
             assert ok.status_code == 200, ok.text
             assert set(sheet.page_edits) == {"cover"}
@@ -110,6 +117,7 @@ def test_an_invalid_layer_or_operation_is_a_422_and_changes_nothing():
         client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
         try:
             bad_layer = {**_layer(MARK), "type": "hologram"}
+            bad_layer["id"] = "client-layer"
             for body in (
                 {"op": "add", "layer": bad_layer, "origin_page_key": c["basin"].id},
                 {"op": "add", "origin_page_key": c["basin"].id},
@@ -130,9 +138,10 @@ def test_adding_to_every_page_needs_the_edit_right():
         for who, slugs in ((c["owner"], VIEW_ONLY), (_uid(), EDIT_SLUGS[:2])):
             client, originals = _client(db, who, slugs=slugs)
             try:
+                layer = _layer(MARK)
                 refused = client.post(
-                    _url(c, sheet),
-                    json={"op": "add", "layer": _layer(MARK), "origin_page_key": c["basin"].id},
+                    _url(c, sheet, layer),
+                    json={"op": "add", "layer": layer, "origin_page_key": c["basin"].id},
                 )
                 assert refused.status_code == 403, refused.text
             finally:
