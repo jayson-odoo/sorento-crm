@@ -335,6 +335,20 @@ export function QuotationDocumentHeader({
               }
             />
           ) : null}
+          {/* QUOTE-DUPLICATE-PARTY: the document this copy was made from for another party. */}
+          {document.copied_from_document_id && document.copied_from_label ? (
+            <Field
+              label="Copied from"
+              value={
+                <Link
+                  className="text-primary hover:underline"
+                  href={`/project-sales/${document.project_id}/quotation-documents/${document.copied_from_document_id}`}
+                >
+                  {document.copied_from_label}
+                </Link>
+              }
+            />
+          ) : null}
           {document.kind !== 'quotation' && document.quotation_document_id ? (
             <Field
               label="Quotation"
