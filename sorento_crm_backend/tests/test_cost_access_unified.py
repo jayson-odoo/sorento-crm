@@ -307,3 +307,37 @@ def test_ac9_the_cost_permission_gate_for_staff_screens_is_unchanged(db):
     assert COST_VIEW_PERM == COST_PERM
     assert can_view_cost(db, link_user(db, _contact(db), slugs=(COST_PERM,))) is True
     assert can_view_cost(db, link_user(db, _contact(db), slugs=())) is False
+
+
+# ---------------------------------------------------------------- lookup failure leaves the session usable
+
+
+def _boom(db, user_id):
+    from sqlalchemy import text
+
+    db.execute(text("select 1/0"))  # a real database error inside the lookup
+
+
+def test_cost_unified_a_failed_lookup_leaves_the_session_usable_for_one_contact(db, monkeypatch):
+    from sqlalchemy import text
+
+    from app.services import cost_access
+
+    pk = _contact(db)
+    cost_viewer(db, pk)
+    monkeypatch.setattr(cost_access, "can_view_cost", _boom)
+    assert cost_access.contact_can_view_cost(db, pk) is False
+    assert db.execute(text("select 1")).scalar() == 1  # not "current transaction is aborted"
+    assert db.query(ContactFieldReveal).count() >= 0
+
+
+def test_cost_unified_a_failed_lookup_leaves_the_session_usable_for_many_contacts(db, monkeypatch):
+    from sqlalchemy import text
+
+    from app.services import cost_access
+
+    pk = _contact(db)
+    cost_viewer(db, pk)
+    monkeypatch.setattr(cost_access, "can_view_cost", _boom)
+    assert cost_access.contact_ids_who_can_view_cost(db, [pk]) == set()
+    assert db.execute(text("select 1")).scalar() == 1
