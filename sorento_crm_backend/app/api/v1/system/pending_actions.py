@@ -219,6 +219,24 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
     for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
         if not (payload or {}).get(key):
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
+    if action_key == "tag_template.unassign_products":
+        # PRICETAG-TEMPLATE-PRODUCTS: the same shape and 500-per-list cap /assign takes, so a
+        # parked removal can never carry a list the HTTP route would refuse.
+        from pydantic import ValidationError
+
+        from app.schemas.price_tag import TemplateAssignFilter
+
+        keys = (
+            "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids", "combo_ids",
+        )
+        try:
+            TemplateAssignFilter.model_validate(
+                {key: (payload or {})[key] for key in keys if (payload or {}).get(key) is not None}
+            )
+        except ValidationError:
+            raise handle_validation_error(
+                "Each filter must be a list of at most 500 values for 'tag_template.unassign_products'."
+            )
     if action_key in _UUID_ENTITY_ACTIONS:
         from app.services.ideation_gateway_service import require_uuid
 

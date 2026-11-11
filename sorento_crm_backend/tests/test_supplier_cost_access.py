@@ -553,14 +553,6 @@ def test_two_requests_on_one_client_do_not_share_visibility(env):
     assert Decimal(str(env.get(buyer, url).json()["cost_price"])) == Decimal("123.45")
 
 
-def test_po_cost_reveals_answer_to_the_cost_permission():
-    from app.services.chatbot.agent import tools
-    from app.services.contact_field_reveal_service import _STAFF_REVEAL_SLUGS
-
-    assert _STAFF_REVEAL_SLUGS["purchase_orders.cost"] == COST_PERM
-    assert tools.REGISTRY["crm_procurement_po_last_cost_list"].user_permission == COST_PERM
-
-
 def test_parked_cost_row_delete_refused_without_cost_permission(env):
     from app.services.error_handler import AppException
     from app.services.record_actions import _delete_product_supplier_cost

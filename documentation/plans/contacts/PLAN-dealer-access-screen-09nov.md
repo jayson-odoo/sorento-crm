@@ -39,7 +39,7 @@ Every element per the mock v3 reuse table.
 
 ## Tests (red first)
 
-pytest `tests/test_dealer_access_screen.py`: S1-S7 (two salespeople sharing a dealer across Sorento and Mocha;
+pytest `tests/chatbot/agent/test_dealer_access_screen.py`: S1-S7 (two salespeople sharing a dealer across Sorento and Mocha;
 leak checks on every response; all-or-nothing grant; edit diff; deferred unlink as requester incl. C4).
 `tests/chatbot/agent/test_dealer_access_agent.py`: M1 replay. vitest: form row errors, list empty state, menu item.
 

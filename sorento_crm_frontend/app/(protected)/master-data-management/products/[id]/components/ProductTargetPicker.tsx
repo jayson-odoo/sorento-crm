@@ -8,9 +8,16 @@
  *
  * A hook, not a component: the dialog swaps the grid for its confirm step and back, and the ticks,
  * search and filters must survive that round trip, so the state lives with the dialog.
+ *
+ * PRICETAG-TEMPLATE-PRODUCTS reuses it for the tag template designer's Products dialog, where a
+ * tick means "uses this template": the ticks start from `initialSelection`, an extra filter rides in
+ * the same popover, and "Select all" adds to the ticks (`mergeSelectAll`) instead of replacing them,
+ * so a search can never untick what is already linked.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   ColumnDef,
   PaginationState,
@@ -41,8 +48,8 @@ import { toast } from '@/lib/toast';
 import { useProductCategorySelectQuery } from '../../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../../shared/hooks/use-brand-select-query';
 import { useProducts } from '../../hooks/useProducts';
-import { getProducts } from '../../services/productService';
-import type { Product } from '../../types/product.types';
+import { getProducts, type GetProductsParams } from '../../services/productService';
+import type { Product, ProductApiResponse } from '../../types/product.types';
 
 /** The server's cap on one copy (target_product_ids max_length on both copy endpoints). */
 export const MAX_COPY_TARGETS = 500;
@@ -69,28 +76,67 @@ export function CopyCapNote({ children }: { children?: ReactNode } = {}) {
   );
 }
 
-/**
- * `sourceProductId` is the product a copy dialog copies FROM (its row cannot be ticked). It is
- * optional: the Costing page's "Add products" has no source. `alreadyAddedIds` are products the
- * caller already holds (a party's list): their rows get a disabled tick box, they can never end up
- * in `picked`, and "Select all N records" skips them.
- */
+export interface ProductTargetPickerOptions {
+  /** A product that can never be ticked (the copy source). Optional: Costing's Add products has none. */
+  excludeProductId?: string;
+  /**
+   * Products the caller already holds (a party's list): a disabled tick box marked "Already added",
+   * never in `picked`, skipped by "Select all N records". Also takes the second argument below.
+   */
+  alreadyAddedIds?: string[];
+  /** Ticks to start from, applied once, the first time it is defined. */
+  initialSelection?: string[];
+  /** Extra products-list params, e.g. `tag_template_id`. A change is a new result set. */
+  extraParams?: Partial<GetProductsParams>;
+  /** One more control for the Filters popover, owned by the caller. */
+  extraFilter?: { content: ReactNode; activeCount: number };
+  /**
+   * "Select all" adds the matching products to the ticks instead of replacing them. Clear then
+   * undoes that Select all, and any other Clear goes back to `initialSelection`, never to nothing.
+   */
+  mergeSelectAll?: boolean;
+  /**
+   * Another row source in the same grid (the template designer's combos), shaped as products:
+   * used for the page and for "Select all" instead of the products list. `sourceKey` keeps its
+   * cache apart and makes a switch a new result set.
+   */
+  fetchRows?: (params: GetProductsParams) => Promise<ProductApiResponse>;
+  sourceKey?: string;
+  /** A row that cannot be ticked, and why (shown on its checkbox); "Select all" skips it. */
+  rowDisabledReason?: (row: Product) => string | undefined;
+  /** A grey hint after the code (default: "Discontinued" for a discontinued product). */
+  rowHint?: (row: Product) => string | undefined;
+  /** The Product Name cell (default: the name, blank when it only repeats the code). */
+  rowName?: (row: Product) => string;
+}
+
 export function useProductTargetPicker(
-  sourceProductId?: string,
-  options?: { alreadyAddedIds?: string[] },
+  source?: string | ProductTargetPickerOptions,
+  extra?: { alreadyAddedIds?: string[] },
 ): {
   picked: string[];
   overCap: boolean;
   cappedFrom: number | null;
   grid: ReactNode;
 } {
+  const options: ProductTargetPickerOptions =
+    typeof source === 'string' ? { excludeProductId: source } : (source ?? {});
+  const sourceProductId = options.excludeProductId ?? '';
+  const addedKey = (extra?.alreadyAddedIds ?? options.alreadyAddedIds ?? []).join(',');
+  const alreadyAdded = useMemo(() => new Set(addedKey ? addedKey.split(',') : []), [addedKey]);
+  const {
+    initialSelection,
+    extraParams,
+    extraFilter,
+    mergeSelectAll = false,
+    fetchRows,
+    sourceKey = 'products',
+    rowDisabledReason,
+    rowHint,
+    rowName,
+  } = options;
+  const extraKey = JSON.stringify({ extra: extraParams ?? {}, source: sourceKey });
   const search = useDebouncedSearch('');
-  const addedKey = (options?.alreadyAddedIds ?? []).join(',');
-  const blocked = useMemo(() => {
-    const ids = new Set(addedKey ? addedKey.split(',') : []);
-    if (sourceProductId) ids.add(sourceProductId);
-    return ids;
-  }, [addedKey, sourceProductId]);
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [brandIds, setBrandIds] = useState<string[]>([]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -101,6 +147,19 @@ export function useProductTargetPicker(
     { id: 'product_code', desc: false },
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // The latest ticks, for a "Select all" whose fetch lands after the user ticked more.
+  const selectionRef = useRef<RowSelectionState>({});
+  selectionRef.current = rowSelection;
+  // The ticks just before a merging "Select all"; read only while that Select all is active.
+  const beforeMatching = useRef<RowSelectionState | null>(null);
+  // The seed itself, which a Clear in merge mode goes back to.
+  const seed = useRef<RowSelectionState | null>(null);
+  useEffect(() => {
+    if (seed.current || !initialSelection) return;
+    seed.current = Object.fromEntries(initialSelection.map((id) => [id, true]));
+    // Union: a tick made before the seed arrived is kept.
+    setRowSelection((current) => ({ ...seed.current, ...current }));
+  }, [initialSelection]);
   const [matchingActive, setMatchingActive] = useState(false);
   const [matchingTotal, setMatchingTotal] = useState<number | null>(null);
   const [matchingPending, setMatchingPending] = useState(false);
@@ -118,34 +177,46 @@ export function useProductTargetPicker(
       category_id: joinMulti(categoryIds) || undefined,
       brand_id: joinMulti(brandIds) || undefined,
       status: 'active' as const,
+      // From the serialised key, so a caller's fresh object each render is not a new result set.
+      ...(JSON.parse(extraKey).extra as Partial<GetProductsParams>),
     }),
-    [pagination, sorting, search.debouncedValue, categoryIds, brandIds],
+    [pagination, sorting, search.debouncedValue, categoryIds, brandIds, extraKey],
   );
 
   // A new search or filter is a new result set: a "Select all" made on the old one no longer
   // describes what is on screen, so it is dropped (ticks made by hand stay).
   useEffect(() => {
     matchingSeq.current += 1;
+    beforeMatching.current = null;
     setMatchingActive(false);
     setMatchingPending(false);
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [search.debouncedValue, categoryIds, brandIds]);
+  }, [search.debouncedValue, categoryIds, brandIds, extraKey]);
 
-  const { data, isLoading, isFetching, isPlaceholderData } =
-    useProducts(params);
+  const productsQuery = useProducts(params, { enabled: !fetchRows });
+  const customQuery = useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: ['product-target-picker', sourceKey, params],
+    queryFn: () => (fetchRows as NonNullable<typeof fetchRows>)(params),
+    enabled: !!fetchRows,
+  });
+  const { data, isLoading, isFetching, isPlaceholderData } = fetchRows
+    ? customQuery
+    : productsQuery;
+  const blockedReason = (row: Product): string | undefined =>
+    row.id === sourceProductId
+      ? SOURCE_REASON
+      : alreadyAdded.has(row.id)
+        ? ADDED_REASON
+        : rowDisabledReason?.(row);
   const rows = useMemo(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
 
   const columns = useMemo<ColumnDef<Product>[]>(
     () => [
       buildSelectColumn<Product>({
-        enableRow: (row) => !blocked.has(row.original.id),
-        disabledReason: (row) =>
-          row.original.id === sourceProductId
-            ? SOURCE_REASON
-            : blocked.has(row.original.id)
-              ? ADDED_REASON
-              : undefined,
+        enableRow: (row) => !blockedReason(row.original),
+        disabledReason: (row) => blockedReason(row.original),
         rowLabel: (row) => `Select ${row.original.product_code}`,
       }),
       {
@@ -160,22 +231,23 @@ export function useProductTargetPicker(
             title={row.original.product_code}
           >
             {row.original.product_code}
-            {blocked.has(row.original.id) && row.original.id !== sourceProductId ? (
+            {/* Owner, 7 Nov: a discontinued product stays pickable, with a grey hint. */}
+            {(rowHint ? rowHint(row.original) : row.original.is_discontinued ? 'Discontinued' : undefined) ? (
               <span className="ms-1.5 text-xs font-normal text-muted-foreground">
-                {ADDED_REASON}
+                {rowHint ? rowHint(row.original) : 'Discontinued'}
               </span>
             ) : null}
-            {/* Owner, 7 Nov: a discontinued product stays pickable, with a grey hint. */}
-            {row.original.is_discontinued ? (
+            {alreadyAdded.has(row.original.id) && row.original.id !== sourceProductId ? (
               <span className="ms-1.5 text-xs font-normal text-muted-foreground">
-                Discontinued
+                {ADDED_REASON}
               </span>
             ) : null}
           </div>
         ),
         size: 160,
         meta: { headerTitle: 'Product Code' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
       {
         accessorKey: 'product_name',
@@ -184,11 +256,9 @@ export function useProductTargetPicker(
           <DataGridColumnHeader title="Product Name" column={column} />
         ),
         cell: ({ row }) => {
-          const name =
-            distinctName(
-              row.original.product_code,
-              row.original.product_name,
-            ) ?? '';
+          const name = rowName
+            ? rowName(row.original)
+            : (distinctName(row.original.product_code, row.original.product_name) ?? '');
           return (
             <div className="truncate text-sm" title={name}>
               {name}
@@ -197,7 +267,8 @@ export function useProductTargetPicker(
         },
         size: 280,
         meta: { headerTitle: 'Product Name' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
       {
         accessorFn: (row) => row.category?.category_name ?? '',
@@ -215,7 +286,8 @@ export function useProductTargetPicker(
         },
         size: 160,
         meta: { headerTitle: 'Category' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
       {
         accessorFn: (row) => row.brand?.brand_name ?? '',
@@ -233,10 +305,12 @@ export function useProductTargetPicker(
         },
         size: 140,
         meta: { headerTitle: 'Brand' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
     ],
-    [blocked, sourceProductId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sourceProductId, alreadyAdded, rowDisabledReason, rowHint, rowName, fetchRows],
   );
 
   const table = useReactTable({
@@ -251,21 +325,31 @@ export function useProductTargetPicker(
     onRowSelectionChange: (updater) => {
       // A hand tick or untick after "Select all" makes it a hand-picked set again.
       setMatchingActive(false);
-      setRowSelection(updater);
+      setRowSelection((current) => {
+        const next = typeof updater === 'function' ? updater(current) : updater;
+        if (!rowDisabledReason) return next;
+        // A ticked row that can no longer be ticked (a linked combo the template stopped fitting)
+        // is never dropped by the page's untick-all: once off it could not come back.
+        const kept = { ...next };
+        rows.forEach((row) => {
+          if (current[row.id] && rowDisabledReason(row)) kept[row.id] = true;
+        });
+        return kept;
+      });
     },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
-    enableRowSelection: (row) => !blocked.has(row.original.id),
+    enableRowSelection: (row) => !blockedReason(row.original),
   });
 
   // Ticks survive paging and filtering, so the picked set is the selection state, not the page.
   const picked = useMemo(
     () =>
       Object.keys(rowSelection).filter(
-        (id) => rowSelection[id] && !blocked.has(id),
+        (id) => rowSelection[id] && id !== sourceProductId && !alreadyAdded.has(id),
       ),
-    [rowSelection, blocked],
+    [rowSelection, sourceProductId, alreadyAdded],
   );
   const overCap = picked.length > MAX_COPY_TARGETS;
 
@@ -273,20 +357,24 @@ export function useProductTargetPicker(
     const mine = ++matchingSeq.current;
     setMatchingPending(true);
     try {
-      const res = await getProducts({
+      const res = await (fetchRows ?? getProducts)({
         ...params,
         pageIndex: 0,
         pageSize: MAX_COPY_TARGETS + 1,
       });
       if (matchingSeq.current !== mine) return;
-      const eligible = res.data
-        .map((p) => p.id)
-        .filter((id) => !blocked.has(id));
+      const eligible = res.data.filter((p) => !blockedReason(p)).map((p) => p.id);
       const ids = eligible.slice(0, MAX_COPY_TARGETS);
       setMatchingTotal(
         eligible.length > MAX_COPY_TARGETS ? res.pagination.total : null,
       );
-      setRowSelection(Object.fromEntries(ids.map((id) => [id, true])));
+      const matching = Object.fromEntries(ids.map((id) => [id, true]));
+      if (mergeSelectAll) {
+        beforeMatching.current = selectionRef.current;
+        setRowSelection({ ...selectionRef.current, ...matching });
+      } else {
+        setRowSelection(matching);
+      }
       setMatchingActive(true);
     } catch (err) {
       if (matchingSeq.current !== mine) return;
@@ -313,6 +401,8 @@ export function useProductTargetPicker(
         <DataGridListToolbar
           table={table}
           keepSearchWhileSelected
+          // Ticked from the start in merge mode, so the strip is always up: keep Filters on it.
+          keepFiltersWhileSelected={mergeSelectAll}
           showColumns={false}
           showExport={false}
           searchSlot={
@@ -330,11 +420,15 @@ export function useProductTargetPicker(
           }
           filters={{
             kind: 'custom',
-            active: categoryIds.length + brandIds.length > 0,
+            active:
+              categoryIds.length + brandIds.length + (extraFilter?.activeCount ?? 0) > 0,
             activeCount:
-              (categoryIds.length ? 1 : 0) + (brandIds.length ? 1 : 0),
+              (categoryIds.length ? 1 : 0) +
+              (brandIds.length ? 1 : 0) +
+              (extraFilter?.activeCount ?? 0),
             content: (
               <div className="space-y-3">
+                {extraFilter?.content}
                 <SearchableMultiSelect
                   value={categoryIds}
                   onChange={setCategoryIds}
@@ -390,8 +484,16 @@ export function useProductTargetPicker(
             limit: MAX_COPY_TARGETS,
             onSelectAll: () => void selectAllMatching(),
             onClear: () => {
+              // Merge mode: a Clear (banner or strip) while a "Select all" is active undoes it,
+              // back to the ticks before it; any other Clear goes back to the seed, never to
+              // nothing. Copy dialogs: Clear empties.
+              // `matchingActive` is this render's value: the toolbar resets the rows first.
+              const restore = mergeSelectAll
+                ? ((matchingActive ? beforeMatching.current : null) ?? seed.current ?? {})
+                : {};
+              beforeMatching.current = null;
               setMatchingActive(false);
-              setRowSelection({});
+              setRowSelection(restore);
             },
           }}
         />

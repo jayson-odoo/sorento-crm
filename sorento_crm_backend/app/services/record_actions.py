@@ -1802,7 +1802,8 @@ for _key, _fn, _label in (
 def _unassign_tag_template_products(db: Session, payload: dict):
     """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
     an unlink, so it parks (5s, reversible: Add puts the links back). The
-    filter is re-applied at commit, under the requester's own scope."""
+    filter is re-applied at commit, under the requester's own scope.
+    PRICETAG-TEMPLATE-PRODUCTS: the designer's Save parks its unticked ``product_ids`` here."""
     from app.services.dealer_kit import product_tag_template_service
 
     return product_tag_template_service.bulk_assign(
@@ -1810,7 +1811,10 @@ def _unassign_tag_template_products(db: Session, payload: dict):
         _entity_id(payload),
         {
             key: payload.get(key) or []
-            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+            for key in (
+                "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids",
+                "combo_ids",
+            )
         },
         "remove",
         user_id=payload.get("requested_by_id"),

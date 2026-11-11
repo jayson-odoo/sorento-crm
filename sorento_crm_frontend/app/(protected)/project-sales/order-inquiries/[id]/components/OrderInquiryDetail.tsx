@@ -1164,7 +1164,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           }
           answeredRequestCount={editingAnsweredRows.length}
           locationOptions={editingRowOptions?.options ?? []}
-          availableQtyByLocation={editingRowOptions?.availableQtyByWarehouseId ?? {}}
+          onHandQtyByLocation={editingRowOptions?.onHandQtyByWarehouseId ?? {}}
           defaultLocationId={
             editingOpenRequest?.warehouseId ?? editingRowOptions?.defaultWarehouseId ?? null
           }
