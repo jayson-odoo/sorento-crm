@@ -1774,16 +1774,20 @@ def test_supplier_and_party_side_expect_keys_load_and_are_typed(tmp_path):
 
 
 def test_supplier_expect_passes_only_an_id_bound_supplier_entity():
-    bound = {"entities": [{"hint": "supplier", "raw": "zz supplier", "canonical_code": "row-1"}]}
+    bound = {"entities": [{"hint": "supplier", "raw": "zz supplier", "canonical_code": "3f2b6c1e-0d4a-4b8e-9a51-6c7d8e9f0a1b"}]}
     unbound = {"entities": [{"hint": "supplier", "raw": "zz supplier", "canonical_code": None}]}
+    # Gate run 1 (11 Nov, arm A): without the id line the parser wrote the supplier's NAME as canonical_code; the
+    # engine binds a supplier by its row id only, so a name binds nothing.
+    by_name = {"entities": [{"hint": "supplier", "raw": "zz supplier", "canonical_code": "ZZ SUPPLIER TECHNOLOGY CO.,LTD"}]}
     customer = {"entities": [{"hint": "customer", "raw": "zz supplier", "canonical_code": None}]}
     assert pg.grade_parse(bound, {"supplier": True})[0] is True
-    for v in (unbound, customer, {}):
+    for v in (unbound, by_name, customer, {}):
         ok, why = pg.grade_parse(v, {"supplier": True})
         assert ok is False and any("supplier" in r for r in why), (v, why)
     ok, why = pg.grade_parse(bound, {"supplier": False})
     assert ok is False and any("supplier" in r for r in why), why
     assert pg.grade_parse(unbound, {"supplier": False})[0] is True, "a supplier with no id binds nothing"
+    assert pg.grade_parse(by_name, {"supplier": False})[0] is True, "nor does one bound by name"
 
 
 def test_party_side_expect_is_equality_and_null_reads_absent():
