@@ -13,7 +13,7 @@ exactly what the upgrade added: the tables, the manage permission and its grants
 Contract: documentation/plans/products/CONTRACT-product-costing.md section 2.
 
 Revision ID: pc_0001_product_costing
-Revises: sca_0001_products_cost_view
+Revises: ptag_0022_request_customers
 """
 import uuid
 from datetime import datetime
@@ -23,7 +23,7 @@ from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "pc_0001_product_costing"
-down_revision = "sca_0001_products_cost_view"
+down_revision = "ptag_0022_request_customers"
 branch_labels = None
 depends_on = None
 
