@@ -217,8 +217,8 @@ previous version again, not by asking engineering to revert code.
 * [Chatbot - "which products have X" (asking for a set)](chatbot-attribute-set-answers.md) - what
   a customer sees when they ask for a whole group of products at once, and the Lookup Sets an
   admin fills in to teach the bot new words for it.
-* [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md) - the per-contact
-  Field reveal that gates a cost answer, and rolling out its parser vocabulary via a Publish.
+* [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md) - who gets a cost
+  answer (the linked user's View Product Cost permission), and rolling out its parser vocabulary via a Publish.
 * [Chatbot - photos and voice notes](chatbot-media-intake.md) - what a contact sees when they
   send a photo or voice note, and why one might be refused.
 * [Chatbot Domains](chatbot-domains.md) and [Entity kinds](chatbot-entity-kinds.md) - what a
