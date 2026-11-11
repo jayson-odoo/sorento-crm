@@ -83,6 +83,10 @@ DRAFT = "draft"
 #: HOUSE)"), so it is generous; a marker is the sample's ``*`` / ``**`` / ``***``.
 AREA_MAX = 200
 COMMENT_MAX = 500
+#: The per-sheet "Spec sheet description" override: same ceiling as the product field.
+DESCRIPTION_MAX = 20000
+#: Accessory overrides one page row may keep.
+ACCESSORY_DESCRIPTIONS_MAX = 200
 MARKER_MAX = 10
 
 #: One preview call serves one window of the reader; more than this is a client bug.
@@ -115,9 +119,23 @@ def _text(value: Any, limit: int) -> str:
     return str(value or "").strip()[:limit]
 
 
+def _accessory_descriptions(raw: Any) -> Dict[str, str]:
+    """{accessory product id: trimmed override}, empty values dropped, entries capped."""
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for key, value in raw.items():
+        text = _text(value, DESCRIPTION_MAX)
+        if key and text:
+            out[str(key)] = text
+        if len(out) >= ACCESSORY_DESCRIPTIONS_MAX:
+            break
+    return out
+
+
 def _row(raw: dict) -> dict:
     accessories = raw.get("accessories") or []
-    return {
+    out = {
         "key": str(raw.get("key") or ""),
         "area": _text(raw.get("area"), AREA_MAX),
         "comment": _text(raw.get("comment"), COMMENT_MAX),
@@ -125,6 +143,12 @@ def _row(raw: dict) -> dict:
         "hidden": bool(raw.get("hidden")),
         "accessories": [str(a) for a in accessories if a],
     }
+    # B1: per-sheet "Spec sheet description" overrides, stored only when set (empty = none).
+    if description := _text(raw.get("description"), DESCRIPTION_MAX):
+        out["description"] = description
+    if overrides := _accessory_descriptions(raw.get("accessory_descriptions")):
+        out["accessory_descriptions"] = overrides
+    return out
 
 
 def _invalid_rows(message: str) -> AppException:
@@ -548,7 +572,14 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
     from app.services.dealer_kit import tag_data_service as tags
 
     if product is None:
-        return {"dimensions": "", "spec_lines": [], "specs": [], "barcode": None, "description": None}
+        return {
+            "dimensions": "",
+            "spec_lines": [],
+            "specs": [],
+            "barcode": None,
+            "description": None,
+            "spec_sheet_description": None,
+        }
     if product.id not in spec_cache:
         rows = spec_cache.get(_ROWS) or {}
         spec_row = rows[str(product.id)] if str(product.id) in rows else tags._spec_row(db, product)
@@ -559,6 +590,8 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
             "barcode": product.barcode or None,
             # {{product.description}}: the product master's plain description.
             "description": product.description or None,
+            # B1: the spec sheet copy, else the plain description.
+            "spec_sheet_description": product.spec_sheet_description or product.description or None,
         }
     return spec_cache[product.id]
 
@@ -614,10 +647,12 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
     for key in ordered:
         item = items[key]
         setting = by_key.get(key) or _row({"key": key})
+        overrides = setting.get("accessory_descriptions") or {}
         accessories = [
             {
                 "key": None,
                 "source": "set",
+                "_override": overrides.get(str(part.get("product_id"))),
                 "product_id": part.get("product_id"),
                 "code": part.get("product_code") or "",
                 "name": name_of(part.get("product_id"), part.get("description")),
@@ -633,6 +668,7 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 {
                     "key": picked,
                     "source": "picked",
+                    "_override": overrides.get(str(other["product_id"])),
                     "product_id": other["product_id"],
                     "code": other["code"],
                     "name": name_of(other["product_id"], other["description"]),
@@ -660,6 +696,7 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 "comment": setting["comment"],
                 "marker": setting["marker"],
                 "hidden": setting["hidden"],
+                "_description": setting.get("description") or "",
                 "edited": key in edits,
                 "template": "page" if accessories else "single",
                 # Print-only (underscore keys never leave the API): the quoted unit price.
@@ -746,6 +783,8 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
         "barcode": None,
         "price_tag_description": None,
         "description": None,
+        "spec_sheet_description": None,
+        "accessories": [],
         "drawing": None,
         "area": "",
         "comment": "",
@@ -1151,10 +1190,27 @@ def build_print_payload(
         product = products.get(str(page["product_id"])) if page["product_id"] else None
         fields = _product_fields(db, product, spec_cache)
         parts = []
+        cards = []
         for acc in page["accessories"]:
             part_product = products.get(str(acc["product_id"])) if acc.get("product_id") else None
             part_fields = _product_fields(db, part_product, spec_cache)
             photo = _image(acc["_photo"], urls)
+            sheet_text = acc.get("_override") or part_fields["spec_sheet_description"]
+            # B1/B2: the same item as a TagAccessory, for the shared Accessories box.
+            cards.append(
+                {
+                    "kind": "product",
+                    "id": acc.get("product_id") or acc["code"],
+                    "code": acc["code"],
+                    "name": acc["name"],
+                    "brand": acc["brand"],
+                    "description": part_fields["description"],
+                    "spec_sheet_description": sheet_text,
+                    "dimensions": part_fields["dimensions"],
+                    "image": photo,
+                    "spec_lines": part_fields["spec_lines"],
+                }
+            )
             parts.append(
                 {
                     "product_id": acc.get("product_id"),
@@ -1168,6 +1224,7 @@ def build_print_payload(
                     "drawing": _image(acc["_drawing"], urls),
                     "barcode": part_fields["barcode"],
                     "description": part_fields["description"],
+                    "spec_sheet_description": sheet_text,
                     # A set part has no price of its own (the set line carries it); a
                     # hand-picked accessory carries its own quoted line price.
                     "list_price": acc.get("_price"),
@@ -1190,6 +1247,8 @@ def build_print_payload(
                 "drawing": _image(page["_drawing"], urls),
                 "barcode": fields["barcode"],
                 "description": fields["description"],
+                "spec_sheet_description": page["_description"] or fields["spec_sheet_description"],
+                "accessories": cards,
                 "parts": parts,
                 "own_parts": parts,
                 "area": page["area"].upper(),

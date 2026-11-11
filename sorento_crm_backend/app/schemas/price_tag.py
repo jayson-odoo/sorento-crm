@@ -1480,6 +1480,8 @@ class ProductTagData(BaseModel):
     price_tag_description: Optional[str] = None
     # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
     description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY B1: `products.spec_sheet_description`, else `description`.
+    spec_sheet_description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
@@ -1622,6 +1624,8 @@ class TagPartData(BaseModel):
     price_tag_description: Optional[str] = None
     # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
     description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY B1: `products.spec_sheet_description`, else `description`.
+    spec_sheet_description: Optional[str] = None
     #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
     accessories: list[TagAccessory] = []
     accessory_box_style: Optional[TagAccessoryBoxStyle] = None
@@ -1710,6 +1714,8 @@ class ResolvedLineData(BaseModel):
     price_tag_description: Optional[str] = None
     # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
     description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY B1: `products.spec_sheet_description`, else `description`.
+    spec_sheet_description: Optional[str] = None
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did
