@@ -133,10 +133,10 @@ describe('limited user, New Stock Inquiry renders the portal form', () => {
     await waitFor(() => expect(urls((c) => c.url.startsWith('/api/v1/my-requests/lookups/debtors')).length).toBeGreaterThan(0), { timeout: 3000 });
   });
 
-  it('delivery date is the portal date input, and the profile comes from /api/v1/my-requests/me', async () => {
+  it('delivery date is the shared DD/MM/YYYY picker, and the profile comes from /api/v1/my-requests/me', async () => {
     mountForm(LIMITED);
     await waitFor(() => expect(document.getElementById('delivery_date')).not.toBeNull());
-    expect((document.getElementById('delivery_date') as HTMLInputElement).type).toBe('date');
+    expect((document.getElementById('delivery_date') as HTMLInputElement).placeholder).toBe('DD/MM/YYYY'); // the shared picker, never the browser's date box
     await waitFor(() => expect(urls((c) => c.url === '/api/v1/my-requests/me').length).toBeGreaterThan(0));
   });
 

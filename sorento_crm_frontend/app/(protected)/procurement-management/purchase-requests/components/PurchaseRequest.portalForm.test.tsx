@@ -145,14 +145,14 @@ beforeEach(() => {
 });
 
 describe('limited user, New Purchase Request renders the portal form', () => {
-  it('is the portal form: no request-type selector, no CRM registered-project picker, Expected PO date is the portal date input', async () => {
+  it('is the portal form: no request-type selector, no CRM registered-project picker, Expected PO date is the shared DD/MM/YYYY picker', async () => {
     mountForm(LIMITED);
     expect(await screen.findByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
     expect(screen.queryByText('Request type')).toBeNull();
     expect(screen.queryByText('Registered project')).toBeNull();
     await waitFor(() => expect(document.getElementById('expected_delivery_date')).not.toBeNull());
-    expect((document.getElementById('expected_delivery_date') as HTMLInputElement).type).toBe('date');
-    expect((document.getElementById('expected_po_date') as HTMLInputElement).type).toBe('date');
+    expect((document.getElementById('expected_delivery_date') as HTMLInputElement).placeholder).toBe('DD/MM/YYYY'); // the shared picker, never the browser's date box
+    expect((document.getElementById('expected_po_date') as HTMLInputElement).placeholder).toBe('DD/MM/YYYY'); // the shared picker, never the browser's date box
     await waitFor(() => expect(urls((c) => c.url === '/api/v1/my-requests/me').length).toBeGreaterThan(0));
   });
 
