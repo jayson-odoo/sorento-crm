@@ -87,8 +87,9 @@ describe('POCrossCheckViewer attachment classification', () => {
   it('shows the empty state with no attachments', () => {
     render(<POCrossCheckViewer attachments={[]} lines={[]} />);
 
-    expect(
-      screen.getByText('No sales order files attached to this request.'),
-    ).toBeInTheDocument();
+    // Owner hand test 11 Nov (crew pass): no "Sales Order" wording, and the empty state reads
+    // "No files attached." like the request's own files box.
+    expect(screen.getByText('No files attached.')).toBeInTheDocument();
+    expect(screen.queryByText(/Sales Order/)).toBeNull();
   });
 });

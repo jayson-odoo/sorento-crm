@@ -75,20 +75,18 @@ export default function POCrossCheckViewer({
   return (
     <Card>
       <CardHeader className="py-3 px-4">
-        <CardTitle className="text-base">Sales Order Cross-Check</CardTitle>
+        {/* Owner hand test 11 Nov: no "Sales Order" wording on the request's files. */}
+        <CardTitle className="text-base">Cross-check</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Left: Sales Order attachments */}
+          {/* Left: the request's attached files */}
           <div className="space-y-2">
-            <h4 className="text-sm font-medium text-muted-foreground">
-              Sales Order
-            </h4>
             {attachments.length === 0 ? (
               <div className="rounded-lg border-2 border-dashed border-muted p-8 text-center">
                 <FileText className="size-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">
-                  No sales order files attached to this request.
+                  No files attached.
                 </p>
               </div>
             ) : (

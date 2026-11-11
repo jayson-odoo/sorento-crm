@@ -13,6 +13,7 @@
 import { Fragment, useCallback, useMemo } from 'react';
 import { Eye, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -79,14 +80,16 @@ export function PriceTagLinesTable({
           Fixed columns let the picker's trigger truncate instead, and
           the min-width keeps every cell usable while the wrapper
           scrolls on a phone, which is the Purchase Request pattern. */}
-      <table className="w-full min-w-[560px] table-fixed text-sm">
+      {/* On a phone (crew pass 11 Nov) there is no width floor: the table keeps #, Item, Qty and
+          the icons as columns and stacks prices and remarks under the item, so Qty is never cut. */}
+      <table className={cn('w-full table-fixed text-sm', !isMobile && 'min-w-[560px]')}>
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th className="w-7 px-2 py-2 text-left">#</th>
             <th
               className={
                 isMobile
-                  ? 'w-[40%] px-2 py-2 text-left'
+                  ? 'px-2 py-2 text-left'
                   : anySelling
                     ? 'w-[24%] px-2 py-2 text-left'
                     : 'w-[36%] px-2 py-2 text-left'
@@ -102,7 +105,7 @@ export function PriceTagLinesTable({
                 // own Input is never honoured once the column is
                 // narrower than it.
                 isMobile
-                  ? 'w-[13%] min-w-[3.5rem] px-2 py-2 text-left'
+                  ? 'w-[4.5rem] px-2 py-2 text-left'
                   : anySelling
                     ? 'w-[8%] min-w-[3.5rem] px-2 py-2 text-left'
                     : 'w-[10%] min-w-[3.5rem] px-2 py-2 text-left'
@@ -124,17 +127,13 @@ export function PriceTagLinesTable({
                 <th className="w-[11%] px-2 py-2 text-left">Selling price</th>
               </>
             )}
-            <th
-              className={
-                isMobile
-                  ? 'w-[35%] px-2 py-2 text-left'
-                  : anySelling
-                    ? 'w-[12%] px-2 py-2 text-left'
-                    : 'w-[20%] px-2 py-2 text-left'
-              }
-            >
-              Remarks
-            </th>
+            {!isMobile && (
+              <th
+                className={anySelling ? 'w-[12%] px-2 py-2 text-left' : 'w-[20%] px-2 py-2 text-left'}
+              >
+                Remarks
+              </th>
+            )}
             {/* The eye and the trash can: two 28px icons. */}
             <th className="w-[72px] px-2 py-2"></th>
           </tr>
@@ -562,7 +561,7 @@ function LineRow({
   // columns, since the price fields move into the stack nested under the
   // Item cell instead (AC-S1-11) - the two never render at once, so
   // nothing duplicates in the DOM.
-  const subRowSpan = isMobile ? 5 : anySelling ? 9 : 7;
+  const subRowSpan = isMobile ? 4 : anySelling ? 9 : 7;
 
   // Owner polish after #948: the desktop `<td>` already sits under a
   // "List price"/"Promotion"/"Selling price" header, so its cell holds only
@@ -696,11 +695,13 @@ function LineRow({
               the same fields stack here instead of living in their own
               columns - never both at once (isMobile picks exactly one), so
               nothing in the row duplicates. */}
-          {isMobile && showPricing && (
+          {isMobile && (
             <div
               data-testid="line-pricing-stack"
               className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
             >
+              {showPricing && (
+                <>
               <div className="min-w-[90px]">{renderTypeCell()}</div>
               <div className="min-w-[110px]">{renderListPriceCell(true)}</div>
               {isSelling && (
@@ -711,6 +712,14 @@ function LineRow({
                   <div className="min-w-[110px]">{renderSellingPriceCell(true)}</div>
                 </>
               )}
+                </>
+              )}
+              <Input
+                value={line.remarks}
+                onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
+                placeholder="Note for this line..."
+                aria-label={`Remarks for line ${index + 1}`}
+              />
             </div>
           )}
         </td>
@@ -746,14 +755,16 @@ function LineRow({
             </td>
           </>
         )}
-        <td className="px-2 py-2">
-          <Input
-            value={line.remarks}
-            onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
-            placeholder="Note for this line..."
-            aria-label={`Remarks for line ${index + 1}`}
-          />
-        </td>
+        {!isMobile && (
+          <td className="px-2 py-2">
+            <Input
+              value={line.remarks}
+              onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
+              placeholder="Note for this line..."
+              aria-label={`Remarks for line ${index + 1}`}
+            />
+          </td>
+        )}
         <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
             <Button
