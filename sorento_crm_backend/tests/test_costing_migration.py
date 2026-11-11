@@ -336,24 +336,18 @@ def test_ac_ax_04_manage_is_granted_by_role_slug_to_admin_and_director_only():
             assert MANAGE not in _slugs(db, roles[slug].id), slug  # superadmin passes by bypass
         assert MANAGE not in _slugs(db, extra.id)
         # nothing is revoked or granted beyond the manage slug
-        assert _slugs(db, roles["admin"].id) - {MANAGE, COST_VIEW} == set()
+        assert _slugs(db, roles["admin"].id) - {MANAGE} == set()
 
 
-def test_ac_ax_04_cost_view_row_is_inserted_granted_to_admin_and_director_and_never_duplicated():
+def test_ac_ax_04_the_migration_leaves_products_cost_view_to_sca_0001():
+    """`sca_0001_products_cost_view` runs first and owns the permission and its grants."""
     with blank_session() as db:
         director = _role(db, "director")
-        purchasing = _role(db, "purchasing_manager")
         _drop_lane_tables(db)
-        module = _module()
-        _run(db, module, "upgrade")
-        assert db.execute(text("SELECT count(*) FROM user_permissions WHERE slug = :s"), {"s": COST_VIEW}).scalar() == 1
-        assert COST_VIEW in _slugs(db, director.id)
-        assert COST_VIEW not in _slugs(db, purchasing.id)  # nobody else
-        _run(db, module, "upgrade")  # a rerun adds neither a row nor a grant
-        assert db.execute(text("SELECT count(*) FROM user_permissions WHERE slug = :s"), {"s": COST_VIEW}).scalar() == 1
-        assert db.execute(
-            text("SELECT count(*) FROM user_role_permissions rp JOIN user_permissions p ON p.id = rp.permission_id "
-                 "WHERE p.slug = :s AND rp.role_id = :r"), {"s": COST_VIEW, "r": director.id}).scalar() == 1
+        _run(db, _module(), "upgrade")
+        assert db.execute(text("SELECT count(*) FROM user_permissions WHERE slug = :s"), {"s": COST_VIEW}).scalar() == 0
+        assert COST_VIEW not in _slugs(db, director.id)
+        assert MANAGE in _slugs(db, director.id)
 
 
 def test_ac_ax_04_an_existing_cost_view_row_and_its_grants_are_left_alone():
@@ -393,7 +387,6 @@ def test_downgrade_removes_only_what_upgrade_added():
         assert db.execute(
             text("SELECT count(*) FROM user_role_permissions rp JOIN user_permissions p ON p.id = rp.permission_id "
                  "WHERE p.slug = :s"), {"s": MANAGE}).scalar() == 0
-        # products.cost.view and its grants belong to #2319 and survive, the ones this upgrade made too
+        # products.cost.view and its grants belong to #2319 and survive
         assert COST_VIEW in _slugs(db, keeper.id)
-        assert COST_VIEW in _slugs(db, admin.id)
         assert db.execute(text("SELECT count(*) FROM user_permissions WHERE slug = :s"), {"s": COST_VIEW}).scalar() == 1

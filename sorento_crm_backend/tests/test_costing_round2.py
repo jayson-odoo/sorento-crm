@@ -213,3 +213,20 @@ def test_s6_party_product_ids_lists_every_id_without_costing(costing_env):
     assert e.get(f"/parties/{uuid.uuid4()}/product-ids").status_code == 404
     e.as_user(e.user())
     assert e.get(f"/parties/{w.customer.id}/product-ids").status_code == 403
+
+
+# ------------------------------------------------------------------ round 3: history timestamps
+
+
+def test_r3_history_changed_at_is_timezone_aware(costing_env):
+    from datetime import datetime
+
+    e, w = _setup(costing_env, "manager")
+    e.patch_rows({"party_id": w.customer.id, "changes": [{"product_id": w.jac.id, "markup_pct": 15}]})
+    e.as_user(e.viewer())
+    data = e.get(f"/rows/{w.jac.id}/history", party_id=w.customer.id).json()["data"]
+    assert data
+    for entry in data:
+        stamp = entry["changed_at"]
+        assert stamp.endswith("Z") or stamp.endswith("+00:00"), stamp
+        assert datetime.fromisoformat(stamp.replace("Z", "+00:00")).tzinfo is not None

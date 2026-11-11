@@ -11,7 +11,7 @@ API's floats (6 dp).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
@@ -339,7 +339,7 @@ def history(db: Session, product_id: str, party_id: Optional[str]) -> list:
                 if old == new:
                     continue
                 entries.append((log.changed_at, str(log.id), {
-                    "changed_at": log.changed_at.isoformat(), "user_name": user_name or "System",
+                    "changed_at": log.changed_at.replace(tzinfo=timezone.utc).isoformat(), "user_name": user_name or "System",
                     "field": name, "old": old, "new": new,
                 }))
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
