@@ -90,6 +90,8 @@ const getSpecSheet = vi.fn();
 const getSpecSheetPreview = vi.fn();
 const saveSpecSheetPageEdit = vi.fn();
 const applySpecSheetLayerToAll = vi.fn();
+// B6: the apply-all `add` operation (contract: layer + origin page key).
+const addSpecSheetLayerToAll = vi.fn();
 const updateSpecSheet = vi.fn();
 const listSpecSheets = vi.fn();
 vi.mock(
@@ -105,6 +107,7 @@ vi.mock(
     saveSpecSheetPageEdit: (...a: unknown[]) => saveSpecSheetPageEdit(...a),
     applySpecSheetLayerToAll: (...a: unknown[]) =>
       applySpecSheetLayerToAll(...a),
+    addSpecSheetLayerToAll: (...a: unknown[]) => addSpecSheetLayerToAll(...a),
     queueSpecSheetPdf: vi.fn(),
   }),
 );
@@ -137,6 +140,17 @@ vi.mock('@/services/pendingActionService', () => ({
 vi.mock('@/lib/dealer-kit/fonts', () => ({
   ensureFontsLoaded: vi.fn(async () => undefined),
   ensureSeedFontsLoaded: vi.fn(async () => undefined),
+}));
+// B7: a deferred action commits the moment it starts (the 5 s window is not under test).
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: { onCommitted?: () => void }) => ({
+    pending: null,
+    isPending: false,
+    isBlocked: false,
+    start: () => input.onCommitted?.(),
+    cancel: () => undefined,
+    countdown: null,
+  }),
 }));
 let mobile = false;
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mobile }));
@@ -218,6 +232,8 @@ type FakeProps = {
   };
 };
 const liveSeen = new Set<string>();
+// B6: what the toolbar asked each page's canvas to add.
+const addCalls: { key: string; kind: string }[] = [];
 const mounts = new Map<string, number>();
 let lastDocLayers: Record<string, unknown>[] = [];
 let livePeak = 0;
@@ -263,6 +279,24 @@ vi.mock(
                 : l,
             ),
           ),
+        addLayer: (kind: string) => {
+          addCalls.push({ key, kind });
+          change([
+            ...latest.current,
+            {
+              id: `new-${kind}`,
+              type: kind,
+              x_mm: 10,
+              y_mm: 10,
+              width_mm: 30,
+              height_mm: 8,
+              rotation_deg: 0,
+              z_index: 9,
+              visible: true,
+              props: { kind },
+            },
+          ]);
+        },
       };
       return (
         <div
@@ -468,6 +502,8 @@ const live = () => document.querySelectorAll('[data-testid^="live-canvas-"]');
 beforeEach(() => {
   observers.length = 0;
   liveSeen.clear();
+  addCalls.length = 0;
+  addSpecSheetLayerToAll.mockReset().mockResolvedValue(detail());
   livePeak = 0;
   liveNow = 0;
   mobile = false;
@@ -1710,4 +1746,128 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     expect(screen.queryByText('Templates')).toBeNull();
   });
 
+});
+
+describe('the page toolbar (B6)', () => {
+  const ADDS = ['Add Text', 'Add Image', 'Add Shape', 'Add Table', 'Add Accessories', 'Add Badge'];
+  const NOT_ON_A_SPEC_SHEET = [
+    'Add Product',
+    'Add Set',
+    'Add Alternatives Row',
+    'Add Price Badge',
+    'Add Barcode',
+    'Add Product Slot',
+  ];
+
+  it('offers the shared add buttons and Undo / Redo / Delete / Duplicate, and not the price tag only ones', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    for (const name of [...ADDS, 'Undo', 'Redo', 'Delete', 'Duplicate']) {
+      expect(screen.getByRole('button', { name }), name).toBeInTheDocument();
+    }
+    for (const name of NOT_ON_A_SPEC_SHEET) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull();
+    }
+  });
+
+  it('a viewer who cannot edit gets no add buttons', async () => {
+    getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(screen.queryByRole('button', { name: 'Add Text' })).toBeNull();
+  });
+
+  it('Add Text adds to the page the user last pressed, and to no other', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k5'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Text' }));
+
+    await waitFor(() => expect(addCalls).toEqual([{ key: 'k5', kind: 'text' }]));
+  });
+
+  it('with no press, the page holding the selection is the target', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k6')).getByText('select k6'));
+    await screen.findByTestId('inspector');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Table' }));
+
+    await waitFor(() => expect(addCalls).toEqual([{ key: 'k6', kind: 'table' }]));
+  });
+
+  it('This page: nothing goes to the every-page endpoint', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Text' }));
+    await waitFor(() => expect(addCalls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 900));
+    expect(addSpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+
+  it('Every page: Add Text also sends the add operation with the new layer and the origin page', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('select k1'));
+    await screen.findByTestId('inspector');
+    fireEvent.click(screen.getByRole('radio', { name: 'Every page' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Text' }));
+
+    await waitFor(() => expect(addSpecSheetLayerToAll).toHaveBeenCalledTimes(1));
+    expect(addSpecSheetLayerToAll).toHaveBeenCalledWith(
+      'p1',
+      'd1',
+      'sheet-1',
+      expect.objectContaining({ id: 'new-text', type: 'text' }),
+      'k1',
+    );
+  });
+});
+
+describe('Reset to template drops the page draft (B7)', () => {
+  it('after a reset the next edit saves the template layers plus ONE nudge, not the old two', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const base = detail();
+    const edited = {
+      ...base,
+      pages: base.pages.map((p) => (p.key === 'k1' ? { ...p, edited: true } : p)),
+    };
+    getSpecSheet.mockResolvedValue(edited);
+    saveSpecSheetPageEdit.mockResolvedValue(edited);
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k1'));
+
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(1));
+    expect((saveSpecSheetPageEdit.mock.calls[0][4] as { x_mm: number }[])[0].x_mm).toBe(6);
+
+    fireEvent.mouseEnter(document.querySelector('[data-page-wrap="k1"]')!);
+    fireEvent.click(await screen.findByRole('button', { name: /Reset to template/ }));
+
+    await waitFor(() => expect(screen.getByTestId('live-canvas-k1')).toBeInTheDocument());
+    fireEvent.click(within(await screen.findByTestId('live-canvas-k1')).getByText('nudge k1'));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(2));
+    expect((saveSpecSheetPageEdit.mock.calls[1][4] as { x_mm: number }[])[0].x_mm).toBe(6);
+  });
 });

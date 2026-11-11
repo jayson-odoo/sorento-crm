@@ -66,3 +66,31 @@ describe('useSheetEditing undo after a new edit', () => {
     expect(result.current.canUndo('k')).toBe(false);
   });
 });
+
+describe('useSheetEditing forget(key) (B7)', () => {
+  it('clears that page draft, history and pending save, and leaves the other pages alone', () => {
+    vi.useFakeTimers();
+    mutateAsync.mockClear();
+    const { result } = renderHook(() => useSheetEditing('p', 'd', 's'));
+    const base = [layer('a')];
+    act(() => result.current.report('one', base, [layer('a'), layer('b')]));
+    act(() => result.current.report('two', base, [layer('a'), layer('c')]));
+    expect(result.current.canUndo('one')).toBe(true);
+
+    act(() => (result.current as unknown as { forget: (k: string) => void }).forget('one'));
+
+    expect(result.current.draftOf('one')).toBeUndefined();
+    expect(result.current.canUndo('one')).toBe(false);
+    expect(result.current.externalOf('one')).toBeUndefined();
+    expect(result.current.draftOf('two')?.map((l) => l.id)).toEqual(['a', 'c']);
+    expect(result.current.canUndo('two')).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    // Only the untouched page saves; the forgotten page's waiting save is gone.
+    expect(mutateAsync.mock.calls.map((c) => (c as unknown as [{ key: string }])[0].key)).toEqual(['two']);
+    vi.useRealTimers();
+  });
+});
+
