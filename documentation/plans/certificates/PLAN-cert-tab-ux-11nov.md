@@ -1,6 +1,6 @@
 # PLAN: Certification tab UX (CERT-TAB-UX)
 
-Status: Review round 2 (crew browser pass fixes) on PR #2333. Track: small fix track by shape (no migration, no auth/RBAC change, no new ingest), size M. UAC: `cert-tab-ux-11nov-acceptance-criteria.md`.
+Status: Merge-ready pending crew browser re-check and owner hand test (PR #2333); reviewer READY after round 2 (crew browser pass fixes). Track: small fix track by shape (no migration, no auth/RBAC change, no new ingest), size M. UAC: `cert-tab-ux-11nov-acceptance-criteria.md`.
 
 Lane: CERT-TAB-UX. Owner feedback 11 Nov 2026 ~15:10 MYT on the Certification tab built by QUOTE-CERT-TAB (#2245).
 
