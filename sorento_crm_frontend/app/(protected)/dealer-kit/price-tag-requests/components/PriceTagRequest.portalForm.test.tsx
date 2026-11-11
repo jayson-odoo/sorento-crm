@@ -57,7 +57,9 @@ vi.mock('@/components/common/DetailActionsMenu', () => ({
     <div data-testid="gear-menu" aria-label={ariaLabel}>{children}</div>
   ),
 }));
-vi.mock('@/components/ui/dropdown-menu', () => ({
+// The design lightbox's zoom menu needs the real DropdownMenu; only the item is stood in.
+vi.mock('@/components/ui/dropdown-menu', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   DropdownMenuItem: ({ children, onSelect, disabled }: { children: React.ReactNode; onSelect?: (e: { preventDefault: () => void }) => void; disabled?: boolean }) => (
     <button role="menuitem" disabled={disabled} onClick={() => onSelect?.({ preventDefault: () => {} })}>{children}</button>
   ),
@@ -211,6 +213,11 @@ function mountPage(slugs: string[], over: Record<string, unknown> = {}) {
   state.detail = detail(over);
   window.history.replaceState({}, '', `${LIST}/req-1`);
   return wrap(<PriceTagRequestPage requestId="req-1" />);
+}
+
+/** Owner hand test 11 Nov: the design is a popup the page's Preview button opens. */
+async function openPreview() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
 }
 
 /** Same gesture the portal's own suite uses: click the tag, type the comment, Add. */
@@ -369,6 +376,7 @@ describe('limited user, proof review on a request awaiting approval', () => {
 
   it('reads the design and the review rounds through my-requests', async () => {
     mountPage(LIMITED, PROOF);
+    await openPreview();
     expect(await screen.findByTestId('pin-hit-l-1')).toBeTruthy();
     expect(where((c) => c.method === 'GET' && c.url.split('?')[0] === `${MINE}/req-1/design`).length).toBeGreaterThan(0);
     await waitFor(() => expect(where((c) => c.method === 'GET' && c.url.split('?')[0] === `${MINE}/req-1/review-comments`).length).toBeGreaterThan(0));
@@ -378,6 +386,7 @@ describe('limited user, proof review on a request awaiting approval', () => {
 
   it('Approve POSTs .../<id>/approve through my-requests, then pushes the CRM list', async () => {
     mountPage(LIMITED, PROOF);
+    await openPreview();
     await screen.findByTestId('pin-hit-l-1');
     fireEvent.click((await screen.findAllByRole('button', { name: /^Approve/ }))[0]);
     await waitFor(() => expect(posted('approve')).toHaveLength(1));
@@ -387,6 +396,7 @@ describe('limited user, proof review on a request awaiting approval', () => {
 
   it('Request changes (a pin and a note) POSTs ONE .../<id>/request-changes with the portal body, then pushes the CRM list', async () => {
     mountPage(LIMITED, PROOF);
+    await openPreview();
     await placePin('Make the price bigger');
     fireEvent.change(await screen.findByLabelText(/Anything else \(optional\)/), { target: { value: 'Too busy' } });
     fireEvent.click(await screen.findByTestId('send-change-requests'));

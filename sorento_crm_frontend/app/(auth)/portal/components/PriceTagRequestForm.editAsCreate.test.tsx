@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -138,12 +138,16 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   ),
 }));
 
+let capturedOnPendingFilesChange: ((files: File[]) => void) | undefined;
 vi.mock('./AttachmentDropzone', () => ({
-  AttachmentDropzone: () => <div data-testid="so-dropzone" />,
+  AttachmentDropzone: (props: { onPendingFilesChange?: (files: File[]) => void }) => {
+    capturedOnPendingFilesChange = props.onPendingFilesChange;
+    return <div data-testid="so-dropzone" />;
+  },
 }));
 
 import { approveRequest, getRequest, lookupTagPreviewForRequest } from '../lib/price-tag-request-service';
-import { fetchSubmissionNeighbours } from '../lib/portal-client';
+import { fetchSubmissionNeighbours, uploadAttachment } from '../lib/portal-client';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -298,6 +302,27 @@ describe('Edit follows the create path', () => {
     expect(asMock(approveRequest).mock.calls[0][0]).toBe('req-1');
     expect(asMock(approveRequest).mock.calls[0][1]).toBeTruthy();
     expect(toasts.success).toHaveBeenCalledWith('Tag approved');
+  });
+
+  it('a file added while editing is uploaded when the edit is approved', async () => {
+    asMock(lookupTagPreviewForRequest).mockResolvedValue({ lines: [], templates: {}, assets: {}, images: {}, fonts: [] });
+    asMock(approveRequest).mockResolvedValue({ status: 'approved' });
+    asMock(uploadAttachment).mockResolvedValue({
+      link_id: 'link-1', attachment_id: 'att-1', filename: 'ZZT-po.pdf', size: 3,
+      url: 'https://cdn.test/ZZT-po.pdf', content_type: 'application/pdf',
+    });
+    await openEdit();
+    fireEvent.click(screen.getByRole('button', { name: 'Upload a file instead' }));
+    act(() => {
+      capturedOnPendingFilesChange?.([new File(['zzt'], 'ZZT-po.pdf', { type: 'application/pdf' })]);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const popup = await screen.findByTestId('sheet-popup');
+    fireEvent.click(within(popup).getByRole('button', { name: /^approve$/i }));
+
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalled());
+    await waitFor(() => expect(approveRequest).toHaveBeenCalled());
   });
 
   it('Cancel goes back to the view page without saving', async () => {
