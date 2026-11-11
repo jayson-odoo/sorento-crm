@@ -742,3 +742,140 @@ def test_oi_options_lines_carry_the_location_and_delivery_date_like_stock_debt(s
     assert "location_code" in first and "delivery_date" in first, sorted(first)
     assert first["location_code"] == w["mwh"].warehouse_code
     assert first["delivery_date"] == w["so_line"].required_date.isoformat()
+
+
+# --------------------------------------------------------------------------- Shared Service batch op
+
+BATCH = "/api/v1/autocount/po-links/batch"
+_KEY_A, _KEY_B = ("11990", 4), ("12001", 3)  # (soDtlKey, qty) of the two SO lines of the world
+
+
+def _batch_answer(links=((11988, 11990, 4, 12080), (11999, 12001, 3, 12081)), skipped=(), outcome="done"):
+    """SS's batch answer: one PO line (12009 of 500), `links` = (soDocKey, soDtlKey, qty, new poDtlKey)."""
+    linked = sum(q for _d, _s, q, _p in links)
+
+    def answer(request):
+        done = outcome == "done"
+        return 200, {
+            "operationId": "op-batch", "actionId": None, "outcome": outcome, "errorCode": None,
+            "message": "", "warnings": [], "docKey": 12008, "docNo": "202609-S0029", "replacedLines": [],
+            "links": [
+                {"soDocKey": d, "soDtlKey": s, "qty": str(q), "poDtlKey": p} for d, s, q, p in links
+            ] if done else [],
+            "freeLine": {"poDtlKey": 12009, "qty": str(500 - linked)} if done else None,
+            "skipped": [{"soDtlKey": s, "code": c} for s, c in skipped],
+            "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+                {"DtlKey": 12009, "Location": "HQ", "Qty": 500 - linked, "FromSODtlKey": 0},
+                *[{"DtlKey": p, "Location": "MWH", "Qty": q, "FromSODtlKey": s} for _d, s, q, p in links],
+            ]},
+        }
+
+    return answer
+
+
+def test_two_so_lines_on_one_po_line_go_in_one_batch_call(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    (body,) = fake_ss.bodies(BATCH)
+    assert (body["poDocKey"], body["poDtlKey"]) == (12008, 12009)
+    assert body["expectedLastModified"] is None
+    assert [(l["soDtlKey"], l["qty"]) for l in body["links"]] == [(11990, 4), (12001, 3)]
+    assert all(isinstance(l["qty"], (int, float)) for l in body["links"])
+    assert len(_keys_sent(fake_ss, BATCH)) == 1 and _keys_sent(fake_ss, BATCH)[0]
+    assert fake_ss.bodies(PO_LINKS) == []
+
+    from app.models.procurement import PurchaseOrderLine
+
+    db = w["db"]
+    db.expire_all()
+    refs = {
+        r.source_ref: (r.from_so_line_ref, r.qty_ordered)
+        for r in db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == w["po"].id)
+    }
+    assert refs[f"{DB}:12008:12080"] == (f"{DB}:11988:11990", Decimal("4"))
+    assert refs[f"{DB}:12008:12081"] == (f"{DB}:11999:12001", Decimal("3"))
+    assert refs[f"{DB}:12008:12009"] == (None, Decimal("493"))
+
+
+def test_two_po_lines_in_one_request_are_two_batch_calls_in_request_order(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    _po2, po_line2 = _po_line(w["db"], w["product"], w["hq"], qty=500, doc_key=12200, dtl_key=12201)
+    w["db"].flush()
+
+    def answer(request):
+        body = json.loads(request.content)
+        if body["poDtlKey"] == 12009:
+            return _batch_answer(links=((11988, 11990, 4, 12080),))(request)
+        reply = _batch_answer(links=((11999, 12001, 3, 12281),))(request)
+        reply[1]["docKey"] = 12200
+        return reply
+
+    fake_ss.answers[BATCH] = answer
+    resp = _oi_link(w, [
+        _item(w, "so_line", 4, "po_line"),
+        {"sales_order_line_id": w["other"].id, "po_line_id": po_line2.id, "qty": 3},
+    ])
+    assert resp.status_code == 200, resp.text
+    assert [b["poDtlKey"] for b in fake_ss.bodies(BATCH)] == [12009, 12201]
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    assert fake_ss.bodies(PO_LINKS) == []
+
+
+def test_a_skipped_line_is_named_in_plain_words_and_the_valid_line_stays_linked(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "QTY_ABOVE_OUTSTANDING")])
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    first, second = resp.json()["results"]
+    assert first["outcome"] == "done"
+    assert second["outcome"] in ("skipped", "refused")
+    assert w["other"].source_ref and f"{w['marker']}-SO2" in second["message"] and "line 10" in second["message"]
+    assert "QTY_ABOVE_OUTSTANDING" not in json.dumps(second)
+
+    from app.models.procurement import PurchaseOrderLine
+
+    w["db"].expire_all()
+    linked = w["db"].query(PurchaseOrderLine).filter(PurchaseOrderLine.source_ref == f"{DB}:12008:12080").one()
+    assert linked.from_so_line_ref == f"{DB}:11988:11990" and linked.qty_ordered == Decimal("4")
+
+
+@pytest.mark.parametrize("answer,same_key", [
+    ((422, {"operationId": "op-r", "outcome": "refused", "errorCode": "FIELD_REQUIRED",
+            "message": "PurchaseAgent is required.", "warnings": [], "links": [], "freeLine": None,
+            "skipped": [], "document": None}), False),
+    ((502, {"operationId": "op-v", "outcome": "vendor_error", "errorCode": "VENDOR_ERROR",
+            "message": "", "links": [], "freeLine": None, "skipped": []}), True),
+])
+def test_a_whole_batch_refusal_refuses_every_line_and_the_key_follows_the_outcome(scm_app, fake_ss, answer, same_key):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = answer
+    lines = [_item(w, "so_line", 4), _item(w, "other", 3)]
+    first = _oi_link(w, lines)
+    assert first.status_code == 200, first.text
+    assert [r["outcome"] for r in first.json()["results"]] == [answer[1]["outcome"]] * 2
+    _oi_link(w, lines)
+    k1, k2 = _keys_sent(fake_ss, BATCH)
+    assert k1 and k2 and (k1 == k2) is same_key
+
+
+def test_a_404_from_the_batch_route_falls_back_to_the_per_line_writes(scm_app, fake_ss):
+    w = _oi_world(scm_app)  # no BATCH answer: FakeSS answers 404 like an SS not yet deployed
+    fake_ss.answers[PO_LINKS] = _two_step_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)])
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    assert len(fake_ss.bodies(BATCH)) >= 1
+    assert [(b["soDtlKey"], b["qty"]) for b in fake_ss.bodies(PO_LINKS)] == [(11990, 120), (12001, 30)]
+
+
+def test_a_single_line_group_also_goes_through_batch(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(links=((11988, 11990, 4, 12080),))
+    resp = _oi_link(w, [_item(w, "so_line", 4)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    assert len(fake_ss.bodies(BATCH)) == 1 and fake_ss.bodies(PO_LINKS) == []

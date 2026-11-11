@@ -428,3 +428,24 @@ describe('A refused or failed result offers Try again (D3)', () => {
     expect(within(screen.getByTestId('po-link-result')).queryByRole('button', { name: /try again/i })).toBeNull();
   });
 });
+
+describe('A skipped line in a batch (plain reason, Try again)', () => {
+  it('shows the SO number and line with the message, never the code, and offers Try again', async () => {
+    linkPoLines.mockResolvedValue({
+      results: [
+        result({
+          outcome: 'skipped', error_code: 'QTY_ABOVE_OUTSTANDING',
+          message: 'SO425045 line 140 was not linked: it needs less than that now.',
+        }),
+      ],
+    });
+    const { dialog } = renderDialog();
+    fireEvent.change(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link 1 line' }));
+    const card = await screen.findByTestId('po-link-result');
+    expect(card).toHaveTextContent('SO425045 line 140');
+    expect(card).toHaveTextContent('it needs less than that now');
+    expect(document.body).not.toHaveTextContent('QTY_ABOVE_OUTSTANDING');
+    expect(within(card).getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+});
