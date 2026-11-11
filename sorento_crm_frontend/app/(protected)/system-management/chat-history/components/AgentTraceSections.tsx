@@ -116,7 +116,7 @@ export function AgentThinkingSection({ agent }: { agent: TurnDetailAgent }) {
           <div className="mb-0.5 font-medium text-muted-foreground">Plan</div>
           <ol className="list-decimal space-y-0.5 pl-4">
             {agent.plan.map((part, i) => (
-              <li key={i}>{part}</li>
+              <li key={i}>{maskIds(part)}</li>
             ))}
           </ol>
         </div>
@@ -124,7 +124,7 @@ export function AgentThinkingSection({ agent }: { agent: TurnDetailAgent }) {
       {agent.reasoning.map((entry, i) => (
         <div key={i}>
           <div className="mb-0.5 font-medium text-muted-foreground">Round {entry.round ?? '-'}</div>
-          <p className="whitespace-pre-wrap break-words">{entry.text}</p>
+          <p className="whitespace-pre-wrap break-words">{maskIds(entry.text)}</p>
         </div>
       ))}
     </div>

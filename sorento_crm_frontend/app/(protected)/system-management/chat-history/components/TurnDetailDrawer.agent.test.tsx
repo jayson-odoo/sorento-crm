@@ -46,7 +46,9 @@ function agent(): TurnDetailAgent {
         tools_offered: 3, tool_schema_chars: 3362, message_chars: 16445,
       },
     ],
-    reasoning: [{ round: 1, kind_of_call: 'round', text: 'Read the lines of both quotations first.' }],
+    reasoning: [
+      { round: 1, kind_of_call: 'round', text: `Read the lines of both quotations first. project_id ${PROJECT}` },
+    ],
     tools: [
       {
         name: 'crm_project_quotation_lines', args: { refs: ['PRJQ-2026-0007'], project_id: PROJECT }, status: 'ok', ms: 84,
@@ -54,7 +56,7 @@ function agent(): TurnDetailAgent {
         result_chars: 3431, more: 0, detail: null,
       },
     ],
-    plan: [],
+    plan: [`Read the quotations of ${PROJECT}`],
     context: {
       prompt_key: 'chatbot_agent', prompt_version: 14, system_chars: 6842, context_before: '',
       context_before_chars: 0, context_after: PAGE_NOTE, context_after_chars: PAGE_NOTE.length,

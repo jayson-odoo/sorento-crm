@@ -117,7 +117,8 @@ def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict],
     ran = sum(1 for c in calls if str(c.get("name") or "") not in ("plan", "answer"))
     answered = done[-ran:] if ran else []
     if QUOTATION_LINES in names and names <= {QUOTATION_LINES, "plan"}:
-        if plan_parts > 1 or not any(c.get("name") == QUOTATION_LINES and c.get("status") == "ok" for c in answered):
+        # Only a lookup that found every ref it was given: a ref in not_found may be another project's (find it).
+        if plan_parts > 1 or not any(c.get("name") == QUOTATION_LINES and c.get("complete") for c in answered):
             return schemas
         return [s for s in schemas if s.get("function", {}).get("name") in AFTER_QUOTATION_LINES]
     if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
@@ -1735,9 +1736,10 @@ def _run(
                 extra["tool_choice"] = tool_choice
             if json_schema is not None:
                 extra.update(json_schema=json_schema, json_schema_name=kind)
-            if not side and tool_choice is None and json_schema is None:
-                # The stable prefix (system prompt, tools) cached by the provider (AGENT-PANEL-FIXES C). Gemini
-                # rejects a tool_config beside a cache, so a forced tool call goes uncached.
+            if not side and tool_choice is None and json_schema is None and provider_name != "gemini":
+                # A routing hint for the provider's automatic prompt cache (AGENT-PANEL-FIXES C). Not on Gemini: there
+                # the key creates an explicit cache (`GeminiProvider._generate`), a blocking create per user, day and
+                # tool list that is not measured yet (review round 1).
                 extra["prompt_cache_key"] = cache_key
             result = send(
                 messages, tools=tools, model=model, timeout=timeout, **extra,
@@ -2164,7 +2166,14 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, **({"agents_only": True} if agents else {})})
+                complete = (
+                    name == QUOTATION_LINES and out.status == "ok" and isinstance(out.data, dict)
+                    and bool(out.data.get("documents")) and not out.data.get("not_found")
+                )
+                run.tool_calls.append({
+                    "name": name, "status": out.status, "ms": ms,
+                    **({"agents_only": True} if agents else {}), **({"complete": True} if complete else {}),
+                })
                 if basis and out.status == "ok" and not turn_basis:
                     turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})

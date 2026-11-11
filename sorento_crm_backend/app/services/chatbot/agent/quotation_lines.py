@@ -29,9 +29,9 @@ def vs_list(listed: Any, unit: Any) -> str | None:
         return None
     listed = Decimal(listed)
     unit = Decimal(unit or 0)
-    if unit == listed:
-        return "at list"
     pct = round(abs(listed - unit) / listed * 100, 2)
+    if not pct:  # equal, or a difference that rounds to 0.00
+        return "at list"
     shown = f"{pct:.2f}".rstrip("0").rstrip(".")  # 74.52, 10, 12.5
     return f"{shown}% {'below' if unit < listed else 'above'} list"
 

@@ -873,6 +873,8 @@ def test_AC_E2_vs_list_labels_every_percent_below_or_above_list(db):
     assert by_code["BELOW1"]["vs_list"] == "10% below list"
     assert by_code["EQUAL1"]["vs_list"] == "at list"
     assert by_code["SRTWC8518-SH"]["vs_list"] == "74.52% below list"
+    from app.services.chatbot.agent.quotation_lines import vs_list
+    assert vs_list(Decimal("100000.00"), Decimal("99999.99")) == "at list"  # rounds to 0.00: never "0% below list"
     for line in by_code.values():
         assert "discount_pct" not in line and "above_list_pct" not in line, line
         assert not [v for k, v in line.items() if k.endswith("_pct")], line
