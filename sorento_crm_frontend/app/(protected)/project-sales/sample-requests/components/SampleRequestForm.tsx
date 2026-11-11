@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { Loader2, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -67,6 +67,7 @@ import { lookupCustomersForRequest } from '@/app/(protected)/procurement-managem
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
 import * as portalSampleRequest from '@/app/(auth)/portal/lib/sample-request-service';
+import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
 import { clientService, useSubmissionClient } from '@/app/(auth)/portal/lib/submission-client';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
@@ -160,20 +161,68 @@ function useOwnSampleRequestApi(): SampleRequestFormApi {
           debtor_type: null,
           sales_type: null,
         })),
-      searchProjects: async (q) =>
-        (await client.lookupProjects(q)).map((o) => ({
-          value: o.id,
-          label: `${projectCodeLabel(o)} - ${projectDisplayName(o)}`,
-        })),
+      // The CRM project search, which the own-scope guard answers with this salesperson's own
+      // projects only: the portal lookup is company-wide, and My Requests refuses any other
+      // project on save (security review B1, slice 2).
+      searchProjects: (q) => searchProjectsForLink(q, 1),
       searchProducts: svc.searchSampleRequestProducts as typeof searchSampleRequestProducts,
       getPrefill: svc.getSampleRequestQuotationPrefill as typeof getSampleRequestQuotationPrefill,
     };
   }, [client]);
 }
 
+/** The query a salesperson's own request is read with (dropped after every save, review S2). */
+const OWN_REQUEST_KEY = ['my-request', 'sample_request'] as const;
+
 function OwnSampleRequestForm(props: SampleRequestFormProps) {
   const api = useOwnSampleRequestApi();
+  if (props.requestId) return <OwnSampleRequestOpen requestId={props.requestId} api={api} />;
   return <StaffSampleRequestForm {...props} api={api} />;
+}
+
+/**
+ * A salesperson's own request, opened from its row or its edit link: a draft is the guided form
+ * (the same as New, owner standing rule "Edit opens the same form as Create"); anything submitted
+ * is the read-only view with its PDF and Cancel (review B1 / N1, slice 2).
+ */
+function OwnSampleRequestOpen({ requestId, api }: { requestId: string; api: SampleRequestFormApi }) {
+  const own = useQuery({
+    queryKey: [...OWN_REQUEST_KEY, requestId],
+    queryFn: () => api.getRequest(requestId),
+    refetchOnMount: 'always',
+    staleTime: 0,
+  });
+  if (own.isError) return <LoadFailed onRetry={() => void own.refetch()} />;
+  if (!own.data) {
+    return (
+      <div className="mx-auto w-full max-w-4xl space-y-4">
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+  if (own.data.status !== 'draft') return <PortalSampleRequestForm requestId={requestId} />;
+  return <StaffSampleRequestForm requestId={requestId} api={api} />;
+}
+
+/** Nothing hangs (owner standing rule): a request that cannot be loaded says so, with Try again. */
+function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="mx-auto w-full max-w-4xl rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center text-sm">
+      <p>This sample request could not be loaded.</p>
+      <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+/** The detail page of a salesperson limited to their own sample requests (same rule as above). */
+export function OwnSampleRequestDetail({ requestId }: { requestId: string }) {
+  return (
+    <MyRequestClientProvider>
+      <OwnSampleRequestForm requestId={requestId} />
+    </MyRequestClientProvider>
+  );
 }
 
 /**
@@ -203,10 +252,13 @@ function StaffSampleRequestForm({
   const { create, update, submit } = useSampleRequestMutations();
   const staffExisting = useSampleRequestQuery(api ? null : (requestId ?? null));
   const ownExisting = useQuery({
-    queryKey: ['my-request', 'sample_request', requestId],
+    queryKey: [...OWN_REQUEST_KEY, requestId],
     queryFn: () => (api as SampleRequestFormApi).getRequest(requestId as string),
     enabled: Boolean(api && requestId),
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
+  const queryClient = useQueryClient();
   const existing = api ? ownExisting : staffExisting;
   const [apiBusy, setApiBusy] = useState(false);
   const { data: switches } = useSampleRequestSwitches();
@@ -303,13 +355,15 @@ function StaffSampleRequestForm({
       : create.mutateAsync(body);
   };
   const submitSaved = (id: string) => (api ? api.submit(id) : submit.mutateAsync(id));
-  /** The My Requests path has no mutation hook: hold the buttons while it runs. */
+  /** The My Requests path has no mutation hook: hold the buttons while it runs, and drop the cached
+   * request afterwards so reopening it never shows the values from before the save (review S2). */
   const busy = async <T,>(fn: () => Promise<T>): Promise<T> => {
     setApiBusy(true);
     try {
       return await fn();
     } finally {
       setApiBusy(false);
+      if (api) queryClient.removeQueries({ queryKey: OWN_REQUEST_KEY });
     }
   };
 
@@ -373,6 +427,9 @@ function StaffSampleRequestForm({
     setState((prev) => withShipToContacts(prev, rows));
   }
 
+  if (requestId && existing.isError) {
+    return <LoadFailed onRetry={() => void existing.refetch()} />;
+  }
   if (requestId && (existing.isLoading || !hydrated)) {
     return (
       <div className="mx-auto w-full max-w-4xl space-y-4">

@@ -1,6 +1,6 @@
 # PLAN: sample request v2, slice 2: the limited salesperson's form (lane SAMPLE-REQUEST-V2)
 
-Status: Plan. Slice 1 (PR #2338) is frozen for the owner's hand test; this branch stacks on it.
+Status: Review (built; reviewer + security round 1 findings fixed, round 2 next; browser pass next). Slice 1 (PR #2338) is green on CI and frozen; this branch stacks on it.
 Track: full (auth / own-scope surface: My Requests routes).
 
 Owner Q1 (a), 11 Nov: the salesperson who sees only their own sample requests gets the same experience
@@ -38,3 +38,23 @@ Submit, back to where they started). External portal contacts keep today's form.
    external portal token still cannot; a project outside the salesperson's own scope answers as unknown.
 
 Question for the owner: none (Q1 answered). Security review mandatory (own-scope, ingest).
+
+## As built (decisions, review round 1)
+
+- Step 2 (My Requests party / contact routes) was NOT built: the CRM routes already answer a limited
+  salesperson by their own grants and own project scope (`GET /projects/{id}/parties` behind
+  `get_project_or_404(viewer_user_id)`, `GET /parties` and `GET /parties/{id}/contacts` behind
+  `projects.parties.view` or `projects.registrations.submit`, fields trimmed without the view grant;
+  `POST /parties` needs `projects.parties.edit`). The seeded salesperson role holds
+  `projects.projects.view_own` + `projects.registrations.submit`, so the form works for it. A custom
+  role holding ONLY the sample request grants cannot read parties and so cannot submit; trigger to
+  revisit: such a role appears in use.
+- Projects: the salesperson's form searches projects with the CRM project search (own-scope guarded),
+  not the company-wide portal lookup, and every My Requests create / update runs the own-project
+  check (security B1: the ship-to party would otherwise read another salesperson's project site
+  address back).
+- A salesperson's own request opened from its row or its edit link: a draft is the guided form, a
+  submitted one the read-only view (review B1 / N1). The cached request is dropped after each save
+  and refetched on open (S2); a failed load shows Try again (S3).
+- Out of scope, recommended follow-up: the My Requests `/lookups/projects` (shared by other forms)
+  still lists company-wide projects for a limited salesperson.

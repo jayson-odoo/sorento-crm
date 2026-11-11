@@ -45,8 +45,7 @@ import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
-import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
+import { OwnSampleRequestDetail } from './SampleRequestForm';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { dateAnswerProblem, dateAnswerText } from '@/lib/sample-request-tracking';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -447,13 +446,9 @@ function InternalDialog({
  */
 export default function SampleRequestDetail({ requestId }: { requestId: string }) {
   const { limited } = useRequestScope('sample_request');
-  if (limited) {
-    return (
-      <MyRequestClientProvider>
-        <PortalSampleRequestForm requestId={requestId} />
-      </MyRequestClientProvider>
-    );
-  }
+  // A salesperson's own request: a draft opens the guided form, anything else the read-only view
+  // (SAMPLE-REQUEST-V2 slice 2, review B1).
+  if (limited) return <OwnSampleRequestDetail requestId={requestId} />;
   return <StaffSampleRequestDetail requestId={requestId} />;
 }
 

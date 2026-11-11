@@ -165,7 +165,7 @@ describe('limited user, New Sample Request renders the guided form through My Re
     expect(staffApi()).toHaveLength(0);
   });
 
-  it('customer search, product search and project search go to my-requests only', async () => {
+  it('customer and product search go to my-requests, projects to the own-scope CRM search', async () => {
     mountForm(LIMITED);
     await screen.findByText('Customer & project');
     const customer = screen.getByLabelText(/^Customer/);
@@ -177,7 +177,10 @@ describe('limited user, New Sample Request renders the guided form through My Re
     fireEvent.click(document.getElementById('sr-project') as HTMLElement);
     const box = await screen.findByPlaceholderText('Search...');
     fireEvent.change(box, { target: { value: 'PR' } });
-    await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/projects')).length).toBeGreaterThan(0), { timeout: 3000 });
+    // Projects: the CRM project search, which the own-scope guard answers with this salesperson's own
+    // projects only (the company-wide portal lookup is refused on save; security review B1, slice 2).
+    await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/project-sales/projects/')).length).toBeGreaterThan(0), { timeout: 3000 });
+    expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/projects'))).toHaveLength(0);
     expect(portalCalls()).toHaveLength(0);
     expect(staffApi()).toHaveLength(0);
     expect(where((c) => c.url.includes('/procurement-management/') || c.url.includes('/api/v1/complaints'))).toHaveLength(0);

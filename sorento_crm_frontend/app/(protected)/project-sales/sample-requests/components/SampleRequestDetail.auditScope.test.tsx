@@ -93,9 +93,17 @@ afterEach(cleanup);
 
 
 describe('Audit Trail for a limited user (PORTAL-P4-REQUESTS)', () => {
-  it('limited user: no Audit Trail section (the portal has none; /audit/logs answers 403)', async () => {
+  it('limited user, draft: the guided form opens, with no Audit Trail section', async () => {
+    // SAMPLE-REQUEST-V2 slice 2: a salesperson's own draft opens the same guided form as New.
     mount(LIMITED);
+    await screen.findByText('Customer & project');
+    expect(screen.queryByTestId('audit-trail')).toBeNull();
+  });
+
+  it('limited user, submitted: the read-only view, with no Audit Trail section (/audit/logs answers 403)', async () => {
+    mount(LIMITED, { status: 'submitted', status_label: 'Submitted' });
     await screen.findAllByText(/SR-000001/);
+    expect(screen.queryByText('Customer & project')).toBeNull();
     expect(screen.queryByTestId('audit-trail')).toBeNull();
   });
 
