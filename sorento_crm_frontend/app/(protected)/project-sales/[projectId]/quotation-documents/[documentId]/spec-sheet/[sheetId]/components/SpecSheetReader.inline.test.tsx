@@ -234,6 +234,7 @@ type FakeProps = {
 const liveSeen = new Set<string>();
 // B6: what the toolbar asked each page's canvas to add.
 const addCalls: { key: string; kind: string }[] = [];
+const groupCalls: string[] = [];
 const mounts = new Map<string, number>();
 let lastDocLayers: Record<string, unknown>[] = [];
 let livePeak = 0;
@@ -279,6 +280,8 @@ vi.mock(
                 : l,
             ),
           ),
+        groupSelected: () => groupCalls.push(key),
+        ungroupSelected: () => groupCalls.push(`un:${key}`),
         addLayer: (kind: string) => {
           addCalls.push({ key, kind });
           change([
@@ -326,6 +329,26 @@ vi.mock(
             onClick={() => props.embedded.onEditField?.('area')}
           >
             {`double-click area ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              change(
+                latest.current.map((l) =>
+                  l.id === 'new-image'
+                    ? { ...l, props: { ...(l.props as object), source: { type: 'asset', assetId: 'a1' } } }
+                    : l,
+                ),
+              )
+            }
+          >
+            {`pick artwork ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => change(latest.current.filter((l) => l.id !== 'new-image'))}
+          >
+            {`drop new image ${key}`}
           </button>
           <button
             type="button"
@@ -503,6 +526,7 @@ beforeEach(() => {
   observers.length = 0;
   liveSeen.clear();
   addCalls.length = 0;
+  groupCalls.length = 0;
   addSpecSheetLayerToAll.mockReset().mockResolvedValue(detail());
   livePeak = 0;
   liveNow = 0;
@@ -1871,3 +1895,85 @@ describe('Reset to template drops the page draft (B7)', () => {
     expect((saveSpecSheetPageEdit.mock.calls[1][4] as { x_mm: number }[])[0].x_mm).toBe(6);
   });
 });
+
+describe('Every page + Add Image waits for the artwork (B6 fix round)', () => {
+  async function everyPageOnK1() {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('select k1'));
+    await screen.findByTestId('inspector');
+    fireEvent.click(screen.getByRole('radio', { name: 'Every page' }));
+  }
+
+  it('an empty image frame is not sent; the layer with its artwork is', async () => {
+    await everyPageOnK1();
+    fireEvent.click(screen.getByRole('button', { name: 'Add Image' }));
+    await waitFor(() => expect(addCalls).toEqual([{ key: 'k1', kind: 'image' }]));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(addSpecSheetLayerToAll).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('pick artwork k1'));
+    await waitFor(() => expect(addSpecSheetLayerToAll).toHaveBeenCalledTimes(1));
+    expect(addSpecSheetLayerToAll.mock.calls[0][3]).toMatchObject({
+      id: 'new-image',
+      props: { source: { type: 'asset', assetId: 'a1' } },
+    });
+  });
+
+  it('a frame that is dropped (picker cancelled) is never sent', async () => {
+    await everyPageOnK1();
+    fireEvent.click(screen.getByRole('button', { name: 'Add Image' }));
+    await waitFor(() => expect(addCalls).toHaveLength(1));
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('drop new image k1'));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(addSpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('Group / Ungroup on the page toolbar (B6 fix round)', () => {
+  it('act on the input page through its controller', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k2'));
+    expect(screen.getByRole('button', { name: 'Group' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ungroup' })).toBeInTheDocument();
+  });
+});
+
+describe('Reset to template: an edit reported while the page is read again is dropped (B6 fix round)', () => {
+  it('the nudge made between the reset and the restart is not saved', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const base = detail();
+    const edited = { ...base, pages: base.pages.map((p) => (p.key === 'k1' ? { ...p, edited: true } : p)) };
+    getSpecSheet.mockResolvedValue(edited);
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k1'));
+    // The refetch after the reset is slow; the old canvas is still on screen meanwhile.
+    let finish: () => void = () => undefined;
+    getSpecSheetPreview.mockImplementation(
+      (_p: string, _d: string, _s: string, keys: string[]) =>
+        new Promise((resolve) => {
+          finish = () => resolve(previewFor(keys));
+        }),
+    );
+    fireEvent.mouseEnter(document.querySelector('[data-page-wrap="k1"]')!);
+    fireEvent.click(await screen.findByRole('button', { name: /Reset to template/ }));
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'));
+    await act(async () => {
+      finish();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+  });
+});
+

@@ -95,3 +95,26 @@ describe('useSheetEditing forget(key) (B7)', () => {
   });
 });
 
+describe('useSheetEditing forget(key) and a save already queued (B6 fix round)', () => {
+  it('a save queued behind the gate before forget is never sent', async () => {
+    vi.useFakeTimers();
+    mutateAsync.mockClear();
+    const { result } = renderHook(() => useSheetEditing('p', 'd', 's'));
+    let release: () => void = () => undefined;
+    await act(async () => {
+      release = await result.current.settle();
+    });
+    act(() => result.current.report('k', [layer('a')], [layer('a'), layer('b')]));
+    await act(async () => {
+      vi.advanceTimersByTime(1500); // the timer fired: the save now waits behind the gate
+    });
+    act(() => (result.current as unknown as { forget: (k: string) => void }).forget('k'));
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    expect(mutateAsync).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+});
+

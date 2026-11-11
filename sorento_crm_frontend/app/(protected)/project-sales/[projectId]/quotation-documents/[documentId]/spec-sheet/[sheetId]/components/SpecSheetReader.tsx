@@ -9,9 +9,7 @@ import {
   LayoutTemplate,
   Minus,
   Plus,
-  Redo2,
   Trash2,
-  Undo2,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -84,6 +82,12 @@ import { ReaderInspector, type ApplyMode } from './ReaderInspector';
 import { applicableChanges, movedKeys } from './selectionTools';
 import { useSheetEditing } from './useSheetEditing';
 import { COVER, ReaderPage } from './ReaderPage';
+
+/** Whether a freshly added image or badge has had its artwork chosen. */
+function hasArtwork(layer: TagLayer): boolean {
+  const props = layer.props as { kind: string; source?: unknown; assetId?: string };
+  return props.kind === 'badge' ? Boolean(props.assetId) : Boolean(props.source);
+}
 
 /** Scroll the page stack (only the stack, never the window) so that page's top sits at its top. */
 function scrollStackTo(stack: HTMLElement | null, key: string) {
@@ -672,20 +676,34 @@ export function SpecSheetReader({
   const everyPageRef = React.useRef({ selection, applyMode, sendToEveryPage });
   everyPageRef.current = { selection, applyMode, sendToEveryPage };
   // B6: set by the toolbar's Add; the next report of that page names the new layer.
-  const pendingAdd = React.useRef<{ key: string; every: boolean } | null>(null);
+  const pendingAdd = React.useRef<{
+    key: string;
+    every: boolean;
+    kind: EmbeddedAddKind;
+    layerId?: string;
+  } | null>(null);
   const onLayersReport = React.useCallback(
     (key: string, base: TagLayer[], layers: TagLayer[]) => {
       const { selection: sel, applyMode: mode, sendToEveryPage: send } =
         everyPageRef.current;
       const adding = pendingAdd.current;
       if (adding && adding.key === key) {
-        const before = editing.draftOf(key) ?? base;
-        const created = layers.find((l) => !before.some((b) => b.id === l.id));
-        if (created) {
-          pendingAdd.current = null;
-          report(key, base, layers);
-          if (adding.every) runApplyAllRef.current(created.id, {}, key, created);
-          return;
+        if (!adding.layerId) {
+          const before = editing.draftOf(key) ?? base;
+          adding.layerId = layers.find((l) => !before.some((b) => b.id === l.id))?.id;
+        }
+        if (adding.layerId) {
+          const created = layers.find((l) => l.id === adding.layerId);
+          if (!created) {
+            // The empty frame was taken away again (the picker was cancelled): nothing to send.
+            pendingAdd.current = null;
+          } else if (!(adding.kind === 'image' || adding.kind === 'badge') || hasArtwork(created)) {
+            pendingAdd.current = null;
+            report(key, base, layers);
+            if (adding.every) runApplyAllRef.current(created.id, {}, key, created);
+            return;
+          }
+          // An image or badge still waiting for its picture: saved on this page, not yet sent.
         }
       }
       if (mode === 'all' && sel && sel.pageKey === key) {
@@ -708,8 +726,13 @@ export function SpecSheetReader({
   const addToPage = (kind: EmbeddedAddKind) => {
     const key = inputKey;
     if (!key || !liveKeys.has(key)) return;
-    pendingAdd.current = { key, every: applyMode === 'all' };
-    controllerRefFor(key).current?.addLayer(kind);
+    const controller = controllerRefFor(key).current;
+    if (!controller) {
+      pendingAdd.current = null;
+      return;
+    }
+    pendingAdd.current = { key, every: applyMode === 'all', kind };
+    controller.addLayer(kind);
   };
   const toolbarLive = Boolean(inputKey && liveKeys.has(inputKey));
   // Reset to template (B7): the override is gone on the server; forget this page's draft and undo
@@ -719,7 +742,12 @@ export function SpecSheetReader({
       editing.forget(key);
       void queryClient
         .invalidateQueries({ queryKey: specSheetPreviewPrefix(documentId, sheetId) })
-        .finally(() => setRestarts((prev) => ({ ...prev, [key]: (prev[key] ?? 0) + 1 })));
+        .finally(() => {
+          // The old canvas stayed on screen while the page was read again and may have reported an
+          // edit meanwhile: drop that too, right before the restart.
+          editing.forget(key);
+          setRestarts((prev) => ({ ...prev, [key]: (prev[key] ?? 0) + 1 }));
+        });
     },
     [editing, queryClient, documentId, sheetId],
   );
@@ -1018,6 +1046,10 @@ export function SpecSheetReader({
               onAddTable={() => addToPage('table')}
               onAddAccessories={() => addToPage('accessories')}
               addDisabled={!toolbarLive}
+              onGroupSelected={() => inputKey && controllerRefFor(inputKey).current?.groupSelected()}
+              onUngroupSelected={() => inputKey && controllerRefFor(inputKey).current?.ungroupSelected()}
+              hasMultiSelection={toolbarLive}
+              selectionIsGroup={toolbarLive}
               onUndo={() => targetKey && editing.undo(targetKey)}
               onRedo={() => targetKey && editing.redo(targetKey)}
               canUndo={editing.canUndo(targetKey)}

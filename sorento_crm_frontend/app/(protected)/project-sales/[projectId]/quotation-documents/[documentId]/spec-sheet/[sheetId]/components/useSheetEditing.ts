@@ -50,6 +50,8 @@ export function useSheetEditing(
   const histories = React.useRef(new Map<string, History>());
   const timers = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const chains = React.useRef(new Map<string, Promise<unknown>>());
+  // Bumped by `forget`: a save created before it, still waiting its turn, must not be sent.
+  const generations = React.useRef(new Map<string, number>());
   const failed = React.useRef(new Set<string>());
   const inflight = React.useRef(0);
   const last = React.useRef<string | null>(null);
@@ -79,10 +81,15 @@ export function useSheetEditing(
       const layers = drafts.current.get(key);
       if (!layers) return null;
       inflight.current += 1;
+      const generation = generations.current.get(key) ?? 0;
       const run = (chains.current.get(key) ?? Promise.resolve())
         .catch(() => undefined)
         .then(() => gate.current)
-        .then(() => save.current({ sheetId, key, layers }));
+        .then(() =>
+          (generations.current.get(key) ?? 0) === generation
+            ? save.current({ sheetId, key, layers })
+            : undefined,
+        );
       chains.current.set(key, run);
       const done = run
         .then(() => {
@@ -265,6 +272,7 @@ export function useSheetEditing(
       const pending = timers.current.get(key);
       if (pending) clearTimeout(pending);
       timers.current.delete(key);
+      generations.current.set(key, (generations.current.get(key) ?? 0) + 1);
       drafts.current.delete(key);
       histories.current.delete(key);
       failed.current.delete(key);

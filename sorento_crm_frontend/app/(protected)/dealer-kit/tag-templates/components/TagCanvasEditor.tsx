@@ -492,6 +492,8 @@ export interface EmbeddedController {
   /** B6: the toolbar's Delete / Duplicate act on this canvas's selection. */
   deleteSelected: () => void;
   duplicateSelected: () => void;
+  groupSelected: () => void;
+  ungroupSelected: () => void;
 }
 
 export interface EmbeddedMode {
@@ -755,7 +757,7 @@ export function TagCanvasEditor({
   const [pickerBusy, setPickerBusy] = useState(false);
   /** Feature icons: the icon library dialog, opened from the layer's inspector. */
   const [iconLibraryOpen, setIconLibraryOpen] = useState(false);
-  const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean } | null>(
+  const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean; fresh?: boolean } | null>(
     null,
   );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
@@ -1279,8 +1281,9 @@ export function TagCanvasEditor({
     addLayer(layer);
     // Straight into the picker: a badge with no artwork is an empty square, and
     // the reason somebody pressed the button was to place a specific badge.
-    setImagePicker({ layerId: layer.id, badge: true });
-  }, [addLayer, makeBaseLayer]);
+    // On a spec sheet page a badge left unpicked is removed again (`fresh`).
+    setImagePicker({ layerId: layer.id, badge: true, fresh: Boolean(embedded) });
+  }, [addLayer, makeBaseLayer, embedded]);
 
   const handleAddBarcode = useCallback(() => {
     // Bound to slot 'barcode' on creation, not left null like the generic
@@ -4205,7 +4208,7 @@ export function TagCanvasEditor({
         image: () => {
           const layer = { ...makeBaseLayer('image', 40, 30), props: defaultImageProps() };
           addLayer(layer);
-          setImagePicker({ layerId: layer.id, badge: false });
+          setImagePicker({ layerId: layer.id, badge: false, fresh: true });
         },
         table: handleAddTable,
         accessories: handleAddAccessories,
@@ -4217,6 +4220,8 @@ export function TagCanvasEditor({
         addLayer: (kind) => adders[kind]?.(),
         deleteSelected: deleteSelectedLayers,
         duplicateSelected: duplicateSelectedLayers,
+        groupSelected: groupSelectedLayers,
+        ungroupSelected: ungroupSelectedLayers,
       };
     }
     return () => {
@@ -4235,6 +4240,8 @@ export function TagCanvasEditor({
     handleAddBadge,
     deleteSelectedLayers,
     duplicateSelectedLayers,
+    groupSelectedLayers,
+    ungroupSelectedLayers,
   ]);
   // Layers the host changed (undo, redo, apply): adopted when they are not what this canvas holds.
   useEffect(() => {
@@ -5669,7 +5676,18 @@ export function TagCanvasEditor({
           allowProductPhotos={!imagePicker?.badge}
           uploadKind={imagePicker?.badge ? 'badge' : 'decorative'}
           title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
-          onCancel={() => setImagePicker(null)}
+          onCancel={() => {
+            // A frame the toolbar just added, with no artwork chosen, is not left behind.
+            const fresh = imagePicker?.fresh ? imagePicker.layerId : null;
+            setImagePicker(null);
+            if (fresh) {
+              setLayers((prev) => {
+                const next = prev.filter((l) => l.id !== fresh);
+                history.pushState(next);
+                return next;
+              });
+            }
+          }}
           onPick={handleImagePicked}
         />
       </div>

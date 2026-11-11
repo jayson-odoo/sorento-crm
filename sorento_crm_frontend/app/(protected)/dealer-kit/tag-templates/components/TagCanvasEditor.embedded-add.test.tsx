@@ -175,3 +175,26 @@ describe('embedded controller addLayer (B6)', () => {
     expect(last[1].type).toBe('shape');
   });
 });
+
+describe('embedded picker cancel and group (B6 fix round)', () => {
+  it('cancelling the asset picker removes the empty frame addLayer(image) just added', async () => {
+    const { controllerRef, reported } = mount();
+    await act(async () => {
+      (controllerRef.current as Adder).addLayer('image');
+    });
+    expect(reported[reported.length - 1].map((l) => l.type)).toEqual(['image']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(reported[reported.length - 1]).toEqual([]);
+  });
+
+  it('exposes groupSelected / ungroupSelected on the controller', async () => {
+    const { controllerRef } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const controller = controllerRef.current as { groupSelected?: unknown; ungroupSelected?: unknown };
+    expect(typeof controller.groupSelected).toBe('function');
+    expect(typeof controller.ungroupSelected).toBe('function');
+  });
+});
+
