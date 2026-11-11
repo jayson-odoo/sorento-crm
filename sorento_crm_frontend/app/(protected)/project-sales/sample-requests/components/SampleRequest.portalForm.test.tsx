@@ -48,7 +48,14 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     <button onClick={() => onSelect?.()}>{children}</button>
   ),
 }));
-vi.mock('@/app/(protected)/project-sales/_shared/services/projectService', () => ({ getProject: vi.fn() }));
+vi.mock('@/app/(protected)/project-sales/_shared/services/projectService', () => ({
+  getProject: vi.fn(),
+  // SAMPLE-REQUEST-V2: the staff form's Ship to picker reads the roles and the parties.
+  listPartyRoles: vi.fn(async () => []),
+  getPartiesOnProject: vi.fn(async () => []),
+  listParties: vi.fn(async () => ({ data: [] })),
+  listPartyContacts: vi.fn(async () => []),
+}));
 
 let held = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({

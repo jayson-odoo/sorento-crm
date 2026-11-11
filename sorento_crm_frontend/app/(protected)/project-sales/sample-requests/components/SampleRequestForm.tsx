@@ -611,7 +611,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
       <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={handleSaveDraft} disabled={saving}>
           {saving && !previewOpen && <Loader2 className="mr-1 size-4 animate-spin" />}
-          Save draft
+          Save as draft
         </Button>
         <Button type="button" onClick={handlePreview} disabled={saving}>
           Preview

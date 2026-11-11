@@ -1,38 +1,20 @@
 /**
- * SR-CORE staff New / Edit form, rebuilt as the Purchase Request / Sponsorship Form document
- * card (mock v4 frame 1; AC-SR-02, 03, 11, 12, 80, 81). Red-first: written before the rebuild.
- * Component: ./SampleRequestForm.tsx (default export, props { requestId?, projectId? }).
- *
- * UI hooks this file fixes for the coder (the mock names no markup):
- *  - the document card carries the visible title text "Consignment Requisition Form";
- *  - every header field has a visible label with the text asserted below, and the control is
- *    reachable with getByLabelText(<label>) (use htmlFor/id or aria-label). Labels may carry a
- *    trailing " *" or "(optional)"; the matchers are prefix matches;
- *  - Customer Name: a searchable box that is a free-text <input> (AsyncCombobox +
- *    lookupCustomersForRequest, as RequestCustomerField); typing text that matches no debtor and
- *    leaving the box keeps it as customer_name with customer_id null;
- *  - the line table: header cells "No.", "Item Code", "Qty", "Remark"; the outline button
- *    "Add row" appends one row; each PRODUCT row is exactly one element with
- *    data-testid="sample-request-line"; inside it the product search control has role="combobox"
- *    and the accessible name "Item code" (an <input> or a SearchableSelect trigger; both work
- *    with the helper below); Qty = aria-label "Quantity", Remark = aria-label "Remark";
- *  - row 1 is NOT a product row: a checkbox named "Mount & label sample board" outside any
- *    data-testid="sample-request-line" element; once ticked, a textbox named "Board label" shows;
- *  - footer: radios named "Deliver-Van", "Self-Deliver", "Self-Collection"; labels "Loan Period",
- *    "Goods Taken From" (options "Demo Sets", "New Goods"), "Purpose"; buttons "Cancel",
- *    "Save as draft", "Submit";
- *  - a submit refusal for the date is a sentence (not the <label>) that contains
- *    "Request Delivery Date"; the delivery mode one reads "Choose a delivery mode".
- * Whether a blank product row exists before "Add row" is left open: the tests add one if none.
+ * SR-CORE staff New / Edit form, restructured by SAMPLE-REQUEST-V2 (owner 11 Nov): four guided
+ * sections (Customer & project / Ship to / Items / Delivery), ship to = a party of the project,
+ * the customer an AutoCount debtor only, "For" and the free contact phone / note gone, Preview the
+ * page's one main button and Submit inside its popup, every exit back to where the person came
+ * from (`?from=`). Card: documentation/plans/project-sales/CARD-sample-request-v2-11nov.md.
+ * Line table, product search and number-field rules (AC-SR-11, 12, 80, round 9) are unchanged.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
+const nav = vi.hoisted(() => ({ push: vi.fn(), search: '' }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(''),
+  useRouter: () => ({ push: nav.push, replace: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -43,6 +25,7 @@ const mut = vi.hoisted(() => ({
   createAsync: vi.fn(),
   updateAsync: vi.fn(),
   submitAsync: vi.fn(),
+  existing: undefined as unknown,
 }));
 
 vi.mock('../hooks/useSampleRequests', async (importOriginal) => {
@@ -54,7 +37,7 @@ vi.mock('../hooks/useSampleRequests', async (importOriginal) => {
       update: { mutateAsync: mut.updateAsync, isPending: false },
       submit: { mutateAsync: mut.submitAsync, isPending: false },
     }),
-    useSampleRequestQuery: () => ({ data: undefined, isLoading: false }),
+    useSampleRequestQuery: () => ({ data: mut.existing, isLoading: false }),
     useSampleRequestSwitches: () => ({ data: { requireProject: false } }),
   };
 });
@@ -69,6 +52,10 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   return {
     ...actual,
     getProject: vi.fn(async () => ({})),
+    listPartyRoles: vi.fn(async () => []),
+    getPartiesOnProject: vi.fn(async () => []),
+    listParties: vi.fn(async () => ({ data: [] })),
+    listPartyContacts: vi.fn(async () => []),
     listProjects: vi.fn(async () => ({ data: [] })),
     listQuotations: vi.fn(async () => []),
   };
@@ -126,82 +113,77 @@ const fold = (q: string) => q.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nav.search = '';
+  mut.existing = undefined;
   mut.createAsync.mockResolvedValue({ id: 'sr-new' });
   mut.updateAsync.mockResolvedValue({ id: 'sr-new' });
-  mut.submitAsync.mockResolvedValue({ id: 'sr-new' });
+  mut.submitAsync.mockResolvedValue({ id: 'sr-new', request_no: 'SR-000231' });
   asMock(searchSampleRequestProducts).mockImplementation(async (q: string) =>
     fold(q) === 'tpe9101' ? [TPE] : [],
   );
   asMock(lookupCustomersForRequest).mockResolvedValue([]);
 });
 
-describe('AC-SR-80 the document card', () => {
-  it('shows the paper title in a card, not collapsible sections', async () => {
+describe('SAMPLE-REQUEST-V2 the guided form', () => {
+  it('has the four sections in order, not the paper card', async () => {
     renderForm();
-    expect(await screen.findByText('Consignment Requisition Form')).toBeTruthy();
-    expect(screen.queryByText('Customer & project')).toBeNull();
-    expect(screen.queryByText('Additional Information')).toBeNull();
+    const order = ['Customer & project', 'Ship to', 'Items', 'Delivery'].map(
+      (t) => screen.getAllByText(t, { selector: 'span' })[0],
+    );
+    await screen.findByText('Customer & project');
+    for (let i = 0; i < order.length - 1; i += 1) {
+      expect(order[i].compareDocumentPosition(order[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(screen.queryByText('Consignment Requisition Form')).toBeNull();
   });
 
-  it('prints the header labels in the paper order', async () => {
+  it('drops For, the free contact phone / note, and the empty Consignment / PO numbers', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
-    const order = [
-      /^Sales Person/,
-      /^Date\b/,
-      /^Customer Name/,
-      /^Project Title/,
-      /^Registered project/,
-      /^For\b/,
-      /^Request Delivery Date/,
-      /^Ship To/,
-      /^Shipping Address/,
-      /^Contact Person/,
-      /^Contact Phone/,
-      /^Consignment No/,
-      /^PO No/,
-    ];
-    const nodes = order.map(labelNode);
-    for (let i = 0; i < nodes.length - 1; i += 1) {
-      expect(
-        nodes[i].compareDocumentPosition(nodes[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING,
-        `${order[i]} should come before ${order[i + 1]}`,
-      ).toBeTruthy();
-    }
+    await screen.findByText('Customer & project');
+    expect(screen.queryByLabelText(/^For\b/)).toBeNull();
+    expect(screen.queryByText(/^Contact Phone/)).toBeNull();
+    expect(screen.queryByLabelText(/note/i)).toBeNull();
+    expect(screen.queryByText(/^Consignment No/)).toBeNull();
+    expect(screen.queryByText(/^PO No/)).toBeNull();
   });
 
   it('has no Quotation, Or (alternative) or Immediate arrangement anywhere', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     clickAddRow();
     const text = document.body.textContent ?? '';
     expect(text).not.toMatch(/quotation/i);
     expect(text).not.toMatch(/or \(alternative\)/i);
     expect(text).not.toMatch(/immediate/i);
-    expect(screen.queryByLabelText(/alternative/i)).toBeNull();
   });
 
-  it('has the footer fields and the three buttons', async () => {
+  it('has the footer fields, Save as draft, and Preview as the only main button', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     for (const name of ['Deliver-Van', 'Self-Deliver', 'Self-Collection']) {
       expect(screen.getByRole('radio', { name })).toBeTruthy();
     }
     expect(labelNode(/^Loan Period/)).toBeTruthy();
     expect(labelNode(/^Goods Taken From/)).toBeTruthy();
-    expect(labelNode(/^Demo Sets$/)).toBeTruthy();
-    expect(labelNode(/^New Goods$/)).toBeTruthy();
     expect(labelNode(/^Purpose/)).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: /^cancel$/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /^save as draft$/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^submit$/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^preview$/i })).toBeTruthy();
+    // Submit lives in the preview popup only (one main button per screen).
+    expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
+  });
+
+  it('the delivery date is the dd/mm/yyyy picker, not a native date input', async () => {
+    renderForm();
+    await screen.findByText('Customer & project');
+    expect(document.querySelector('input[type="date"]')).toBeNull();
+    expect(screen.getByPlaceholderText('DD/MM/YYYY')).toBeTruthy();
   });
 });
 
 describe('AC-SR-80 the line table', () => {
   it('has the Item Code, Qty and Remark headers and Add row appends a product row', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     clickAddRow();
     expect(screen.getAllByText(/^Item Code/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/^Qty$/).length).toBeGreaterThan(0);
@@ -214,7 +196,7 @@ describe('AC-SR-80 the line table', () => {
 
   it('keeps the board in row 1 as a checkbox with a label, never as a product row', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     const board = screen.getByRole('checkbox', { name: /mount & label sample board/i });
     expect(board.closest('[data-testid="sample-request-line"]')).toBeNull();
     const before = rows().length;
@@ -227,7 +209,7 @@ describe('AC-SR-80 the line table', () => {
 describe('AC-SR-11 product search lists and never picks', () => {
   it('"tpe9101" lists TPE-9101 and leaves the row empty until it is clicked', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     const row = ensureRow();
     searchProduct(row, 'tpe9101');
 
@@ -243,7 +225,7 @@ describe('AC-SR-11 product search lists and never picks', () => {
 describe('AC-SR-12 product not in the list', () => {
   it('shows the card sentence and adds nothing', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     const row = ensureRow();
     const before = rows().length;
     searchProduct(row, 'B2155-BLUE-NL');
@@ -258,11 +240,11 @@ describe('AC-SR-12 product not in the list', () => {
   });
 });
 
-describe('AC-SR-02 / AC-SR-03 submit names the missing field', () => {
+describe('AC-SR-02 / AC-SR-03 Preview names the missing field', () => {
   it('without a Request Delivery Date shows an error naming it and does not save', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
-    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
 
     const messages = await screen.findAllByText(
       (content, el) =>
@@ -273,35 +255,41 @@ describe('AC-SR-02 / AC-SR-03 submit names the missing field', () => {
     expect(messages.length).toBeGreaterThan(0);
     expect(mut.createAsync).not.toHaveBeenCalled();
     expect(mut.submitAsync).not.toHaveBeenCalled();
+    expect(screen.queryByText('Preview sample request')).toBeNull();
   });
 
   it('without a delivery mode shows "Choose a delivery mode"', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
-    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
     expect(await screen.findByText(/choose a delivery mode/i)).toBeTruthy();
     expect(mut.createAsync).not.toHaveBeenCalled();
   });
+
+  it('without a ship-to party says who the samples go to (rule 2)', async () => {
+    renderForm();
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    expect(await screen.findByText('Pick who the samples go to')).toBeTruthy();
+  });
 });
 
-describe('AC-SR-81 Customer Name is a searchable box that accepts free text', () => {
-  it('keeps a typed name that matches no debtor, and saves it as customer_name', async () => {
+describe('rule 1: the customer is an AutoCount debtor', () => {
+  it('a typed name that matches no debtor is not kept', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
-    const customer = screen.getByLabelText(/^Customer Name/) as HTMLInputElement;
+    await screen.findByText('Customer & project');
+    const customer = screen.getByLabelText(/^Customer/) as HTMLInputElement;
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'Walk-in Trading' } });
     await waitFor(() => expect(lookupCustomersForRequest).toHaveBeenCalled());
     fireEvent.blur(customer);
     await new Promise((r) => setTimeout(r, 250));
-    expect(customer.value).toBe('Walk-in Trading');
 
     fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
     await waitFor(() => expect(mut.createAsync).toHaveBeenCalled());
-    expect(mut.createAsync.mock.calls[0][0]).toMatchObject({
-      customer_name: 'Walk-in Trading',
-      customer_id: null,
-    });
+    expect(mut.createAsync.mock.calls[0][0]).toMatchObject({ customer_id: null, customer_name: null });
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    expect(await screen.findByText('Pick the customer')).toBeTruthy();
   });
 
   it('lists a debtor with its code and links the pick', async () => {
@@ -315,8 +303,8 @@ describe('AC-SR-81 Customer Name is a searchable box that accepts free text', ()
       },
     ]);
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
-    const customer = screen.getByLabelText(/^Customer Name/);
+    await screen.findByText('Customer & project');
+    const customer = screen.getByLabelText(/^Customer/);
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'perkasa' } });
     expect(await screen.findByText('300-J099')).toBeTruthy();
@@ -328,39 +316,91 @@ describe('AC-SR-81 Customer Name is a searchable box that accepts free text', ()
   });
 });
 
-describe('AC-SR-03 / AC-SR-80 the write payload', () => {
-  it('sends the plain delivery date and none of the removed keys', async () => {
-    renderForm();
-    await screen.findByText('Consignment Requisition Form');
-    const customer = screen.getByLabelText(/^Customer Name/);
-    fireEvent.focus(customer);
-    fireEvent.change(customer, { target: { value: 'Walk-in Trading' } });
-    fireEvent.blur(customer);
-    await new Promise((r) => setTimeout(r, 250));
-    fireEvent.change(screen.getByLabelText(/^Project Title/), { target: { value: 'Tower A' } });
-    fireEvent.change(screen.getByLabelText(/^Request Delivery Date/), {
-      target: { value: '2026-12-01' },
-    });
-    fireEvent.change(screen.getByLabelText(/^Ship To/), { target: { value: 'Site store' } });
-    fireEvent.click(screen.getByRole('radio', { name: 'Deliver-Van' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /mount & label sample board/i }));
-    fireEvent.change(await screen.findByRole('textbox', { name: /board label/i }), {
-      target: { value: 'TOWER A' },
-    });
+/** A draft that passes every staff rule, as the server returns it. */
+const READY_DRAFT = {
+  id: 'sr-1',
+  request_no: 'SR-000231',
+  status: 'draft',
+  status_label: 'Draft',
+  customer_id: 'c-1',
+  customer_name: 'NUSANTARA BUILDERS SDN BHD',
+  project_id: null,
+  project_title: 'Residensi Taman Seri Murni',
+  ship_to_party_id: 'party-1',
+  ship_to_role: null,
+  ship_to_name: 'Bintang Trading Sdn Bhd',
+  ship_to_address: 'No. 12, Jalan Perindustrian 3, Klang',
+  site_contact_name: 'Mei Ling Tan',
+  site_contact_phone: '012-345 6789',
+  scope_note: 'show unit',
+  site_contact_note: 'call first',
+  delivery_date: '2026-11-18',
+  delivery_mode: 'driver',
+  loan_value: 2,
+  loan_unit: 'months',
+  goods_from: 'either',
+  board_mounting: false,
+  lines: [
+    { id: 'l1', line_no: 1, product_id: 'p-1', product_code: 'TPE-9101', product_name: 'ZZT Tape', qty: 1, remark: null },
+  ],
+};
 
-    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
-    await waitFor(() => expect(mut.submitAsync).toHaveBeenCalledWith('sr-new'));
+describe('Preview, then Submit in the popup', () => {
+  it('opens the preview with the request as the sample team reads it, and Submit sends it', async () => {
+    mut.existing = READY_DRAFT;
+    mut.updateAsync.mockResolvedValue({ id: 'sr-1', request_no: 'SR-000231' });
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Preview sample request')).toBeTruthy();
+    expect(within(dialog).getByText(/Bintang Trading Sdn Bhd/)).toBeTruthy();
+    expect(within(dialog).getByText(/Mei Ling Tan, 012-345 6789/)).toBeTruthy();
+    expect(mut.updateAsync).not.toHaveBeenCalled();
 
-    const body = mut.createAsync.mock.calls[0][0];
+    fireEvent.click(within(dialog).getByRole('button', { name: /^submit$/i }));
+    await waitFor(() => expect(mut.submitAsync).toHaveBeenCalledWith('sr-1'));
+    const body = mut.updateAsync.mock.calls[0][0].data;
     expect(body).toMatchObject({
-      delivery_date: '2026-12-01',
+      customer_id: 'c-1',
+      ship_to_party_id: 'party-1',
+      delivery_date: '2026-11-18',
       delivery_mode: 'driver',
-      board_mounting: true,
-      board_label: 'TOWER A',
     });
+    // Rules 3-4: the staff form never writes For or the contact note; the server prints the
+    // party name and the contact from the party.
+    expect(body).not.toHaveProperty('scope_note');
+    expect(body).not.toHaveProperty('site_contact_note');
+    expect(body).not.toHaveProperty('ship_to_name');
     expect(body).not.toHaveProperty('quotation_version_id');
-    expect(body).not.toHaveProperty('deliver_immediately');
-    for (const line of body.lines ?? []) expect(line).not.toHaveProperty('alt_product_id');
+  });
+});
+
+describe('owner 16:30: every exit returns to where the person started', () => {
+  it('Submit from a project tab goes back to that tab', async () => {
+    nav.search = `from=${encodeURIComponent('/project-sales/pr-1?tab=sample-requests')}`;
+    mut.existing = READY_DRAFT;
+    mut.updateAsync.mockResolvedValue({ id: 'sr-1', request_no: 'SR-000231' });
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /^submit$/i }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/pr-1?tab=sample-requests'));
+  });
+
+  it('Save as draft without an origin goes to the Sample Requests list', async () => {
+    renderForm();
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
+  });
+
+  it('an origin that is not a same-app path is ignored', async () => {
+    nav.search = `from=${encodeURIComponent('https://evil.example/x')}`;
+    renderForm();
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
   });
 });
 
@@ -380,7 +420,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
 
   it('a blank Quantity sends nothing and shows the sentence', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     const row = await pickProduct();
     fireEvent.change(within(row).getByLabelText('Quantity'), { target: { value: '' } });
     draft();
@@ -390,7 +430,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
 
   it('a Quantity of 0 sends nothing and shows the sentence', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     const row = await pickProduct();
     fireEvent.change(within(row).getByLabelText('Quantity'), { target: { value: '0' } });
     draft();
@@ -400,7 +440,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
 
   it('a bad-input Quantity sends nothing and shows the sentence', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     const row = await pickProduct();
     typeBadInput(within(row).getByLabelText('Quantity'));
     draft();
@@ -410,7 +450,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
 
   it('a blank Loan Period sends nothing and shows the sentence', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     await pickProduct();
     fireEvent.change(screen.getByLabelText('Loan Period'), { target: { value: '' } });
     draft();
@@ -420,7 +460,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
 
   it('a bad-input Loan Period sends nothing and shows the sentence', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     await pickProduct();
     typeBadInput(screen.getByLabelText('Loan Period'));
     draft();
@@ -428,11 +468,11 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
     nothingSent();
   });
 
-  it('S1 guard: a refused Submit with a blank Loan Period shows the sentence under the box', async () => {
+  it('S1 guard: a refused Preview with a blank Loan Period shows the sentence under the box', async () => {
     renderForm();
-    await screen.findByText('Consignment Requisition Form');
+    await screen.findByText('Customer & project');
     fireEvent.change(screen.getByLabelText('Loan Period'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
     expect(await screen.findByText(SENTENCE)).toBeTruthy();
     nothingSent();
   });
