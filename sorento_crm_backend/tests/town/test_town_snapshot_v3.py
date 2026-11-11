@@ -249,10 +249,10 @@ def test_to_deliver_counts_distinct_open_overdue_orders(db):
 
 
 def test_to_deliver_is_zero_with_no_orders_not_missing(db):
-    assert _build(db)["deliveries"] == {"to_deliver": 0, "customers": []}
+    assert _build(db)["deliveries"] == {"to_deliver": 0, "customers": [], "project_orders": 0, "project_states": []}  # TOWN-PROJECT-CITY adds the project count and states
 
 
 def test_deliveries_is_a_count_only_no_names_or_amounts(db):
     # TOWN-V2 Q6 adds `customers` (shop keys only, test_town_snapshot_v2_lorries.py); still no names or amounts.
     _order(db, [{"required": DAY}])
-    assert set(_build(db)["deliveries"]) == {"to_deliver", "customers"}
+    assert set(_build(db)["deliveries"]) == {"to_deliver", "customers", "project_orders", "project_states"}

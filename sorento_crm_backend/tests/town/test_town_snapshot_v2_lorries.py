@@ -72,7 +72,7 @@ def test_customers_cap_at_six(db):
 
 
 def test_customers_empty_when_nothing_due(db):
-    assert _build(db)["deliveries"] == {"to_deliver": 0, "customers": []}
+    assert _build(db)["deliveries"] == {"to_deliver": 0, "customers": [], "project_orders": 0, "project_states": []}  # TOWN-PROJECT-CITY adds the project count and states
 
 
 @pytest.mark.parametrize("fn_name", ["redact", "strip_names"])
