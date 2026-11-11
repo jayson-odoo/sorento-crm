@@ -145,6 +145,9 @@ export function useUnsavedChangesGuard(
     if (target === 'back') {
       // The guard's entry is already gone: this Back reaches the page before this one. A tab
       // opened on this page has none, and Back then goes nowhere: go to the fallback instead.
+      // In this app the page before is the same document (Next's router), so the address
+      // changes at once; 400 ms only decides "Back went nowhere". If Back instead starts a slow
+      // full page load, this page is torn down first and the timer never fires.
       ownBackRef.current = true;
       const from = window.location.href;
       window.history.back();
