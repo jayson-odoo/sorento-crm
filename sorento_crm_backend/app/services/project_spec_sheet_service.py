@@ -453,6 +453,13 @@ def snapshot_items(
             "drawing_attachment_id": line.drawing_attachment_id,
             "section": section,
             "unit_price": float(line.unit_price) if line.unit_price is not None else None,
+            # B3: the quoted line's own fields, frozen with the item (`line.*` variables).
+            "quantity": float(line.quantity) if line.quantity is not None else 1,
+            "uom": line.uom or "",
+            "line_description": line_text(line) or "",
+            "technical_spec": line.technical_spec or "",
+            "notes": line.notes or "",
+            "item_label": line.item_label or "",
             "set_parts": [
                 {
                     "product_id": p.get("product_id"),
@@ -708,6 +715,15 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 "spec_sheet_description_default": default_text(item["product_id"]),
                 "edited": key in edits,
                 "template": "page" if accessories else "single",
+                # Print-only: the frozen line fields; items taken before B3 read quantity 1 / ''.
+                "_line": {
+                    "quantity": item.get("quantity", 1),
+                    "uom": item.get("uom") or "",
+                    "line_description": item.get("line_description") or "",
+                    "technical_spec": item.get("technical_spec") or "",
+                    "notes": item.get("notes") or "",
+                    "item_label": item.get("item_label") or "",
+                },
                 # Print-only (underscore keys never leave the API): the quoted unit price.
                 "_price": _quoted_price(item["unit_price"]),
             }
@@ -759,6 +775,10 @@ def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict
             document.signatory_phone or (getattr(owner, "contact_number", None) if owner else "") or ""
         ).strip(),
         "date": fmt_date(issued, naive_is_utc=False) if issued else "",
+        "subject_title": (document.subject_title or "").strip(),
+        "attn": (document.attn_name or "").strip(),
+        "recipient": (document.recipient_name_snapshot or "").strip(),
+        "project_code": ((project.project_code if project is not None else "") or "").strip(),
     }
 
 
@@ -789,6 +809,12 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
         "show_promo_price": False,
         "included_accessories": "",
         "quantity": 1,
+        "uom": "",
+        "line_description": "",
+        "technical_spec": "",
+        "notes": "",
+        "item_label": "",
+        "page_no": None,
         "barcode": None,
         "price_tag_description": None,
         "description": None,
@@ -1164,6 +1190,8 @@ def build_print_payload(
     visible = [p for p in every if not p["hidden"]]
     numbers = {COVER_KEY: 1}
     numbers.update({p["key"]: n for n, p in enumerate(visible, start=2)})
+    # B3: `{{doc.page_count}}`, the printed pages including the cover.
+    doc_fields["page_count"] = len(numbers)
 
     if keys is None:
         chosen, with_cover = visible, True
@@ -1194,6 +1222,7 @@ def build_print_payload(
     sheets: List[dict] = []
     if with_cover:
         resolved[COVER_KEY] = _blank_row(COVER_KEY, "Cover", doc_fields)
+        resolved[COVER_KEY]["page_no"] = 1
         sheets.append(_sheet(COVER_KEY, pinned["cover"], width, height, layers_of(COVER_KEY)))
     for page in chosen:
         product = products.get(str(page["product_id"])) if page["product_id"] else None
@@ -1259,6 +1288,8 @@ def build_print_payload(
                 "barcode": fields["barcode"],
                 "description": fields["description"],
                 "spec_sheet_description": page["description"] or fields["spec_sheet_description"],
+                **page["_line"],
+                "page_no": numbers.get(page["key"]),
                 "accessories": cards,
                 "parts": parts,
                 "own_parts": parts,

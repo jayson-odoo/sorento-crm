@@ -1072,6 +1072,12 @@ export interface SpecSheetDocFields {
   prepared_by: string;
   prepared_by_phone: string;
   date: string;
+  /** B3: older payloads lack these; they read as empty. */
+  subject_title?: string;
+  attn?: string;
+  recipient?: string;
+  project_code?: string;
+  page_count?: number | string;
 }
 
 /**
@@ -1151,6 +1157,13 @@ export interface LineTagData {
   area?: string;
   comment?: string;
   marker?: string;
+  /** B3: the quoted line's own text fields and this page's printed number (spec sheet rows only). */
+  line_description?: string;
+  uom?: string;
+  technical_spec?: string;
+  notes?: string;
+  item_label?: string;
+  page_no?: number | string | null;
   doc?: SpecSheetDocFields;
   /** A layer pointed at a part this line does not have reads as an empty product rather
    *  than falling back to the parent (which would print the main item twice). */
