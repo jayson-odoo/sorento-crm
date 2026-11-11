@@ -425,11 +425,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the read-only page instead of the form.
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
-  // R3-1: no post-submit Edit any more - a submitted request is read-only,
-  // and a change goes through the revision engine instead. `reviseMode` only
-  // ever turns on via the header gear's own Revise item (same hooks
-  // `SubmissionForm` reads for the legacy kinds), never from status/draft
-  // state directly, so Cancel puts the read view back with no round trip.
+  // A submitted request is read-only until its page's Edit button turns on `reviseMode` (owner
+  // hand test 11 Nov: Edit is the create form; the save goes through the revision engine's
+  // endpoint, which records History). Never from status/draft state directly, so Cancel puts
+  // the read view back with no round trip.
   // r10 S1 (owner: "always i print myself, qty ignore"): the portal no
   // longer asks - every request the portal creates prints self. The CRM
   // keeps its own office control (Q7); this constant is what every payload
@@ -1292,12 +1291,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numbersInvalid, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, applyFieldErrors, client]);
 
-  // ---- Revise (R3-1): sent through the portal revision engine, never the
-  // retired post-submit PUT. A reason is required; the same zero-line/
-  // set-guard/duplicate-product bar Submit runs is enforced server side
-  // inside the revise transaction (apply_lines), so a client-side pre-check
-  // here only saves a round trip on the one case that is free to check
-  // (zero lines) - the rest surfaces as the server's own sentence. ----
+  // ---- Edit save: through the portal revision engine's endpoint, never the retired
+  // post-submit PUT. No reason for a price tag (owner hand test 11 Nov); the same zero-line/
+  // set-guard/duplicate-product bar Submit runs is enforced server side inside that
+  // transaction (apply_lines), and surfaces as the server's own sentence. ----
   /**
    * Owner hand test 11 Nov: Edit of a sent request is the create path, so its popup's Approve
    * first saves the edit. It goes through the same endpoint the old Submit revision used, which
@@ -1449,9 +1446,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setServerMessage(null);
     setFieldErrors({});
     setLines((prev) => prev.map((l) => ({ ...l, guard_error: null })));
+    // Set once an edit is saved: a failure after that must not leave the form posting the same
+    // edit again (the server refuses a second save of an old version).
+    let editSaved = false;
     try {
       if (reviseMode && action.kind === 'approve') {
         const id = await saveEdit();
+        editSaved = true;
         const saved = await service().getRequest(id);
         if (!saved) throw new Error('Request not found');
         const preview = await service().lookupTagPreviewForRequest(id);
@@ -1517,6 +1518,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           : action.kind === 'approve'
             ? 'Failed to approve request'
             : 'Failed to send to marketing';
+      if (editSaved && effectiveId) {
+        // The edit is saved and the tag waits for this approval: back to the request page,
+        // reloaded, where Preview then Approve finishes it (review, owner round).
+        setPreviewOpen(false);
+        setReviseMode(false);
+        setPendingFiles([]);
+        toast.error(message);
+        try {
+          const fresh = await service().getRequest(effectiveId);
+          if (fresh) {
+            setRequest(fresh);
+            applyRequestFieldsFrom(fresh);
+          }
+        } catch {
+          // The page still shows the request it had; the toast already said what failed.
+        }
+        revisionHistory.reload();
+        return;
+      }
       // A refused Approve closes the preview, so what it names on the form is in view.
       if (action.kind === 'approve') setPreviewOpen(false);
       const named = errorFields(e);
@@ -1533,7 +1553,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readyToFinish, applyFieldErrors, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client, reviseMode, saveEdit, revisionHistory]);
+  }, [readyToFinish, applyFieldErrors, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client, reviseMode, saveEdit, revisionHistory, applyRequestFieldsFrom]);
 
   // ---- Approve proof ----
   // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
@@ -2002,14 +2022,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 )}
               </span>
             )}
-            {/* R3-1/AC-R7: no Edit after submit - a submitted request is
-                read-only exactly like a stock inquiry, and a change goes
-                through the revision engine instead. ONE gear: Duplicate,
-                Download PDF (disabled with a reason until a completed
-                export exists), and Revise when the policy allows it.
-                Controlled open state so the menu closes itself once the
-                download settles, instead of sitting open with a stale item
-                until an outside click. */}
+            {/* ONE gear: Download PDF (disabled with a reason until a completed export
+                exists), Duplicate and Escalate. Edit is its own button (owner, 11 Nov).
+                Controlled open state so the menu closes itself once the download settles,
+                instead of sitting open with a stale item until an outside click. */}
             {/* Owner hand test 11 Nov: the design opens from a button (no inline design bloating
                 the page) and Edit is the page's main button. */}
             {(isOwnProof || showDesignPreview) && (
@@ -2408,12 +2424,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       )}
 
-      {/* Actions - R3-1: a revision (reviseMode, never a draft or new form
-          here - see `showEditForm`) has its Cancel / Submit revision in the
-          header above, same spot the read view's Revise gear item sat - not
-          a second action row down here, and never Delete. Everything else
-          (a draft or a brand new form) keeps Save Draft, then Escalate to marketing
-          and Approve (owner ruling 3 Nov: no plain Submit). */}
+      {/* Actions. An edit of a sent request: Cancel and Preview (never Delete or Save Draft).
+          A draft or a brand new form: Save Draft, Escalate to marketing and Preview (owner
+          ruling 3 Nov: no plain Submit; 10 Nov: Approve lives in the preview popup). */}
       {reviseMode ? (
         // Owner hand test 11 Nov: editing a sent request is the create path - Cancel, then
         // Preview, whose popup's Approve saves the edit and approves it.

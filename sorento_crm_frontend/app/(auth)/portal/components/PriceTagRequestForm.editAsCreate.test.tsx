@@ -325,6 +325,32 @@ describe('Edit follows the create path', () => {
     await waitFor(() => expect(approveRequest).toHaveBeenCalled());
   });
 
+  it('keeps the request\'s Need by unchanged when the edit is saved', async () => {
+    asMock(lookupTagPreviewForRequest).mockResolvedValue({ lines: [], templates: {}, assets: {}, images: {}, fonts: [] });
+    asMock(approveRequest).mockResolvedValue({ status: 'approved' });
+    await openEdit();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const popup = await screen.findByTestId('sheet-popup');
+    fireEvent.click(within(popup).getByRole('button', { name: /^approve$/i }));
+    await waitFor(() => expect(reviseMock).toHaveBeenCalled());
+    expect(reviseMock.mock.calls[0][0].fields.needed_by_date).toBe('2026-09-10');
+  });
+
+  it('a failure after the edit is saved lands on the request page, where Preview then Approve finishes it', async () => {
+    asMock(lookupTagPreviewForRequest).mockRejectedValue(new Error('The preview could not be drawn.'));
+    await openEdit();
+    asMock(getRequest).mockResolvedValue({ ...APPROVED(), status: 'proof_ready', self_review: true, revision_no: 1 });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const popup = await screen.findByTestId('sheet-popup');
+    fireEvent.click(within(popup).getByRole('button', { name: /^approve$/i }));
+
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
+    expect(approveRequest).not.toHaveBeenCalled();
+    expect(toasts.error).toHaveBeenCalled();
+  });
+
   it('Cancel goes back to the view page without saving', async () => {
     await openEdit();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

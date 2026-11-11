@@ -1694,6 +1694,12 @@ class PortalRevisionService:
         #    side effect, so a replay yields one revision, not two voids and two restarts.
         current_revision_no = int(getattr(row, adapter.revision_no_attr, 0) or 0)
         if expected_revision_no is None or int(expected_revision_no) != current_revision_no:
+            if source_entity_type == "price_tag_request":
+                # Owner hand test 11 Nov: a salesperson edits their own request; the word
+                # revision never reaches them.
+                raise handle_conflict(
+                    "This request changed while you were editing it. Reload to see the latest."
+                )
             raise handle_conflict(
                 f"This {adapter.label} was revised while you were working on it. "
                 f"Reload to see revision {current_revision_no}."
@@ -2037,10 +2043,12 @@ class PortalRevisionService:
                 stage = self._stage_code_for_tracker(tracker) or "this stage"
                 stage_label = str(stage).replace("_", " ")
                 title = f"Revision {revision_no}: {display_number} - stop work"
+                # A price tag edit carries no reason (owner hand test 11 Nov): no empty line.
+                reason_line = f"Reason: {reason}\n\n" if reason else ""
                 body = (
                     f"{adapter.label.capitalize()} {display_number} was revised by {who}. "
                     f"Your {stage_label} stage was voided - stop work on the previous "
-                    f"version.\n\nReason: {reason}\n\n"
+                    f"version.\n\n{reason_line}"
                     f"The {adapter.label} has restarted from the first stage.\n\n"
                     f"Open: {full_link}"
                 )

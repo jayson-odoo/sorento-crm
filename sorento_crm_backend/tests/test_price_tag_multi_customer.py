@@ -278,3 +278,20 @@ def test_the_revise_route_takes_an_empty_reason_for_a_price_tag_edit():
         finally:
             app.dependency_overrides.clear()
     assert res.status_code == 200, res.text
+
+
+def test_a_stale_edit_is_refused_without_calling_it_a_revision(db):
+    """Review, owner round: the 409 reaches the salesperson's toast, so it must not say revision."""
+    from app.services.error_handler import AppException
+    from app.services.portal_revision_service import PortalRevisionService
+
+    contact, product_id, row = _setup(db)
+    payload = {"products": [{"product_id": product_id, "quantity": 1}]}
+    service = PortalRevisionService(db)
+    service.revise(_seed_token(contact), "price_tag_request", str(row.id), payload, "", 0)
+
+    with pytest.raises(AppException) as refused:
+        service.revise(_seed_token(contact), "price_tag_request", str(row.id), payload, "", 0)
+    assert refused.value.status_code == 409
+    assert "revis" not in str(refused.value.detail if hasattr(refused.value, "detail") else refused.value).lower()
+    assert "revis" not in str(refused.value).lower()
