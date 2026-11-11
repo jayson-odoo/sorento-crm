@@ -116,9 +116,10 @@ export function ReserveLineForm({
   // AC-RS-85: the row's pools, each with its plain on hand (RESERVE-DIALOG-ON-HAND,
   // owner 11 Nov 2026) as its own DESCRIPTION line (the shared `SearchableSelect`
   // primitive's own second row), never baked into the primary label -
-  // `useReserveRowOptions`' own combined string ("BRW  on hand 107") would otherwise print in full as the SELECTED
-  // value's own trigger text (no UUID in the UI is the letter of the rule; a
-  // duplicated "available N" clause on the CLOSED control is the same spirit of it).
+  // `useReserveRowOptions`' own combined string ("BRW  on hand 107") would otherwise
+  // print in full as the SELECTED value's own trigger text (no UUID in the UI is the
+  // letter of the rule; a duplicated "on hand N" clause on the CLOSED control is the
+  // same spirit of it).
   const displayLocationOptions = React.useMemo(
     () =>
       locationOptions.map((option) => {

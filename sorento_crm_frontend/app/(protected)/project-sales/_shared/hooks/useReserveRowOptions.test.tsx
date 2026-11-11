@@ -50,11 +50,11 @@ describe('useReserveRowOptions: F1 default pool reaches a viewer with no setting
       product_id: 'prod-1',
       group: 'pools',
       locations: [
-        { warehouse_id: 'brw-id', location: 'BRW', available_qty: '90' },
+        { warehouse_id: 'brw-id', location: 'BRW', qty_on_hand: '90' },
         // The row's OWN site pool (DC1, off `location: 'DC1-BB'` below) is a
         // DIFFERENT pool - proving BRW wins because it is the CONFIGURED default,
         // not merely because it happens to be the row's own site.
-        { warehouse_id: 'dc1-id', location: 'DC1', available_qty: '5' },
+        { warehouse_id: 'dc1-id', location: 'DC1', qty_on_hand: '5' },
       ],
     });
 
