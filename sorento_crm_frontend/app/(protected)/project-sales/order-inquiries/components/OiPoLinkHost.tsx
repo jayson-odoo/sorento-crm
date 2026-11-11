@@ -4,7 +4,7 @@ import * as React from 'react';
 import { toast } from '@/lib/toast';
 import { PoLinkDialog } from '../../_shared/po-link/PoLinkDialog';
 import { usePoLinkOptions } from '../../_shared/po-link/usePoLink';
-import type { PoLinkTarget } from '../../_shared/po-link/poLink.types';
+import type { OiPoLinkOptions, PoLinkTarget } from '../../_shared/po-link/poLink.types';
 import { poLinkMenu, type PoLinkKind } from '../../_shared/po-link/poLinkWording';
 import {
   changeOrderInquiryPoLines,
@@ -46,7 +46,7 @@ export function OiPoLinkHost({
     [rowIds],
   );
   const options = usePoLinkOptions(target, true);
-  const data = options.data;
+  const data = options.data as OiPoLinkOptions | undefined;
   const blocked = React.useMemo(() => {
     if (!data) return null;
     const lines = data.lines ?? [];
