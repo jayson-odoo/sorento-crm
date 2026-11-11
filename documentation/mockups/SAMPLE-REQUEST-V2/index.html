@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample Request v2</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--primary:#2563eb;--primary-fg:#fff;--soft:#eff6ff;--ok:#16a34a;--ok-soft:#dcfce7;--warn:#b45309;--warn-soft:#fef3c7;--note:#7c3aed;--note-soft:#f5f3ff;--shadow:0 1px 2px rgba(0,0,0,.05),0 4px 16px rgba(0,0,0,.06)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0d12;--card:#151821;--fg:#e5e7eb;--muted:#9ca3af;--line:#2a2f3a;--primary:#3b82f6;--soft:#172036;--ok-soft:#12301d;--warn-soft:#33270d;--note:#a78bfa;--note-soft:#221a38}}
+:root[data-theme="dark"]{--bg:#0b0d12;--card:#151821;--fg:#e5e7eb;--muted:#9ca3af;--line:#2a2f3a;--primary:#3b82f6;--soft:#172036;--ok-soft:#12301d;--warn-soft:#33270d;--note:#a78bfa;--note-soft:#221a38}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:24px 16px 80px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:40px 0 4px}.sub{color:var(--muted);margin:0 0 16px}
+.screen{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
+@media (max-width:900px){.screen{grid-template-columns:1fr}}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+.bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}
+.crumb b{color:var(--fg)}
+.page{padding:20px}
+.ph{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.ph h3{margin:0;font-size:20px}
+.pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;background:var(--line)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.draft{background:var(--line)}
+.sec{border:1px solid var(--line);border-radius:10px;margin-bottom:12px;background:var(--card)}
+.sec>.hd{display:flex;align-items:center;gap:10px;padding:12px 14px;font-weight:600}
+.sec>.hd .num{width:22px;height:22px;border-radius:50%;background:var(--soft);color:var(--primary);display:grid;place-items:center;font-size:12px}
+.sec>.hd .num.done{background:var(--ok-soft);color:var(--ok)}
+.sec>.hd .sum{font-weight:400;color:var(--muted);margin-left:auto;text-align:right;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+.sec>.bd{padding:4px 14px 14px;display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+@media (max-width:600px){.sec>.bd{grid-template-columns:1fr}}
+.full{grid-column:1/-1}
+.f label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+.in{border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:38px;background:var(--card);display:flex;align-items:center;gap:8px;justify-content:space-between}
+.in.ro{background:transparent;border-style:dashed}
+.in .ph2{color:var(--muted)}.in .meta{color:var(--muted);font-size:12px}
+.in.focus{outline:2px solid var(--primary);outline-offset:1px}
+.chev::after{content:"\25BE";color:var(--muted)}
+.cal::after{content:"\1F4C5";font-size:13px}
+.ta{min-height:64px;align-items:flex-start}
+.link{color:var(--primary);cursor:pointer;font-size:13px}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:8px 14px;font-weight:500;cursor:pointer;font-size:14px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}th{color:var(--muted);font-weight:500}
+.dd{border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);background:var(--card);margin-top:4px}
+.dd .grp{padding:6px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--bg)}
+.dd .opt{padding:8px 10px;display:flex;justify-content:space-between;gap:8px}.dd .opt.on{background:var(--soft)}
+.dd .opt .role{color:var(--muted);font-size:12px}
+.chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:13px}
+.notes{display:flex;flex-direction:column;gap:10px}
+.n{background:var(--note-soft);border-left:3px solid var(--note);border-radius:8px;padding:10px 12px;font-size:12.5px}
+.n b{display:block;margin-bottom:2px}.n code{font-size:11.5px;word-break:break-all}
+.n.rule{background:var(--warn-soft);border-left-color:var(--warn)}
+.dialog-bg{background:rgba(17,24,39,.45);padding:28px 16px;border-radius:0 0 12px 12px}
+.dialog{max-width:520px;margin:0 auto;background:var(--card);border-radius:12px;box-shadow:var(--shadow);border:1px solid var(--line)}
+.dialog.wide{max-width:760px}
+.dialog .dh{padding:14px 16px;font-weight:600;border-bottom:1px solid var(--line)}
+.dialog .db{padding:14px 16px}.dialog .df{padding:12px 16px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+.cb{display:flex;gap:10px;align-items:flex-start;padding:8px 4px;border-bottom:1px solid var(--line)}
+.box{width:16px;height:16px;border:1.5px solid var(--muted);border-radius:4px;margin-top:2px;flex:none}
+.box.on{background:var(--primary);border-color:var(--primary)}
+.small{font-size:12px;color:var(--muted)}
+.doc{border:1px solid var(--line);border-radius:10px;padding:16px}
+.doc dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;margin:0}.doc dt{color:var(--muted)}.doc dd{margin:0}
+.toast{position:relative;margin:0 0 12px auto;max-width:340px;background:var(--fg);color:var(--bg);border-radius:8px;padding:10px 14px;font-size:13px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:14px;overflow-x:auto}
+.tabs span{padding:8px 0;color:var(--muted);white-space:nowrap}.tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary)}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0}.toc a{color:var(--primary);text-decoration:none;font-size:13px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--card)}
+.legacy{background:var(--warn-soft);border-radius:6px;padding:6px 10px;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Sample Request v2 (mock)</h1>
+<p class="sub">Lane SAMPLE-REQUEST-V2. All names below are fake. Purple notes name the existing component behind each element; amber notes are rules. Waiting on the owner's approval: no code yet.</p>
+<div class="toc">
+<a href="#s1">1. New request from the project</a><a href="#s2">2. Ship to picker open</a><a href="#s3">3. Contact popup</a><a href="#s4">4. Preview, then Submit</a><a href="#s5">5. Back on the project</a><a href="#s6">6. Party not on the project</a><a href="#s7">7. Old request (free text)</a>
+</div>
+
+<!-- 1 -->
+<h2 id="s1">1. New sample request, started from the project's Samples Request tab</h2>
+<p class="sub">Example A: project PPF2611007, customer is the debtor, the samples go to the trading house.</p>
+<div class="screen">
+<div class="frame">
+<div class="bar crumb">Project Sales / Projects / PPF2611007 / <b>New sample request</b></div>
+<div class="page">
+<div class="ph"><h3>New sample request</h3><span class="pill draft">Draft</span></div>
+
+<div class="sec"><div class="hd"><span class="num done">&#10003;</span>Customer &amp; project<span class="sum">NUSANTARA BUILDERS SDN BHD &middot; PPF2611007 Residensi Taman Seri Murni</span></div>
+<div class="bd">
+<div class="f full"><label>Customer *</label><div class="in"><span>NUSANTARA BUILDERS SDN BHD [A/C I] <span class="meta">300-N021</span></span><span class="chev"></span></div></div>
+<div class="f"><label>Project</label><div class="in ro">PPF2611007 - Residensi Taman Seri Murni</div></div>
+<div class="f"><label>Requested by</label><div class="in ro">Aiman Hakim (you) &middot; 11/11/2026</div></div>
+</div></div>
+
+<div class="sec"><div class="hd"><span class="num done">&#10003;</span>Ship to<span class="sum">Bintang Trading Sdn Bhd (Trading house) &middot; Mei Ling Tan</span></div>
+<div class="bd">
+<div class="f full"><label>Ship to *</label><div class="in"><span>Bintang Trading Sdn Bhd <span class="meta">Trading house</span></span><span class="chev"></span></div></div>
+<div class="f full"><label>Shipping address *</label><div class="in ta">No. 12, Jalan Perindustrian 3, Taman Perindustrian Bukit Raja, 41050 Klang, Selangor</div></div>
+<div class="f full"><label>Contact person</label>
+<div class="in"><span>Mei Ling Tan <span class="meta">Purchasing &middot; +60 12-345 6789</span></span><span class="link">Choose contact</span></div></div>
+</div></div>
+
+<div class="sec"><div class="hd"><span class="num">3</span>Items<span class="sum">2 items from proposal SRT/Q/2026/0141</span></div>
+<div class="bd"><div class="full">
+<table><thead><tr><th style="width:40px">No.</th><th>Item code</th><th>Description</th><th style="width:70px">Qty</th><th>Remark</th></tr></thead>
+<tbody><tr><td>1</td><td>BS-6021-WH</td><td title="Wall hung basin 600 white">Wall hung basin 600 white</td><td>1</td><td>show unit</td></tr>
+<tr><td>2</td><td>MX-118-CH</td><td title="Basin mixer chrome">Basin mixer chrome</td><td>2</td><td></td></tr>
+<tr><td>3</td><td><span class="ph2" style="color:var(--muted)">Search a product</span></td><td></td><td></td><td></td></tr></tbody></table>
+</div></div></div>
+
+<div class="sec"><div class="hd"><span class="num">4</span>Delivery<span class="sum"></span></div>
+<div class="bd">
+<div class="f"><label>Request delivery date *</label><div class="in focus"><span>18/11/2026</span><span class="cal"></span></div></div>
+<div class="f"><label>Delivery *</label><div class="in"><span>&#9673; Driver &nbsp; &#9675; Self deliver &nbsp; &#9675; Self collect</span></div></div>
+<div class="f"><label>Loan period</label><div class="in"><span>2 &nbsp; Months</span></div></div>
+<div class="f"><label>Goods from</label><div class="in"><span>&#9745; Demo &nbsp; &#9745; New</span></div></div>
+<div class="f full"><label>Purpose</label><div class="in ta"><span class="ph2">Optional</span></div></div>
+<div class="f full"><label>Board mounting</label><div class="in"><span>&#9744; Mount on a board</span></div></div>
+</div></div>
+
+<div class="actions"><button class="btn ghost">Cancel</button><button class="btn">Save draft</button><button class="btn primary">Preview</button></div>
+</div></div>
+<div class="notes">
+<div class="n"><b>Page + sections</b><code>sample-requests/components/SampleRequestForm.tsx</code> rebuilt on <code>components/common/FormSection.tsx</code> (the price tag request pattern, PR #2318). A finished section folds to its one-line summary.</div>
+<div class="n"><b>Customer</b><code>AsyncCombobox</code> + <code>lookupCustomersForRequest</code> as today; the "type a name" fallback is removed.</div>
+<div class="n"><b>Project</b> fixed text when started from a project (<code>?project_id=</code>). From the list it is the existing project <code>SearchableSelect</code>.</div>
+<div class="n"><b>Requested by</b> the creator (<code>salesperson_id</code>), read only.</div>
+<div class="n"><b>Ship to</b> the proposal's party picker <code>quotation-documents/components/QuotationRecipientPicker.tsx</code> over <code>GET /projects/{id}/parties</code>.</div>
+<div class="n"><b>Contact person</b> <code>_shared/components/PartyContactsDialog.tsx</code> (registration's popup, PR #2335 version).</div>
+<div class="n"><b>Items</b> <code>components/common/SampleRequestLines.tsx</code> + quotation prefill, unchanged. One product per row.</div>
+<div class="n"><b>Date</b> <code>components/ui/date-picker.tsx</code> (dd/mm/yyyy), replaces the native date input.</div>
+<div class="n"><b>Delivery fields</b> <code>components/common/SampleRequestFooterFields.tsx</code>, moved into section 4.</div>
+<div class="n rule"><b>Gone</b> "For", "Contact phone / Note", the typed Ship To, and Consignment No / PO No on a NEW form (they are read-only and empty here; the detail page keeps them).</div>
+<div class="n rule"><b>One main button</b> Preview. Save draft is secondary, Cancel quiet.</div>
+</div>
+</div>
+
+<!-- 2 -->
+<h2 id="s2">2. Ship to picker open</h2>
+<div class="screen">
+<div class="frame"><div class="page">
+<div class="f"><label>Ship to *</label><div class="in focus"><span>bin</span><span class="chev"></span></div></div>
+<div class="dd">
+<div class="grp">On this project</div>
+<div class="opt"><span>Seri Murni Development Sdn Bhd</span><span class="role">Developer</span></div>
+<div class="opt on"><span>Bintang Trading Sdn Bhd</span><span class="role">Trading house</span></div>
+<div class="opt"><span>Arkitek Lima &amp; Rakan</span><span class="role">Consultant</span></div>
+<div class="grp">Other parties</div>
+<div class="opt"><span>Bintang Jaya Hardware</span><span class="role">Dealer</span></div>
+<div class="opt"><span class="link">+ Add "bin" as a new party</span><span></span></div>
+</div>
+</div></div>
+<div class="notes">
+<div class="n"><b>Same list as the proposal "To"</b> this project's parties first, with their role, then every other party (<code>listParties</code>), then add new.</div>
+<div class="n rule"><b>Rule</b> picking fills Shipping address from the party; no address on the party: the project's site address; neither: empty and required. Address stays editable (it is where the van goes).</div>
+<div class="n rule"><b>Changing the party</b> clears the contact person.</div>
+</div>
+</div>
+
+<!-- 3 -->
+<h2 id="s3">3. Choose contact: the registration popup</h2>
+<div class="screen">
+<div class="frame"><div class="dialog-bg"><div class="dialog">
+<div class="dh">Contacts at Bintang Trading Sdn Bhd</div>
+<div class="db">
+<div class="in"><span class="ph2">Search contacts</span></div>
+<div class="cb" style="margin-top:8px"><span class="box"></span><span>Select all (2)</span></div>
+<div class="cb"><span class="box on"></span><span>Mei Ling Tan<br><span class="small">Purchasing &middot; +60 12-345 6789</span></span></div>
+<div class="cb"><span class="box"></span><span>Ravi Kumar<br><span class="small">Site coordinator &middot; no number</span></span></div>
+<p class="link" style="margin:10px 0 0">+ Add contact</p>
+</div>
+<div class="df"><button class="btn ghost">Cancel</button><button class="btn primary">Done</button></div>
+</div></div></div>
+<div class="notes">
+<div class="n"><b>Component</b> <code>PartyContactsDialog</code>, the one behind registration (<code>ProjectPartiesSection.tsx</code>) and proposal Attn (<code>QuotationAttnChooser</code>). Search + Select all from PR #2335's <code>SearchableMultiSelect</code>.</div>
+<div class="n"><b>+ Add contact</b> name, job title, phone; while open it is the only main button (PR #2335).</div>
+<div class="n rule"><b>Rule</b> several picked print "Mei Ling Tan &amp; Ravi Kumar"; phone from the first. Picked people join the project's stakeholders, like the proposal's Attn. Without the parties edit grant: tick only.</div>
+</div>
+</div>
+
+<!-- 4 -->
+<h2 id="s4">4. Preview, then Submit</h2>
+<div class="screen">
+<div class="frame"><div class="dialog-bg"><div class="dialog wide">
+<div class="dh">Preview sample request</div>
+<div class="db"><div class="doc"><dl>
+<dt>Customer</dt><dd>NUSANTARA BUILDERS SDN BHD [A/C I] (300-N021)</dd>
+<dt>Project</dt><dd>PPF2611007 - Residensi Taman Seri Murni</dd>
+<dt>Requested by</dt><dd>Aiman Hakim, 11/11/2026</dd>
+<dt>Ship to</dt><dd>Bintang Trading Sdn Bhd (Trading house)<br>No. 12, Jalan Perindustrian 3, Taman Perindustrian Bukit Raja, 41050 Klang, Selangor</dd>
+<dt>Contact</dt><dd>Mei Ling Tan, +60 12-345 6789</dd>
+<dt>Deliver by</dt><dd>18/11/2026, driver</dd>
+<dt>Loan</dt><dd>2 months, demo or new</dd>
+<dt>Items</dt><dd>1 x BS-6021-WH Wall hung basin 600 white (show unit)<br>2 x MX-118-CH Basin mixer chrome</dd>
+</dl></div></div>
+<div class="df"><button class="btn">Back to edit</button><button class="btn primary">Submit</button></div>
+</div></div></div>
+<div class="notes">
+<div class="n"><b>Pattern</b> the price tag request's Preview popup (PR #2318): Preview runs the submit checks first; a problem keeps the popup closed and points at the section.</div>
+<div class="n rule"><b>One main button</b> per screen: Preview on the page, Submit in the popup.</div>
+</div>
+</div>
+
+<!-- 5 -->
+<h2 id="s5">5. After Submit: back on the project (owner, 16:30)</h2>
+<div class="screen">
+<div class="frame">
+<div class="bar crumb">Project Sales / Projects / <b>PPF2611007</b></div>
+<div class="page">
+<div class="toast">Sample request SR-000231 submitted</div>
+<div class="ph"><h3>Residensi Taman Seri Murni</h3><button class="btn primary">Move to Final negotiation</button></div>
+<div class="tabs"><span>Overview</span><span>Stakeholders</span><span>Proposals</span><span class="on">Samples Request</span><span>Orders</span><span>Activity</span></div>
+<div class="ph" style="margin-bottom:8px"><b>Sample requests</b><button class="btn">Create</button></div>
+<table><thead><tr><th>No.</th><th>Ship to</th><th>Deliver by</th><th>Status</th><th>Requested by</th></tr></thead>
+<tbody><tr><td>SR-000231</td><td>Bintang Trading Sdn Bhd</td><td>18/11/2026</td><td><span class="pill">Submitted</span></td><td>Aiman Hakim</td></tr>
+<tr><td>SR-000214</td><td>Arkitek Lima &amp; Rakan</td><td>05/11/2026</td><td><span class="pill ok">Delivered</span></td><td>Aiman Hakim</td></tr></tbody></table>
+</div></div>
+<div class="notes">
+<div class="n"><b>Where</b> <code>[projectId]/components/SampleRequestsPanel.tsx</code>, tab "Samples Request". Many per project already works; Ship to + Deliver by become columns.</div>
+<div class="n"><b>Return</b> Create passes <code>?from=/project-sales/&lt;id&gt;?tab=sample-requests</code>; the form reads it with <code>useReviewOriginHref</code> (<code>_shared/hooks/useReviewOrigin.ts</code>, guarded by <code>isSafeReviewOrigin</code>).</div>
+<div class="n rule"><b>Rule</b> Submit, Save draft, Cancel, Back all return there. Started from the Sample Requests list: back to the list.</div>
+</div>
+</div>
+
+<!-- 6 -->
+<h2 id="s6">6. Example C: a party not on the project yet</h2>
+<div class="screen">
+<div class="frame"><div class="page">
+<div class="f"><label>Ship to *</label><div class="in"><span>Delta Interior Works <span class="meta">new party</span></span><span class="chev"></span></div></div>
+<div class="f" style="margin-top:10px"><label>Not on this project yet. Add as</label><div class="in"><span>Subcontractor</span><span class="chev"></span></div></div>
+<div class="f" style="margin-top:10px"><label>Shipping address *</label><div class="in ta">Lot 22, Jalan Seri Murni 5, 43000 Kajang, Selangor <span class="meta">(project site address)</span></div></div>
+<div class="f" style="margin-top:10px"><label>Contact person</label><div class="in"><span class="ph2">No contacts yet</span><span class="link">Add contact</span></div></div>
+</div></div>
+<div class="notes">
+<div class="n"><b>Same as the proposal</b> role select from <code>QuotationRecipientPicker.tsx</code> (active roles, never Developer, a one-party role only while empty); linked on save by <code>add_party_link</code>.</div>
+<div class="n rule"><b>Unregistered project</b> (require-project switch off): Ship to lists every party under "Parties"; no link is written.</div>
+</div>
+</div>
+
+<!-- 7 -->
+<h2 id="s7">7. Example E: an old request with free text</h2>
+<div class="screen">
+<div class="frame"><div class="page">
+<div class="ph"><h3>SR-000118</h3><span class="pill ok">Delivered</span></div>
+<div class="doc"><dl>
+<dt>Ship to</dt><dd>site office, Lot 22<br><span class="small">Lot 22, Jalan Seri Murni 5, Kajang</span></dd>
+<dt>Contact</dt><dd>Encik Faiz, 013-222 1100, call before 10am</dd>
+<dt>For (scope)</dt><dd>show unit</dd>
+<dt>Consignment No</dt><dd>CG-2610-0457</dd>
+<dt>PO No</dt><dd>-</dd>
+</dl></div>
+<p class="small" style="margin-top:14px">Same request still a draft, opened in the new form:</p>
+<div class="f"><label>Ship to *</label><div class="in"><span class="ph2">Pick a party</span><span class="chev"></span></div></div>
+<div class="legacy" style="margin-top:6px">Typed before: site office, Lot 22</div>
+</div></div>
+<div class="notes">
+<div class="n"><b>Detail</b> <code>sample-requests/components/SampleRequestDetail.tsx</code> shows stored text unchanged; "For" only when an old row has it.</div>
+<div class="n rule"><b>Rule</b> nothing is rewritten. A draft keeps its typed Ship to as a hint; Submit then needs a party.</div>
+</div>
+</div>
+
+</div>
+</body>
+</html>
