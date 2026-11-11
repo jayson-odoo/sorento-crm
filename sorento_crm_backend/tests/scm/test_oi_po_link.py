@@ -604,3 +604,45 @@ def test_unlink_merges_the_freed_qty_into_the_existing_free_row_of_the_same_po(s
     assert len(on_b) == 1, [(l.source_ref, l.qty_ordered, l.line_status, l.from_so_line_ref) for l in db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == w["po"].id)]
     assert on_b[0].qty_ordered == Decimal("10") and on_b[0].from_so_line_ref is None
     assert not [l for l in open_lines if l.source_ref == a_ref and l.from_so_line_ref]
+
+
+# --------------------------------------------------------------------------- the rebook after a done write
+
+ACTION = "projects.order_inquiry.action"
+
+
+def _record_rebook(monkeypatch):
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    seen: list = []
+
+    def fake(self, product_ids, **kwargs):
+        seen.append(kwargs.get("row_ids"))
+        return {}
+
+    monkeypatch.setattr(ProjectOrderInquiryService, "auto_place_for_products", fake)
+    return seen
+
+
+def test_without_the_order_inquiry_action_grant_the_link_works_and_no_rebook_runs(scm_app, fake_ss, monkeypatch):
+    w = _oi_world(scm_app)  # link_po but NOT projects.order_inquiry.action
+    seen = _record_rebook(monkeypatch)
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _oi_link(w, [_item(w, "so_line", 120)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    assert seen == []
+
+
+def test_the_rebook_gets_only_the_rows_that_resolved_into_scope(scm_app, fake_ss, monkeypatch):
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, ACTION))
+    seen = _record_rebook(monkeypatch)
+    fake_ss.answers[PO_LINKS] = _done_split
+    stranger = _u()  # a row id that exists nowhere
+    resp = w["c"].post(f"{OI}/po-link/link", json={
+        "row_ids": [w["rows"]["a"].id, w["rows"]["none"].id, stranger],
+        "lines": [_item(w, "so_line", 120)],
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    assert len(seen) == 1 and sorted(seen[0]) == [w["rows"]["a"].id]
