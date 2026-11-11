@@ -111,6 +111,11 @@ function openTab(name: string) {
   fireEvent.mouseDown(tab);
   fireEvent.click(tab);
 }
+const typeDate = (label: string, value: string) => {
+  const input = screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value } });
+  fireEvent.blur(input);
+};
 const type = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
@@ -189,7 +194,7 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
     await screen.findByText('Workbook rate');
     expect((screen.getByRole('radio', { name: 'Units per MYR 1' }) as HTMLInputElement).checked).toBe(true);
     type('Currency', 'CNY');
-    type('Effective from', '2026-12-15');
+    typeDate('Effective from', '2026-12-15');
     type('Rate', '1.65');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
     await waitFor(() => expect(service.createExchangeRate).toHaveBeenCalledTimes(1));
@@ -203,7 +208,7 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
     await screen.findByText('Workbook rate');
     fireEvent.click(screen.getByRole('radio', { name: 'MYR per unit' }));
     type('Currency', 'USD');
-    type('Effective from', '2026-12-15');
+    typeDate('Effective from', '2026-12-15');
     type('Rate', '4.5');
     type('Note', 'Dec');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
@@ -217,7 +222,7 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
     mount();
     await screen.findByText('Workbook rate');
     type('Currency', 'CNY');
-    type('Effective from', '2026-12-15');
+    typeDate('Effective from', '2026-12-15');
     type('Rate', '0');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
     await new Promise((r) => setTimeout(r, 30));
@@ -229,7 +234,7 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
     mount();
     await screen.findByText('Workbook rate');
     type('Currency', 'CNY');
-    type('Effective from', '2026-11-01');
+    typeDate('Effective from', '2026-11-01');
     type('Rate', '1.6');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
     await waitFor(() =>
@@ -310,6 +315,47 @@ describe('standard grids (round 5)', () => {
     fireEvent.submit(screen.getByPlaceholderText('Search category').closest('form')!);
     await new Promise((r) => setTimeout(r, 30));
     expect(service.saveCategoryRule).not.toHaveBeenCalled();
+  });
+});
+
+describe('round 6', () => {
+  it('Effective from is the shared date picker: no native date input, dd/mm/yyyy in, ISO out', async () => {
+    mount();
+    await screen.findByText('Workbook rate');
+    expect(document.querySelector('input[type=date]')).toBeNull();
+    type('Currency', 'CNY');
+    typeDate('Effective from', '15/12/2026');
+    type('Rate', '1.65');
+    fireEvent.click(screen.getByRole('button', { name: 'Add rate' }));
+    await waitFor(() => expect(service.createExchangeRate).toHaveBeenCalledTimes(1));
+    expect(service.createExchangeRate.mock.calls[0][0]).toMatchObject({ currency: 'CNY', effective_from: '2026-12-15' });
+  });
+
+  it('Value sorted descending keeps the categories with no rule last', async () => {
+    mount();
+    openTab('Transport by category');
+    await screen.findByLabelText('Transport mode for Ceramics');
+    const valueHeader = () =>
+      within(screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === 'Value')!).getByRole('button', { name: 'Value' });
+    const order = () => screen.getAllByLabelText(/^Transport value for /).map((n) => n.getAttribute('aria-label')!.replace('Transport value for ', ''));
+    fireEvent.click(valueHeader());
+    await waitFor(() => expect(order()).toEqual(['Taps', 'Ceramics', 'Accessories']));
+    fireEvent.click(valueHeader());
+    await waitFor(() => expect(order()).toEqual(['Ceramics', 'Taps', 'Accessories']));
+  });
+
+  it('Note sorted descending keeps the rates with no note last', async () => {
+    mount();
+    await screen.findByText('Workbook rate');
+    const noteHeader = () =>
+      within(screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === 'Note')!).getByRole('button', { name: 'Note' });
+    fireEvent.click(noteHeader());
+    fireEvent.click(noteHeader());
+    await waitFor(() => {
+      const rows = screen.getAllByRole('row').slice(1).map((r) => r.textContent ?? '');
+      expect(rows[0]).toMatch(/Workbook rate/);
+      expect(rows.at(-1)).not.toMatch(/Q4 budget|Workbook rate/);
+    });
   });
 });
 

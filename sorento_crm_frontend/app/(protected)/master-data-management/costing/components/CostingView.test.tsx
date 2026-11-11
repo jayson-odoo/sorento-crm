@@ -540,13 +540,13 @@ describe('Round 5 review', () => {
     await screen.findByText('CGB9032B');
     fireEvent.click(screen.getByRole('button', { name: 'Show suppliers for CGB9032B' }));
     const grid = await screen.findByTestId('costing-supplier-grid');
-    await within(grid).findByText('SUP-B07');
-    const order = () => within(grid).getAllByText(/^SUP-/).map((n) => n.textContent);
+    await within(grid).findByText('Supplier B');
+    const order = () => within(grid).getAllByText(/^Supplier [A-Z]$/).map((n) => n.textContent);
     const press = () => fireEvent.click(within(grid).getByRole('button', { name: 'Cost' }));
     press();
-    await waitFor(() => expect(order()).toEqual(['SUP-A01', 'SUP-B07', 'SUP-L02']));
+    await waitFor(() => expect(order()).toEqual(['Supplier A', 'Supplier B', 'Supplier L']));
     press();
-    await waitFor(() => expect(order()).toEqual(['SUP-L02', 'SUP-B07', 'SUP-A01']));
+    await waitFor(() => expect(order()).toEqual(['Supplier L', 'Supplier B', 'Supplier A']));
   });
 
   it('changing As of writes the ISO date to the URL', async () => {
@@ -574,6 +574,73 @@ describe('Round 5 review', () => {
     mount();
     await screen.findByText('CGB9032B');
     expect(within(screen.getByLabelText('Party')).getByText('Company standard')).toBeTruthy();
+  });
+});
+
+describe('Round 6', () => {
+  it('the sub-grid supplier cell is one line: the name, truncated, with "NAME (CODE)" as its title', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
+    fireEvent.click(screen.getByRole('button', { name: 'Show suppliers for CGB9032B' }));
+    const grid = await screen.findByTestId('costing-supplier-grid');
+    const cell = await within(grid).findByText('Supplier B');
+    expect(cell.getAttribute('title')).toBe('Supplier B (SUP-B07)');
+    expect(cell.className).toMatch(/truncate/);
+    expect(cell.parentElement!.children).toHaveLength(1); // no second line under it
+    expect(within(grid).queryByText('SUP-B07')).toBeNull();
+  });
+
+  it('the sub-grid sorts the supplier column by name, unknown names last', async () => {
+    service.getCostingRowSuppliers.mockResolvedValue({ data: [
+      { ...SUPPLIERS.data[0], supplier_id: 'z', supplier_code: 'A-CODE', supplier_name: 'Zeta' },
+      { ...SUPPLIERS.data[1], supplier_id: 'a', supplier_code: 'Z-CODE', supplier_name: 'Alpha' },
+      { ...SUPPLIERS.data[2], supplier_id: 'n', supplier_code: 'M-CODE', supplier_name: null },
+    ] });
+    mount();
+    await screen.findByText('CGB9032B');
+    fireEvent.click(screen.getByRole('button', { name: 'Show suppliers for CGB9032B' }));
+    const grid = await screen.findByTestId('costing-supplier-grid');
+    await within(grid).findByText('Zeta');
+    const names = () => within(grid).getAllByTitle(/\(.*-CODE\)|M-CODE/).map((n) => n.textContent);
+    const press = () => fireEvent.click(within(grid).getByRole('button', { name: 'Supplier' }));
+    press();
+    await waitFor(() => expect(names()).toEqual(['Alpha', 'Zeta', 'M-CODE']));
+    press();
+    await waitFor(() => expect(names()).toEqual(['Zeta', 'Alpha', 'M-CODE']));
+  });
+
+  it('writes sort, search and page to the URL', async () => {
+    service.getCostingRows.mockResolvedValue(standardEnvelope(undefined, { total: 120 }));
+    mount();
+    await screen.findByText('CGB9032B');
+    fireEvent.click(screen.getByRole('button', { name: 'Name' }));
+    await waitFor(() => expect(urlsWritten().some((u) => /sort=product_name/.test(u) && /dir=asc/.test(u))).toBe(true));
+    fireEvent.change(screen.getByPlaceholderText('Search code or name'), { target: { value: 'WB 245' } });
+    await waitFor(() => expect(urlsWritten().some((u) => /query=WB(\+|%20)245/.test(u))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to next page' }));
+    await waitFor(() => expect(urlsWritten().some((u) => /page=2/.test(u))).toBe(true));
+  });
+
+  it('restores sort, search, page and page size from the URL', async () => {
+    url.search = 'sort=product_name&dir=desc&query=wb&page=2&limit=25';
+    service.getCostingRows.mockResolvedValue(standardEnvelope(undefined, { total: 120 }));
+    mount();
+    await screen.findByText('CGB9032B');
+    expect(lastParams()).toMatchObject({ sort: 'product_name', dir: 'desc', query: 'wb', page: 2, limit: 25 });
+    expect((screen.getByPlaceholderText('Search code or name') as HTMLInputElement).value).toBe('wb');
+  });
+
+  it('a filter change keeps the filter when the page resets in the same breath', async () => {
+    url.search = 'page=3';
+    service.getCostingRows.mockResolvedValue(standardEnvelope(undefined, { total: 200 }));
+    mount();
+    await screen.findByText('CGB9032B');
+    openFilters();
+    const category = (await screen.findByLabelText('Category')) as HTMLSelectElement;
+    Array.from(category.options).find((o) => o.value === 'cat-1')!.selected = true;
+    fireEvent.change(category);
+    await waitFor(() => expect(urlsWritten().some((u) => /category=cat-1/.test(u))).toBe(true));
+    expect(urlsWritten().at(-1)).toMatch(/category=cat-1/);
   });
 });
 
@@ -715,7 +782,7 @@ describe('Row expand and row menu (AC-CG-06, AC-CG-11, AC-CG-12)', () => {
     ));
     expect(await screen.findByText('Margin if bought here')).toBeTruthy();
     for (const h of ['Primary', 'Lead time']) expect(screen.getAllByText(h).length).toBeGreaterThan(0);
-    expect(await screen.findByText('SUP-B07')).toBeTruthy();
+    expect(await screen.findByText('Supplier B')).toBeTruthy(); // the name; its code is the title
     expect(screen.getByText(/114\.35\s?%/)).toBeTruthy();
     expect(screen.getByText(/34\.96\s?%/)).toBeTruthy();
   });

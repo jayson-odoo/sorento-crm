@@ -514,3 +514,18 @@ def test_r5_the_supplier_expand_of_a_product_priced_zero_has_no_markup_final_or_
         if not params:
             assert row["markup_pct"] is None and row["final"] is None
         assert "no_list_price" in [x["code"] for x in row["reasons"]]
+
+
+# ------------------------------------------------------------------ round 6
+
+
+def test_r6_a_duplicate_rate_says_what_to_do_in_the_screens_own_words(costing_env):
+    e, w = _setup(costing_env)
+    e.as_user(e.user("scm.config.manage", COST_VIEW))
+    body = {"currency": "CNY", "effective_from": "2026-12-01", "rate_to_base": 0.6}
+    assert e.post("/exchange-rates", body).status_code == 201
+    r = e.post("/exchange-rates", body)
+    assert r.status_code == 409
+    text = r.json()["message"]
+    assert "01/12/2026" in text and "Delete that row first" in text
+    assert "2026-12-01" not in text and "Edit" not in text

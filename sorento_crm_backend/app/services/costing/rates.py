@@ -217,7 +217,7 @@ def create_rate(
     if exists is not None:
         raise AppException(
             status_code=409,
-            message=f"{code} already has a rate from {effective_from.isoformat()}. Edit that row instead.",
+            message=f"{code} already has a rate from {effective_from:%d/%m/%Y}. Delete that row first.",
         )
     row = ExchangeRate(
         id=str(uuid.uuid4()), currency=code, rate_to_base=rate, effective_from=effective_from,
