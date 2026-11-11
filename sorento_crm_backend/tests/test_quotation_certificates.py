@@ -1133,7 +1133,8 @@ def test_m3_a_reader_can_queue_the_certificates_pdf(files, queued):
 def test_m2_the_heavy_routes_are_marked():
     from app.api.v1.projects import quotation_certificates as routes
 
-    for name in ("list_certificates", "read_certificate", "read_certificate_file", "put_certificate_boxes"):
+    # The list is not heavy any more (CERT-TAB-UX, tests/test_quotation_certificates_perf.py).
+    for name in ("read_certificate", "read_certificate_file", "put_certificate_boxes"):
         assert getattr(getattr(routes, name), "heavy", False) is True, name
 
 

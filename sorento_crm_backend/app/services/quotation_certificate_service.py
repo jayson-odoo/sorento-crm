@@ -13,9 +13,9 @@ import math
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models.certificate import Certificate, CertificateProduct
+from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.product import Product
 from app.models.projects import (
     ProjectQuotationDocument,
@@ -143,6 +143,11 @@ class _Group:
                     self.unreadable = True
         return self._file
 
+    def release(self) -> None:
+        """Drop the file bytes (read again on demand); `unreadable` is kept."""
+        if not self.unreadable:
+            self._file = False
+
     def learn(self, cache: Optional[dict]) -> None:
         """Take the text flag and page count a current cache already knows, so no read is needed."""
         if not cache:
@@ -165,6 +170,12 @@ class _Group:
         return self._has_text
 
 
+def _with_file():
+    """CERT-TAB-UX: load each certificate's current revision and its attachment in two queries,
+    not two per certificate (79 statements on a 34-certificate quote before, 13 after)."""
+    return selectinload(Certificate.current_revision).selectinload(CertificateRevision.attachment)
+
+
 def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Group]:
     derived: Dict[str, Certificate] = {}
     coverage: Dict[str, List[CertificateProduct]] = {}
@@ -173,6 +184,7 @@ def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Gro
             db.query(CertificateProduct, Certificate)
             .join(Certificate, Certificate.id == CertificateProduct.certificate_id)
             .filter(CertificateProduct.product_id.in_(list(quoted)), Certificate.status == "active")
+            .options(_with_file())
             .all()
         )
         for cp, cert in rows:
@@ -181,7 +193,8 @@ def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Gro
     manual_ids = [cid for cid, m in markers.items() if m.included and m.source == "manual" and cid not in derived]
     certs: Dict[str, Certificate] = dict(derived)
     if manual_ids:
-        for cert in db.query(Certificate).filter(Certificate.id.in_(manual_ids), Certificate.status == "active"):
+        manual = db.query(Certificate).options(_with_file())
+        for cert in manual.filter(Certificate.id.in_(manual_ids), Certificate.status == "active"):
             certs[str(cert.id)] = cert
     certs = {cid: c for cid, c in certs.items() if not (cid in markers and not markers[cid].included)}
     if not certs:
@@ -450,7 +463,10 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def list_rows(db: Session, document) -> List[Dict[str, Any]]:
     quoted, markers, groups = _context(db, document)
-    rows = [_row(db, g, quoted, markers) for g in groups]
+    rows = []
+    for group in groups:
+        rows.append(_row(db, group, quoted, markers))
+        group.release()  # a first look reads files one at a time, never all of them at once
     rows.sort(key=lambda r: not r["verified"])  # stable: verified first, scheme and number kept
     db.flush()
     return [_public(r) for r in rows]
