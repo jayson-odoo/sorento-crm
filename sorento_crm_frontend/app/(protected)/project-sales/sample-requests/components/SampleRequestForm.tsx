@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { Loader2, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -74,7 +74,6 @@ import { useRequestScope } from '@/hooks/useRequestScope';
 import { useProject, usePartyContacts, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
-import { projectDisplayName } from '../../_shared/lib/projectName';
 import { ProjectPartyPicker } from '../../_shared/components/ProjectPartyPicker';
 import { PartyContactsDialog } from '../../_shared/components/PartyContactsDialog';
 import type { PartyContact } from '../../_shared/types/project.types';
@@ -258,7 +257,6 @@ function StaffSampleRequestForm({
     refetchOnMount: 'always',
     staleTime: 0,
   });
-  const queryClient = useQueryClient();
   const existing = api ? ownExisting : staffExisting;
   const [apiBusy, setApiBusy] = useState(false);
   const { data: switches } = useSampleRequestSwitches();
@@ -307,12 +305,14 @@ function StaffSampleRequestForm({
   });
 
   useEffect(() => {
-    if (requestId && existing.data && !hydrated) {
+    // Fill the form from a FRESH read only: a cached copy from before the last save would otherwise
+    // be shown and then saved back (review S2). The cache itself is never dropped mid-submit (R2-B1).
+    if (requestId && existing.data && !hydrated && !existing.isFetching) {
       const loaded = stateFromDetail(existing.data);
       setState(loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] });
       setHydrated(true);
     }
-  }, [requestId, existing.data, hydrated]);
+  }, [requestId, existing.data, existing.isFetching, hydrated]);
 
   // A project passed in the URL starts the request on that project, its buyer prefilled.
   const startProject = useProject(!requestId ? projectId : undefined);
@@ -355,17 +355,16 @@ function StaffSampleRequestForm({
       : create.mutateAsync(body);
   };
   const submitSaved = (id: string) => (api ? api.submit(id) : submit.mutateAsync(id));
-  /** The My Requests path has no mutation hook: hold the buttons while it runs, and drop the cached
-   * request afterwards so reopening it never shows the values from before the save (review S2). */
+  /** The My Requests path has no mutation hook: hold the buttons while it runs. */
   const busy = async <T,>(fn: () => Promise<T>): Promise<T> => {
     setApiBusy(true);
     try {
       return await fn();
     } finally {
       setApiBusy(false);
-      if (api) queryClient.removeQueries({ queryKey: OWN_REQUEST_KEY });
     }
   };
+
 
   const handleSaveDraft = async () => {
     setServerMessage(null);

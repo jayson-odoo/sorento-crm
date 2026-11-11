@@ -81,6 +81,7 @@ const detail = (over: Record<string, unknown> = {}) => ({
 });
 let detailNow: Record<string, unknown> = detail();
 let refusal: { status: number; body: unknown } | null = null;
+let failGets = 0;
 vi.mock('@/lib/api', () => ({
   apiFetch: async (url: string, init?: RequestInit) => {
     const method = (init?.method ?? 'GET').toUpperCase();
@@ -91,6 +92,10 @@ vi.mock('@/lib/api', () => ({
     calls.push({ url, method, body });
     const path = url.split('?')[0];
     if (refusal && method === 'POST' && path === MINE) return json(refusal.body, refusal.status);
+    if (failGets > 0 && method === 'GET' && path === `${MINE}/sr-5`) {
+      failGets -= 1;
+      return json({ message: 'boom' }, 500);
+    }
     if (path.startsWith('/api/v1/my-requests/sample-request/customers')) return json([{ customer_id: 'd1', customer_code: 'D-1', debtor_name: 'ZZT Debtor' }]);
     if (path.startsWith('/api/v1/my-requests/sample-request/products')) return json([{ id: 'p-1', product_code: 'TILE-1', product_name: 'Tile', brand_name: 'B' }]);
     if (path === '/api/v1/my-requests/lookups/projects') return json([{ id: 'prj-1', project_code: 'PRJ-0001', title: 'Project One', company_name: 'Company A' }]);
@@ -138,6 +143,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   detailNow = detail();
   refusal = null;
+  failGets = 0;
   nav.search = '';
   pending.getCurrentPendingAction.mockResolvedValue({ pending: null, last_outcome: null });
 });
@@ -221,6 +227,38 @@ describe('limited user, New Sample Request renders the guided form through My Re
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
     expect(nav.push.mock.calls.every((a) => !String(a[0]).startsWith('/portal'))).toBe(true);
     expect(staffApi()).toHaveLength(0);
+  });
+
+  it('review R2-B1: the form stays on screen from Submit until it leaves (no skeleton mid-submit)', async () => {
+    detailNow = detail(READY);
+    mountForm(LIMITED, { requestId: 'sr-5' });
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /^Submit$/ }));
+    await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === `${MINE}/sr-5/submit`)).toHaveLength(1));
+    expect(screen.queryByText('Customer & project')).not.toBeNull();
+    await waitFor(() => expect(nav.push).toHaveBeenCalled());
+  });
+
+  it('review S3: a request that fails to load says so, and Try again loads it', async () => {
+    failGets = 1;
+    detailNow = detail(READY);
+    mountForm(LIMITED, { requestId: 'sr-5' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await screen.findByText('Customer & project');
+    expect(where((c) => c.method === 'GET' && c.url === `${MINE}/sr-5`).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('review S2: reopening a saved draft shows what the server holds now, not the cached copy', async () => {
+    held = new Set(LIMITED);
+    detailNow = detail({ ...READY, ship_to_address: 'Old address' });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = render(<QueryClientProvider client={client}><SampleRequestForm requestId="sr-5" /></QueryClientProvider>);
+    expect(await screen.findByDisplayValue('Old address')).toBeInTheDocument();
+    first.unmount();
+    detailNow = detail({ ...READY, ship_to_address: 'Saved address' });
+    render(<QueryClientProvider client={client}><SampleRequestForm requestId="sr-5" /></QueryClientProvider>);
+    expect(await screen.findByDisplayValue('Saved address')).toBeInTheDocument();
   });
 
   it('Submit lands on the ?from= origin when there is one', async () => {
