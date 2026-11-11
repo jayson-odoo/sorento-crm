@@ -37,3 +37,29 @@ One function decides it: `cost_access.contact_can_view_cost(db, contact_pk)` -> 
 `can_view_cost`. `granted_keys_for` (`contact_field_reveal_service.py:144`) computes the
 `purchase_orders.cost` key from that function and ignores the stored row, so every chatbot/agent seam that
 reads granted keys gets the same answer with no per-seam change.
+
+## Owner answers (crew relay, 12 Nov)
+Q1 (a), Q2 (a), Q3 (b), Q4 (a), Q5 (a). UAC: `cost-access-unified-11nov-acceptance-criteria.md`.
+
+## Slices (one lane, one PR)
+1. Backend rule: `cost_access.contact_can_view_cost` + a SQL form of it for the list; `granted_keys_for`
+   computes the cost key from it; checklist + copy-access stop handling the key (key stays in the
+   `FIELD_REVEAL_KEYS` literal so the catalogue pin test and `staff_reveal_keys` keep working; a
+   `RETIRED_CHECKLIST_KEYS` set hides it from the checklist and from `set_granted_keys`).
+2. Contacts list `cost_visible`, filter, sort from the SQL form.
+3. Copy text that says "contact holding purchase_orders.cost" (`mcp_catalog_copy.py:1642`,
+   `reused_tools.py:637`, docstrings) reworded to the role rule. No frontend code change expected: the
+   checklist renders the server's key list and the Cost column already reads `cost_visible`.
+4. User guide: contacts access page + the cost permission page.
+
+Track: M (permission change) -> security-reviewer required. No migration (stored rows kept, ignored).
+
+## Test list (tester)
+pytest, Postgres fixture: AC-1..AC-9, plus updates to existing tests that pin the old rule
+(`tests/test_contact_field_reveals.py`, `tests/chatbot/test_dealer_my_cost.py`, `tests/chatbot/test_last_cost_gate.py`,
+`tests/chatbot/test_chatbot_field_reveals_api.py`). No paid API calls: chatbot turns use the existing fixtures.
+
+## Standing rules that apply
+- AI/chatbot: "states only what the data holds", refusal wording unchanged.
+- Lists: Cost column still sorts on the server; filter still multi-value-safe (yes/no).
+- Data: no automatic joining by name (link is the explicit `users.respond_contact_id`).
