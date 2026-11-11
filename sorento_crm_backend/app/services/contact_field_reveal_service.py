@@ -100,7 +100,8 @@ _STAFF_REVEAL_SLUGS: dict[str, str] = {
     "inventory.sellable": "inventory.stock.view",
     "purchase_orders.placed": "scm.purchase_orders.view",
     "purchase_orders.supplier": "procurement.suppliers.view",
-    "purchase_orders.cost": "scm.purchase_orders.view",
+    # SUPPLIER-COST-ACCESS: PO cost is for purchasing and management.
+    "purchase_orders.cost": "products.cost.view",
     "sales_orders.outstanding": "order_management.orders.view",
     "sales_orders.sales_report": "sales.reports.view",
     "scm.low_stock_report": "scm.reorder.run",

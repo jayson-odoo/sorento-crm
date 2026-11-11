@@ -12,7 +12,7 @@ quotation that was already sent.
 """
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -24,6 +24,9 @@ class PaymentTerm(Base, CompanyScopedMixin):
     __tablename__ = "payment_terms"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    #: NOT NULL here although the mixin leaves it nullable, to match migration qts_0001 (`company_id UUID
+    #: NOT NULL`): every row is one company's AutoCount term, and the insert stamp fills it.
+    company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id"), nullable=False, index=True)
     # AutoCount `Terms.DisplayTerm`, exactly as AutoCount spells it: what prints on a quotation
     # and what a debtor's terms name. Unique per company (case matters: "Cash" is not "CASH").
     term_code = Column(String(100), nullable=False)

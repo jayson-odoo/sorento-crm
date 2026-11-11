@@ -105,6 +105,20 @@ if (typeof Element !== 'undefined') {
   Element.prototype.releasePointerCapture ??= function releasePointerCapture() {};
 }
 
+// jsdom has no layout, so a Range has no getClientRects / getBoundingClientRect. ProseMirror (the
+// tiptap rich-text editor) measures the selection's Range to scroll it into view after a
+// transaction; the TypeError lands outside any test, so the run exits 1 with every test green
+// (QuotationLinesGrid.description.test.tsx, #2304). Empty rects: there is nothing to scroll to.
+if (typeof Range !== 'undefined') {
+  const emptyRect = { x: 0, y: 0, width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0 };
+  Range.prototype.getClientRects ??= function getClientRects() {
+    return Object.assign([], { item: () => null }) as unknown as DOMRectList;
+  };
+  Range.prototype.getBoundingClientRect ??= function getBoundingClientRect() {
+    return { ...emptyRect, toJSON: () => emptyRect } as DOMRect;
+  };
+}
+
 // A test file that ends with a Radix DropdownMenu / Dialog / Popover / Sheet still open leaves
 // FocusScope's unmount effect pending: its cleanup does `setTimeout(() => dispatchEvent(new
 // CustomEvent(...)), 0)` against the container node. Testing Library's own auto cleanup unmounts
