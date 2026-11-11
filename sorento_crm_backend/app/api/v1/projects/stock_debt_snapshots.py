@@ -12,6 +12,7 @@
     POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/link
     POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/unlink
     POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/relink
+    POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/change
     POST /project-sales/stock-debt/po-link/relocate
     POST /project-sales/stock-debt/po-link/operations/{operation_id}/resume
 
@@ -41,6 +42,7 @@ from app.schemas.stock_debt_snapshot import (
     PoLinkOptions,
     PoLinkResult,
     PoLinkResults,
+    PoChangeIn,
     PoRelinkIn,
     PoRelocateIn,
     PoResumeIn,
@@ -331,6 +333,28 @@ def po_link_relink(
     try:
         out = StockDebtPoLinkService(db).relink(
             snapshot_id, row_id, [move.model_dump() for move in payload.moves]
+        )
+        db.commit()
+        return out
+    except Exception as exc:
+        _guard(exc)
+
+
+@router.post(PO_LINK + "/change", response_model=PoLinkResults)
+def po_link_change(
+    snapshot_id: str,
+    row_id: str,
+    payload: PoChangeIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    """STOCKDEBT-LIVE-ACTIONS: swap the PO line covering each SO line for another one."""
+    validate_uuid_path(snapshot_id, resource="Snapshot")
+    validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
+    try:
+        out = StockDebtPoLinkService(db).change(
+            snapshot_id, row_id, [change.model_dump() for change in payload.changes]
         )
         db.commit()
         return out

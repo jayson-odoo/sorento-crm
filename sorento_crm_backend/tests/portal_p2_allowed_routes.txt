@@ -280,6 +280,7 @@ POST /stock-debt/po-link/operations/{operation_id}/resume
 POST /stock-debt/po-link/relocate
 POST /stock-debt/snapshots
 POST /stock-debt/snapshots/{snapshot_id}/export
+POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/change
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/link
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/relink
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/unlink

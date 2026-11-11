@@ -107,6 +107,8 @@ export interface SnapshotPoLink {
   po_number: string;
   po_line_no: number | null;
   qty: number;
+  /** Still to arrive on the PO line: what Change PO moves (received stays with the old PO). */
+  open_qty?: number | null;
   location_code: string | null;
 }
 
@@ -178,4 +180,9 @@ export interface PoLinkResult {
   company_code: string | null;
   /** The PO line a follow-up (Move location, Resume) acts on. Never shown. */
   po_line_id: string | null;
+  /** Change PO only: which half of the change this answer is. */
+  action?: 'link' | 'unlink' | null;
+  /** Change PO only, on a link that was not done: the PO already unlinked, so the line is
+   *  now uncovered. */
+  unlinked_po?: string | null;
 }

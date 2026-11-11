@@ -118,5 +118,58 @@ describe('poLinkMenu', () => {
   it('while AutoCount is being asked, items wait', () => {
     const menu = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true });
     expect(menu.link).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
+    expect(menu.change).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
+  });
+
+  it('Change PO needs link and unlink from AutoCount, and one PO line on every ticked line', () => {
+    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
+    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: CAPS, loading: false }).change)
+      .toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
+    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 1, capabilities: on, loading: false }).change)
+      .toEqual({ enabled: false, reason: 'Each ticked line needs exactly one PO linked' });
+    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: on, loading: false }).change)
+      .toEqual({ enabled: true, reason: null });
+    // A covered line greys Link but not Change.
+    const menu = poLinkMenu({
+      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, coveredBy: ['202609-S0029'],
+    });
+    expect(menu.link.enabled).toBe(false);
+    expect(menu.change.enabled).toBe(true);
+  });
+
+  it('Change PO is greyed when the one PO line has nothing left to arrive', () => {
+    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
+    const menu = poLinkMenu({
+      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, nothingOpenOn: '202609-S0029',
+    });
+    expect(menu.change).toEqual({ enabled: false, reason: 'Nothing is left open on PO 202609-S0029 to change' });
+  });
+});
+
+describe('Change PO answers (STOCKDEBT-LIVE-ACTIONS review, unlink first)', () => {
+  it('a link refused after the old PO was unlinked says the line is now uncovered', () => {
+    const text = poLinkResultText(
+      result({ outcome: 'refused', error_code: 'DOC_STALE', action: 'link', unlinked_po: 'PO-OLD' }),
+      'link',
+    );
+    expect(text.title).toBe('Not linked');
+    expect(text.text).toMatch(/It was unlinked from PO PO-OLD, so the line is now uncovered\.$/);
+  });
+
+  it('a link that stopped part way says so, and still offers Resume', () => {
+    const text = poLinkResultText(
+      result({ outcome: 'needs_attention', operation_id: 'op-1', action: 'link', unlinked_po: 'PO-OLD' }),
+      'link',
+    );
+    expect(text.text).toBe(
+      'SO425045 line 140: AutoCount stopped part way. It was unlinked from PO PO-OLD, so the line is now uncovered.',
+    );
+    expect(text.action).toBe('resume');
+  });
+
+  it('a done answer adds nothing', () => {
+    expect(poLinkResultText(result({ action: 'link', unlinked_po: null }), 'link').text).toBe(
+      'SO425045 line 140 now covered by PO 202609-S0029 (120).',
+    );
   });
 });
