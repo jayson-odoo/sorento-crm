@@ -49,8 +49,8 @@ export function ContactImpersonateDialog({
           <AlertDialogTitle>Confirm Impersonation</AlertDialogTitle>
           <AlertDialogDescription>
             You will browse the portal as <strong>{label}</strong> with their access
-            rights. All records you create or modify will still be attributed to you.
-            Continue?
+            rights. What you submit is saved as {label}, except comments, which carry your name;
+            the audit log shows you did it. Continue?
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

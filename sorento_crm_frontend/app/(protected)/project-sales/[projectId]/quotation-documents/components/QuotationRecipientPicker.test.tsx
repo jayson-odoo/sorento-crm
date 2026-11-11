@@ -272,6 +272,35 @@ describe('Attn from the contacts popup', () => {
     );
   });
 
+  it('edit: the contacts already in Attn come up ticked, so Done keeps them (crew pass 11 Nov)', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', is_active: true },
+      { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, is_active: true },
+      { id: 'c3', party_id: 'p-pgb', name: 'EN. OTHER CONTOH', phone: null, is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_name: 'MS. ANNE CONTOH & MS IIYANA CONTOH' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    expect(await screen.findByRole('option', { name: /MS\. ANNE CONTOH/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: /MS IIYANA CONTOH/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: /EN\. OTHER CONTOH/ })).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ attn_contact_ids: ['c1', 'c2'], attn_name: 'MS. ANNE CONTOH & MS IIYANA CONTOH' }),
+      ),
+    );
+  });
+
   it('a contact without a number or email keeps the party ones the pick loaded', async () => {
     listPartyContacts.mockResolvedValue([
       { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, email: null, is_active: true },

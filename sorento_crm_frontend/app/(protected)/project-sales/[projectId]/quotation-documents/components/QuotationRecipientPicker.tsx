@@ -337,6 +337,24 @@ export function QuotationAttnChooser({
     });
   }
 
+  /**
+   * The contacts the Attn already names, ticked when the popup opens. A saved document keeps only
+   * the Attn text ("A & B"), not the ids, so an edit matches that text to the party's contacts;
+   * without this an edit opened with nothing ticked and Done blanked Attn (crew pass, 11 Nov).
+   */
+  function currentAttnIds(): string[] {
+    if ((value.attn_contact_ids ?? []).length > 0) return value.attn_contact_ids ?? [];
+    const names = (value.attn_name ?? '')
+      .split('&')
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean);
+    if (names.length === 0) return [];
+    const rows = (contacts.data ?? []).filter((c) => c.is_active !== false);
+    return names
+      .map((n) => rows.find((c) => c.name.trim().toLowerCase() === n)?.id)
+      .filter((id): id is string => Boolean(id));
+  }
+
   return (
     <>
       <Button
@@ -348,11 +366,12 @@ export function QuotationAttnChooser({
       >
         Choose contacts
       </Button>
-      {open && (
+      {/* Mounted once the contacts have answered: the popup takes its ticks when it opens. */}
+      {open && !contacts.isLoading && (
         <PartyContactsDialog
           title={(name) => `Attn at ${name}`}
           parties={[{ partyId, name: partyName }]}
-          picks={{ [partyId]: value.attn_contact_ids ?? [] }}
+          picks={{ [partyId]: currentAttnIds() }}
           canEdit={canEdit}
           onSave={(next) => void apply(next[partyId] ?? [])}
           onClose={() => setOpen(false)}
