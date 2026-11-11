@@ -194,20 +194,21 @@ function renderTab(route: string, tab: React.ReactNode) {
 
 /**
  * What stays above the tabs on every tab (#1341, owner: "i need this to be under 'Header' tab"):
- * the title, the status pill, the project title and developer lines, and the header actions.
+ * the title, the status pill, the project name and developer lines, and the header actions.
  * The letterhead card itself (To, Our Ref, Your Ref, Date, Total) lives in the Header tab only.
  */
 async function expectIdentityOnScreen() {
-  // The Order Inquiry record card (PROPOSAL-HEADER-LAYOUT): number, status, title; no customer
-  // line (the letterhead's To carries it).
+  // The Order Inquiry record card (PROPOSAL-HEADER-LAYOUT): number, status, the project's short
+  // name (QUOTE-HEADER-TIDY; the title when it has none); no customer line (the letterhead's To
+  // carries it).
   const card = await screen.findByTestId('record-header-card');
   expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
-  expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+  expect(within(card).getByText('Menara Test')).toBeInTheDocument();
   expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
   expect(within(card).getByText('Draft')).toBeInTheDocument();
   // E4: an unsigned, unblocked draft leads with Sign and offers no Send to Customer.
   expect(screen.getByRole('button', { name: 'Sign' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Proposal actions' })).toBeInTheDocument();
 }
 

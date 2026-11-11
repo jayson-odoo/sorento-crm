@@ -897,3 +897,39 @@ describe('renderMergeFields - spec.material pass-through (AC-S3-5)', () => {
     expect(renderMergeFields('{{spec.material}}', data, 'print')).toBe('Stainless Steel');
   });
 });
+
+describe('{{product.description}} (SPEC-SHEET-DESIGNER-PARITY A4)', () => {
+  it('is offered in the Product group of Insert field', () => {
+    const field = mergeFieldCatalog([]).find((f) => f.path === 'product.description');
+    expect(field).toMatchObject({ group: 'Product', label: 'Description' });
+  });
+
+  it('prints the product plain description', () => {
+    expect(
+      renderMergeFields('{{product.description}}', product({ description: 'Wall hung WC, rimless' }), 'print'),
+    ).toBe('Wall hung WC, rimless');
+  });
+
+  it('prints the line description on a spec sheet page', () => {
+    expect(
+      renderMergeFields('{{product.description}}', line({ description: 'Close coupled WC' }), 'print'),
+    ).toBe('Close coupled WC');
+  });
+
+  it('a layer pointed at a part (an accessory) prints that PART\'s description, not the line\'s', () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'AV-0120',
+      name: 'AV-0120',
+      dimensions: '',
+      description: 'Angle valve, chrome',
+    };
+    const data = line({ description: 'Wall hung WC', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+    expect(renderMergeFields('{{product.description}}', data, 'print', layer)).toBe('Angle valve, chrome');
+  });
+
+  it('prints empty, never the token, on a row frozen before the field existed', () => {
+    expect(renderMergeFields('{{product.description}}', line(), 'print')).toBe('');
+  });
+});

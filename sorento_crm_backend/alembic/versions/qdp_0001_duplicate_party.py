@@ -11,13 +11,13 @@ Plan: documentation/plans/project-sales/PLAN-quote-duplicate-party-11nov.md.
 Additive only. Downgrade drops the column and restores the old kind check (event rows deleted).
 
 Revision ID: qdp_0001_duplicate_party
-Revises: ptag_0022_request_customers
+Revises: pc_0001_product_costing
 Create Date: 2026-11-11
 """
 from alembic import op
 
 revision = "qdp_0001_duplicate_party"
-down_revision = "ptag_0022_request_customers"
+down_revision = "pc_0001_product_costing"
 branch_labels = None
 depends_on = None
 

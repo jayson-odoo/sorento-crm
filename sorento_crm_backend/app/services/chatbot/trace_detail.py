@@ -174,10 +174,11 @@ def _session(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _tool(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    entries = _kind_records(records, "tool")
-    if not entries:
+    # TRACE-ENTITY-TOOL: the last tool event WITH a name; the fetch step's bare
+    # `{"domain": ...}` event after it is not the tool (`trace.named_tool_event`).
+    entry = trace_mod.named_tool_event(records)
+    if entry is None:
         return None
-    entry = entries[-1]  # the business lane calls at most one tool per turn today
     return {
         "name": entry.get("name"),
         "args": entry.get("args"),
@@ -352,8 +353,10 @@ def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None
     wait_ms = facts.get("wait_ms")
     if ticket is None and wait_ms is None:
         return None
+    # TRACE-ENTITY-TOOL: `neighbours_checked` tells the drawer whether a `None` neighbour means
+    # "there is none" (first / latest message) or "not looked up" (no session to hand).
     if db is None:
-        return {"ticket": ticket, "wait_ms": wait_ms, "previous": None, "next": None}
+        return {"ticket": ticket, "wait_ms": wait_ms, "previous": None, "next": None, "neighbours_checked": False}
 
     earlier = (
         db.query(ChatbotTurn)
@@ -380,6 +383,7 @@ def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None
         "wait_ms": wait_ms,
         "previous": _order_neighbor(earlier),
         "next": _order_neighbor(later),
+        "neighbours_checked": True,
     }
 
 
@@ -576,10 +580,9 @@ def _looked_up(records: list[dict[str, Any]], lk: _Lookups) -> dict[str, Any] | 
     """What the bot looked up this turn (its tool call), in plain words. Codes (`*_code`,
     `*_codes` args) and free text stay as stored; internal ids (`*_id`, `*_ids`) and plumbing
     args are left out; a registry spec key shows its label and value label."""
-    entries = _kind_records(records, "tool")
-    if not entries or not entries[-1].get("name"):
+    entry = trace_mod.named_tool_event(records)
+    if entry is None:
         return None
-    entry = entries[-1]
     details: list[str] = []
     args = entry.get("args") if isinstance(entry.get("args"), dict) else {}
     for key, value in args.items():
@@ -667,6 +670,33 @@ def _index_match(records: list[dict[str, Any]], db: Session | None = None) -> di
     }
 
 
+def _entity_match(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """TRACE-ENTITY-TOOL: what each typed word matched in the code lookup (the `resolve`
+    event `engine.py` writes after `turn_runtime.resolve_kinds`), on every lane that
+    resolves. None for a turn with no such event."""
+    events = _kind_records(records, "resolve")
+    if not events:
+        return None
+    event = events[-1]
+    words = [
+        {
+            "word": str(w.get("word") or ""),
+            "codes": [str(c) for c in w.get("codes") or []],
+            "more": int(w.get("more") or 0),
+            "tiers": [str(t) for t in w.get("tiers") or []],
+            "kinds": [str(k) for k in w.get("kinds") or []],
+            "ambiguous": bool(w.get("ambiguous")),
+        }
+        for w in event.get("words") or []
+        if isinstance(w, dict)
+    ]
+    return {
+        "words": words,
+        "unplaced": [str(u) for u in event.get("unplaced") or []],
+        "not_checked": [str(u) for u in event.get("not_checked") or []],
+    }
+
+
 def _span_extract(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     """ENTITY-EXTRACT-MATCH S2: the span pass of a turn (the phrases the model copied, the fallback), plus the row
     labels the parser was shown (the turn's `lookup_lists` hits, once each); None for a turn with no span event."""
@@ -698,9 +728,61 @@ def _span_extract(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+_ROUND_FIELDS = (
+    "kind_of_call", "model", "ms", "prompt_tokens", "completion_tokens", "cached_tokens", "reasoning_tokens",
+    "stop", "called", "tools_offered", "tool_schema_chars", "message_chars",
+)
+_TOOL_FIELDS = ("name", "args", "status", "ms", "rows", "result_chars", "more", "detail")
+_CONTEXT_FIELDS = (
+    "prompt_key", "prompt_version", "system_chars", "context_before", "context_before_chars", "context_after",
+    "context_after_chars", "history_messages", "history_summary", "history_chars", "file_text_chars", "images",
+    "tools", "tool_schema_chars",
+)
+
+
+def _agent(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """AGENT-PANEL-FIXES D: an agent turn's rounds, thinking, tool calls and the context it sent, from the
+    `agent_round` / `agent_reasoning` / `agent_tool` / `agent_context` records `agent/loop.py` writes. None for a
+    turn the agent did not run (the bot pipeline's stages are the whole story there)."""
+    rounds = _kind_records(records, "agent_round")
+    tools = _kind_records(records, "agent_tool")
+    context = _kind_records(records, "agent_context")
+    if not (rounds or tools or context or _kind_records(records, "agent_provider_failed")):
+        return None
+
+    def pick(record: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+        return {f: record.get(f) for f in fields}
+
+    shown_rounds = [{"n": i + 1, **pick(r, _ROUND_FIELDS)} for i, r in enumerate(rounds)]
+
+    def total(field: str) -> int:
+        return sum(int(r.get(field) or 0) for r in rounds)
+
+    plans = _kind_records(records, "agent_plan")
+    return {
+        "rounds": shown_rounds,
+        "reasoning": [
+            {"round": r.get("round"), "kind_of_call": r.get("kind_of_call"), "text": r.get("text") or ""}
+            for r in _kind_records(records, "agent_reasoning")
+        ],
+        "tools": [pick(t, _TOOL_FIELDS) for t in tools],
+        "plan": (plans[-1].get("parts") or []) if plans else [],
+        "context": pick(context[-1], _CONTEXT_FIELDS) if context else None,
+        "failures": [{"error_class": f.get("error_class")} for f in _kind_records(records, "agent_provider_failed")],
+        "totals": {
+            "calls": len(rounds),
+            "ms": total("ms"),
+            "prompt_tokens": total("prompt_tokens"),
+            "completion_tokens": total("completion_tokens"),
+            "cached_tokens": total("cached_tokens"),
+        },
+    }
+
+
 def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any]:
     records = _records(row)
     return {
+        "agent": _agent(records),
         "stages": _stages(records),
         "parse": _parse(records),
         "decay": _decay(records),
@@ -717,5 +799,6 @@ def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[st
         "order": _order(row, db),
         "prompt_text": _prompt_text(records),
         "index_match": _index_match(records, db),
+        "entity_match": _entity_match(records),
         "span_extract": _span_extract(records),
     }

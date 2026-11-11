@@ -117,7 +117,8 @@ _LEGACY_SOURCE = {
     "terms": "terms",
     "payment_terms": "payment_terms",
     "validity": "validity",
-    "prepared_by": "salesperson_name",
+    # Prepared By is the document's creator, not the salesperson (owner ruling 11 Nov 2026).
+    "prepared_by": "prepared_by_name",
 }
 
 
@@ -374,7 +375,7 @@ def issue_values(
 
     Terms, payment terms and validity come off the issue (frozen at issue); the rest is live.
     """
-    from app.services.project_quotation_template_service import salesperson_of
+    from app.services.project_quotation_template_service import prepared_by_of
 
     if project is None and document.project_id:
         project = db.query(Project).filter(Project.id == document.project_id).first()
@@ -394,7 +395,7 @@ def issue_values(
         "terms": clean_terms_html(issue.terms_rendered),
         "payment_terms": clean(issue.payment_terms),
         "validity": clean(issue.validity),
-        "prepared_by": clean(salesperson_of(db, project, document)),
+        "prepared_by": clean(prepared_by_of(db, document)),
     }
 
 
@@ -490,7 +491,10 @@ def source_values(
     def clean(value: Any) -> str:
         return str(value).strip() if value is not None else ""
 
+    from app.services.project_quotation_template_service import prepared_by_user
+
     person = _salesperson(db, project, document)
+    preparer = prepared_by_user(db, document)
     title = clean(getattr(document, "subject_title", None)) or clean(
         getattr(project, "title", None) if project is not None else None
     )
@@ -508,14 +512,40 @@ def source_values(
         "salesperson_name": clean(person.name if person is not None else None),
         "salesperson_email": clean(person.email if person is not None else None),
         "salesperson_mobile": clean(person.contact_number if person is not None else None),
-        "prepared_by_name": clean(getattr(document, "signatory_name", None)),
-        "prepared_by_phone": clean(getattr(document, "signatory_phone", None)),
+        # The document's creator, never the owner or the typed signatory (owner ruling 11 Nov).
+        "prepared_by_name": clean(preparer.name if preparer is not None else None),
+        "prepared_by_phone": clean(preparer.contact_number if preparer is not None else None),
+        "prepared_by_email": clean(preparer.email if preparer is not None else None),
         "terms": clean_terms_html(issue.terms_rendered),
         "payment_terms": clean(issue.payment_terms),
         "validity": clean(issue.validity),
     }
     values.update(_company_values(db, getattr(document, "company_id", None)))
     return values
+
+
+#: A salesperson field a design saved before the 11 Nov ruling uses for Prepared By -> the
+#: creator field it prints instead.
+_PREPARED_BY_INSTEAD = {
+    "salesperson_name": "prepared_by_name",
+    "salesperson_mobile": "prepared_by_phone",
+    # Not offered in the picker: it exists so a saved "Prepared by" block is one person.
+    "salesperson_email": "prepared_by_email",
+}
+
+
+def _says_prepared_by(text: Any) -> bool:
+    return "prepared by" in " ".join(str(text or "").lower().replace(":", " ").replace(",", " ").split())
+
+
+def _printed_source(source: str, row_label: Any, section_label: Any) -> str:
+    """The field a row prints. Prepared By is the document's creator (owner ruling 11 Nov 2026,
+    compliance), so a salesperson row a saved design labels "Prepared By", or keeps in a
+    "Prepared by" section, prints the creator; the design itself is not rewritten. A row labelled
+    anything else (e.g. "Sales") is the salesperson and keeps the owner."""
+    if source in _PREPARED_BY_INSTEAD and (_says_prepared_by(row_label) or _says_prepared_by(section_label)):
+        return _PREPARED_BY_INSTEAD[source]
+    return source
 
 
 def sections_for_design(
@@ -529,7 +559,7 @@ def sections_for_design(
         columns = int(section.get("columns") or 1)
         cells: List[List[Dict[str, Any]]] = [[] for _ in range(columns)]
         for item in section.get("rows") or []:
-            source = item["source"]
+            source = _printed_source(item["source"], item.get("label"), section.get("label"))
             value = values.get(source) or ""
             if not item.get("shown", True) or not value:
                 continue
@@ -638,6 +668,7 @@ SAMPLE_VALUES: Dict[str, str] = {
     "salesperson_mobile": "012-000 0000",
     "prepared_by_name": "Prepared Person D",
     "prepared_by_phone": "012-000 0001",
+    "prepared_by_email": "prepared.d@example.com",
     "terms": "<p>1. Prices are in Ringgit Malaysia.</p><p>2. Delivery within 6 weeks of order.</p>",
     "payment_terms": "30 days from invoice date",
     "validity": "30 days from quotation date",

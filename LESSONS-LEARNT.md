@@ -98,14 +98,6 @@ These were split out of `CLAUDE.md` in the first extraction. As binding as the r
 - **Pushing to a branch after its PR has merged orphans the commit with no warning from any tool.** `gh pr view <n> --json state,mergedAt` before pushing follow-on work to an existing PR branch; if merged, cut a fresh branch from `origin/main` and cherry-pick, and verify with `git merge-base --is-ancestor <sha> origin/main` rather than trusting the push output.
 - **A fixed `grid-cols-N` tab list collapses variable-length labels instead of overflowing visibly**, so it looks fine in every desktop screenshot until one more tab tips it over. Wrap by breakpoint (`grid-cols-2 sm:grid-cols-3 lg:grid-cols-5` + `h-auto`) and measure the tablist's `scrollWidth` vs `clientWidth` at 375px rather than eyeballing it.
 
-## Retired
-
-Kept for the record. Do NOT follow these - each is superseded by an entry above or a rule now
-governed by `PRINCIPLES.md`/`CLAUDE.md`.
-
-- **Playwright MCP can disconnect mid-session** - superseded by agent-browser verification (`CLAUDE.md` "Browser verification"); Playwright MCP is retired for verification, so its disconnect behaviour no longer applies.
-- **sqlite pytest fixtures** - superseded by "Tests run on Postgres ONLY, NEVER sqlite" (`PRINCIPLES.md`); the sqlite-fixture workaround this described is now a banned approach, not a recipe.
-
 ## 89. A bootstrap assertion that names a rule dies the day the rule is retired (27 Aug 2026)
 
 `scripts/bootstrap_env.py._fix_committed_v` asserted a hard-coded marker string as proof the newest `scm.committed_v` body had landed; migration 424 retired that leg on purpose, so every branch carrying 424 aborted CI in bootstrap before a single test ran, reading as test failures. Now asserts the current marker, but it is still a hard-coded substring - the same trap fires again next time the view is redefined. Prefer asserting on something the source-of-truth module exports.
@@ -251,3 +243,11 @@ SO398322, 4 Nov 09:28 MYT: an AutoCount user re-saved the SO and line Seq 2552 (
 ## 124. The purchasing email has ONE trigger, the board Confirm; a sync or ingest path that queues a handover must email nobody (6 Nov 2026)
 
 SO398322 (4 Nov): an AutoCount re-save re-keyed an SO line, the SO ingest read it as a removal, retired the order inquiry row and queued the purchasing handover, so purchasing got a false CANCEL by email. Every path that wrote an OI row could queue `order_inquiry_handover` / `order_inquiry_changed_with_links`, and per-path `notify` flags were the only brake. Owner rule: "I only want the email to purchasing to have 1 trigger, which is this button" (the board Confirm; Publish amendment is his named exception). Fix (PR #2220): `mark_purchasing_email_trigger` marks the ROOT transaction of a press that may email purchasing; `_fire_pending_handover` drops (and logs) whatever any other write queued, and `_dispatch_changed_with_links` queues only inside a marked transaction. Guards: `tests/test_lessons_learnt_regressions.py` (only those two callers mark; the guards below still exist), `tests/test_purchasing_email_tripwire_so_po.py` + `_docs.py` (every SO/PO/Cancel SO/DO/GRN ingest with the automations ON emails nobody, each with a positive control), `tests/scm/test_purchasing_email_one_trigger.py::test_structural_*`. Rule: a new path that should tell purchasing does it by putting the change on the board for CS to Confirm, never by marking itself a trigger.
+
+## Retired
+
+Kept for the record. Do NOT follow these - each is superseded by an entry above or a rule now
+governed by `PRINCIPLES.md`/`CLAUDE.md`.
+
+- **Playwright MCP can disconnect mid-session** - superseded by agent-browser verification (`CLAUDE.md` "Browser verification"); Playwright MCP is retired for verification, so its disconnect behaviour no longer applies.
+- **sqlite pytest fixtures** - superseded by "Tests run on Postgres ONLY, NEVER sqlite" (`PRINCIPLES.md`); the sqlite-fixture workaround this described is now a banned approach, not a recipe.
