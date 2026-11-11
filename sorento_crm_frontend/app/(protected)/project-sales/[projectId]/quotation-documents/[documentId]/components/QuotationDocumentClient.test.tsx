@@ -1241,7 +1241,71 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
     expect(within(card).getAllByText('Issued by')).toHaveLength(1);
   });
 
-  it('groups them by scope when the scopes were opened by different people', async () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026: "don't need to be by unit here"): one pair for the
+  // document, the most recently opened ISSUED area version's, never one group per area.
+  it('shows one Issued by and Opened for the document, not one per area', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        scopes: [
+          scope(),
+          scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+          scope({ id: 'q3', scope_label: 'Level 9', current_version_id: 'v10' }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation(),
+      quotation({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+      quotation({ id: 'q3', scope_label: 'Level 9', current_version_id: 'v10' }),
+    ]);
+    listQuotationVersions.mockImplementation((quotationId: string) =>
+      Promise.resolve(
+        quotationId === 'q2'
+          ? [
+              version({
+                id: 'v9',
+                quotation_id: 'q2',
+                version_no: 1,
+                is_issued: true,
+                issued_by_name: 'Kelly Tan',
+                created_at: '2026-11-03T02:00:00',
+              }),
+            ]
+          : quotationId === 'q3'
+            ? [
+                // Opened most recently, but never issued: an issued version wins over it.
+                version({
+                  id: 'v10',
+                  quotation_id: 'q3',
+                  version_no: 1,
+                  is_issued: false,
+                  issued_by_name: 'Siti Aminah',
+                  created_at: '2026-11-09T02:00:00',
+                }),
+              ]
+            : [
+                version({
+                  is_issued: true,
+                  issued_by_name: 'Baser Ramli',
+                  created_at: '2026-11-01T02:00:00',
+                }),
+              ],
+      ),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+    expect(within(card).getAllByText('Opened')).toHaveLength(1);
+    expect(card).not.toHaveTextContent('Baser Ramli');
+    expect(card).not.toHaveTextContent('Siti Aminah');
+    expect(within(card).queryByRole('group')).toBeNull();
+    expect(card).not.toHaveTextContent('Guard House v1');
+    expect(card).not.toHaveTextContent('Townhouse v2');
+  });
+
+  it('falls back to the most recently opened area when none is issued', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         scopes: [scope(), scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' })],
@@ -1254,18 +1318,24 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
     listQuotationVersions.mockImplementation((quotationId: string) =>
       Promise.resolve(
         quotationId === 'q2'
-          ? [version({ id: 'v9', quotation_id: 'q2', version_no: 1, issued_by_name: 'Kelly Tan' })]
-          : [version({ issued_by_name: 'Baser Ramli' })],
+          ? [
+              version({
+                id: 'v9',
+                quotation_id: 'q2',
+                version_no: 1,
+                issued_by_name: 'Kelly Tan',
+                created_at: '2026-11-05T02:00:00',
+              }),
+            ]
+          : [version({ issued_by_name: 'Baser Ramli', created_at: '2026-11-01T02:00:00' })],
       ),
     );
     renderScreen(<QuotationHeaderTab />);
 
     const card = await screen.findByTestId('quotation-header-card');
     await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
-    const townhouse = within(card).getByRole('group', { name: 'Townhouse v2' });
-    const guard = within(card).getByRole('group', { name: 'Guard House v1' });
-    expect(townhouse).toHaveTextContent('Baser Ramli');
-    expect(guard).toHaveTextContent('Kelly Tan');
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+    expect(card).not.toHaveTextContent('Baser Ramli');
   });
 
   it('leaves no Issued by / Opened strip above the lines table', async () => {
@@ -1285,23 +1355,71 @@ describe('QuotationDocumentClient header dedupe (#1336 kept, AC-QF054)', () => {
   // Superseded by PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026: "it should be like order
   // inquiry"): the record card leads with the number, as Order Inquiry does, and the title is
   // its subtitle line.
-  it('leads the record card with the document number, the title under it', async () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the record card names the project by its short
+  // name (PROJECT-NAME, `projects.name`); the full title moves into the Header section.
+  it('leads the record card with the document number, the project name under it', async () => {
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
     getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
     renderScreen(<QuotationHeaderTab />);
 
     expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
     const card = screen.getByTestId('record-header-card');
     expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
-    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    expect(within(card).getByText('Menara Ujian')).toBeInTheDocument();
+    expect(within(card).queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
     expect(within(card).getByText('Draft')).toBeInTheDocument();
   });
 
-  it('says the project title once, in the record header, not again in the Header tab card', async () => {
+  it('falls back to the project title in the record card when the project has no name', async () => {
+    getProject.mockResolvedValue(project({ name: null }));
     getQuotationDocument.mockResolvedValue(quotationDocument());
     renderScreen(<QuotationHeaderTab />);
 
-    expect(await screen.findByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    const card = await screen.findByTestId('record-header-card');
+    expect(within(card).getByText('Menara Test')).toBeInTheDocument();
+  });
+
+  it('shows the full project title as a Project row in the Header section', async () => {
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    const header = await screen.findByTestId('quotation-header-card');
+    expect(within(header).getByText('Project')).toBeInTheDocument();
+    expect(within(header).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
     expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
+  });
+});
+
+// QUOTE-HEADER-TIDY (owner, 11 Nov 2026: "even in view the header and line should be
+// collapsible"): the same fold the edit form uses, open on arrival.
+describe('QuotationDocumentClient view folds (QUOTE-HEADER-TIDY)', () => {
+  it('folds and unfolds the Header and the Lines in view mode', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.getByTestId('quotation-header-card')).toBeInTheDocument();
+
+    const headerToggle = screen.getByRole('button', { name: /^Header/ });
+    const linesToggle = screen.getByRole('button', { name: /^Lines/ });
+    expect(headerToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(linesToggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(headerToggle);
+    await waitFor(() => expect(screen.queryByTestId('quotation-header-card')).toBeNull());
+    // Folded, the one-line summary stands in: To, title, date, total.
+    expect(headerToggle).toHaveTextContent('Nadi Cergas Sdn Bhd');
+    expect(headerToggle).toHaveTextContent('RM');
+
+    fireEvent.click(linesToggle);
+    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).toBeNull());
+    expect(linesToggle).toHaveTextContent('1 scope');
+
+    fireEvent.click(headerToggle);
+    fireEvent.click(linesToggle);
+    expect(await screen.findByTestId('quotation-header-card')).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
   });
 });
 
