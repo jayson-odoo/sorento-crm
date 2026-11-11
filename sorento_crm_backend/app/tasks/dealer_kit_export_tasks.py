@@ -63,6 +63,7 @@ def _print_url(download_id: str) -> str:
 def _tag_sheet_print_url(
     download_id: str,
     sheet_ids: list[str] | None = None,
+    layout: bool = False,
 ) -> str:
     """Build the print URL for a tag sheet page."""
     base = _print_base()
@@ -71,6 +72,9 @@ def _tag_sheet_print_url(
     if sheet_ids:
         for sid in sheet_ids:
             url += f"&sheet={sid}"
+    if layout:
+        # B5: only the PowerPoint reader asks the page to publish its layout.
+        url += "&layout=1"
     return url
 
 
@@ -127,7 +131,7 @@ def _render_pdf(
             return handle.read()
 
 
-def _render_layout(url: str, size_mm: Optional[tuple[float, float]] = None) -> dict:
+def _render_layout(url: str) -> dict:
     """The print page's resolved layers (``window.__tagSheetLayout``), read in a spawned browser
     process for the same reason ``_render_pdf`` is. Pictures come back as data URLs."""
     import json
@@ -382,7 +386,7 @@ def generate_spec_sheet_pptx(download_id: str) -> dict:
             logger.warning("spec sheet %s: image cap skipped", download_id, exc_info=True)
         db.close()
 
-        layout = _render_layout(_tag_sheet_print_url(download_id), size_mm)
+        layout = _render_layout(_tag_sheet_print_url(download_id, layout=True))
         page_mm = layout.get("page_mm") or list(size_mm)
         deck = build_pptx(layout.get("pages") or [], page_mm)
         filename = (download.filename or f"spec-sheet-{download_id}.pptx").replace("/", "-")

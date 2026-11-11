@@ -88,7 +88,7 @@ def render(
 
 
 IMAGE_MAX_BYTES = 20 * 1024 * 1024
-IMAGES_TOTAL_MAX_BYTES = 200 * 1024 * 1024
+IMAGES_TOTAL_MAX_BYTES = 100 * 1024 * 1024
 
 
 def inline_images(
@@ -136,6 +136,21 @@ _LOADED_IMAGE_SRCS_JS = """
 """
 
 
+def fetch_image_with_cap(request, url: str, per_image_max: int = IMAGE_MAX_BYTES):
+    """``(content_type, body)`` through the browser context's request client, or None. The body is
+    not read when the response already declares itself over the cap."""
+    response = request.get(url, timeout=60_000)
+    if not response.ok:
+        return None
+    try:
+        declared = int(response.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > per_image_max:
+        return None
+    return response.headers.get("content-type"), response.body()
+
+
 def render_layout(url: str, out_path: str) -> int:
     import json
 
@@ -153,10 +168,7 @@ def render_layout(url: str, out_path: str) -> int:
             loaded = page.evaluate(_LOADED_IMAGE_SRCS_JS)
 
             def fetch(src: str):
-                response = page.context.request.get(src, timeout=60_000)
-                if not response.ok:
-                    return None
-                return response.headers.get("content-type"), response.body()
+                return fetch_image_with_cap(page.context.request, src)
 
             inlined = inline_images(loaded, fetch)
             for entry in layout.get("pages") or []:

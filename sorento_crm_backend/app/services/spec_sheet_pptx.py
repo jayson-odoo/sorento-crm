@@ -14,6 +14,7 @@ import base64
 import binascii
 import io
 import logging
+import math
 import re
 from typing import Any, Optional, Sequence
 
@@ -60,6 +61,20 @@ def _box(layer: dict) -> tuple[Emu, Emu, Emu, Emu]:
     return _mm(layer.get("x_mm")), _mm(layer.get("y_mm")), _mm(layer.get("width_mm")), _mm(layer.get("height_mm"))
 
 
+def _turn(shape, layer: dict) -> None:
+    """Rotate like CSS / Konva: about the box's top-left, not its centre (PowerPoint's pivot)."""
+    degrees = float(layer.get("rotation_deg") or 0)
+    if not degrees:
+        return
+    radians = math.radians(degrees)
+    half_w, half_h = int(shape.width) / 2, int(shape.height) / 2
+    # The centre after swinging (half_w, half_h) about the top-left corner.
+    cx = int(shape.left) + half_w * math.cos(radians) - half_h * math.sin(radians)
+    cy = int(shape.top) + half_w * math.sin(radians) + half_h * math.cos(radians)
+    shape.left, shape.top = Emu(int(round(cx - half_w))), Emu(int(round(cy - half_h)))
+    shape.rotation = degrees
+
+
 def _style_run(run, layer: dict) -> None:
     font = run.font
     if layer.get("fontFamily"):
@@ -86,8 +101,7 @@ def _add_text(slide, layer: dict) -> None:
         run = paragraph.add_run()
         run.text = line
         _style_run(run, layer)
-    if layer.get("rotation_deg"):
-        shape.rotation = float(layer["rotation_deg"])
+    _turn(shape, layer)
 
 
 def _decode_image(url: Any) -> Optional[bytes]:
@@ -128,8 +142,7 @@ def _add_image(slide, layer: dict) -> None:
             else:
                 keep = ratio / box_ratio
                 picture.crop_top = picture.crop_bottom = (1 - keep) / 2
-    if layer.get("rotation_deg"):
-        picture.rotation = float(layer["rotation_deg"])
+    _turn(picture, layer)
 
 
 def _add_shape(slide, layer: dict) -> None:
@@ -159,8 +172,7 @@ def _add_shape(slide, layer: dict) -> None:
         shape.line.width = _mm(width_mm)
     elif kind != "line":
         shape.line.fill.background()
-    if layer.get("rotation_deg"):
-        shape.rotation = float(layer["rotation_deg"])
+    _turn(shape, layer)
 
 
 def _set_border(tc_pr, side: str, color: RGBColor, width_mm: float) -> None:

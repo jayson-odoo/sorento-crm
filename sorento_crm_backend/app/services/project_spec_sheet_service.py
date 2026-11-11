@@ -87,6 +87,7 @@ COMMENT_MAX = 500
 DESCRIPTION_MAX = 20000
 #: Accessory overrides one page row may keep.
 ACCESSORY_DESCRIPTIONS_MAX = 200
+ACCESSORY_KEY_MAX = 120
 MARKER_MAX = 10
 
 #: One preview call serves one window of the reader; more than this is a client bug.
@@ -102,8 +103,6 @@ LAYER_TYPES = frozenset(
     {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group", "table"}
 )
 LAYER_DEPTH_MAX = 8
-#: A table layer's rows / columns: a page edit cannot carry a huge grid.
-TABLE_LINES_MAX = 50
 LAYER_STRING_MAX = 5000
 
 #: A template page outside this range (or not a finite number) is refused before Chromium sees
@@ -128,7 +127,7 @@ def _accessory_descriptions(raw: Any) -> Dict[str, str]:
     out: Dict[str, str] = {}
     for key, value in raw.items():
         text = _text(value, DESCRIPTION_MAX)
-        if key and text:
+        if key and len(str(key)) <= ACCESSORY_KEY_MAX and text:
             out[str(key)] = text
         if len(out) >= ACCESSORY_DESCRIPTIONS_MAX:
             break
@@ -1528,6 +1527,18 @@ def update_sheet(
         if any(not k for k in keys) or len(set(keys)) != len(keys):
             raise _invalid_rows("Each item can appear once on the spec sheet.")
         stored = [_row(r) for r in sheet.rows or [] if isinstance(r, dict)]
+        by_key = {r["key"]: r for r in stored}
+        # A row that does not name an override keeps the stored one (the reader sends the page
+        # fields it shows; an empty string is the explicit reset).
+        sent = [r for r in payload.get("rows") or [] if isinstance(r, dict)]
+        for row, raw in zip(rows, sent):
+            old = by_key.get(row["key"])
+            if old is None:
+                continue
+            if "description" not in raw and old.get("description"):
+                row["description"] = old["description"]
+            if "accessory_descriptions" not in raw and old.get("accessory_descriptions"):
+                row["accessory_descriptions"] = old["accessory_descriptions"]
         rows += [r for r in stored if r["key"] not in set(keys)]
         _check_rows(rows)
         sheet.rows = rows
@@ -1634,13 +1645,11 @@ def _check_layer(layer: Any) -> None:
         if not isinstance(props, dict):
             raise _invalid_layer("A layer's properties are malformed.")
         if layer.get("type") == "table":
-            cells = props.get("cells")
-            if (
-                not isinstance(cells, list)
-                or len(cells) > TABLE_LINES_MAX
-                or any(not isinstance(r, list) or len(r) > TABLE_LINES_MAX for r in cells)
-            ):
-                raise _invalid_layer("A table is too large or malformed.")
+            from app.utils.table_layer_check import table_props_problem
+
+            problem = table_props_problem(props)
+            if problem:
+                raise _invalid_layer(problem)
         source = props.get("source")
         if source is not None and not isinstance(source, (dict, str)):
             raise _invalid_layer("A layer's artwork source is malformed.")

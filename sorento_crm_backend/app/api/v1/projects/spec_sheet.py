@@ -9,7 +9,7 @@ Plan: ``documentation/plans/project-sales/PLAN-spec-sheet-v2-03nov.md``.
 """
 from __future__ import annotations
 
-from typing import Annotated, List, Optional
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -40,6 +40,11 @@ class SpecSheetRowIn(BaseModel):
     accessories: List[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
         default_factory=list, max_length=20
     )
+    # B1: per-sheet "Spec sheet description" overrides; left out = the stored ones are kept.
+    description: Optional[str] = Field(None, max_length=spec.DESCRIPTION_MAX)
+    accessory_descriptions: Optional[
+        Dict[Annotated[str, Field(max_length=120)], Annotated[str, Field(max_length=spec.DESCRIPTION_MAX)]]
+    ] = Field(None, max_length=spec.ACCESSORY_DESCRIPTIONS_MAX)
 
 
 class SpecSheetCreateIn(BaseModel):

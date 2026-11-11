@@ -944,6 +944,17 @@ class TagTemplateCreate(BaseModel):
     #: Hand-picked LP / SP / LP & SP; None = unset (offered on both kinds of line).
     price_type: Optional[Literal["list", "selling", "both"]] = None
 
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: a table layer is bounded and uses plain colours, wherever a template doc is saved."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        problem = doc_table_problem(doc)
+        if problem:
+            raise ValueError(problem)
+        return doc
+
 
 #: A template setting that is trimmed and must not be blank (item 4).
 _SettingText255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -958,6 +969,17 @@ class TagTemplateUpdate(BaseModel):
     print_size: Optional[dict] = None
     #: Omitted = left alone; an explicit null clears it (`exclude_unset`).
     price_type: Optional[Literal["list", "selling", "both"]] = None
+
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: a table layer is bounded and uses plain colours, wherever a template doc is saved."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        problem = doc_table_problem(doc)
+        if problem:
+            raise ValueError(problem)
+        return doc
 
 
 class TemplateNeeds(BaseModel):
@@ -1046,6 +1068,17 @@ class TagTemplateFromTagCreate(BaseModel):
     family: str = Field(..., min_length=1, max_length=50)
     doc: dict = Field(default_factory=dict)
     print_size: dict = Field(default_factory=dict)
+
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: a table layer is bounded and uses plain colours, wherever a template doc is saved."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        problem = doc_table_problem(doc)
+        if problem:
+            raise ValueError(problem)
+        return doc
 
 
 # ---------------------------------------------------------------------------
