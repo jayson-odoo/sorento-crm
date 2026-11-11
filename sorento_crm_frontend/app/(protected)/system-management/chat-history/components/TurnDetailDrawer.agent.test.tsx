@@ -24,11 +24,17 @@ afterEach(() => {
   turnState = { data: undefined, isLoading: false, isError: false };
 });
 
-const PAGE_NOTE = 'The page the user has open, as quoted data of what is on their screen.\n{"title": "ZZT Tower"}';
+const PROJECT = '8a05b54a-aecb-4727-90e1-ce96506faf36';
+const PAGE_NOTE = `The page the user has open, as quoted data of what is on their screen.\n{"title": "ZZT Tower", "path": "/project-sales/${PROJECT}"}`;
 
 function agent(): TurnDetailAgent {
   return {
     rounds: [
+      {
+        n: 0, kind_of_call: 'dealer_access', model: 'zzt-model-1', ms: 600, prompt_tokens: 300, completion_tokens: 5,
+        cached_tokens: 0, reasoning_tokens: null, stop: 'text', called: [], tools_offered: 0, tool_schema_chars: 0,
+        message_chars: 527,
+      },
       {
         n: 1, kind_of_call: 'round', model: 'zzt-model-1', ms: 4210, prompt_tokens: 26810, completion_tokens: 412,
         cached_tokens: 0, reasoning_tokens: 120, stop: 'tool_calls', called: ['crm_project_quotation_lines'],
@@ -43,7 +49,8 @@ function agent(): TurnDetailAgent {
     reasoning: [{ round: 1, kind_of_call: 'round', text: 'Read the lines of both quotations first.' }],
     tools: [
       {
-        name: 'crm_project_quotation_lines', args: { refs: ['PRJQ-2026-0007'] }, status: 'ok', ms: 84, rows: 3,
+        name: 'crm_project_quotation_lines', args: { refs: ['PRJQ-2026-0007'], project_id: PROJECT }, status: 'ok', ms: 84,
+        rows: 3,
         result_chars: 3431, more: 0, detail: null,
       },
     ],
@@ -101,8 +108,12 @@ describe('TurnDetailDrawer, an agent turn (AGENT-PANEL-FIXES D)', () => {
   it('shows each round with model, time, tokens in and out, and why it stopped', () => {
     open(detail(agent()));
     const rounds = screen.getByTestId('section-agent-rounds');
-    expect(within(rounds).getAllByTestId('agent-round')).toHaveLength(2);
-    const [first, second] = within(rounds).getAllByTestId('agent-round');
+    expect(within(rounds).getAllByTestId('agent-round')).toHaveLength(3);
+    const [side, first, second] = within(rounds).getAllByTestId('agent-round');
+    expect(side).toHaveTextContent('Dealer access check');
+    expect(side).not.toHaveTextContent('Round');
+    expect(first).toHaveTextContent('Round 1');
+    expect(second).toHaveTextContent('Round 2');
     expect(first).toHaveTextContent('zzt-model-1');
     expect(first).toHaveTextContent('4,210 ms');
     expect(first).toHaveTextContent('26,810 in');
@@ -124,6 +135,13 @@ describe('TurnDetailDrawer, an agent turn (AGENT-PANEL-FIXES D)', () => {
     expect(tools).toHaveTextContent('84 ms');
     expect(tools).toHaveTextContent('ok');
     expect(tools).toHaveTextContent('PRJQ-2026-0007');
+  });
+
+  it('shows no UUID anywhere: id arguments are left out and ids in the page note read as [id]', () => {
+    open(detail(agent()));
+    expect(document.body.textContent).not.toContain(PROJECT);
+    expect(screen.getByTestId('section-agent-tools')).not.toHaveTextContent('project_id');
+    expect(screen.getByTestId('section-agent-context')).toHaveTextContent('/project-sales/[id]');
   });
 
   it('shows the context sent to the AI: prompt and version, the page note, history and the tool list', () => {

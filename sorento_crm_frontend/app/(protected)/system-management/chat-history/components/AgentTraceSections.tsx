@@ -15,6 +15,33 @@ import type {
 
 const num = (value: number | null | undefined) => (value ?? 0).toLocaleString('en-US');
 
+const plural = (count: number | null | undefined, one: string, many: string) =>
+  `${num(count)} ${count === 1 ? one : many}`;
+
+// No UUIDs in the UI (repo rule): an id inside a note or an argument reads as [id].
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const maskIds = (text: string) => text.replace(UUID, '[id]');
+
+/** The side calls a turn can make besides its rounds (`loop.py` `chat(kind=...)`). */
+const CALL_WORDS: Record<string, string> = {
+  dealer_access: 'Dealer access check',
+  compaction: 'History summary',
+  final: 'Final answer',
+};
+
+/** "Round N" counts the turn's rounds only; a side call is named for what it did. */
+function callLabels(rounds: TurnDetailAgentRound[]): string[] {
+  let n = 0;
+  return rounds.map((round) => {
+    const kind = round.kind_of_call ?? 'round';
+    if (kind === 'round') {
+      n += 1;
+      return `Round ${n}`;
+    }
+    return CALL_WORDS[kind] ?? kind.replace(/_/g, ' ');
+  });
+}
+
 const STOP_WORDS: Record<string, string> = { answer: 'Answered', text: 'Replied in text' };
 
 function stopText(round: TurnDetailAgentRound): string {
@@ -32,6 +59,7 @@ function Muted({ children }: { children: React.ReactNode }) {
 export function AgentRoundsSection({ agent }: { agent: TurnDetailAgent }) {
   if (agent.rounds.length === 0 && agent.failures.length === 0) return <Muted>No model call finished.</Muted>;
   const { totals } = agent;
+  const labels = callLabels(agent.rounds);
   return (
     <div className="space-y-2 text-xs">
       <p className="text-muted-foreground tabular-nums">
@@ -39,13 +67,10 @@ export function AgentRoundsSection({ agent }: { agent: TurnDetailAgent }) {
         {num(totals.completion_tokens)} out{totals.cached_tokens ? `, ${num(totals.cached_tokens)} cached` : ''}
       </p>
       <ol className="space-y-1.5">
-        {agent.rounds.map((round) => (
+        {agent.rounds.map((round, i) => (
           <li key={round.n} data-testid="agent-round" className="rounded-md border px-2 py-1.5">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="font-medium">
-                {round.kind_of_call && round.kind_of_call !== 'round' ? `${round.kind_of_call} ` : 'Round '}
-                {round.n}
-              </span>
+              <span className="font-medium">{labels[i]}</span>
               <span className="min-w-0 truncate text-muted-foreground" title={round.model ?? ''}>
                 {round.model ?? '-'}
               </span>
@@ -57,10 +82,10 @@ export function AgentRoundsSection({ agent }: { agent: TurnDetailAgent }) {
               ) : null}
             </div>
             <div className="mt-0.5 flex flex-wrap gap-x-2 text-muted-foreground">
-              {stopText(round) ? <span>{stopText(round)}</span> : null}
-              {round.tools_offered != null ? (
+              {(round.kind_of_call ?? 'round') === 'round' && stopText(round) ? <span>{stopText(round)}</span> : null}
+              {round.tools_offered ? (
                 <span className="tabular-nums">
-                  {round.tools_offered} tools offered ({num(round.tool_schema_chars)} chars)
+                  {plural(round.tools_offered, 'tool', 'tools')} offered ({num(round.tool_schema_chars)} chars)
                 </span>
               ) : null}
               {round.message_chars != null ? (
@@ -106,10 +131,12 @@ export function AgentThinkingSection({ agent }: { agent: TurnDetailAgent }) {
   );
 }
 
+/** The call's arguments in one line; internal ids (`*_id`, `*_ids`) are left out, as the bot's "Looked up" does. */
 function argsText(args: TurnDetailAgentTool['args']): string {
-  if (!args || Object.keys(args).length === 0) return '';
+  if (!args) return '';
   return Object.entries(args)
-    .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .filter(([key]) => !/_ids?$/.test(key))
+    .map(([key, value]) => maskIds(`${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`))
     .join(', ');
 }
 
@@ -130,7 +157,7 @@ export function AgentToolsSection({ agent }: { agent: TurnDetailAgent }) {
                 {tool.status ?? '-'}
               </Badge>
               <span className="tabular-nums">{num(tool.ms)} ms</span>
-              {tool.rows != null ? <span className="tabular-nums">{num(tool.rows)} rows</span> : null}
+              {tool.rows != null ? <span className="tabular-nums">{plural(tool.rows, 'row', 'rows')}</span> : null}
               <span className="tabular-nums text-muted-foreground">{num(tool.result_chars)} chars</span>
               {tool.more ? <span className="text-muted-foreground">{num(tool.more)} not shown</span> : null}
             </div>
@@ -155,7 +182,7 @@ function Note({ label, text, chars }: { label: string; text: string | null; char
         {label} ({num(chars)} chars{cut ? ', first part shown' : ''})
       </div>
       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 text-2xs">
-        {text}
+        {maskIds(text)}
       </pre>
     </div>
   );
@@ -174,12 +201,13 @@ export function AgentContextSection({ context }: { context: TurnDetailAgentConte
         </dd>
         <dt className="text-muted-foreground">History</dt>
         <dd>
-          {context.history_messages ?? 0} messages{context.history_summary ? ' and a summary' : ''} (
+          {plural(context.history_messages, 'message', 'messages')}
+          {context.history_summary ? ' and a summary' : ''} (
           {num(context.history_chars)} chars)
         </dd>
         <dt className="text-muted-foreground">Tools</dt>
         <dd className="min-w-0 break-words" title={tools.join(', ')}>
-          {tools.length} tools ({num(context.tool_schema_chars)} chars): {tools.join(', ')}
+          {plural(tools.length, 'tool', 'tools')} ({num(context.tool_schema_chars)} chars): {tools.join(', ')}
         </dd>
         {context.file_text_chars ? (
           <>
