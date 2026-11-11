@@ -316,7 +316,8 @@ export function QuotationAttnChooser({
   }, [shouldAuto]);
   if (!partyId || locked) return null;
 
-  async function apply(ids: string[]) {
+  /** `keep`: Attn text that names no contact (typed, or a contact renamed since), kept after. */
+  async function apply(ids: string[], keep: string[] = []) {
     // A contact added inside the popup may not be in the cached list yet: read it fresh then.
     let list = contacts.data ?? [];
     if (ids.some((id) => !list.some((c) => c.id === id))) {
@@ -328,7 +329,7 @@ export function QuotationAttnChooser({
     const first = rows[0];
     onChange({
       attn_contact_ids: ids,
-      attn_name: rows.map((c) => c.name).join(' & ') || null,
+      attn_name: [...rows.map((c) => c.name), ...keep].join(' & ') || null,
       // A contact without one keeps the party's own, which the pick loaded into the block.
       recipient_phone_snapshot:
         formatPhone(first?.phone || partyPhone || partyFallback.current.phone) || null,
@@ -336,6 +337,33 @@ export function QuotationAttnChooser({
         first?.email || partyEmail || partyFallback.current.email || null,
     });
   }
+
+  /**
+   * What the Attn already says, read when the popup opens: the contacts it names (ticked) and any
+   * text that names no contact (kept on Done). A saved document keeps only the Attn text ("A & B"),
+   * not the ids, so the text is matched to the party's contacts, each contact at most once; ids
+   * picked earlier in this session are used only while the text still reads exactly their names.
+   * Without this an edit opened with nothing ticked and Done blanked Attn (crew pass, 11 Nov).
+   */
+  function readAttn(): { ids: string[]; unmatched: string[] } {
+    const rows = (contacts.data ?? []).filter((c) => c.is_active !== false);
+    const fold = (text: string) => text.trim().toLowerCase();
+    const text = value.attn_name ?? '';
+    const picked = value.attn_contact_ids ?? [];
+    if (picked.length > 0) {
+      const names = picked.map((id) => rows.find((c) => c.id === id)?.name ?? '');
+      if (fold(names.join(' & ')) === fold(text)) return { ids: picked, unmatched: [] };
+    }
+    const ids: string[] = [];
+    const unmatched: string[] = [];
+    for (const part of text.split('&').map((t) => t.trim()).filter(Boolean)) {
+      const hit = rows.find((c) => fold(c.name) === fold(part) && !ids.includes(c.id));
+      if (hit) ids.push(hit.id);
+      else unmatched.push(part);
+    }
+    return { ids, unmatched };
+  }
+  const attn = open && !contacts.isLoading ? readAttn() : { ids: [], unmatched: [] };
 
   return (
     <>
@@ -348,13 +376,19 @@ export function QuotationAttnChooser({
       >
         Choose contacts
       </Button>
-      {open && (
+      {/* Mounted once the contacts have answered: the popup takes its ticks when it opens. */}
+      {open && !contacts.isLoading && (
         <PartyContactsDialog
           title={(name) => `Attn at ${name}`}
           parties={[{ partyId, name: partyName }]}
-          picks={{ [partyId]: value.attn_contact_ids ?? [] }}
+          picks={{ [partyId]: attn.ids }}
           canEdit={canEdit}
-          onSave={(next) => void apply(next[partyId] ?? [])}
+          onSave={(next) => {
+            const ids = next[partyId] ?? [];
+            // Nothing changed: leave Attn exactly as it reads.
+            if (ids.length === attn.ids.length && ids.every((id, i) => id === attn.ids[i])) return;
+            void apply(ids, attn.unmatched);
+          }}
           onClose={() => setOpen(false)}
         />
       )}
