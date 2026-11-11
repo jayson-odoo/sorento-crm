@@ -115,3 +115,33 @@ def test_a_set_is_judged_against_its_series_set_row(api):
     assert judge("950.00")["is_discounted"] is True
     assert judge("950.00")["is_below_floor"] is False
     assert judge("1000.00")["is_discounted"] is False
+
+
+def test_banner_counts_below_default_per_line_so_it_equals_the_pill_count():
+    """AC-9: the banner's "priced below the default price" count is the lines the pill marks
+    (discounted AND not below the floor), counted per line. The old arithmetic, discounted minus
+    below floor, miscounted a line below the floor that is not discounted (a floor set above the
+    default price): 3 pills, banner "2 lines"."""
+    from app.services import project_quotation_approval_service as approval
+    from app.services import project_quotation_document_service as qdocs
+
+    from ._pg_fixture import blank_session
+    from .test_project_quotation_approval import _price, _setup
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        lines = [_price(db, scope, product, owner, "1.00") for _ in range(4)]
+        # Stored flags as the guardrails can leave them: three discounted above the floor, one
+        # below the floor without a discount.
+        for line in lines[:3]:
+            line.is_discounted, line.is_below_floor = True, False
+        lines[3].is_discounted, lines[3].is_below_floor = False, True
+        db.flush()
+
+        payload = qdocs.serialize_document(db, document)
+        assert payload["below_default_line_count"] == 3
+        assert payload["below_floor_line_count"] == 1
+        assert "3 lines are priced below the default price" in payload["approval_reasons"]
+        assert approval.reasons_text(approval.counts(db, document)).endswith(
+            "3 lines are priced below the default price"
+        )

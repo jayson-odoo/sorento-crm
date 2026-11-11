@@ -3267,6 +3267,73 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     expect(drafts()[0].unit_price).toBe('900.00');
   });
 
+  it('AC-4: a copy\'s new product that the series names opens at the series price', async () => {
+    const service = await import('../../_shared/services/projectService');
+    const priced = vi
+      .spyOn(service, 'getSeriesPricedRows')
+      .mockResolvedValue([
+        { product_id: 'p9', selling_price: '480.00' } as unknown as Awaited<
+          ReturnType<typeof service.getSeriesPricedRows>
+        >[number],
+      ]);
+    try {
+      listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+      renderEditor({}, true, false, 's1');
+      await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+      await waitFor(() => expect(priced).toHaveBeenCalledWith('s1'));
+      await chooseMenuItem('SRT-WC-01', 'Duplicate line');
+      fireEvent.click(screen.getAllByRole('combobox', { name: /^Product on / })[1]);
+      fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+      const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+      await waitFor(() => expect(drafts()[1]).toMatchObject({ product_id: 'p9', unit_price: '480.00' }));
+    } finally {
+      priced.mockRestore();
+    }
+  });
+
+  it('AC-1: Duplicate line is disabled on a line staged for removal', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    // A removed row has no inputs left, so it is found by its stable row key.
+    await chooseMenuItem('A-1', 'Remove line');
+    const removed = document.querySelector('tr[data-line-key="l1"]') as HTMLElement;
+    fireEvent.contextMenu(removed.querySelector('td') as HTMLElement);
+    expect(await screen.findByRole('menuitem', { name: 'Duplicate line' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it('AC-1: a section heading\'s right-click menu offers no Duplicate line', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', band_label: 'BILL NO 1' }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const heading = screen.getByRole('textbox', { name: 'Section heading above A-1' });
+    fireEvent.contextMenu(heading.closest('[data-section-key]') as HTMLElement);
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Duplicate line' })).toBeNull();
+  });
+
+  it('AC-8: a filtered row stays on screen while its rate is being typed', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
+    ]);
+    // The live verdict answers slowly: the row must not vanish while it waits.
+    judgeQuotationLine.mockImplementation(() => new Promise(() => undefined));
+    await renderEditing();
+    await chooseFlag('Below default price');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull());
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on A-1' }), {
+      target: { value: '850.00' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
+  });
+
   it('AC-8: the Flags filter narrows the lines, keeps their numbers, and counts each option', async () => {
     listQuotationLines.mockResolvedValue(FLAGGED_LINES);
     renderEditor();

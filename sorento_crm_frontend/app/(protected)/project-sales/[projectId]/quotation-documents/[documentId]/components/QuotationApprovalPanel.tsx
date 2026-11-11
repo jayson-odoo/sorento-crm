@@ -22,13 +22,17 @@ function linesPhrase(count: number): string {
 /**
  * The server's reasons sentence (`reasons_text`, project_quotation_approval_service.py) as its
  * clauses, so each count can open the lines it counts (PROJECT-QUOTE-LINE-TOOLS, owner 11 Nov).
- * Same order, same words, same arithmetic: a below-floor line is counted once, under the minimum
- * price, and the default-price clause is the discounted lines left over.
+ * Same order, same words, same counts: a below-floor line is counted once, under the minimum
+ * price, and the default-price clause counts the discounted lines that are not below it.
  */
 export function reasonClauses(document: QuotationDocument): ReasonClause[] {
   const offSeries = document.off_series_line_count ?? 0;
   const belowFloor = document.below_floor_line_count ?? 0;
-  const discounted = Math.max(0, (document.discounted_line_count ?? 0) - belowFloor);
+  // Per line from the server (discounted and not below the floor: the pill's rule), else the
+  // older payload's arithmetic.
+  const discounted =
+    document.below_default_line_count ??
+    Math.max(0, (document.discounted_line_count ?? 0) - belowFloor);
   const belowProposal = document.below_proposal_count ?? 0;
   const clauses: ReasonClause[] = [];
   if (offSeries) clauses.push({ count: offSeries, rest: "outside the project's series", flag: 'non_standard' });

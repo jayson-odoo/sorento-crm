@@ -144,6 +144,7 @@ import type {
   MediaKind,
   QuotationLine,
   QuotationLineBulkItem,
+  QuotationLineVerdict,
   QuotationVersion,
   SeriesProductImportBody,
   LeadQualifyBody,
@@ -1596,19 +1597,6 @@ export function useImportJobStatus(jobId: string | null) {
  * non-standard" is not something a disappearing notification should be the only record of.
  */
 /**
- * The verdict for one DRAFT line, kept current as it is typed.
- *
- * Debounced at 400ms: judging fires a request, and a keystroke-per-request would hammer
- * the API for answers about prices nobody has finished typing. The debounce lives HERE,
- * on the queried value, so every caller gets the same behaviour for free.
- *
- * `LIST_QUERY_OPTIONS`'s `placeholderData` keeps the previous verdict on screen while the next loads - a badge
- * that blinks off and on with every keystroke reads as the system changing its mind.
- *
- * Verdicts are judged by the server (the same `is_in_series` / `resolve_floor` the save
- * runs); this hook only decides WHEN to ask.
- */
-/**
  * The cache key of one draft's verdict. Exported so the lines filter reads the SAME cached answer
  * the row's pills show (PROJECT-QUOTE-LINE-TOOLS): one question, one answer, two readers.
  */
@@ -1626,6 +1614,19 @@ export function lineVerdictKey(
   ] as const;
 }
 
+/**
+ * The verdict for one DRAFT line, kept current as it is typed.
+ *
+ * Debounced at 400ms: judging fires a request, and a keystroke-per-request would hammer
+ * the API for answers about prices nobody has finished typing. The debounce lives HERE,
+ * on the queried value, so every caller gets the same behaviour for free.
+ *
+ * `LIST_QUERY_OPTIONS`'s `placeholderData` keeps the previous verdict on screen while the next loads - a badge
+ * that blinks off and on with every keystroke reads as the system changing its mind.
+ *
+ * Verdicts are judged by the server (the same `is_in_series` / `resolve_floor` the save
+ * runs); this hook only decides WHEN to ask.
+ */
 export function useLineVerdict(
   target: { quotationId: string | null; seriesId?: string | null },
   draft: { product_id?: string; product_set_id?: string; unit_price?: string },
@@ -1663,6 +1664,38 @@ export function useLineVerdict(
     // it, and retyping it should not be three requests.
     staleTime: 30_000,
   });
+}
+
+/**
+ * The verdicts the rows' own `useLineVerdict` calls hold, for many drafts at once (the lines
+ * filter, PROJECT-QUOTE-LINE-TOOLS). It never asks by itself (`enabled: false`), so filtering
+ * costs no request, yet it carries the REAL query function: an observer's options land on the
+ * shared query, so a global refetch of the key judges the draft rather than writing null over
+ * the answer. One observer per distinct draft; answers come back in `drafts` order, `undefined`
+ * where nothing has been answered yet.
+ */
+export function useCachedLineVerdicts(
+  target: { quotationId: string | null; seriesId?: string | null },
+  drafts: { product_id?: string; product_set_id?: string; unit_price?: string }[],
+): (QuotationLineVerdict | undefined)[] {
+  const ids = drafts.map((draft) => JSON.stringify(lineVerdictKey(target, draft)));
+  const distinct = Array.from(new Map(drafts.map((draft, index) => [ids[index], draft])));
+  const answers = useQueries({
+    queries: distinct.map(([, draft]) => ({
+      queryKey: lineVerdictKey(target, draft),
+      queryFn: () => judgeQuotationLine(target, draft),
+      enabled: false,
+      staleTime: 30_000,
+    })),
+    // Structurally shared, so the array keeps its identity until an answer actually changes.
+    combine: (results) => results.map((result) => result.data),
+  });
+  return React.useMemo(() => {
+    const byId = new Map(distinct.map(([id], index) => [id, answers[index]]));
+    return ids.map((id) => byId.get(id));
+    // `ids` is rebuilt every render; its joined text is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, ids.join('|')]);
 }
 
 /**

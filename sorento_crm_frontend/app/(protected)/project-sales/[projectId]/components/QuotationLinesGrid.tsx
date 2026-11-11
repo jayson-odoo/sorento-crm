@@ -1522,8 +1522,9 @@ export function QuotationLinesGrid({
         [PICKED_CODE_KEY]: option.label,
         // Off a set, its parts text no longer describes the line.
         ...(held.draft.product_set_id ? { complete_set: '' } : {}),
-        ...fillFromProduct(option),
+        // Before the fill: a fresh copy's blank rate must not overwrite the series price it puts.
         ...clearPicks,
+        ...fillFromProduct(option),
       });
     },
     [fillFromProduct, fillFromSet, update],

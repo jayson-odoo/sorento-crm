@@ -162,6 +162,8 @@ export function QuotationDocumentClient({
   const showFlaggedLines = React.useCallback(
     async (flag: ApprovalLineFlag) => {
       setLineFlags([flag]);
+      // The banner counts the CURRENT versions, so the lines shown are the current ones too.
+      setVersionNo(null);
       const header = `/project-sales/${projectId}/quotation-documents/${documentId}`;
       if (pathname !== header) router.push(header);
       const option = LINE_FLAG_FILTERS.find((row) => row.value === flag);

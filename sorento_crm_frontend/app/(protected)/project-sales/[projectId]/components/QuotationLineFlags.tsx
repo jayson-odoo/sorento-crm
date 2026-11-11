@@ -3,8 +3,7 @@
 import * as React from 'react';
 import { TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { useQueries } from '@tanstack/react-query';
-import { lineVerdictKey, useLineVerdict } from '../../_shared/hooks/useProjects';
+import { useCachedLineVerdicts, useLineVerdict } from '../../_shared/hooks/useProjects';
 import type {
   QuotationLine,
   QuotationLineVerdict,
@@ -121,40 +120,37 @@ function useLineFacts(
 }
 
 /**
- * Every line's facts at once, for the lines filter and its counts. It only READS the verdicts the
- * rows' own pills ask for (same cache key, never fetching itself), so filtering costs no request
- * and cannot answer differently from the pill on the row.
+ * Every line's facts at once, for the lines filter and its counts. It READS the verdicts the rows'
+ * own pills ask for (`useCachedLineVerdicts`, same cache key, never fetching itself), so filtering
+ * costs no request. While a changed draft waits on its verdict the row keeps its last known facts,
+ * exactly as its pill keeps the previous verdict on screen (`keepPreviousData`), so a row being
+ * typed into is not hidden by the filter on the first keystroke.
  */
 export function useLinesFacts(
   target: { quotationId: string | null; seriesId?: string | null },
   lines: { key: string; line: QuotationLine | null; draft: LineDraft }[],
 ): Map<string, LineFacts> {
-  // One observer per DISTINCT draft: a duplicated line asks exactly what its source asks.
-  const keys = lines.map((row) => lineVerdictKey(target, verdictDraft(row.draft)));
-  const distinct = Array.from(new Map(keys.map((key) => [JSON.stringify(key), key])).values());
-  const verdicts = useQueries({
-    queries: distinct.map((queryKey) => ({
-      queryKey,
-      queryFn: (): Promise<QuotationLineVerdict | null> => Promise.resolve(null),
-      enabled: false,
-    })),
-  });
-  const answers = verdicts.map((query) => query.data);
+  const verdicts = useCachedLineVerdicts(
+    target,
+    lines.map((row) => verdictDraft(row.draft)),
+  );
+  const lastKnown = React.useRef(new Map<string, LineFacts>());
   return React.useMemo(() => {
-    const byKey = new Map(
-      distinct.map((key, index) => [JSON.stringify(key), answers[index] ?? null]),
-    );
-    return new Map(
-      lines.map((row, index) => [
-        row.key,
-        isSectionDraft(row.draft)
-          ? { nonStandard: false, belowFloor: false, belowDefault: false }
-          : lineFacts(row.line, row.draft, byKey.get(JSON.stringify(keys[index])) ?? null),
-      ]),
-    );
-    // `verdicts` is a fresh array every render; its answers are what matter.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, target.quotationId, target.seriesId, ...answers]);
+    const facts = new Map<string, LineFacts>();
+    lines.forEach((row, index) => {
+      if (isSectionDraft(row.draft)) {
+        facts.set(row.key, { nonStandard: false, belowFloor: false, belowDefault: false });
+        return;
+      }
+      const verdict = verdicts[index];
+      const waiting = verdict === undefined && !isPristine(row.line, row.draft);
+      const known = lastKnown.current.get(row.key);
+      const fact = waiting && known ? known : lineFacts(row.line, row.draft, verdict ?? null);
+      lastKnown.current.set(row.key, fact);
+      facts.set(row.key, fact);
+    });
+    return facts;
+  }, [lines, verdicts]);
 }
 
 /** The Product cell's flags: Non-standard and Below default price, each once. */
@@ -179,7 +175,9 @@ export function LineFlags({
       {nonStandard && (
         <Badge
           variant="secondary"
-          className="gap-1 text-2xs"
+          // Wraps in the narrow Product column instead of spilling into the next cell, as the
+          // Minimum price pill does.
+          className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
           title="Outside the series this scope is quoted from"
         >
           <TriangleAlert className="size-3" aria-hidden />
@@ -190,7 +188,9 @@ export function LineFlags({
       {belowDefault && (
         <Badge
           variant="secondary"
-          className="gap-1 text-2xs"
+          // Wraps in the narrow Product column instead of spilling into the next cell, as the
+          // Minimum price pill does.
+          className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
           title="Priced below the default price: this quotation needs a manager's approval"
         >
           <TriangleAlert className="size-3" aria-hidden />
