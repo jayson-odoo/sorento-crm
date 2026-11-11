@@ -1,6 +1,6 @@
 # PLAN: Order Inquiry lines link to purchase orders with the shared Stock Debt link function (OI-PO-LINK)
 
-Status: Plan, behaviour card filed (waiting on owner answers). Track: normal (size M, LEAD pattern: tester, coder,
+Status: Build (card answered by crew 11 Nov, owner may veto). Stacked on #2332's branch (merged into this lane at 8954e73d). Track: normal (size M, LEAD pattern: tester, coder,
 reviewer subagents). Depends on #2332 (STOCKDEBT-LIVE-ACTIONS, head 11f7a635, not merged): coding stacks on its
 branch `claude/stockdebt-frozen-so-po-link-t3dlxa` if it is still open when the card is answered.
 
@@ -113,6 +113,15 @@ coverage (a write action: n/a unless the registry lists stock-debt link, checked
 - FE: the shared dialog renders from both screens; OI menu enable/disable reasons; existing Stock Debt
   `PoLinkDialog.test.tsx` / `poLinkWording.test.ts` green unchanged (moved path only).
 
-## 6. Open questions
+## 6. Rulings (crew for the owner, 11 Nov, behaviour card on #2350)
 
-See the behaviour card on the PR (crew-ask).
+- Q1 (a): one permission `projects.stock_debt.link_po` and one Settings switch
+  (`system_settings.stock_debt_po_link_enabled`) for both screens; their labels are reworded to cover both
+  (permission name "Link PO lines in AutoCount (Stock Debt, Order Inquiries)"; switch label likewise). No new
+  permission slug, no migration.
+- Q2 (b): OI gets "Link to PO...", "Change PO...", "Unlink from PO..."; the existing "Unlink selected" is renamed
+  "Remove link in CRM" and "Link selected" (re-runs the AutoCount book step, R18) is renamed "Recheck in AutoCount".
+- Q3 (a): default qty = the SO line's still-needed qty (outstanding less POs already linked), capped at the PO line's
+  free qty: Stock Debt's `stillNeeds` / `qtyCap` unchanged.
+
+UAC: `oi-po-link-11nov-acceptance-criteria.md`.
