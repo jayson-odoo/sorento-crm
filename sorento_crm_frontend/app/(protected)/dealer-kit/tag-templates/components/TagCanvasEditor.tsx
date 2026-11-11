@@ -3131,6 +3131,13 @@ export function TagCanvasEditor({
     if (!hasHydratedRef.current || panelGroupSize.height <= 0) return;
     hasAppliedRailRef.current = true;
     railPanelRef.current?.resize(railPercent);
+    // The side columns have the same mount-time problem: their stored widths (shared with the
+    // spec sheet designer, SPEC-SHEET-DESIGNER-PARITY) were never applied either, so the columns
+    // opened at whatever the first measurement clamped them to. A collapsed column stays shut.
+    if (!panelLayout.leftCollapsed) leftPanelRef.current?.resize(leftPercent);
+    if (!panelLayout.rightCollapsed) rightPanelRef.current?.resize(rightPercent);
+    // Applied once, from the values at that moment; a later drag must not be fought.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelGroupSize.height, railPercent]);
 
   const handleLeftResize = useCallback(
