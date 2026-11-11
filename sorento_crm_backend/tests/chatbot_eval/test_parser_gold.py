@@ -1756,3 +1756,170 @@ def test_entity_said_as_text_exact_want_is_case_aside_and_a_word_without_an_enti
     for want in (None, "*", "company"):
         ok, why = pg.grade_parse(_text_v("company", raw="Mocha"), {"entity_said_as_text": {"sorento": want}})
         assert ok is False and any("said_as_text" in r for r in why), (want, why)
+
+
+# ------------------------------------------------------------------------------------------ PARSER-SUPPLIER-RESTORE
+# The gold harness reaches the supplier path the way the engine does: the contact's own visibility, the parser
+# config's id flags on the span seam, a pinned span version, a candidate text swapped in for the pinned parser text,
+# and two expect keys (an id-bound supplier entity, the parse's party_side).
+SUPPLIER_GOLD = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_supplier_restore.jsonl"
+
+
+def test_supplier_and_party_side_expect_keys_load_and_are_typed(tmp_path):
+    assert len(pg.load_gold(_write(tmp_path, [_row("a", "hi", {"supplier": True, "party_side": "unclear"})]))) == 1
+    assert len(pg.load_gold(_write(tmp_path, [_row("a", "hi", {"supplier": False, "party_side": None})]))) == 1
+    for bad in ({"supplier": "yes"}, {"party_side": 3}):
+        with pytest.raises(ValueError):
+            pg.load_gold(_write(tmp_path, [_row("a", "hi", bad)]))
+
+
+def test_supplier_expect_passes_only_an_id_bound_supplier_entity():
+    bound = {"entities": [{"hint": "supplier", "raw": "zz supplier", "canonical_code": "row-1"}]}
+    unbound = {"entities": [{"hint": "supplier", "raw": "zz supplier", "canonical_code": None}]}
+    customer = {"entities": [{"hint": "customer", "raw": "zz supplier", "canonical_code": None}]}
+    assert pg.grade_parse(bound, {"supplier": True})[0] is True
+    for v in (unbound, customer, {}):
+        ok, why = pg.grade_parse(v, {"supplier": True})
+        assert ok is False and any("supplier" in r for r in why), (v, why)
+    ok, why = pg.grade_parse(bound, {"supplier": False})
+    assert ok is False and any("supplier" in r for r in why), why
+    assert pg.grade_parse(unbound, {"supplier": False})[0] is True, "a supplier with no id binds nothing"
+
+
+def test_party_side_expect_is_equality_and_null_reads_absent():
+    assert pg.grade_parse({"party_side": "unclear"}, {"party_side": "unclear"})[0] is True
+    assert pg.grade_parse({}, {"party_side": None})[0] is True
+    for got in ("customer", None):
+        ok, why = pg.grade_parse({"party_side": got}, {"party_side": "unclear"})
+        assert ok is False and any("party_side" in r for r in why), (got, why)
+
+
+def test_parse_one_runs_the_span_seam_as_the_engine_with_the_contact_and_the_span_pin(session_factory, monkeypatch):
+    from app.services.chatbot import engine
+    from app.services.chatbot.head import parser as parser_mod
+
+    prep_calls: list = []
+    lookup_calls: list = []
+    sentinel = object()
+    monkeypatch.setattr(engine, "_span_prep", lambda *a, **k: prep_calls.append((a, k)) or sentinel)
+    monkeypatch.setattr(engine, "_span_lookup", lambda prep, **k: lookup_calls.append((prep, k)) or ([], {}, None))
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: {})
+    config = _config(lookup_lists=True, lookup_spans=True, supplier_ids=True, row_ids=True, category_pick=True)
+    pg._parse_one("zz outstanding", config, session_factory, contact_respond_id="zz-contact-9", span_version_id="zz-span-3")
+    assert len(prep_calls) == 1, prep_calls
+    args, kw = prep_calls[0]
+    assert args[3] == "zz-contact-9", "the span rows follow the gold contact's own visibility"
+    assert kw.get("supplier_ids") is True and kw.get("row_ids") is True and kw.get("group_categories") is True, kw
+    assert kw.get("span_override") == "zz-span-3", kw
+    assert lookup_calls and lookup_calls[0][0] is sentinel and lookup_calls[0][1]["contact_respond_id"] == "zz-contact-9"
+
+
+def test_parse_one_without_the_new_arguments_keeps_the_gold_contact_and_no_span_pin(session_factory, monkeypatch):
+    from app.services.chatbot import engine
+    from app.services.chatbot.head import parser as parser_mod
+
+    prep_calls: list = []
+    monkeypatch.setattr(engine, "_span_prep", lambda *a, **k: prep_calls.append((a, k)) or None)
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: {})
+    pg._parse_one("zz outstanding", _config(lookup_lists=True, lookup_spans=True), session_factory)
+    args, kw = prep_calls[0]
+    assert args[3] == "parser-gold" and kw.get("span_override") is None and kw.get("supplier_ids") is False, (args, kw)
+
+
+def _run_live_text(session_factory, monkeypatch, **kw):
+    import hashlib
+
+    from app.services.ai_prompt_registry import RenderedPrompt
+    from app.services.chatbot.head import parser as parser_mod
+
+    stored = {parser_mod.PROMPT_KEY: "zz stored parser text", "chatbot_span_extractor": "zz stored span text"}
+    monkeypatch.setattr(
+        parser_mod, "get_prompt",
+        lambda db, name, label="production", *, override_version_id=None: RenderedPrompt(text=stored[name], name=name, version=7),
+    )
+    seen: list = []
+    config = _config()
+
+    def fake_resolve(db, **rkw):
+        seen.append(parser_mod.get_prompt(db, parser_mod.PROMPT_KEY, override_version_id=rkw.get("override_version_id")).text)
+        seen.append(parser_mod.get_prompt(db, "chatbot_span_extractor").text)
+        return config
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve)
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: {"status": "ok", "entities": []})
+    headers: list = []
+    out = pg.run_live([{"id": "a", "message": "m", "expect": {}}], session_factory=session_factory, version_id="1",
+                      repeats=1, max_usd=1.0, require_key_last4="WXYZ", on_start=headers.append, **kw)
+    after = parser_mod.get_prompt(None, parser_mod.PROMPT_KEY).text
+    return seen, headers, out, after, hashlib.md5
+
+
+def test_run_live_swaps_only_the_parser_text_and_records_the_md5_it_parsed_with(session_factory, monkeypatch):
+    seen, headers, out, after, md5 = _run_live_text(session_factory, monkeypatch, prompt_text="zz candidate text ü")
+    assert seen == ["zz candidate text ü", "zz stored span text"], "the span prompt is never swapped"
+    assert headers[0]["prompt_md5"] == md5("zz candidate text ü".encode("utf-8")).hexdigest(), headers
+    assert out[0]["prompt_md5"] == headers[0]["prompt_md5"], "every row names the text it was parsed with"
+    assert after == "zz stored parser text", "the swap ends with the run"
+
+
+def test_run_live_without_a_text_records_the_pinned_versions_own_md5(session_factory, monkeypatch):
+    seen, headers, out, _after, md5 = _run_live_text(session_factory, monkeypatch)
+    assert seen[0] == "zz stored parser text"
+    assert headers[0]["prompt_md5"] == md5(b"zz stored parser text").hexdigest(), headers
+
+
+def test_run_live_passes_the_contact_and_the_span_pin_to_every_parse(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    calls: list = []
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    monkeypatch.setattr(pg, "_parse_one", lambda *a, **k: calls.append(k) or {"status": "ok", "entities": []})
+    pg.run_live([{"id": "a", "message": "m", "expect": {}}, {"id": "b", "message": "n", "expect": {}}],
+                session_factory=session_factory, version_id="1", repeats=1, max_usd=1.0, require_key_last4="WXYZ",
+                contact_respond_id="zz-contact-9", span_version_id="zz-span-3")
+    assert [(c.get("contact_respond_id"), c.get("span_version_id")) for c in calls] == [("zz-contact-9", "zz-span-3")] * 2
+
+
+def test_pinned_span_version_accepts_a_span_version_and_refuses_anything_else(session_factory):
+    from app.models.ai_prompt import AIPromptVersion
+    from tests.chatbot.test_span_extract import BASE, SPANS_LINE, seed_prompts
+
+    seed_prompts(session_factory, template=BASE + SPANS_LINE + "\n", span_label=(None, None))
+    db = session_factory()
+    try:
+        span_id = str(db.query(AIPromptVersion.id).filter(AIPromptVersion.name == "chatbot_span_extractor").first()[0])
+        parser_id = str(db.query(AIPromptVersion.id).filter(AIPromptVersion.name == "chatbot_semantic_parser").first()[0])
+    finally:
+        db.close()
+    assert pg._pinned_span_version(session_factory, span_id) >= 1
+    for bad in (parser_id, "00000000-0000-0000-0000-000000000000"):
+        with pytest.raises(ValueError):
+            pg._pinned_span_version(session_factory, bad)
+
+
+def test_cli_live_passes_the_text_file_the_contact_and_the_span_pin(tmp_path, monkeypatch):
+    text = tmp_path / "cand.txt"
+    text.write_text("zz candidate ü\n", encoding="utf-8")
+    got: dict = {}
+    monkeypatch.setattr(pg, "_pinned_version", lambda factory, vid: 1)
+    monkeypatch.setattr(pg, "_pinned_span_version", lambda factory, vid: got.setdefault("span_checked", vid) and 3)
+    monkeypatch.setattr(pg, "run_live", lambda rows, **kw: got.update(kw) or [])
+    monkeypatch.chdir(BACKEND)
+    rc = pg.main(["live", "--gold", str(GOLD), "--out", str(tmp_path / "o.jsonl"), "--max-usd", "0.1",
+                  "--require-key-last4", "WXYZ", "--prompt-version-id", "v", "--repeats", "1",
+                  "--prompt-text-file", str(text), "--contact-respond-id", "zz-contact-9", "--span-version-id", "zz-span-3"])
+    assert rc == 0
+    assert got["prompt_text"] == "zz candidate ü\n", "the file's bytes, unchanged"
+    assert got["contact_respond_id"] == "zz-contact-9" and got["span_version_id"] == "zz-span-3"
+    assert got["span_checked"] == "zz-span-3", "a span pin is checked before any spend"
+
+
+def test_supplier_restore_gold_file_loads_and_covers_each_side():
+    rows = pg.load_gold(SUPPLIER_GOLD)
+    expects = [r["expect"] for r in rows]
+    assert any(e.get("supplier") is True and e.get("domain_hint") == "purchase_order" for e in expects)
+    assert any(e.get("customer") is True and e.get("supplier") is False for e in expects)
+    assert any(e.get("party_side") == "unclear" for e in expects)
+    for r in rows:
+        text = json.dumps(r, ensure_ascii=False).upper()
+        assert "SDN BHD" not in text and "CO., LTD" not in text, r["id"]
