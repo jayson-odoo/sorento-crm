@@ -9,6 +9,8 @@ crew test copy
 - For step 15 (AC-7): a DIY-Tag product other than CB2151-DIY (crew's earlier run already emptied that
   one's Default SP), called D below, that uses DIY Tag and Small Price Tag LP and whose card shows
   Default SP = DIY Tag. Note what its card shows for Default LP and Default SP.
+- For steps 16 to 18 (combos): a product with at least one combo, called H (its combos are on its
+  product page, Combos tab), and a plain price tag template (no combo part positions), called T.
 - The countdowns below read "Removing in 1s" because the dev DB's deferred_action_seconds is 1 (dev
   setting; prod uses its own window).
 - No migration and no SQL is needed.
@@ -32,6 +34,13 @@ crew test copy
     Cancel on the countdown.
 15. Open the template "Small Price Tag SP" in the designer, click the box icon, search D's code, tick D,
     click Save, then open D's product page and look at its "Price tag templates" card.
+
+16. Open T in the designer, click the box icon, open Filters, set "Type" to "Combos", then click outside
+    the popover. Search H's code.
+17. Tick one of H's combos that does not use T yet, called K, click Save, then open H's product page,
+    Combos tab, and look at K's "Price tag templates" field.
+18. Back in T's designer, click the box icon, set "Type" to "Combos", untick K, click Save and wait
+    for the countdown, then look at K's field on H's Combos tab again.
 
 ## Expected
 - Step 3: one dialog titled "Products for <template name>", no tabs. The products that use the
@@ -62,3 +71,12 @@ crew test copy
   is full width, and the product grid scrolls sideways inside its border without the page scrolling
   sideways.
 - A user without `dealer_kit.tag_templates.manage`, and any spec sheet page, shows no Products button.
+- Step 16: the same dialog, no tabs, now lists combos: H's code, the combo name, H's category and
+  brand, and a grey "Combo" hint after the code. Combos that use T are ticked. The footer count
+  includes them. A combo a template with combo part positions cannot print is greyed out and its
+  checkbox tooltip says why (for example "Needs 3 fixed parts; this combo has 2"); with plain T
+  every combo can be ticked.
+- Step 17: toast "Linked 1 combo". K's "Price tag templates" field lists T; if K had no template, T is
+  its default. The designer's box icon tooltip reads one more in "Products (N)".
+- Step 18: "Removing in 1s" with Cancel, then the dialog closes; K's field no longer lists T, and K's
+  other defaults are unchanged.

@@ -30,3 +30,10 @@ Plan: `PLAN-pricetag-template-products-10nov.md` (Design v3). Mock: `pricetag-te
   ignored; more than 500 ids in one call is refused.
 - AC-11 Usable at 375px and 1280px: the modal is full width on a phone and the grid scrolls sideways
   inside its border.
+- AC-12 (owner hand test 11 Nov, reverses card Q1) Combos are linked in the same view: Filters >
+  "Type: Combos" lists combos (host code, combo name, host category / brand) with a "Combo" hint, the
+  linked ones ticked. Ticking / unticking and Save work as for products, on the combo page's own rows
+  (`dealer_kit.combo_tag_template`), so the product page's Combos tab shows the same templates. A
+  plain or main-only template fits every combo (5 Nov ruling); a combo the template cannot print is
+  listed but cannot be ticked, its checkbox naming why. Defaults follow AC-7 / AC-8. "Products (N)"
+  counts products and combos.

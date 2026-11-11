@@ -38,6 +38,7 @@ vi.mock('../components/TemplateVersionsSheet', () => ({ TemplateVersionsSheet: (
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
 vi.mock('../../hooks/useProductTagTemplates', () => ({
   useTemplateProductIds: () => ({ data: undefined }),
+  useTemplateComboIds: () => ({ data: undefined }),
 }));
 
 const link = vi.hoisted(() => ({

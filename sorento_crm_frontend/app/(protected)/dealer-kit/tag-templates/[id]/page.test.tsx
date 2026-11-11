@@ -75,7 +75,9 @@ vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
 const mockCanManage = vi.hoisted(() => ({ value: true }));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => mockCanManage.value }));
 vi.mock('../../hooks/useProductTagTemplates', () => ({
-  useTemplateProductIds: () => ({ data: ['p1', 'p2', 'p3'] }),
+  useTemplateProductIds: () => ({ data: ['p1', 'p2'] }),
+  // Products (N) counts linked products and combos together.
+  useTemplateComboIds: () => ({ data: ['c1'] }),
 }));
 vi.mock('../components/TemplateProductsDialog', () => ({
   TemplateProductsDialog: () => <div data-testid="template-products-dialog" />,

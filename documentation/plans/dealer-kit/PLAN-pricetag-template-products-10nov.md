@@ -2,7 +2,7 @@
 
 Status: in review (mock v3 approved 10 Nov 23:43; built, reviewer round 1 fixed, security CLEAR, browser
 pass done). Track: standard lane (no migration, no permission change, diff over 300 lines; security-reviewer
-joined for multi-company scoping of picked ids). Card: Q1 (a) products only, Q3 (a) never change a default,
+joined for multi-company scoping of picked ids). Card: Q1 reversed by the owner 11 Nov (combos in scope), Q3 (a) never change a default,
 Q2 open (old list-row Assign dialog kept until the owner says retire).
 Lane: PRICETAG-TEMPLATE-PRODUCTS. Requested: owner + management meeting 9 Nov, relayed 10 Nov.
 Mock: `pricetag-template-products-mock-v3.html` (same folder; v1, v2 kept).
@@ -145,6 +145,28 @@ template that fits the type, never saved); adding a second fitting template empt
 Default SP = DIY Tag). Fix: `_freeze_shown_defaults` saves each product's shown Default LP / SP before a
 bulk add, so the card cannot change; red-first tests `TestShownDefaultsNeverMove` (3 of 5 red before the
 fix). Unlink already matched the product page and is now tested. Combos: not bulk-linked in this lane.
+
+## Combos (owner hand test 11 Nov: "it should be able to link to combos also")
+
+Reverses card Q1 (a). Existing schema, no migration: `dealer_kit.combo_tag_template`
+(`app/models/dealer_kit.py:866`), the rows the combo page reads and writes
+(`GET/PUT /dealer-kit/combos/{id}/tag-templates`, `tag_data.py:220/240`); fit by
+`template_needs.fit_reason` (`template_needs.py:130`; plain / main-only fits every combo, 5 Nov #2205).
+
+- Backend: `TemplateAssignFilter.combo_ids`; `bulk_assign` = `_bulk_assign_products` +
+  `_bulk_assign_combos` (scoped through the host, misfits skipped and counted in `skipped`, defaults by
+  `_freeze_shown_defaults` / `_lone_link_is_default`); `GET /tag-templates/{id}/combo-ids` (seed) and
+  `GET /tag-templates/{id}/combos` (query on combo name or host code, host category / brand, linked,
+  paging, `fit_reason` per row); `combo_ids` on the unassign pending action and its park-time cap.
+- Frontend: `ProductTargetPicker` gains optional `fetchRows` / `sourceKey` / `rowDisabledReason` /
+  `rowHint` (copy dialogs unchanged); `TemplateProductsDialog` adds "Type: Products / Combos" in the
+  same Filters popover; combo ids ride the shared selection as `combo:<id>`; "Products (N)" counts both.
+- Tests: `TestCombos` (9, red first), 3 dialog tests (red first), page test sums products + combos.
+- Browser (cloud sandbox, 11 Nov): Type: Combos listed the 2 seeded combos with a "Combo" hint;
+  ticking "ZZT Sink + tap" and Save toasted "Linked 1 combo", DB row default LP + SP (first template);
+  product SRTKS-8014-SS > Combos tab > the combo's "Price tag templates" lists the template; the
+  designer then read "Products (30)" (29 products + 1 combo). Screenshot
+  `evidence-pricetag-template-products/3-combos-1280.png`.
 
 ## Assistant coverage (DoD 6 to 8)
 

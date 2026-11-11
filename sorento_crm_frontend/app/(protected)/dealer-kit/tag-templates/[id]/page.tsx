@@ -93,7 +93,7 @@ import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
 import { TemplateProductsDialog } from '../components/TemplateProductsDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useTemplateProductIds } from '../../hooks/useProductTagTemplates';
+import { useTemplateComboIds, useTemplateProductIds } from '../../hooks/useProductTagTemplates';
 import { isPriceTagFamily } from '../../services/productTagTemplateService';
 import { FocusShell } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
@@ -167,6 +167,8 @@ function TagTemplateEditor() {
   // Price tag templates only: a spec sheet page is never linked to products.
   const showProducts = canManageLinks && !!template && isPriceTagFamily(template.family);
   const linkedIds = useTemplateProductIds(params.id, showProducts);
+  // Owner hand test 11 Nov: combos count too, since the same view links them.
+  const linkedComboIds = useTemplateComboIds(params.id, showProducts);
   const [viewing, setViewing] = useState<TagTemplateVersionDetail | null>(null);
   const [viewingLoading, setViewingLoading] = useState(false);
   // Which version Restore is in flight for - the viewer banner's own button
@@ -613,7 +615,10 @@ function TagTemplateEditor() {
           {
             id: 'products',
             icon: Package,
-            label: linkedIds.data ? `Products (${linkedIds.data.length})` : 'Products',
+            label:
+              linkedIds.data && linkedComboIds.data
+                ? `Products (${linkedIds.data.length + linkedComboIds.data.length})`
+                : 'Products',
             onClick: () => setProductsOpen(true),
           },
         ]
