@@ -14,9 +14,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-/** Marks the history entry the guard keeps on top of the page while there is unsaved work. */
-const GUARD_KEY = '__unsavedChangesGuard';
-
 /** Where a same-site link click would go, or null when the guard should let the click through. */
 function guardedHref(event: MouseEvent): string | null {
   if (event.defaultPrevented || event.button !== 0) return null;
@@ -45,7 +42,15 @@ function guardedHref(event: MouseEvent): string | null {
  *
  * Returns the question's dialog: render it anywhere in the page.
  */
-export function useUnsavedChangesGuard(dirty: boolean): React.ReactNode {
+export function useUnsavedChangesGuard(
+  dirty: boolean,
+  {
+    fallbackHref,
+  }: {
+    /** Where Leave goes after the browser's Back when this tab has no earlier page. */
+    fallbackHref?: string;
+  } = {},
+): React.ReactNode {
   const router = useRouter();
   /** Where the user was going: a link's href, or 'back' for the browser's Back. */
   const [leaveTo, setLeaveToState] = React.useState<string | null>(null);
@@ -67,7 +72,7 @@ export function useUnsavedChangesGuard(dirty: boolean): React.ReactNode {
     if (trappedRef.current) return;
     // The current state is copied, so Next's router reads the entry as this same page.
     const state = window.history.state ?? {};
-    window.history.pushState({ ...state, [GUARD_KEY]: true }, '', window.location.href);
+    window.history.pushState(state, '', window.location.href);
     trappedRef.current = true;
   }, []);
 
@@ -138,9 +143,18 @@ export function useUnsavedChangesGuard(dirty: boolean): React.ReactNode {
     setLeaveTo(null);
     if (target === null) return;
     if (target === 'back') {
-      // The guard's entry is already gone: this Back reaches the page before this one.
+      // The guard's entry is already gone: this Back reaches the page before this one. A tab
+      // opened on this page has none, and Back then goes nowhere: go to the fallback instead.
       ownBackRef.current = true;
+      const from = window.location.href;
       window.history.back();
+      if (fallbackHref) {
+        window.setTimeout(() => {
+          if (window.location.href !== from) return;
+          ownBackRef.current = false;
+          router.replace(fallbackHref);
+        }, 400);
+      }
       return;
     }
     // Over the guard's entry, so Back from there returns here once, not twice.

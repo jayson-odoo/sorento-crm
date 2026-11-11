@@ -344,6 +344,10 @@ export function QuotationCertificatesList({
     [],
   );
 
+  const rowAt = (target: EventTarget) => {
+    const id = (target as Element).closest?.('[data-certificate-id]')?.getAttribute('data-certificate-id');
+    return id ? all.find((r) => r.certificate_id === id) : undefined;
+  };
   const open = (row: CertificateRow) =>
     router.push(certificateHref(projectId, documentId, row.certificate_id));
 
@@ -357,14 +361,17 @@ export function QuotationCertificatesList({
             // Capture phase: a right-click outside a certificate row stops here, so the
             // browser's own menu shows instead of an empty one.
             onContextMenuCapture={(event) => {
-              const rowEl = (event.target as Element).closest('[data-certificate-id]');
-              const id = rowEl?.getAttribute('data-certificate-id');
-              const hit = id ? all.find((r) => r.certificate_id === id) : undefined;
+              const hit = rowAt(event.target);
               if (!hit) {
                 event.stopPropagation();
                 return;
               }
               setMenuRow(hit);
+            }}
+            // A long-press (touch, pen) opens the menu on a timer with no contextmenu event on
+            // iOS, so the row is picked when the press starts.
+            onPointerDownCapture={(event) => {
+              if (event.pointerType !== 'mouse') setMenuRow(rowAt(event.target) ?? null);
             }}
           >
       <PanelDataGrid<CertificateRow>
@@ -468,7 +475,9 @@ export function QuotationCertificatesList({
       />
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="w-48">
+        {/* Hidden with no row: a long-press outside the rows opens nothing, and the next touch
+            anywhere closes it. */}
+        <ContextMenuContent className="w-48" hidden={!menuRow}>
           {menuRow && (
             <>
               <ContextMenuItem onSelect={() => open(menuRow)}>Open</ContextMenuItem>

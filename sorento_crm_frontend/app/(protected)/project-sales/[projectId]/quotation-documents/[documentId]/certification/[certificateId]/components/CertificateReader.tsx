@@ -175,7 +175,9 @@ export function CertificateReader({
   }, [detail, dirty]);
 
   // Unsaved boxes ask before any way out: a link, the browser's Back, a refresh or close.
-  const leaveGuard = useUnsavedChangesGuard(dirty);
+  const leaveGuard = useUnsavedChangesGuard(dirty, {
+    fallbackHref: `/project-sales/${projectId}/quotation-documents/${documentId}/certification`,
+  });
 
   const canEdit = Boolean(detail?.can_edit);
   const canDefaults = Boolean(detail?.can_edit_defaults);
@@ -190,8 +192,8 @@ export function CertificateReader({
   // "Go to box": bring the box into the middle of the viewer and outline it for a moment. The
   // pages (and their boxes) exist only once the file has loaded, so a jump asked for on open
   // waits for its box; the outline starts when the box is found, not when the jump was asked.
-  // A new jump or leaving the page cancels a jump still waiting. `onFound` runs once the box is
-  // on screen.
+  // A new jump or leaving the page cancels a jump still waiting. `onSettled` runs once the box is
+  // on screen, or once the jump gives up (the page never drew it).
   const seekTimer = React.useRef<number | null>(null);
   const cancelSeek = React.useCallback(() => {
     if (seekTimer.current !== null) window.clearTimeout(seekTimer.current);
@@ -199,7 +201,7 @@ export function CertificateReader({
   }, []);
   React.useEffect(() => cancelSeek, [cancelSeek]);
   const goToBox = React.useCallback(
-    (index: number, onFound?: () => void) => {
+    (index: number, onSettled?: () => void) => {
       cancelSeek();
       let tries = 0;
       const seek = () => {
@@ -208,10 +210,11 @@ export function CertificateReader({
         if (node) {
           revealInViewer(node);
           setFlashed(index);
-          onFound?.();
+          onSettled?.();
           return;
         }
         if (tries++ < 100) seekTimer.current = window.setTimeout(seek, 100);
+        else onSettled?.();
       };
       seek();
     },
@@ -229,6 +232,14 @@ export function CertificateReader({
   // before it got there (StrictMode's mount, cleanup, mount on a certificate whose data was
   // already cached, i.e. every second open) is asked again instead of being skipped.
   const landedRef = React.useRef<string | null>(null);
+  // A jump the user asked for replaces the landing: a later refetch must not pull the view back.
+  const jumpTo = React.useCallback(
+    (index: number) => {
+      landedRef.current = detail?.certificate_id ?? null;
+      goToBox(index);
+    },
+    [detail?.certificate_id, goToBox],
+  );
   React.useEffect(() => {
     if (!detail || landedRef.current === detail.certificate_id) return;
     const id = detail.certificate_id;
@@ -433,7 +444,7 @@ export function CertificateReader({
                 onSaved={refresh}
                 onGoToBox={(() => {
                   const first = boxOrder(boxes, p.product_id)[0];
-                  return first === undefined ? undefined : () => goToBox(first);
+                  return first === undefined ? undefined : () => jumpTo(first);
                 })()}
               />
             ))}
