@@ -21,13 +21,7 @@ import { toast } from '@/lib/toast';
 import { searchSuppliersForSelect } from '../../suppliers/services/supplierService';
 import { OpenSetExistsError, useProbeCostPriceFile, useUploadCostPriceFile } from '../hooks/useCostPriceChangeSets';
 import { formatPlainDate } from '../lib/formatPlainDate';
-
-const CURRENCY_OPTIONS: SearchableSelectOption[] = [
-  { value: 'CNY', label: 'CNY, Chinese yuan' },
-  { value: 'USD', label: 'USD, US dollar' },
-  { value: 'MYR', label: 'MYR, Malaysian ringgit' },
-  { value: 'EUR', label: 'EUR, Euro' },
-];
+import { CURRENCY_NAMED_OPTIONS } from '@/lib/currencies';
 
 function toDateOnly(date: Date | undefined): string | null {
   if (!date) return null;
@@ -196,7 +190,7 @@ export function UploadPriceListDialog({
               id="cost-price-currency"
               value={currency}
               onChange={setCurrency}
-              options={CURRENCY_OPTIONS}
+              options={CURRENCY_NAMED_OPTIONS}
               clearable
               placeholder="Select a currency"
               triggerClassName="w-full"

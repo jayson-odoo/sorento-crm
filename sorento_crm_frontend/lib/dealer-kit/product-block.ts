@@ -208,6 +208,7 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     barcode: line.barcode,
     currency: line.currency,
     price_tag_description: line.price_tag_description,
+    description: line.description ?? null,
     brand: line.brand,
     drawing: line.drawing ?? null,
   };
@@ -231,6 +232,7 @@ function productFromPart(part: TagPartData): ProductTagData {
     barcode: part.barcode ?? null,
     currency: part.currency,
     price_tag_description: part.price_tag_description,
+    description: part.description ?? null,
     brand: part.brand,
     drawing: part.drawing ?? null,
   };
