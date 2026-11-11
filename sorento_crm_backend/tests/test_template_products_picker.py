@@ -447,3 +447,207 @@ class TestShownDefaultsNeverMove:
         )
         assert _card(c, p) == {small_lp: (True, False)}
         assert _flags(db, p) == {small_lp: (True, False)}
+
+
+# ---------------------------------------------------------------------------
+# Owner hand test 11 Nov: "it should be able to link to combos also" (reverses card Q1)
+# Same rows as the combo page: dealer_kit.combo_tag_template.
+# ---------------------------------------------------------------------------
+
+
+def _host_combo(db, ref, code: str | None = None, name: str = "ZZT combo"):
+    """(host product id, combo id) for a combo with no parts."""
+    from app.models.product import Product
+    from tests import _ptag_combo_seed as combo_seed
+
+    host_id = _product(db, ref, code=code)
+    combo = combo_seed.combo(db, db.get(Product, host_id), unique_code(name))
+    return host_id, combo.id
+
+
+def _foreign_host_combo(db):
+    """A combo on another company's product (built by id: the scoped session cannot load it)."""
+    from app.models.product_combo import ProductCombo
+
+    combo = ProductCombo(id=str(uuid.uuid4()), host_product_id=_foreign_product(db),
+                         name=unique_code("ZZT foreign combo"), sort_order=0)
+    db.add(combo)
+    db.flush()
+    return combo.id
+
+
+def _combo_links(db, template_id: str) -> set[str]:
+    from app.models.dealer_kit import ComboTagTemplate
+
+    return {r.combo_id for r in db.query(ComboTagTemplate).filter_by(template_id=template_id)}
+
+
+def _fixed_parts_template(db, name: str, fixed: int) -> str:
+    """A published template whose doc prints `fixed` fixed combo parts (needs them)."""
+    from app.models.dealer_kit import TagTemplate
+
+    tid = _template(db, name)
+    layers = [
+        {"id": f"f{i}", "type": "text", "x_mm": 0, "y_mm": 0, "width_mm": 10, "height_mm": 5,
+         "rotation": 0, "z_index": 1,
+         "props": {"kind": "text", "subjectSlot": {"kind": "fixed", "index": i}}}
+        for i in range(fixed)
+    ]
+    template = db.get(TagTemplate, tid)
+    template.published_version.doc = {"layers": layers, "width_mm": 80, "height_mm": 50}
+    db.flush()
+    return tid
+
+
+class TestCombos:
+    def test_combo_ids_seed_lists_this_companys_linked_combos(self, env):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        db, c, as_ = env
+        ref = _reference(db)
+        _h1, linked = _host_combo(db, ref)
+        _h2, unlinked = _host_combo(db, ref)
+        foreign = _foreign_host_combo(db)
+        t = _template(db, "Pick")
+        db.add(ComboTagTemplate(combo_id=linked, template_id=t))
+        db.add(ComboTagTemplate(combo_id=foreign, template_id=t))
+        db.flush()
+        res = c.get(f"{DK}/tag-templates/{t}/combo-ids")
+        assert res.status_code == 200, res.text
+        assert res.json() == [linked]
+        assert unlinked not in res.json()
+        as_(VIEWER_ID)
+        assert c.get(f"{DK}/tag-templates/{t}/combo-ids").status_code == 403
+
+    def test_combo_list_searches_host_code_or_name_and_says_why_one_cannot_print(self, env):
+        db, c, _ = env
+        ref = _reference(db)
+        code = unique_code("SRTKS", alpha=True)
+        _host, combo = _host_combo(db, ref, code=code, name="Sink set")
+        _host_combo(db, ref)  # another host, not matched
+        _foreign_host_combo(db)
+        plain = _template(db, "Plain")
+        three_fixed = _fixed_parts_template(db, "ThreeFixed", 3)
+
+        res = c.get(f"{DK}/tag-templates/{plain}/combos", params={"query": code})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert [row["id"] for row in body["data"]] == [combo]
+        row = body["data"][0]
+        assert row["host_code"] == code
+        assert row["fit_reason"] is None  # a plain template prints every combo as one product
+        assert body["pagination"]["total"] == 1
+
+        res = c.get(f"{DK}/tag-templates/{three_fixed}/combos", params={"query": code})
+        assert res.json()["data"][0]["fit_reason"] == "Needs 3 fixed parts; this combo has 0"
+
+    def test_combo_list_can_show_only_the_linked_combos(self, env):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        _h1, linked = _host_combo(db, ref)
+        _h2, _unlinked = _host_combo(db, ref)
+        t = _template(db, "Pick")
+        db.add(ComboTagTemplate(combo_id=linked, template_id=t))
+        db.flush()
+        res = c.get(f"{DK}/tag-templates/{t}/combos", params={"linked": "true", "limit": 50})
+        assert [row["id"] for row in res.json()["data"]] == [linked]
+
+    def test_assign_links_picked_combos_and_skips_foreign_junk_and_misfits(self, env):
+        db, c, _ = env
+        ref = _reference(db)
+        _h1, combo = _host_combo(db, ref)
+        foreign = _foreign_host_combo(db)
+        plain = _template(db, "Plain")
+        res = c.post(f"{DK}/tag-templates/{plain}/assign",
+                     json={"combo_ids": [combo, foreign, "junk"], "action": "add"})
+        assert res.status_code == 200, res.text
+        assert res.json()["changed"] == 1
+        assert _combo_links(db, plain) == {combo}
+
+        three_fixed = _fixed_parts_template(db, "ThreeFixed", 3)
+        res = c.post(f"{DK}/tag-templates/{three_fixed}/assign",
+                     json={"combo_ids": [combo], "action": "add"})
+        assert res.json() == {"changed": 0, "skipped": 1}
+        assert _combo_links(db, three_fixed) == set()
+
+    def test_products_and_combos_in_one_save(self, env):
+        db, c, _ = env
+        ref = _reference(db)
+        p = _product(db, ref)
+        _h, combo = _host_combo(db, ref)
+        t = _template(db, "Pick")
+        res = c.post(f"{DK}/tag-templates/{t}/assign",
+                     json={"product_ids": [p], "combo_ids": [combo], "action": "add"})
+        assert res.json()["changed"] == 2
+        assert _links(db, t) == {p}
+        assert _combo_links(db, t) == {combo}
+
+    def test_the_combo_page_reads_the_same_rows_and_shown_defaults_never_move(self, env):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        _h, combo = _host_combo(db, ref)
+        diy = _typed(db, "DIY", None)
+        small_lp = _typed(db, "SmallLP", "list")
+        db.add(ComboTagTemplate(combo_id=combo, template_id=diy))
+        db.add(ComboTagTemplate(combo_id=combo, template_id=small_lp))
+        db.flush()
+
+        def card():
+            res = c.get(f"{DK}/combos/{combo}/tag-templates")
+            assert res.status_code == 200, res.text
+            return {r["id"]: (r["default_list"], r["default_selling"]) for r in res.json()}
+
+        before = card()
+        assert before == {diy: (False, True), small_lp: (False, False)}
+        small_sp = _typed(db, "SmallSP", "selling")
+        c.post(f"{DK}/tag-templates/{small_sp}/assign", json={"combo_ids": [combo], "action": "add"})
+        after = card()
+        assert after[diy] == before[diy]
+        assert after[small_lp] == before[small_lp]
+        assert after[small_sp] == (False, False)
+
+    def test_a_first_template_becomes_the_combos_default(self, env):
+        db, c, _ = env
+        ref = _reference(db)
+        _h, combo = _host_combo(db, ref)
+        t = _template(db, "Pick")
+        c.post(f"{DK}/tag-templates/{t}/assign", json={"combo_ids": [combo], "action": "add"})
+        res = c.get(f"{DK}/combos/{combo}/tag-templates").json()
+        assert [(r["id"], r["default_list"], r["default_selling"]) for r in res] == [(t, True, True)]
+
+    def test_deferred_unassign_by_combo_ids(self, env):
+        import app.services.record_actions  # noqa: F401
+        from app.models.base import set_company_scope
+        from app.models.dealer_kit import ComboTagTemplate
+        from app.services.form_action_registry import get_action
+
+        db, _c, _ = env
+        ref = _reference(db)
+        _h1, gone = _host_combo(db, ref)
+        _h2, kept = _host_combo(db, ref)
+        foreign = _foreign_host_combo(db)
+        t = _template(db, "Pick")
+        for cid in (gone, kept, foreign):
+            db.add(ComboTagTemplate(combo_id=cid, template_id=t))
+        db.flush()
+        set_company_scope(db, frozenset({SORENTO}))
+        result = get_action("tag_template.unassign_products").execute(
+            db, {"entity_id": t, "combo_ids": [gone, foreign], "requested_by_id": MANAGER_ID}
+        )
+        assert result == {"changed": 1}
+        assert _combo_links(db, t) == {kept, foreign}
+
+    def test_parking_more_than_500_combo_ids_is_refused(self, env):
+        db, c, _ = env
+        t = _template(db, "Pick")
+        res = c.post(
+            "/api/v1/pending-actions",
+            json={"action_key": "tag_template.unassign_products", "entity_type": "tag_template",
+                  "entity_id": t,
+                  "payload": {"combo_ids": [str(uuid.uuid4()) for _ in range(501)]}},
+        )
+        assert res.status_code == 400, res.text
