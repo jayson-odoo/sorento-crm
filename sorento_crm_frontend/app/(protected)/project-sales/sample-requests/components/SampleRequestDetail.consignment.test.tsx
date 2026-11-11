@@ -157,7 +157,7 @@ beforeEach(() => {
   state.userId = 'u-coord';
   state.data = detail({
     status: 'processing',
-    status_label: 'Customer confirmed',
+    status_label: 'Processing',
     delivery_date: '2026-12-01',
     date_feasible: true,
     proposed_delivery_date: null,

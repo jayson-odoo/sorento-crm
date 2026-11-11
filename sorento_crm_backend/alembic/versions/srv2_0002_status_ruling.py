@@ -58,7 +58,16 @@ _requests = sa.Table(
     sa.Column("id", sa.String),
     sa.Column("status_id", sa.String),
     sa.Column("company_id", sa.String),
+    sa.Column("consignment_order_id", sa.String),
+    sa.Column("consignment_no", sa.String),
     schema="projects",
+)
+_orders = sa.Table(
+    "sales_orders",
+    _meta,
+    sa.Column("id", sa.String),
+    sa.Column("so_number", sa.String),
+    sa.Column("status", sa.String),
 )
 _audit = sa.Table(
     "audit_logs",
@@ -119,6 +128,37 @@ def retire_customer_confirmed(conn) -> int:
                 )
             )
             moved += 1
+    # A consignment voided BEFORE this ruling left its link in place (the old rule only undid the
+    # delivery), so a later AutoCount restore would deliver the request again. Voided stays voided:
+    # let go of it now, with a History row naming it (review of the ruling, SHOULD 1).
+    voided = conn.execute(
+        sa.select(_requests.c.id, _requests.c.company_id, _orders.c.so_number)
+        .select_from(_requests.join(_orders, _orders.c.id == _requests.c.consignment_order_id))
+        .where(_orders.c.status == "cancelled")
+    ).all()
+    for rid, company_id, number in voided:
+        conn.execute(
+            _requests.update()
+            .where(_requests.c.id == rid)
+            .values(consignment_order_id=None, consignment_no=None)
+        )
+        conn.execute(
+            _audit.insert().values(
+                id=str(uuid.uuid4()),
+                entity_type=AUDIT_ENTITY,
+                entity_id=str(rid),
+                action="UPDATE",
+                old_values={"consignment_no": number},
+                new_values={"consignment_no": None},
+                description=(
+                    f"Consignment {number} was voided: unlinked (owner, 11 Nov 2026: a voided "
+                    "consignment stays voided). Link a new consignment to deliver."
+                ),
+                company_id=company_id,
+                event="sample_request_status_ruling",
+            )
+        )
+
     manual = []
     if confirmed:
         manual.append(
@@ -151,7 +191,17 @@ def downgrade() -> None:
         ("customer_confirmed", "delivered", "Delivered"),
     )
     for frm, to, label in pairs:
-        if ids.get(frm) and ids.get(to):
+        if not (ids.get(frm) and ids.get(to)):
+            continue
+        exists = conn.execute(
+            sa.select(_transitions.c.id).where(
+                _transitions.c.entity_type == "sample_request",
+                _transitions.c.scope_id.is_(None),
+                _transitions.c.from_status_id == ids[frm],
+                _transitions.c.to_status_id == ids[to],
+            )
+        ).first()
+        if not exists:
             conn.execute(
                 _transitions.insert().values(
                     id=str(uuid.uuid4()),

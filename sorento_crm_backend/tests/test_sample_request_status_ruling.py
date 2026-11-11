@@ -177,3 +177,31 @@ def test_existing_customer_confirmed_rows_move_to_processing_with_a_history_entr
         .count()
         == 1
     )
+
+
+def test_a_consignment_voided_before_the_ruling_is_unlinked_by_the_migration(world):
+    """Review SHOULD 1: the old rule kept the link to a voided CG; the migration lets go of it,
+    so an AutoCount restore can no longer deliver the request again."""
+    w = world
+    rid = _processing(w)
+    cg = _cg(w, status="cancelled")
+    row = w.db.get(SampleRequest, rid)
+    row.consignment_order_id = cg.id
+    row.consignment_no = cg.so_number
+    w.db.flush()
+    _migration().retire_customer_confirmed(w.db.connection())
+    w.db.expire_all()
+    row = w.db.get(SampleRequest, rid)
+    assert row.consignment_order_id is None and row.consignment_no is None
+    assert (
+        w.db.query(AuditLog)
+        .filter(AuditLog.entity_id == rid, AuditLog.description.ilike(f"%{cg.so_number}%voided%"))
+        .count()
+        == 1
+    )
+    cg.status = "closed"
+    w.db.flush()
+    svc.sync_consignment(w.db, w.company_id, cg.so_number)
+    assert _key(w, rid) == "processing"
+    # Idempotent: a second run moves and logs nothing more.
+    assert _migration().retire_customer_confirmed(w.db.connection()) == 0

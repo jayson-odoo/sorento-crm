@@ -815,7 +815,6 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             <Field label="Purpose" wide>
               {r.purpose}
             </Field>
-            {r.confirmed_at && <Field label="Customer confirmed">{day(r.confirmed_at)}</Field>}
             {r.delivered_at && (
               <Field label="Delivered">
                 {day(r.delivered_at)}

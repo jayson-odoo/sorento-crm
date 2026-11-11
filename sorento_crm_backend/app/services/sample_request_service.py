@@ -1086,8 +1086,11 @@ def _resync(db: Session, req: SampleRequest, cg) -> None:
     if status_key(db, req) not in CONSIGNMENT_OPEN:
         return
     delivery = consignment_delivery(db, cg)
-    if delivery is None:
+    if cg.status == CONSIGNMENT_CANCELLED:
         _void(db, req, cg)
+    elif delivery is None:
+        # Live but with no date to deliver on: not a void, so the link stays.
+        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} has no delivery date")
     else:
         _deliver_by(db, req, delivery[0], actor_id=None, no=cg.so_number)
 
