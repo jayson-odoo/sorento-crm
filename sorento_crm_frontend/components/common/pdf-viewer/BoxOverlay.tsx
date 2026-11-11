@@ -2,6 +2,13 @@
 
 import * as React from 'react';
 
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
 import {
   boxToStyle,
@@ -31,6 +38,8 @@ type Gesture =
  * The boxes of one PDF page, drawn on top of its text layer as percentages of the page so they
  * follow any zoom. `boxes` is the WHOLE list (indices are global); only this page's are drawn.
  * Draw mode turns the page into a drag surface; a box moves by its body and resizes by a corner.
+ * A box is deleted by selecting it and pressing Delete/Backspace, or from its right-click menu
+ * (CERT-TAB-UX: no separate Remove button). `flashed` outlines one box briefly after "Go to box".
  */
 export function BoxOverlay({
   pageNumber,
@@ -38,6 +47,7 @@ export function BoxOverlay({
   editable,
   drawing,
   selected,
+  flashed = null,
   drawProductId = null,
   onSelect,
   onChange,
@@ -48,6 +58,8 @@ export function BoxOverlay({
   editable: boolean;
   drawing: boolean;
   selected: number | null;
+  /** The box "Go to box" just jumped to; outlined until the caller clears it. */
+  flashed?: number | null;
   drawProductId?: string | null;
   onSelect: (index: number | null) => void;
   onChange: (boxes: PageBox[]) => void;
@@ -132,30 +144,37 @@ export function BoxOverlay({
       onPointerMove={moveDraw}
       onPointerUp={endDraw}
     >
-      {boxes.map((box, index) =>
-        box.page !== pageNumber ? null : (
+      {boxes.map((box, index) => {
+        if (box.page !== pageNumber) return null;
+        const element = (
           <div
             key={index}
             role="group"
             aria-label="Box"
             tabIndex={editable ? 0 : -1}
+            data-box-index={index}
             data-selected={selected === index || undefined}
+            data-flashed={flashed === index || undefined}
             className={cn(
               'absolute border-2 border-rose-600 bg-rose-500/10',
               editable && !drawing && 'pointer-events-auto cursor-move touch-none',
               selected === index && 'ring-2 ring-primary/60',
+              // Static, no animation: it follows a keyboard action and must respect reduced motion.
+              flashed === index && 'ring-4 ring-warning',
             )}
             style={boxToStyle(box)}
             onPointerDown={(event) => {
-              if (!editable || drawing) return;
+              if (!editable || drawing || event.button !== 0) return;
               beginGesture(event, { kind: 'move', index, startX: event.clientX, startY: event.clientY, origin: box });
             }}
             onPointerMove={onGestureMove}
             onPointerUp={endGesture}
+            onContextMenu={() => onSelect(index)}
             onKeyDown={(event) => {
               if (!editable) return;
               if (event.key === 'Delete' || event.key === 'Backspace') {
                 event.preventDefault();
+                event.stopPropagation();
                 onRemove(index);
               }
             }}
@@ -181,8 +200,20 @@ export function BoxOverlay({
                 />
               ))}
           </div>
-        ),
-      )}
+        );
+        if (!editable || drawing) return element;
+        return (
+          <ContextMenu key={index}>
+            <ContextMenuTrigger asChild>{element}</ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem variant="destructive" onSelect={() => onRemove(index)}>
+                Delete
+                <ContextMenuShortcut>Del</ContextMenuShortcut>
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        );
+      })}
       {draftStyle && (
         <div className="absolute border-2 border-dashed border-rose-600 bg-rose-500/10" style={draftStyle} />
       )}

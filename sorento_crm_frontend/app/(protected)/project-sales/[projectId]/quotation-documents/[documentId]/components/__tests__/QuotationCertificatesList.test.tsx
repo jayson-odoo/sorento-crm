@@ -7,7 +7,7 @@
  *              returning `{ data, isLoading, error, refetch }`; `data` = `{ can_edit, can_edit_defaults, items: Row[] }`.
  *   List       `PanelDataGrid`; scheme, number, a validity badge, and marked text that carries the count and the
  *              state in words ("2 rows, found").
- *   Toolbar    "Download certificates PDF"; "Add certificate" only when `can_edit`.
+ *   Toolbar    "Download certificates PDF" (Actions menu); "Add certificate" only when `can_add`.
  *   Empty      heading "No certificates" and the hint "None of the quoted products has a certificate on file."
  *   Remove     the row menu deferred action `quotation_certificate.remove` (entity type `quotation_certificate`,
  *              entity id = the document id, payload `{ certificate_id }`): no confirm dialog.
@@ -100,6 +100,14 @@ function ok(items: unknown[], canEdit = true) {
   });
 }
 
+/** Download certificates PDF lives in the toolbar's Actions menu (CERT-TAB-UX, 375px). */
+async function findDownloadItem() {
+  const trigger = await screen.findByRole('button', { name: /^actions$/i });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+  return screen.findByRole('menuitem', { name: /download certificates pdf/i });
+}
+
 function renderList() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
@@ -149,7 +157,9 @@ describe('QuotationCertificatesList', () => {
     expect(screen.getByText('ZZT-0200')).toBeInTheDocument();
     expect(screen.getByText(/^valid$/i)).toBeInTheDocument();
     expect(screen.getByText(/expired/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 rows?, found/i)).toBeInTheDocument();
+    // CERT-TAB-UX: a marked row reads "2 rows" (no "found" / "suggested, check" words).
+    expect(screen.getByText('2 rows')).toBeInTheDocument();
+    expect(screen.getByText('Code not found')).toBeInTheDocument();
     // No UUID reaches the screen.
     expect(document.body.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
@@ -164,7 +174,10 @@ describe('QuotationCertificatesList', () => {
       }),
     ]);
     renderList();
-    expect(await screen.findByText('Also filed as WCM 000318, PC 000318')).toBeInTheDocument();
+    // One line per row: the other filings are in the number's tooltip, not on a second line.
+    const number = await screen.findByText('ZZT-0119');
+    expect(number.getAttribute('title')).toContain('Also filed as WCM 000318, PC 000318');
+    expect(screen.queryByText('Also filed as WCM 000318, PC 000318')).toBeNull();
   });
 
   it('says nothing about other filings when there are none', async () => {
@@ -192,8 +205,8 @@ describe('QuotationCertificatesList', () => {
   it('shows the download and add buttons for an editor', async () => {
     ok([row()]);
     renderList();
-    expect(await screen.findByRole('button', { name: /download certificates pdf/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /add certificate/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /add certificate/i })).toBeInTheDocument();
+    expect(await findDownloadItem()).toBeInTheDocument();
   });
 
   it('hides Add certificate when the viewer cannot edit', async () => {
@@ -213,7 +226,7 @@ describe('QuotationCertificatesList', () => {
     renderList();
     await screen.findByText('ZZT-0119');
     expect(screen.queryByRole('button', { name: /add certificate/i })).toBeNull();
-    expect(screen.getByRole('button', { name: /download certificates pdf/i })).toBeInTheDocument();
+    expect(await findDownloadItem()).toBeInTheDocument();
   });
 
   it('shows neither the empty state nor rows while loading', () => {
@@ -240,7 +253,7 @@ describe('QuotationCertificatesList', () => {
     ok([row()]);
     renderList();
     await screen.findByText('ZZT-0119');
-    const trigger = screen.getAllByRole('button', { name: /actions/i })[0];
+    const trigger = screen.getByRole('button', { name: 'PPS ZZT-0119 actions' });
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: /remove/i }));
@@ -254,5 +267,142 @@ describe('QuotationCertificatesList', () => {
       }),
     );
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------- CERT-TAB-UX
+
+  it('keeps every row to one line: the description is a tooltip, not a second line', async () => {
+    ok([row()]);
+    renderList();
+    const number = await screen.findByText('ZZT-0119');
+    expect(number.getAttribute('title')).toContain('Sanitary ware');
+    expect(screen.queryByText('Sanitary ware')).toBeNull();
+  });
+
+  it('never says Suggested', async () => {
+    ok([row()]);
+    renderList();
+    await screen.findByText('ZZT-0119');
+    expect(document.body.textContent).not.toMatch(/suggested/i);
+  });
+
+  it('searches number, scheme and quoted product codes', async () => {
+    ok([
+      row(),
+      row({
+        certificate_id: 'cert-2',
+        scheme: 'SPAN',
+        certificate_number: 'ZZT-0200',
+        products: [{ product_id: 'prod-3', product_code: 'SRTWCY8840-SH' }],
+      }),
+    ]);
+    renderList();
+    await screen.findByText('ZZT-0119');
+    fireEvent.change(screen.getByRole('searchbox', { name: /search certificates/i }), {
+      target: { value: 'wcy8840' },
+    });
+    await waitFor(() => expect(screen.queryByText('ZZT-0119')).toBeNull());
+    expect(screen.getByText('ZZT-0200')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox', { name: /search certificates/i }), {
+      target: { value: 'nothing like this' },
+    });
+    expect(await screen.findByText('Nothing matches')).toBeInTheDocument();
+  });
+
+  it('sorts by a column header click, client-side', async () => {
+    ok([
+      row({ certificate_id: 'cert-b', certificate_number: 'ZZT-0300' }),
+      row({ certificate_id: 'cert-a', certificate_number: 'ZZT-0100' }),
+    ]);
+    renderList();
+    await screen.findByText('ZZT-0300');
+    const order = () =>
+      screen.getAllByText(/^ZZT-0[13]00$/).map((el) => el.textContent);
+    expect(order()).toEqual(['ZZT-0300', 'ZZT-0100']);
+    fireEvent.click(screen.getByRole('button', { name: /^certificate$/i }));
+    await waitFor(() => expect(order()).toEqual(['ZZT-0100', 'ZZT-0300']));
+  });
+
+  it('opens a filter menu with Scheme, Validity, Rows marked and Source', async () => {
+    ok([row()]);
+    renderList();
+    await screen.findByText('ZZT-0119');
+    const trigger = screen.getByRole('button', { name: /filter/i });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+    const menu = await screen.findByRole('menu');
+    const labels = Array.from(menu.querySelectorAll('label')).map((l) => l.textContent);
+    expect(labels).toEqual(['Scheme', 'Validity', 'Rows marked', 'Source']);
+  });
+});
+
+describe('QuotationCertificatesList filters (CERT-TAB-UX)', () => {
+  async function pick(filter: string, option: string) {
+    const trigger = screen.getByRole('button', { name: /^filters/i });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+    const combo = await screen.findByRole('combobox', { name: filter });
+    fireEvent.click(combo);
+    fireEvent.click(await screen.findByRole('option', { name: option }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  }
+
+  const rows = () => [
+    row({ certificate_id: 'c1', certificate_number: 'ZZT-A1', scheme: 'PPS', marked: { count: 1, state: 'found' } }),
+    row({ certificate_id: 'c2', certificate_number: 'ZZT-A2', scheme: 'SPAN', marked: { count: 0, state: 'not_found' } }),
+    row({
+      certificate_id: 'c3',
+      certificate_number: 'ZZT-A3',
+      scheme: 'PPS',
+      verified: false,
+      marked: { count: 0, state: 'not_on_certificate' },
+    }),
+    row({ certificate_id: 'c4', certificate_number: 'ZZT-A4', scheme: 'PPS', source: 'manual', marked: { count: 0, state: 'no_text' } }),
+  ];
+
+  const shown = () => ['ZZT-A1', 'ZZT-A2', 'ZZT-A3', 'ZZT-A4'].filter((n) => screen.queryByText(n));
+
+  it('Rows marked: Code not found keeps not_found and the greyed not_on_certificate rows', async () => {
+    ok(rows());
+    renderList();
+    await screen.findByText('ZZT-A1');
+    await pick('Rows marked', 'Code not found');
+    await waitFor(() => expect(shown()).toEqual(['ZZT-A2', 'ZZT-A3']));
+  });
+
+  it('Scheme and Source narrow the rows together', async () => {
+    ok(rows());
+    renderList();
+    await screen.findByText('ZZT-A1');
+    await pick('Scheme', 'PPS');
+    await waitFor(() => expect(shown()).toEqual(['ZZT-A1', 'ZZT-A3', 'ZZT-A4']));
+    await pick('Source', 'Added');
+    await waitFor(() => expect(shown()).toEqual(['ZZT-A4']));
+  });
+});
+
+describe('Rows marked filter buckets (owner, 11 Nov 2026)', () => {
+  it('offers exactly Marked, Edited, Code not found, Code needed, No text, No file', async () => {
+    const { MARKED_FILTERS } = await import('../../../../../_shared/lib/quotationCertificateDisplay');
+    expect(MARKED_FILTERS.map((f) => f.label)).toEqual([
+      'Marked',
+      'Edited',
+      'Code not found',
+      'Code needed',
+      'No text',
+      'No file',
+    ]);
+  });
+
+  it('puts each state in its bucket', async () => {
+    const { markedFilterOf } = await import('../../../../../_shared/lib/quotationCertificateDisplay');
+    expect(markedFilterOf('found')).toBe('marked');
+    expect(markedFilterOf('edited')).toBe('edited');
+    expect(markedFilterOf('not_found')).toBe('code_not_found');
+    expect(markedFilterOf('not_on_certificate')).toBe('code_not_found');
+    expect(markedFilterOf('code_needed')).toBe('code_needed');
+    expect(markedFilterOf('no_text')).toBe('no_text');
+    expect(markedFilterOf('no_file')).toBe('no_file');
+    expect(markedFilterOf('none')).toBeNull();
   });
 });
