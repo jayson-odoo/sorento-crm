@@ -27,8 +27,8 @@ const ANON_SITE = { key: SITE.key, stage: SITE.stage, final_negotiation: SITE.fi
 const REDACTED = {
   ...FULL,
   today: { ...FULL.today, amount: undefined, split: { dealer: { invoice_count: 3 }, project: { invoice_count: 2 }, other: { invoice_count: 1 } } },
-  projects: { ...FULL.projects, sites: [{ ...ANON_SITE, key: 'sabcdef012345' }] },
-  trading_houses: { more: 0, rows: [{ key: 'sabcdef012346', state: 'Selangor', open_projects: 4, today_docs: 2 }] },
+  projects: { ...FULL.projects, sites: [{ ...ANON_SITE, key: 'opaque-site-1' }] },
+  trading_houses: { more: 0, rows: [{ key: 'opaque-house-1', state: 'Selangor', open_projects: 4, today_docs: 2 }] },
 };
 
 describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
@@ -54,7 +54,7 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
   });
 
   it('opens a site without a name, value or link for a viewer without amounts', () => {
-    render(<TownLightbox snapshot={REDACTED as never} target={{ kind: 'site', key: 'sabcdef012345' }} onClose={() => undefined} />);
+    render(<TownLightbox snapshot={REDACTED as never} target={{ kind: 'site', key: 'opaque-site-1' }} onClose={() => undefined} />);
     expect(screen.getByText('Project site')).toBeTruthy();
     expect(screen.queryByText(/Residensi/)).toBeNull();
     expect(screen.queryByText(/RM/)).toBeNull();
