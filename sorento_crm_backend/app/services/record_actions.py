@@ -2706,7 +2706,15 @@ def _delete_product_supplier_cost(db: Session, payload: dict):
     from app.models.cost_price import ProductSupplierCost
     from app.services.error_handler import handle_not_found
     from app.services.procurement.supplier_cost_service import delete_cost
+    from app.services.cost_access import COST_VIEW_PERM, can_view_cost
+    from app.services.error_handler import AppException
 
+    # SUPPLIER-COST-ACCESS: the cost routes also need `products.cost.view`, which the single
+    # parking slug below cannot say; checked here so this door is no wider than the router.
+    if not can_view_cost(db, payload.get("requested_by_id")):
+        raise AppException(
+            status_code=403, message=f"Permission required: {COST_VIEW_PERM}", code="cost_view_required"
+        )
     cost_id = _entity_id(payload)
     row = db.query(ProductSupplierCost).filter(ProductSupplierCost.id == cost_id).first()
     if row is None:

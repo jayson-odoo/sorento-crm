@@ -429,6 +429,19 @@ def get_packing_list(
         raise handle_internal_error(str(e))
 
 
+def _strip_line_costs_for_non_holder(db: Session, current_user: dict, shipment_data) -> None:
+    """SUPPLIER-COST-ACCESS: a reader without `products.cost.view` was served each line's
+    `unit_cost` as null, so a save that sends it back must neither wipe nor set it: treated as
+    not sent (an existing line keeps its cost, a new one has none)."""
+    from app.services.cost_access import holds_cost_view
+
+    if holds_cost_view(db, current_user):
+        return
+    for line in getattr(shipment_data, "shipment_lines", None) or []:
+        line.unit_cost = None
+        line.model_fields_set.discard("unit_cost")
+
+
 @router.post("/", response_model=InboundShipmentResponse, status_code=status.HTTP_201_CREATED)
 def create_packing_list(
     shipment_data: InboundShipmentCreate,
@@ -437,6 +450,7 @@ def create_packing_list(
 ):
     """Create a new packing list (inbound shipment) with lines."""
     try:
+        _strip_line_costs_for_non_holder(db, current_user, shipment_data)
         service = InboundShipmentService(db)
         shipment = service.create_shipment(shipment_data, current_user["id"])
         return shipment
@@ -460,6 +474,7 @@ def update_packing_list(
 ):
     """Update a packing list."""
     try:
+        _strip_line_costs_for_non_holder(db, current_user, shipment_data)
         service = InboundShipmentService(db)
         shipment = service.update_shipment(shipment_id, shipment_data, current_user["id"])
         return shipment

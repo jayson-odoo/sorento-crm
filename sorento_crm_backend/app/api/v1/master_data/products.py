@@ -16,6 +16,7 @@ from app.dependencies import (
 )
 from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
+from app.services.cost_access import holds_cost_view, require_cost_view
 from app.services import product_list_price_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
@@ -228,6 +229,9 @@ def get_products(
         [tag_template_id] if tag_template_id else None, param_name="tag_template_id"
     )
     try:
+        if (sort or "").strip().lower() == "cost_price" and not holds_cost_view(db, current_user):
+            # SUPPLIER-COST-ACCESS: an order by cost would read the hidden value back.
+            sort = "created_at"
         service = ProductService(db)
         result = service.list_products(
             page=page,
@@ -309,7 +313,11 @@ def get_product(
         raise handle_internal_error(str(e))
 
 
-@router.get("/{product_id}/purchase-history")
+@router.get(
+    "/{product_id}/purchase-history",
+    # SUPPLIER-COST-ACCESS: every row is a supplier and a PO unit cost.
+    dependencies=[Depends(require_cost_view(get_current_user_or_api_key))],
+)
 def get_product_purchase_history(
     product_id: str,
     limit: int = Query(
@@ -372,6 +380,9 @@ def create_product(
 ):
     """Create a new product."""
     try:
+        if not holds_cost_view(db, current_user):
+            # SUPPLIER-COST-ACCESS: who cannot see cost cannot set it either.
+            product_data.cost_price = None
         guard_chatbot_limits_edit(
             db, current_user["id"], NULL_LIMITS, product_data.model_dump(exclude_unset=True)
         )
@@ -412,6 +423,11 @@ def update_product(
 ):
     """Update a product."""
     try:
+        if not holds_cost_view(db, current_user):
+            # SUPPLIER-COST-ACCESS: the reader saw `cost_price` as null, so a save that sends it
+            # back must not wipe (or set) the real cost. Treated as not sent.
+            product_data.cost_price = None
+            product_data.model_fields_set.discard("cost_price")
         service = ProductService(db)
         existing = service.get_product(product_id)
         guard_chatbot_limits_edit(
