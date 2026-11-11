@@ -335,6 +335,8 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
             prop = params["properties"][self_key] = dict(params["properties"][self_key])
             prop["description"] = (str(prop.get("description") or "").rstrip() + SELF_HINT).strip()
             schema["function"]["description"] += SELF_TOOL_NOTE.format(key=self_key)
+        if tool.name in COUNT_TOOLS:
+            schema["function"]["description"] += COUNT_NOTE
         out.append(schema)
     return out
 
@@ -777,6 +779,36 @@ SELF_HINT = ' Write "me" for the person asking ("my projects"); it is sent as th
 SELF_TOOL_NOTE = (
     ' HERE: `{key}` takes "me" for the person asking, or ids from crm_resolve; a name is refused.'
 )
+
+
+#: Crew pass on 2343: "who owns them" was answered by the model counting rows, and 16 full rows do not fit the
+#: result cap, so it counted the rows it could see. The count per owner is computed here from every row.
+COUNT_TOOLS = frozenset({"crm_projects_list"})
+COUNT_NOTE = ' The result carries `count_by_owner` (every matching project): quote it, never count the rows yourself.'
+NO_OWNER = "No owner"
+
+
+def with_owner_counts(name: str, data: Any) -> Any:
+    """`data` with `count_by_owner` when the page holds every matching row, else a note saying how to get it."""
+    if name not in COUNT_TOOLS or not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        return data
+    rows = [r for r in data["data"] if isinstance(r, dict)]
+    pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
+    total = pagination.get("total", data.get("total"))
+    if not isinstance(total, int) or isinstance(total, bool) or len(rows) < total:
+        return {
+            **data,
+            "count_by_owner_note": (
+                f"{total} projects match but this page holds {len(rows)}: call again with limit={total} to count "
+                "them by owner."
+            ),
+        }
+    counts: dict[str, int] = {}
+    for row in rows:
+        owner = str(row.get("owner_name") or "").strip() or NO_OWNER
+        counts[owner] = counts.get(owner, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {**data, "count_by_owner": [{"owner": o, "projects": n} for o, n in ordered]}
 
 
 def _is_self(value: Any) -> bool:
@@ -1502,6 +1534,8 @@ def _dispatch_inner(
     failure = _body_failure(data, f"tool {name} user {ctx.user_id}")
     if failure is not None:
         return failure
+    # Before the cap below cuts rows: the counts are over every row the route returned.
+    data = with_owner_counts(name, data)
     if tool.render:
         # Fail closed: a presenter tool's result that is not a render envelope has not been
         # through the presenter, so nothing in it can be trusted to be field-scoped.

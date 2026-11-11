@@ -378,7 +378,7 @@ def _value_forms(value: Any) -> set[str]:
 #: scoring fields, any `*_id` / `*_ids`, and name-like text ("Basin 600" is not 600 units).
 _NOT_FIGURE_KEYS = frozenset(
     {"more", "page", "limit", "offset", "total_count", "score", "has_result", "rank",
-     "name", "product_name", "label", "description", "title", "display", "problem"}
+     "name", "product_name", "label", "description", "title", "display", "problem", "count_by_owner_note"}
 )
 
 
@@ -689,10 +689,17 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
         # A batch result is built by code from the pasted rows (its row numbers and counts), whatever its status.
         if entry["status"] == "ok" or (entry.get("name") == batch.BATCH and isinstance(entry.get("data"), dict)):
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
+        elif entry["status"] == "empty":
+            # A read that matched nothing backs "0" (crew pass on 2343: "0 projects found" was flagged).
+            backed.add(_normal("0"))
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
-    for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
+    blank = _data_text_blank(ledger, text)
+    for _, _, written, forms in _figures(text, blank):
         if not _figure_backed(written, forms, backed, user_forms) and written not in bad_numbers:
+            bad_numbers.append(written)
+    for written in _group_count_misses(text, ledger, blank):
+        if written not in bad_numbers:
             bad_numbers.append(written)
     found = _found_ids(ledger)
     bad_not_found = [
@@ -703,15 +710,67 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     return bad_numbers, [w for w in bad_not_found if w]
 
 
+#: Results that carry a count per group, computed by code from every row (`tools.with_owner_counts`):
+#: key -> (label field, count field). A figure written right after a group's label is held to its count.
+GROUP_COUNTS: dict[str, tuple[str, str]] = {"count_by_owner": ("owner", "projects")}
+
+
+def _group_count_misses(text: str, ledger: dict[str, dict], blank: Any = None) -> list[str]:
+    """Figures written beside a group's label that are not that group's count. "A: 10" passes the plain check
+    when any 10 sits anywhere in the result (crew pass on 2343: 10 / 6 against 8 / 8), so a grouped count is
+    held to its own group: the first figure after the label, on the same line and before the next label."""
+    groups: dict[str, str] = {}
+    for entry in ledger.values():
+        data = entry.get("data")
+        if entry.get("status") != "ok" or not isinstance(data, dict):
+            continue
+        for key, (label, count) in GROUP_COUNTS.items():
+            for row in data.get(key) or []:
+                if isinstance(row, dict) and str(row.get(label) or "").strip() and isinstance(row.get(count), int):
+                    groups[str(row[label]).strip().lower()] = _normal(str(row[count]))
+    if not groups:
+        return []
+    lowered = text.lower()
+    figures = _figures(text, blank)
+    misses: list[str] = []
+    for label, want in groups.items():
+        for m in re.finditer(re.escape(label), lowered):
+            line_end = lowered.find("\n", m.end())
+            stop = len(text) if line_end < 0 else line_end
+            for other in groups:
+                at = lowered.find(other, m.end())
+                if other != label and 0 <= at < stop:
+                    stop = at
+            for start, _, written, forms in figures:
+                if m.end() <= start < stop:
+                    if want not in forms and written not in misses:
+                        misses.append(written)
+                    break
+    return misses
+
+
+#: What a repair adds instead of writing into a sentence (crew pass on 2343: "((not verified) projects found)").
+LEFT_OUT_NOTE = "I left out a figure I could not check against the data."
+_SENTENCE_SPLIT = re.compile(r"\n|(?<=[.!?])[ \t]+")
+
+
 def _redact_written(text: str, bad: set[str], blank: Any = None) -> str:
-    out, last = [], 0
-    for start, end, written, _ in _figures(text, blank):
-        if written in bad:
-            out.append(text[last:start])
-            out.append(NOT_VERIFIED)
-            last = end
-    out.append(text[last:])
-    return "".join(out)
+    """`text` without each sentence (or line) that holds a figure in `bad`, plus one closing note. A repair never
+    writes into a sentence: a half-sentence with a placeholder misleads more than a missing one."""
+    spans = [(start, end) for start, end, written, _ in _figures(text, blank) if written in bad]
+    if not spans:
+        return text
+    kept: list[str] = []
+    pos = 0
+    pieces = [*_SENTENCE_SPLIT.finditer(text), None]
+    for sep in pieces:
+        end = sep.start() if sep is not None else len(text)
+        joiner = sep.group(0) if sep is not None else ""
+        if not any(pos <= s < end for s, _ in spans):
+            kept.append(text[pos:end] + joiner)
+        pos = sep.end() if sep is not None else len(text)
+    body = re.sub(r"\n{3,}", "\n\n", "".join(kept)).strip()
+    return f"{body}\n\n{LEFT_OUT_NOTE}".strip()
 
 
 def _same_part(a: str, b: str) -> bool:
