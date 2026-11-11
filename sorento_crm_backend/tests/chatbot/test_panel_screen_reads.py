@@ -71,6 +71,16 @@ from tests.chatbot.test_panel_principal import (  # noqa: F401
 )
 
 SETTINGS_VIEW = "system.ai_assistant_settings.view"
+#: Stands for "holds an admin role" in `grants` (AGENT-PANEL-FIXES F: the trace is for admins only). Faked through
+#: `panel_service.sees_trace`, not the role slugs, because an admin's role also decides `on_the_brain`.
+ADMIN = "role:admin"
+
+
+@pytest.fixture(autouse=True)
+def _admin_role(monkeypatch, grants):
+    from app.services.chatbot import panel_service
+
+    monkeypatch.setattr(panel_service, "sees_trace", lambda db, user_id: ADMIN in grants)
 CHAT_URL = "/api/v1/system/ai-assistant/chat"
 MESSAGES = "/api/v1/system/ai-assistant/conversations/{}/messages"
 LONG_AGO = datetime.utcnow() - timedelta(days=2)
@@ -267,7 +277,7 @@ def _assert_decision(decision: dict[str, Any], side: str) -> None:
 
 
 def test_a_chat_turn_stores_the_route_decision_for_a_trace_viewer(session_factory, monkeypatch, staff, grants, http, world):
-    grants.add(SETTINGS_VIEW)
+    grants.add(ADMIN)
     fake_chat_turn(monkeypatch)
 
     resp = post_chat(http, staff)
@@ -281,7 +291,7 @@ def test_a_chat_turn_stores_the_route_decision_for_a_trace_viewer(session_factor
 def test_an_agent_turn_stores_the_route_decision_for_a_trace_viewer(
     session_factory, monkeypatch, staff, grants, http, world, jev, agent_model
 ):
-    grants.update({SETTINGS_VIEW, STOCK_SLUG})
+    grants.update({ADMIN, STOCK_SLUG})
     jev.answer = jev_answer("agent", 0.95)
     agent_model.set(stock_then_answer("ZZT stock is fine."))
 
@@ -304,7 +314,7 @@ def test_a_proposal_still_waiting_reads_as_waiting(session_factory, staff, grant
     """Positive control for the tests below: the live read keeps a waiting card."""
     grants.add(NOTE_SLUG)
     if holder:
-        grants.add(SETTINGS_VIEW)
+        grants.add(ADMIN)
     action_id, _turn, message_id = seed_proposing_message(session_factory, staff)
 
     agent = message_of(read_thread(http, staff.conv_id), message_id)["metadata_json"]["agent"]
@@ -319,7 +329,7 @@ def test_after_a_confirm_the_thread_reads_the_action_as_executed_and_nothing_pen
 ):
     grants.add(NOTE_SLUG)
     if holder:
-        grants.add(SETTINGS_VIEW)
+        grants.add(ADMIN)
     action_id, _turn, message_id = seed_proposing_message(session_factory, staff)
     assert http.post(f"{PANEL_ACTIONS}/{action_id}/confirm", json={}).status_code == 200
 
@@ -339,7 +349,7 @@ def test_after_a_cancel_the_thread_reads_the_action_as_cancelled_and_nothing_pen
 ):
     grants.add(NOTE_SLUG)
     if holder:
-        grants.add(SETTINGS_VIEW)
+        grants.add(ADMIN)
     action_id, _turn, message_id = seed_proposing_message(session_factory, staff)
     assert http.post(f"{PANEL_ACTIONS}/{action_id}/cancel", json={}).status_code == 200
 
@@ -567,8 +577,8 @@ def _messages_by_route(route: str, http, staff_: Staff, monkeypatch) -> list[dic
 
 @pytest.mark.parametrize("route", ["get", "post"])
 def test_a_trace_holder_reads_the_full_agent_turn(session_factory, monkeypatch, staff, grants, http, route):
-    """Positive control for the strip: the same message, with the slug, still carries every field."""
-    grants.add(SETTINGS_VIEW)
+    """Positive control for the strip: the same message, read by an admin, still carries every field."""
+    grants.add(ADMIN)
     message_id = _seed_trace_message(session_factory, staff)
 
     meta = message_of(_messages_by_route(route, http, staff, monkeypatch), message_id)["metadata_json"]
@@ -601,6 +611,19 @@ def test_a_reader_without_the_settings_slug_gets_only_the_card_and_the_route(
         assert f'"{key}"' not in raw, f"{key} reached a reader without {SETTINGS_VIEW}"
 
 
+@pytest.mark.parametrize("route", ["get", "post"])
+def test_the_settings_slug_without_an_admin_role_no_longer_sees_the_trace(
+    session_factory, monkeypatch, staff, grants, http, route
+):
+    """AGENT-PANEL-FIXES F: steps, route and trace are for admins only (owner, 11 Nov)."""
+    grants.update({NOTE_SLUG, SETTINGS_VIEW})
+    message_id = _seed_trace_message(session_factory, staff)
+
+    meta = message_of(_messages_by_route(route, http, staff, monkeypatch), message_id)["metadata_json"]
+    assert set(meta["agent"]) == {"pending_action", "actions"}, sorted(meta["agent"])
+    assert "route_decision" not in meta and "chatbot_turn_id" not in meta
+
+
 # --------------------------------------------------------------------------- #
 # 10 (AC-26): a message from the old path comes back untouched
 # --------------------------------------------------------------------------- #
@@ -617,7 +640,7 @@ OLD_META = {
 @pytest.mark.parametrize("holder", [True, False], ids=["trace-holder", "no-trace-slug"])
 def test_an_old_path_message_is_returned_byte_identical_on_get(session_factory, staff, grants, http, holder):
     if holder:
-        grants.add(SETTINGS_VIEW)
+        grants.add(ADMIN)
     db = session_factory()
     old = AIAssistantMessage(conversation_id=staff.conv_id, role="assistant", content="ZZT old reply", metadata_json=OLD_META, created_at=LONG_AGO)
     db.add(old)

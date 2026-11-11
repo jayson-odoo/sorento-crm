@@ -55,8 +55,8 @@ before the `coder` (one agent, kept alive for the whole lane) makes them green; 
 `reviewer` + browser verification (`tester`) in parallel, once per lane; `security-reviewer`
 joins only when the diff touches its surface (auth, RBAC, external ingest, uploads,
 multi-company scoping) - otherwise it is skipped and the PR body says so (owner ruling,
-24 Sep 2026). `guide-writer` no longer runs per lane (same ruling): Outline updates are
-on-request or a weekly batch over merged lanes, see `.claude/agents/guide-writer.md`.
+24 Sep 2026). User guides: every PR that changes what a user sees or does updates its user guide under `documentation/user-guides/` in the same PR (owner ruling, 31 Oct 2026);
+see `.claude/agents/guide-writer.md`.
 Running a step in the wrong seat is a process violation.
 
 0. **Guided user experience FIRST - design the journey before the system.** Before any entity,
@@ -106,7 +106,8 @@ Running a step in the wrong seat is a process violation.
    numbers are written as failing tests first, and the code is built to satisfy them. FE hook/logic
    tests (vitest) are likewise test-first; FE component-state tests may follow once the prototype
    shape settles. Per user flow, real clicks FE→BE→DB, but **no new Playwright spec**: a
-   recorded agent-browser evidence run stands in, per CLAUDE.md "Persisted Playwright spec".
+   recorded agent-browser evidence run stands in, per `documentation/agents/browser-verification.md`
+   section 2 "Persisted Playwright spec".
    Tests are **never
    deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
    ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
@@ -118,8 +119,8 @@ Running a step in the wrong seat is a process violation.
    otherwise it is skipped and the PR body says so ("security-reviewer: not run, diff outside
    its surface") (owner ruling, 24 Sep 2026); browser verification (`tester`) runs alongside
    both. Fix round goes back to the same `coder`. Address findings via `--fix` / `/simplify` →
-   open PR - `guide-writer` is retired from this step (same ruling): the Outline user guide is
-   updated on-request or as a weekly batch over merged lanes, not per lane. Reviewer runs
+   update the user guide in the same PR when the lane changes what a user sees or does (owner
+   ruling, 31 Oct 2026) → open PR. Reviewer runs
    `documentation/reference/PR-CHECKLIST.md` + the DoD gate below. Use THIS repo's `/code-review`,
    not the plugin's same-named skill, unless asked otherwise. Inbound bugs enter via `/triage`
    (labels in `documentation/agents/triage-labels.md`) and are worked with `/diagnosing-bugs`;
@@ -152,8 +153,8 @@ before spawning, and it runs as:
    still runs.
 5. **Browser pass only when a screen changed**, scoped to that screen, on whichever stack
    is already up (main or a lane's). No stack boot for a backend-only fix.
-6. No guide-writer step - it is retired from the per-lane pipeline (24 Sep 2026 ruling; see
-   `.claude/agents/guide-writer.md`), Outline updates now run on-request or as a weekly batch.
+6. A user-visible fix updates its user guide under `documentation/user-guides/` in the same PR
+   (owner ruling, 31 Oct 2026; see `.claude/agents/guide-writer.md`).
    PR carries `Track: small-fix` and `Plan created: <ISO timestamp>` (see PR checklist). CI is
    the full gate.
 
@@ -228,7 +229,7 @@ the same axis as the module decision - not a separate schema axis.
    (`get_user`/`get_me`, `system_settings` GET dict + `*Update`); schema inheritance alone drops it.
 5. **Verify from the USER's perspective** - real sidebar clicks, real data, at **375px AND 1280px**.
    Tests green ≠ user-verifiable. **`npm run dev` (HMR) for ALL frontend work and verification, sub-agents
-   included, with exactly ONE dev server running machine-wide; `npm run build` ONLY when the user
+   included, with exactly ONE dev server per lane on the lane's own ports; `npm run build` ONLY when the user
    explicitly asks** (standing rule 2026-08-15, reaffirmed 2026-08-23). HMR is what makes iteration
    fast; parallel prod builds took the machine down twice. Dev hides some `next build`-only errors;
    if that class matters for the change, say so and ask rather than building.
@@ -244,12 +245,15 @@ the same axis as the module decision - not a separate schema axis.
    entity or action (`{"expect": {"entity": ...}}` or `{"expect": {"action": ...}}`, row format in
    `scripts/chatbot_eval/cases.py`).
 
-   Lines 6 to 8: `documentation/plans/chatbot/PLAN-ai-tools-standard-5nov.md` section 2.5.
+   Lines 6 to 8 are the AI-tools standard (owner ruling, 5 Nov 2026); `scripts/ci_ai_coverage.py`
+   enforces line 6 at the PR gate.
 
 ## Design mandates (non-negotiable)
 
+**Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
+
 - **CRUD standard** (`documentation/reference/ADR-PRODUCT-STANDARDS.md`): list = DataGrid + search/filters +
-  Add; create/edit = **modal by default** (dedicated page only for complex/multi-tab/file flows);
+  Create; create/edit = **modal by default** (dedicated page only for complex/multi-tab/file flows);
   view = dedicated `/{module}/{id}` detail page rendering **every section** with an explicit empty
   state + next-step CTA (never hide a section on missing data).
 - **Delete = hard delete, no confirmation dialog** (D7, Apple Alignment S6). A destructive or
@@ -342,13 +346,13 @@ reduced-motion path.
 
 ## Ops quick-reference
 
-- Local ports: backend **8000**, frontend **3000**, MCP **8765**. **FE: `npm run dev` for ALL work and
-  verification, ONE dev server machine-wide (check `lsof -i :3000` first); `npm run build` only on
+- Default local ports: backend **8000**, frontend **3000**, MCP **8765** (a lane uses its own). **FE: `npm run dev` for ALL work and
+  verification, ONE dev server per lane on its own ports (check `lsof -i :<port>` first); `npm run build` only on
   the user's explicit ask.** Worker has **no reload** - restart after editing
   `app/tasks/*`; imports/Respond sends run ONLY on the worker (`OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` mandatory on macOS).
 - Local DB (`DATABASE_URL` → `localhost:5432/sorento_ai_automation`) is a **copy of prod data** -
   safe to migrate/test; real prod migration is a separate deploy.
-- Deploy: `DEPLOY.md` (blue/green via CI + `scripts/blue_green_deploy.sh`). Prod server
+- Deploy: `.github/workflows/deploy.yml` (blue/green via CI + `scripts/blue_green_deploy.sh`; release steps in `documentation/agents/cloud-lanes.md`). Prod server
   `/opt/sorento-crm2/` has **no git repo** - CI scp's the deploy script; compose is edited by hand.
 - New Alembic `down_revision` must chain onto a **committed** main head (not an uncommitted WIP
   migration); revision ids ≤ 32 chars. Immediately before merging, re-check `alembic heads`
