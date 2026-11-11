@@ -58,6 +58,22 @@ A footer is a strip under the cards for a note such as *\* Accessories Color Fol
 
 The footer's dots show all the colours of the accessories in the box, each colour once, unless you pick the colours by hand on that element.
 
+## Accessories box on spec sheet templates
+
+The **Add Accessories** button is also on spec sheet templates. There the box prints every accessory a salesperson picked with **Add accessory** on a spec sheet page, any number. The default card is the picture, then a bold line with the brand and code, then the spec sheet description. The card also offers the fields **Brand**, **Description**, **Spec sheet description** and **Dimensions**.
+
+## Tables
+
+Click **Add Table** in the toolbar of a price tag or spec sheet template.
+
+* Right-click a cell for **Insert row below**, **Insert column right**, **Delete row**, **Delete column**, **Merge cells**, **Merge down** and **Unmerge cells**.
+* Click a cell to edit it in the Inspector: its content (with **Insert field**), border colour and width for each side or for all sides, padding, and fill.
+* A border shared by two cells draws once; changing either cell's side of it changes that line.
+
+## Insert field on spec sheet templates
+
+A spec sheet template's **Insert field** also lists: **Line** (Description, UOM, Technical spec, Notes, Item label), **Spec sheet** (Subject title, Attn, Recipient, Project code, Page number, Page count) and **Accessories** (Accessory 1 to 3: code, name, brand, description, spec sheet description, dimensions). A price tag template does not offer the spec-sheet-only ones.
+
 ## Save the design and reuse it
 
 1. With the box selected, click **Save as accessories template**, type a name and save. A toast confirms *Accessories template saved*. The box design is stored: frame, header, footer, direction, card layout and fit settings. The box's position on the tag and which list it reads from stay with each tag template.
@@ -137,3 +153,4 @@ Immediate and in-app: toasts when a template is saved, renamed or deleted, a war
 
 * [Catalogue packages on price tags](price-tag-packages.md) - combos and their free items.
 * [Price Tag Requests](price-tag-requests.md) - working a request and designing a tag.
+* [Project spec sheet](../project-sales-rep/project-spec-sheet.md) - where the spec sheet templates are used.
