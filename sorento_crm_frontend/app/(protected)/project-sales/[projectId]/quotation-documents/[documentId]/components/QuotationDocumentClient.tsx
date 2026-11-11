@@ -625,17 +625,28 @@ export function QuotationDocumentClient({
               {action.kind === 'send' && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button type="button" size="sm" disabled={mutations.issue.isPending}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={mutations.issue.isPending}
+                      // A long party name truncates rather than pushing the page sideways at 375px.
+                      className="max-w-full min-w-0"
+                      title={sendLabel}
+                    >
                       {/* The owner on "Issue R1": "call this Send to Customer" (#1341), then on
                           "Send to Customer A" (QUOTE-HEADER-TIDY, 11 Nov 2026): A read as a
                           customer, so the label names the revision and the To party. The
                           revision stays because R2 is a different paper from R1. The API and the
                           status names keep "issue". */}
-                      {sendLabel}
+                      <span className="truncate">{sendLabel}</span>
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
+                  {/* Capped to the screen and wrapping: the items carry the party name too. */}
+                  <DropdownMenuContent
+                    align="end"
+                    className="max-w-[calc(100vw-2rem)] [&_[role=menuitem]]:whitespace-normal"
+                  >
                     <DropdownMenuItem onSelect={() => mutations.issue.mutate(documentId)}>
                       <Mail className="size-4" aria-hidden />
                       {`${sendLabel} by email`}
