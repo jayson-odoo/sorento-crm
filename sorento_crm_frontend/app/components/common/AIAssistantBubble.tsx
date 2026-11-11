@@ -45,6 +45,8 @@ import {
 } from '@/lib/aiAssistantChatApi';
 import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
+import { TurnDetailDrawer } from '@/app/(protected)/system-management/chat-history/components/TurnDetailDrawer';
 import { localStore } from '@/lib/storage';
 
 const SIZE_STORAGE_KEY = 'sorento.ai.bubbleSize';
@@ -150,8 +152,11 @@ function BrainReplyParts({
 
 export default function AIAssistantBubble() {
   const canUseAIAssistant = useHasPermission('system.ai_assistant_chat.use');
-  // Admins can jump from any assistant message to its per-turn trace (M2).
-  const canViewTrace = useHasPermission('system.ai_assistant_settings.view');
+  // Admins only (owner, AGENT-PANEL-FIXES F): the route pill, steps, reply meta and View trace. The backend strips the
+  // same data from a non-admin's thread (`panel_service.sees_trace`); this keeps the old path's link and the chrome off.
+  const canViewTrace = useEffectiveIsSuperadmin() === true;
+  // The turn whose trace drawer is open over the page, in this tab (AGENT-PANEL-FIXES E).
+  const [traceTurnId, setTraceTurnId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
@@ -882,20 +887,28 @@ export default function AIAssistantBubble() {
                         !m.id.startsWith('temp-') &&
                         (!m.metadata_json?.route || m.metadata_json.chatbot_turn_id) ? (
                           <div className="mt-1.5 border-t border-border/50 pt-1.5">
-                            <Link
-                              href={
-                                m.metadata_json?.route
-                                  ? `/system-management/chat-history?turn=${encodeURIComponent(m.metadata_json.chatbot_turn_id ?? '')}`
-                                  : `/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`
-                              }
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
-                              data-testid="bubble-view-trace"
-                            >
-                              <GitBranch className="size-3" />
-                              View trace
-                            </Link>
+                            {m.metadata_json?.route ? (
+                              <button
+                                type="button"
+                                onClick={() => setTraceTurnId(m.metadata_json?.chatbot_turn_id ?? null)}
+                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
+                                data-testid="bubble-view-trace"
+                              >
+                                <GitBranch className="size-3" />
+                                View trace
+                              </button>
+                            ) : (
+                              <Link
+                                href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
+                                data-testid="bubble-view-trace"
+                              >
+                                <GitBranch className="size-3" />
+                                View trace
+                              </Link>
+                            )}
                           </div>
                         ) : null}
                         {/* M3a Clarifier - enumerable options as clickable chips.
@@ -1015,6 +1028,14 @@ export default function AIAssistantBubble() {
         </motion.div>
         )}
       </AnimatePresence>
+      {canViewTrace ? (
+        <TurnDetailDrawer
+          turnId={traceTurnId}
+          onOpenChange={(next) => {
+            if (!next) setTraceTurnId(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -514,9 +514,12 @@ describe('QuotationDocumentClient header total', () => {
  */
 describe('QuotationDocumentClient header dedupe', () => {
   // The number and project title specs live on the Header tab below ("#1336 kept, AC-QF054").
-  it('leaves no subject read in the card, but keeps the Subject input in an edit session', () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the read is a Project row now, since the record
+  // card above shows only the short name; an edit session keeps the input.
+  it('reads the title as a Project row, and keeps the Project title input in an edit session', () => {
     const { rerender } = render(<QuotationDocumentHeader document={quotationDocument()} />);
-    expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
+    expect(screen.getByText('Project')).toBeInTheDocument();
+    expect(screen.getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
 
     rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
     expect(screen.getByLabelText('Project title')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
@@ -536,7 +539,7 @@ describe('QuotationDocumentClient header dedupe', () => {
 });
 
 describe('QuotationDocumentClient signing gate', () => {
-  it('E4: offers Sign, not Send to Customer, until the quotation is signed', async () => {
+  it('E4: offers Sign, not the Send CTA, until the quotation is signed', async () => {
     // Replaces "a disabled Send to Customer with a Sign it first title": the one primary button
     // is now the NEXT action, so an unsigned quotation leads with Sign.
     getQuotationDocument.mockResolvedValue(quotationDocument());
@@ -544,7 +547,7 @@ describe('QuotationDocumentClient signing gate', () => {
 
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(sign).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('opens Issue once a signature is on the draft', async () => {
@@ -553,7 +556,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Send to Customer R1' });
+    const issue = await screen.findByRole('button', { name: 'Send' });
     expect(issue).toBeEnabled();
     expect(screen.queryByText('Sign it first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
@@ -569,10 +572,10 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send to Customer C' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
-  it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never Send to Customer', async () => {
+  it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never the Send CTA', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         signatory_signature: signature(),
@@ -584,7 +587,7 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     expect(await screen.findByRole('button', { name: 'Send for approval' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('leaves Issue alone once a manager has approved', async () => {
@@ -598,10 +601,10 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
-  it('E4: an issued document that carries no signature leads with Sign, not Send to Customer', async () => {
+  it('E4: an issued document that carries no signature leads with Sign, not the Send CTA', async () => {
     // "It is issued, so it must have been signed" is wrong on every document issued before the
     // signature gate existed. Signed-ness is read off the signature and nothing else.
     getQuotationDocument.mockResolvedValue(
@@ -628,7 +631,7 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     expect(await screen.findByRole('button', { name: 'Sign' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('shows the captured signature read-only in the signatures panel', async () => {
@@ -1205,15 +1208,53 @@ describe('QuotationDocumentClient scope series', () => {
 /**
  * Fix round 2 (#1341, owner addenda 2 to 4 and the 11:33Z alignment notes).
  */
-describe('QuotationDocumentClient Send to Customer (AC-QF057)', () => {
-  it('names the primary CTA Send to Customer, with the revision it will send', async () => {
+describe('QuotationDocumentClient the Send CTA (AC-QF057)', () => {
+  it('names the primary CTA the Send CTA, with the revision it will send', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ signatory_signature: signature() }),
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: /^Issue/ })).toBeNull();
+  });
+
+  // QUOTE-HEADER-TIDY, owner hand test (11 Nov 2026): "here should just show Send then email or
+  // whatsapp, simple as that". No revision and no party on the CTA or its menu; the WhatsApp
+  // prompt keeps them in its title.
+  it('reads just Send, then Email or WhatsApp, with the revision and party only in the prompt', async () => {
+    const user = userEvent.setup();
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        next_revision_label: 'A',
+        recipient_name_snapshot: 'PGB Contoh Group',
+      }),
+    );
+    issueQuotationDocument.mockResolvedValue({
+      id: 'i1',
+      document_id: 'd1',
+      issue_no: 1,
+      revision_label: 'A',
+      our_ref_text: 'SRT/Q/2026/0141 (A)',
+      issued_at: '2026-10-30T02:00:00',
+      issued_by: 'u1',
+      issued_by_name: 'SALES REP A',
+      grand_total: '0.00',
+      scope_count: 0,
+    });
+    createQuotationSignLink.mockResolvedValue({ token: 'tok', path: '/quotation-sign/tok', expires_at: null });
+    renderScreen();
+
+    const cta = await screen.findByRole('button', { name: 'Send' });
+    expect(screen.queryByText(/PGB Contoh Group/)).toBeNull();
+    expect(screen.queryByText(/Send to Customer/)).toBeNull();
+    await user.click(cta);
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'WhatsApp' }));
+    expect(
+      await screen.findByText('Send rev A to PGB Contoh Group via WhatsApp'),
+    ).toBeInTheDocument();
   });
 
   it('says Send it to the customer first on the exports of a draft, never Issue it first', async () => {
@@ -1241,7 +1282,71 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
     expect(within(card).getAllByText('Issued by')).toHaveLength(1);
   });
 
-  it('groups them by scope when the scopes were opened by different people', async () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026: "don't need to be by unit here"): one pair for the
+  // document, the most recently opened ISSUED area version's, never one group per area.
+  it('shows one Issued by and Opened for the document, not one per area', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        scopes: [
+          scope(),
+          scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+          scope({ id: 'q3', scope_label: 'Level 9', current_version_id: 'v10' }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation(),
+      quotation({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+      quotation({ id: 'q3', scope_label: 'Level 9', current_version_id: 'v10' }),
+    ]);
+    listQuotationVersions.mockImplementation((quotationId: string) =>
+      Promise.resolve(
+        quotationId === 'q2'
+          ? [
+              version({
+                id: 'v9',
+                quotation_id: 'q2',
+                version_no: 1,
+                is_issued: true,
+                issued_by_name: 'Kelly Tan',
+                created_at: '2026-11-03T02:00:00',
+              }),
+            ]
+          : quotationId === 'q3'
+            ? [
+                // Opened most recently, but never issued: an issued version wins over it.
+                version({
+                  id: 'v10',
+                  quotation_id: 'q3',
+                  version_no: 1,
+                  is_issued: false,
+                  issued_by_name: 'Siti Aminah',
+                  created_at: '2026-11-09T02:00:00',
+                }),
+              ]
+            : [
+                version({
+                  is_issued: true,
+                  issued_by_name: 'Baser Ramli',
+                  created_at: '2026-11-01T02:00:00',
+                }),
+              ],
+      ),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+    expect(within(card).getAllByText('Opened')).toHaveLength(1);
+    expect(card).not.toHaveTextContent('Baser Ramli');
+    expect(card).not.toHaveTextContent('Siti Aminah');
+    expect(within(card).queryByRole('group')).toBeNull();
+    expect(card).not.toHaveTextContent('Guard House v1');
+    expect(card).not.toHaveTextContent('Townhouse v2');
+  });
+
+  it('falls back to the most recently opened area when none is issued', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         scopes: [scope(), scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' })],
@@ -1254,18 +1359,24 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
     listQuotationVersions.mockImplementation((quotationId: string) =>
       Promise.resolve(
         quotationId === 'q2'
-          ? [version({ id: 'v9', quotation_id: 'q2', version_no: 1, issued_by_name: 'Kelly Tan' })]
-          : [version({ issued_by_name: 'Baser Ramli' })],
+          ? [
+              version({
+                id: 'v9',
+                quotation_id: 'q2',
+                version_no: 1,
+                issued_by_name: 'Kelly Tan',
+                created_at: '2026-11-05T02:00:00',
+              }),
+            ]
+          : [version({ issued_by_name: 'Baser Ramli', created_at: '2026-11-01T02:00:00' })],
       ),
     );
     renderScreen(<QuotationHeaderTab />);
 
     const card = await screen.findByTestId('quotation-header-card');
     await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
-    const townhouse = within(card).getByRole('group', { name: 'Townhouse v2' });
-    const guard = within(card).getByRole('group', { name: 'Guard House v1' });
-    expect(townhouse).toHaveTextContent('Baser Ramli');
-    expect(guard).toHaveTextContent('Kelly Tan');
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+    expect(card).not.toHaveTextContent('Baser Ramli');
   });
 
   it('leaves no Issued by / Opened strip above the lines table', async () => {
@@ -1285,23 +1396,71 @@ describe('QuotationDocumentClient header dedupe (#1336 kept, AC-QF054)', () => {
   // Superseded by PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026: "it should be like order
   // inquiry"): the record card leads with the number, as Order Inquiry does, and the title is
   // its subtitle line.
-  it('leads the record card with the document number, the title under it', async () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the record card names the project by its short
+  // name (PROJECT-NAME, `projects.name`); the full title moves into the Header section.
+  it('leads the record card with the document number, the project name under it', async () => {
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
     getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
     renderScreen(<QuotationHeaderTab />);
 
     expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
     const card = screen.getByTestId('record-header-card');
     expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
-    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    expect(within(card).getByText('Menara Ujian')).toBeInTheDocument();
+    expect(within(card).queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
     expect(within(card).getByText('Draft')).toBeInTheDocument();
   });
 
-  it('says the project title once, in the record header, not again in the Header tab card', async () => {
+  it('falls back to the project title in the record card when the project has no name', async () => {
+    getProject.mockResolvedValue(project({ name: null }));
     getQuotationDocument.mockResolvedValue(quotationDocument());
     renderScreen(<QuotationHeaderTab />);
 
-    expect(await screen.findByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    const card = await screen.findByTestId('record-header-card');
+    expect(within(card).getByText('Menara Test')).toBeInTheDocument();
+  });
+
+  it('shows the full project title as a Project row in the Header section', async () => {
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    const header = await screen.findByTestId('quotation-header-card');
+    expect(within(header).getByText('Project')).toBeInTheDocument();
+    expect(within(header).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
     expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
+  });
+});
+
+// QUOTE-HEADER-TIDY (owner, 11 Nov 2026: "even in view the header and line should be
+// collapsible"): the same fold the edit form uses, open on arrival.
+describe('QuotationDocumentClient view folds (QUOTE-HEADER-TIDY)', () => {
+  it('folds and unfolds the Header and the Lines in view mode', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.getByTestId('quotation-header-card')).toBeInTheDocument();
+
+    const headerToggle = screen.getByRole('button', { name: /^Header/ });
+    const linesToggle = screen.getByRole('button', { name: /^Lines/ });
+    expect(headerToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(linesToggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(headerToggle);
+    await waitFor(() => expect(screen.queryByTestId('quotation-header-card')).toBeNull());
+    // Folded, the one-line summary stands in: To, title, date, total.
+    expect(headerToggle).toHaveTextContent('Nadi Cergas Sdn Bhd');
+    expect(headerToggle).toHaveTextContent('RM');
+
+    fireEvent.click(linesToggle);
+    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).toBeNull());
+    expect(linesToggle).toHaveTextContent('1 scope');
+
+    fireEvent.click(headerToggle);
+    fireEvent.click(linesToggle);
+    expect(await screen.findByTestId('quotation-header-card')).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
   });
 });
 
@@ -1397,7 +1556,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     ['no rung', null, false],
     ['draft', 'draft', false],
     ['issued', 'issued', true],
-  ])('E1: below floor on %s leads with Send for approval and renders no Send to Customer', async (_name, rung, issued) => {
+  ])('E1: below floor on %s leads with Send for approval and renders no the Send CTA', async (_name, rung, issued) => {
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(
       belowFloor(rung, {
@@ -1412,7 +1571,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const send = await screen.findByRole('button', { name: 'Send for approval' });
     expect(send).toBeEnabled();
     expect(primaryButtons()).toEqual([send]);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('E1: an UNSIGNED below-floor draft leads with Send for approval; Sign is not a primary button', async () => {
@@ -1542,7 +1701,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(primaryButtons()).toEqual([sign]);
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('E3: once signed there is no primary button, only "With a manager for approval"', async () => {
@@ -1554,19 +1713,19 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     await screenReady();
     expect(await screen.findByText('With a manager for approval')).toBeInTheDocument();
     expect(primaryButtons()).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it.each([
     ['nothing below the floor', () => quotationDocument()],
     ['approved', () => belowFloor('approved')],
-  ])('E4: %s and unsigned leads with Sign and renders no Send to Customer', async (_name, make) => {
+  ])('E4: %s and unsigned leads with Sign and renders no the Send CTA', async (_name, make) => {
     getQuotationDocument.mockResolvedValue(make());
     renderScreen();
 
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(primaryButtons()).toEqual([sign]);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it.each([
@@ -1583,11 +1742,11 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
         }),
       'R3',
     ],
-  ])('E5: %s and signed leads with an enabled Send to Customer %s', async (_name, make, revision) => {
+  ])('E5: %s and signed leads with an enabled Send (next revision %s)', async (_name, make) => {
     getQuotationDocument.mockResolvedValue(make());
     renderScreen();
 
-    const send = await screen.findByRole('button', { name: `Send to Customer ${revision}` });
+    const send = await screen.findByRole('button', { name: 'Send' });
     expect(send).toBeEnabled();
     expect(primaryButtons()).toEqual([send]);
   });
@@ -1666,7 +1825,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
       await screen.findByText('You can read this quotation but not change it.'),
     ).toBeInTheDocument();
     expect(primaryButtons()).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send for approval' })).toBeNull();
   });
 });
@@ -1925,7 +2084,7 @@ describe('QuotationDocumentClient: fix round 2', () => {
 // QUOTE-SEND-WHATSAPP (UAC section E): Send to Customer offers Email or WhatsApp.
 // ---------------------------------------------------------------------------------------------
 
-describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHATSAPP)', () => {
+describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP)', () => {
   const sentIssue = {
     id: 'i1',
     document_id: 'd1',
@@ -1950,7 +2109,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
       expires_at: null,
     });
     renderScreen();
-    await user.click(await screen.findByRole('button', { name: 'Send to Customer R1' }));
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
     return user;
   }
 
@@ -1974,7 +2133,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     expect(issueQuotationDocument).toHaveBeenCalledWith('p1', 'd1');
-    expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
+    expect(screen.queryByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeNull();
   });
 
   it('E2: Email confirms with the sent-to-customer toast', async () => {
@@ -1989,7 +2148,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     const user = await openSendMenu();
     await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText('Send R1 via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeInTheDocument();
   });
 
   it('E4: a failed send opens no prompt', async () => {
@@ -1998,7 +2157,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
+    expect(screen.queryByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeNull();
   });
 });
 
@@ -2224,7 +2383,8 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
     renderScreen(<QuotationHeaderTab />);
 
     const card = await headerCard();
-    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    // QUOTE-HEADER-TIDY: the record card names the project (its short name, or the title).
+    expect(within(card).getByText('Menara Test')).toBeInTheDocument();
     expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
   });
 
@@ -2243,7 +2403,7 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
 
     const gear = await screen.findByRole('button', { name: 'Proposal actions' });
     const printer = await screen.findByTitle('View downloads for SRT/Q/2026/0141-R2');
-    const send = await screen.findByRole('button', { name: /^Send to Customer/ });
+    const send = await screen.findByRole('button', { name: 'Send' });
     expect(gear.compareDocumentPosition(printer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(printer.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

@@ -232,6 +232,17 @@ export function documentNoun(document?: { kind?: QuotationDocumentKind | null } 
   return document?.kind === 'quotation' ? 'Quotation' : 'Proposal';
 }
 
+/**
+ * The words for sending one revision to the document's To party (QUOTE-HEADER-TIDY, owner 11 Nov
+ * 2026: "Send to Customer A" read as a customer called A). A proposal's letter reads "rev A"; a
+ * quotation's "R1" already says it is a revision. No To party yet reads "the customer".
+ */
+export function sendRevisionLabel(revision: string, recipient?: string | null): string {
+  const label = revision.trim();
+  const words = /^R\d+$/.test(label) ? label : `rev ${label}`;
+  return `Send ${words} to ${recipient?.trim() || 'the customer'}`;
+}
+
 export type QuotationIssue = {
   id: string;
   document_id: string;

@@ -63,6 +63,7 @@ import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
 import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
+import { projectDisplayName } from '../../../../_shared/lib/projectName';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -298,9 +299,6 @@ export function QuotationDocumentClient({
   const record = document.data;
   const canEdit = project.data.can_edit;
   const standing = quotationStanding(record);
-  // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
-  // the next revision is always the one after whatever the customer currently holds.
-  const nextIssueNo = (record.current_issue_no ?? 0) + 1;
   const latestIssue = issues.data?.[0] ?? null;
   const sorentoSignature = record.signatory_signature ?? null;
   /**
@@ -512,11 +510,14 @@ export function QuotationDocumentClient({
           </>
         }
         subtitle={[
+          // The project's short name (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "just show project
+          // name so it doesn't clutter"; PROJECT-NAME `projects.name`, the title when none yet).
+          // The full title is the Header section's Project row.
           <TruncatedTextCell
             key="title"
-            text={record.subject_title}
+            text={projectDisplayName(project.data)}
             lines={2}
-            dialogTitle="Title"
+            dialogTitle="Project"
           />,
           record.is_issued ? (
             <QuotationViewCount key="views" projectId={projectId} document={record} />
@@ -662,10 +663,11 @@ export function QuotationDocumentClient({
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button type="button" size="sm" disabled={mutations.issue.isPending}>
-                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
-                          stays in the label, as it did, because R2 is a different paper from R1. The
-                          API and the status names keep "issue". */}
-                      {`Send to Customer ${record.next_revision_label ?? `R${nextIssueNo}`}`}
+                      {/* Just "Send", then Email or WhatsApp (QUOTE-HEADER-TIDY, owner hand test
+                          11 Nov 2026: "simple as that"). "Send to Customer A" read as a customer
+                          called A; the revision and the party now show only in the WhatsApp
+                          prompt's title. The API and the status names keep "issue". */}
+                      Send
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
