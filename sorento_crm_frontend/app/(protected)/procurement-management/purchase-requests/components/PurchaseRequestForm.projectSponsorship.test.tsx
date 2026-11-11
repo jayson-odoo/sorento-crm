@@ -22,8 +22,9 @@ const projectRef = vi.hoisted(() => ({
     customer_phone: '012-3456789',
     address: '1 Example Road',
     estimated_sales_value: '250000.00',
-    owner_name: 'Ann Sales',
+    owner_name: 'Ann (user)',
     owner_contact_id: 'c-ann',
+    owner_contact_name: 'Ann Sales',
   } as Record<string, unknown>,
 }));
 vi.mock('@/app/(protected)/project-sales/_shared/hooks/useProjects', () => ({

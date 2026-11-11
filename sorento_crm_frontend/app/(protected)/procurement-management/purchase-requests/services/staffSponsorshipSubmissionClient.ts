@@ -41,6 +41,8 @@ export interface StaffSponsorshipProject {
   id: string;
   owner_name?: string | null;
   owner_contact_id?: string | null;
+  /** That contact's name, which the saved form's Requested by prints. */
+  owner_contact_name?: string | null;
 }
 
 async function unwrap<T>(res: Response, fallback: string): Promise<T> {
@@ -229,7 +231,8 @@ export function createStaffSponsorshipClient(project: StaffSponsorshipProject): 
   const me: PortalContact = {
     contact_id: project.owner_contact_id ?? '',
     space_id: '',
-    name: project.owner_name ?? null,
+    // The contact's name, as the saved form shows Requested by, never the user's.
+    name: project.owner_contact_name ?? null,
     phone_number: null,
     expires_at: '',
     // As for an unflagged salesperson: the project the form starts with is shown by the form

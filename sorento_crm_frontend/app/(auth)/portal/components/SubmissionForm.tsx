@@ -97,7 +97,7 @@ import { cleanLineItems } from '../lib/line-items';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
-import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
+import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
 import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
@@ -468,11 +468,6 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   complaint: [],
 };
 
-/** A picked day as YYYY-MM-DD in local time (toISOString would shift it a day in UTC+8). */
-function isoLocalDate(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 const VERB_DOING = { Submit: 'Submitting...', Appeal: 'Appealing...' };
 const VERB_DONE = { Submit: 'Submitted.', Appeal: 'Appealed.' };
 
@@ -604,16 +599,26 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
     .filter(([, value]) => Boolean(value))
     .map(([name]) => name)
     .join(',');
+  // The same for a saved form: a contact-gated field it holds a value for (the project a form was
+  // started from) stays shown when it is opened again. Names only, so the load runs at most once
+  // more, never in a loop.
+  const savedGatedNames = FIELDS[kind]
+    .filter((f) => f.showWhenContact && submissionId && detail && (detail as unknown as Record<string, unknown>)[f.name])
+    .map((f) => f.name)
+    .join(',');
   const fieldDefs = useMemo(
     () => {
       const seeded = new Set(seededNames ? seededNames.split(',') : []);
+      const saved = new Set(savedGatedNames ? savedGatedNames.split(',') : []);
       return FIELDS[kind].filter((f) =>
         f.showWhenContact
-          ? f.showWhenContact(contact) || (!submissionId && seeded.has(f.name))
+          ? f.showWhenContact(contact) ||
+            (!submissionId && seeded.has(f.name)) ||
+            saved.has(f.name)
           : true,
       );
     },
-    [kind, contact, submissionId, seededNames],
+    [kind, contact, submissionId, seededNames, savedGatedNames],
   );
   const showLines = HAS_LINES.includes(kind);
   // The id to save/flush against: the route param when one exists, else
@@ -3367,7 +3372,7 @@ function FieldControl({
           id={field.name}
           ariaLabel={field.label}
           value={parseDateInput(stringValue)}
-          onChange={(date) => onChange(date ? isoLocalDate(date) : '')}
+          onChange={(date) => onChange(date ? toIsoDate(date) : '')}
           disabled={disabled}
         />
       );

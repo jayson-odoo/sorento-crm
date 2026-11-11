@@ -72,6 +72,12 @@ def test_staff_submit_moves_the_draft_the_way_the_portal_submit_does(world):
     # On behalf of the salesperson: they are Requested by, and the form is theirs.
     assert body["requested_by_contact_id"] == salesperson
     assert body["contact_id"] == salesperson
+    # Submitted with no date: it takes today's (Malaysia), so the project tab's "Requested" shows it.
+    from datetime import datetime
+
+    from app.utils.date_format import MY_TZ
+
+    assert body["request_date"] == datetime.now(MY_TZ).date().isoformat()
 
 
 def test_staff_submit_starts_the_form_sla_like_a_salesperson_submit(world):
@@ -150,6 +156,8 @@ def test_the_project_carries_its_salespersons_contact(world):
 
     assert res.status_code == 200, res.text
     assert res.json()["owner_contact_id"] == salesperson_contact
+    # The contact's name, as the saved form's Requested by prints it, not the user's name.
+    assert res.json()["owner_contact_name"].endswith("owner contact")
 
 
 def test_staff_submit_refuses_a_salespersons_own_portal_draft(world):

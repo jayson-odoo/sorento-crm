@@ -1304,6 +1304,14 @@ class PortalService:
         notifications, the project feed and the form SLA. Shared by the portal submit and the
         staff submit of the same form (PROJECT-STAGE-ACTIONS), so the two cannot drift."""
         row.portal_draft_at = None
+        # A request without a date takes the day it was submitted (Malaysia), so lists that show
+        # "Requested" (the project's Sponsorship Form tab) never read "-" (PROJECT-STAGE-ACTIONS).
+        if kind in ("purchase_request", "sponsorship_form") and not getattr(row, "request_date", None):
+            from datetime import datetime as _dt
+
+            from app.utils.date_format import MY_TZ
+
+            row.request_date = _dt.now(MY_TZ).date()
 
         # Document number generation (skip complaint - no number column).
         self._assign_document_number_if_missing(kind, row)

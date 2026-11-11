@@ -273,6 +273,22 @@ describe('limited user, Sponsorship Form edit loads from my-requests', () => {
   });
 });
 
+describe('limited user, a saved form started from a project', () => {
+  it('still shows its Registered project to an unflagged contact (PROJECT-STAGE-ACTIONS)', async () => {
+    meNow = { requires_registered_project: false };
+    mountDetail(LIMITED, { project_id: '5b0c1d2e-aaaa-4bbb-8ccc-0123456789ab', project_code: 'PRJ-0001' });
+    expect(await screen.findByText('Registered project')).toBeInTheDocument();
+    await waitFor(() => expect((document.getElementById('project_id') as HTMLInputElement | null)?.value ?? '').toContain('PRJ-0001'));
+  });
+
+  it('a saved form with no project shows no Registered project to an unflagged contact', async () => {
+    meNow = { requires_registered_project: false };
+    mountDetail(LIMITED);
+    await waitFor(() => expect(document.getElementById('customer_name')).not.toBeNull());
+    expect(screen.queryByText('Registered project')).toBeNull();
+  });
+});
+
 describe('limited user, Sponsorship Form view renders the portal form read-only', () => {
   it('shows the not-editable banner, disabled controls, and Comments + Revisions tabs, loaded from my-requests', async () => {
     mountDetail(LIMITED, { status: 'pending_approval', is_draft: false, is_editable: false });

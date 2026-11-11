@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -386,12 +387,13 @@ export default function SampleRequestForm({
                 htmlFor="sr-delivery-date"
                 error={errors.delivery_date}
               >
-                <Input
+                {/* The shared DD/MM/YYYY picker, never the browser's own date box. */}
+                <DatePicker
                   id="sr-delivery-date"
-                  type="date"
+                  ariaLabel="Request Delivery Date"
                   disabled={readOnly}
-                  value={state.delivery_date}
-                  onChange={(e) => set('delivery_date', e.target.value)}
+                  value={parseDateInput(state.delivery_date)}
+                  onChange={(date) => set('delivery_date', date ? toIsoDate(date) : '')}
                 />
                 {request && dateAnswerText(request, formatDateInMalaysia) && (
                   // PS-SAMPLE-TRACKING rule 3: the sample team's answer, read-only.

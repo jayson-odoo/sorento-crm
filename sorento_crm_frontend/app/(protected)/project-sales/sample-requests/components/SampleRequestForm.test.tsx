@@ -338,9 +338,10 @@ describe('AC-SR-03 / AC-SR-80 the write payload', () => {
     fireEvent.blur(customer);
     await new Promise((r) => setTimeout(r, 250));
     fireEvent.change(screen.getByLabelText(/^Project Title/), { target: { value: 'Tower A' } });
-    fireEvent.change(screen.getByLabelText(/^Request Delivery Date/), {
-      target: { value: '2026-12-01' },
-    });
+    // The shared DD/MM/YYYY picker: typed, then committed on leaving the box.
+    const deliveryDate = screen.getByLabelText(/^Request Delivery Date/);
+    fireEvent.change(deliveryDate, { target: { value: '01/12/2026' } });
+    fireEvent.blur(deliveryDate);
     fireEvent.change(screen.getByLabelText(/^Ship To/), { target: { value: 'Site store' } });
     fireEvent.click(screen.getByRole('radio', { name: 'Deliver-Van' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /mount & label sample board/i }));

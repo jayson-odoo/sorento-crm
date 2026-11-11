@@ -85,3 +85,16 @@ The clicking user is recorded by the audit log (the request actor); `purchase_re
 - A new sponsorship form opened from the Sponsorship Forms list (not from a project) still shows
   the staff form for staff. Trigger to unify it too: owner confirms that list's Create should
   also be the salesperson form.
+- Follow-up (crew pass 11 Nov, not this lane): per-line trash icons on the sponsorship form's
+  items; the History tab shows "Line X removed" on a fresh submit.
+
+## Round 3 (crew re-pass, 11 Nov)
+
+- A salesperson's sample request started from a project: bottom Cancel returns to the project's
+  Samples Request tab (`MyRequestClientProvider paths`), as the staff form's does.
+- Requested by reads the contact's name on the new form too (`owner_contact_name`), as the saved
+  form prints it.
+- A saved form keeps showing the contact-gated field it holds a value for (Registered project).
+- A request submitted without a date takes the submit day (Malaysia), so the tab's Requested is set.
+- Both sample request forms' Request Delivery Date use the shared DD/MM/YYYY picker.
+

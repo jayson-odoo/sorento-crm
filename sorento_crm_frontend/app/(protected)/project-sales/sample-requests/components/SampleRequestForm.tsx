@@ -14,6 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
+import type { SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
+import { myRequestsPaths } from '@/services/myRequestsSubmissionClient';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -137,6 +140,18 @@ function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
         : undefined,
     [project],
   );
+  // From a project its Cancel goes back to the project's Samples Request tab, as the staff form's
+  // does (PROJECT-STAGE-ACTIONS); a saved request still opens on its own page.
+  const paths = useMemo<SubmissionPaths | undefined>(
+    () =>
+      project
+        ? {
+            ...myRequestsPaths,
+            home: () => `/project-sales/${encodeURIComponent(project.id)}?tab=sample-requests`,
+          }
+        : undefined,
+    [project],
+  );
   if (projectId && isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -145,7 +160,7 @@ function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
     );
   }
   return (
-    <MyRequestClientProvider>
+    <MyRequestClientProvider paths={paths}>
       <PortalSampleRequestForm initialValues={initialValues} />
     </MyRequestClientProvider>
   );
@@ -382,11 +397,12 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               htmlFor="sr-delivery-date"
               error={errors.delivery_date}
             >
-              <Input
+              {/* The shared DD/MM/YYYY picker, never the browser's own date box. */}
+              <DatePicker
                 id="sr-delivery-date"
-                type="date"
-                value={state.delivery_date}
-                onChange={(e) => set('delivery_date', e.target.value)}
+                ariaLabel="Request Delivery Date"
+                value={parseDateInput(state.delivery_date)}
+                onChange={(date) => set('delivery_date', date ? toIsoDate(date) : '')}
               />
             </DocField>
 

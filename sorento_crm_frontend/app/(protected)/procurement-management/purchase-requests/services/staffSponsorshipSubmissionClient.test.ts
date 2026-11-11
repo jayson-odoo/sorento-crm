@@ -12,7 +12,7 @@ import { createStaffSponsorshipClient } from './staffSponsorshipSubmissionClient
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-const project = { id: 'p1', owner_name: 'Ann Sales', owner_contact_id: 'c-ann' };
+const project = { id: 'p1', owner_name: 'Ann (user)', owner_contact_id: 'c-ann', owner_contact_name: 'Ann Sales' };
 
 function bodyOf(call: unknown[]) {
   return JSON.parse(String((call[1] as RequestInit).body));

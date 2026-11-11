@@ -225,6 +225,7 @@ export interface Project {
   owner_name?: string | null;
   /** The owner's linked contact: Requested by on a sponsorship form written from the project. */
   owner_contact_id?: string | null;
+  owner_contact_name?: string | null;
 
   is_critical: boolean;
   critical_at?: string | null;
