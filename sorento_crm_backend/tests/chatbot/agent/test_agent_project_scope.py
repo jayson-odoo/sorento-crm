@@ -361,3 +361,18 @@ def test_e_the_page_note_says_screen_rows_are_not_the_users_own(world):
     snap = PageSnapshotPayload(title="Projects", path="/project-sales/projects", visible_text="PPF1 Oscar Owner")
     _, note = panel_service._page_context(world.db, world.sales, snap)
     assert panel_service.SCREEN_NOT_YOURS in note
+
+
+def test_f_a_project_row_says_how_many_quotation_documents_it_has(world):
+    """Crew case A: "do any of my projects have quotations?" was answered with every scope's total nobody asked for.
+    The list itself now says how many quotation documents each project has, so the question needs no totals read."""
+    from app.models.projects import ProjectQuotationDocument
+
+    for i in range(2):
+        world.db.add(ProjectQuotationDocument(
+            id=str(uuid.uuid4()), company_id=SORENTO, project_id=world.mine.id, document_no=f"ZZT-QD-{i}-{uuid.uuid4().hex[:4]}",
+        ))
+    world.db.flush()
+    rows = {r["id"]: r for r in _list(world, world.owner)["data"]}
+    assert rows[world.mine.id]["quotation_document_count"] == 2
+    assert rows[world.theirs[0].id]["quotation_document_count"] == 0

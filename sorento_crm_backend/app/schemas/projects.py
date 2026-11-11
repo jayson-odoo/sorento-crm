@@ -398,6 +398,7 @@ class ProjectResponse(BaseModel):
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
     owner_is_viewer: bool = False
+    quotation_document_count: int = 0
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None

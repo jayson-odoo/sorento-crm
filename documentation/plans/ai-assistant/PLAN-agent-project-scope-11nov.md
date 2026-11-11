@@ -85,3 +85,6 @@ wrong owner; from the Users page 2 of 2 right). Fixed in the data, not by word l
 - the page note's header says a list on screen is what the user can see, not what is theirs (`panel_service.SCREEN_NOT_YOURS`).
 Not fixed by data: unrequested breakdowns in other answers (step 10 per-project, J per-scope totals) rest on the
 answer-scope rule; the live set measures them. Live set: `agent-project-scope-live-set.md` (crew runs it).
+- Crew case A (J, "do any of my projects have quotations?", answered with 8 per-scope totals nobody asked for): the
+  list row now carries `quotation_document_count` (one grouped count in `serialize_projects`), so the question is
+  answered from the list with no totals read; the tool description says so.

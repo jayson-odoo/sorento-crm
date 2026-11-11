@@ -850,6 +850,16 @@ def serialize_projects(
             .all()
         }
 
+    # One grouped count: "which of my projects have quotations" is answered from the list (AGENT-PROJECT-SCOPE).
+    from app.models.projects import ProjectQuotationDocument
+
+    quotation_documents = dict(
+        db.query(ProjectQuotationDocument.project_id, func.count(ProjectQuotationDocument.id))
+        .filter(ProjectQuotationDocument.project_id.in_([p.id for p in projects]))
+        .group_by(ProjectQuotationDocument.project_id)
+        .all()
+    ) if projects else {}
+
     out: List[Dict[str, Any]] = []
     for project in projects:
         status = statuses.get(project.status_id) if project.status_id else None
@@ -948,6 +958,7 @@ def serialize_projects(
                 # Whose project it is, from the reader's side (AGENT-PROJECT-SCOPE): the AI panel reads every project a
                 # full-view salesperson may see, and this is how it tells their own rows from everyone else's.
                 "owner_is_viewer": bool(actor_user_id) and project.owner_user_id == actor_user_id,
+                "quotation_document_count": int(quotation_documents.get(project.id, 0)),
                 "can_edit": (
                     is_manager
                     or (

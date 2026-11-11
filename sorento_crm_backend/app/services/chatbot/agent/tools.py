@@ -787,6 +787,8 @@ COUNT_TOOLS = frozenset({"crm_projects_list"})
 COUNT_NOTE = (
     ' The result carries `count_by_owner` (every matching project) and `your_projects` (how many are the asker\'s):'
     ' quote them, never count the rows yourself. A row is the asker\'s only when `owner_is_viewer` is true.'
+    ' `quotation_document_count` is how many quotation and proposal documents a project has: it answers whether a'
+    ' project has quotations without another read.'
 )
 NO_OWNER = "No owner"
 
