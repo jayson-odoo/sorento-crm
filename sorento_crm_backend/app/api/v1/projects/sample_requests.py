@@ -202,7 +202,13 @@ def create_request(
     try:
         data = payload.model_dump(exclude_unset=True)
         _assert_own_project(db, user, data.get("project_id"))
-        req = svc.create_draft(db, salesperson_id=user["id"], data=data, source="staff")
+        req = svc.create_draft(
+            db,
+            salesperson_id=user["id"],
+            data=data,
+            source="staff",
+            slugs=permission_slugs(db, user["id"]),
+        )
         db.commit()
         db.refresh(req)
         return svc.serialize_detail(db, req)
@@ -234,7 +240,7 @@ def update_request(
         req = _load_own(db, request_id, actor)
         data = payload.model_dump(exclude_unset=True)
         _assert_own_project(db, user, data.get("project_id"))
-        svc.update_draft(db, req, actor=actor, data=data)
+        svc.update_draft(db, req, actor=actor, data=data, slugs=permission_slugs(db, user["id"]))
         db.commit()
         db.refresh(req)
         return svc.serialize_detail(db, req)

@@ -132,17 +132,31 @@ describe('validateStaff', () => {
 });
 
 describe('staffPayloadFromState', () => {
-  it('sends the party, its role and contacts; the server prints name and contact from them', () => {
+  it('sends the party, its role, contacts, name, address and contact person as shown', () => {
     const body = staffPayloadFromState(
       ready({ ship_to_role: 'trading_house', ship_to_contact_ids: ['k1'], site_contact_name: 'Mei' }),
     );
     expect(body.ship_to_party_id).toBe('party-1');
     expect(body.ship_to_role).toBe('trading_house');
     expect(body.ship_to_contact_ids).toEqual(['k1']);
+    expect(body.ship_to_name).toBe('Bintang Trading Sdn Bhd');
     expect(body.ship_to_address).toBe('No. 12, Jalan Perindustrian 3, Klang');
-    expect('ship_to_name' in body).toBe(false);
-    expect('site_contact_name' in body).toBe(false);
-    expect('site_contact_phone' in body).toBe(false);
+    expect(body.site_contact_name).toBe('Mei');
+    expect(body.site_contact_phone).toBeNull();
+  });
+
+  it('review B1: a cleared party is cleared on the server', () => {
+    const body = staffPayloadFromState(withShipToParty(ready(), null));
+    expect(body.ship_to_party_id).toBeNull();
+  });
+
+  it('review S1/S2: unticked contacts and a cleared address are sent as cleared', () => {
+    const body = staffPayloadFromState(
+      withShipToContacts(ready({ site_contact_name: 'Old', ship_to_address: '' }), []),
+    );
+    expect(body.site_contact_name).toBeNull();
+    expect(body.site_contact_phone).toBeNull();
+    expect(body.ship_to_address).toBeNull();
   });
 
   it('never writes "For" or the contact note, and never a typed customer (rules 1, 3, 4)', () => {
@@ -151,12 +165,13 @@ describe('staffPayloadFromState', () => {
     );
     expect('scope_note' in body).toBe(false);
     expect('site_contact_note' in body).toBe(false);
-    expect(body.customer_name ?? null).toBeNull();
+    expect('customer_name' in body).toBe(false);
   });
 
-  it('an empty address is left to the server (party or site address)', () => {
-    const body = staffPayloadFromState(ready({ ship_to_address: '' }));
-    expect('ship_to_address' in body).toBe(false);
+  it('an address the form could not see is left to the server (review S5)', () => {
+    const state = ready({ ship_to_address: '', ship_to_address_pending: true });
+    expect('ship_to_address' in staffPayloadFromState(state)).toBe(false);
+    expect(validateStaff(state).ship_to_address).toBeUndefined();
   });
 });
 

@@ -19,8 +19,18 @@ from app.models.projects import (
     ProjectStakeholder,
 )
 
+import pytest
+
 from ._sample_request_seed import MARKER, full_payload, sorento, uid
 from .test_sample_requests_core import SR, world  # noqa: F401  (fixture)
+
+
+@pytest.fixture(autouse=True)
+def _sales_owns_the_project(world):
+    """The salesperson below edits the project (its owner), as the project page's gate asks
+    (security review B1); `sales_b` is the one who cannot."""
+    world.project.owner_user_id = world.sales
+    world.db.flush()
 
 SITE = "Lot 22, Jalan Seri Murni 5\n43000 Kajang, Selangor"
 
@@ -162,6 +172,8 @@ def test_without_a_project_any_party_is_accepted_and_nothing_is_linked(world):
 
 def test_several_contacts_print_a_and_b_with_the_first_ones_phone(world):
     w = world
+    # The phone is party data: it is copied only for a caller who may read it (security S1).
+    w.perms[w.sales].add("projects.parties.view")
     party = _party(w.db, "Bintang Trading", address="Klang", phone="0331112222")
     _link(w.db, w.project, party)
     mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
@@ -281,3 +293,120 @@ def test_an_old_free_text_draft_keeps_its_text_until_a_party_is_picked(world):
     assert got["ship_to_name"] == "site office, Lot 22"
     assert got["scope_note"] == "show unit"
     assert got["ship_to_party_id"] is None
+
+
+# ------------------------------------------------------------------ security review B1, S1
+
+
+def test_a_salesperson_who_cannot_edit_the_project_cannot_add_a_party_to_it(world):
+    """B1: linking a party is a project edit, behind the project page's own gate."""
+    w = world
+    party = _party(w.db, "Delta Interior Works", party_type="subcontractor")
+    res = w.api.as_(w.sales_b).post(
+        SR, json=_body(w, ship_to_party_id=party.id, ship_to_role="subcontractor")
+    )
+    assert res.status_code == 403, res.text
+    assert w.db.query(ProjectPartyLink).filter(ProjectPartyLink.party_id == party.id).count() == 0
+
+
+def test_a_non_editor_may_still_pick_a_party_already_on_the_project(world):
+    w = world
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    res = w.api.as_(w.sales_b).post(SR, json=_body(w, ship_to_party_id=party.id))
+    assert res.status_code == 201, res.text
+    assert res.json()["ship_to_name"] == party.name
+
+
+def test_a_non_editors_contacts_print_but_do_not_join_the_stakeholders(world):
+    w = world
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
+    res = w.api.as_(w.sales_b).post(
+        SR, json=_body(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id])
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["site_contact_name"] == "Mei Ling Tan"
+    assert (
+        w.db.query(ProjectStakeholder)
+        .filter(ProjectStakeholder.project_id == w.project.id, ProjectStakeholder.party_contact_id == mei.id)
+        .count()
+        == 0
+    )
+
+
+def test_the_contact_phone_is_not_copied_without_the_parties_view_grant(world):
+    """S1: GET /parties/{id}/contacts strips the phone for such a caller; the request must not
+    hand it over either."""
+    w = world
+    assert "projects.parties.view" not in w.perms[w.sales]
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
+    d = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id]).json()
+    assert d["site_contact_name"] == "Mei Ling Tan"
+    assert d["site_contact_phone"] is None
+
+
+# ------------------------------------------------------------------ review B1 / S1 / S2: edits of a saved draft
+# The bodies below are the ones the staff form sends (lib/sample-request-form.ts staffPayloadFromState).
+
+
+def test_clearing_then_repicking_the_party_leaves_a_submittable_draft(world):
+    w = world
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    d = _create(w, ship_to_party_id=party.id).json()
+    cleared = w.api.as_(w.sales).put(
+        f"{SR}/{d['id']}", json={"ship_to_party_id": None, "ship_to_address": None}
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["ship_to_party_id"] is None
+    again = w.api.as_(w.sales).put(
+        f"{SR}/{d['id']}",
+        json={
+            "ship_to_party_id": party.id,
+            "ship_to_name": party.name,
+            "ship_to_address": "Klang",
+            "ship_to_contact_ids": [],
+        },
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["ship_to_name"] == party.name
+    assert _submit(w, d["id"]).status_code in (200, 201)
+
+
+def test_unticking_every_contact_clears_the_contact_person(world):
+    w = world
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
+    d = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id]).json()
+    assert d["site_contact_name"] == "Mei Ling Tan"
+    res = w.api.as_(w.sales).put(
+        f"{SR}/{d['id']}",
+        json={
+            "ship_to_party_id": party.id,
+            "ship_to_contact_ids": [],
+            "site_contact_name": None,
+            "site_contact_phone": None,
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["site_contact_name"] is None
+
+
+def test_a_cleared_address_is_cleared_and_then_blocks_submit(world):
+    w = world
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    d = _create(w, ship_to_party_id=party.id).json()
+    res = w.api.as_(w.sales).put(
+        f"{SR}/{d['id']}", json={"ship_to_party_id": party.id, "ship_to_address": None}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["ship_to_address"] is None
+    sub = _submit(w, d["id"])
+    assert sub.status_code == 422, sub.text
+    assert sub.json()["details"]["field"] == "ship_to_address"

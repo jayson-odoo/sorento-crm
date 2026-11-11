@@ -157,6 +157,13 @@ def world():
         db.flush()
         project = make_project(db, company_id, admin)
         other_project = make_project(db, company_id, admin)
+        # The ship-to party is already on both projects, so a salesperson who cannot edit the
+        # project may still pick it (SAMPLE-REQUEST-V2, security review B1).
+        from app.models.projects import ProjectPartyLink
+
+        for p in (project, other_project):
+            db.add(ProjectPartyLink(project_id=p.id, role="trading_house", party_id=ship_party.id))
+        db.flush()
         db.commit()
 
         state = {"user": admin}

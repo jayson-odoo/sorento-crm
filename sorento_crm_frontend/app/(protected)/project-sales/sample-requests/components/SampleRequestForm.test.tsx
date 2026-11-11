@@ -287,7 +287,8 @@ describe('rule 1: the customer is an AutoCount debtor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
     await waitFor(() => expect(mut.createAsync).toHaveBeenCalled());
-    expect(mut.createAsync.mock.calls[0][0]).toMatchObject({ customer_id: null, customer_name: null });
+    expect(mut.createAsync.mock.calls[0][0]).toMatchObject({ customer_id: null });
+    expect(mut.createAsync.mock.calls[0][0]).not.toHaveProperty('customer_name');
     fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
     expect(await screen.findByText('Pick the customer')).toBeTruthy();
   });
@@ -371,7 +372,7 @@ describe('Preview, then Submit in the popup', () => {
     // party name and the contact from the party.
     expect(body).not.toHaveProperty('scope_note');
     expect(body).not.toHaveProperty('site_contact_note');
-    expect(body).not.toHaveProperty('ship_to_name');
+    expect(body).not.toHaveProperty('customer_name');
     expect(body).not.toHaveProperty('quotation_version_id');
   });
 });

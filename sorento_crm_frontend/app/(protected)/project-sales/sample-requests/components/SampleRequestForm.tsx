@@ -491,6 +491,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
                         role,
                         siteAddress: party.detailed ? siteAddress : null,
                         needsRole: Boolean(prev.project_id) && !onProject,
+                        addressUnknown: !party.detailed,
                       }
                     : null,
                 ),

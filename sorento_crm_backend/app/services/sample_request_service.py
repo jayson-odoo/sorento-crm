@@ -426,8 +426,16 @@ def _check_on_quotation(
 # ------------------------------------------------------------------ writes
 
 
-def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
-    """Copy a (partial) payload onto the header and replace the lines when given."""
+def _apply(
+    db: Session,
+    req: SampleRequest,
+    data: Dict[str, Any],
+    *,
+    actor_user_id: Optional[str] = None,
+    slugs: Optional[Iterable[str]] = None,
+) -> None:
+    """Copy a (partial) payload onto the header and replace the lines when given. ``actor_user_id``
+    and ``slugs`` (the caller's permission slugs) gate the ship-to party's project writes."""
     data = dict(data)
     lines = data.pop("lines", None)
 
@@ -449,7 +457,7 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
         if field in data:
             setattr(req, field, data[field] or None)
     _check_source(db, req)
-    _apply_ship_to(db, req, data)
+    _apply_ship_to(db, req, data, actor_user_id=actor_user_id, slugs=slugs)
     if req.quotation_document_id and (
         lines is not None or "quotation_document_id" in data or "quotation_issue_id" in data
     ):
@@ -487,7 +495,14 @@ def _ship_to_invalid(code: str, field: str, message: str) -> AppException:
     return AppException(status_code=422, message=message, code=code, details={"field": field})
 
 
-def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
+def _apply_ship_to(
+    db: Session,
+    req: SampleRequest,
+    data: Dict[str, Any],
+    *,
+    actor_user_id: Optional[str] = None,
+    slugs: Optional[Iterable[str]] = None,
+) -> None:
     """Ship to is a party (SAMPLE-REQUEST-V2 card rules 2 and 4), the proposal "To" rule
     (`project_quotation_document_service.apply_recipient_pick`) applied to a sample request.
 
@@ -496,7 +511,14 @@ def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> Non
     contact. A party not on the project yet is linked in ``ship_to_role`` first (no project: nothing
     is linked). ``ship_to_contact_ids`` are that party's people: "A & B", the first one's phone, and
     they join the project's stakeholders. A text field present in ``data`` was typed and wins.
+
+    Security review B1/S1: linking a party and adding stakeholders are project edits, so they need
+    the project page's own gate (`assert_can_write_project`); a caller without it may still pick a
+    party already on the project, and its people print without joining the stakeholders. The
+    contact's phone is copied only for a caller holding `projects.parties.view`, the grant that
+    `GET /parties/{id}/contacts` asks before it shows a phone.
     """
+    granted = set(slugs or ())
     from app.models.projects import ProjectParty, ProjectPartyContact
     from app.services import project_party_contact_service as party_contacts
 
@@ -538,7 +560,26 @@ def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> Non
         raise _ship_to_invalid(
             "SAMPLE_REQUEST_SHIP_TO_INVALID", "ship_to_party_id", "That party was not found."
         )
+    def can_edit_project() -> bool:
+        from app.services.project_service import assert_can_write_project
+
+        if not actor_user_id:
+            return False
+        try:
+            assert_can_write_project(db, project, actor_user_id, granted)
+        except AppException:
+            return False
+        return True
+
     if project is not None and party.id not in party_contacts._party_ids_on(db, project):
+        if not can_edit_project():
+            raise AppException(
+                status_code=403,
+                message=f"{party.name} is not on this project, and only someone who can edit the "
+                "project can add it. Pick one of the project's parties.",
+                code="SAMPLE_REQUEST_SHIP_TO_NOT_EDITABLE",
+                details={"field": "ship_to_party_id"},
+            )
         role = data.get("ship_to_role")
         if not role:
             raise _ship_to_invalid(
@@ -556,6 +597,7 @@ def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> Non
                 row.id: row
                 for row in db.query(ProjectPartyContact).filter(
                     ProjectPartyContact.id.in_(contact_ids),
+                    ProjectPartyContact.company_id == party.company_id,
                     ProjectPartyContact.party_id == party.id,
                     ProjectPartyContact.is_active.is_(True),
                 )
@@ -567,7 +609,7 @@ def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> Non
                 f"Pick the contact from the people at {party.name}.",
             )
         contacts = [rows[c] for c in contact_ids]
-        if project is not None:
+        if project is not None and can_edit_project():
             party_contacts.add_registered_contacts(db, project, contact_ids)
 
     loaded: Dict[str, Any] = {}
@@ -589,7 +631,11 @@ def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> Non
         first = contacts[0]
         loaded.update(
             site_contact_name=" & ".join(c.name for c in contacts),
-            site_contact_phone=party_contacts.display_phone(first.phone),
+            site_contact_phone=(
+                party_contacts.display_phone(first.phone)
+                if "projects.parties.view" in granted
+                else None
+            ),
         )
     for field, value in loaded.items():
         if field == "ship_to_party_id" or field not in data:
@@ -604,6 +650,7 @@ def create_draft(
     source: str,
     contact_id: Optional[str] = None,
     space_id: Optional[str] = None,
+    slugs: Optional[Iterable[str]] = None,
 ) -> SampleRequest:
     req = SampleRequest(
         source=source,
@@ -617,13 +664,20 @@ def create_draft(
         goods_from="either",
         board_mounting=False,
     )
-    _apply(db, req, data)
+    _apply(db, req, data, actor_user_id=salesperson_id, slugs=slugs)
     db.add(req)
     db.flush()
     return req
 
 
-def update_draft(db: Session, req: SampleRequest, *, actor: Actor, data: Dict[str, Any]) -> None:
+def update_draft(
+    db: Session,
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    data: Dict[str, Any],
+    slugs: Optional[Iterable[str]] = None,
+) -> None:
     if not is_owner(req, actor):
         raise _forbidden("Only the person who raised this request can edit it.")
     if status_key(db, req) != DRAFT:
@@ -632,7 +686,7 @@ def update_draft(db: Session, req: SampleRequest, *, actor: Actor, data: Dict[st
             message="A submitted request cannot be edited. Cancel it and raise a new one.",
             code="SAMPLE_REQUEST_NOT_EDITABLE",
         )
-    _apply(db, req, data)
+    _apply(db, req, data, actor_user_id=actor.user_id, slugs=slugs)
 
 
 def assert_deletable(db: Session, request_id: str, user_id: Optional[str]) -> SampleRequest:
@@ -1690,7 +1744,14 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
 
 #: Staff-side facts a portal contact never gets (review S3): which staff member answered and
 #: when, and the AutoCount consignment record behind the delivery (its id and AutoCount status).
-PORTAL_HIDDEN = ("consignment", "date_answered_at", "date_answered_by_name")
+PORTAL_HIDDEN = (
+    "consignment",
+    "date_answered_at",
+    "date_answered_by_name",
+    # SAMPLE-REQUEST-V2: staff-only in slice 1 (security review N1); slice 2 decides on purpose.
+    "ship_to_party_id",
+    "ship_to_role",
+)
 
 
 def serialize_portal_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:

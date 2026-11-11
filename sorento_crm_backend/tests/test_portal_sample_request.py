@@ -528,7 +528,11 @@ def test_sample_request_v2_portal_ignores_the_ship_to_party(portal):
         ship_to_party_id=party.id,
         ship_to_role="trading_house",
     )
-    assert d["ship_to_party_id"] is None
+    # Hidden from the portal (security review N1) and never stored for a portal row.
+    assert d.get("ship_to_party_id") is None
+    from app.models.sample_request import SampleRequest
+
+    assert portal.db.get(SampleRequest, d["id"]).ship_to_party_id is None
     assert d["ship_to_name"] == f"{MARKER} site"
     assert portal.db.query(ProjectPartyLink).filter(ProjectPartyLink.party_id == party.id).count() == 0
     sub = _as(portal, portal.granted).post(f"{BASE}/{d['id']}/submit")
