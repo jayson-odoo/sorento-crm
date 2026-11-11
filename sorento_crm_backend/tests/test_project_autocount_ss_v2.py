@@ -394,3 +394,35 @@ def test_an_existing_so_patch_key_and_body_shape_are_unchanged(so_api, fake_ss):
     assert fake_ss.body(patch)["expectedLastModified"] == LAST_MODIFIED
     assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"
 
+
+
+@pytest.mark.parametrize("code", ["SOME_NEW_CODE", None])
+def test_a_refusal_with_no_message_never_shows_a_blank_reason(qt_api, fake_ss, code):
+    """AC-E2E-DB3 B14 (11 Nov, db3): the dialog read "AutoCount refused: . Nothing was changed."
+    A refusal SS sends with an empty message names its code, or says no reason was given."""
+    client, db, world = qt_api
+    _issue2(db, world)
+    _answer_qt(fake_ss, world, patch=(409, refused_body(code, "")))
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert "refused: ." not in body["message"]
+    expected = f"AutoCount refused ({code}). Nothing was changed." if code else (
+        "AutoCount refused with no reason given. Nothing was changed."
+    )
+    assert body["message"] == expected
+
+
+def test_a_refused_write_is_logged_with_its_outcome_and_code(qt_api, fake_ss, caplog):
+    import logging
+
+    client, db, world = qt_api
+    _issue2(db, world)
+    _answer_qt(fake_ss, world, patch=(409, refused_body("DOC_STALE", "")))
+
+    with caplog.at_level(logging.WARNING, logger="app.services.project_autocount_write_service"):
+        client.post(_qt_url(world))
+
+    line = " ".join(r.getMessage() for r in caplog.records)
+    assert "outcome=refused" in line and "errorCode=DOC_STALE" in line

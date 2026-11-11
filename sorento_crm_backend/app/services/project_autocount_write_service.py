@@ -159,6 +159,21 @@ def _trim_sentence(message: Optional[str]) -> str:
     return (message or "").strip()[:_MAX_TEXT].rstrip(".").strip()
 
 
+_CODE_SHAPE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+
+
+def _refused_text(answer: Dict[str, Any]) -> str:
+    """A refusal in words. Never a blank reason (AC-E2E-DB3 B14): with no message the code is
+    named (only a plain UPPER_SNAKE code, never other text from SS)."""
+    reason = _trim_sentence(answer.get("message"))
+    if reason:
+        return f"AutoCount refused: {reason}. Nothing was changed."
+    code = str(answer.get("errorCode") or "")
+    if _CODE_SHAPE.fullmatch(code):
+        return f"AutoCount refused ({code}). Nothing was changed."
+    return "AutoCount refused with no reason given. Nothing was changed."
+
+
 def _safe_key(key: Any) -> str:
     """A DocKey is digits; anything else never reaches a gateway path."""
     text = str(key or "").strip()
@@ -302,9 +317,18 @@ class ProjectAutocountWriteService:
         Attempt 0 is the plain `base_key`; a definite refusal moves the next press of the same
         intent to a new key so it is not answered with the stored refusal. Anything else keeps
         the key, so a retry can only replay."""
-        return send_with_attempts(
+        answer = send_with_attempts(
             attempt_store(), base_key, lambda key: self._call(lambda c: call(c, key))
         )
+        if answer.get("outcome") not in _DONE:
+            # One line per write that did not land, so a refusal on a live stack can be read back.
+            logger.warning(
+                "autocount write %s: outcome=%s errorCode=%s",
+                base_key,
+                str(answer.get("outcome"))[:40],
+                str(answer.get("errorCode"))[:64],
+            )
+        return answer
 
     def company_code(self, company_id: Optional[str]) -> str:
         company = self.db.query(Company).filter(Company.id == company_id).first() if company_id else None
@@ -437,10 +461,7 @@ class ProjectAutocountWriteService:
         if outcome == "gateway_error":
             if code == "UNREACHABLE":
                 return self._blank("unreachable", UNREACHABLE)
-            return self._blank(
-                "refused",
-                f"AutoCount refused: {_trim_sentence(answer.get('message'))}. Nothing was changed.",
-            )
+            return self._blank("refused", _refused_text(answer))
         if code in ("WRITE_DISABLED", "WRITE_NOT_ALLOWED", "WRITE_COMPANY_NOT_TEST"):
             return self._blank("refused", SWITCHED_OFF_HERE)
         if debtor and (
@@ -471,10 +492,7 @@ class ProjectAutocountWriteService:
         if code == "LINE_NOT_DELETED":
             return self._blank(str(outcome or "mismatch"), LINE_NOT_DELETED_TEXT)
         if outcome == "refused" or outcome is None:
-            return self._blank(
-                "refused",
-                f"AutoCount refused: {_trim_sentence(answer.get('message'))}. Nothing was changed.",
-            )
+            return self._blank("refused", _refused_text(answer))
         # mismatch and anything else SS may add: shown as AutoCount's answer, never as done.
         return self._blank(
             str(outcome),
