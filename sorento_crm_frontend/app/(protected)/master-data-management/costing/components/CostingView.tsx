@@ -759,7 +759,7 @@ function CostingPage() {
             }
           />
         ),
-        size: 110,
+        size: 180,
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
