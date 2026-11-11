@@ -49,7 +49,7 @@ Proposed additions (no new column, all read off rows the sheet already loads):
 ### Several products on one page: it already exists, needs a template
 
 A page's "Add accessory" picks other quotation lines; a picked line's own page is skipped
-(`absorbed`, service:574-582) and its product is drawn through the template's Accessory 1..N
+(`absorbed`, service:587-596) and its product is drawn through the template's Accessory 1..N
 layers (`subjectPart`, PS-SPEC-SHEET). The owner's WC + angle valve + hose page is this mechanism
 plus a template with two Accessory slots. Gaps: the picker labels (fixed in slice A), no
 "Accessory card" block to drop in one go (photo + title + description grouped), and the slot
