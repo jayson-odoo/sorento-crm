@@ -108,3 +108,68 @@ def test_perf_a_cold_list_holds_one_file_at_a_time(files, monkeypatch):
         with _api(db, c) as client:
             assert len(_items(client, c)) == SIZE
     assert held and max(held) == 1, held
+
+
+# ---------------------------------------------------------------- crew browser pass, 11 Nov
+# A certificate whose file is missing from storage was fetched again on every list load (~150 ms
+# a file on the dev copy) because the miss was never remembered. The list now remembers it for the
+# revision (with a retry after MISS_RETRY), so a warm list never calls storage.
+
+LATENCY = 0.15
+
+
+def _slow_misses(monkeypatch, store):
+    """Every storage read takes LATENCY and the files are gone, like the dev copy."""
+    import time as _time
+
+    from app.services.resources_service import AttachmentService
+
+    seen: list[str] = []
+
+    def read(self, attachment):
+        seen.append(str(attachment.id))
+        _time.sleep(LATENCY)
+        raise FileNotFoundError(str(attachment.id))
+
+    monkeypatch.setattr(AttachmentService, "get_file_content_for", read)
+    store.clear()
+    return seen
+
+
+def test_perf_a_missing_file_is_remembered_and_the_warm_list_never_calls_storage(files, monkeypatch):
+    with blank_session() as db:
+        c = _draft(db)
+        _seed(db, c, files)
+        seen = _slow_misses(monkeypatch, files)
+        with _api(db, c) as client:
+            t0 = time.perf_counter()
+            cold = _items(client, c)
+            cold_s = time.perf_counter() - t0
+            assert len(cold) == SIZE and len(seen) == SIZE
+            assert {i["marked"]["state"] for i in cold} == {"no_file"}
+            seen.clear()
+            t0 = time.perf_counter()
+            warm = _items(client, c)
+            warm_s = time.perf_counter() - t0
+            print(f"\nCERT-TAB-UX missing files: cold {cold_s * 1000:.0f} ms, warm {warm_s * 1000:.0f} ms")
+            assert seen == [], "a remembered miss is not fetched again"
+            assert {i["marked"]["state"] for i in warm} == {"no_file"}
+            assert warm_s < 1.0, warm_s
+
+
+def test_perf_a_remembered_miss_is_retried_after_it_expires(files, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from app.services import quotation_certificate_service as svc
+
+    with blank_session() as db:
+        c = _draft(db)
+        _seed(db, c, files)
+        seen = _slow_misses(monkeypatch, files)
+        with _api(db, c) as client:
+            _items(client, c)
+            seen.clear()
+            later = datetime.utcnow() + svc.MISS_RETRY + timedelta(minutes=1)
+            monkeypatch.setattr(svc, "_utcnow", lambda: later)
+            _items(client, c)
+            assert len(seen) == SIZE

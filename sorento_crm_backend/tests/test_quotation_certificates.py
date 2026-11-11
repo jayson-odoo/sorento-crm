@@ -1402,3 +1402,84 @@ def test_r5_a_merged_box_names_its_products_and_a_default_save_gives_each_its_ow
                 json={"scope": "quote", "boxes": [{**merged, "product_id": None}]},
             )
             assert q.status_code == 200, q.text
+
+
+# ---------------------------------------------------------------- CERT-TAB-UX crew pass, 11 Nov
+
+
+def test_ux_a_remembered_miss_does_not_hide_a_file_that_is_back(files, monkeypatch):
+    """The box editor reads the file itself: when it is readable again the miss is forgotten."""
+    pdf = _pdf("WB 1515")
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=pdf)
+        files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+            files[str(cr.att.id)] = pdf
+            d = _detail(client, c, cr.id)
+            assert d["marked"]["state"] == "found" and len(d["boxes"]) == 1
+            assert _items(client, c)[0]["marked"] == {"count": 1, "state": "found"}
+
+
+def test_ux_a_product_whose_box_was_deleted_for_this_quote_is_not_marked(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        with _api(db, c) as client:
+            d = _detail(client, c, cr.id)
+            assert {p["state"] for p in d["products"]} == {"found"}
+            keep = [b for b in d["boxes"] if b["product_id"] == c["b"].id]
+            assert len(keep) == 1
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": keep})
+            assert r.status_code == 200, r.text
+            by = {p["product_id"]: p["state"] for p in r.json()["products"]}
+            assert by[c["a"].id] == "unmarked"
+            assert by[c["b"].id] == "found"
+            assert _items(client, c)[0]["marked"] == {"count": 1, "state": "edited"}
+
+
+def test_ux_a_merged_quote_box_keeps_both_products_marked(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_row_with_both_codes_pdf(),
+        )
+        with _api(db, c) as client:
+            (merged,) = _detail(client, c, cr.id)["boxes"]
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [merged]})
+            assert r.status_code == 200, r.text
+            assert {p["state"] for p in r.json()["products"]} == {"found"}
+            assert set(r.json()["boxes"][0]["product_ids"]) == {c["a"].id, c["b"].id}
+
+
+def test_ux_an_unattributed_quote_box_leaves_product_states_alone(files):
+    """A box drawn for this quote names no product, so it may be any product's: none is unmarked."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [_box()]})
+            assert r.status_code == 200, r.text
+            assert r.json()["products"][0]["state"] == "found"
+
+
+def test_ux_deleting_every_box_for_this_quote_unmarks_the_product(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": []})
+            assert r.status_code == 200, r.text
+            assert r.json()["products"][0]["state"] == "unmarked"
+            assert _items(client, c)[0]["marked"] == {"count": 0, "state": "edited"}

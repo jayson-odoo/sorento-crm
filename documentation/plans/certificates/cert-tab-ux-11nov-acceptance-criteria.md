@@ -28,3 +28,15 @@ Plan: `PLAN-cert-tab-ux-11nov.md`. Owner feedback 11 Nov 2026.
 - UX-12 "Save boxes" is the primary button in the page header, disabled until something changes;
   the header shows "Unsaved changes" after an edit and "Saved" after a save.
 - UX-13 Product state reads "Marked" for a found box, whether the code was typed or read.
+
+## Crew browser pass fixes (11 Nov 2026)
+
+- UX-14 A certificate whose file is missing from storage is remembered as missing for its revision:
+  a warm list does not call storage for it (34 missing files: 5.2 s before, ~50 ms after). The miss
+  is retried after 24 h, and the box editor always reads the file itself, so a file that is back is
+  seen at once and the miss forgotten.
+- UX-15 A product's state follows the boxes in force: a product marked by its code whose box was
+  deleted (this quote only, or as default) reads "Not marked" (`unmarked`). A box drawn for this
+  quote names no product, so while one exists no product is unmarked.
+- UX-16 A quote-only save keeps each merged box's `product_ids`, so a box shared by two products
+  keeps both marked.

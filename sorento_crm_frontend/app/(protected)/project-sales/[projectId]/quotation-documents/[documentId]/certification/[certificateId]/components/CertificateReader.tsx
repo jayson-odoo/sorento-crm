@@ -37,6 +37,8 @@ const STATE_BADGE: Record<ProductState, { label: string; variant: 'success' | 'w
   // A box found by a guessed code is just Marked (owner, 11 Nov 2026): no "Suggested, check".
   found: { label: 'Marked', variant: 'success' },
   edited: { label: 'Edited', variant: 'secondary' },
+  // Its box was deleted: the state follows the boxes, not the code (crew pass, 11 Nov 2026).
+  unmarked: { label: 'Not marked', variant: 'secondary' },
   not_found: { label: 'Code not found', variant: 'destructive' },
   no_text: { label: 'No text', variant: 'secondary' },
   code_needed: { label: 'Code needed', variant: 'warning' },

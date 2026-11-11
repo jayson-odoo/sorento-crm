@@ -1,6 +1,6 @@
 # PLAN: Certification tab UX (CERT-TAB-UX)
 
-Status: Merge-ready pending owner hand test (PR #2333); reviewer READY after 1 fix round, crew-tests green on 58519693. Track: small fix track by shape (no migration, no auth/RBAC change, no new ingest), size M. UAC: `cert-tab-ux-11nov-acceptance-criteria.md`.
+Status: Review round 2 (crew browser pass fixes) on PR #2333. Track: small fix track by shape (no migration, no auth/RBAC change, no new ingest), size M. UAC: `cert-tab-ux-11nov-acceptance-criteria.md`.
 
 Lane: CERT-TAB-UX. Owner feedback 11 Nov 2026 ~15:10 MYT on the Certification tab built by QUOTE-CERT-TAB (#2245).
 
@@ -83,6 +83,21 @@ it as `ai` (`quotation_certificate_service.py:301-304`); a box from an `ai` code
 row `suggested` (`:355`, `:378-379`). The tick confirmed the code (`manual`) and changed nothing
 else. Removed per ruling (a): service, types, list, reader and `CoverageCodeEditor` (register too).
 The backend `confirm` PATCH body is kept (tested, harmless) with no screen sending it.
+
+### Crew browser pass, 11 Nov (round 2)
+
+- Speed on the dev copy: certificate files missing from storage were fetched again on every list
+  load (~150 ms each) and the miss was never remembered (`_Group.file`). Now remembered on
+  `certificate_products.boxes` (`missing`, `checked_at`) for the revision, retried after
+  `MISS_RETRY` (24 h); the box editor reads the file itself (`trust_miss=False`). Seeded 34 missing
+  files with 150 ms per storage read: warm list 5174 ms before, 50 ms after
+  (`test_perf_a_missing_file_is_remembered_and_the_warm_list_never_calls_storage`). The FIRST look
+  at a revision still reads its file once (cold: 5.2 s for 34 missing files at 150 ms); that is
+  the one read the cache needs. Making even that free would need a background job filling the
+  cache, which is not built (trigger: a report that a first open is slow on real files).
+- A product whose box was deleted kept "Marked": product states came from the default cache even
+  under a quote override. `_unmark_boxless` now sets `unmarked` ("Not marked") for a product with
+  no box naming it, unless a box names no product. Quote-only saves keep `product_ids`.
 
 ## Known limits
 

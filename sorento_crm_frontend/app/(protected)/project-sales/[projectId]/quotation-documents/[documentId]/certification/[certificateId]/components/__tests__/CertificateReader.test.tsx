@@ -239,6 +239,14 @@ describe('CertificateReader (CERT-TAB-UX)', () => {
     );
   });
 
+  it('shows Not marked, and no Go to box, for a product whose box was deleted', () => {
+    const d = detail();
+    d.products[0].state = 'unmarked';
+    renderReader({ ...d, boxes: [box({ y: 0.2, product_id: 'prod-2' })] });
+    expect(screen.getByText('Not marked')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /go to the box of SRTWCY8840-SH/i })).toBeNull();
+  });
+
   it('offers Go to box only for a product that has a box', () => {
     renderReader();
     expect(screen.getByRole('button', { name: /go to the box of SRTWB1515/i })).toBeInTheDocument();
