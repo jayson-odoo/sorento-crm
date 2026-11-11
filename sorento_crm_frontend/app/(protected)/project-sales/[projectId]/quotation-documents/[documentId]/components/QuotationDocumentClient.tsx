@@ -55,7 +55,10 @@ import { QuotationViewCount } from './QuotationViewCount';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
-import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
+import {
+  documentNoun,
+  sendRevisionLabel,
+} from '../../../../_shared/services/quotationDocumentService';
 import { projectDisplayName } from '../../../../_shared/lib/projectName';
 
 /**
@@ -255,6 +258,10 @@ export function QuotationDocumentClient({
   // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
   // the next revision is always the one after whatever the customer currently holds.
   const nextIssueNo = (record.current_issue_no ?? 0) + 1;
+  const sendLabel = sendRevisionLabel(
+    record.next_revision_label ?? `R${nextIssueNo}`,
+    record.recipient_name_snapshot,
+  );
   const latestIssue = issues.data?.[0] ?? null;
   const sorentoSignature = record.signatory_signature ?? null;
   /**
@@ -619,17 +626,19 @@ export function QuotationDocumentClient({
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button type="button" size="sm" disabled={mutations.issue.isPending}>
-                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
-                          stays in the label, as it did, because R2 is a different paper from R1. The
-                          API and the status names keep "issue". */}
-                      {`Send to Customer ${record.next_revision_label ?? `R${nextIssueNo}`}`}
+                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341), then on
+                          "Send to Customer A" (QUOTE-HEADER-TIDY, 11 Nov 2026): A read as a
+                          customer, so the label names the revision and the To party. The
+                          revision stays because R2 is a different paper from R1. The API and the
+                          status names keep "issue". */}
+                      {sendLabel}
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onSelect={() => mutations.issue.mutate(documentId)}>
                       <Mail className="size-4" aria-hidden />
-                      Email
+                      {`${sendLabel} by email`}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() =>
@@ -639,7 +648,7 @@ export function QuotationDocumentClient({
                       }
                     >
                       <MessageCircle className="size-4" aria-hidden />
-                      WhatsApp
+                      {`${sendLabel} via WhatsApp`}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

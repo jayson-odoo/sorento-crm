@@ -218,6 +218,6 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
         />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText('Send B via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send rev B to the customer via WhatsApp')).toBeInTheDocument();
   });
 });

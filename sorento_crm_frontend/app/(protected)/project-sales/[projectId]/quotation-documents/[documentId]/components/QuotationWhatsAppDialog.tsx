@@ -32,9 +32,10 @@ import {
   toWaDigits,
   whatsAppMessage,
 } from '../../../../_shared/lib/quotationWhatsApp';
-import type {
-  QuotationDocument,
-  QuotationIssue,
+import {
+  sendRevisionLabel,
+  type QuotationDocument,
+  type QuotationIssue,
 } from '../../../../_shared/services/quotationDocumentService';
 import { formatPhone } from '../../../../_shared/lib/phoneDisplay';
 
@@ -75,7 +76,10 @@ export function QuotationWhatsAppDialog({
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         {shown && (
           <DialogHeader>
-            <DialogTitle>{`Send ${revisionLabel(shown)} via WhatsApp`}</DialogTitle>
+            {/* The same words as the button that opened it (QUOTE-HEADER-TIDY). */}
+            <DialogTitle>
+              {`${sendRevisionLabel(revisionLabel(shown), document.recipient_name_snapshot)} via WhatsApp`}
+            </DialogTitle>
           </DialogHeader>
         )}
         {shown && (
