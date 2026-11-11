@@ -43,6 +43,13 @@ export type QuotationDocumentScreen = {
   lineFlags: string[];
   setLineFlags: (next: string[]) => void;
   /**
+   * A banner count asked for the lines to be shown: bumped per ask, and `consumeLinesScroll`
+   * answers true once per ask, so the area strip scrolls into view then and not on a later
+   * ordinary visit to the tab (crew pass: below the fold a tap looked like nothing happened).
+   */
+  linesScrollRequest?: number;
+  consumeLinesScroll?: () => boolean;
+  /**
    * The version the header chip has picked (PROPOSAL-HEADER-LAYOUT: "version is per quotation /
    * proposal"), applied to every area. Null reads each area's current version.
    */

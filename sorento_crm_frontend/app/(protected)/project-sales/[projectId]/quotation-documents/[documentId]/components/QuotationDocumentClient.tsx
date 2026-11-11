@@ -154,6 +154,13 @@ export function QuotationDocumentClient({
 
   // The lines filter (PROJECT-QUOTE-LINE-TOOLS): on across area tabs, and set by the banner.
   const [lineFlags, setLineFlags] = React.useState<string[]>([]);
+  const [linesScrollRequest, setLinesScrollRequest] = React.useState(0);
+  const linesScrollPending = React.useRef(false);
+  const consumeLinesScroll = React.useCallback(() => {
+    const pending = linesScrollPending.current;
+    linesScrollPending.current = false;
+    return pending;
+  }, []);
   const findScopeWithLine = useFindScopeWithLine();
   /**
    * A banner count, pressed: the lines filtered to what it counts, on the first area holding one,
@@ -178,6 +185,9 @@ export function QuotationDocumentClient({
       } catch {
         // The filter is on all the same; the open area stays as it was.
       }
+      // Bring the lines into view, after the area switch, whether or not one was found.
+      linesScrollPending.current = true;
+      setLinesScrollRequest((n) => n + 1);
     },
     [document.data?.scopes, documentId, findScopeWithLine, pathname, projectId, router],
   );
@@ -723,6 +733,8 @@ export function QuotationDocumentClient({
           selectScope,
           lineFlags,
           setLineFlags,
+          linesScrollRequest,
+          consumeLinesScroll,
           versionNo,
           recheckResults,
           dismissRecheck,

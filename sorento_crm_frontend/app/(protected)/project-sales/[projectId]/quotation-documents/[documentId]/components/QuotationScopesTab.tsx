@@ -44,7 +44,21 @@ export function QuotationScopesTab() {
     dismissRecheck,
     lineFlags,
     setLineFlags,
+    linesScrollRequest,
+    consumeLinesScroll,
   } = useQuotationDocumentScreen();
+  // A banner count was pressed: the area strip and its lines come into view.
+  const linesRef = React.useRef<HTMLDivElement | null>(null);
+  // Consumed inside the frame, not before it: StrictMode's double effect cancels the first
+  // frame, and a request taken there would be lost.
+  React.useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (consumeLinesScroll?.()) {
+        linesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [consumeLinesScroll, linesScrollRequest]);
   const quotations = useQuotations(projectId);
 
 
@@ -90,7 +104,7 @@ export function QuotationScopesTab() {
   }
 
   return (
-    <div className="space-y-5">
+    <div ref={linesRef} className="scroll-mt-4 space-y-5">
       <QuotationScopeTabs
         scopes={scopes}
         activeScopeId={activeScope?.id ?? ''}

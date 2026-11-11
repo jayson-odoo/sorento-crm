@@ -1534,10 +1534,21 @@ export function QuotationLinesGrid({
     stage(restored);
   }, [historyRedo, stage]);
 
-  /** Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z and Ctrl+Y on the grid, the designer's keys. */
-  const onHistoryKey = React.useCallback(
-    (event: React.KeyboardEvent) => {
-      if (!editing || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+  /**
+   * Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z and Ctrl+Y, the designer's keys, while editing. Listened for on
+   * the document, not the grid's own box: a click on an empty part of the grid leaves focus on
+   * the page body (crew pass), and the keys must still reach it. Taken only when the key comes
+   * from inside the grid or from the body, never from a control elsewhere on the page, and
+   * never from a text field (its own text undo).
+   */
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (!editing) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.defaultPrevented) return;
+      const target = event.target as Node | null;
+      const onBody = target === document.body || target === document.documentElement;
+      if (!onBody && !(target && wrapperRef.current?.contains(target))) return;
       if (isTextField(event.target)) return;
       const key = event.key.toLowerCase();
       if (key === 'z') {
@@ -1548,9 +1559,15 @@ export function QuotationLinesGrid({
         event.preventDefault();
         redo();
       }
-    },
-    [editing, redo, undo],
-  );
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [editing, redo, undo]);
+
+  /** Leaving a field ends its Undo step: the next edit of the same field is a step of its own. */
+  const endEditStep = React.useCallback(() => {
+    lastEdit.current = null;
+  }, []);
 
   /**
    * Remove takes the line out at once (owner, 11 Nov: "when remove line then is remove already,
@@ -2305,8 +2322,7 @@ export function QuotationLinesGrid({
   return (
     <GridContext.Provider value={context}>
      <MatrixGridProvider value={matrixContext}>
-      {/* Undo / Redo keys reach the grid from anywhere inside it except a text field. */}
-      <div className="min-w-0 space-y-2" onKeyDown={onHistoryKey}>
+      <div ref={wrapperRef} className="min-w-0 space-y-2" onBlur={endEditStep}>
         <DataGrid
           table={table}
           recordCount={visibleRows.length}
