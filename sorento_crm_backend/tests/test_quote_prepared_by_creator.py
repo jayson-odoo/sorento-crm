@@ -165,3 +165,13 @@ def test_the_cover_preview_route_names_the_requester_on_an_unsaved_proposal(api)
         for c in col
     }
     assert texts.get("prepared_by_name") == me.name
+
+
+def test_the_designer_preview_keeps_every_row_of_a_saved_prepared_by_block():
+    """The admin's designer preview prints what the PDF prints: Name, Phone and Email rows of a
+    "Prepared by" block all show (sample values), none drops."""
+    from app.services.quotation_cover_service import SAMPLE_VALUES, sections_for_design, validate_design
+
+    block = _saved_design()["sections"][1]
+    out = sections_for_design(dict(SAMPLE_VALUES), validate_design({**_saved_design(), "sections": [block]}))
+    assert [c["label"] for c in out[0]["cells"][0]] == ["Name", "Phone No", "Email"]

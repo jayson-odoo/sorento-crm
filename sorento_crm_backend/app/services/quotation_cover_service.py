@@ -668,6 +668,7 @@ SAMPLE_VALUES: Dict[str, str] = {
     "salesperson_mobile": "012-000 0000",
     "prepared_by_name": "Prepared Person D",
     "prepared_by_phone": "012-000 0001",
+    "prepared_by_email": "prepared.d@example.com",
     "terms": "<p>1. Prices are in Ringgit Malaysia.</p><p>2. Delivery within 6 weeks of order.</p>",
     "payment_terms": "30 days from invoice date",
     "validity": "30 days from quotation date",

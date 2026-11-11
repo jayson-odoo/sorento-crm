@@ -373,6 +373,26 @@ describe('Attn from the contacts popup', () => {
     expect(rows.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'true']);
   });
 
+  it('a contact picked earlier, then Attn edited by hand: the popup follows the text, not the old pick', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', is_active: true },
+      { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, is_active: true },
+    ]);
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_contact_ids: ['c1'], attn_name: 'MS IIYANA CONTOH' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    expect(await screen.findByRole('option', { name: /MS IIYANA CONTOH/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: /MS\. ANNE CONTOH/ })).toHaveAttribute('aria-checked', 'false');
+  });
+
   it('a contact without a number or email keeps the party ones the pick loaded', async () => {
     listPartyContacts.mockResolvedValue([
       { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, email: null, is_active: true },
