@@ -208,7 +208,7 @@ def test_redaction_leaves_identifiers_alone():
     from app.services.chatbot.agent.loop import LEFT_OUT_NOTE
 
     # The identifier's digits are not the bad figure: its sentence stays, the one holding 9 is left out.
-    out = _redact_written("SO2610-0127 is open. It has 9 of SRTWC8357-300-RL.", {"9"})
+    out = _redact_written("SO2610-0127 is open. It has 2610 of SRTWC8357-300-RL.", {"2610"})
     assert out == f"SO2610-0127 is open.\n\n{LEFT_OUT_NOTE}"
 
 

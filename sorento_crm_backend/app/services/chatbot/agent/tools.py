@@ -796,13 +796,14 @@ def with_owner_counts(name: str, data: Any) -> Any:
     pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
     total = pagination.get("total", data.get("total"))
     if not isinstance(total, int) or isinstance(total, bool) or len(rows) < total:
-        return {
-            **data,
-            "count_by_owner_note": (
-                f"{total} projects match but this page holds {len(rows)}: call again with limit={total} to count "
-                "them by owner."
-            ),
-        }
+        from app.schemas.common import MAX_PAGE_LIMIT
+
+        ask = (
+            f"call again with limit={total} to count them by owner"
+            if isinstance(total, int) and total <= MAX_PAGE_LIMIT
+            else "narrow the read with a filter to count them by owner"
+        )
+        return {**data, "count_by_owner_note": f"{total} projects match but this page holds {len(rows)}: {ask}."}
     counts: dict[str, int] = {}
     for row in rows:
         owner = str(row.get("owner_name") or "").strip() or NO_OWNER

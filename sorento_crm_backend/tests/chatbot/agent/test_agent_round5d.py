@@ -99,7 +99,7 @@ def test_redaction_leaves_written_dates_alone():
     from app.services.chatbot.agent.loop import LEFT_OUT_NOTE
 
     # The date's digits are not the bad figure: its sentence stays, the one holding 9 units is left out.
-    out = _redact_written("Ships 15 Nov 2026. It has 9 units.", {"9 units"})
+    out = _redact_written("Ships 15 Nov 2026. It has 15 units.", {"15 units"})
     assert out == f"Ships 15 Nov 2026.\n\n{LEFT_OUT_NOTE}"
 
 

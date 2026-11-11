@@ -236,3 +236,20 @@ def test_ac5_the_hint_is_added_once_and_the_catalogue_is_untouched(world):
         schema = agent_tools.tool_schemas([agent_tools.REGISTRY[LIST]], cat)[0]
     assert schema["function"]["parameters"]["properties"]["owner_user_ids"]["description"].count('"me"') == 1
     assert cat[LIST]["inputSchema"]["properties"]["owner_user_ids"]["description"] == "Owner user UUIDs."
+
+
+def test_s3_dispatch_keeps_the_owner_counts_after_the_cap(world):
+    """Crew pass on 2343: 16 full rows exceed the result cap; the counts are added before it, in dispatch."""
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    owners = ["ZZT A"] * 8 + ["ZZT B"] * 8
+    rows = [{"id": f"p{i}", "title": f"P{i}", "owner_name": o, "notes": "x" * 2000} for i, o in enumerate(owners)]
+    rec = Recorder(result={"data": rows, "pagination": {"total": 16}})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(
+            world.db, make_ctx(world.sales), LIST, {}, call=rec, catalog=_list_catalog(), timeout=5.0
+        )
+    assert out.status == "ok", out.message
+    assert out.more > 0
+    assert out.data["count_by_owner"] == [{"owner": "ZZT A", "projects": 8}, {"owner": "ZZT B", "projects": 8}]

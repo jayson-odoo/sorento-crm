@@ -128,3 +128,69 @@ def test_when_every_sentence_is_left_out_the_reply_says_what_happened_and_what_t
 
     assert _redact_written("You own 99 projects.", {"99"}) == ALL_LEFT_OUT_NOTE
     assert "again" in ALL_LEFT_OUT_NOTE
+
+
+# --- review round 3 (B1, B2, S1, S3) --------------------------------------------------------------
+def _ledger_counts(*groups) -> dict:
+    ledger = {}
+    for i, counts in enumerate(groups):
+        ledger[f"c{i}"] = {"name": LIST, "args": {}, "status": "ok", "data": {
+            "data": [], "pagination": {"total": sum(counts.values())},
+            "count_by_owner": [{"owner": o, "projects": n} for o, n in counts.items()],
+            "values": [1200000, 16],
+        }}
+    return ledger
+
+
+@pytest.mark.parametrize("text, counts", [
+    ("Ali Bakar owns 5 projects and Ali owns 3.", {"Ali": 3, "Ali Bakar": 5}),
+    ("Natalie owns 2 projects.", {"Ali": 3, "Natalie": 2}),
+    ("Sally Sales' biggest project is worth RM 1,200,000.", {"Sally Sales": 3}),
+    ("Sally Sales (pipeline RM 1,200,000) owns 3 projects.", {"Sally Sales": 3}),
+])
+def test_b1_correct_answers_are_not_flagged(text, counts):
+    bad, reply = _check(text, _ledger_counts(counts), "who owns them")
+    assert bad == [] and reply == text
+
+
+def test_b1_a_name_keeps_every_count_this_turn_read():
+    ledger = _ledger_counts({"Sally Sales": 3}, {"Sally Sales": 1})
+    bad, _ = _check("Sally Sales owns 3 projects; 1 of them is won.", ledger, "who owns them")
+    assert bad == []
+
+
+def test_s1_only_the_wrong_count_is_left_out_not_every_sentence_with_that_number():
+    ledger = _ledger_counts({"Sally Sales": 3, "Oscar Owner": 13})
+    text = "There are 16 projects, 13 of them open. Sally Sales: 13."
+    bad, reply = _check(text, ledger, "who owns them")
+    assert bad == ["13"]
+    assert reply.startswith("There are 16 projects, 13 of them open.")
+    assert "Sally Sales: 13" not in reply
+
+
+@pytest.mark.parametrize("text, bad, kept, gone", [
+    ("Owners:\n1. Oscar Owner: 12 projects\n2. Sally Sales: 3 projects", {"12"}, "Owners:\n2. Sally Sales: 3 projects", "1."),
+    ("1. Ali: 9\n2. Siti: 8", {"8"}, "1. Ali: 9", "2."),
+    ("Ali has 9 (approx. 10 later). Fine.", {"10"}, "Fine.", "approx"),
+    ("Sorento Sdn. Bhd. owns 9 projects. Done.", {"9"}, "Done.", "Sdn"),
+    ("Project No. 5 is the oldest. Ask me more.", {"5"}, "Ask me more.", "No."),
+])
+def test_b2_lines_and_sentences_are_left_out_whole(text, bad, kept, gone):
+    from app.services.chatbot.agent.loop import LEFT_OUT_NOTE, _redact_written
+
+    out = _redact_written(text, bad)
+    assert out.startswith(kept) and out.endswith(LEFT_OUT_NOTE)
+    assert gone not in out.removesuffix(LEFT_OUT_NOTE)
+
+
+def test_s3_the_model_is_told_to_quote_the_counts():
+    catalog = {LIST: {"description": LIST, "inputSchema": {"type": "object", "properties": {}}}}
+    schema = agent_tools.tool_schemas([agent_tools.REGISTRY[LIST]], catalog)[0]
+    assert "count_by_owner" in schema["function"]["description"]
+
+
+def test_the_note_never_asks_for_more_than_the_route_allows():
+    from app.schemas.common import MAX_PAGE_LIMIT
+
+    out = agent_tools.with_owner_counts(LIST, {"data": _rows([ALI]), "pagination": {"total": MAX_PAGE_LIMIT + 5}})
+    assert f"limit={MAX_PAGE_LIMIT + 5}" not in out["count_by_owner_note"]
