@@ -53,6 +53,7 @@ import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { LiveNumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -301,6 +302,9 @@ interface InspectorPanelProps {
   /** PRICETAG-HEADER-DRAG round 2: the box's header is selected (its band as drawn, box mm); the
    *  header inspector replaces the box one, as the element inspector does in card editing. */
   accessoryHeaderSelected?: AccessoryRect | null;
+  /** B4: the table cell the Inspector edits (a right-click picks it); null = the first cell. */
+  tableCell?: { row: number; col: number } | null;
+  onTableCellChange?: (row: number, col: number) => void;
 }
 
 export function InspectorPanel({
@@ -313,6 +317,8 @@ export function InspectorPanel({
   fontOptions,
   onUploadFont,
   onInsertField,
+  tableCell,
+  onTableCellChange,
   onContentEditorReady,
   onChooseImage,
   onChooseBadge,
@@ -439,7 +445,7 @@ export function InspectorPanel({
               usedColours={usedColours}
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
-              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes } as Partial<TagLayerProps>)}
             />
           </div>
         ) : layer.props.kind === 'accessories' &&
@@ -641,6 +647,16 @@ export function InspectorPanel({
               onUploadFont={onUploadFont}
             />
           )}
+          {layer.props.kind === 'table' && (
+            <TableInspector
+              props={layer.props}
+              cellAt={tableCell ?? { row: 0, col: 0 }}
+              onCellChange={onTableCellChange}
+              onChange={updateProps}
+              onInsertField={onInsertField}
+              usedColours={usedColours}
+            />
+          )}
           {layer.props.kind === 'shape' && (
             <ShapeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
           )}
@@ -668,7 +684,7 @@ export function InspectorPanel({
               onManageIcons={onManageIcons}
               iconCount={featureIconCount ?? 0}
               boxWidth_mm={layer.width_mm}
-              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes } as Partial<TagLayerProps>)}
             />
           )}
           {layer.props.kind === 'accessories' && (
@@ -680,7 +696,7 @@ export function InspectorPanel({
               usedColours={usedColours}
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
-              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes } as Partial<TagLayerProps>)}
               onEditCard={onEditAccessoryCard ? () => onEditAccessoryCard(layer.id) : undefined}
               onEditFooter={onEditAccessoryFooter ? () => onEditAccessoryFooter(layer.id) : undefined}
               onSaveTemplate={
@@ -1254,6 +1270,117 @@ function withShape(
     // in place.
     points: shape === 'polygon' ? (props.points ?? defaultPolygonPoints()) : undefined,
   };
+}
+
+const TABLE_SIDE_OPTIONS = [
+  { value: 'all', label: 'All sides' },
+  { value: 'top', label: 'Top' },
+  { value: 'right', label: 'Right' },
+  { value: 'bottom', label: 'Bottom' },
+  { value: 'left', label: 'Left' },
+];
+
+/** B4: the table's size, then the picked cell: its text, borders, padding and fill. */
+function TableInspector({
+  props,
+  cellAt,
+  onCellChange,
+  onChange,
+  onInsertField,
+  usedColours,
+}: {
+  props: Extract<TagLayerProps, { kind: 'table' }>;
+  cellAt: { row: number; col: number };
+  onCellChange?: (row: number, col: number) => void;
+  onChange: (changes: Partial<TagLayerProps>) => void;
+  onInsertField?: () => void;
+  usedColours: string[];
+}) {
+  const [side, setSide] = useState('all');
+  const row = Math.min(cellAt.row, props.rows.length - 1);
+  const col = Math.min(cellAt.col, props.columns.length - 1);
+  const cell = props.cells[row][col];
+  const sides = side === 'all' ? (['top', 'right', 'bottom', 'left'] as const) : ([side] as ('top' | 'right' | 'bottom' | 'left')[]);
+  const shown = cell.border?.[sides[0]] ?? { color: '#000000', width_mm: 0 };
+
+  const patchCell = (changes: Partial<(typeof props.cells)[number][number]>) =>
+    onChange({
+      ...props,
+      cells: props.cells.map((cells, r) => cells.map((c, i) => (r === row && i === col ? { ...c, ...changes } : c))),
+    });
+  const patchBorder = (changes: Partial<{ color: string; width_mm: number }>) => {
+    const border = { ...(cell.border ?? {}) };
+    for (const s of sides) border[s] = { ...(border[s] ?? { color: '#000000', width_mm: 0.2 }), ...changes };
+    patchCell({ border });
+  };
+
+  return (
+    <section>
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Table</h4>
+      <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-2 gap-2">
+          <NumberInput label="Rows" value={props.rows.length} onChange={() => undefined} min={props.rows.length} max={props.rows.length} />
+          <NumberInput label="Columns" value={props.columns.length} onChange={() => undefined} min={props.columns.length} max={props.columns.length} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <NumberInput
+            label="Cell row"
+            value={row + 1}
+            min={1}
+            max={props.rows.length}
+            onChange={(v) => onCellChange?.(Math.max(0, Math.min(props.rows.length - 1, Math.round(v) - 1)), col)}
+          />
+          <NumberInput
+            label="Cell column"
+            value={col + 1}
+            min={1}
+            max={props.columns.length}
+            onChange={(v) => onCellChange?.(row, Math.max(0, Math.min(props.columns.length - 1, Math.round(v) - 1)))}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Content</Label>
+            {onInsertField && (
+              <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={onInsertField}>
+                Insert field
+              </Button>
+            )}
+          </div>
+          <Textarea
+            aria-label="Cell content"
+            rows={3}
+            value={cell.text}
+            maxLength={5000}
+            onChange={(e) => patchCell({ text: e.target.value })}
+            className="text-xs"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Border</Label>
+          <SearchableSelect value={side} onChange={(v: string) => setSide(v)} options={TABLE_SIDE_OPTIONS} />
+        </div>
+        <ColorPicker label="Border colour" value={shown.color} onChange={(v) => patchBorder({ color: v })} usedColours={usedColours} />
+        <div className="grid grid-cols-2 gap-2">
+          <NumberInput
+            label="Border width"
+            value={shown.width_mm}
+            step={0.1}
+            min={0}
+            onChange={(v) => patchBorder({ width_mm: v })}
+          />
+          <NumberInput
+            label="Padding"
+            value={cell.padding_mm ?? 1}
+            step={0.5}
+            min={0}
+            onChange={(v) => patchCell({ padding_mm: v })}
+          />
+        </div>
+        <ColorPicker label="Fill" value={cell.fill ?? ''} onChange={(v) => patchCell({ fill: v || undefined })} usedColours={usedColours} />
+      </div>
+    </section>
+  );
 }
 
 function ShapeInspector({

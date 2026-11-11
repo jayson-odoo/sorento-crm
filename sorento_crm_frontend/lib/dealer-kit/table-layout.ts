@@ -301,3 +301,18 @@ export function unmergeCell(props: TableLayerProps, row: number, col: number): T
   cells[owner.r][owner.c] = plain;
   return { ...props, cells };
 }
+
+/** The same table with every cell's text passed through `resolve` (merge fields), before layout. */
+export function resolveTableText(props: TableLayerProps, resolve: (text: string) => string): TableLayerProps {
+  return {
+    ...props,
+    cells: props.cells.map((row) => row.map((cell) => (cell.text ? { ...cell, text: resolve(cell.text) } : cell))),
+  };
+}
+
+/** The CSS-ready font size (mm) of a table's text. */
+export function tableFontMm(props: Pick<TableLayerProps, 'fontSize'>): number {
+  return (props.fontSize ?? DEFAULT_TABLE_FONT_PT) * PT_TO_MM;
+}
+
+export { SIDES as TABLE_SIDES };

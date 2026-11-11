@@ -276,6 +276,18 @@ import {
   newCardElement,
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
+import {
+  cellAt,
+  defaultTableProps,
+  deleteColumn,
+  deleteRow,
+  insertColumn,
+  insertRow,
+  mergeCells,
+  tableLayout,
+  tableMeasure,
+  unmergeCell,
+} from '@/lib/dealer-kit/table-layout';
 import { AccessoryEditOverlay } from './AccessoryEditOverlay';
 import { HeaderDragOverlay } from './HeaderDragOverlay';
 import type { SaveTemplateRequest } from './AccessoryTemplatesBridge';
@@ -1269,6 +1281,14 @@ export function TagCanvasEditor({
       ...makeBaseLayer('barcode', 40, 22),
       slot_binding: 'barcode',
       props: defaultBarcodeProps(),
+    });
+  }, [addLayer, makeBaseLayer]);
+
+  // B4: a 3 x 2 table, in price tag and spec sheet templates alike.
+  const handleAddTable = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer('table', 80, 30),
+      props: defaultTableProps(3, 2, 80),
     });
   }, [addLayer, makeBaseLayer]);
 
@@ -3389,6 +3409,9 @@ export function TagCanvasEditor({
    */
   /** Where the context menu was opened, in mm: a menu Paste lands there ("paste here"). */
   const menuPointRef = useRef<{ x_mm: number; y_mm: number } | null>(null);
+  /** B4: the table cell last right-clicked (or picked in the Inspector): the menu and the cell
+   *  section of the Inspector act on it. */
+  const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
   const handleStageContextMenu = useCallback(
     (e: React.MouseEvent) => {
       const content = stageRef.current?.getContent();
@@ -3408,9 +3431,37 @@ export function TagCanvasEditor({
       setMenuOnEmpty(!drawnHit && hits.length === 0);
       const next = selectionForContextMenu(selectedIds, hits, drawnHit);
       if (next) setSelectedIds(next);
+      // A table: which cell is under the pointer (the layout the canvas and print both use).
+      const ofKind = (id: string | null | undefined) => {
+        const hit = id ? layers.find((l) => l.id === id) : undefined;
+        return hit && hit.props.kind === 'table' ? hit : undefined;
+      };
+      const tableHit = ofKind(drawnHit) ?? hits.map(ofKind).find(Boolean);
+      if (tableHit && tableHit.props.kind === 'table' && point) {
+        const found = cellAt(
+          tableLayout(tableHit.props, tableHit.width_mm, tableMeasure(tableHit.props)),
+          point.x_mm - tableHit.x_mm,
+          point.y_mm - tableHit.y_mm,
+        );
+        setTableCell({ layerId: tableHit.id, row: found?.row ?? 0, col: found?.col ?? 0 });
+      }
     },
     [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
   );
+
+  // B4: a table's height follows its laid-out rows (a row grows to fit its text). Not a history
+  // entry: undo restores the older layers and this puts the height right again.
+  useEffect(() => {
+    if (embedded?.readOnly) return;
+    const fixes = new Map<string, number>();
+    for (const layer of layers) {
+      if (layer.props.kind !== 'table') continue;
+      const height = tableLayout(layer.props, layer.width_mm, tableMeasure(layer.props)).height_mm;
+      if (Math.abs(height - layer.height_mm) > 0.05) fixes.set(layer.id, height);
+    }
+    if (fixes.size === 0) return;
+    setLayers((prev) => prev.map((l) => (fixes.has(l.id) ? { ...l, height_mm: fixes.get(l.id) as number } : l)));
+  }, [layers, embedded?.readOnly]);
 
   // -- Undo / Redo -----------------------------------------------------------
 
@@ -4137,6 +4188,24 @@ export function TagCanvasEditor({
     return null;
   }, [selectedIds, layers]);
 
+  // The table menu acts on the right-clicked cell of the single selected table.
+  const tableMenu = useMemo(() => {
+    if (!selectedLayer || selectedLayer.props.kind !== 'table') return null;
+    const props = selectedLayer.props;
+    const at = tableCell?.layerId === selectedLayer.id ? tableCell : { row: 0, col: 0 };
+    const cell = props.cells[at.row]?.[at.col];
+    return {
+      layerId: selectedLayer.id,
+      props,
+      row: at.row,
+      col: at.col,
+      rowSpan: Math.max(1, cell?.rowSpan ?? 1),
+      colSpan: Math.max(1, cell?.colSpan ?? 1),
+      merged: Boolean(cell && ((cell.rowSpan ?? 1) > 1 || (cell.colSpan ?? 1) > 1)),
+    };
+  }, [selectedLayer, tableCell]);
+
+
   const selectionIsGroup = selectedLayer?.props.kind === 'group';
   /** The context menu's "Crop image" (S8): an image layer only, entered ONLY
    * from this menu (double-click on an image stays a no-op, captain call 4). */
@@ -4248,9 +4317,12 @@ export function TagCanvasEditor({
           (layer.props.kind === 'text' ? layer.props.text : '')
         );
       }
+      if (layer.props.kind === 'table' && tableCell?.layerId === layer.id) {
+        return layer.props.cells[tableCell.row]?.[tableCell.col]?.text ?? '';
+      }
       return layer.props.kind === 'text' ? layer.props.text : '';
     },
-    [dataOf],
+    [dataOf, tableCell],
   );
 
   /**
@@ -4268,9 +4340,16 @@ export function TagCanvasEditor({
         updateLayer(layer.id, { text_override: content });
       } else if (layer.props.kind === 'text') {
         updateLayerProps(layer.id, { ...layer.props, text: content });
+      } else if (layer.props.kind === 'table' && tableCell?.layerId === layer.id) {
+        // Insert field on a table writes into the picked cell.
+        const { row, col } = tableCell;
+        const cells = layer.props.cells.map((cellRow, r) =>
+          cellRow.map((cell, c) => (r === row && c === col ? { ...cell, text: content } : cell)),
+        );
+        updateLayerProps(layer.id, { cells });
       }
     },
-    [layers, updateLayer, updateLayerProps],
+    [layers, updateLayer, updateLayerProps, tableCell],
   );
 
   /** The Inspector's rich Content box, so Insert field lands at its caret. */
@@ -5301,6 +5380,68 @@ export function TagCanvasEditor({
           <ContextMenuContent className="w-56">
             {hasSelection && !menuOnEmpty ? (
               <>
+                {tableMenu && (
+                  <>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, insertRow(tableMenu.props, tableMenu.row + tableMenu.rowSpan))
+                      }
+                    >
+                      Insert row below
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          insertColumn(tableMenu.props, tableMenu.col + tableMenu.colSpan),
+                        )
+                      }
+                    >
+                      Insert column right
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() => updateLayerProps(tableMenu.layerId, deleteRow(tableMenu.props, tableMenu.row))}
+                      disabled={tableMenu.props.rows.length <= 1}
+                    >
+                      Delete row
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, deleteColumn(tableMenu.props, tableMenu.col))
+                      }
+                      disabled={tableMenu.props.columns.length <= 1}
+                    >
+                      Delete column
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          mergeCells(
+                            tableMenu.props,
+                            tableMenu.row,
+                            tableMenu.col,
+                            tableMenu.row + tableMenu.rowSpan - 1,
+                            tableMenu.col + tableMenu.colSpan,
+                          ),
+                        )
+                      }
+                      disabled={tableMenu.col + tableMenu.colSpan >= tableMenu.props.columns.length}
+                    >
+                      Merge cells
+                    </ContextMenuItem>
+                    {tableMenu.merged && (
+                      <ContextMenuItem
+                        onSelect={() =>
+                          updateLayerProps(tableMenu.layerId, unmergeCell(tableMenu.props, tableMenu.row, tableMenu.col))
+                        }
+                      >
+                        Unmerge cells
+                      </ContextMenuItem>
+                    )}
+                    <ContextMenuSeparator />
+                  </>
+                )}
                 <ContextMenuItem
                   onSelect={() => {
                     handleCut();
@@ -5455,6 +5596,7 @@ export function TagCanvasEditor({
         onAddBadge={handleAddBadge}
         onAddBarcode={handleAddBarcode}
         onAddFeatureIcons={specSheet ? undefined : handleAddFeatureIcons}
+        onAddTable={handleAddTable}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
@@ -5706,6 +5848,8 @@ export function TagCanvasEditor({
               fontOptions={library.fontOptions}
               onUploadFont={() => setFontUploadOpen(true)}
               onInsertField={() => setInsertFieldOpen(true)}
+              tableCell={tableCell && selectedLayer && tableCell.layerId === selectedLayer.id ? tableCell : null}
+              onTableCellChange={(row, col) => selectedLayer && setTableCell({ layerId: selectedLayer.id, row, col })}
               onContentEditorReady={(editor) => {
                 contentEditorRef.current = editor;
               }}

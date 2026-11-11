@@ -90,6 +90,14 @@ import {
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
 import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
+import { renderMergeFields } from '@/lib/dealer-kit/merge-fields';
+import {
+  resolveTableText,
+  tableFontMm,
+  tableLayout,
+  tableMeasure,
+  TABLE_SIDES,
+} from '@/lib/dealer-kit/table-layout';
 import { layerFeatureIcons } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
@@ -1070,6 +1078,7 @@ function TagRenderer({
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
           {layer.type === 'feature_icons' && renderFeatureIconsLayer(layer, media, binding)}
           {layer.type === 'accessories' && renderAccessoriesLayer(layer, media, binding)}
+          {layer.type === 'table' && <TableLayerView layer={layer} binding={binding} />}
         </div>
       ))}
     </div>
@@ -1297,6 +1306,79 @@ export default function TagSheetRenderer({
 // ---------------------------------------------------------------------------
 // Feature icons (PRICETAG-DESIGNER-GAPS item 3)
 // ---------------------------------------------------------------------------
+
+/**
+ * A table layer: one absolutely positioned div per laid-out cell, laid out by the SAME module the
+ * designer canvas uses (`table-layout.ts`), with merge fields resolved against the page's data
+ * before the rows are measured. A merged-away cell is not emitted.
+ */
+function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindingData | null }) {
+  const props = layer.props;
+  const laid = useMemo(() => {
+    if (props.kind !== 'table') return null;
+    const resolved = resolveTableText(props, (text) => renderMergeFields(text, binding, 'print', layer));
+    return { resolved, layout: tableLayout(resolved, layer.width_mm, tableMeasure(resolved)) };
+  }, [props, binding, layer]);
+  if (props.kind !== 'table' || !laid) return null;
+  const { resolved, layout } = laid;
+  const align = resolved.verticalAlign ?? 'middle';
+  return (
+    <div
+      data-testid="table-layer"
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${layer.width_mm}mm`,
+        height: `${layout.height_mm}mm`,
+        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        fontFamily: resolved.fontFamily,
+        fontSize: `${tableFontMm(resolved)}mm`,
+        color: resolved.color,
+        textAlign: resolved.align,
+      }}
+    >
+      {layout.cells.map((c) => {
+        const border: CSSProperties = {};
+        for (const side of TABLE_SIDES) {
+          const spec = c.cell.border?.[side];
+          const name = side[0].toUpperCase() + side.slice(1);
+          Object.assign(border, {
+            [`border${name}Style`]: spec && spec.width_mm > 0 ? 'solid' : 'none',
+            [`border${name}Width`]: spec ? `${spec.width_mm}mm` : 0,
+            [`border${name}Color`]: spec?.color,
+          });
+        }
+        return (
+          <div
+            key={`${c.row}-${c.col}`}
+            data-testid={`table-cell-${c.row}-${c.col}`}
+            style={{
+              position: 'absolute',
+              left: `${c.x_mm}mm`,
+              top: `${c.y_mm}mm`,
+              width: `${c.width_mm}mm`,
+              height: `${c.height_mm}mm`,
+              boxSizing: 'border-box',
+              padding: `${c.cell.padding_mm ?? 1}mm`,
+              background: c.cell.fill || undefined,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: align === 'top' ? 'flex-start' : align === 'bottom' ? 'flex-end' : 'center',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              lineHeight: 1.2,
+              ...border,
+            }}
+          >
+            {c.text}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * The subject's matched icons as `<img alt=name>`, packed by `featureIconRow` - the SAME two

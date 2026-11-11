@@ -14,6 +14,7 @@
  */
 
 import { useMemo } from 'react';
+import { tableFontMm, tableLayout, tableMeasure, TABLE_SIDES } from '@/lib/dealer-kit/table-layout';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type {
@@ -243,6 +244,80 @@ export function KonvaTagLayer({
   );
 }
 
+/**
+ * B4: a table. Laid out by `table-layout.ts`, the module the print page uses, so a row is the same
+ * height here: a Rect per filled cell, a Line per border side, a Text per cell.
+ */
+function TableContent({
+  props,
+  widthMm,
+  scale,
+}: {
+  props: TagLayerProps;
+  widthMm: number;
+  scale: number;
+}) {
+  const epoch = useFontsEpoch();
+  const layout = useMemo(
+    () => (props.kind === 'table' ? tableLayout(props, widthMm, tableMeasure(props)) : null),
+    [props, widthMm],
+  );
+  void epoch;
+  if (props.kind !== 'table' || !layout) return null;
+  const fontPx = mm2px(tableFontMm(props), scale);
+  return (
+    <>
+      {layout.cells.map((c) => {
+        const x = mm2px(c.x_mm, scale);
+        const y = mm2px(c.y_mm, scale);
+        const w = mm2px(c.width_mm, scale);
+        const h = mm2px(c.height_mm, scale);
+        const pad = mm2px(c.cell.padding_mm ?? 1, scale);
+        const lines: Record<(typeof TABLE_SIDES)[number], number[]> = {
+          top: [x, y, x + w, y],
+          right: [x + w, y, x + w, y + h],
+          bottom: [x, y + h, x + w, y + h],
+          left: [x, y, x, y + h],
+        };
+        return (
+          <Group key={`${c.row}-${c.col}`}>
+            {c.cell.fill ? <Rect x={x} y={y} width={w} height={h} fill={c.cell.fill} listening={false} /> : null}
+            <Rect x={x} y={y} width={w} height={h} fill="rgba(0,0,0,0.001)" />
+            {c.text ? (
+              <Text
+                x={x + pad}
+                y={y + pad}
+                width={Math.max(0, w - 2 * pad)}
+                height={Math.max(0, h - 2 * pad)}
+                text={c.text}
+                fontFamily={props.fontFamily}
+                fontSize={fontPx}
+                fill={props.color ?? '#000000'}
+                align={props.align ?? 'left'}
+                verticalAlign={props.verticalAlign ?? 'middle'}
+                lineHeight={1.2}
+                listening={false}
+              />
+            ) : null}
+            {TABLE_SIDES.map((side) => {
+              const spec = c.cell.border?.[side];
+              return spec && spec.width_mm > 0 ? (
+                <Line
+                  key={side}
+                  points={lines[side]}
+                  stroke={spec.color}
+                  strokeWidth={mm2px(spec.width_mm, scale)}
+                  listening={false}
+                />
+              ) : null;
+            })}
+          </Group>
+        );
+      })}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Type-specific content rendering
 // ---------------------------------------------------------------------------
@@ -411,6 +486,9 @@ function LayerContent({
           />
         </>
       );
+
+    case 'table':
+      return <TableContent props={display?.table ?? props} widthMm={widthMm} scale={scale} />;
 
     case 'feature_icons':
       return (

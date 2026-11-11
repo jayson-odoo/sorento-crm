@@ -32,6 +32,7 @@ import {
   Redo2,
   RectangleHorizontal,
   Shapes,
+  Table2,
   Tag,
   Trash2,
   Type,
@@ -108,6 +109,8 @@ interface CanvasToolbarProps {
   onAddBarcode: () => void;
   /** Feature icons (PRICETAG-DESIGNER-GAPS item 3). Absent hides the button. */
   onAddFeatureIcons?: () => void;
+  /** B4: add a 3 x 2 table. */
+  onAddTable?: () => void;
   onAddProduct: () => void;
   onAddSet: () => void;
   onAddAlternativesRow: () => void;
@@ -338,6 +341,7 @@ export function CanvasToolbar({
   onAddBadge,
   onAddBarcode,
   onAddFeatureIcons,
+  onAddTable,
   onAddProduct,
   onAddSet,
   onAddAlternativesRow,
@@ -453,6 +457,7 @@ export function CanvasToolbar({
       />
       <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
       <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />
+      {onAddTable && <ToolbarButton icon={Table2} label="Add Table" onClick={onAddTable} />}
       {onAddFeatureIcons && (
         <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
       )}
