@@ -218,8 +218,9 @@ Binding for every new or changed screen. Where the Foundryx UI/UX playbook diffe
   typed or picked as DD/MM/YYYY, never a native `<input type="date">` (the browser draws it in
   its own locale). Calendar days travel as `YYYY-MM-DD` (`ADR-PRODUCT-STANDARDS.md`).
 - **Lists are the standard DataGrid, one line per row.** No second info line under a cell, no
-  stacked badge + caption; long text truncates with `title`. No card layout on phones: the
-  grid scrolls inside its box.
+  stacked badge + caption; long text truncates with `title`. Phones follow the playbook
+  instead (owner, 11 Nov, D4/D8): a list renders as the one generic phone card, not the
+  desktop grid squeezed; see `documentation/owner-standing-rules.md`.
 - **Every column sorts server-side.** `enableSorting: false` needs a reason at the call site;
   the backend list takes a sort key for every column it returns.
 - **Every dropdown filter is multi-select** (`SearchableMultiSelect`), OR-ed server-side,
@@ -230,11 +231,10 @@ Binding for every new or changed screen. Where the Foundryx UI/UX playbook diffe
   stands in.
 - **A dialog or lightbox over a side panel.** New surfaces open as `Dialog`; a `Sheet` needs a
   reason (the mobile nav drawer and bottom sheets, D13, are the standing exceptions).
-- **One image pipeline.** Uploads go through a shared dropzone, never a hand-rolled
-  `<input type="file">`: `AttachmentDropzone` (`app/(auth)/portal/components/AttachmentDropzone.tsx`)
-  for record attachments (drop, paste, preview, and a failed file stays as its own row with why
-  and **Try again**), `FileDropzone` (section 4) for a single file a form reads. No third
-  uploader; folding the two into one is the next step, not a licence for a new one.
+- **One image pipeline** for showing stored images: ONE rendition service makes the sizes and
+  ONE image component shows them. Lists and editors show a thumbnail, never the full-size
+  original; a click opens the shared lightbox. No screen builds its own image URL, resize or
+  viewer. The full rule lives in `documentation/owner-standing-rules.md`.
 - **Minimal UI, Sorento brand.** Sorento blue `--primary`, no hover lift or pop, no floating
   widgets beyond the AI bubble. From the playbook only the styled tooltip is adopted: an icon
   button's label is the shared `Tooltip` (`components/ui/tooltip.tsx`), never a native `title`
