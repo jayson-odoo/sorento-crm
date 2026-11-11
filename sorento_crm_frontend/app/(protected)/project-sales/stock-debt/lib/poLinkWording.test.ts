@@ -136,6 +136,14 @@ describe('poLinkMenu', () => {
     expect(menu.link.enabled).toBe(false);
     expect(menu.change.enabled).toBe(true);
   });
+
+  it('Change PO is greyed when the one PO line has nothing left to arrive', () => {
+    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
+    const menu = poLinkMenu({
+      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, nothingOpenOn: '202609-S0029',
+    });
+    expect(menu.change).toEqual({ enabled: false, reason: 'Nothing is left open on PO 202609-S0029 to change' });
+  });
 });
 
 describe('Change PO answers (STOCKDEBT-LIVE-ACTIONS review, unlink first)', () => {

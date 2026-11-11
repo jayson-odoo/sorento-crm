@@ -210,7 +210,8 @@ export function PoLinkDialog({
         line,
         poLineId: po.po_line_id,
         poLabel: `${po.po_number} · line ${po.po_line_no ?? '-'}`,
-        linkedQty: po.qty,
+        // Change PO moves the open balance only (crew for the owner, 11 Nov).
+        linkedQty: mode === 'change' ? (po.open_qty ?? po.qty) : po.qty,
       })),
     );
   }, [mode, lines]);
@@ -449,7 +450,7 @@ export function PoLinkDialog({
       },
       {
         id: 'po_qty',
-        header: 'PO qty',
+        header: mode === 'change' ? 'Open' : 'PO qty',
         size: 80,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => (

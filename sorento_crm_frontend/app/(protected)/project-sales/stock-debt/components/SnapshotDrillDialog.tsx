@@ -292,6 +292,11 @@ function OiGroupGrid({
     ticked: tickedLines.length,
     linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
     singleLinked: tickedLines.filter((line) => (line.now.po_links ?? []).length === 1).length,
+    nothingOpenOn:
+      tickedLines
+        .map((line) => line.now.po_links ?? [])
+        .find((links) => links.length === 1 && (links[0].open_qty ?? links[0].qty) <= 0)?.[0]
+        .po_number ?? null,
     capabilities: options.data?.capabilities ?? null,
     loading: options.isFetching,
     // Crew round 3: every ticked line already covered by POs -> Link greyed, naming them.

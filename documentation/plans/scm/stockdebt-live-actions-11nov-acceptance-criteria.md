@@ -21,3 +21,6 @@ Plan: `PLAN-stockdebt-live-actions-11nov.md`.
   nothing is sent to AutoCount.
 - AC-11 With "AutoCount links from Stock Debt" off, the change route answers 403 and Decide is
   not shown.
+- AC-12 Change PO moves the open balance still due on the old PO line (ordered less received,
+  cancels counted once); what was received stays with the old PO. With nothing open, Change PO is
+  greyed "Nothing is left open on PO X to change" and the route refuses with the same words.

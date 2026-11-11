@@ -331,7 +331,7 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     status: 'pinned', short_qty: 0, assigned_qty: 120,
     now: {
       so_status: 'open', open_qty: 120,
-      po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 120, location_code: 'MWH-BB' }],
+      po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 120, open_qty: 120, location_code: 'MWH-BB' }],
     },
   });
 
@@ -339,7 +339,7 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     const { dialog } = renderDialog([covered], 'change');
     const headers = within(dialog).getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers.slice(1)).toEqual([
-      'Sales order', 'Line', 'Location', 'Delivery date', 'Outstanding', 'PO', 'PO qty', 'Change to', 'Free',
+      'Sales order', 'Line', 'Location', 'Delivery date', 'Outstanding', 'PO', 'Open', 'Change to', 'Free',
     ]);
     expect(dialog).toHaveTextContent('202610-S0007 · line 1');
     const options = [...(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement).options];
@@ -347,7 +347,7 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
   });
 
   it('refuses a PO line with less free than the linked qty, and sends nothing', async () => {
-    const { dialog } = renderDialog([{ ...covered, now: { ...covered.now, po_links: [{ ...covered.now.po_links![0], qty: 400 }] } }], 'change');
+    const { dialog } = renderDialog([{ ...covered, now: { ...covered.now, po_links: [{ ...covered.now.po_links![0], qty: 400, open_qty: 400 }] } }], 'change');
     fireEvent.change(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement, { target: { value: 'po-3' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Change 1 line' }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('PO 202609-S0029 has only 380 free');
@@ -372,5 +372,15 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
       'UnlinkedSO425045 line 140 is no longer covered by PO 202610-S0007 (120).',
       'LinkedSO425045 line 140 now covered by PO 202609-S0029 (120).',
     ]);
+  });
+
+  it('moves only the open balance: a line with 50 of 120 received shows Open 70', () => {
+    const { dialog } = renderDialog(
+      [{ ...covered, now: { ...covered.now, po_links: [{ ...covered.now.po_links![0], open_qty: 70 }] } }],
+      'change',
+    );
+    const headers = within(dialog).getAllByRole('columnheader').map((cell) => cell.textContent);
+    const cells = within(within(dialog).getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells[headers.indexOf('Open')]).toHaveTextContent(/^70$/);
   });
 });

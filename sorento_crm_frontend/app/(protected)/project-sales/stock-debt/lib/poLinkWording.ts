@@ -107,6 +107,8 @@ export function poLinkMenu(input: {
   coveredBy?: string[] | null;
   /** Ticked lines covered by exactly one PO line (Change PO needs every ticked line so). */
   singleLinked?: number;
+  /** A ticked line's one PO with nothing left to arrive: Change PO has nothing to move. */
+  nothingOpenOn?: string | null;
 }): { link: MenuItemState; unlink: MenuItemState; relink: MenuItemState; change: MenuItemState } {
   const off = (reason: string): MenuItemState => ({ enabled: false, reason });
   if (input.ticked === 0) {
@@ -134,7 +136,9 @@ export function poLinkMenu(input: {
       ? off(caps.unlink_row.reason ?? 'Waiting for AutoCount')
       : (input.singleLinked ?? 0) !== input.ticked
         ? off('Each ticked line needs exactly one PO linked')
-        : { enabled: true, reason: null };
+        : input.nothingOpenOn
+          ? off(`Nothing is left open on PO ${input.nothingOpenOn} to change`)
+          : { enabled: true, reason: null };
   return {
     link: covered ?? from(caps.split_link, false),
     unlink: from(caps.unlink_row, true),

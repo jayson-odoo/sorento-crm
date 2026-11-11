@@ -146,6 +146,8 @@ class SnapshotLinePoLink(BaseModel):
     po_number: str
     po_line_no: Optional[int] = None
     qty: float
+    #: What is still to arrive on the PO line: what Change PO can move.
+    open_qty: Optional[float] = None
     location_code: Optional[str] = None
 
 

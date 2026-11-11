@@ -137,6 +137,9 @@ def po_links_for(db: Session, so_line_ids: Sequence[str]) -> Dict[str, List[Dict
                 "po_number": po_number,
                 "po_line_no": numbers.get(str(line.id)),
                 "qty": _num(line.qty_ordered) - _num(line.qty_cancelled),
+                # What is still to arrive on the line (TransferedQty includes cancels):
+                # what Change PO can move (crew for the owner, 11 Nov).
+                "open_qty": max(_num(line.qty_ordered) - _num(line.qty_received), 0.0),
                 "location_code": code,
             }
         )
@@ -622,7 +625,8 @@ class StockDebtPoLinkService:
 
     def change(self, snapshot_id: str, row_id: str, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
         """STOCKDEBT-LIVE-ACTIONS "Change PO..." (owner, 11 Nov, card answers 1a/2a/3a): swap the
-        ONE PO line covering an SO line for another PO line, for the same qty.
+        ONE PO line covering an SO line for another PO line, for the open balance still due on it
+        (what was already received stays with the old PO).
 
         Refused, with nothing sent, unless the line is covered by exactly one PO line and the
         new PO line has that qty free. The old PO line is unlinked FIRST: while it covers the
@@ -654,6 +658,15 @@ class StockDebtPoLinkService:
                 raise AppException(
                     status_code=422, message=f"{so_label} is not covered by exactly one PO line."
                 )
+            # Crew for the owner, 11 Nov: Change PO moves the OPEN balance still covered by the
+            # old PO line; what was already received stays with the old PO. `_free` is that
+            # balance (`qty_received` is TransferedQty, which already includes cancels).
+            qty = self._free(current[0][0])
+            if qty <= 0:
+                raise AppException(
+                    status_code=422,
+                    message=f"Nothing is left open on PO {current[0][1].po_number} to change.",
+                )
             # The old row is written to (unlinked) as well: the same open-AutoCount-line checks
             # as the new one, before anything is sent.
             old_line, old_po = self._po_line(row, str(current[0][0].id))
@@ -667,10 +680,9 @@ class StockDebtPoLinkService:
                     status_code=422,
                     message=f"PO {new_po.po_number} is in a different AutoCount book from {so.so_number}.",
                 )
-            qty = Decimal(str(old_line.qty_ordered or 0)) - Decimal(str(old_line.qty_cancelled or 0))
             asked[str(new_line.id)] = asked.get(str(new_line.id), Decimal("0")) + qty
             free = self._free(new_line)
-            if qty <= 0 or asked[str(new_line.id)] > free:
+            if asked[str(new_line.id)] > free:
                 raise AppException(
                     status_code=422, message=f"PO {new_po.po_number} has only {free.normalize():f} free."
                 )

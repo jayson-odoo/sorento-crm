@@ -107,6 +107,8 @@ export interface SnapshotPoLink {
   po_number: string;
   po_line_no: number | null;
   qty: number;
+  /** Still to arrive on the PO line: what Change PO moves (received stays with the old PO). */
+  open_qty?: number | null;
   location_code: string | null;
 }
 

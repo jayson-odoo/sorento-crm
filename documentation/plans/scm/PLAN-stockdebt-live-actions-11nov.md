@@ -67,12 +67,16 @@ Not built: AC-E2E-DB3's option (b), one PUT for old and new rows on the same PO 
 - Vitest: `PoLinkDialog.test.tsx` (Change PO popup), `poLinkWording.test.ts` (menu state),
   `SnapshotClient.drill.test.tsx` (menu order).
 
-## Open owner questions (from review round 1)
+## Answered (crew for the owner, 11 Nov, from the ruling)
 
-- The drill's Total and the board's month cells stay frozen while Short is now live, so after a
-  link the drill can read Short 0 beside a frozen Total.
-- Which qty Change PO moves: built as `qty_ordered - qty_cancelled` (what Now shows); the other
-  reading is the open balance `qty_ordered - qty_received`.
+- A frozen Total beside a live Short is the ruling itself (frozen = SO qty, live = cover): kept,
+  no extra UI.
+- Change PO moves the OPEN balance still due on the old PO line; what was already received stays
+  with the old PO (received goods cannot move). Built as `qty_ordered - qty_received` (`_free`):
+  `qty_received` is AutoCount's TransferedQty, which already includes what Cancel PO documents
+  cancelled (`PurchaseOrderLine.qty_cancelled` model comment), so cancels count once. Nothing
+  open: the route refuses ("Nothing is left open on PO X to change.") and Decide greys Change PO
+  with the same reason. The drill's PO links carry `open_qty` for it.
 
 ## Not changed (named so the trigger is visible)
 

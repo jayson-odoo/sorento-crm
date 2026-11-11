@@ -395,15 +395,44 @@ def test_two_changes_onto_one_po_line_share_its_free(scm_app, fake_ss):
     assert not [r for r in fake_ss.calls if "po-links" in r.url.path], "nothing is sent"
 
 
-def test_change_moves_the_linked_qty_less_what_was_cancelled(scm_app, fake_ss):
-    w = _covered_world(scm_app, fake_ss)
-    w["po_line"].qty_cancelled = Decimal("20")
-    w["db"].flush()
+def _change_qty(w, fake_ss):
     fake_ss.answers["/api/v1/autocount/po-links"] = _link_done(w)
     fake_ss.answers["/api/v1/autocount/po-links/unlink"] = _unlink_done(w)
-    assert _change(w).status_code == 200
+    resp = _change(w)
+    assert resp.status_code == 200, resp.text
     (body,) = fake_ss.bodies("/api/v1/autocount/po-links")
-    assert body["qty"] == 100
+    return body["qty"]
+
+
+def test_change_moves_only_the_open_balance_and_received_stays_with_the_old_po(scm_app, fake_ss):
+    """Crew for the owner, 11 Nov: what was received cannot move."""
+    w = _covered_world(scm_app, fake_ss)
+    w["po_line"].qty_received = Decimal("50")
+    w["db"].flush()
+    # The drill names the open balance beside the linked qty.
+    (link,) = _drill(w)[w["so_line"].id]["now"]["po_links"]
+    assert (link["qty"], link["open_qty"]) == (120, 70)
+    assert _change_qty(w, fake_ss) == 70
+
+
+def test_a_cancel_is_counted_once(scm_app, fake_ss):
+    """AutoCount adds a cancel to TransferedQty (`qty_received`), so 20 cancelled of 120 leaves
+    100 open, not 80."""
+    w = _covered_world(scm_app, fake_ss)
+    w["po_line"].qty_cancelled = Decimal("20")
+    w["po_line"].qty_received = Decimal("20")
+    w["db"].flush()
+    assert _change_qty(w, fake_ss) == 100
+
+
+def test_change_refuses_a_po_line_with_nothing_left_open(scm_app, fake_ss):
+    w = _covered_world(scm_app, fake_ss)
+    w["po_line"].qty_received = Decimal("120")
+    w["db"].flush()
+    resp = _change(w)
+    assert resp.status_code == 422
+    assert resp.json()["message"] == f"Nothing is left open on PO {w['po'].po_number} to change."
+    assert not [r for r in fake_ss.calls if "po-links" in r.url.path]
 
 
 def test_change_refuses_the_same_sales_order_line_twice(scm_app, fake_ss):
