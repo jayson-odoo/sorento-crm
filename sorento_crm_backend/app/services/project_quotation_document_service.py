@@ -1279,11 +1279,10 @@ def _customer_decision(latest: Optional[ProjectQuotationIssue]) -> Optional[str]
 
 
 def _prepared_by(db: Session, document: ProjectQuotationDocument) -> Optional[str]:
-    """The project's salesperson, the same name the cover page prints."""
-    from app.services.project_quotation_template_service import salesperson_of
+    """The document's creator, the same name the cover page prints (owner ruling 11 Nov 2026)."""
+    from app.services.project_quotation_template_service import prepared_by_of
 
-    project = db.query(Project).filter(Project.id == document.project_id).first()
-    return salesperson_of(db, project, document)
+    return prepared_by_of(db, document)
 
 
 def _kind_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
@@ -2486,7 +2485,7 @@ _PREVIEW_FIELDS = (
 
 
 def preview_cover(
-    db: Session, *, project: Project, payload: Dict[str, Any]
+    db: Session, *, project: Project, payload: Dict[str, Any], viewer_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """The cover as it would print now, from the form's unsaved values.
 
@@ -2522,7 +2521,8 @@ def preview_cover(
             doc_date=date.today(),
             document_no="NEW",
             subject_title=project.title,
-            created_by=None,
+            # Whoever saves it becomes its creator, so the unsaved cover names them as Prepared By.
+            created_by=viewer_id,
             company_id=project.company_id,
             kind=KIND_PROPOSAL,
         )

@@ -1611,14 +1611,26 @@ describe('QuotationFormClient cover page fields', () => {
     expect(screen.getByLabelText('Terms project')).toHaveTextContent('p1');
   });
 
-  it('shows Prepared By read-only on the Header tab as the project salesperson', async () => {
-    getProject.mockResolvedValue(withEmail());
-    getQuotationLetterTemplates.mockResolvedValue(templates);
-    renderForm();
+  it('shows Prepared By read-only as whoever creates the quotation, not the project owner (owner, 11 Nov)', async () => {
+    // The creator here is the effective user of a view-as: the backend saves created_by as them.
+    const { impersonationStore } = await import('@/lib/impersonation-store');
+    impersonationStore.setSession({
+      sessionId: 'imp-1',
+      startedAt: '2026-11-11T00:00:00Z',
+      targetUser: { id: 'u-9', name: 'Test Creator B', email: 'b@x.test', avatar: null, role_name: null },
+    });
+    try {
+      getProject.mockResolvedValue(withEmail());
+      getQuotationLetterTemplates.mockResolvedValue(templates);
+      renderForm();
 
-    expect(await screen.findByText('Prepared By')).toBeInTheDocument();
-    expect(screen.getByText('Ahmad Faizal')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
+      expect(await screen.findByText('Prepared By')).toBeInTheDocument();
+      expect(screen.getByText('Test Creator B')).toBeInTheDocument();
+      expect(screen.queryByText('Ahmad Faizal')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
+    } finally {
+      impersonationStore.setSession(null);
+    }
   });
 
   it('Save sends recipient_email_snapshot, the terms and their picks, and no quotation_purpose', async () => {
@@ -2098,6 +2110,20 @@ describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT
     expect(within(header).getByText('v1')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
     expect(recomputeQuotationVersion).not.toHaveBeenCalled();
+  });
+
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the record card names the project by its short name;
+  // the full title is the Header's own Project title field below it.
+  it('F7: the record card reads the project short name, not the full title', async () => {
+    const savedTitle = 'Menara Test';
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
+    renderForm('d1');
+
+    const header = await screen.findByTestId('record-header-card');
+    expect(await within(header).findByText('Menara Ujian')).toBeInTheDocument();
+    const field = await screen.findByLabelText('Project title');
+    expect(field).toHaveValue(savedTitle);
+    expect(within(header).queryByText(savedTitle)).toBeNull();
   });
 
   it('F6: a new proposal has no record card yet (nothing numbered, no version)', async () => {

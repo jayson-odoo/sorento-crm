@@ -19,11 +19,11 @@ MARKER = "zzt-qcpreview"
 SOURCE_OF = {
     "reference": "document_no", "date": "date", "attn": "attn", "company": "to_name",
     "contact": "to_tel", "address": "to_address", "email": "to_email", "terms": "terms",
-    "payment_terms": "payment_terms", "validity": "validity", "prepared_by": "salesperson_name",
+    "payment_terms": "payment_terms", "validity": "validity", "prepared_by": "prepared_by_name",
 }
 DEFAULT_SOURCES = [
     "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",
-    "terms", "payment_terms", "validity", "salesperson_name",
+    "terms", "payment_terms", "validity", "prepared_by_name",
 ]
 
 

@@ -57,7 +57,9 @@ vi.mock('@/components/common/DetailActionsMenu', () => ({
     <div data-testid="gear-menu" aria-label={ariaLabel}>{children}</div>
   ),
 }));
-vi.mock('@/components/ui/dropdown-menu', () => ({
+// The design lightbox's zoom menu needs the real DropdownMenu; only the item is stood in.
+vi.mock('@/components/ui/dropdown-menu', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   DropdownMenuItem: ({ children, onSelect, disabled }: { children: React.ReactNode; onSelect?: (e: { preventDefault: () => void }) => void; disabled?: boolean }) => (
     <button role="menuitem" disabled={disabled} onClick={() => onSelect?.({ preventDefault: () => {} })}>{children}</button>
   ),
@@ -68,7 +70,11 @@ vi.mock('@/lib/dealer-kit/fonts', async (importOriginal) => {
   return { ...actual, ensureFontsLoaded: vi.fn(async () => {}), ensureSeedFontsLoaded: vi.fn(async () => {}) };
 });
 vi.mock('@/lib/save-blob', async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), saveBlobAs: vi.fn() }));
-// A native select for the debtor picker (the portal's own suites do the same): `selectOption('Debtor', code)`.
+// A native select for the debtor picker (the portal's own suites do the same): `selectOption('Customer', code)`.
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -209,6 +215,11 @@ function mountPage(slugs: string[], over: Record<string, unknown> = {}) {
   return wrap(<PriceTagRequestPage requestId="req-1" />);
 }
 
+/** Owner hand test 11 Nov: the design is a popup the page's Preview button opens. */
+async function openPreview() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
+}
+
 /** Same gesture the portal's own suite uses: click the tag, type the comment, Add. */
 async function placePin(text: string) {
   const hit = await screen.findByTestId('pin-hit-l-1');
@@ -224,9 +235,9 @@ async function placePin(text: string) {
 async function expectPortalEditForm() {
   expect(await screen.findByRole('button', { name: 'Save Draft' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /escalate to marketing/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /^approve$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
-  expect(screen.getByLabelText('Debtor')).toBeInTheDocument();
+  expect(screen.getByLabelText('Customer')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
   expect(screen.queryByText(/^Printing:/)).toBeNull();
 }
@@ -257,12 +268,13 @@ describe('limited user, New Price Tag Request renders the portal form', () => {
   it('Save Draft with a customer that has no debtor_code POSTs customer_code and print_by self, then pushes the CRM list', async () => {
     mountNew();
     await expectPortalEditForm();
-    await selectOption('Debtor', 'ZZT-CUST-1');
+    await selectOption('Customer', 'ZZT-CUST-1');
     fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
     expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toEqual({
-      debtor_code: 'ZZT-CUST-1', debtor_name: 'ZZT Customer One', needed_by_date: null, notes: null,
-      price_mode: 'list', print_by: 'self', lines: [],
+      debtor_code: 'ZZT-CUST-1', debtor_name: 'ZZT Customer One',
+      customers: [{ code: 'ZZT-CUST-1', name: 'ZZT Customer One' }],
+      needed_by_date: null, notes: null, price_mode: 'list', print_by: 'self', lines: [],
     });
     await waitFor(() => expect(pushed().some((p) => p === LIST || p.startsWith(`${LIST}?`) || p.startsWith(`${LIST}/`))).toBe(true));
     expect(pushed().every((p) => !p.startsWith('/portal'))).toBe(true);
@@ -273,7 +285,7 @@ describe('limited user, New Price Tag Request renders the portal form', () => {
   it('Save Draft with a customer that has a debtor_code POSTs the debtor_code (debtor_code ?? customer_code)', async () => {
     mountNew();
     await expectPortalEditForm();
-    await selectOption('Debtor', 'ZZT-DEB-2');
+    await selectOption('Customer', 'ZZT-DEB-2');
     fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
     expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toMatchObject({
@@ -364,6 +376,7 @@ describe('limited user, proof review on a request awaiting approval', () => {
 
   it('reads the design and the review rounds through my-requests', async () => {
     mountPage(LIMITED, PROOF);
+    await openPreview();
     expect(await screen.findByTestId('pin-hit-l-1')).toBeTruthy();
     expect(where((c) => c.method === 'GET' && c.url.split('?')[0] === `${MINE}/req-1/design`).length).toBeGreaterThan(0);
     await waitFor(() => expect(where((c) => c.method === 'GET' && c.url.split('?')[0] === `${MINE}/req-1/review-comments`).length).toBeGreaterThan(0));
@@ -373,6 +386,7 @@ describe('limited user, proof review on a request awaiting approval', () => {
 
   it('Approve POSTs .../<id>/approve through my-requests, then pushes the CRM list', async () => {
     mountPage(LIMITED, PROOF);
+    await openPreview();
     await screen.findByTestId('pin-hit-l-1');
     fireEvent.click((await screen.findAllByRole('button', { name: /^Approve/ }))[0]);
     await waitFor(() => expect(posted('approve')).toHaveLength(1));
@@ -382,6 +396,7 @@ describe('limited user, proof review on a request awaiting approval', () => {
 
   it('Request changes (a pin and a note) POSTs ONE .../<id>/request-changes with the portal body, then pushes the CRM list', async () => {
     mountPage(LIMITED, PROOF);
+    await openPreview();
     await placePin('Make the price bigger');
     fireEvent.change(await screen.findByLabelText(/Anything else \(optional\)/), { target: { value: 'Too busy' } });
     fireEvent.click(await screen.findByTestId('send-change-requests'));
