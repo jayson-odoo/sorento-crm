@@ -1,0 +1,12 @@
+{"id": "sr-01", "message": "outstiang for taiyang", "expect": {"supplier": true, "customer": false, "domain_hint": "purchase_order"}}
+{"id": "sr-02", "message": "outstanding for taiyang", "expect": {"supplier": true, "customer": false, "domain_hint": "purchase_order"}}
+{"id": "sr-03", "message": "taiyang outstanding PO", "expect": {"supplier": true, "customer": false, "domain_hint": "purchase_order"}}
+{"id": "sr-04", "message": "PO belum sampai dari taiyang", "expect": {"supplier": true, "customer": false, "domain_hint": "purchase_order"}}
+{"id": "sr-05", "message": "what is still open with taiyang", "expect": {"supplier": true, "customer": false, "domain_hint": "purchase_order"}}
+{"id": "sr-06", "message": "outstanding for weng kee hardware", "expect": {"customer": true, "supplier": false}}
+{"id": "sr-07", "message": "weng kee hardware sales this month", "expect": {"customer": true, "supplier": false}}
+{"id": "sr-08", "message": "sales for weng kee hardware after 2025", "expect": {"customer": true, "supplier": false, "report_ask": {"date_from": "2026-01-01", "date_to": null}}}
+{"id": "sr-09", "message": "outstanding for shing soon heng", "expect": {"party_side": "unclear"}}
+{"id": "sr-10", "message": "outstanding for fullshun", "expect": {"party_side": "unclear"}}
+{"id": "sr-11", "message": "sales for fullshun this year", "expect": {"party_side": "customer"}}
+{"id": "sr-12", "message": "open PO to shing soon heng", "expect": {"party_side": "supplier"}}

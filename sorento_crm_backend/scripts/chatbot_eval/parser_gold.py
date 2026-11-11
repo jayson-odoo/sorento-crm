@@ -3,7 +3,7 @@
 usage (cwd = the backend dir of the checkout under test):
   python -m scripts.chatbot_eval.parser_gold live --gold F --out F --max-usd X --require-key-last4 XXXX \
       --prompt-version-id ID --repeats N [--closed-lists-mode block|index]
-      [--reasoning-effort off|low]
+      [--reasoning-effort off|low] [--prompt-text-file F] [--contact-respond-id ID] [--span-version-id ID]
       (calls ONLY the parser, on the pinned prompt version, with the user turn the engine builds for a fresh
       turn and the candidate block when the version carries CLOSED LISTS; every DB session is rolled back; spend
       is capped by --max-usd and only a provider key ending with --require-key-last4 may spend.
@@ -11,7 +11,11 @@ usage (cwd = the backend dir of the checkout under test):
       the DB value is used. The header line and every row name the mode the run used: off when the version
       carries no CLOSED LISTS section. --reasoning-effort forces the stored parser setting
       `chatbot_parser_reasoning_effort` for this process only, never in the DB ("off" sends none, as the setting's
-      off does); without it the DB value is used. Header and rows record the effort the parse read)
+      off does); without it the DB value is used. Header and rows record the effort the parse read.
+      PARSER-SUPPLIER-RESTORE: --prompt-text-file parses with that file's text in place of the pinned version's
+      (in-process, never written); header and rows record the md5 of the text parsed with, so a run is pinned by
+      md5. --contact-respond-id builds the lookup rows with that contact's visibility (default: a contact that
+      resolves to no one, so no Customer, Salesperson or Supplier rows); --span-version-id pins the span prompt)
   python -m scripts.chatbot_eval.parser_gold check --gold F
       (no provider call: builds every row's user block with a bare config carrying the report ask marker,
       sessions rolled back, and checks that a row's `held` line is the block's one `Held report` line)
@@ -24,6 +28,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -74,6 +80,10 @@ EXPECT_KEYS = frozenset({
     # {word -> null | "*" | text}: the `said_as_text` of every entity whose raw holds the word. null: no typed word (null or
     # blank); "*": any non-blank text; otherwise the text, case aside.
     "entity_said_as_text",
+    # PARSER-SUPPLIER-RESTORE: true means a supplier entity bound by a Supplier candidates line id (a non-blank
+    # canonical_code: without the id nothing binds a supplier); false means none. And the parse's party_side
+    # ("customer" | "supplier" | "unclear"; null means null or absent).
+    "supplier", "party_side",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -110,6 +120,8 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "report_ask": (dict, type(None)),
     "entity_said_as": (dict,),
     "entity_said_as_text": (dict,),
+    "supplier": (bool,),
+    "party_side": (str, type(None)),
 }
 #: The `report_ask` slots (`parser.REPORT_ASK_KEYS`, stdlib-only here like the rest of this module) and the list ones.
 REPORT_ASK_SLOTS = (
@@ -326,6 +338,12 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         has = any(e.get("hint") == "customer" for e in entities)
         if has != bool(expect["customer"]):
             reasons.append("customer entity " + ("missing" if expect["customer"] else "present"))
+    if "supplier" in expect:
+        has = any(e.get("hint") == "supplier" and str(e.get("canonical_code") or "").strip() for e in entities)
+        if has != expect["supplier"]:
+            reasons.append("id-bound supplier entity " + ("missing" if expect["supplier"] else "present"))
+    if "party_side" in expect and verdict.get("party_side") != expect["party_side"]:
+        reasons.append(f"party_side {verdict.get('party_side')!r} != {expect['party_side']!r}")
     if "access_levels" in expect:
         got = {_fold(a) for a in verdict.get("access_levels") or []}
         if got != {_fold(a) for a in expect["access_levels"]}:
@@ -502,16 +520,20 @@ def _mode_used(config: Any) -> str:
 
 #: The `span_extract` event of this thread's latest `_parse_one` (None for a version without the span marker).
 _SPAN = threading.local()
+#: The contact a gold turn runs as by default: it resolves to no one, so no Customer, Salesperson or Supplier rows.
+GOLD_CONTACT = "parser-gold"
 
 
 def user_block_for(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None,
-                   held_report: str | None = None) -> str:
+                   held_report: str | None = None, *, contact_respond_id: str = GOLD_CONTACT,
+                   span_version_id: str | None = None) -> str:
     """The user turn the engine builds for one message: for a turn with no history (no held product, so no held
     ids), or (F1-B) for a gold `context` rendered through the same ContextLayers, as the `State:` block when the
     version asks for one and as the legacy Current subject / Open question lines otherwise. Index mode renders as
     the engine does: the candidate block with the index lines and no Product types / Product details lines. A gold
     `held` line (`held_report`) goes in as the engine's `ContextLayers.held_report`, only for a version that carries the report ask
-    marker (`ParserConfig.report_ask`), as the engine prints it."""
+    marker (`ParserConfig.report_ask`), as the engine prints it. `contact_respond_id` decides which rows the lookup
+    may show (`engine._lookup_visibility`); `span_version_id` pins the span prompt, as a dry run pins it."""
     from app.models.base import set_company_scope
     from app.services.chatbot import engine, turn_runtime
     from app.services.chatbot.head import lookup_lists, parser
@@ -550,20 +572,25 @@ def user_block_for(message: str, config: Any, factory: Any, context: dict[str, A
         )
         if spans:
             # ENTITY-EXTRACT-MATCH S2: the span seam, as the engine runs it (the call itself after the session closes).
+            # PARSER-SUPPLIER-RESTORE: the config's id flags, as `engine.run_turn` passes them (without `supplier_ids`
+            # no Supplier line carries an id and no supplier binds).
             span_prep = engine._span_prep(
-                db, user_turn.own_text, frozenset(), "parser-gold", None, brands,
+                db, user_turn.own_text, frozenset(), contact_respond_id, None, brands,
                 lookup_lists.held_values(_subject_values(held.get("subject"))), None,
+                group_categories=bool(getattr(config, "category_pick", False)),
+                row_ids=bool(getattr(config, "row_ids", False)), span_override=span_version_id,
+                supplier_ids=bool(getattr(config, "supplier_ids", False)),
             )
         elif lookup:
             lookup_lines, _event = engine._lookup_lines(
-                db, user_turn.own_text, config, frozenset(), "parser-gold", None, brands,
+                db, user_turn.own_text, config, frozenset(), contact_respond_id, None, brands,
                 lookup_lists.held_values(_subject_values(held.get("subject"))),
             )
     finally:
         db.close()
     if span_prep is not None:
         lookup_lines, _event, _SPAN.event = engine._span_lookup(
-            span_prep, session_factory=factory, contact_respond_id="parser-gold", dry_run=True, turn_id=None
+            span_prep, session_factory=factory, contact_respond_id=contact_respond_id, dry_run=True, turn_id=None
         )
     # As the engine: an empty state adds no block.
     held_any = bool(
@@ -593,11 +620,13 @@ def user_block_for(message: str, config: Any, factory: Any, context: dict[str, A
 
 
 def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None,
-               held_report: str | None = None) -> Any:
+               held_report: str | None = None, *, contact_respond_id: str = GOLD_CONTACT,
+               span_version_id: str | None = None) -> Any:
     """The parser's emission for one message, with the user turn `user_block_for` builds."""
     from app.services.chatbot.head import parser
 
-    user_block = user_block_for(message, config, factory, context, held_report)
+    user_block = user_block_for(message, config, factory, context, held_report,
+                                contact_respond_id=contact_respond_id, span_version_id=span_version_id)
     # The parser call alone is timed (the engine's own `parse_started` span), not the user turn build.
     started = time.perf_counter()
     out = parser.parse(config, user_block)
@@ -625,6 +654,53 @@ def _pinned_version(session_factory: Any, version_id: str) -> int:
     if labelled:
         raise ValueError("prompt_version_id carries a label; pin an unlabelled version")
     return int(number)
+
+
+def _pinned_span_version(session_factory: Any, version_id: str) -> int:
+    """PARSER-SUPPLIER-RESTORE: the stored version number of a pinned span prompt. ValueError when the id is not a
+    stored version of the span prompt (the registry would fall back to the label silently). A labelled version may be
+    pinned: the production span text is a fair arm."""
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services.chatbot.head import span_extract
+
+    db = session_factory()
+    try:
+        number = (
+            db.query(AIPromptVersion.version)
+            .filter(AIPromptVersion.id == version_id, AIPromptVersion.name == span_extract.PROMPT_KEY)
+            .scalar()
+        )
+    except Exception as exc:  # noqa: BLE001 - a malformed id is not a stored version either
+        raise ValueError("span_version_id is not a stored version of the span prompt") from exc
+    finally:
+        db.rollback()
+        db.close()
+    if number is None:
+        raise ValueError("span_version_id is not a stored version of the span prompt")
+    return int(number)
+
+
+@contextlib.contextmanager
+def _text_swapped(text: str | None) -> Any:
+    """PARSER-SUPPLIER-RESTORE: the parser reads `text` in place of the stored text of whatever version it resolves,
+    for this process while the run lasts (`parser.get_prompt`, the parser module's own registry read, so every gate
+    and the rendered prompt see the same text); no other prompt is touched and the database is never written. None
+    leaves the stored text."""
+    if text is None:
+        yield
+        return
+    from unittest import mock
+
+    from app.services.chatbot.head import parser
+
+    real = parser.get_prompt
+
+    def swapped(db: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+        resolved = real(db, name, *args, **kwargs)
+        return dataclasses.replace(resolved, text=text) if name == parser.PROMPT_KEY else resolved
+
+    with mock.patch.object(parser, "get_prompt", swapped):
+        yield
 
 
 @contextlib.contextmanager
@@ -660,10 +736,13 @@ def _forced_effort(effort: str | None) -> Any:
 
 def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: str, repeats: int, max_usd: float,
              require_key_last4: str, on_row: Any = None, closed_lists_mode: str | None = None,
-             on_start: Any = None, reasoning_effort: str | None = None) -> list[dict[str, Any]]:
+             on_start: Any = None, reasoning_effort: str | None = None, prompt_text: str | None = None,
+             contact_respond_id: str | None = None, span_version_id: str | None = None) -> list[dict[str, Any]]:
     """Each gold message x `repeats` through the parser alone; stops cleanly at the spend cap or a wrong key.
     `closed_lists_mode` ("block" | "index") forces the mode in-process, `reasoning_effort` (one of
-    `parser.REASONING_EFFORTS`) the stored parser effort; `on_start` gets the run header."""
+    `parser.REASONING_EFFORTS`) the stored parser effort; `on_start` gets the run header. `prompt_text` parses with
+    that text in place of the pinned version's (`_text_swapped`); the header and every row carry `prompt_md5`, the
+    md5 of the text parsed with. `contact_respond_id` / `span_version_id` go to every parse (`user_block_for`)."""
     from app.services.chatbot import engine
     from app.services.chatbot.head import closed_lists_index, parser
     from scripts.chatbot_eval import replay
@@ -687,6 +766,7 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
             replay._guard_network(stack, [], replay.MODEL_HOSTS)
             stack.enter_context(_forced_mode(closed_lists_mode))
             stack.enter_context(_forced_effort(reasoning_effort))
+            stack.enter_context(_text_swapped(prompt_text))
             usage = replay._new_usage()
             stack.enter_context(replay._metered(usage, total))
             with replay._rolled_back(session_factory) as factory:
@@ -696,6 +776,9 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                     config = parser.resolve_config(
                         db, current_date=engine._current_date_directive(), override_version_id=version_id
                     )
+                    # The one text this run parses with, read the way the parser read it (swap included).
+                    used = parser.get_prompt(db, parser.PROMPT_KEY, override_version_id=version_id).text
+                    prompt_md5 = hashlib.md5((used or "").encode("utf-8")).hexdigest()
                 finally:
                     db.close()
                 mode = _mode_used(config)
@@ -705,19 +788,23 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                 if on_start is not None:
                     on_start({"prompt_version": config.prompt_version, "closed_lists_mode": mode,
                               "forced": closed_lists_mode is not None, "reasoning_effort": effort,
-                              "reasoning_forced": reasoning_effort is not None})
+                              "reasoning_forced": reasoning_effort is not None, "prompt_md5": prompt_md5,
+                              "text_swapped": prompt_text is not None, "contact_respond_id": contact_respond_id,
+                              "span_version_id": span_version_id})
                 for case in rows:
                     for repeat in range(repeats):
                         before = total["usd"]
                         row: dict[str, Any] = {
                             "id": case["id"], "repeat": repeat, "prompt_version": config.prompt_version,
-                            "closed_lists_mode": mode, "reasoning_effort": effort,
+                            "prompt_md5": prompt_md5, "closed_lists_mode": mode, "reasoning_effort": effort,
                         }
                         try:
                             # The held line only when the row has one, so a `_parse_one` double without it still fits.
                             parsed = _parse_one(
                                 case["message"], config, factory, context=case.get("context"),
                                 **({"held_report": case["held"]} if case.get("held") else {}),
+                                **({"contact_respond_id": contact_respond_id} if contact_respond_id else {}),
+                                **({"span_version_id": span_version_id} if span_version_id else {}),
                             )
                             if getattr(_SPAN, "event", None):  # S2: did the span call fall back to the n-gram lines
                                 row.update(span_fallback=bool(_SPAN.event.get("fallback")),
@@ -737,6 +824,7 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                                 open_question_answer=_answer_fields(verdict.get("open_question_answer")),
                                 state_changes=_state_change_fields(verdict.get("state_changes")),
                                 **({"report_ask": verdict.get("report_ask")} if "report_ask" in verdict else {}),
+                                **({"party_side": verdict.get("party_side")} if "party_side" in verdict else {}),
                             )
                         except replay._CapStop as stop:
                             total["stop"] = total.get("stop") or stop.reason
@@ -832,8 +920,15 @@ def _cmd_live(args: argparse.Namespace) -> int:
 
     try:
         _pinned_version(SessionLocal, args.prompt_version_id)
+        if args.span_version_id:
+            _pinned_span_version(SessionLocal, args.span_version_id)
     except ValueError as exc:
         return _refuse(str(exc))
+    prompt_text = None
+    if args.prompt_text_file:
+        # Bytes as stored: newline translation off, so the md5 is the file's own.
+        with open(args.prompt_text_file, encoding="utf-8", newline="") as fh:
+            prompt_text = fh.read()
 
     with open(args.out, "w") as fh:
         os.chmod(args.out, 0o600)
@@ -846,13 +941,16 @@ def _cmd_live(args: argparse.Namespace) -> int:
             forced = "forced" if info["forced"] else "from the db"
             effort = f"{info['reasoning_effort']} ({'forced' if info['reasoning_forced'] else 'from the db'})"
             print(f"prompt_version {info['prompt_version']} closed_lists_mode {info['closed_lists_mode']} ({forced})"
-                  f" reasoning_effort {effort}", flush=True)
+                  f" reasoning_effort {effort} prompt_md5 {info.get('prompt_md5')}"
+                  f"{' (text file)' if info.get('text_swapped') else ''}"
+                  f" span_version {info.get('span_version_id') or 'label'}", flush=True)
 
         try:
             results = run_live(
                 rows, session_factory=SessionLocal, version_id=args.prompt_version_id, repeats=args.repeats,
                 max_usd=args.max_usd, require_key_last4=last4, on_row=write, closed_lists_mode=args.closed_lists_mode,
-                on_start=header, reasoning_effort=args.reasoning_effort,
+                on_start=header, reasoning_effort=args.reasoning_effort, prompt_text=prompt_text,
+                contact_respond_id=args.contact_respond_id, span_version_id=args.span_version_id,
             )
         except ValueError as exc:
             return _refuse(str(exc))
@@ -876,6 +974,11 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--closed-lists-mode", choices=("block", "index"), default=None)
     # The stored setting's values (head/parser.REASONING_EFFORTS; app is not imported before the args parse).
     live.add_argument("--reasoning-effort", choices=("off", "low"), default=None)
+    # PARSER-SUPPLIER-RESTORE: a candidate text in place of the pinned version's, the contact whose visibility the
+    # lookup rows follow, and a pinned span prompt version.
+    live.add_argument("--prompt-text-file", default=None)
+    live.add_argument("--contact-respond-id", default=None)
+    live.add_argument("--span-version-id", default=None)
     # SALES-ACCOUNT-TYPE semantic carry: no provider call; every row's user block with a bare report ask config.
     check = sub.add_parser("check")
     check.add_argument("--gold", required=True)
