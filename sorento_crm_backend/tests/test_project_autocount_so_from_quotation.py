@@ -57,6 +57,9 @@ def _quotation_in_autocount(db, world, *, book=BOOK, doc_key=QT_KEY):
         .order_by(ProjectQuotationLine.sort_order)
         .first()
     )
+    # An SO line made from a quotation line carries that line's product.
+    quoted.product_id = world.product.id
+    quoted.product_code_snapshot = world.product.product_code
     world.line1.quotation_line_id = quoted.id
     db.commit()
     return qt
@@ -197,3 +200,29 @@ def test_a_malformed_stored_quotation_key_never_blocks_the_create(api, fake_ss):
     lines = _create(client, fake_ss, world)
 
     assert "fromQuotation" not in lines[0]
+
+
+def test_a_rate_only_line_of_the_item_never_counts_in_the_place(api, fake_ss):
+    """Re-review S4: a rate-only line is never sent to AutoCount (U16), so the place is counted in
+    the payload the quotation was sent with, not among the version's lines."""
+    from app.models.projects import ProjectQuotationLine
+
+    client, db, world = api
+    qt = _quotation_in_autocount(db, world)
+    first = db.query(ProjectQuotationLine).filter(ProjectQuotationLine.id == world.line1.quotation_line_id).one()
+    first.is_rate_only = True  # never went to AutoCount
+    second = ProjectQuotationLine(
+        id=str(__import__("uuid").uuid4()), company_id=world.company_id, version_id=qt.version.id,
+        product_id=first.product_id, product_code_snapshot=first.product_code_snapshot,
+        description_snapshot="Same item, priced", unit_price=Decimal("9.00"), quantity=Decimal("5"),
+        uom="UNIT", line_total=Decimal("45.00"), sort_order=(first.sort_order or 0) + 1,
+    )
+    db.add(second)
+    db.flush()
+    world.line1.quotation_line_id = second.id
+    db.commit()
+    _ac_quotation(fake_ss, world, [detail(9003, world.product.product_code, "5", "9.00", "BRW-BB", None, 1)])
+
+    lines = _create(client, fake_ss, world)
+
+    assert lines[0].get("fromQuotation") == {"docNo": "QT-000042", "dtlKey": 9003}

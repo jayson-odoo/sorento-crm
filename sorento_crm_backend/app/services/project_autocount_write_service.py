@@ -386,6 +386,7 @@ class ProjectAutocountWriteService:
         (None, body, None) when another press already linked the record.
         """
         model = type(record)
+        self.db.flush()  # populate_existing drops unflushed changes; the session does not autoflush
         record = (
             self.db.query(model).filter(model.id == record.id).with_for_update().populate_existing().one()
         )
@@ -748,6 +749,37 @@ class ProjectAutocountWriteService:
             .first()
         )
 
+    def _sent_place(self, document: ProjectQuotationDocument, quoted: ProjectQuotationLine, item: str) -> Optional[int]:
+        """Where `quoted` sat among the rows of `item` in the payload the quotation was sent with
+        (re-review S4): the issue AutoCount holds, its scopes in order, each line through the same
+        builder (rate-only lines dropped, sets as parts). None when that issue does not carry it."""
+        issue = None
+        if document.autocount_issue_id:
+            issue = self.db.query(ProjectQuotationIssue).filter(ProjectQuotationIssue.id == document.autocount_issue_id).first()
+        if issue is None:
+            issue = self._latest_issue(document)
+        if issue is None:
+            return None
+        scopes = (
+            self.db.query(ProjectQuotationIssueScope)
+            .filter(ProjectQuotationIssueScope.issue_id == issue.id)
+            .order_by(ProjectQuotationIssueScope.sort_order.asc())
+            .all()
+        )
+        before = 0
+        for scope in scopes:
+            lines = (
+                self.db.query(ProjectQuotationLine)
+                .filter(ProjectQuotationLine.version_id == scope.version_id)
+                .all()
+            )
+            for line in sorted(lines, key=lambda l: (l.sort_order or 0)):
+                if line.id == quoted.id:
+                    return None if getattr(line, "is_rate_only", False) else before
+                sent = build_quotation_lines([line], location="-").lines
+                before += sum(1 for row in sent if row["itemCode"] == item)
+        return None
+
     def _add_quotation_links(self, order: ProjectSalesOrder, body: Dict[str, Any], book: str) -> None:
         """Crew finding (11 Nov): each SO line made from a quotation line carries
         `fromQuotation {docNo, dtlKey}`, so AutoCount shows the transfer and the quotation's
@@ -778,19 +810,9 @@ class ProjectAutocountWriteService:
                     logger.warning("autocount SO %s: quotation %s could not be read; no link", order.id, key)
                     held = {}
                 rows_of[key] = list(((held.get("document") or held).get("Details")) or [])
-            # Review S4: the quotation went to AutoCount in its line order, so the quotation
-            # line's place among its own lines of this item is its place among AutoCount's rows
-            # of the item. No row at that place: no link (never two lines on one row by default).
-            siblings = (
-                self.db.query(ProjectQuotationLine.id)
-                .filter(
-                    ProjectQuotationLine.version_id == quoted.version_id,
-                    ProjectQuotationLine.product_code_snapshot == quoted.product_code_snapshot,
-                )
-                .order_by(ProjectQuotationLine.sort_order.asc(), ProjectQuotationLine.id.asc())
-                .all()
-            )
-            place = [s_id for (s_id,) in siblings].index(quoted.id)
+            place = self._sent_place(document, quoted, wire["itemCode"])
+            if place is None:
+                continue
             same_item = [r for r in rows_of[key] if (r.get("ItemCode") or "") == wire["itemCode"]]
             if place >= len(same_item) or same_item[place].get("DtlKey") is None:
                 continue
