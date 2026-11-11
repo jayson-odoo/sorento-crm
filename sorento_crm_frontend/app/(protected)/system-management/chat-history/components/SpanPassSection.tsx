@@ -16,6 +16,15 @@ const SOURCE_VARIANT: Record<SpanExtractSource, BadgeProps['variant']> = {
   number: 'secondary',
 };
 
+/**
+ * TRACE-ENTITY-TOOL: a product code span is not matched here on purpose (`list_resolver._resolve_texts`):
+ * it goes to the code lookup, whose answer is the drawer's "Entity match". "skipped" read as a failure.
+ */
+function spanStatusWords(span: SpanExtract['spans'][number]): string {
+  if (span.type === 'product_code' && span.status === 'skipped') return 'sent to the code lookup';
+  return String(span.status);
+}
+
 /** The span pass of a turn, in the Index match section's own heading, chip and muted-text styles. */
 export function SpanPassSection({
   spanExtract,
@@ -68,7 +77,7 @@ export function SpanPassSection({
                 )}
                 {s.status && (
                   <Badge variant="primary" size="sm">
-                    {s.status}
+                    {spanStatusWords(s)}
                   </Badge>
                 )}
                 {s.residual && (
