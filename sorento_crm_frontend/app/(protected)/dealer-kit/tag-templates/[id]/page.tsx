@@ -46,6 +46,7 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Package,
   Save as SaveIcon,
   Settings2,
   Upload,
@@ -90,6 +91,10 @@ import {
 } from '../components/TemplateSettingsDialog';
 import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
+import { TemplateProductsDialog } from '../components/TemplateProductsDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useTemplateComboIds, useTemplateProductIds } from '../../hooks/useProductTagTemplates';
+import { isPriceTagFamily } from '../../services/productTagTemplateService';
 import { FocusShell } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
 import { TagSizeControl } from '../../components/TagSizeControl';
@@ -156,6 +161,14 @@ function TagTemplateEditor() {
   const [publishing, setPublishing] = useState(false);
 
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // PRICETAG-TEMPLATE-PRODUCTS: which products print with this template, picked here.
+  const [productsOpen, setProductsOpen] = useState(false);
+  const canManageLinks = useHasPermission('dealer_kit.tag_templates.manage');
+  // Price tag templates only: a spec sheet page is never linked to products.
+  const showProducts = canManageLinks && !!template && isPriceTagFamily(template.family);
+  const linkedIds = useTemplateProductIds(params.id, showProducts);
+  // Owner hand test 11 Nov: combos count too, since the same view links them.
+  const linkedComboIds = useTemplateComboIds(params.id, showProducts);
   const [viewing, setViewing] = useState<TagTemplateVersionDetail | null>(null);
   const [viewingLoading, setViewingLoading] = useState(false);
   // Which version Restore is in flight for - the viewer banner's own button
@@ -597,6 +610,19 @@ function TagTemplateEditor() {
       onClick: () => setVersionsOpen(true),
       disabled: viewingLoading,
     },
+    ...(showProducts
+      ? [
+          {
+            id: 'products',
+            icon: Package,
+            label:
+              linkedIds.data && linkedComboIds.data
+                ? `Products (${linkedIds.data.length + linkedComboIds.data.length})`
+                : 'Products',
+            onClick: () => setProductsOpen(true),
+          },
+        ]
+      : []),
     {
       id: 'save',
       icon: saving ? Loader2 : SaveIcon,
@@ -733,6 +759,15 @@ function TagTemplateEditor() {
           />
         )}
       </div>
+
+      {productsOpen ? (
+        <TemplateProductsDialog
+          open
+          onOpenChange={setProductsOpen}
+          templateId={template.id}
+          templateName={template.name}
+        />
+      ) : null}
 
       <TemplateVersionsSheet
         templateId={template.id}

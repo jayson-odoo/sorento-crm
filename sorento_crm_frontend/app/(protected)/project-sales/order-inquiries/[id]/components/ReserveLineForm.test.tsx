@@ -22,7 +22,7 @@ const LOCATION_OPTIONS = [
   { value: 'wh-brw', label: 'BRW' },
   { value: 'wh-dc1', label: 'DC1' },
 ];
-const AVAILABLE_QTY_BY_LOCATION = { 'wh-brw': 107, 'wh-dc1': 20 };
+const ON_HAND_QTY_BY_LOCATION = { 'wh-brw': 107, 'wh-dc1': 20 };
 
 function renderForm(overrides: Partial<React.ComponentProps<typeof ReserveLineForm>> = {}) {
   const onStage = vi.fn();
@@ -35,7 +35,7 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof ReserveLineFo
       mode="reserve"
       requestedQty="107"
       locationOptions={LOCATION_OPTIONS}
-      availableQtyByLocation={AVAILABLE_QTY_BY_LOCATION}
+      onHandQtyByLocation={ON_HAND_QTY_BY_LOCATION}
       defaultLocationId="wh-brw"
       onStage={onStage}
       {...overrides}
@@ -81,11 +81,11 @@ describe('AC-RS-85: reserve mode - title, Location prefilled, Reserved default, 
     });
   });
 
-  it('owner 16 Oct: choosing DC1 (20 available) keeps Reserved at the request - CRM stock is information only', async () => {
+  it('owner 16 Oct: choosing DC1 (20 on hand, RESERVE-DIALOG-ON-HAND) keeps Reserved at the request - CRM stock is information only', async () => {
     const { onStage } = renderForm();
 
     fireEvent.click(screen.getByLabelText('Location'));
-    expect(await screen.findByText('available 20')).toBeInTheDocument();
+    expect(await screen.findByText('on hand 20')).toBeInTheDocument();
     fireEvent.click(await screen.findByText('DC1'));
 
     // AutoCount may already hold the reservation while CRM stock lags: never capped by it.
@@ -95,8 +95,8 @@ describe('AC-RS-85: reserve mode - title, Location prefilled, Reserved default, 
     expect(onStage).toHaveBeenCalledWith({ warehouse_id: 'wh-dc1', qty_reserved: 107, reason: null });
   });
 
-  it('owner 16 Oct: prefills the full request even when the pool shows less (SRT53-CR: 300 asked, 28 in CRM)', () => {
-    renderForm({ requestedQty: '300', availableQtyByLocation: { 'wh-brw': 28, 'wh-dc1': 0 } });
+  it('owner 16 Oct: prefills the full request even when the pool holds less (SRT53-CR: 300 asked, 28 in CRM)', () => {
+    renderForm({ requestedQty: '300', onHandQtyByLocation: { 'wh-brw': 28, 'wh-dc1': 0 } });
     expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('300');
     expect(screen.queryByLabelText(/reason/i)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '400' } });
@@ -110,7 +110,7 @@ describe('AC-RS-85: reserve mode - title, Location prefilled, Reserved default, 
   });
 
   it('6e.4 (S8): with no location chosen, Reserved prefills the request and the stage carries no warehouse_id', async () => {
-    const { onStage } = renderForm({ locationOptions: [], availableQtyByLocation: {}, defaultLocationId: null });
+    const { onStage } = renderForm({ locationOptions: [], onHandQtyByLocation: {}, defaultLocationId: null });
 
     expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('107');
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));

@@ -177,6 +177,12 @@ export type DataGridListToolbarProps<TData extends object> = {
    * of it, so "1 selected" cannot sit beside a "Plan together (2)".
    */
   keepSearchWhileSelected?: boolean;
+  /**
+   * Keep the Filters button in the bulk strip too (default false). For a list whose rows are
+   * ticked from the start, where the strip is always up: the template designer's Products
+   * dialog (PRICETAG-TEMPLATE-PRODUCTS), where a tick means "uses this template".
+   */
+  keepFiltersWhileSelected?: boolean;
   /** Omit to hide the Filters button entirely (D3). */
   filters?: ListToolbarFilters;
   /** Export config, or `false` to hide Export. Default: selection-gated client export;
@@ -288,6 +294,7 @@ export function DataGridListToolbar<TData extends object>({
   table,
   searchSlot,
   keepSearchWhileSelected = false,
+  keepFiltersWhileSelected = false,
   filters,
   exportConfig,
   showColumns = true,
@@ -407,6 +414,43 @@ export function DataGridListToolbar<TData extends object>({
   // off in the normal cluster, enabled inside the bulk strip.
   const bulkStripActive = hasSelection || allRecordsActive;
 
+  // One Filters control, shown in the idle cluster and, with `keepFiltersWhileSelected`, in the
+  // bulk strip too.
+  const filtersButtonEl = filters ? (
+    filters.kind === 'listQuery' ? (
+      <Button variant="outline" size="sm" className="gap-1.5" aria-label={filters.advancedFilter ? 'Filters On' : 'Filters'} title="Filters" onClick={() => setFilterOpen(true)}>
+        <Filter className="size-4" />
+        <span className="hidden sm:inline">Filters</span>
+        {filters.advancedFilter ? (
+          <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">On</Badge>
+        ) : null}
+      </Button>
+    ) : (
+      <DropdownMenu modal={filters.modal ?? true}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            aria-label={filters.active ? `Filters ${filters.activeCount ?? 'On'}` : 'Filters'}
+            title="Filters"
+          >
+            <Filter className="size-4" />
+            <span className="hidden sm:inline">Filters</span>
+            {filters.active ? (
+              <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                {filters.activeCount ?? 'On'}
+              </Badge>
+            ) : null}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72 p-3">
+          {filters.content}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  ) : null;
+
   // GRID-DRAG-SELECT: while a checkbox drag moves in this table, nothing above the rows may
   // change height, or the rows slide under a still pointer and the drag ticks rows past it
   // (the bulk strip is 130px shorter than Internal Users' idle toolbar). So:
@@ -490,6 +534,7 @@ export function DataGridListToolbar<TData extends object>({
               {/* Where the box already sits when nothing is selected, so it does not move
                   under the cursor the moment a row is ticked. */}
               {keepSearchWhileSelected ? searchSlot : null}
+              {keepFiltersWhileSelected ? filtersButtonEl : null}
               <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
                 {allRecordsActive && selectAllMatching
                   ? matchingCapped
@@ -538,40 +583,7 @@ export function DataGridListToolbar<TData extends object>({
               >
                 {searchSlot}
               </div>
-              {filters ? (
-                filters.kind === 'listQuery' ? (
-                  <Button variant="outline" size="sm" className="gap-1.5" aria-label={filters.advancedFilter ? 'Filters On' : 'Filters'} title="Filters" onClick={() => setFilterOpen(true)}>
-                    <Filter className="size-4" />
-                    <span className="hidden sm:inline">Filters</span>
-                    {filters.advancedFilter ? (
-                      <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">On</Badge>
-                    ) : null}
-                  </Button>
-                ) : (
-                  <DropdownMenu modal={filters.modal ?? true}>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        aria-label={filters.active ? `Filters ${filters.activeCount ?? 'On'}` : 'Filters'}
-                        title="Filters"
-                      >
-                        <Filter className="size-4" />
-                        <span className="hidden sm:inline">Filters</span>
-                        {filters.active ? (
-                          <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                            {filters.activeCount ?? 'On'}
-                          </Badge>
-                        ) : null}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-72 p-3">
-                      {filters.content}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )
-              ) : null}
+              {filtersButtonEl}
               {showColumns ? (
                 <DataGridColumnVisibility
                   table={table}
