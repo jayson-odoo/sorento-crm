@@ -1,24 +1,24 @@
 /**
- * PORTAL-P4-REQUESTS R3a (form parity, PAR-1/3/5): a LIMITED user (`view_own`, not `view`) creates, edits and VIEWS a
- * Sample Request through the PORTAL's own SampleRequestForm (app/(auth)/portal/components), wired to
- * `/api/v1/my-requests` by an injected client. Entry points are the components the pages render: SampleRequestForm
- * (new with ?project_id= / edit), and SampleRequestDetailTabs + SampleRequestDetail (view). Staff keep today's screens.
+ * SAMPLE-REQUEST-V2 slice 2 (owner Q1 a, 11 Nov), which replaced PORTAL-P4-REQUESTS R3a's portal form: a LIMITED
+ * user (`view_own`, not `view`) now gets the SAME guided staff form as everyone else (four sections, Save as draft,
+ * Preview, Submit inside the Preview popup), but every server call of THEIR form goes through My Requests
+ * (`/api/v1/my-requests/...`), never the staff sample request API. Their read-only VIEW is still the portal's
+ * SampleRequestDetail. Entry points are the components the pages render: SampleRequestForm (new with ?project_id= /
+ * edit), and SampleRequestDetailTabs + SampleRequestDetail (view). Staff keep today's screens.
  *
- * Marker that tells the PORTAL form from the CRM one: the portal's submit button reads "Submit sample request"
- * (the CRM reads "Submit"), its item card is titled "Items" with an "Add item" button (the CRM has "Line items" and
- * "Add row"), and the portal shows no "Sales Person" read-only field.
+ * Marker that tells the guided form from the old portal one: the four section titles and the Preview button
+ * (the portal form had "Submit sample request" and an "Items" card with "Add item").
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EMPTY_FORM, blankLine, payloadFromState } from '@/lib/sample-request-form';
 
-const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: nav.push, replace: nav.replace, back: vi.fn(), prefetch: vi.fn() }),
   usePathname: () => '/project-sales/sample-requests/new',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock('next-auth/react', () => ({
   useSession: () => ({ data: { user: { name: 'Ann Sales' } }, status: 'authenticated' }),
@@ -138,60 +138,107 @@ beforeEach(() => {
   vi.clearAllMocks();
   detailNow = detail();
   refusal = null;
+  nav.search = '';
   pending.getCurrentPendingAction.mockResolvedValue({ pending: null, last_outcome: null });
 });
 
-describe('limited user, New Sample Request renders the portal form', () => {
-  it('is the portal form (Submit sample request, Items / Add item), not the CRM one', async () => {
+const SECTIONS = ['Customer & project', 'Ship to', 'Items', 'Delivery'];
+const draftBtn = () => screen.getByRole('button', { name: 'Save as draft' });
+const posts = () => where((c) => c.method === 'POST' && c.url === MINE);
+/** A draft that passes every staff rule, as My Requests returns it. */
+const READY = {
+  customer_id: 'd1', customer_name: 'ZZT Debtor', ship_to_party_id: 'party-1', ship_to_role: null,
+  ship_to_name: 'ZZT Site', ship_to_address: '1 Jalan Test, Klang', delivery_date: '2026-11-18', delivery_mode: 'driver',
+  loan_value: 2, loan_unit: 'months', goods_from: 'either', board_mounting: false,
+};
+
+describe('limited user, New Sample Request renders the guided form through My Requests', () => {
+  it('is the guided form (four sections, Save as draft, Preview), not the portal one, and not the staff API', async () => {
     mountForm(LIMITED);
-    expect(await screen.findByRole('button', { name: 'Submit sample request' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add item/ })).toBeInTheDocument();
-    expect(screen.queryByText('Sales Person')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Add row/ })).toBeNull();
+    for (const t of SECTIONS) expect((await screen.findAllByText(t, { selector: 'span' })).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Submit sample request' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add item/ })).toBeNull();
+    // Submit lives inside the Preview popup only.
+    expect(screen.queryByRole('button', { name: /^Submit$/ })).toBeNull();
+    expect(staffApi()).toHaveLength(0);
   });
 
-  it('customer search, product search and registered projects go to my-requests only', async () => {
+  it('customer search, product search and project search go to my-requests only', async () => {
     mountForm(LIMITED);
-    await screen.findByRole('button', { name: 'Submit sample request' });
-    fireEvent.change(screen.getByLabelText(/^Customer Name/), { target: { value: 'ZZ' } });
+    await screen.findByText('Customer & project');
+    const customer = screen.getByLabelText(/^Customer/);
+    fireEvent.focus(customer);
+    fireEvent.change(customer, { target: { value: 'ZZ' } });
     await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/sample-request/customers')).length).toBeGreaterThan(0), { timeout: 3000 });
-    fireEvent.change(screen.getByLabelText('Item code'), { target: { value: 'TI' } });
+    fireEvent.change(screen.getByRole('combobox', { name: /item code/i }), { target: { value: 'TI' } });
     await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/sample-request/products')).length).toBeGreaterThan(0), { timeout: 3000 });
-    fireEvent.change(screen.getByPlaceholderText('Search your registered projects'), { target: { value: 'PR' } });
+    fireEvent.click(document.getElementById('sr-project') as HTMLElement);
+    const box = await screen.findByPlaceholderText('Search...');
+    fireEvent.change(box, { target: { value: 'PR' } });
     await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/projects')).length).toBeGreaterThan(0), { timeout: 3000 });
     expect(portalCalls()).toHaveLength(0);
     expect(staffApi()).toHaveLength(0);
+    expect(where((c) => c.url.includes('/procurement-management/') || c.url.includes('/api/v1/complaints'))).toHaveLength(0);
   });
 
-  it('Save as draft POSTs the portal payload, then router.replace goes to the CRM detail (never /portal)', async () => {
+  it('Save as draft POSTs my-requests, never the staff API, then lands on the list when there is no origin', async () => {
     mountForm(LIMITED);
-    fireEvent.change(await screen.findByLabelText(/^Ship To/), { target: { value: 'ZZT Site' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
-    const expected = payloadFromState({ ...EMPTY_FORM, ship_to_name: 'ZZT Site', lines: [blankLine()] });
-    expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toEqual(expected);
-    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/project-sales/sample-requests/new-1'));
-    expect(nav.replace.mock.calls.every((a) => !String(a[0]).startsWith('/portal'))).toBe(true);
+    await screen.findByText('Customer & project');
+    fireEvent.click(draftBtn());
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(posts()[0].body).toMatchObject({ customer_id: null });
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
+    expect(nav.push.mock.calls.every((a) => !String(a[0]).startsWith('/portal'))).toBe(true);
     expect(staffApi()).toHaveLength(0);
     expect(portalCalls()).toHaveLength(0);
   });
 
-  it('Submit POSTs .../<id>/submit then pushes the CRM list', async () => {
+  it('Save as draft lands on the ?from= origin when there is one', async () => {
+    nav.search = `from=${encodeURIComponent('/project-sales/pr-1?tab=sample-requests')}`;
+    mountForm(LIMITED);
+    await screen.findByText('Customer & project');
+    fireEvent.click(draftBtn());
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/pr-1?tab=sample-requests'));
+    expect(staffApi()).toHaveLength(0);
+  });
+
+  it('Preview then Submit saves via PUT and POSTs .../<id>/submit on my-requests, then lands on the origin rule', async () => {
+    detailNow = detail(READY);
     mountForm(LIMITED, { requestId: 'sr-5' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Submit sample request' }));
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Preview sample request')).toBeInTheDocument();
+    expect(where((c) => c.url.endsWith('/submit'))).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Submit$/ }));
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === `${MINE}/sr-5/submit`)).toHaveLength(1));
+    expect(where((c) => c.method === 'PUT' && c.url === `${MINE}/sr-5`)).toHaveLength(1);
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
     expect(nav.push.mock.calls.every((a) => !String(a[0]).startsWith('/portal'))).toBe(true);
+    expect(staffApi()).toHaveLength(0);
+  });
+
+  it('Submit lands on the ?from= origin when there is one', async () => {
+    nav.search = `from=${encodeURIComponent('/project-sales/pr-1?tab=sample-requests')}`;
+    detailNow = detail(READY);
+    mountForm(LIMITED, { requestId: 'sr-5' });
+    await screen.findByText('Customer & project');
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /^Submit$/ }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/pr-1?tab=sample-requests'));
     expect(staffApi()).toHaveLength(0);
   });
 });
 
 describe('limited user, Sample Request edit loads from my-requests', () => {
-  it('GETs my-requests/submissions/sample_request/<id>, shows the portal form, saves with PUT, never the staff API', async () => {
+  it('GETs my-requests/submissions/sample_request/<id>, shows the guided form, saves with PUT, never the staff API', async () => {
     mountForm(LIMITED, { requestId: 'sr-5' });
-    expect(await screen.findByRole('button', { name: 'Submit sample request' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Preview' })).toBeInTheDocument();
+    expect(screen.getByText('Ship to', { selector: 'span' })).toBeInTheDocument();
     expect(where((c) => c.method === 'GET' && c.url === `${MINE}/sr-5`).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
+    fireEvent.click(draftBtn());
     await waitFor(() => expect(where((c) => c.method === 'PUT' && c.url === `${MINE}/sr-5`)).toHaveLength(1));
     expect(staffApi()).toHaveLength(0);
     expect(portalCalls()).toHaveLength(0);
@@ -220,35 +267,42 @@ describe('limited user, Sample Request view renders the portal form read-only', 
 
 const PROJECT_ID = '5b0c1d2e-aaaa-4bbb-8ccc-0123456789ab';
 describe('limited user, Sample Request seeded from a project (?project_id=)', () => {
-  it('seeds project_id and the project title into the PORTAL form and the saved body carries project_id', async () => {
+  it('seeds project_id and the project title into the guided form and the saved body carries project_id', async () => {
     (getProject as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: PROJECT_ID, project_code: 'PRJ-0001', title: 'Project One' });
     mountForm(LIMITED, { projectId: PROJECT_ID });
-    expect(await screen.findByRole('button', { name: 'Submit sample request' })).toBeInTheDocument();
-    await waitFor(() => expect((document.getElementById('sr-project-title') as HTMLInputElement).value).toBe('Project One'));
+    expect(await screen.findByText(/PRJ-0001 - Project One/)).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(PROJECT_ID);
-    fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
-    expect((where((c) => c.method === 'POST' && c.url === MINE)[0].body as { project_id?: string }).project_id).toBe(PROJECT_ID);
+    fireEvent.click(draftBtn());
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect((posts()[0].body as { project_id?: string }).project_id).toBe(PROJECT_ID);
     expect(getProject).toHaveBeenCalledWith(PROJECT_ID);
+    expect(staffApi()).toHaveLength(0);
   });
 
   it('no projectId: nothing is seeded', async () => {
     mountForm(LIMITED);
-    await screen.findByRole('button', { name: 'Submit sample request' });
+    await screen.findByText('Customer & project');
     expect(getProject).not.toHaveBeenCalled();
     expect((document.getElementById('sr-project-title') as HTMLInputElement).value).toBe('');
+    fireEvent.click(draftBtn());
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect((posts()[0].body as { project_id?: string | null }).project_id ?? null).toBeNull();
   });
 });
 
 describe('limited user, a refused save shows the message', () => {
-  it('422 SAMPLE_REQUEST_PROJECT_NOT_ALLOWED: toast.error carries the message text, never the code', async () => {
+  it('422 SAMPLE_REQUEST_PROJECT_NOT_ALLOWED: the form shows the message text, never the code', async () => {
     const message = 'Pick one of your own projects.';
     refusal = { status: 422, body: { message, code: 'SAMPLE_REQUEST_PROJECT_NOT_ALLOWED', details: { field: 'project_id' } } };
     mountForm(LIMITED);
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(message));
-    const shown = (toast.error as unknown as ReturnType<typeof vi.fn>).mock.calls.map((a) => String(a[0])).join('|');
-    expect(shown).not.toContain('SAMPLE_REQUEST_PROJECT_NOT_ALLOWED');
+    await screen.findByText('Customer & project');
+    fireEvent.click(draftBtn());
+    expect((await screen.findAllByText(message)).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain('SAMPLE_REQUEST_PROJECT_NOT_ALLOWED');
+    const toasted = (toast.error as unknown as ReturnType<typeof vi.fn>).mock.calls.map((a) => String(a[0])).join('|');
+    expect(toasted).not.toContain('SAMPLE_REQUEST_PROJECT_NOT_ALLOWED');
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(staffApi()).toHaveLength(0);
   });
 });
 
@@ -269,7 +323,7 @@ describe('staff keep today\'s Sample Request screens', () => {
   });
 });
 
-/** S1: the CRM page header carries the one Back; the embedded portal form shows none of its own and no /portal link. */
+/** S1: the CRM page header carries the one Back; the guided form renders no Back of its own and no /portal link. */
 function expectNoOwnBack() {
   expect(screen.queryByRole('button', { name: /^Back/ })).toBeNull();
   expect(screen.queryByRole('link', { name: /Back/ })).toBeNull();
@@ -277,24 +331,16 @@ function expectNoOwnBack() {
     expect(el.getAttribute('href') ?? '').not.toContain('/portal');
   }
 }
-/** Item 4: a NEW embedded form opens on its first card, with no empty header row above it. */
-function expectNoEmptyHeaderRow(container: HTMLElement) {
-  const shell = container.firstElementChild as HTMLElement;
-  const first = shell.firstElementChild as HTMLElement;
-  expect(first.childElementCount).toBeGreaterThan(0);
-  expect(first.querySelector('[data-slot="card"]') ?? first.closest('[data-slot="card"]')).not.toBeNull();
-}
 
 describe('limited user, Sample Request shows exactly one Back (the CRM header\'s)', () => {
-  it('new form: no Back of its own, no /portal link, no empty header row', async () => {
-    const { container } = mountForm(LIMITED);
-    await screen.findByRole('button', { name: 'Submit sample request' });
+  it('new form: no Back of its own, no /portal link', async () => {
+    mountForm(LIMITED);
+    await screen.findByText('Customer & project');
     expectNoOwnBack();
-    expectNoEmptyHeaderRow(container);
   });
   it('edit form: no Back of its own', async () => {
     mountForm(LIMITED, { requestId: 'sr-5' });
-    await screen.findByRole('button', { name: 'Submit sample request' });
+    await screen.findByRole('button', { name: 'Preview' });
     expectNoOwnBack();
   });
   it('read-only view: no Back of its own', async () => {
