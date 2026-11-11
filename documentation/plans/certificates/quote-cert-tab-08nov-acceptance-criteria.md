@@ -86,7 +86,10 @@ products: [{product_id, product_code}], marked: {count: int, state: "found"|"edi
 `Detail` = `Row` + `{revision_id, page_count|null, has_text, can_edit, can_edit_defaults,
 box_source ("quote"|"default"), boxes: [Box], products: [{product_id, product_code,
 coverage_id, model_code, model_code_source ("ai"|"manual"|null), code_used, number_only: bool,
-state ("found"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
+state ("found"|"edited"|"unmarked"|"not_found"|"no_text"|"code_needed")}]}`.
+
+`unmarked` (CERT-TAB-UX, 11 Nov 2026): the product's code marks it but no box in force names it
+(its box was deleted for this quote or as default); shown "Not marked".
 
 CERT-TAB-UX (owner, 11 Nov 2026): the `suggested` state is gone from both unions; a box found by an
 `ai` code is `found` ("Marked" on screen). See `PLAN-cert-tab-ux-11nov.md`.

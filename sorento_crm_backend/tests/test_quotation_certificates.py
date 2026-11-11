@@ -1551,6 +1551,53 @@ def test_ux_a_bad_product_ids_entry_is_422(files):
         c = _draft(db)
         cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
         with _api(db, c) as client:
-            bad = {**_box(), "product_ids": ["x" * 40]}
-            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [bad]})
-            assert r.status_code == 422, r.text
+            for entry in ("x" * 40, "abc"):
+                bad = {**_box(), "product_ids": [entry]}
+                r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [bad]})
+                assert r.status_code == 422, (entry, r.text)
+
+
+def test_ux_a_remembered_miss_never_overrides_a_file_read_in_the_same_request(files, reads):
+    """Fresh review: product a's stale cache reads the file fine; b's remembered miss must not then
+    turn the row into "No file"."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        pdf = files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+            files[str(cr.att.id)] = pdf
+            cr.cps[c["a"].id].boxes = None  # a (read first, code order) must read the file again
+            db.commit()
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 2, "state": "found"}
+
+
+def test_ux_a_miss_is_stamped_only_when_storage_was_asked(files, reads):
+    """Fresh review: a product skipped because another product's miss was trusted keeps its cache
+    untouched; no new miss is stamped without a storage call."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            _items(client, c)
+            cr.cps[c["b"].id].boxes = None
+            db.commit()
+            reads.clear()
+            _items(client, c)
+            assert reads == []
+            db.expire_all()
+            assert cr.cps[c["b"].id].boxes is None

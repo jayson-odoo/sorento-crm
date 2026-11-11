@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session, selectinload
@@ -46,7 +46,7 @@ MISS_RETRY = timedelta(hours=1)
 
 
 def _utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def _miss_fresh(cache: dict) -> bool:
@@ -54,6 +54,8 @@ def _miss_fresh(cache: dict) -> bool:
         checked = datetime.fromisoformat(str(cache.get("checked_at")))
     except (TypeError, ValueError):
         return False
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=timezone.utc)
     return _utcnow() - checked < MISS_RETRY
 
 
@@ -146,6 +148,7 @@ class _Group:
         self._has_text: Optional[bool] = None
         self._page_count: Optional[int] = None
         self.unreadable = False  # a file is on record but the object could not be read
+        self.asked_storage = False  # this request called storage for the file (a miss may be stamped)
 
     @property
     def rev(self):
@@ -160,6 +163,7 @@ class _Group:
 
     def file(self, db: Session) -> Optional[bytes]:
         if self._file is False:
+            self.asked_storage = True
             self._file = None
             att = self.attachment
             if att is not None:
@@ -338,7 +342,9 @@ def _resolve(
         cache = cp.boxes if isinstance(cp.boxes, dict) else None
         current = bool(cache) and cache.get("revision_id") == owner_rev_id
         if current and cache.get("missing"):
-            if trust_miss and _miss_fresh(cache):
+            # Trusted only while this request has not read the file: bytes read a moment ago for
+            # another product win over a remembered miss.
+            if trust_miss and _miss_fresh(cache) and group._file is False:
                 # The whole file counts as gone for this read, so no other product reads it either
                 # and the row cannot be half "no file" and half marked.
                 group.unreadable = True
@@ -353,7 +359,7 @@ def _resolve(
             # (a suggestion, or the negative result) so no later read parses the file again.
             data = group.file(db)
             if data is None:
-                if group.unreadable:
+                if group.unreadable and group.asked_storage:
                     _remember_miss(db, cp, owner_rev_id)
                 continue
             has_text = group.has_text(db)
@@ -394,7 +400,7 @@ def _resolve(
             else:
                 data = group.file(db)
                 if data is None:
-                    if group.unreadable:
+                    if group.unreadable and group.asked_storage:
                         _remember_miss(db, cp, owner_rev_id)
                     continue
                 found = pdfs.find_boxes(data, code)

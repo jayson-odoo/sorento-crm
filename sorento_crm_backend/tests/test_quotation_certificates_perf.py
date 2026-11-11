@@ -158,7 +158,7 @@ def test_perf_a_missing_file_is_remembered_and_the_warm_list_never_calls_storage
 
 
 def test_perf_a_remembered_miss_is_retried_after_it_expires(files, monkeypatch):
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from app.services import quotation_certificate_service as svc
 
@@ -169,7 +169,7 @@ def test_perf_a_remembered_miss_is_retried_after_it_expires(files, monkeypatch):
         with _api(db, c) as client:
             _items(client, c)
             seen.clear()
-            later = datetime.utcnow() + svc.MISS_RETRY + timedelta(minutes=1)
+            later = datetime.now(timezone.utc) + svc.MISS_RETRY + timedelta(minutes=1)
             monkeypatch.setattr(svc, "_utcnow", lambda: later)
             _items(client, c)
             assert len(seen) == SIZE
