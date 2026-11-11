@@ -36,6 +36,36 @@ from app.services.workflow_submission_dynamic_list_query import (
 from app.utils.heavy_work import heavy
 
 router = APIRouter()
+
+#: SUPPLIER-COST-ACCESS: list-query fields that are product cost, per resource. A reader without
+#: `products.cost.view` is not offered them, cannot filter or sort on them (a range filter
+#: would read the value back) and cannot export them; the row serializer nulls the value.
+_COST_FIELDS: Dict[str, frozenset[str]] = {"products": frozenset({"cost_price"})}
+
+
+def _cost_fields_hidden(db: Session, user_id: str, resource_key: str) -> frozenset[str]:
+    from app.services.cost_access import can_view_cost
+
+    fields = _COST_FIELDS.get(resource_key)
+    if not fields or can_view_cost(db, user_id):
+        return frozenset()
+    return fields
+
+
+def _filter_keys(group: Any) -> set[str]:
+    keys: set[str] = set()
+    for child in getattr(group, "children", None) or []:
+        if hasattr(child, "children"):
+            keys |= _filter_keys(child)
+        else:
+            keys.add(getattr(child, "field_key", ""))
+    return keys
+
+
+def _refuse_cost_fields(db: Session, user_id: str, resource_key: str, used: set[str]) -> None:
+    hidden = _cost_fields_hidden(db, user_id, resource_key)
+    if hidden & used:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission required: products.cost.view")
 logger = logging.getLogger(__name__)
 
 
@@ -241,7 +271,10 @@ def list_fields(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource")
     out: list[ListQueryFieldResponse] = []
     option_specs = _option_specs()
+    hidden_cost = _cost_fields_hidden(db, current_user["id"], resource_key)
     for f in fields:
+        if f.field_key in hidden_cost:
+            continue
         base = ListQueryFieldResponse.model_validate(f)
         sec, sub = (None, None)
         if resource_key == "orders":
@@ -366,6 +399,11 @@ def advanced_search(
     require_adapter(body.resource)
     if not _can_view(db, current_user["id"], body.resource):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    # A saved column sort on cost (an older view, a published one) falls back to the default
+    # order rather than breaking the grid; a filter on cost is refused (it would read it back).
+    if body.sort and body.sort in _cost_fields_hidden(db, current_user["id"], body.resource):
+        body.sort = None
+    _refuse_cost_fields(db, current_user["id"], body.resource, _filter_keys(body.filter))
     _t1 = time.perf_counter() if _profile else 0.0
     try:
         result = ListQuerySearchService(db).search(body)
@@ -411,6 +449,12 @@ def export_rows(
     slug = adapter.export_slug
     if not slug or not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Export permission required")
+    _refuse_cost_fields(
+        db,
+        current_user["id"],
+        body.resource,
+        {f.field_key for f in body.fields} | _filter_keys(body.filter),
+    )
     if body.resource == "finance_billing_documents":
         # The export reads what the finance routes read: same module gate, and the view slug
         # that guards every billing figure on them.

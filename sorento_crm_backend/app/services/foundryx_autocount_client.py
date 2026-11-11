@@ -236,12 +236,19 @@ class FoundryxAutocountClient:
             params={"companyCode": company_code},
         )
 
-    def write(self, path: str, body: dict, *, idempotency_key: Optional[str] = None) -> dict:
+    def write(
+        self, path: str, body: dict, *, idempotency_key: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> dict:
         """``POST`` one write route (``/po-links``, ``/po-links/unlink``,
-        ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``)."""
+        ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``).
+        ``request_id`` goes as the optional ``X-Request-ID`` (SS #230), so SS's call log can be
+        matched to the press that sent it."""
         headers = self._headers()
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
+        if request_id:
+            headers["X-Request-ID"] = request_id
         try:
             with self._client(_WRITE_TIMEOUT_SECONDS) as client:
                 response = client.post(f"/api/v1/autocount/{path}", headers=headers, json=body)
