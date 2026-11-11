@@ -86,7 +86,7 @@ export interface CertificateProduct {
   company_name: string | null;
   /** COV-2 / FE-7: rendered as colour, never as a per-row text badge. */
   source: CertificateSource;
-  /** QUOTE-CERT-TAB: the code as printed on the certificate; `ai` = Suggested, `manual` = confirmed. */
+  /** QUOTE-CERT-TAB: the code as printed on the certificate; `ai` = read by the system, `manual` = typed. Shown the same (CERT-TAB-UX). */
   model_code?: string | null;
   model_code_source?: 'ai' | 'manual' | null;
 }
