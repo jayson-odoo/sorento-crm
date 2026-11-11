@@ -203,7 +203,7 @@ function StaffSampleRequestsList() {
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
-        size: 190,
+        size: 220,
         cell: ({ row }) => <DeliveryCell row={row.original} />,
         meta: { headerTitle: 'Delivery', skeleton: <Skeleton className="h-4 w-20" /> },
       },

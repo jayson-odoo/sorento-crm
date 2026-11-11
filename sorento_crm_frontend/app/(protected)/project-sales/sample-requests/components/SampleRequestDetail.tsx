@@ -17,6 +17,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { DatePicker } from '@/components/ui/date-picker';
+import { toIsoDate } from '@/components/ui/date-range-picker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -282,12 +284,13 @@ export function DateAnswerDialog({
           {feasible === false && (
             <div className="space-y-1.5">
               <Label htmlFor="sr-answer-date">Proposed date *</Label>
-              <Input
+              {/* The shared DD/MM/YYYY picker (standing rule); a date before today is refused below. */}
+              <DatePicker
                 id="sr-answer-date"
-                type="date"
-                min={today}
-                value={proposed}
-                onChange={(e) => setProposed(e.target.value)}
+                ariaLabel="Proposed date"
+                portal
+                value={proposed ? new Date(`${proposed}T00:00:00`) : undefined}
+                onChange={(d) => setProposed(toIsoDate(d) ?? '')}
               />
             </div>
           )}
@@ -724,7 +727,15 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
           primary={
             <div className="flex flex-wrap items-center gap-2">
               {isDraft && ownerActs && (
-                <Button disabled={busy} onClick={() => submit.mutate(r.id)}>
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    submit.mutate(r.id, {
+                      onSuccess: (done) =>
+                        toast.success(`Sample request ${done?.request_no ?? r.request_no} submitted`),
+                    })
+                  }
+                >
                   Submit
                 </Button>
               )}

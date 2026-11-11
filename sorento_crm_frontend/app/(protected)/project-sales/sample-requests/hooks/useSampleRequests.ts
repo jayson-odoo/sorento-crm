@@ -117,10 +117,8 @@ export function useSampleRequestMutations() {
   });
   const submit = useMutation({
     mutationFn: (id: string) => submitSampleRequest(id),
-    onSuccess: () => {
-      refresh();
-      toast.success('Sample request submitted');
-    },
+    // The caller says "submitted" once, with the number (crew pass 11 Nov: two toasts were shown).
+    onSuccess: refresh,
     onError: fail('Failed to submit the sample request'),
   });
   const move = useMutation({

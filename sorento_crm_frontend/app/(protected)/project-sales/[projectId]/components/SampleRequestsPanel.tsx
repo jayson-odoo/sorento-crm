@@ -67,7 +67,7 @@ export function SampleRequestsPanel({ project }: { project: Project }) {
         accessorFn: (row) => deliveryText(row),
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
         cell: ({ row }) => <DeliveryCell row={row.original} />,
-        size: 190,
+        size: 220,
         meta: { headerTitle: 'Delivery' },
       },
       {
