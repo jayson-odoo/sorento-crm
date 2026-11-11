@@ -253,3 +253,32 @@ def test_s3_dispatch_keeps_the_owner_counts_after_the_cap(world):
     assert out.status == "ok", out.message
     assert out.more > 0
     assert out.data["count_by_owner"] == [{"owner": "ZZT A", "projects": 8}, {"owner": "ZZT B", "projects": 8}]
+
+
+def test_d_dispatch_hands_the_model_one_project_name(world):
+    """Crew re-pass (d): the Projects list's name (short name, else title), never the long title beside it."""
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rows = [{"id": "p1", "project_code": "PPF2611010", "title": "ZZT Long Legal Title Phase 2", "name": "ZZT Melur",
+             "owner_name": "ZZT A"}]
+    rec = Recorder(result={"data": rows, "pagination": {"total": 1}})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, {}, call=rec, catalog=_list_catalog(), timeout=5.0)
+    assert out.data["data"][0]["name"] == "ZZT Melur" and "title" not in out.data["data"][0]
+
+
+def test_d_the_finder_names_a_project_as_the_projects_list_does(world):
+    world.mine.name = "ZZT Melur Short"
+    world.db.flush()
+    with panel_turn(world.sales):
+        out = writes._projects_find(world.db, make_ctx(world.sales), {"query": world.mine.project_code})
+    row = out.data["projects"][0]
+    assert row["name"] == "ZZT Melur Short" and "title" not in row
+
+
+@pytest.mark.parametrize("principal", ["user", "contact"])
+def test_a_the_prompt_the_agent_gets_carries_the_answer_scope_rule(world, principal):
+    from app.services.chatbot.agent import loop
+
+    assert "ANSWER ONLY WHAT WAS ASKED" in loop._system_prompt(world.db, "ZZT User", (), principal)
