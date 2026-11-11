@@ -223,6 +223,8 @@ export interface ReaderPageProps {
   sheetId: string;
   /** Stable across renders (the page passes its own key), so the memoised page skips re-rendering. */
   onPatch: (key: string, change: Partial<SpecSheetPage>) => void;
+  /** B7: the server dropped this page's override; the reader forgets its draft and restarts it. */
+  onReset: (key: string) => void;
   onSelectLayer: (key: string, layerId: string | null) => void;
   onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
   /** Ctrl/Cmd+Z / Shift+Z / Y on this page: the host's per-page undo. Stable, like `onPatch`. */
@@ -293,6 +295,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   documentId,
   sheetId,
   onPatch,
+  onReset,
   onSelectLayer,
   onLayersReport,
   onHistory,
@@ -502,6 +505,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                 sheetId={sheetId}
                 pageKey={page.key}
                 code={isCover ? 'Cover' : page.code}
+                onReset={() => onReset(page.key)}
               />
             )}
             {!isCover && !page.hidden && (

@@ -481,9 +481,17 @@ function clampInto(start: number, size: number, limit: number): number {
  * delete, nudge) answer on the ONE canvas the host marks `active`, the same handlers the
  * template editor runs (SPEC-SHEET-DESIGNER-PARITY), so a paste never lands on several pages.
  */
+export type EmbeddedAddKind = 'text' | 'shape' | 'image' | 'table' | 'accessories' | 'badge';
+
 export interface EmbeddedController {
   updateLayer: (id: string, changes: Partial<TagLayer>) => void;
   updateLayerProps: (id: string, changes: Partial<TagLayerProps>) => void;
+  /** B6: add an element through the editor's own handlers (placement, defaults and selection as
+   *  in the template designer). The new layer is reported like any edit. */
+  addLayer: (kind: EmbeddedAddKind) => void;
+  /** B6: the toolbar's Delete / Duplicate act on this canvas's selection. */
+  deleteSelected: () => void;
+  duplicateSelected: () => void;
 }
 
 export interface EmbeddedMode {
@@ -4188,11 +4196,46 @@ export function TagCanvasEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds]);
   useEffect(() => {
-    if (embeddedController) embeddedController.current = { updateLayer, updateLayerProps };
+    if (embeddedController) {
+      const adders: Record<EmbeddedAddKind, () => void> = {
+        text: handleAddText,
+        shape: handleAddShape,
+        // On a page the picture is chosen at once (as a badge is): the reader's Inspector has no
+        // "choose image" of its own.
+        image: () => {
+          const layer = { ...makeBaseLayer('image', 40, 30), props: defaultImageProps() };
+          addLayer(layer);
+          setImagePicker({ layerId: layer.id, badge: false });
+        },
+        table: handleAddTable,
+        accessories: handleAddAccessories,
+        badge: handleAddBadge,
+      };
+      embeddedController.current = {
+        updateLayer,
+        updateLayerProps,
+        addLayer: (kind) => adders[kind]?.(),
+        deleteSelected: deleteSelectedLayers,
+        duplicateSelected: duplicateSelectedLayers,
+      };
+    }
     return () => {
       if (embeddedController) embeddedController.current = null;
     };
-  }, [embeddedController, updateLayer, updateLayerProps]);
+  }, [
+    embeddedController,
+    updateLayer,
+    updateLayerProps,
+    handleAddText,
+    handleAddShape,
+    addLayer,
+    makeBaseLayer,
+    handleAddTable,
+    handleAddAccessories,
+    handleAddBadge,
+    deleteSelectedLayers,
+    duplicateSelectedLayers,
+  ]);
   // Layers the host changed (undo, redo, apply): adopted when they are not what this canvas holds.
   useEffect(() => {
     if (embeddedLayers && embeddedLayers !== layersRef.current) setLayers(embeddedLayers);
@@ -5616,7 +5659,21 @@ export function TagCanvasEditor({
   );
 
   if (embedded) {
-    return <div className="relative flex h-full w-full overflow-hidden">{canvasArea}</div>;
+    return (
+      <div className="relative flex h-full w-full overflow-hidden">
+        {canvasArea}
+        {/* B6: the asset picker the add handlers open (a badge, an image) works on a page too. */}
+        <AssetPickerDialog
+          open={imagePicker !== null}
+          productImages={pickerProductImages}
+          allowProductPhotos={!imagePicker?.badge}
+          uploadKind={imagePicker?.badge ? 'badge' : 'decorative'}
+          title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
+          onCancel={() => setImagePicker(null)}
+          onPick={handleImagePicked}
+        />
+      </div>
+    );
   }
 
   return (

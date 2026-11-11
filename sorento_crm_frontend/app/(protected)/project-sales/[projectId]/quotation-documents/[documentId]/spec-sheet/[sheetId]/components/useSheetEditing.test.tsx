@@ -68,7 +68,7 @@ describe('useSheetEditing undo after a new edit', () => {
 });
 
 describe('useSheetEditing forget(key) (B7)', () => {
-  it('clears that page draft, history and pending save, and leaves the other pages alone', () => {
+  it('clears that page draft, history and pending save, and leaves the other pages alone', async () => {
     vi.useFakeTimers();
     mutateAsync.mockClear();
     const { result } = renderHook(() => useSheetEditing('p', 'd', 's'));
@@ -85,7 +85,8 @@ describe('useSheetEditing forget(key) (B7)', () => {
     expect(result.current.draftOf('two')?.map((l) => l.id)).toEqual(['a', 'c']);
     expect(result.current.canUndo('two')).toBe(true);
 
-    act(() => {
+    // A save runs through a promise chain, so its call lands a microtask after the timer.
+    await act(async () => {
       vi.advanceTimersByTime(5000);
     });
     // Only the untouched page saves; the forgotten page's waiting save is gone.

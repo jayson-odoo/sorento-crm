@@ -346,6 +346,27 @@ export interface ApplyAllChanges {
   props?: Record<string, string | number | boolean>;
 }
 
+/** B6: add a new element (the client's layer) to every page; the server gives each copy its own id. */
+export async function addSpecSheetLayerToAll(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  layer: TagLayer,
+  originPageKey?: string,
+): Promise<SpecSheetDetail> {
+  return read(
+    await apiFetch(
+      url(projectId, documentId, `/${sheetId}/layers/${encodeURIComponent(layer.id)}/apply-all`),
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ op: 'add', layer, origin_page_key: originPageKey }),
+      },
+    ),
+    'Could not add the element to every page',
+  );
+}
+
 /** Move or restyle one layer on every page of the sheet that has it. */
 export async function applySpecSheetLayerToAll(
   projectId: string,

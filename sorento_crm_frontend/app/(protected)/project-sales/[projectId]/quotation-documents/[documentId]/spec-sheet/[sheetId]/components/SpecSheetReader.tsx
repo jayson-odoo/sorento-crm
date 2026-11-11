@@ -21,6 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -41,7 +42,11 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/drawer';
-import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
+import type {
+  EmbeddedAddKind,
+  EmbeddedController,
+} from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
+import { CanvasToolbar } from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 import {
   CollapsiblePanel,
   FocusShell,
@@ -62,6 +67,7 @@ import {
   specSheetListKey,
   templateSignature,
   useSpecSheetDetail,
+  specSheetPreviewPrefix,
   useSpecSheetMutations,
   useSpecSheetPageImages,
   useSpecSheetPreviews,
@@ -192,7 +198,8 @@ export function SpecSheetReader({
 
   const searchParams = useSearchParams();
   const editing = useSheetEditing(projectId, documentId, sheetId);
-  const { applyAll } = useSpecSheetMutations(projectId, documentId);
+  const { applyAll, addToAll } = useSpecSheetMutations(projectId, documentId);
+  const queryClient = useQueryClient();
   const [selection, setSelection] = React.useState<{
     pageKey: string;
     layerId: string;
@@ -581,18 +588,28 @@ export function SpecSheetReader({
     false,
   );
   const runApplyAll = React.useCallback(
-    (layerId: string, changes: ApplyAllChanges, keep: string | null) => {
+    (
+      layerId: string,
+      changes: ApplyAllChanges,
+      keep: string | null,
+      // B6: the same round trip for "add this element to every page".
+      add?: TagLayer,
+    ) => {
       setApplyingFrom(keep);
       void (async () => {
         // Every page's pending edit goes first, and no save lands in the middle of the apply.
         const release = await editing.settle();
         try {
-          await applyAll.mutateAsync({
-            sheetId,
-            layerId,
-            changes,
-            originPageKey: keep ?? undefined,
-          });
+          if (add) {
+            await addToAll.mutateAsync({ sheetId, layer: add, originPageKey: keep ?? undefined });
+          } else {
+            await applyAll.mutateAsync({
+              sheetId,
+              layerId,
+              changes,
+              originPageKey: keep ?? undefined,
+            });
+          }
           // The server changed the other pages: their local copies are stale, start them over.
           editing.forgetOthers(keep);
           setRestarts((prev) => {
@@ -609,7 +626,7 @@ export function SpecSheetReader({
         }
       })();
     },
-    [applyAll, sheetId, editing],
+    [applyAll, addToAll, sheetId, editing],
   );
   // "Every page" changes are gathered while the user is still typing or clicking (a font size
   // typed as "24" is one apply, not two) and sent once they pause.
@@ -654,10 +671,23 @@ export function SpecSheetReader({
   // goes to every page too, the same as typing it in the Inspector.
   const everyPageRef = React.useRef({ selection, applyMode, sendToEveryPage });
   everyPageRef.current = { selection, applyMode, sendToEveryPage };
+  // B6: set by the toolbar's Add; the next report of that page names the new layer.
+  const pendingAdd = React.useRef<{ key: string; every: boolean } | null>(null);
   const onLayersReport = React.useCallback(
     (key: string, base: TagLayer[], layers: TagLayer[]) => {
       const { selection: sel, applyMode: mode, sendToEveryPage: send } =
         everyPageRef.current;
+      const adding = pendingAdd.current;
+      if (adding && adding.key === key) {
+        const before = editing.draftOf(key) ?? base;
+        const created = layers.find((l) => !before.some((b) => b.id === l.id));
+        if (created) {
+          pendingAdd.current = null;
+          report(key, base, layers);
+          if (adding.every) runApplyAllRef.current(created.id, {}, key, created);
+          return;
+        }
+      }
       if (mode === 'all' && sel && sel.pageKey === key) {
         const before = (editing.draftOf(key) ?? base).find(
           (l) => l.id === sel.layerId,
@@ -674,6 +704,25 @@ export function SpecSheetReader({
   );
   // Leaving the reader sends what was gathered.
   React.useEffect(() => () => flushApply(), [flushApply]);
+  // The toolbar's Add buttons: the page the clipboard and shortcuts would act on, when it is live.
+  const addToPage = (kind: EmbeddedAddKind) => {
+    const key = inputKey;
+    if (!key || !liveKeys.has(key)) return;
+    pendingAdd.current = { key, every: applyMode === 'all' };
+    controllerRefFor(key).current?.addLayer(kind);
+  };
+  const toolbarLive = Boolean(inputKey && liveKeys.has(inputKey));
+  // Reset to template (B7): the override is gone on the server; forget this page's draft and undo
+  // history, read the page again, and restart its canvas from what came back.
+  const onResetPage = React.useCallback(
+    (key: string) => {
+      editing.forget(key);
+      void queryClient
+        .invalidateQueries({ queryKey: specSheetPreviewPrefix(documentId, sheetId) })
+        .finally(() => setRestarts((prev) => ({ ...prev, [key]: (prev[key] ?? 0) + 1 })));
+    },
+    [editing, queryClient, documentId, sheetId],
+  );
   const changeSelectedProps = (id: string, changes: Partial<TagLayerProps>) => {
     if (!selection) return;
     controllerRefFor(selection.pageKey).current?.updateLayerProps(id, changes);
@@ -931,24 +980,6 @@ export function SpecSheetReader({
             {canEdit && (
               <>
                 <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-                <Button
-                  size="icon"
-                  variant="outline"
-                  aria-label="Undo"
-                  disabled={!editing.canUndo(targetKey)}
-                  onClick={() => targetKey && editing.undo(targetKey)}
-                >
-                  <Undo2 className="size-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  aria-label="Redo"
-                  disabled={!editing.canRedo(targetKey)}
-                  onClick={() => targetKey && editing.redo(targetKey)}
-                >
-                  <Redo2 className="size-4" />
-                </Button>
                 {/* Always the same bar (hidden unless a text layer is picked): the toolbar keeps
                     one height whatever is selected, so the pages never slide under the pointer. */}
                 {/* Not on a phone: the hidden bar wraps into blank toolbar rows there, and the
@@ -977,6 +1008,25 @@ export function SpecSheetReader({
               </>
             )}
           </div>
+
+          {canEdit && (
+            <CanvasToolbar
+              onAddText={() => addToPage('text')}
+              onAddShape={() => addToPage('shape')}
+              onAddImage={() => addToPage('image')}
+              onAddBadge={() => addToPage('badge')}
+              onAddTable={() => addToPage('table')}
+              onAddAccessories={() => addToPage('accessories')}
+              addDisabled={!toolbarLive}
+              onUndo={() => targetKey && editing.undo(targetKey)}
+              onRedo={() => targetKey && editing.redo(targetKey)}
+              canUndo={editing.canUndo(targetKey)}
+              canRedo={editing.canRedo(targetKey)}
+              onDeleteSelected={() => inputKey && controllerRefFor(inputKey).current?.deleteSelected()}
+              onDuplicateSelected={() => inputKey && controllerRefFor(inputKey).current?.duplicateSelected()}
+              hasSelection={Boolean(selection && selection.pageKey === inputKey)}
+            />
+          )}
 
           {isMobile && (
             <PageRail
@@ -1099,6 +1149,7 @@ export function SpecSheetReader({
                           documentId={documentId}
                           sheetId={sheetId}
                           onPatch={patch}
+                          onReset={onResetPage}
                           onSelectLayer={onSelectLayer}
                           onLayersReport={onLayersReport}
                           onHistory={onHistory}

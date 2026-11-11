@@ -255,8 +255,34 @@ export function useSheetEditing(
     bump((n) => n + 1);
   }, []);
 
+  /**
+   * Drop everything this page holds locally: its draft, undo history, host-set layers and the save
+   * that was waiting ("Reset to template": the server dropped the override, so the old layers
+   * must not be saved back by the next edit).
+   */
+  const forget = React.useCallback(
+    (key: string) => {
+      const pending = timers.current.get(key);
+      if (pending) clearTimeout(pending);
+      timers.current.delete(key);
+      drafts.current.delete(key);
+      histories.current.delete(key);
+      failed.current.delete(key);
+      setExternal((prev) => {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      bump((n) => n + 1);
+      refresh();
+    },
+    [refresh],
+  );
+
   return {
     status,
+    forget,
     draftOf: (key: string) => drafts.current.get(key),
     externalOf: (key: string) => external[key],
     report,
