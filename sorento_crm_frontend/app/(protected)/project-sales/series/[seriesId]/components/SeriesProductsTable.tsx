@@ -203,16 +203,14 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
           { value: 'yes', label: 'Yes' },
           { value: 'no', label: 'No' },
         ],
-        resolveSelected: (row, draft) =>
+        // The draft is seeded from the row (`ownAnswer`), so it alone is read: a cleared
+        // draft means "Follows category" even while the stored row still says Yes or No.
+        resolveSelected: (_row, draft) =>
           draft.non_cancellable === 'yes'
             ? { value: 'yes', label: 'Yes' }
             : draft.non_cancellable === 'no'
               ? { value: 'no', label: 'No' }
-              : row?.non_cancellable === true
-                ? { value: 'yes', label: 'Yes' }
-                : row?.non_cancellable === false
-                  ? { value: 'no', label: 'No' }
-                  : undefined,
+              : undefined,
       },
       {
         key: 'non_cancellable_effective',

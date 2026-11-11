@@ -2267,7 +2267,9 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
-      return true;
+      // A fresh non-cancellable refusal keeps its dialog open: report "not done" so the
+      // override handler does not close the dialog it was just given.
+      return !postedRefusal;
     } catch (error) {
       // The mutation's own `onError` already toasted the message; nothing here is left to say.
       // Caught only so the rejection does not float unhandled past this async click handler.

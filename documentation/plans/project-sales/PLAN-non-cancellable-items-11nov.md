@@ -1,6 +1,6 @@
 # PLAN: Non-cancellable items (NON-CANCELLABLE-ITEMS)
 
-Status: Build (track: standard M; one additive migration, one new permission). UAC:
+Status: Review (track: standard M; one additive migration, one new permission). UAC:
 `non-cancellable-items-11nov-acceptance-criteria.md`.
 
 ## Journey
@@ -64,6 +64,10 @@ were; some are internal). The screen shows the remark beside the line's own note
   heading or swapping its product, through `DELETE .../lines/{id}`, `PUT .../lines/{id}` and the
   bulk `PUT .../lines` (query param `non_cancellable_override_reason`). This also keeps the SO
   line's `quotation_line_id`, through which every other gate reads the flag, from being cut.
+  Limit: the gate guards the exact quotation lines a published SO consumes. Those usually sit on an
+  issued version, which is already read-only; a revision's lines are new rows with no link back, so
+  removing or cutting the item on a revision is not gated here. Such a cut reaches the SO only through
+  a PO revision, and that path is the gated amendment publish.
 - Board Confirm all answers per order, so a refusal there comes back as
   `results[].error_code = "non_cancellable_line"` with `error_details`, not as an HTTP 409.
 
@@ -85,5 +89,6 @@ Delivered / settled lines (`CLOSED`) are never alerted.
 ## Not in scope
 
 - Blocking AutoCount itself (it owns SO cancels).
-- Matrix-scope column edits (`set_columns`) that move quantities; and the quotation document
-  form save, which reaches the bulk gate but sends no override reason (refusal names the line).
+- Matrix-scope column edits (`set_columns`) that move quantities.
+- A line deleted or zeroed in AutoCount without a Cancel SO document: the SO book reads it as
+  settled (`CLOSED`), so no alert is raised for it.

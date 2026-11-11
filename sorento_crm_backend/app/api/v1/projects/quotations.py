@@ -1198,23 +1198,6 @@ def update_non_cancellable_rule(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-@router.delete("/config/non-cancellable-rules/{rule_id}", status_code=204)
-def delete_non_cancellable_rule(
-    rule_id: str,
-    _user: dict = Depends(require_permission(CONFIG_EDIT)),
-    db: Session = Depends(get_db),
-):
-    try:
-        validate_uuid_path(rule_id, resource="Non-cancellable rule")
-        rule = non_cancellable.rule_or_404(db, rule_id, company_id=acting_company_id(db))
-        db.delete(rule)
-        db.commit()
-        return Response(status_code=204)
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
 @router.delete(
     "/config/series/{series_id}/products/{product_id}",
     status_code=204,

@@ -201,3 +201,32 @@ def test_series_category_beats_a_company_product_exemption():
         )
     finally:
         pricing.category_ancestry = original
+
+
+def test_board_does_not_refuse_a_line_autocount_already_cancelled(api, monkeypatch):
+    """NC12 second clause: a Cancel SO already cancelled it; CS confirming the transfer is
+    not a new cancel, so no override is asked for."""
+    client, world = api
+    w = _cb_world(world)
+    core_a, mirror_a, _product_a = w["a"]
+    core_a.line_status = "cancelled"
+    core_a.cancelled_by_cancel_doc = True
+    core_a.cancelled_at = None
+    world.db.commit()
+    _flag_all(monkeypatch)
+    monkeypatch.setattr(nc, "can_override", lambda _db, _uid: False)
+
+    result = _confirm_all(client, w["order"], **_cancel_body(mirror_a))
+
+    assert result.get("error_code") != "non_cancellable_line", result
+
+
+def test_amendment_cut_is_measured_on_the_row_not_one_line():
+    """A model on two SO lines (30 + 23) cut 53 -> 40 is a cut although 40 > 23."""
+    from app.services.project_so_delta_service import ProjectSODeltaService
+
+    service = ProjectSODeltaService(db=None)
+    last_line = SimpleNamespace(id="l2", qty=23, line_no=2)
+    service._line_or_none = lambda _id: last_line  # type: ignore[method-assign]
+    rows = [{"verb": "CANCEL BALANCE", "so_line_id": "l2", "from_value": "53", "to_value": "40"}]
+    assert [line.id for _row, line in service._cut_lines(rows)] == ["l2"]

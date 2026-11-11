@@ -432,6 +432,42 @@ def test_bulk_save_cannot_drop_or_cut_a_confirmed_non_cancellable_line(world, mo
         )
 
 
+def test_swapping_the_product_of_a_confirmed_line_needs_an_override(world, monkeypatch):
+    """NC10: replacing the confirmed bathtub with another item cancels the bathtub."""
+    from app.services import project_quotation_service as quotes
+
+    db, cid, owner = world["db"], world["company_id"], world["owner"]
+    tub = _product(db, cid, world["bath"].id, world["uom"])
+    other = _product(db, cid, world["bath"].id, world["uom"], name="Other bathtub")
+    series = _series(db, cid, [world["bath"].id], [world["bath"].id])
+    quotation, version = _scope(db, cid, owner, series_id=series.id)
+    line = _line(db, version, owner, tub, qty=53)
+    _confirmed(db, quotation, line)
+    monkeypatch.setattr(nc, "can_override", lambda _db, _uid: False)
+    with pytest.raises(AppException) as refused:
+        quotes.upsert_line(
+            db, version=version, actor_user_id=owner, line=line,
+            payload={"product_id": other.id, "quantity": 53},
+        )
+    assert refused.value.code == "non_cancellable_line"
+
+
+def test_a_draft_so_does_not_confirm_the_line(world):
+    """NC9: only a PUBLISHED SO makes the line confirmed; a draft consuming it leaves it free."""
+    from app.services import project_quotation_service as quotes
+
+    db, cid, owner = world["db"], world["company_id"], world["owner"]
+    tub = _product(db, cid, world["bath"].id, world["uom"])
+    series = _series(db, cid, [world["bath"].id], [world["bath"].id])
+    quotation, version = _scope(db, cid, owner, series_id=series.id)
+    line = _line(db, version, owner, tub)
+    order = _confirmed(db, quotation, line)
+    order.published_at = None
+    order.status = "draft"
+    db.flush()
+    quotes.delete_line(db, version=version, line=line, user_id=owner)
+
+
 def test_assert_may_reduce_passes_when_nothing_is_non_cancellable(world):
     nc.assert_may_reduce(
         world["db"], reductions=[], user_id=None, override_reason=None, action="x"
