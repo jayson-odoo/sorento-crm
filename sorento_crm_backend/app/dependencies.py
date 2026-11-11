@@ -336,6 +336,17 @@ def extract_token_from_request(request: Request) -> Optional[str]:
     return None
 
 
+def _stamped(db: Session, user):
+    """The effective user, after stamping whether this request may see product cost
+    (SUPPLIER-COST-ACCESS, `app/services/cost_access.py`). Runs inside the async auth
+    dependencies so the flag lands on the request's own context."""
+    from app.services.cost_access import stamp_cost_visibility
+
+    if user is not None:
+        stamp_cost_visibility(db, user)
+    return user
+
+
 async def get_current_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
@@ -354,7 +365,7 @@ async def get_current_user(
 
     connector = _connector_user(request)
     if connector is not None:
-        return connector
+        return _stamped(db, connector)
 
     # Try to get token from request if not in header
     if not token:
@@ -380,7 +391,7 @@ async def get_current_user(
         real_user = _resolve_session_to_user(token, request, db)
         _stamp_session_actor(request, db, real_user)
         effective_user = _maybe_apply_impersonation(request, db, real_user)
-        return effective_user
+        return _stamped(db, effective_user)
     except HTTPException:
         raise
     except JWTError as e:
@@ -419,7 +430,7 @@ async def get_current_user_optional(
     """
     if getattr(request.state, "connector_call", None) is not None:
         try:
-            return _connector_user(request)
+            return _stamped(db, _connector_user(request))
         except HTTPException:
             return None
     if not token:
@@ -432,9 +443,9 @@ async def get_current_user_optional(
         return None
     try:
         _stamp_session_actor(request, db, real_user)
-        return _maybe_apply_impersonation(request, db, real_user)
+        return _stamped(db, _maybe_apply_impersonation(request, db, real_user))
     except Exception:
-        return real_user
+        return _stamped(db, real_user)
 
 
 def get_api_key(
@@ -765,7 +776,7 @@ async def get_current_user_or_api_key(
 
     connector = _connector_user(request)
     if connector is not None:
-        return connector
+        return _stamped(db, connector)
 
     # If API key is provided, validate it
     if api_key:
@@ -782,7 +793,7 @@ async def get_current_user_or_api_key(
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
-        return user
+        return _stamped(db, user)
 
     # Otherwise, try JWT token authentication
     auth_mode = "jwt"
@@ -803,7 +814,7 @@ async def get_current_user_or_api_key(
         effective_user["auth_method"] = "jwt"
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
-        return effective_user
+        return _stamped(db, effective_user)
     except HTTPException:
         raise
     except JWTError as e:

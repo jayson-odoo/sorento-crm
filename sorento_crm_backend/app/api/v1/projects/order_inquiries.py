@@ -1714,6 +1714,13 @@ def order_inquiry_po_candidates(
         validate_uuid_path(row_id, resource="Order inquiry row")
         service = ProjectOrderInquiryService(db)
         candidates = service.po_candidates_for_row(row_id)
+        from app.services.cost_access import holds_cost_view
+
+        if not holds_cost_view(db, _user):
+            # SUPPLIER-COST-ACCESS: the PO line's unit cost is for `products.cost.view` holders
+            # (CS holds this route's slug). The PO number and supplier still identify the line.
+            for candidate in candidates:
+                candidate["unit_cost"] = None
         still_to_link = service.still_to_link_for_row(row_id)
         linkable_qty = service.linkable_qty_for_row(row_id)
         return {

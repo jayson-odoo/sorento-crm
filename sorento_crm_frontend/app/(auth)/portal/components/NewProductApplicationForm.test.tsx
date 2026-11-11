@@ -424,11 +424,14 @@ describe('purchasing feedback on the portal (PQ1)', () => {
       lines: [line({ cost_price: '12.50' })],
     });
 
-  it('shows COST, LEADTIME and the supplier read-only, with no Save feedback', async () => {
+  it('shows LEADTIME and the supplier read-only and never COST, with no Save feedback', async () => {
+    // SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost is never shown to a dealer, even if
+    // an older API still sent it.
     asMock(getNewProductApplication).mockResolvedValue(filled());
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
     expect(await screen.findByText('3 weeks')).toBeInTheDocument();
-    expect(screen.getByText(/12\.50/)).toBeInTheDocument();
+    expect(screen.queryByText(/12\.50/)).toBeNull();
+    expect(screen.queryByText('COST:')).toBeNull();
     expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
@@ -738,7 +741,7 @@ describe('portal: no product table from a stock inquiry, purchasing result read-
     expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 
-  it('shows a typed new code (no product yet), LEADTIME and COST read-only, with no purchasing controls', async () => {
+  it('shows a typed new code (no product yet) and LEADTIME read-only, never COST, with no purchasing controls', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       detail({
         status: 'completed',
@@ -756,7 +759,7 @@ describe('portal: no product table from a stock inquiry, purchasing result read-
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
     expect(await screen.findByText('XY-TYPED-7')).toBeInTheDocument();
     expect(screen.getByText('3 weeks')).toBeInTheDocument();
-    expect(screen.getByText(/12\.50/)).toBeInTheDocument();
+    expect(screen.queryByText(/12\.50/)).toBeNull();
     expect(screen.queryByRole('button', { name: /edit purchasing response/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
     expect(screen.queryByLabelText(/^lead ?time/i)).toBeNull();

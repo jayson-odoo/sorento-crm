@@ -314,8 +314,10 @@ def _staff_fill(p, aid, *, cost="12.50", lead="3 weeks", link=None):
     p.db.commit()
 
 
-def test_portal_detail_shows_cost_leadtime_and_the_linked_supplier_read_only(portal):
-    """AC-NPA-78 (PQ1): cost, lead time and supplier are shown; group, UOM and list price never."""
+def test_portal_detail_shows_leadtime_and_the_linked_supplier_but_never_cost(portal):
+    """AC-NPA-78 (PQ1): lead time and supplier are shown; group, UOM and list price never. Cost
+    price is never shown to a dealer (SUPPLIER-COST-ACCESS, management 9 Nov 2026), even once
+    purchasing has filled it."""
     from app.models.base import company_scope
     from app.models.procurement import ProductSupplier, Supplier
 
@@ -333,18 +335,20 @@ def test_portal_detail_shows_cost_leadtime_and_the_linked_supplier_read_only(por
     got = _as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()
     assert got["lead_time"] == "3 weeks"
     line = got["lines"][0]
-    assert line["cost_price"] == "12.50"
+    assert "cost_price" not in line and "cost_price" not in got
+    assert "12.50" not in str(got)
     assert line["opened_supplier_name"] == "Example Supplier Sdn Bhd"
     for key in ("opened_category_name", "opened_base_uom_name", "opened_list_price", "selling_price",
                 "supplier_item_code", "category_id", "base_uom_id"):
         assert key not in line, key
 
 
-def test_portal_detail_carries_the_cost_keys_even_before_purchasing_fills_them(portal):
+def test_portal_detail_carries_the_purchasing_keys_but_no_cost_before_purchasing_fills_them(portal):
     d = _create(portal)
     got = _as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()
     assert "lead_time" in got and got["lead_time"] is None
-    assert "cost_price" in got["lines"][0] and got["lines"][0]["cost_price"] is None
+    # SUPPLIER-COST-ACCESS: cost is never a portal key, filled or not.
+    assert "cost_price" not in got["lines"][0] and "cost_price" not in got
     assert "opened_supplier_name" in got["lines"][0]
 
 
@@ -496,7 +500,7 @@ def _portal_xlsx_app(p):
     return d
 
 
-def test_portal_download_has_the_paper_sheet_with_cost_filled(portal):
+def test_portal_download_has_the_paper_sheet_with_cost_blank(portal):
     d = _portal_xlsx_app(portal)
     res = _as(portal, portal.granted).get(f"{BASE}/{d['id']}/download")
     assert res.status_code == 200, res.text
@@ -505,7 +509,10 @@ def test_portal_download_has_the_paper_sheet_with_cost_filled(portal):
     for ws in wb.worksheets:
         assert [label for label, _row in label_rows(ws)] == SHEET_LABELS
     one = sheet_values(wb["Product 1"])
-    assert float(text_of(one["COST:"])) == 12.5  # PQ1: cost is filled on the portal copy too
+    # SUPPLIER-COST-ACCESS (management, 9 Nov 2026) replaces PQ1: the dealer's copy never
+    # carries cost, though purchasing filled it (12.50).
+    assert not text_of(one["COST:"])
+    assert "12.5" not in "".join(str(c.value) for ws in wb.worksheets for r in ws.iter_rows() for c in r)
     assert text_of(one["LEADTIME:"]) == "3 weeks"
     assert text_of(one["PRODUCT CODE:"]) == "XY-1234-MB"
     assert text_of(one["DATE:"]) == "17/01/2028"

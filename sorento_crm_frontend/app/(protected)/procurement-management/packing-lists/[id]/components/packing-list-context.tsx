@@ -105,6 +105,7 @@ interface PackingListContextValue {
   isLoading: boolean;
   /** Holds `SCM_READ_PERMISSION`. False while permissions are still loading. */
   canReadScm: boolean;
+  canViewCost: boolean;
   suppliers: Array<{ id: string; supplier_code: string; supplier_name: string }>;
   supplierNameById: Map<string, string>;
   /** Every factory named on the lines, in the order they appear. */
@@ -162,6 +163,9 @@ export function PackingListProvider({
   const { data: suppliers = [] } = useSupplierSelectQuery();
   const { data: checkpoints = [] } = useClearanceCheckpoints();
   const canReadScm = useHasPermission(SCM_READ_PERMISSION);
+  // SUPPLIER-COST-ACCESS: a line's unit cost is for `products.cost.view`; the API serves it as
+  // null otherwise and ignores it on save, so it is neither shown nor sent.
+  const canViewCost = useHasPermission('products.cost.view');
   // The proforma invoices behind this container, read ONCE for the four places that show
   // them: the Proforma invoices tab, the Lines column, the Timeline entry and Documents.
   const { data: sourceInvoices, isError: sourceInvoicesFailed } = usePackingListSourceInvoices(
@@ -392,7 +396,7 @@ export function PackingListProvider({
         carton_height_cm: orNullNumber(line.carton_height_cm),
         net_weight_per_carton: orNullNumber(line.net_weight_per_carton),
         gross_weight_per_carton: orNullNumber(line.gross_weight_per_carton),
-        unit_cost: orNullNumber(line.unit_cost),
+        unit_cost: canViewCost ? orNullNumber(line.unit_cost) : undefined,
         // NULL for a cleared field, never `undefined` - same reasoning as `orNull` above.
         // The line PUT is an existing-row upsert keyed on presence (`_upsert_shipment_lines`
         // in the backend), so an omitted key is "unchanged" but an explicit null clears it;
@@ -428,6 +432,7 @@ export function PackingListProvider({
     packingList,
     isLoading,
     canReadScm,
+    canViewCost,
     suppliers,
     supplierNameById,
     lineSupplierNames,

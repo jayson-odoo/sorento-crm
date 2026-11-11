@@ -62,7 +62,7 @@ function collectChangeLines(
   const resubmit = heading === 'Appealed' ? resubmittedSummary(summary) : summary;
   const shown = own && statusMove ? appealWording(resubmit) : resubmit;
   const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
-  for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {
+  for (const change of auditFieldChanges(entry.old_values, entry.new_values, entry.masked_fields)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
     const statusLine = own && STATUS_SUMMARY_KEYS.includes(change.key);
     lines.push(
