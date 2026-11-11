@@ -123,6 +123,8 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   specified: (id) => `/project-sales/${id}/quotation-documents/new`,
   sample_submission: (id) => `/project-sales/sample-requests/new?project_id=${id}`,
   sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
+  // The PO tab with its existing "Upload a customer PO" dialog already open.
+  po_received: (id) => `/project-sales/${id}?tab=orders&upload=po`,
 };
 
 export function resolveProjectTab(requested: string | null): TabId {

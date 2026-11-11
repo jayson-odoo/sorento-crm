@@ -804,6 +804,27 @@ describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
     );
   });
 
+  it('PROJECT-STAGE-ACTIONS: PO received moves, then opens the PO tab with the upload dialog', () => {
+    stand('s-spon');
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'PO received' }));
+    expect(changeStatus).toHaveBeenCalledWith(
+      { projectId: 'p1', toStatusId: 's-po' },
+      expect.anything(),
+    );
+    expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=orders&upload=po');
+  });
+
+  it('PROJECT-STAGE-ACTIONS: PO received from the gear opens the upload dialog too', async () => {
+    stand('s-neg');
+    succeed();
+    renderDetail();
+    openOverflow();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'PO received' }));
+    expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=orders&upload=po');
+  });
+
   it('AC-PS-22: Spec In from Registered still opens the new quotation page', () => {
     stand('s-reg');
     succeed();

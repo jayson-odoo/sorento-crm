@@ -17,13 +17,18 @@ export default async function NewSponsorshipFormPage({
   searchParams: Promise<{ project_id?: string }>;
 }) {
   const { project_id } = await searchParams;
+  // Opened from a project's Sponsorship stage button: Cancel and save go back to that
+  // project's Sponsorship Form tab (PROJECT-STAGE-ACTIONS).
+  const backHref = project_id
+    ? `/project-sales/${encodeURIComponent(project_id)}?tab=sponsorships`
+    : '/procurement-management/sponsorship-forms';
   return (
     <Container>
       <PageHeader
         title="New Sponsorship Form"
         actions={
           <Button variant="outline" asChild>
-            <Link href="/procurement-management/sponsorship-forms">Cancel</Link>
+            <Link href={backHref}>Cancel</Link>
           </Button>
         }
       />
@@ -33,7 +38,7 @@ export default async function NewSponsorshipFormPage({
           <PurchaseRequestForm
             defaultRequestType="sponsorship_form"
             defaultProjectId={project_id}
-            successRedirectUrl="/procurement-management/sponsorship-forms"
+            successRedirectUrl={backHref}
           />
         </Suspense>
       </div>

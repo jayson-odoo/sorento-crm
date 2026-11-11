@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { ColumnDef, ExpandedState } from '@tanstack/react-table';
 import {
   ChevronDown,
@@ -96,6 +96,21 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
     po: ProjectPurchaseOrder | null;
   } | null>(null);
   const [scheduleFor, setScheduleFor] = React.useState<ProjectPurchaseOrder | null>(null);
+
+  // The PO received stage button lands here with `upload=po` (PROJECT-STAGE-ACTIONS): open the
+  // upload dialog straight away, then drop the param so Cancel leaves the PO tab as it is and a
+  // refresh does not reopen it.
+  const searchParams = useSearchParams();
+  const uploadRequested = searchParams.get('upload') === 'po';
+  const canUpload = canWorkOnProject(project);
+  React.useEffect(() => {
+    if (!uploadRequested) return;
+    if (canUpload) setUploadingFor({ po: null });
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('upload');
+    const query = next.toString();
+    router.replace(`/project-sales/${project.id}${query ? `?${query}` : ''}`, { scroll: false });
+  }, [uploadRequested, canUpload, searchParams, router, project.id]);
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   const [menuPo, setMenuPo] = React.useState<ProjectPurchaseOrder | null>(null);
   const schedules = useDeliverySchedules(project.id);

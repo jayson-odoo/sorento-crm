@@ -490,7 +490,15 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.push(requestId ? `${BASE_PATH}/${requestId}` : BASE_PATH)}
+              onClick={() =>
+                router.push(
+                  requestId
+                    ? `${BASE_PATH}/${requestId}`
+                    : projectId
+                      ? `/project-sales/${projectId}?tab=sample-requests`
+                      : BASE_PATH,
+                )
+              }
             >
               Cancel
             </Button>
