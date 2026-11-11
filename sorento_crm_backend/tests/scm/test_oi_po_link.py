@@ -555,3 +555,52 @@ def test_every_write_logs_one_audit_event_on_the_po_line(scm_app, fake_ss):
     assert new["operation_id"] == "op-1"
     assert new["outcome"] == "done" and new["qty"] in (120, 120.0, "120")
     assert new["action"]
+
+
+# --------------------------------------------------------------------------- unlink merges into the free row
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_unlink_merges_the_freed_qty_into_the_existing_free_row_of_the_same_po(scm_app, fake_ss, route):
+    """Row A (linked, 4) is unlinked while row B (free, 6) sits on the same PO: AutoCount answers
+    one row of 10 under B's DtlKey, A's DtlKey is re-pointed to it (`replacedLines`). The CRM ends
+    with ONE open line (B's ref, qty 10, no link) and no open line left under A's ref."""
+    from app.models.procurement import PurchaseOrderLine
+
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    db = w["db"]
+    row_b = w["po_line"]  # free, dtl 12009
+    row_b.qty_ordered = Decimal("6")
+    _po, row_a = _po_line(db, w["product"], w["hq"], qty=4, so_ref=w["so_line"].source_ref,
+                          doc_key=12008, dtl_key=12101, po=w["po"])
+    db.flush()
+    a_ref, b_ref = row_a.source_ref, row_b.source_ref
+
+    fake_ss.answers[UNLINK] = (200, {
+        "operationId": "op-m", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+        "warnings": [], "docKey": 12008, "docNo": "202609-S0029",
+        "replacedLines": [{"oldDtlKey": 12101, "newDtlKey": 12009}],
+        "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+            {"DtlKey": 12009, "ItemCode": "X", "Location": "HQ", "Qty": 10, "FromSODtlKey": 0},
+        ]},
+    })
+    if route == "oi":
+        resp = w["c"].post(f"{OI}/po-link/unlink", json={
+            "row_ids": _ids(w, "a", "b", "c"), "po_line_ids": [row_a.id]})
+    else:
+        resp = w["c"].post(
+            f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/unlink", json={"po_line_ids": [row_a.id]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+
+    db.flush()
+    db.expire_all()
+    open_lines = (
+        db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.purchase_order_id == w["po"].id, PurchaseOrderLine.line_status == "open")
+        .all()
+    )
+    on_b = [l for l in open_lines if l.source_ref == b_ref]
+    assert len(on_b) == 1
+    assert on_b[0].qty_ordered == Decimal("10") and on_b[0].from_so_line_ref is None
+    assert not [l for l in open_lines if l.source_ref == a_ref and l.from_so_line_ref]

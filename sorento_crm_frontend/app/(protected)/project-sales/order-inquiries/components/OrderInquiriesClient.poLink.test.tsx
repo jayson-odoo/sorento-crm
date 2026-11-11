@@ -317,3 +317,31 @@ describe('AC-12 / AC-14 picking Link to PO opens the shared dialog', () => {
     expect(optionsSpy.mock.calls[0]).toContain(true);
   });
 });
+
+describe('Right-click a row: the row actions are there', () => {
+  it('opens a menu with the three PO link items for that row, and Link to PO asks options for that row only', async () => {
+    await ready();
+    fireEvent.contextMenu(screen.getByText('SO-P2'));
+    const link = await screen.findByRole('menuitem', { name: /^Link to PO\.\.\./ });
+    expect(screen.getByRole('menuitem', { name: /^Change PO\.\.\./ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Unlink from PO\.\.\./ })).toBeInTheDocument();
+    fireEvent.click(link);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Link to PO')).toBeInTheDocument();
+    await waitFor(() => expect(optionsSpy).toHaveBeenCalled());
+    const key = JSON.stringify((optionsSpy.mock.calls[0][0] as { key: unknown }).key);
+    expect(key).toContain('row-p2');
+    expect(key).not.toContain('row-p1');
+    expect(key).not.toContain('row-p3');
+  });
+
+  it('shows no PO link menu on right-click when the switch is off', async () => {
+    poLinkSwitchOn = false;
+    await ready();
+    fireEvent.contextMenu(screen.getByText('SO-P2'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole('menuitem', { name: /^Link to PO/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
+  });
+});
