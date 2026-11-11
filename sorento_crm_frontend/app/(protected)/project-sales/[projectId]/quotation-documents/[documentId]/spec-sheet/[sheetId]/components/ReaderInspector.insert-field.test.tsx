@@ -20,17 +20,33 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', 
   useKitLibrary: () => ({ assetUrls: {}, thumbUrls: {}, fonts: [], specKeys: [], fontOptions: [] }),
 }));
 // The inspector renders Insert field only when it is handed the callback, as the real one does.
-vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel', () => ({
-  InspectorPanel: ({ onInsertField }: { onInsertField?: () => void }) => (
-    <div data-testid="inspector">
-      {onInsertField && (
-        <button type="button" onClick={onInsertField}>
-          Insert field
-        </button>
-      )}
-    </div>
-  ),
-}));
+// The rich Content box hands its editor up when one is mounted (a formatted text layer).
+const rich = vi.hoisted(() => ({ editor: null as unknown, inserted: [] as unknown[] }));
+vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel', async () => {
+  const React = await import('react');
+  return {
+    InspectorPanel: ({
+      onInsertField,
+      onContentEditorReady,
+    }: {
+      onInsertField?: () => void;
+      onContentEditorReady?: (editor: unknown) => void;
+    }) => {
+      React.useEffect(() => {
+        if (rich.editor) onContentEditorReady?.(rich.editor);
+      }, [onContentEditorReady]);
+      return (
+        <div data-testid="inspector">
+          {onInsertField && (
+            <button type="button" onClick={onInsertField}>
+              Insert field
+            </button>
+          )}
+        </div>
+      );
+    },
+  };
+});
 
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import { ReaderInspector } from './ReaderInspector';
@@ -105,6 +121,40 @@ describe('Insert field on the spec sheet page Inspector', () => {
     expect(controller.updateLayer).toHaveBeenCalledWith('title', {
       text_override: expect.stringContaining('{{line.area}}'),
     });
+  });
+
+  it('a formatted (bold) text: the dialog never shows HTML, and the field goes in at the Content box caret', () => {
+    rich.inserted = [];
+    rich.editor = {
+      isDestroyed: false,
+      chain: () => ({
+        focus: () => ({
+          insertContent: (content: unknown) => ({
+            run: () => {
+              rich.inserted.push(content);
+              return true;
+            },
+          }),
+        }),
+      }),
+    };
+    try {
+      const bold = {
+        ...LAYER,
+        props: { ...LAYER.props, text: '<p><strong>{{doc.project_title}}{{product.code}}</strong></p>' },
+      } as TagLayer;
+      const controller = mount(bold);
+      fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+      expect(screen.queryByDisplayValue(/<p>|<strong>/)).toBeNull();
+      fireEvent.change(screen.getByPlaceholderText('Search fields...'), { target: { value: 'line.area' } });
+      fireEvent.click(screen.getByText('Area'));
+      fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      expect(rich.inserted).toEqual([{ type: 'text', text: '{{line.area}}' }]);
+      expect(controller.updateLayerProps).not.toHaveBeenCalled();
+      expect(controller.updateLayer).not.toHaveBeenCalled();
+    } finally {
+      rich.editor = null;
+    }
   });
 
   it('offers the slice B document fields too (Subject title)', () => {
