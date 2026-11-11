@@ -23,7 +23,8 @@ export type TagLayerType =
   | 'barcode'
   | 'group'
   | 'feature_icons'
-  | 'accessories';
+  | 'accessories'
+  | 'table';
 
 /** Named slots that bind a layer to a product data field at render time. */
 export type SlotBinding =
@@ -543,6 +544,39 @@ export interface GroupLayerProps {
   binding?: GroupBinding;
 }
 
+// ---------------------------------------------------------------------------
+// Table (SPEC-SHEET-DESIGNER-PARITY B4)
+// ---------------------------------------------------------------------------
+
+export interface TableBorderSide {
+  color: string;
+  width_mm: number;
+}
+
+export interface TableCell {
+  /** Plain text with `{{variables}}`. */
+  text: string;
+  padding_mm?: number;
+  fill?: string;
+  border?: Partial<Record<'top' | 'right' | 'bottom' | 'left', TableBorderSide>>;
+  /** Merge: set on the top-left (anchor) cell only; the cells it covers are skipped. */
+  colSpan?: number;
+  rowSpan?: number;
+}
+
+export interface TableLayerProps {
+  kind: 'table';
+  columns: { width_mm: number }[];
+  /** The row height is a minimum: a row grows to fit its text. */
+  rows: { height_mm: number }[];
+  cells: TableCell[][];
+  fontFamily?: string;
+  fontSize?: number;
+  color?: string;
+  align?: 'left' | 'center' | 'right';
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+}
+
 export type TagLayerProps =
   | ImageLayerProps
   | TextLayerProps
@@ -553,7 +587,8 @@ export type TagLayerProps =
   | BarcodeLayerProps
   | GroupLayerProps
   | FeatureIconsLayerProps
-  | AccessoriesLayerProps;
+  | AccessoriesLayerProps
+  | TableLayerProps;
 
 // ---------------------------------------------------------------------------
 // Layer

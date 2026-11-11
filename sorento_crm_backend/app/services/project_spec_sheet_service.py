@@ -99,9 +99,11 @@ PAGE_EDITS_TOTAL_MAX = 4_000_000
 #: Layer types the designer produces (FE `TagLayerType`). The strict `TagLayerDoc` schema is not
 #: used: it lacks `barcode` and demands fields a layer may legitimately omit.
 LAYER_TYPES = frozenset(
-    {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group"}
+    {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group", "table"}
 )
 LAYER_DEPTH_MAX = 8
+#: A table layer's rows / columns: a page edit cannot carry a huge grid.
+TABLE_LINES_MAX = 50
 LAYER_STRING_MAX = 5000
 
 #: A template page outside this range (or not a finite number) is refused before Chromium sees
@@ -1631,6 +1633,14 @@ def _check_layer(layer: Any) -> None:
     if props is not None:
         if not isinstance(props, dict):
             raise _invalid_layer("A layer's properties are malformed.")
+        if layer.get("type") == "table":
+            cells = props.get("cells")
+            if (
+                not isinstance(cells, list)
+                or len(cells) > TABLE_LINES_MAX
+                or any(not isinstance(r, list) or len(r) > TABLE_LINES_MAX for r in cells)
+            ):
+                raise _invalid_layer("A table is too large or malformed.")
         source = props.get("source")
         if source is not None and not isinstance(source, (dict, str)):
             raise _invalid_layer("A layer's artwork source is malformed.")

@@ -647,5 +647,10 @@ export function mergeFieldCatalog(
     ),
   ];
 
-  return groups ? all.filter((field) => groups.includes(field.group)) : all;
+  // The spec sheet's own Line fields print empty on a price tag: a caller that does not ask for the
+  // Spec sheet group (the price tag template) is not offered them.
+  const pricesTag = groups !== undefined && !groups.includes('Spec sheet');
+  return groups
+    ? all.filter((field) => groups.includes(field.group) && !(pricesTag && field.path in LINE_TEXT_FIELDS))
+    : all;
 }

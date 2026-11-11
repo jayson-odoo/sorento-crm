@@ -793,6 +793,59 @@ class GroupBindingDoc(_StrictProps):
     product_set_id: Optional[str] = None
 
 
+TABLE_MAX_LINES = 50
+TABLE_CELL_TEXT_MAX = 5000
+
+
+class TableBorderSideDoc(_StrictProps):
+    color: str = Field(max_length=40)
+    width_mm: float = Field(ge=0, le=20)
+
+
+class TableBorderDoc(_StrictProps):
+    top: Optional[TableBorderSideDoc] = None
+    right: Optional[TableBorderSideDoc] = None
+    bottom: Optional[TableBorderSideDoc] = None
+    left: Optional[TableBorderSideDoc] = None
+
+
+class TableCellDoc(_StrictProps):
+    text: str = Field(default="", max_length=TABLE_CELL_TEXT_MAX)
+    padding_mm: Optional[float] = Field(default=None, ge=0, le=50)
+    fill: Optional[str] = Field(default=None, max_length=40)
+    border: Optional[TableBorderDoc] = None
+    colSpan: Optional[int] = Field(default=None, ge=1, le=TABLE_MAX_LINES)
+    rowSpan: Optional[int] = Field(default=None, ge=1, le=TABLE_MAX_LINES)
+
+
+class TableColumnDoc(_StrictProps):
+    width_mm: float = Field(gt=0, le=2000)
+
+
+class TableRowDoc(_StrictProps):
+    height_mm: float = Field(ge=0, le=2000)
+
+
+class TableLayerPropsDoc(_StrictProps):
+    """B4: a grid of text cells. Bounded so a page edit cannot carry a huge table."""
+
+    kind: Literal["table"]
+    columns: list[TableColumnDoc] = Field(min_length=1, max_length=TABLE_MAX_LINES)
+    rows: list[TableRowDoc] = Field(min_length=1, max_length=TABLE_MAX_LINES)
+    cells: list[list[TableCellDoc]] = Field(min_length=1, max_length=TABLE_MAX_LINES)
+    fontFamily: Optional[str] = Field(default=None, max_length=100)
+    fontSize: Optional[float] = Field(default=None, gt=0, le=500)
+    color: Optional[str] = Field(default=None, max_length=40)
+    align: Optional[Literal["left", "center", "right"]] = None
+    verticalAlign: Optional[Literal["top", "middle", "bottom"]] = None
+
+    @model_validator(mode="after")
+    def _grid_matches(self) -> "TableLayerPropsDoc":
+        if len(self.cells) != len(self.rows) or any(len(r) != len(self.columns) for r in self.cells):
+            raise ValueError("table cells must be rows x columns")
+        return self
+
+
 class GroupLayerPropsDoc(_StrictProps):
     kind: Literal["group"]
     children: list[str]
@@ -809,6 +862,7 @@ TagLayerPropsDoc = Annotated[
         BadgeLayerPropsDoc,
         GroupLayerPropsDoc,
         FeatureIconsLayerPropsDoc,
+        TableLayerPropsDoc,
     ],
     Field(discriminator="kind"),
 ]
@@ -820,7 +874,7 @@ class TagLayerDoc(BaseModel):
     id: str
     type: Literal[
         "image", "text", "shape", "product_slot", "price_badge",
-        "badge", "group", "feature_icons",
+        "badge", "group", "feature_icons", "table",
     ]
     x_mm: float
     y_mm: float
