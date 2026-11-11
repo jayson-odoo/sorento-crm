@@ -504,3 +504,32 @@ def test_ps_sample_tracking_portal_gets_the_date_answer_not_the_internals(portal
     for body in (d, c.get(f"{BASE}/{d['id']}").json()):
         assert {"date_feasible", "proposed_delivery_date", "date_note"} <= set(body)
         assert not {"consignment", "date_answered_at", "date_answered_by_name"} & set(body)
+
+
+def test_sample_request_v2_portal_ignores_the_ship_to_party(portal):
+    """SAMPLE-REQUEST-V2 slice 1: the ship-to party is staff only. A portal caller that sends one is
+    ignored (no party stored, nothing linked to the project), and the portal keeps its typed Ship To
+    and typed customer on submit (the limited salesperson moves over in slice 2)."""
+    from app.models.projects import ProjectParty, ProjectPartyLink
+
+    party = ProjectParty(
+        id=uid(),
+        company_id=sorento(portal.db),
+        party_type="trading_house",
+        name=f"{MARKER} portal party",
+        address="Klang",
+    )
+    portal.db.add(party)
+    portal.db.flush()
+    d = _create(
+        portal,
+        project_id=portal.inside.id,
+        project_title=None,
+        ship_to_party_id=party.id,
+        ship_to_role="trading_house",
+    )
+    assert d["ship_to_party_id"] is None
+    assert d["ship_to_name"] == f"{MARKER} site"
+    assert portal.db.query(ProjectPartyLink).filter(ProjectPartyLink.party_id == party.id).count() == 0
+    sub = _as(portal, portal.granted).post(f"{BASE}/{d['id']}/submit")
+    assert sub.status_code in (200, 201), sub.text

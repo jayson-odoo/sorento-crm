@@ -500,6 +500,10 @@ def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> Non
     from app.models.projects import ProjectParty, ProjectPartyContact
     from app.services import project_party_contact_service as party_contacts
 
+    # Staff only in slice 1: the portal's form (an external contact, or a limited salesperson until
+    # slice 2) keeps typed text, and a portal caller must not link parties to projects.
+    if (req.source or "staff") != "staff":
+        return
     party_present = "ship_to_party_id" in data
     contact_ids = list(
         dict.fromkeys(str(c) for c in (data.get("ship_to_contact_ids") or []) if c)
