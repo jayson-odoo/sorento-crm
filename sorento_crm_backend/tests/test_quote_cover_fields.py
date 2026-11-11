@@ -24,7 +24,8 @@ LEGACY_LABELS = [
 ]
 DEFAULT_SOURCES = [
     "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",
-    "terms", "payment_terms", "validity", "salesperson_name",
+    # Prepared By prints the document's creator (owner ruling 11 Nov 2026).
+    "terms", "payment_terms", "validity", "prepared_by_name",
 ]
 
 
@@ -174,7 +175,7 @@ def test_default_design_is_todays_rows_in_one_single_column_section_then_the_tit
     labels = {r["source"]: r["label"] for r in section["rows"]}
     assert labels["document_no"] == "Reference No."
     assert labels["to_tel"] == "Contact" and labels["to_address"] == "Add"
-    assert labels["salesperson_name"] == "Prepared By"
+    assert labels["prepared_by_name"] == "Prepared By"
     assert all(r["shown"] and r["column"] == 0 for r in section["rows"])
 
 
@@ -236,7 +237,7 @@ def test_a_legacy_design_is_read_as_one_section_with_purpose_dropped():
         sources = [r["source"] for r in section["rows"]]
         assert sources == [
             "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",
-            "terms", "payment_terms", "validity", "salesperson_name",
+            "terms", "payment_terms", "validity", "prepared_by_name",
         ]
         assert section["rows"][0]["label"] == "Our Ref"
         assert section["rows"][1]["shown"] is False
@@ -245,10 +246,17 @@ def test_a_legacy_design_is_read_as_one_section_with_purpose_dropped():
 # ------------------------------------------------------------------ values
 
 
-def _document(db, env, **over):
+def _document(db, env, *, creator_name=f"{MARKER} Prepared Person", **over):
+    """Prepared By is the document's creator (owner ruling 11 Nov 2026): a second salesperson
+    creates it, so it is never the project owner by accident."""
+    from app.models.user import User
+
+    from .test_project_quotation_pdf import _user
+
     document = _full_document(db, env)
-    document.signatory_name = f"{MARKER} Prepared Person"
-    document.signatory_phone = "012-000 0001"
+    creator_id = _user(db, creator_name)
+    db.query(User).filter(User.id == creator_id).first().contact_number = "012-000 0001"
+    document.created_by = creator_id
     document.recipient_fax_snapshot = "03-0000 0001"
     for key, value in over.items():
         setattr(document, key, value)
@@ -589,7 +597,7 @@ def test_pdf_layout_4_escapes_every_label_and_value_and_cleans_the_terms():
             env,
             recipient_name_snapshot=f"{MARKER} {evil}",
             subject_title=f"{MARKER} title {evil}",
-            signatory_name=f"{MARKER} sig {evil}",
+            creator_name=f"{MARKER} sig {evil}",
             terms_html=f"<p>{MARKER} ok</p><script>alert(1)</script>",
         )
         record = _issue(db, document, env["owner"])
@@ -655,8 +663,9 @@ def test_draft_preview_uses_the_typed_title_and_signatory_and_the_number_only_re
             for c in col
         }
         assert cells["project_title"] == f"{MARKER} typed title"
-        assert cells["prepared_by_name"] == f"{MARKER} typed signer"
-        assert cells["prepared_by_phone"] == "012-000 0001"  # saved, not typed
+        # Prepared By is the creator; a typed signatory does not change it (owner ruling 11 Nov).
+        assert cells["prepared_by_name"] == f"{MARKER} Prepared Person"
+        assert cells["prepared_by_phone"] == "012-000 0001"
         assert cells["document_no"].startswith(document.document_no)
         assert env["project"].title not in cells["document_no"]
 

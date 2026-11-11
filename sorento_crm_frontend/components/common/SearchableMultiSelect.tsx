@@ -407,19 +407,23 @@ export function SearchableMultiSelect({
                   {/* No truncation: a chip that reads "CHAOZHOU JINBAICHUAN SANITAR..."
                       does not say which supplier was chosen. It wraps instead. */}
                   <span className="break-words">{opt.label}</span>
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    aria-label={`Remove ${opt.label}`}
-                    className="opacity-60 hover:opacity-100"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      remove(opt.value);
-                    }}
-                  >
-                    <X className="size-3" />
-                  </span>
+                  {/* No remove X on a disabled control, nor on a disabled option: neither
+                      can be changed from the list, so the chip must not change it either. */}
+                  {isDisabled || opt.disabled ? null : (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      aria-label={`Remove ${opt.label}`}
+                      className="opacity-60 hover:opacity-100"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        remove(opt.value);
+                      }}
+                    >
+                      <X className="size-3" />
+                    </span>
+                  )}
                 </span>
               ))}
             </span>
