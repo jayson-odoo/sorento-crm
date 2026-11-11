@@ -12,6 +12,8 @@ Additive only:
 - ``projects.quotation_lines.is_non_cancellable`` (NOT NULL, false): computed on save and
   STORED, like ``is_non_standard``, so a later change of the setting never rewrites a quotation
   the customer already holds.
+- ``projects.non_cancellable_rules``: the company-wide default by product or category (owner
+  answer (a)); the series setting wins over it.
 - ``projects.non_cancellable.override`` seeded and granted to superadmin, admin, director and
   project_sales_manager (insert-only, ON CONFLICT DO NOTHING).
 
@@ -56,6 +58,32 @@ def upgrade() -> None:
         "ALTER TABLE projects.quotation_lines "
         "ADD COLUMN IF NOT EXISTS is_non_cancellable BOOLEAN NOT NULL DEFAULT false"
     )
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects.non_cancellable_rules (
+            id UUID PRIMARY KEY,
+            company_id UUID NOT NULL REFERENCES companies(id),
+            product_id UUID NULL REFERENCES products(id) ON DELETE CASCADE,
+            category_id UUID NULL REFERENCES product_categories(id) ON DELETE CASCADE,
+            non_cancellable BOOLEAN NOT NULL DEFAULT true,
+            notes TEXT NULL,
+            created_by VARCHAR(100) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT now(),
+            updated_at TIMESTAMP NOT NULL DEFAULT now(),
+            CONSTRAINT ck_non_cancellable_rules_one_target
+                CHECK ((product_id IS NULL) <> (category_id IS NULL))
+        )
+        """
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_non_cancellable_rules_company_target "
+        "ON projects.non_cancellable_rules (company_id, product_id, category_id) "
+        "NULLS NOT DISTINCT"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_projects_non_cancellable_rules_company_id "
+        "ON projects.non_cancellable_rules (company_id)"
+    )
     bind = op.get_bind()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     bind.execute(
@@ -87,6 +115,7 @@ def downgrade() -> None:
         {"s": SLUG},
     )
     bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :s"), {"s": SLUG})
+    op.execute("DROP TABLE IF EXISTS projects.non_cancellable_rules")
     op.execute("ALTER TABLE projects.quotation_lines DROP COLUMN IF EXISTS is_non_cancellable")
     op.execute("ALTER TABLE projects.series_sets DROP COLUMN IF EXISTS non_cancellable")
     op.execute("ALTER TABLE projects.series_products DROP COLUMN IF EXISTS non_cancellable")

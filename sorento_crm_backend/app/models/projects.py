@@ -1165,6 +1165,54 @@ class PriceFloorRule(Base, CompanyScopedMixin):
     )
 
 
+class NonCancellableRule(Base, CompanyScopedMixin):
+    """The company-wide Non-cancellable default for one product or one category
+    (NON-CANCELLABLE-ITEMS, owner answer (a), 11 Nov 2026).
+
+    Covers lines outside any series, and lines whose series says nothing about the item. A
+    series' own setting wins over this; within each level a product beats a category, and a
+    category covers its children. ``non_cancellable = false`` on a product is the way to
+    exempt one model from a category marked here.
+
+    Exactly one target per row (CHECK below), one row per target per company.
+    """
+
+    __tablename__ = "non_cancellable_rules"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
+    )
+    category_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_categories.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    non_cancellable = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_non_cancellable_rules_company_target",
+            "company_id",
+            "product_id",
+            "category_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "(product_id IS NULL) <> (category_id IS NULL)",
+            name="ck_non_cancellable_rules_one_target",
+        ),
+        {"schema": "projects"},
+    )
+
+
 class ProjectQuotationDocument(Base, CompanyScopedMixin):
     """The letterhead: one quotation the customer receives, carrying several priced scopes.
 

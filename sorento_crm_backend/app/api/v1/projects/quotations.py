@@ -50,11 +50,16 @@ from app.schemas.projects import (
     QuotationLineImagesResponse,
     QuotationLineVerdictResponse,
     QuotationRecomputeResponse,
+    NonCancellableRuleCreate,
+    NonCancellableRuleResponse,
+    NonCancellableRuleUpdate,
+    SeriesNonCancellableUpdate,
     SeriesProductPricingUpdate,
     SeriesProductRowResponse,
     SeriesSetRowResponse,
 )
 from app.services import project_pricing_service as pricing
+from app.services import non_cancellable_service as non_cancellable
 from app.services.error_handler import AppException
 from app.services import project_quotation_service as svc
 from app.services import project_service as projects
@@ -650,15 +655,24 @@ def set_version_columns(
 def delete_line(
     version_id: str,
     line_id: str,
+    non_cancellable_override_reason: Optional[str] = Query(None, max_length=2000),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
+    """NON-CANCELLABLE-ITEMS: removing a Non-cancellable line from a won scope is refused
+    (409 `non_cancellable_line`) unless an override holder sends a reason."""
     try:
         validate_uuid_path(version_id, resource="Quotation version")
         validate_uuid_path(line_id, resource="Line")
         version, _quotation = _version_for_edit(db, version_id, current_user)
         line = _line_or_404(db, version_id, line_id)
-        svc.delete_line(db, version=version, line=line)
+        svc.delete_line(
+            db,
+            version=version,
+            line=line,
+            user_id=current_user["id"],
+            non_cancellable_override_reason=non_cancellable_override_reason,
+        )
         db.commit()
         return {"success": True}
     except Exception as exc:
@@ -857,11 +871,13 @@ def create_series(
         body = payload.model_dump(exclude_unset=True)
         category_ids = body.pop("category_ids", []) or []
         brand_ids = body.pop("brand_ids", []) or []
+        marked_ids = body.pop("non_cancellable_category_ids", []) or []
         series = ProjectSeries(company_id=acting_company_id(db), **body)
         db.add(series)
         db.flush()
         pricing.set_series_brands(db, series=series, brand_ids=brand_ids)
         pricing.set_series_categories(db, series=series, category_ids=category_ids)
+        non_cancellable.set_series_categories(db, series=series, category_ids=marked_ids)
         db.commit()
         db.refresh(series)
         return _serialize_series(db, company_id=series.company_id, series_id=series.id)[0]
@@ -892,12 +908,15 @@ def update_series(
         body = payload.model_dump(exclude_unset=True)
         category_ids = body.pop("category_ids", None)
         brand_ids = body.pop("brand_ids", None)
+        marked_ids = body.pop("non_cancellable_category_ids", None)
         for field, value in body.items():
             setattr(series, field, value)
         if brand_ids is not None:
             pricing.set_series_brands(db, series=series, brand_ids=brand_ids)
         if category_ids is not None:
             pricing.set_series_categories(db, series=series, category_ids=category_ids)
+        if marked_ids is not None:
+            non_cancellable.set_series_categories(db, series=series, category_ids=marked_ids)
         db.commit()
         db.refresh(series)
         return _serialize_series(db, company_id=series.company_id, series_id=series.id)[0]
@@ -981,10 +1000,11 @@ def list_series_product_rows(
     """
     try:
         validate_uuid_path(series_id, resource="Series")
-        _series_or_404(db, series_id)
+        series = _series_or_404(db, series_id)
         rows, total = pricing.series_product_rows(
             db, series_id, page=page, limit=limit, query=query, priced_only=priced
         )
+        _with_effective(db, series, rows)
         return _envelope(rows, total=total, page=page, limit=limit)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -1015,6 +1035,177 @@ def update_series_product_pricing(
         )
         db.commit()
         return row
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+def _with_effective(db: Session, series, rows: List[dict]) -> List[dict]:
+    """NON-CANCELLABLE-ITEMS: each product row's answer with every level applied."""
+    effective = non_cancellable.effective_for_products(
+        db,
+        series_id=series.id,
+        company_id=series.company_id,
+        product_ids=[row["product_id"] for row in rows],
+    )
+    for row in rows:
+        row["non_cancellable_effective"] = effective.get(str(row["product_id"]), False)
+    return rows
+
+
+@router.put(
+    "/config/series/{series_id}/products/{product_id}/non-cancellable",
+    response_model=SeriesProductRowResponse,
+)
+def update_series_product_non_cancellable(
+    series_id: str,
+    product_id: str,
+    payload: SeriesNonCancellableUpdate,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """NON-CANCELLABLE-ITEMS: a model's own answer on this series (null follows the category)."""
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        validate_uuid_path(product_id, resource="Product")
+        series = _series_or_404(db, series_id)
+        non_cancellable.set_series_product(
+            db, series=series, product_id=product_id, non_cancellable=payload.non_cancellable
+        )
+        db.commit()
+        from app.models.product import Product
+        from app.models.projects import ProjectSeriesProduct
+
+        link = (
+            db.query(ProjectSeriesProduct)
+            .filter(
+                ProjectSeriesProduct.series_id == series.id,
+                ProjectSeriesProduct.product_id == product_id,
+            )
+            .first()
+        )
+        product = db.query(Product).filter(Product.id == product_id).first()
+        row = pricing._series_row(
+            link, product, pricing.product_in_series_scope(db, series, product_id)
+        )
+        return _with_effective(db, series, [row])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/config/series/{series_id}/sets/{product_set_id}/non-cancellable",
+    response_model=SeriesSetRowResponse,
+)
+def update_series_set_non_cancellable(
+    series_id: str,
+    product_set_id: str,
+    payload: SeriesNonCancellableUpdate,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """NON-CANCELLABLE-ITEMS: mark a set on this series Non-cancellable."""
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        validate_uuid_path(product_set_id, resource="Product set")
+        series = _series_or_404(db, series_id)
+        non_cancellable.set_series_set(
+            db,
+            series=series,
+            product_set_id=product_set_id,
+            non_cancellable=bool(payload.non_cancellable),
+        )
+        db.commit()
+        for row in pricing.series_set_rows(db, series.id):
+            if str(row["product_set_id"]) == str(product_set_id):
+                return row
+        raise AppException(
+            status_code=404, message="That set is not on this series.", code="series_set_not_found"
+        )
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------ NON-CANCELLABLE-ITEMS company default
+
+
+@router.get(
+    "/config/non-cancellable-rules",
+    response_model=ListResponse[NonCancellableRuleResponse],
+)
+def list_non_cancellable_rules(
+    _user: dict = Depends(require_permission(CONFIG_VIEW)),
+    db: Session = Depends(get_db),
+):
+    try:
+        rules = non_cancellable.list_rules(db, company_id=acting_company_id(db))
+        return _envelope(non_cancellable.serialize_rules(db, rules))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/config/non-cancellable-rules",
+    response_model=NonCancellableRuleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_non_cancellable_rule(
+    payload: NonCancellableRuleCreate,
+    current_user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        rule = non_cancellable.create_rule(
+            db,
+            company_id=acting_company_id(db),
+            payload=payload.model_dump(),
+            actor_user_id=current_user.get("id"),
+        )
+        db.commit()
+        db.refresh(rule)
+        return non_cancellable.serialize_rules(db, [rule])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/config/non-cancellable-rules/{rule_id}",
+    response_model=NonCancellableRuleResponse,
+)
+def update_non_cancellable_rule(
+    rule_id: str,
+    payload: NonCancellableRuleUpdate,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        validate_uuid_path(rule_id, resource="Non-cancellable rule")
+        rule = non_cancellable.rule_or_404(db, rule_id, company_id=acting_company_id(db))
+        rule.non_cancellable = payload.non_cancellable
+        rule.notes = payload.notes or None
+        db.commit()
+        db.refresh(rule)
+        return non_cancellable.serialize_rules(db, [rule])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.delete("/config/non-cancellable-rules/{rule_id}", status_code=204)
+def delete_non_cancellable_rule(
+    rule_id: str,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        validate_uuid_path(rule_id, resource="Non-cancellable rule")
+        rule = non_cancellable.rule_or_404(db, rule_id, company_id=acting_company_id(db))
+        db.delete(rule)
+        db.commit()
+        return Response(status_code=204)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -1352,6 +1543,7 @@ def _serialize_series(
         .all()
     )
 
+    marked = non_cancellable.non_cancellable_category_ids(db, ids)
     out = []
     for row in rows:
         mine = nominated.get(row.id, [])
@@ -1366,6 +1558,7 @@ def _serialize_series(
                 "is_active": row.is_active,
                 "category_ids": mine,
                 "category_names": [names.get(cid, "") for cid in mine],
+                "non_cancellable_category_ids": marked.get(str(row.id), []),
                 "covered_category_count": len(
                     pricing.category_with_descendants(db, mine)
                 ),

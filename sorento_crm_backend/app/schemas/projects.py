@@ -976,6 +976,8 @@ class ProjectSeriesCreate(ProjectSeriesBase):
             "short list of groups rather than a list of every SKU."
         ),
     )
+    #: NON-CANCELLABLE-ITEMS: the nominated categories that are Non-cancellable.
+    non_cancellable_category_ids: List[str] = Field(default_factory=list)
 
 
 class ProjectSeriesUpdate(BaseModel):
@@ -988,6 +990,8 @@ class ProjectSeriesUpdate(BaseModel):
     category_ids: Optional[List[str]] = Field(
         None, description="Sent WHOLE, not as a delta."
     )
+    #: NON-CANCELLABLE-ITEMS: sent WHOLE; each must also be in the series' categories.
+    non_cancellable_category_ids: Optional[List[str]] = None
 
 
 class ProjectSeriesResponse(ProjectSeriesBase):
@@ -998,6 +1002,7 @@ class ProjectSeriesResponse(ProjectSeriesBase):
     brand_names: List[str] = Field(default_factory=list)
     category_ids: List[str] = Field(default_factory=list)
     category_names: List[str] = Field(default_factory=list)
+    non_cancellable_category_ids: List[str] = Field(default_factory=list)
     covered_category_count: int = Field(
         0,
         description=(
@@ -1114,6 +1119,10 @@ class SeriesProductRowResponse(BaseModel):
     derived_floor: Optional[Decimal] = None
     #: True when the product is of the series' brand and under one of its categories.
     in_scope: bool = False
+    #: NON-CANCELLABLE-ITEMS: the row's own answer; NULL follows the category / company default.
+    non_cancellable: Optional[bool] = None
+    #: What a quotation line of this product on this series is marked, all levels applied.
+    non_cancellable_effective: bool = False
 
 
 class SeriesSetRowResponse(BaseModel):
@@ -1128,6 +1137,41 @@ class SeriesSetRowResponse(BaseModel):
     selling_price: Optional[Decimal] = None
     max_discount_pct: Optional[Decimal] = None
     derived_floor: Optional[Decimal] = None
+    #: NON-CANCELLABLE-ITEMS: the set as quoted is Non-cancellable on this series.
+    non_cancellable: bool = False
+
+
+class SeriesNonCancellableUpdate(BaseModel):
+    """NON-CANCELLABLE-ITEMS: a product row's own answer (null = follow the category) or a
+    set row's flag (null reads as false)."""
+
+    non_cancellable: Optional[bool] = None
+
+
+class NonCancellableRuleCreate(BaseModel):
+    """A company-wide default for exactly one product or one category."""
+
+    product_id: Optional[str] = None
+    category_id: Optional[str] = None
+    non_cancellable: bool = True
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class NonCancellableRuleUpdate(BaseModel):
+    non_cancellable: bool
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class NonCancellableRuleResponse(BaseModel):
+    id: str
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    non_cancellable: bool
+    notes: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
 class SeriesProductPricingUpdate(BaseModel):
@@ -2606,6 +2650,8 @@ class QuotationSignScopeLine(BaseModel):
     uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
+    # NON-CANCELLABLE-ITEMS: the REMARK cell ("Non-cancellable"), as the PDF prints it.
+    remark: Optional[str] = None
     band_label: Optional[str] = None
     # A heading row: draw band_label as the band, nothing else (PROPOSAL-FORM-COLLAPSE).
     is_section: bool = False

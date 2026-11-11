@@ -735,6 +735,8 @@ def _series_row(link: Optional[ProjectSeriesProduct], product: Product, in_scope
         "max_discount_pct": pct,
         "derived_floor": series_floor(price, pct),
         "in_scope": in_scope,
+        # NON-CANCELLABLE-ITEMS: the row's own answer (None = follow the category).
+        "non_cancellable": link.non_cancellable if link else None,
     }
 
 
@@ -964,6 +966,7 @@ def _series_set_row(link: ProjectSeriesSet, product_set: Optional[ProductSet]) -
         "selling_price": link.selling_price,
         "max_discount_pct": link.max_discount_pct,
         "derived_floor": series_floor(link.selling_price, link.max_discount_pct),
+        "non_cancellable": bool(link.non_cancellable),
     }
 
 

@@ -31,6 +31,7 @@ from app.models.product import Product
 from app.models.product_set import ProductSet
 from app.models.projects import (
     QUOTATION_LOSS_REASON_SET_KEY,
+    QUOTATION_OUTCOME_WON,
     UNIT_TYPES,
     Project,
     ProjectQuotation,
@@ -1333,9 +1334,36 @@ def set_columns(
 
 
 def delete_line(
-    db: Session, *, version: ProjectQuotationVersion, line: ProjectQuotationLine
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    line: ProjectQuotationLine,
+    user_id: Optional[str] = None,
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> None:
     assert_editable(db, version)
+    # NON-CANCELLABLE-ITEMS: once the customer accepted (outcome won), removing a
+    # Non-cancellable line is a cancel and needs an override with a reason. Quoting before
+    # acceptance stays free.
+    if line.is_non_cancellable and not line.is_section:
+        quotation = _quotation_of(db, version)
+        if quotation.outcome == QUOTATION_OUTCOME_WON:
+            non_cancellable.assert_may_reduce(
+                db,
+                reductions=[
+                    non_cancellable.Reduction(
+                        label=line.product_code_snapshot or line.description_snapshot or "line",
+                        entity_type="project_quotation_lines",
+                        entity_id=str(line.id),
+                        from_qty=str(line.quantity),
+                        to_qty="0",
+                    )
+                ],
+                user_id=user_id,
+                override_reason=non_cancellable_override_reason,
+                action="quotation_line_remove",
+                company_id=quotation.company_id,
+            )
     db.delete(line)
     db.flush()
     _recalculate_total(db, version)
@@ -1392,7 +1420,7 @@ def recompute_version(
     # Expanded once for the whole version rather than per line (S18, and T5 for the money).
     membership = pricing.series_membership(db, quotation.series_id)
     series_pricing = pricing.series_pricing_map(db, quotation.series_id)
-    nc_setting = non_cancellable.series_setting(db, quotation.series_id)
+    nc_setting = non_cancellable.series_setting(db, quotation.series_id, quotation.company_id)
 
     report = {
         "version_id": version.id,

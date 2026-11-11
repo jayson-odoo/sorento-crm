@@ -1440,6 +1440,43 @@ class ProjectSupplyService:
                     message=f"Line {named} is confirmed. Reject it first.",
                     code="supply_cancel_line_covered",
                 )
+        # NON-CANCELLABLE-ITEMS: a Non-cancellable line needs an override with a reason. A line
+        # AutoCount already cancelled (`awaits_cancel_so`) is not this press's cancel: the ingest
+        # alert already told the override holders, so CS confirming it is not refused.
+        from app.services import non_cancellable_service as non_cancellable
+
+        flagged = non_cancellable.so_lines_non_cancellable(
+            self.db, [mirror for mirror, core, _r in picked if not awaits_cancel_so(core)]
+        )
+        if flagged:
+            overrides = {
+                str(entry.project_line_id): getattr(entry, "non_cancellable_override_reason", None)
+                for entry in cancelled_lines
+            }
+            refused = [
+                (mirror, core) for mirror, core, _r in picked if str(mirror.id) in flagged
+            ]
+            reasons = {(overrides.get(str(m.id)) or "").strip() for m, _c in refused}
+            # One press, one override: every refused line must carry the same non-blank reason.
+            reason_given = next(iter(reasons)) if len(reasons) == 1 else None
+            ref = order.autocount_doc_no or order.provisional_ref
+            non_cancellable.assert_may_reduce(
+                self.db,
+                reductions=[
+                    non_cancellable.Reduction(
+                        label=f"{ref} line {so_line_no(core.line_no, mirror.line_no)}",
+                        entity_type="project_sales_orders",
+                        entity_id=str(order.id),
+                        from_qty=str(mirror.qty),
+                        to_qty="0",
+                    )
+                    for mirror, core in refused
+                ],
+                user_id=actor_user_id,
+                override_reason=reason_given,
+                action="board_cancel_line",
+                company_id=order.company_id,
+            )
         now = datetime.utcnow()
         echo: List[Dict[str, Any]] = []
         for mirror, core, reason in picked:

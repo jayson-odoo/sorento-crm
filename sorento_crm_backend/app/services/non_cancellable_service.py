@@ -4,7 +4,10 @@ Plan: documentation/plans/project-sales/PLAN-non-cancellable-items-11nov.md.
 
 The setting lives on the PROJECT SERIES (owner, 11 Nov 2026): a series marks whole categories
 (a parent covers its children), a product row can say yes or no for its own model (model beats
-category), and a set priced on the series can be marked. A line's answer is computed when the
+category), and a set priced on the series can be marked. A company-wide default by product or
+category (``NonCancellableRule``, owner answer (a)) covers what the series says nothing about.
+Precedence, first answer wins: series product row, series category, company product rule,
+company category rule (nearest ancestor). A line's answer is computed when the
 line is saved and STORED on ``quotation_lines.is_non_cancellable``, like ``is_non_standard``:
 changing the setting later never rewrites what a customer was quoted.
 
@@ -30,6 +33,7 @@ from app.models.projects import (
     ProjectSeriesProduct,
     ProjectSeriesSet,
     ProjectQuotationLine,
+    NonCancellableRule,
 )
 from app.services.error_handler import AppException
 
@@ -39,13 +43,6 @@ OVERRIDE_PERMISSION = "projects.non_cancellable.override"
 AUDIT_EVENT = "non_cancellable_override"
 ALERT_TYPE = "project_non_cancellable_reduced"
 
-#: Owner-approved wording for the terms (card question b).
-TERMS_SENTENCE = (
-    "Items marked Non-cancellable are ordered specially for this project and cannot be "
-    "cancelled or reduced once the order is confirmed."
-)
-#: The note printed under a line's description, on screen and in the PDF.
-LINE_NOTE = "Non-cancellable"
 
 
 # --------------------------------------------------------------------- the setting
@@ -59,15 +56,39 @@ class SeriesNonCancellable:
     #: product id -> True / False (the model's own answer; absent = follow the category).
     products: Dict[str, bool] = field(default_factory=dict)
     sets: Set[str] = field(default_factory=set)
+    #: The company default: product id -> answer, category id -> answer.
+    company_products: Dict[str, bool] = field(default_factory=dict)
+    company_categories: Dict[str, bool] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
-        return not (self.categories or self.products or self.sets)
+        return not (
+            self.categories
+            or self.products
+            or self.sets
+            or self.company_products
+            or self.company_categories
+        )
 
 
-def series_setting(db: Session, series_id: Optional[str]) -> SeriesNonCancellable:
+def series_setting(
+    db: Session, series_id: Optional[str], company_id: Optional[str] = None
+) -> SeriesNonCancellable:
+    """The series' setting plus the company default, read once for a whole version."""
+    company_products: Dict[str, bool] = {}
+    company_categories: Dict[str, bool] = {}
+    if company_id:
+        for rule in db.query(NonCancellableRule).filter(
+            NonCancellableRule.company_id == str(company_id)
+        ):
+            if rule.product_id:
+                company_products[str(rule.product_id)] = bool(rule.non_cancellable)
+            elif rule.category_id:
+                company_categories[str(rule.category_id)] = bool(rule.non_cancellable)
     if not series_id:
-        return SeriesNonCancellable()
+        return SeriesNonCancellable(
+            company_products=company_products, company_categories=company_categories
+        )
     categories = {
         str(cid)
         for (cid,) in db.query(ProjectSeriesCategory.category_id).filter(
@@ -91,7 +112,13 @@ def series_setting(db: Session, series_id: Optional[str]) -> SeriesNonCancellabl
             ProjectSeriesSet.non_cancellable.is_(True),
         )
     }
-    return SeriesNonCancellable(categories=categories, products=products, sets=sets)
+    return SeriesNonCancellable(
+        categories=categories,
+        products=products,
+        sets=sets,
+        company_products=company_products,
+        company_categories=company_categories,
+    )
 
 
 def product_is_non_cancellable(
@@ -101,17 +128,26 @@ def product_is_non_cancellable(
     category_id: Optional[str],
     setting: SeriesNonCancellable,
 ) -> bool:
-    """Model beats category: the product row's own answer, else any marked ancestor category."""
+    """Series before company default; within each, model beats category."""
     if not product_id or setting.empty:
         return False
     own = setting.products.get(str(product_id))
     if own is not None:
         return own
-    if not setting.categories or not category_id:
-        return False
-    from app.services.project_pricing_service import category_ancestry
+    ancestry: List[str] = []
+    if category_id and (setting.categories or setting.company_categories):
+        from app.services.project_pricing_service import category_ancestry
 
-    return any(cid in setting.categories for cid in category_ancestry(db, str(category_id)))
+        ancestry = category_ancestry(db, str(category_id))
+    if any(cid in setting.categories for cid in ancestry):
+        return True
+    company_own = setting.company_products.get(str(product_id))
+    if company_own is not None:
+        return company_own
+    for cid in ancestry:  # nearest first
+        if cid in setting.company_categories:
+            return setting.company_categories[cid]
+    return False
 
 
 def set_is_non_cancellable(
@@ -153,7 +189,11 @@ def apply_to_line(
     if line.is_section:
         line.is_non_cancellable = False
         return
-    resolved = setting if setting is not None else series_setting(db, series_id)
+    resolved = (
+        setting
+        if setting is not None
+        else series_setting(db, series_id, getattr(line, "company_id", None))
+    )
     if line.product_set_id:
         line.is_non_cancellable = set_is_non_cancellable(
             db,
@@ -170,36 +210,244 @@ def apply_to_line(
     )
 
 
-# ------------------------------------------------------------------ the quotation
+# ------------------------------------------------------------- writing the setting
 
 
-def versions_have_non_cancellable(db: Session, version_ids: Iterable[str]) -> bool:
-    ids = [str(v) for v in version_ids if v]
-    if not ids:
-        return False
-    return (
-        db.query(ProjectQuotationLine.id)
+def set_series_categories(db: Session, *, series: Any, category_ids: Sequence[str]) -> None:
+    """Mark exactly these of the series' nominated categories Non-cancellable (sent whole)."""
+    wanted = {str(c) for c in category_ids if c}
+    rows = (
+        db.query(ProjectSeriesCategory)
+        .filter(ProjectSeriesCategory.series_id == str(series.id))
+        .all()
+    )
+    nominated = {str(row.category_id) for row in rows}
+    stray = wanted - nominated
+    if stray:
+        raise AppException(
+            status_code=422,
+            message="Only a category of this series can be marked Non-cancellable.",
+            code="series_non_cancellable_category_invalid",
+        )
+    for row in rows:
+        flag = str(row.category_id) in wanted
+        if bool(row.non_cancellable) != flag:
+            row.non_cancellable = flag
+    db.flush()
+
+
+def non_cancellable_category_ids(db: Session, series_ids: Sequence[str]) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    if not series_ids:
+        return out
+    for series_id, category_id in db.query(
+        ProjectSeriesCategory.series_id, ProjectSeriesCategory.category_id
+    ).filter(
+        ProjectSeriesCategory.series_id.in_([str(i) for i in series_ids]),
+        ProjectSeriesCategory.non_cancellable.is_(True),
+    ):
+        out.setdefault(str(series_id), []).append(str(category_id))
+    return out
+
+
+def set_series_product(
+    db: Session, *, series: Any, product_id: str, non_cancellable: Optional[bool]
+) -> None:
+    """A product row's own answer. A product the series lists by scope gets its row here."""
+    from app.services.project_pricing_service import product_in_series_scope
+
+    link = (
+        db.query(ProjectSeriesProduct)
         .filter(
-            ProjectQuotationLine.version_id.in_(ids),
-            ProjectQuotationLine.is_non_cancellable.is_(True),
+            ProjectSeriesProduct.series_id == str(series.id),
+            ProjectSeriesProduct.product_id == str(product_id),
         )
         .first()
-        is not None
+    )
+    if link is None or link.excluded:
+        if link is None and not product_in_series_scope(db, series, str(product_id)):
+            raise AppException(
+                status_code=404,
+                message="That product is not in this series.",
+                code="series_product_not_found",
+            )
+        if link is not None and link.excluded:
+            raise AppException(
+                status_code=404,
+                message="That product was removed from this series.",
+                code="series_product_not_found",
+            )
+        link = ProjectSeriesProduct(series_id=str(series.id), product_id=str(product_id))
+        db.add(link)
+    link.non_cancellable = non_cancellable
+    db.flush()
+
+
+def set_series_set(db: Session, *, series: Any, product_set_id: str, non_cancellable: bool) -> None:
+    link = (
+        db.query(ProjectSeriesSet)
+        .filter(
+            ProjectSeriesSet.series_id == str(series.id),
+            ProjectSeriesSet.product_set_id == str(product_set_id),
+        )
+        .first()
+    )
+    if link is None:
+        raise AppException(
+            status_code=404,
+            message="That set is not on this series.",
+            code="series_set_not_found",
+        )
+    link.non_cancellable = bool(non_cancellable)
+    db.flush()
+
+
+def effective_for_products(
+    db: Session, *, series_id: str, company_id: Optional[str], product_ids: Sequence[str]
+) -> Dict[str, bool]:
+    """Each product's answer on this series, every level applied (the series table column)."""
+    ids = [str(p) for p in product_ids if p]
+    if not ids:
+        return {}
+    setting = series_setting(db, series_id, company_id)
+    categories = dict(db.query(Product.id, Product.category_id).filter(Product.id.in_(ids)).all())
+    return {
+        pid: product_is_non_cancellable(
+            db, product_id=pid, category_id=categories.get(pid), setting=setting
+        )
+        for pid in ids
+    }
+
+
+# --------------------------------------------------------------- company default
+
+
+def serialize_rules(db: Session, rules: Sequence[NonCancellableRule]) -> List[Dict[str, Any]]:
+    from app.models.product import ProductCategory
+
+    product_ids = [r.product_id for r in rules if r.product_id]
+    category_ids = [r.category_id for r in rules if r.category_id]
+    products = (
+        {
+            str(pid): (code, name)
+            for pid, code, name in db.query(
+                Product.id, Product.product_code, Product.product_name
+            ).filter(Product.id.in_(product_ids))
+        }
+        if product_ids
+        else {}
+    )
+    categories = (
+        {
+            str(cid): name
+            for cid, name in db.query(ProductCategory.id, ProductCategory.category_name).filter(
+                ProductCategory.id.in_(category_ids)
+            )
+        }
+        if category_ids
+        else {}
+    )
+    out = []
+    for r in rules:
+        code, name = products.get(str(r.product_id), (None, None)) if r.product_id else (None, None)
+        out.append(
+            {
+                "id": str(r.id),
+                "product_id": str(r.product_id) if r.product_id else None,
+                "product_code": code,
+                "product_name": name,
+                "category_id": str(r.category_id) if r.category_id else None,
+                "category_name": categories.get(str(r.category_id)) if r.category_id else None,
+                "non_cancellable": bool(r.non_cancellable),
+                "notes": r.notes,
+                "updated_at": r.updated_at,
+            }
+        )
+    return out
+
+
+def list_rules(db: Session, *, company_id: str) -> List[NonCancellableRule]:
+    return (
+        db.query(NonCancellableRule)
+        .filter(NonCancellableRule.company_id == str(company_id))
+        .order_by(NonCancellableRule.created_at.asc(), NonCancellableRule.id.asc())
+        .all()
     )
 
 
-def with_terms_sentence(terms_html: Optional[str], needed: bool) -> Optional[str]:
-    """The terms with the non-cancellable sentence added once at the end, when a line needs it.
+def rule_or_404(db: Session, rule_id: str, *, company_id: str) -> NonCancellableRule:
+    rule = (
+        db.query(NonCancellableRule)
+        .filter(
+            NonCancellableRule.id == str(rule_id),
+            NonCancellableRule.company_id == str(company_id),
+        )
+        .first()
+    )
+    if rule is None:
+        raise AppException(
+            status_code=404,
+            message="Non-cancellable rule not found.",
+            code="non_cancellable_rule_not_found",
+        )
+    return rule
 
-    Idempotent: terms that already carry the sentence (typed by hand, or a re-issue of terms
-    copied from an earlier revision) are returned unchanged.
-    """
-    if not needed:
-        return terms_html
-    text = terms_html or ""
-    if TERMS_SENTENCE in text:
-        return terms_html
-    return f"{text}<p>{TERMS_SENTENCE}</p>"
+
+def create_rule(
+    db: Session, *, company_id: str, payload: Dict[str, Any], actor_user_id: Optional[str]
+) -> NonCancellableRule:
+    from app.models.product import ProductCategory
+
+    product_id = (payload.get("product_id") or "").strip() or None
+    category_id = (payload.get("category_id") or "").strip() or None
+    if bool(product_id) == bool(category_id):
+        raise AppException(
+            status_code=422,
+            message="Pick one product or one category.",
+            code="non_cancellable_rule_target",
+        )
+    model, target = (Product, product_id) if product_id else (ProductCategory, category_id)
+    found = (
+        db.query(model.id)
+        .filter(model.id == target, model.company_id == str(company_id))
+        .first()
+    )
+    if found is None:
+        raise AppException(
+            status_code=422,
+            message="That product or category is not in this company.",
+            code="non_cancellable_rule_target",
+        )
+    exists = (
+        db.query(NonCancellableRule.id)
+        .filter(
+            NonCancellableRule.company_id == str(company_id),
+            NonCancellableRule.product_id == product_id
+            if product_id
+            else NonCancellableRule.product_id.is_(None),
+            NonCancellableRule.category_id == category_id
+            if category_id
+            else NonCancellableRule.category_id.is_(None),
+        )
+        .first()
+    )
+    if exists is not None:
+        raise AppException(
+            status_code=409,
+            message="That item already has a Non-cancellable rule. Edit it instead.",
+            code="non_cancellable_rule_exists",
+        )
+    rule = NonCancellableRule(
+        company_id=str(company_id),
+        product_id=product_id,
+        category_id=category_id,
+        non_cancellable=bool(payload.get("non_cancellable", True)),
+        notes=(payload.get("notes") or None),
+        created_by=str(actor_user_id) if actor_user_id else None,
+    )
+    db.add(rule)
+    db.flush()
+    return rule
 
 
 # --------------------------------------------------------------------- the gate
@@ -450,19 +698,24 @@ def _notify(
 __all__ = [
     "ALERT_TYPE",
     "AUDIT_EVENT",
-    "LINE_NOTE",
     "OVERRIDE_PERMISSION",
     "Reduction",
     "SeriesNonCancellable",
-    "TERMS_SENTENCE",
     "alert_autocount_reductions",
     "apply_to_line",
     "assert_may_reduce",
     "can_override",
     "product_is_non_cancellable",
     "series_setting",
+    "create_rule",
+    "effective_for_products",
+    "list_rules",
+    "non_cancellable_category_ids",
+    "rule_or_404",
+    "serialize_rules",
     "set_is_non_cancellable",
+    "set_series_categories",
+    "set_series_product",
+    "set_series_set",
     "so_lines_non_cancellable",
-    "versions_have_non_cancellable",
-    "with_terms_sentence",
 ]

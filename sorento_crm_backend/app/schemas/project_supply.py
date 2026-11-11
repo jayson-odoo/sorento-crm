@@ -442,6 +442,9 @@ class CancelledLine(BaseModel):
 
     project_line_id: str
     reason: str = Field(default="", max_length=500)
+    #: NON-CANCELLABLE-ITEMS: an override holder's reason for cancelling a Non-cancellable
+    #: line; without it such a line is refused 409 `non_cancellable_line`.
+    non_cancellable_override_reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ConfirmSupplyBody(BaseModel):

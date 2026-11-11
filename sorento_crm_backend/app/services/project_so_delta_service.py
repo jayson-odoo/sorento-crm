@@ -755,7 +755,13 @@ class ProjectSODeltaService:
 
     # --------------------------------------------------------------- publish
 
-    def publish_amendment(self, amendment_id: str, *, actor_user_id: str) -> Dict[str, Any]:
+    def publish_amendment(
+        self,
+        amendment_id: str,
+        *,
+        actor_user_id: str,
+        non_cancellable_override_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Apply the delta, stamp the OCN, move the order to ``amended``.
 
         Refuses without an approver on the OCN (AC-G4). Refuses too when a row cannot be
@@ -801,6 +807,18 @@ class ProjectSODeltaService:
         order = self._order_or_404(amendment.project_sales_order_id)
         delta = amendment.delta_json or {}
         accepted_rows, _declined_rows = self._decided_rows(amendment, delta)
+        # NON-CANCELLABLE-ITEMS: an accepted row that cuts a Non-cancellable line needs an
+        # override with a reason. Declining the row is the other way out.
+        from app.services import non_cancellable_service as non_cancellable
+
+        non_cancellable.assert_may_reduce(
+            self.db,
+            reductions=self._non_cancellable_cuts(order, accepted_rows),
+            user_id=actor_user_id,
+            override_reason=non_cancellable_override_reason,
+            action="so_amendment_publish",
+            company_id=order.company_id,
+        )
         applied = self._apply_rows(order, accepted_rows)
 
         # Section 9.3: only the accepted rows are the amendment from here on. The
@@ -853,6 +871,43 @@ class ProjectSODeltaService:
             "ocn_number": ocn.ocn_number,
             "order_inquiry_id": inquiry.id,
         }
+
+    #: The verbs that write a line's quantity (`_apply_rows`); a lower `to_value` is a cut.
+    _QTY_VERBS = (VERB_CANCEL_BALANCE, VERB_ORDER, VERB_RESERVE_AND_ORDER)
+
+    def _cut_lines(
+        self, rows: Sequence[Dict[str, Any]]
+    ) -> List[Tuple[Dict[str, Any], ProjectSalesOrderLine]]:
+        out = []
+        for row in rows:
+            if row.get("verb") not in self._QTY_VERBS:
+                continue
+            line = self._line_or_none(row.get("so_line_id"))
+            if line is None:
+                continue
+            if _dec(row.get("to_value"), _dec(line.qty)) < _dec(line.qty):
+                out.append((row, line))
+        return out
+
+    def _non_cancellable_cuts(
+        self, order: ProjectSalesOrder, rows: Sequence[Dict[str, Any]]
+    ) -> List[Any]:
+        from app.services import non_cancellable_service as non_cancellable
+
+        cuts = self._cut_lines(rows)
+        flagged = non_cancellable.so_lines_non_cancellable(self.db, [line for _r, line in cuts])
+        label_ref = order.autocount_doc_no or order.provisional_ref
+        return [
+            non_cancellable.Reduction(
+                label=f"{label_ref} line {line.line_no} {row.get('product_code') or ''}".strip(),
+                entity_type="project_sales_orders",
+                entity_id=str(order.id),
+                from_qty=_qty_str(_dec(line.qty)),
+                to_qty=_qty_str(_dec(row.get("to_value"))),
+            )
+            for row, line in cuts
+            if str(line.id) in flagged
+        ]
 
     def _apply_rows(
         self, order: ProjectSalesOrder, rows: Sequence[Dict[str, Any]]
@@ -948,6 +1003,14 @@ class ProjectSODeltaService:
         )
         delta = dict(amendment.delta_json or {})
         annotated_rows, accepted_count, declined_count = self._annotated_rows(amendment, delta)
+        # NON-CANCELLABLE-ITEMS: say on each row whether its line is Non-cancellable, so the
+        # screen can mark it before Publish refuses it.
+        from app.services import non_cancellable_service as non_cancellable
+
+        lines = [self._line_or_none(row.get("so_line_id")) for row in annotated_rows]
+        flagged = non_cancellable.so_lines_non_cancellable(self.db, [l for l in lines if l])
+        for row, line in zip(annotated_rows, lines):
+            row["non_cancellable"] = bool(line is not None and str(line.id) in flagged)
         delta["rows"] = annotated_rows
         return {
             "id": amendment.id,

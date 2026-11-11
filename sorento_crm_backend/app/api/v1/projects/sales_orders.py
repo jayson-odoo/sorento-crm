@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ from app.schemas.project_sales_order import (
     AmendmentDetail,
     AmendmentPreviewRequest,
     AmendmentPreviewResponse,
+    AmendmentPublishRequest,
     AmendmentPublishResponse,
     AmendmentRowDecisionsRequest,
     AutocountChangeListResponse,
@@ -876,6 +877,7 @@ def get_amendment(
 )
 def publish_amendment(
     amendment_id: str,
+    payload: Optional[AmendmentPublishRequest] = Body(None),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -896,7 +898,13 @@ def publish_amendment(
         from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
 
         mark_purchasing_email_trigger(db)
-        body = service.publish_amendment(amendment_id, actor_user_id=current_user["id"])
+        body = service.publish_amendment(
+            amendment_id,
+            actor_user_id=current_user["id"],
+            non_cancellable_override_reason=(
+                payload.non_cancellable_override_reason if payload else None
+            ),
+        )
         db.commit()
         return body
     except Exception as exc:

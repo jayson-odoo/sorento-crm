@@ -542,6 +542,13 @@ class AmendmentDetail(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class AmendmentPublishRequest(BaseModel):
+    """Optional body of Publish (NON-CANCELLABLE-ITEMS): the reason an override holder gives
+    for cutting a Non-cancellable line. Absent for every other publish."""
+
+    non_cancellable_override_reason: Optional[str] = Field(None, max_length=2000)
+
+
 class AmendmentPublishResponse(BaseModel):
     status: str
     sales_order_status: str

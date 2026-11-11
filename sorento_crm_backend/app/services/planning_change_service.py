@@ -1091,6 +1091,32 @@ def build_batch(
     for e in entries:
         e["product_id"] = product_by_core.get(e["core_line_id"])
 
+    # NON-CANCELLABLE-ITEMS (owner "4 yes"): a cut or cancel of a Non-cancellable line is
+    # flagged on its change row and alerted to the override holders, whether or not the
+    # held-or-inquiry gate below raises a row for it.
+    from app.services import non_cancellable_service as non_cancellable
+
+    flagged_lines = non_cancellable.so_lines_non_cancellable(
+        db, [e["project_line"] for e in entries if e.get("project_line") is not None]
+    )
+    cuts = []
+    for e in entries:
+        pl = e.get("project_line")
+        if pl is None or str(pl.id) not in flagged_lines:
+            continue
+        c = e["change"]
+        if c.before is None or c.kind == CLOSED:
+            # Nothing before (a new line), or settled: delivered is not a cancel.
+            continue
+        after_qty = c.after.qty if c.after is not None else 0.0
+        if after_qty < c.before.qty:
+            e["non_cancellable"] = True
+            cuts.append((e["core_line_id"], c.before.qty, after_qty))
+    if cuts:
+        non_cancellable.alert_autocount_reductions(
+            db, cuts, source=file_name or "AutoCount order update"
+        )
+
     product_ids = {e["product_id"] for e in entries if e["product_id"]}
     moved_transfers = _moved_transfers(db, core_line_ids_all)
     dealer_where, project_where = _hot_selling_evidence(db, product_ids)
@@ -2433,6 +2459,9 @@ def _build_row(
     # rather than a column of its own - it is a fact the row states, exactly like the
     # others here, and it needs no migration to say it. `row_out` lifts it to the wire,
     # where a phrase reads better than a fact object nobody compares against anything.
+    if entry.get("non_cancellable"):
+        # NON-CANCELLABLE-ITEMS: the line was cut or cancelled although it is Non-cancellable.
+        facts["non_cancellable"] = True
     moved = (moved_transfers or {}).get(str(entry["core_line_id"]))
     if moved:
         facts["moved_transfer"] = (
