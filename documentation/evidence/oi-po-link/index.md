@@ -50,3 +50,16 @@ number field typing PASS; nothing hung PASS (every write answered within 5 s); 3
 - After Unlink the worklist PO column can still name the PO, because the re-run book step re-places the row on a PO line with free qty.
 - The dev server was killed once by the sandbox out of memory (a parallel pytest run); restarted, which is the only source of the
   `ChunkLoadError` lines in the console. No other console errors.
+
+## Re-check 46af9049
+
+Same method (fresh private DB, fake Shared Service, `next dev`, session `oipo`, sidebar navigation). The line covered by two PO lines was seeded
+as PO-60013 (4) plus PO-60014 (2) on SO-24101 line 10.
+
+| # | Step | Expected | Actual | Result | Screenshot |
+|---|------|----------|--------|--------|------------|
+| R1 | OI Link to PO dialog (1280) | Location and Delivery date per line, dd/mm/yyyy | Cells read "MWH" and "15/12/2026" for both lines (the date is cut by the column width to "15/12/20..." on screen, full value in the cell) | PASS | 30-recheck-link-dialog-1280.png |
+| R2 | Change PO on the line covered by two PO lines | "Covered by more than one PO line", cannot be sent | Title "Covered by more than one PO line", text "Change PO needs a line covered by exactly one PO line.", button "Change 0 lines" disabled | PASS | 33-recheck-change-two-po-1280.png |
+| R3 | SS refuses one link, OI dialog | Reason plus "Try again"; pressing it turns the card to done without reopening | Card "Not linked: SO-24102 line 10: PurchaseAgent is required." with "Try again"; pressing it sent a second `po-links` call and the same card became "Linked ... PO-60011 (10)" | PASS | 31-recheck-refused-try-again-1280.png, 32-recheck-try-again-done-1280.png |
+| R4 | Same from the Stock Debt drill | Same behaviour | Refused card with "Try again", pressing it gave "Linked ... PO-60011 (6)" in place | PASS | 35-recheck-stockdebt-refused-1280.png, 36-recheck-stockdebt-try-again-done-1280.png |
+| R5 | Dialog at 375px | No horizontal page scroll | `scrollWidth == clientWidth == 375`, dialog fits, grid scrolls inside itself | PASS | 34-recheck-link-dialog-375.png |
