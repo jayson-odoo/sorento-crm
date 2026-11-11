@@ -66,6 +66,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     'aria-label'?: string;
     fetchOptions?: (q: string, page: number) => Promise<{ value: string; label: string }[]>;
     selectedOption?: { value: string; label: string };
+    clearable?: boolean;
   }) => {
     const [fetched, setFetched] = React.useState<{ value: string; label: string }[]>([]);
     React.useEffect(() => {
@@ -83,7 +84,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
         ) : null}
         <select id={props.id} aria-label={props['aria-label']} value={props.value} disabled={props.disabled}
           onChange={(e) => props.onChange(e.target.value)}>
-          <option value="">{props.placeholder ?? ''}</option>
+          {props.clearable ? <option value="">{props.placeholder ?? ''}</option> : null}
           {[...extra, ...options].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </>

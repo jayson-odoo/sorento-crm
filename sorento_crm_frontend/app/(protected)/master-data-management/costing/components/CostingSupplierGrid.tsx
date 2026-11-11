@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useCostingSuppliers } from '../hooks/useCosting';
 import { money, percent, reasonText } from '../lib/format';
@@ -48,7 +49,8 @@ export function CostingSupplierGrid({
       {
         id: 'supplier',
         accessorFn: (r) => r.supplier_code,
-        header: 'Supplier',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+        sortUndefined: 'last',
         cell: ({ row }) => (
           <div className="min-w-0">
             <span className="block truncate font-medium" title={row.original.supplier_code}>
@@ -64,14 +66,16 @@ export function CostingSupplierGrid({
       {
         id: 'primary',
         accessorFn: (r) => (r.is_primary ? 1 : 0),
-        header: 'Primary',
+        header: ({ column }) => <DataGridColumnHeader title="Primary" column={column} />,
+        sortUndefined: 'last',
         cell: ({ row }) => (row.original.is_primary ? 'Yes' : 'No'),
         size: 80,
       },
       {
         id: 'lead_time',
         accessorFn: (r) => r.lead_time_days ?? undefined,
-        header: 'Lead time',
+        header: ({ column }) => <DataGridColumnHeader title="Lead time" column={column} />,
+        sortUndefined: 'last',
         cell: ({ row }) => (row.original.lead_time_days === null ? '-' : `${row.original.lead_time_days} days`),
         size: 100,
         meta: RIGHT,
@@ -79,7 +83,8 @@ export function CostingSupplierGrid({
       {
         id: 'cost',
         accessorFn: (r) => r.unit_cost ?? undefined,
-        header: 'Cost',
+        header: ({ column }) => <DataGridColumnHeader title="Cost" column={column} />,
+        sortUndefined: 'last',
         cell: ({ row }) =>
           row.original.unit_cost === null ? (
             <span className="text-muted-foreground">-</span>
@@ -92,7 +97,8 @@ export function CostingSupplierGrid({
       {
         id: 'landing',
         accessorFn: (r) => r.landing ?? undefined,
-        header: 'Landing (RM)',
+        header: ({ column }) => <DataGridColumnHeader title="Landing (RM)" column={column} />,
+        sortUndefined: 'last',
         cell: ({ row }) => figure(row.original.landing, row.original.reasons),
         size: 140,
         meta: RIGHT,
@@ -100,7 +106,8 @@ export function CostingSupplierGrid({
       {
         id: 'final',
         accessorFn: (r) => r.final ?? undefined,
-        header: 'Final (RM)',
+        header: ({ column }) => <DataGridColumnHeader title="Final (RM)" column={column} />,
+        sortUndefined: 'last',
         cell: ({ row }) => figure(row.original.final, row.original.reasons),
         size: 120,
         meta: RIGHT,
@@ -109,7 +116,8 @@ export function CostingSupplierGrid({
         ? {
             id: 'margin',
             accessorFn: (r) => r.margin_pct ?? undefined,
-            header: 'Margin if bought here',
+            header: ({ column }) => <DataGridColumnHeader title="Margin if bought here" column={column} />,
+        sortUndefined: 'last',
             cell: ({ row }) =>
               row.original.margin_pct === null ? (
                 <span className="text-muted-foreground">-</span>
@@ -122,7 +130,8 @@ export function CostingSupplierGrid({
         : {
             id: 'markup',
             accessorFn: (r) => r.markup_pct ?? undefined,
-            header: 'Mark-up if bought here',
+            header: ({ column }) => <DataGridColumnHeader title="Mark-up if bought here" column={column} />,
+        sortUndefined: 'last',
             cell: ({ row }) =>
               row.original.markup_pct === null ? (
                 <span className="text-muted-foreground">-</span>

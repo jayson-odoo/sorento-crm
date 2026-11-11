@@ -71,6 +71,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     'aria-label'?: string;
     fetchOptions?: (q: string, page: number) => Promise<{ value: string; label: string }[]>;
     selectedOption?: { value: string; label: string };
+    clearable?: boolean;
   }) => {
     const [fetched, setFetched] = React.useState<{ value: string; label: string }[]>([]);
     React.useEffect(() => {
@@ -88,7 +89,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
         ) : null}
         <select id={props.id} aria-label={props['aria-label']} value={props.value} disabled={props.disabled}
           onChange={(e) => props.onChange(e.target.value)}>
-          <option value="">{props.placeholder ?? ''}</option>
+          {props.clearable ? <option value="">{props.placeholder ?? ''}</option> : null}
           {[...extra, ...options].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </>
@@ -530,6 +531,49 @@ describe('Every column sorts on the server (round 5)', () => {
     const margin = screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === 'Margin')!;
     fireEvent.click(within(margin).getByRole('button', { name: 'Margin' }));
     await waitFor(() => expect(lastParams().dir).toBe('desc'));
+  });
+});
+
+describe('Round 5 review', () => {
+  it('the supplier sub-grid sorts: a header press orders the suppliers and a second reverses them', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
+    fireEvent.click(screen.getByRole('button', { name: 'Show suppliers for CGB9032B' }));
+    const grid = await screen.findByTestId('costing-supplier-grid');
+    await within(grid).findByText('SUP-B07');
+    const order = () => within(grid).getAllByText(/^SUP-/).map((n) => n.textContent);
+    const press = () => fireEvent.click(within(grid).getByRole('button', { name: 'Cost' }));
+    press();
+    await waitFor(() => expect(order()).toEqual(['SUP-A01', 'SUP-B07', 'SUP-L02']));
+    press();
+    await waitFor(() => expect(order()).toEqual(['SUP-L02', 'SUP-B07', 'SUP-A01']));
+  });
+
+  it('changing As of writes the ISO date to the URL', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
+    const input = within(screen.getByTestId('costing-search-slot')).getByLabelText('As of');
+    fireEvent.change(input, { target: { value: '15/10/2026' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(urlsWritten().some((u) => /as_of=2026-10-15/.test(u))).toBe(true));
+  });
+
+  it('names the party in the picker before the rows arrive', async () => {
+    url.search = 'party=cust-1';
+    service.getCostingRows.mockReturnValue(new Promise(() => {}));
+    customers.searchCustomersSelect.mockResolvedValue([]); // not in the first page: the label must come from the read
+    mount();
+    const party = screen.getByLabelText('Party') as HTMLSelectElement;
+    await waitFor(() => expect(party.value).toBe('cust-1'));
+    expect(within(party).getByText('RELATED - BATHPLUS SDN BHD (304-R017)')).toBeTruthy();
+  });
+
+  it('the party select is clearable: its empty option exists only when it is', async () => {
+    url.search = 'party=cust-1';
+    service.getCostingRows.mockResolvedValue(partyEnvelope());
+    mount();
+    await screen.findByText('CGB9032B');
+    expect(within(screen.getByLabelText('Party')).getByText('Company standard')).toBeTruthy();
   });
 });
 

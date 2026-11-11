@@ -54,6 +54,7 @@ import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-ca
 import {
   COSTING_PARTY_KEY,
   COSTING_ROWS_KEY,
+  useCostingParty,
   useCostingRows,
   useCostingSuppliers,
   useExportCosting,
@@ -582,6 +583,9 @@ function CostingPage() {
   const defaultMethod = (data?.settings.default_method ?? 'primary') as CostMethod;
   const resolvedAsOf = data?.as_of;
 
+  // The party's name from its own read, so the picker is right on first paint and after a rows error.
+  const partyRead = useCostingParty(partyId || null);
+  const partyShown = party ?? (partyId ? (partyRead.data ?? null) : null);
   const save = useSaveCostingRows();
   const exporter = useExportCosting();
   const categories = useProductCategorySelectQuery();
@@ -1007,8 +1011,8 @@ function CostingPage() {
                           truncateTriggerLabel
                           placeholder="Company standard"
                           selectedOption={
-                            party
-                              ? { value: partyId, label: `${party.customer_name} (${party.customer_code})` }
+                            partyShown
+                              ? { value: partyId, label: `${partyShown.customer_name} (${partyShown.customer_code})` }
                               : undefined
                           }
                         />
