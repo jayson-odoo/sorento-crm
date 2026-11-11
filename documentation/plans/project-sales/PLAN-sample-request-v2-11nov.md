@@ -1,6 +1,6 @@
 # PLAN: sample request v2 (lane SAMPLE-REQUEST-V2)
 
-Status: Plan. Behaviour card + mock being written; no code until the owner approves. Track: full (size L).
+Status: Build, slice 1 (owner approved card v1 + mock 11 Nov ~18:40). Track: full (size L, one migration).
 
 Owner feedback 11 Nov 2026 ~16:20 MYT (prod Project Sales > Sample Requests > New): ship to is a project
 party (not free text), customer stays mandatory from the AutoCount debtor, many sample requests per project,

@@ -1,6 +1,6 @@
 # CARD: sample request v2 (lane SAMPLE-REQUEST-V2)
 
-Status: behaviour card v1, waiting on the owner. No code yet. Mock: `documentation/mockups/SAMPLE-REQUEST-V2/index.html`.
+Status: behaviour card v1 APPROVED (owner answers 11 Nov ~18:40 MYT: Q1 a, Q2 a, Q3 a, Q4 a; mock approved). Slice 1 building. Mock: `documentation/mockups/SAMPLE-REQUEST-V2/index.html`.
 
 ## What is true today (main 12153bdf, read in this lane)
 
@@ -122,6 +122,13 @@ The mock therefore uses project B's shape with fake names:
 - Existing drafts with free text: example E. Submitted/old rows display as stored; nothing is rewritten.
 - Portal (external dealer contact) form: see Q1.
 - A ship-to party later removed from the project: the request keeps its snapshot; the FK only nulls on party delete.
+
+## Owner answers (11 Nov ~18:40 MYT, supersede anything above)
+
+- Q1 (a): staff form AND the limited salesperson's form; the salesperson form is slice 2 on a NEW branch/PR.
+- Q2 (a): ship to the customer = pick it like any party, "Add as a new party" if missing.
+- Q3 (a): several contacts, printed "A & B", phone from the first.
+- Q4 (a): keep Save draft as a secondary button; Preview is the only main button.
 
 ## Questions (4, with recommendations)
 
