@@ -51,6 +51,16 @@ export function OiPoLinkHost({
   );
   const options = usePoLinkOptions(target, true);
   const data = options.data as OiPoLinkOptions | undefined;
+  // The wire names the SO line's bin and delivery date as Stock Debt's drill lines do in the dialog.
+  const dialogLines = React.useMemo(
+    () =>
+      (data?.lines ?? []).map((line) => ({
+        ...line,
+        warehouse_code: line.warehouse_code ?? line.location_code ?? null,
+        required_date: line.required_date ?? line.delivery_date ?? null,
+      })),
+    [data],
+  );
   const blocked = React.useMemo(() => {
     if (!data) return null;
     const lines = data.lines ?? [];
@@ -90,8 +100,8 @@ export function OiPoLinkHost({
     <PoLinkDialog
       mode={kind}
       target={target}
-      lines={data.lines ?? []}
-      allLines={data.lines ?? []}
+      lines={dialogLines}
+      allLines={dialogLines}
       capabilities={data.capabilities}
       poLines={data.po_lines}
       soBooks={data.so_books}

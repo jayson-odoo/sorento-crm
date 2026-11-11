@@ -45,4 +45,7 @@ export interface PoLinkSkippedRow {
 }
 
 /** Options of ticked Order Inquiry rows: Stock Debt's shape plus the lines and the left-out rows. */
-export type OiPoLinkOptions = PoLinkOptions & { lines: PoLinkLine[]; skipped: PoLinkSkippedRow[] };
+export type OiPoLinkOptions = PoLinkOptions & {
+  lines: Array<PoLinkLine & { location_code?: string | null; delivery_date?: string | null }>;
+  skipped: PoLinkSkippedRow[];
+};

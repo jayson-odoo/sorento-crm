@@ -124,19 +124,44 @@ function ResultCard({
   result,
   kind,
   target,
+  retryItem,
 }: {
   result: PoLinkResult;
   kind: PoLinkKind;
   target: PoLinkTarget;
+  /** The one link this card was for: Try again sends exactly it through the target's link api. */
+  retryItem?: { sales_order_line_id: string; po_line_id: string; qty: number } | null;
 }) {
-  const { relocate, resume } = usePoLinkMutations(target);
+  const { relocate, resume, link } = usePoLinkMutations(target);
   const [current, setCurrent] = React.useState(result);
   const text = poLinkResultText(current, kind);
-  const busy = relocate.isPending || resume.isPending;
+  const busy = relocate.isPending || resume.isPending || link.isPending;
+  const canRetry = Boolean(retryItem) && (current.outcome === 'refused' || current.outcome === 'vendor_error');
   return (
     <div className={cn('space-y-1 rounded-md p-3 text-sm', TONE[text.tone])} data-testid="po-link-result">
       <p className="font-semibold">{text.title}</p>
       <p className="tabular-nums">{text.text}</p>
+      {canRetry ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={async () => {
+            try {
+              const out = await link.mutateAsync([retryItem as NonNullable<typeof retryItem>]);
+              const next = out.results[0];
+              if (next) {
+                setCurrent({ ...current, ...next, so_number: next.so_number ?? current.so_number, so_line_no: next.so_line_no ?? current.so_line_no });
+              }
+            } catch {
+              // The mutation hook already toasted the error; the card stays for another try.
+            }
+          }}
+        >
+          Try again
+        </Button>
+      ) : null}
       {text.action === 'relocate' && current.po_line_id ? (
         <Button
           type="button"
@@ -254,6 +279,7 @@ export function PoLinkDialog({
   );
   const [showErrors, setShowErrors] = React.useState(false);
   const [results, setResults] = React.useState<PoLinkResult[] | null>(null);
+  const [sentLinks, setSentLinks] = React.useState<Record<string, { sales_order_line_id: string; po_line_id: string; qty: number }>>({});
 
   function rowError(row: DialogRow): string | undefined {
     if (mode === 'relink') return target[row.id] ? undefined : 'Pick the sales order line';
@@ -545,6 +571,7 @@ export function PoLinkDialog({
     enableColumnResizing: true,
   });
 
+  const coveredTwice = mode === 'change' && lines.some((line) => (line.now?.po_links ?? []).length > 1);
   const ticked = rows.filter((row) => rowSelection[row.id]);
   const sending = link.isPending || unlink.isPending || relink.isPending || change.isPending;
 
@@ -556,16 +583,16 @@ export function PoLinkDialog({
     try {
       let out: { results: PoLinkResult[] };
       if (mode === 'link') {
-        out = await link.mutateAsync(
-          ticked.map((row) => {
-            const po = poById.get(picked[row.id]) as PoLinkOption;
-            return {
-              sales_order_line_id: row.line.sales_order_line_id,
-              po_line_id: po.po_line_id,
-              qty: Number(qty[row.id] ?? String(qtyCap(row.line, po))),
-            };
-          }),
-        );
+        const items = ticked.map((row) => {
+          const po = poById.get(picked[row.id]) as PoLinkOption;
+          return {
+            sales_order_line_id: row.line.sales_order_line_id,
+            po_line_id: po.po_line_id,
+            qty: Number(qty[row.id] ?? String(qtyCap(row.line, po))),
+          };
+        });
+        setSentLinks(Object.fromEntries(items.map((item) => [item.sales_order_line_id, item])));
+        out = await link.mutateAsync(items);
       } else if (mode === 'change') {
         out = await change.mutateAsync(
           ticked.map((row) => ({
@@ -607,6 +634,12 @@ export function PoLinkDialog({
                   result={result}
                   kind={result.action ?? mode}
                   target={poTarget}
+                  retryItem={
+                    sentLinks[result.sales_order_line_id ?? ''] ??
+                    (result.action === 'link' && result.sales_order_line_id && result.po_line_id && result.qty != null
+                      ? { sales_order_line_id: result.sales_order_line_id, po_line_id: result.po_line_id, qty: result.qty }
+                      : null)
+                  }
                 />
               ))
             ) : (
@@ -614,8 +647,10 @@ export function PoLinkDialog({
             )
           ) : rows.length === 0 ? (
             <div className="px-6 py-10 text-center">
-              <p className="text-sm font-semibold">No PO linked</p>
-              <p className="mt-1 text-sm text-muted-foreground">The ticked lines have no PO line linked.</p>
+              <p className="text-sm font-semibold">{coveredTwice ? 'Covered by more than one PO line' : 'No PO linked'}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {coveredTwice ? 'Change PO needs a line covered by exactly one PO line.' : 'The ticked lines have no PO line linked.'}
+              </p>
             </div>
           ) : (
             <>
