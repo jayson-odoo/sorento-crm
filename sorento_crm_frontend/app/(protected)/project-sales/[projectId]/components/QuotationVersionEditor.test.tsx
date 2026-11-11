@@ -3316,13 +3316,20 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     expect(screen.queryByRole('menuitem', { name: 'Duplicate line' })).toBeNull();
   });
 
-  it('AC-8: a filtered row stays on screen while its rate is being typed', async () => {
+  it('AC-8: a filtered row stays on screen while its rate is typed, even past the flag', async () => {
     listQuotationLines.mockResolvedValue([
       line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
       line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
     ]);
-    // The live verdict answers slowly: the row must not vanish while it waits.
-    judgeQuotationLine.mockImplementation(() => new Promise(() => undefined));
+    // The typed rate turns out to be below the MINIMUM price, so the line no longer matches
+    // "Below default price". It must stay on screen all the same: it is being typed into.
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: false,
+      is_below_floor: true,
+      is_discounted: true,
+      floor_value: '800.00',
+      floor_level: 'series',
+    });
     await renderEditing();
     await chooseFlag('Below default price');
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
@@ -3330,8 +3337,11 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on A-1' }), {
       target: { value: '850.00' },
     });
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(await screen.findByText('Minimum price RM 800.00', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
+    // Changing the filter lets it go: it no longer matches.
+    await chooseFlag('Non-standard');
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Unit price on A-1' })).toBeNull());
   });
 
   it('AC-8: a row whose product is cleared no longer counts as Non-standard', async () => {
@@ -3353,7 +3363,9 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
       );
     });
     // No product: never judged, so nothing to wait for; the stale stored flag no longer counts.
-    await waitFor(() => expect(screen.getByText('No line matches these flags.')).toBeInTheDocument());
+    // (The row itself stays on screen: it was edited while the filter was on.)
+    fireEvent.click(flagsTrigger());
+    expect(await screen.findByRole('option', { name: /Non-standard.*0/ })).toBeInTheDocument();
   });
 
   it('AC-8: the Flags filter narrows the lines, keeps their numbers, and counts each option', async () => {

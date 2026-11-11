@@ -66,8 +66,9 @@ Non-standard / Below default price.
    "Below default price" and "Below minimum price". Several options = a line
    matching ANY of them; combined with the search box by AND. Each option shows how many lines on
    this tab match it (`badgeText`). Rows hide the same way search hides them: numbers and totals do
-   not change. A line duplicated while the filter is on stays visible until the filter changes, so
-   the new copy cannot vanish under the caret. Edit and view modes.
+   not change. A line added (Duplicate, Add a line) or edited while the filter is on stays visible
+   until the filter changes, so a row never vanishes under the caret (browser pass round 2: a
+   rate typed below the minimum price used to hide the row mid-typing). Edit and view modes.
 
 ## Owner rulings (11 Nov 2026 ~14:45, answers to the card)
 

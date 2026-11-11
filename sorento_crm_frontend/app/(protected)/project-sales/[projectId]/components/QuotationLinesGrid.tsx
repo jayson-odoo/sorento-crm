@@ -1341,8 +1341,6 @@ export interface QuotationLinesGridProps {
   seriesId?: string | null;
   /** Live search: rows that fail it are hidden, never renumbered or left out of the total. */
   rowFilter?: (line: StagedQuotationLine) => boolean;
-  /** Told the key of a line Duplicate line just added, so a filter can keep it on screen. */
-  onDuplicated?: (key: string) => void;
   emptyHint: string;
   filterEmptyHint: string;
   fetchProducts: GridContextValue['fetchProducts'];
@@ -1385,7 +1383,6 @@ export function QuotationLinesGrid({
   quotationId,
   seriesId,
   rowFilter,
-  onDuplicated,
   emptyHint,
   filterEmptyHint,
   fetchProducts,
@@ -1636,12 +1633,11 @@ export function QuotationLinesGrid({
           };
           freshCopies.current.add(copy.key);
           commit([...current.slice(0, index + 1), copy, ...current.slice(index + 1)]);
-          onDuplicated?.(copy.key);
           return copy.key;
         }
       }
     },
-    [commit, instanceKey, newHeading, newLine, onDuplicated, onToggleRemoved],
+    [commit, instanceKey, newHeading, newLine, onToggleRemoved],
   );
 
   const handleRowDragEnd = React.useCallback(

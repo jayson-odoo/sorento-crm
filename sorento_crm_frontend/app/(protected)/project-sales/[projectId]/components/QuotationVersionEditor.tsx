@@ -703,16 +703,30 @@ export function QuotationVersionEditor({
     gridLines,
   );
   /**
-   * Lines duplicated while the filter is on: shown until the filter changes, so the new copy
-   * never vanishes from under the caret before its own verdict has answered.
+   * Lines added or edited while the filter is on stay on screen until the filter changes, so a
+   * row never vanishes from under the caret: a duplicated copy before its verdict answers, or a
+   * rate typed past the flag the filter was set on (owner ruling: alerts live, never lost work).
+   * Worked out during render, so the input being typed into is never unmounted.
    */
-  const [pinned, setPinned] = React.useState<Set<string>>(() => new Set());
   const flagsKey = chosenFlags.join(',');
-  React.useEffect(() => setPinned(new Set()), [flagsKey]);
-  const onDuplicated = React.useCallback(
-    (key: string) => setPinned((previous) => new Set(previous).add(key)),
-    [],
-  );
+  const touched = React.useRef<{ flags: string; keys: Set<string>; drafts: Map<string, unknown> }>({
+    flags: flagsKey,
+    keys: new Set(),
+    drafts: new Map(),
+  });
+  if (touched.current.flags !== flagsKey) {
+    touched.current = { flags: flagsKey, keys: new Set(), drafts: touched.current.drafts };
+  }
+  {
+    const held = touched.current;
+    const known = held.drafts.size > 0;
+    gridLines.forEach((line) => {
+      const before = held.drafts.get(line.key);
+      if (flagsKey && known && before !== line.draft) held.keys.add(line.key);
+      held.drafts.set(line.key, line.draft);
+    });
+  }
+  const pinned = touched.current.keys;
   const flagOptions = React.useMemo(
     () =>
       LINE_FLAG_FILTERS.map((option) => {
@@ -746,7 +760,9 @@ export function QuotationVersionEditor({
         ].some((value) => (value ?? '').toLowerCase().includes(needle));
       return flagged && found;
     };
-  }, [chosenFlags, facts, needle, pinned]);
+    // `pinned` is read through the ref; `gridLines` is what changes it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosenFlags, facts, needle, gridLines]);
   const filterEmptyHint = needle
     ? `No line matches "${lineSearch.trim()}".`
     : 'No line matches these flags.';
@@ -875,7 +891,6 @@ export function QuotationVersionEditor({
                 : 'This version was frozen without any lines.'
           }
           filterEmptyHint={filterEmptyHint}
-          onDuplicated={onDuplicated}
           fetchProducts={fetchProducts}
           resolveProduct={resolveProduct}
           productCodeOf={productCodeOf}
