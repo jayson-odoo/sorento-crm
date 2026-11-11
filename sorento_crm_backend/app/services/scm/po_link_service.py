@@ -714,9 +714,14 @@ class PoLinkService:
 
     #: SS refusal codes of one skipped line, in the words staff read (never the code).
     _SKIP_WHY = {
-        "QTY_ABOVE_OUTSTANDING": "it needs less than that now",
-        "QTY_ABOVE_FREE": "the PO line has less free",
+        "SO_ROW_NOT_FOUND": "the sales order line is no longer in AutoCount",
+        "SO_LINE_NOT_FOUND": "the sales order line is no longer in AutoCount",
         "ITEM_MISMATCH": "the PO line is a different item",
+        "UOM_MISMATCH": "the PO line uses a different unit",
+        "DOC_CANCELLED": "the sales order is cancelled",
+        "QTY_ABOVE_OUTSTANDING": "it needs less than that now",
+        "QTY_INVALID": "the quantity is not valid",
+        "QTY_ABOVE_FREE": "the PO line has less free",
     }
 
     def _send_group(self, po_line, po, members: List[Tuple]) -> List[Dict[str, Any]]:
@@ -751,6 +756,9 @@ class PoLinkService:
             return [self._send_link(*member) for member in members]  # SS without the batch route
 
         done = answer.get("outcome") == "done"
+        # Lines are told apart one by one when some were linked (done) or when every line was
+        # skipped (a whole `refused` / ALL_LINKS_SKIPPED); any other refusal is whole.
+        per_line = done or answer.get("errorCode") == "ALL_LINKS_SKIPPED"
         so_refs = {_keys(m[0].source_ref)[2]: m[0].source_ref.strip() for m in members}
         linked_by_dtl = (self._apply_safely(answer, po_line, so_refs) if done else None) or {}
         taken = {int(l.get("soDtlKey")) for l in (answer.get("links") or []) if str(l.get("soDtlKey", "")).isdigit()}
@@ -761,16 +769,14 @@ class PoLinkService:
         results = []
         for so_line, so, _pl, _po, qty in members:
             dtl = _keys(so_line.source_ref)[2]
-            if not done:
-                line_answer = answer
-            elif dtl in taken:
+            if not per_line or (done and dtl in taken):
                 line_answer = answer
             else:
                 code = skipped.get(dtl, "")
                 so_label = f"{so.so_number} line {so_line.line_no}" if so_line.line_no is not None else so.so_number
                 why = self._SKIP_WHY.get(code, "AutoCount did not accept it")
                 line_answer = {
-                    **answer, "outcome": "skipped", "errorCode": code or None, "warnings": [],
+                    **answer, "outcome": "skipped", "errorCode": None, "warnings": [],
                     "message": f"{so_label} was not linked: {why}.",
                 }
             results.append(self._result(
