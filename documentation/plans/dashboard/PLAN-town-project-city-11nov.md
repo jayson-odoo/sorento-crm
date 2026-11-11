@@ -83,7 +83,8 @@ strike it). Q5 (a).
    projects then code; placed in that customer's state like a dealer. Lit on a posted Project-type invoice today (Q5 a).
 9. **State resolution and "State not set".** Dealers and trading houses (both customers): `customers.region` through
    `my_state` if set, else the postcode rule: take the last 20 non-deleted, non-cancelled delivery orders of the
-   customer, pull the 5-digit postcode out of `deliver_address`, keep the most frequent one (tie: the most recent),
+   customer, take the LAST 5-digit group in each `deliver_address` (a Malaysian address ends "..., 40150 Shah Alam,
+   Selangor"; a lot or unit number earlier in the line can also be 5 digits), keep the most frequent (tie: the most recent),
    map it to a state through the postcode-range table `app/services/town/my_postcodes.py` (a static reference table
    with its source cited, KL / Putrajaya / Labuan included, the few shared prefixes such as 68xxx decided by range).
    Projects: `sales_profile.state` matched to a `my_state` value. Anything left without a state goes to a small
@@ -128,6 +129,13 @@ Board (full): "Sold today RM 48,200.00 / Dealers RM 39,900.00 · Projects RM 6,1
 - A dealer that delivers to two states (a branch): the most frequent postcode wins, one shop, one state.
 - A postcode outside every range (typo "4015"): ignored; the next most frequent valid one counts.
 - A self-collect dealer (no delivery orders): "State not set".
+- A lot or unit number that looks like a postcode ("No. 12345, Jalan ..., 81300 Skudai, Johor"): the last 5-digit
+  group wins, so 81300; tested.
+- A dealer whose deliveries mostly go to ITS customers' sites (drop-ship) rather than its shop: the map places it
+  where most of its goods go, which can differ from where the shop stands. Accepted and stated (the state answers
+  "where does this dealer's business go"); `customers.region` overrides it the day the feed fills it.
+- Selangor holds about half the top 30 (16 on dev): it gets two short streets around HQ, and at default zoom one
+  "Selangor: 16 dealers, 5 lit" pill instead of per-shop labels.
 - A state with many shops (Selangor, KL): its street wraps into two rows; the schematic map gives it room.
 - A project state typed outside the lookup (older free text): no match -> "State not set".
 - A trading house that is also a top-30 dealer: shop and tower both, same state, each lit by its own sales type.
@@ -139,8 +147,11 @@ Board (full): "Sold today RM 48,200.00 / Dealers RM 39,900.00 · Projects RM 6,1
 ### Decided
 
 - Q6 (crew + owner, 11 Nov): dealer state from the delivery-order postcode as rule 9; `customers.region` via
-  `my_state` preferred when filled. Top-30 coverage on dev: measured by crew with the query in the PR comment
-  (result recorded here when posted).
+  `my_state` preferred when filled. Top-30 coverage on dev (crew, sorento_prod_1104): **30 of 30 get a state**:
+  Selangor 16, Johor 6, Kuala Lumpur 3, Kedah 1, Pahang 1, Sarawak 1, Negeri Sembilan 1, Pulau Pinang 1. Caveat:
+  that copy has no `billing_documents`, so crew ranked by 90-day retail sales-order line totals
+  (`sales_order_lines.line_total`, as `agent_class_service.py:348`), not by invoiced sales; the real top 30 may
+  differ by a few shops. The hand-test re-checks the count on the real snapshot.
 - Q7 (a): Sabah, Sarawak and Labuan orders go by coaster ship from Port Klang.
 
 ## Phase plan (after sign-off)
