@@ -43,7 +43,6 @@ from app.models.projects import (
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
 )
-from app.models.user import SystemSetting
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.autocount_idempotency import attempt_store, send_with_attempts
@@ -696,15 +695,12 @@ class ProjectAutocountWriteService:
             amendment, amendment.delta_json or {}
         )
 
-        # Classify first: what is sent, and what waits. The feed is read here only when a row
-        # would remove a line, so an edit-only amendment classifies with no gateway call.
-        caps = self._so_caps_for_removal(order, accepted)
-        can_delete = bool(caps and caps["delete_line"]["enabled"])
-        _flags, edits, edit_rows, waiting, removals = self._classify(order, accepted, can_delete=can_delete)
+        # Classify first (no gateway): what is sent, and what waits.
+        _flags, edits, edit_rows, waiting = self._classify(order, accepted)
 
         result = self._blank("waiting", WAITING, order.autocount_doc_no)
         result["waiting"] = waiting
-        if not edits and not removals:
+        if not edits:
             return result
         if amendment.autocount_edit_sent_at is not None:
             # Sent in full already: a second press replays nothing.
@@ -714,21 +710,17 @@ class ProjectAutocountWriteService:
 
         # R8: nothing is written unless SS names the book this order's key belongs to.
         self._require_book(self._order_book(order), self.read_capabilities(order.company_id)[1])
-        caps = caps or self.capabilities(order.company_id)["sales_orders"]
-        if edits and not caps["edit_doc"]["enabled"]:
+        caps = self.capabilities(order.company_id)["sales_orders"]
+        if not caps["edit_doc"]["enabled"]:
             reason = caps["edit_doc"]["reason"] or WAITING
-            result["waiting"] = waiting + [
-                self._waiting(row, reason) for row in edit_rows + [r for _d, r in removals]
-            ]
+            result["waiting"] = waiting + [self._waiting(row, reason) for row in edit_rows]
             return result
 
         company = self._order_company_code(order)
         expected = order.autocount_last_modified
         doc_date = None
-        if not expected or removals:
-            # Adopted order: nothing read back yet, so read the document before the PATCH. With
-            # removals the document is read on every press, so a row already removed (no longer in
-            # Details) is never sent again and every press sends the same bodies (review B1, B2).
+        if not expected:
+            # Adopted order: nothing read back yet, so read the document before the PATCH.
             try:
                 held = self._gateway().read_document("sales-orders", doc_key, company)
             except FoundryxPullError as exc:
@@ -738,65 +730,23 @@ class ProjectAutocountWriteService:
                 )
                 failed["waiting"] = waiting
                 return failed
-            held_doc = held.get("document") or held
-            expected = expected or held_doc.get("LastModified")
-            doc_date = _iso_date(held_doc.get("DocDate"))
-            if removals:
-                still = {str(d.get("DtlKey")) for d in (held_doc.get("Details") or [])}
-                removals = [(dtl, row) for dtl, row in removals if str(dtl) in still]
-        # Removals go first, then the edit carries the stamp the last removal answered.
-        answer: Optional[Dict[str, Any]] = None
-        removed: List[str] = []
-        held_back = False
-        for dtl, row in removals:
-            gone = self._delete_line(
-                "sales-orders", doc_key, dtl, company, doc_date, f"crm-amd-{amendment.id}-update-delete"
-            )
-            if gone.get("errorCode") == "ROW_NOT_FOUND":
-                continue  # removed meanwhile
-            if gone.get("errorCode") == "ROW_HAS_TRANSFERS":
-                # A definite refusal that changed nothing: this row waits, the edits still go.
-                waiting.append(self._waiting(row, f"This line {ROW_TRANSFERRED}, so it cannot be removed"))
-                held_back = True
-                continue
-            if not self._is_done(gone):
-                refused = self._removal_refused(gone, row.get("product_code"), made=False)
-                if removed:
-                    refused["message"] = (
-                        f"Removed: {', '.join(removed)}. The other changes were not sent. {refused['message']}"
-                    )
-                refused["waiting"] = waiting
-                return refused
-            answer = gone
-            removed.append(str(row.get("product_code") or dtl))
-            expected = (gone.get("document") or {}).get("LastModified") or expected
-            order.autocount_last_modified = expected
-            self.db.flush()
-        if edits:
-            body = {
-                "companyCode": company,
-                "expectedLastModified": expected,
-                "lines": list(edits.values()),
-            }
-            if doc_date:
-                # SS finds the document by its own date; with none, it uses the date it staged.
-                body["docDate"] = doc_date
-            path = f"documents/sales-orders/{doc_key}"
-            answer = self._send_attempts(
-                f"crm-amd-{amendment.id}-update-edit",
-                lambda c, key: c.patch(path, body, idempotency_key=key),
-            )
-        if answer is None and held_back:
-            # Nothing was written this press and a row waits: never shown or stored as done.
-            result["waiting"] = waiting
-            return result
-        answer = answer or {"outcome": "done"}
+            expected = (held.get("document") or held).get("LastModified")
+            doc_date = _iso_date((held.get("document") or held).get("DocDate"))
+        body = {
+            "companyCode": company,
+            "expectedLastModified": expected,
+            "lines": list(edits.values()),
+        }
+        if doc_date:
+            # SS finds the document by its own date; with none, it uses the date it staged.
+            body["docDate"] = doc_date
+        path = f"documents/sales-orders/{doc_key}"
+        answer = self._send_attempts(
+            f"crm-amd-{amendment.id}-update-edit",
+            lambda c, key: c.patch(path, body, idempotency_key=key),
+        )
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
-            if removed:
-                refused["message"] = f"Removed: {', '.join(removed)}. " + refused["message"].replace(
-                    "Nothing was changed", "The quantity and date changes were not made"
-                )
             refused["waiting"] = waiting
             if self._is_stale(answer):
                 # B10: keep AutoCount's own stamp, so the next press (after a person checked
@@ -813,8 +763,6 @@ class ProjectAutocountWriteService:
         final = self._interpret(answer, verb="updated")
         final["doc_no"] = final["doc_no"] or order.autocount_doc_no
         final["message"] = f"{final['doc_no']} updated in AutoCount"
-        if removed:
-            final["message"] += f". Removed: {', '.join(removed)}."
         final["waiting"] = waiting
         if not order.autocount_doc_key:
             # An adopted order's first done update: keep its key and the book it came from.
@@ -827,35 +775,12 @@ class ProjectAutocountWriteService:
 
     def sendable_flags(self, order: ProjectSalesOrder, accepted: List[dict]) -> List[bool]:
         """Per accepted row: will Update in AutoCount send it? (the change list shows this)"""
-        caps = self._so_caps_for_removal(order, accepted)
-        return self._classify(order, accepted, can_delete=bool(caps and caps["delete_line"]["enabled"]))[0]
+        return self._classify(order, accepted)[0]
 
-    @staticmethod
-    def _is_removal(row: dict) -> bool:
-        """CANCEL BALANCE down to 0: the CRM's own cancelled line, removed in AutoCount (SS v2)."""
-        if str(row.get("verb") or "") != VERB_CANCEL_BALANCE:
-            return False
-        try:
-            return _dec(row.get("to_value")) == _ZERO
-        except Exception:
-            return False
+    def _classify(self, order: ProjectSalesOrder, accepted: List[dict]):
+        """Split an amendment's accepted rows into the PATCH edits and the rows that wait.
 
-    def _so_caps_for_removal(self, order: ProjectSalesOrder, accepted: List[dict]):
-        """The sales order feed, read only when a row would remove a line and the switch is on
-        (the change list must not call SS, or call it sendable, while writes are off)."""
-        if not any(self._is_removal(r) for r in accepted):
-            return None
-        setting = self.db.query(SystemSetting).first()
-        if not getattr(setting, "project_autocount_write_enabled", False):
-            return None
-        return self.capabilities(order.company_id)["sales_orders"]
-
-    def _classify(self, order: ProjectSalesOrder, accepted: List[dict], *, can_delete: bool = False):
-        """Split an amendment's accepted rows into the PATCH edits, the removals and the rows that wait.
-
-        Returns (per-row sendable flags, edits by dtlKey, the rows that ride the PATCH, waiting,
-        removals as (dtlKey, row)). A CANCEL BALANCE down to 0 is a removal when the feed offers
-        `delete_line`; otherwise it waits like before.
+        Returns (per-row sendable flags, edits by dtlKey, the rows that ride the PATCH, waiting).
         A quantity row for an item that sits on more than one line waits: AutoCount's lines
         cannot be told apart from the row, so a person changes it by hand. Date rows act per
         line and still go.
@@ -867,19 +792,16 @@ class ProjectAutocountWriteService:
         edits: Dict[int, Dict[str, Any]] = {}
         edit_rows: List[dict] = []
         waiting: List[dict] = []
-        removals: List[tuple] = []
         for row in accepted:
             verb = str(row.get("verb") or "")
-            removal = can_delete and self._is_removal(row)
-            as_qty = not removal and (
-                verb in _QTY_VERBS
-                or (verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT)
+            as_qty = verb in _QTY_VERBS or (
+                verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT
             )
-            if not (removal or as_qty or verb in _DATE_VERBS):
+            if not (as_qty or verb in _DATE_VERBS):
                 waiting.append(self._waiting(row, WAITING))
                 flags.append(False)
                 continue
-            if (as_qty or removal) and lines_of_product.get(row.get("product_id"), 0) > 1:
+            if as_qty and lines_of_product.get(row.get("product_id"), 0) > 1:
                 waiting.append(self._waiting(row, SPLIT_ITEM))
                 flags.append(False)
                 continue
@@ -895,10 +817,6 @@ class ProjectAutocountWriteService:
                 waiting.append(self._waiting(row, WAITING_SYNC))
                 flags.append(False)
                 continue
-            if removal:
-                removals.append((dtl, row))
-                flags.append(True)
-                continue
             entry = edits.setdefault(dtl, {"dtlKey": dtl})
             if as_qty:
                 entry["qty"] = _num(row.get("to_value"))
@@ -906,7 +824,7 @@ class ProjectAutocountWriteService:
                 entry["deliveryDate"] = _iso_date(row.get("to_value"))
             edit_rows.append(row)
             flags.append(True)
-        return flags, edits, edit_rows, waiting, removals
+        return flags, edits, edit_rows, waiting
 
     @staticmethod
     def _waiting(row: dict, reason: str) -> dict:

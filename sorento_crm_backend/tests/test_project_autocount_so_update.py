@@ -238,15 +238,14 @@ def test_a_second_press_after_done_makes_no_call_and_answers_already(api, fake_s
     amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
     client.post(_url(amendment))
-    calls = len(_calls_after_setup(fake_ss))
+    calls = len(fake_ss.calls)
 
     second = client.post(_url(amendment))
 
     assert second.status_code == 200
     assert second.json()["outcome"] == "done"
     assert second.json()["message"] == "Already in AutoCount."
-    # AC-QTSO-CRM-2: a zero CANCEL BALANCE row makes the press read the feed (a GET, not a write).
-    assert len(_calls_after_setup(fake_ss)) == calls, "a second press replays nothing"
+    assert len(fake_ss.calls) == calls, "a second press replays nothing"
     assert [w["verb"] for w in second.json()["waiting"]] == ["CHANGE SO NO", "CANCEL BALANCE"]
 
 

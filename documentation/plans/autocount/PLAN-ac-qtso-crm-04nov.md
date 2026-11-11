@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Review (round 8, AC-QTSO-CRM-2: SS write API v2 remove line + plain codes; round 7 reviewer READY).
+Lane: AC-QTSO-CRM. Status: Review (round 8, AC-QTSO-CRM-2: SS write API v2 quotation remove line + plain codes; CANCEL BALANCE ruled no-write 11 Nov).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -113,7 +113,7 @@ Amendment verbs (the delta service's own, `project_so_delta_service.py:65-70`; f
 | --- | --- |
 | ORDER, RESERVE & ORDER (qty up on an existing line) | PATCH line qty to `to_value` |
 | ADVANCE, DELAY | PATCH line deliveryDate to `to_value` |
-| CANCEL BALANCE | waits ("Waiting for AutoCount") while `_SEND_CANCEL_BALANCE_AS_QTY_EDIT = False`; a qty edit down to `to_value` when the owner turns it on. Both paths built and tested. |
+| CANCEL BALANCE | waits ("Waiting for AutoCount"); owner 11 Nov: no AutoCount write for it, `_SEND_CANCEL_BALANCE_AS_QTY_EDIT` stays False. |
 | CHANGE SO NO | waits |
 
 A new product is never a row (the delta service reports it in `unmatched`), so there is no add-line from an amendment. A line with no core
@@ -263,13 +263,11 @@ extra guards; SS has no ROW_LAST_LINE).
   `POST .../{docKey}/lines/{dtlKey}/delete {companyCode, docDate?}` after the PATCH and the adds, key
   `...-update-delete-{dtlKey}`, when the feed offers `delete_line`; with it off the row waits as before. The last line too:
   an update with no sendable line still goes (create still needs one). The done note names the removed rows.
-- Remove line, sales order: an accepted amendment row CANCEL BALANCE down to 0 (the CRM's own cancelled line) is a removal when
-  `delete_line` is on, key `crm-amd-{id}-update-delete-{dtlKey}`. With removals the order is READ on every press (review B1/B2):
-  a row no longer in `Details` is not sent again (so a done removal is never replayed with its old stamp), and every press sends
-  the same bodies (docDate from the read), so a retry after a timeout never conflicts on its own key. Removals go before the
-  PATCH; ROW_HAS_TRANSFERS on one row lists it as waiting ("This line has already been delivered or copied ...") and the edits
-  still go (review S2); a refusal after a removal names what was removed (S1). A CANCEL BALANCE to a non-zero qty still waits
-  on the pending ruling. The change list reads the feed only when such a row exists AND the switch is on (S4).
+- Sales order CANCEL BALANCE (owner, 11 Nov ~13:50 MYT, "cancel balance don t do much about it"): no AutoCount write for any
+  CANCEL BALANCE row, whether it lowers a staying line (revised PO 120 -> 80) or cuts it to zero, whatever the feed offers. The row
+  stays "Waiting for AutoCount" and the edits beside it still go. No balance-cancel is built; `_SEND_CANCEL_BALANCE_AS_QTY_EDIT`
+  stays False. The round-8 zero-qty removal (and its review fixes B1/B2/S1/S2/S4) was taken back out; the sales order update is
+  the pre-round-8 code again.
 - The delete body carries no `expectedLastModified` (accepted: the document was read this press and a removed row is gone
   whatever else changed). ROW_NOT_FOUND on a removal counts as already removed.
 - Owner check (review nit): with `delete_line` on, a revision that turns a line into a rate-only line (not sent, U16) removes
