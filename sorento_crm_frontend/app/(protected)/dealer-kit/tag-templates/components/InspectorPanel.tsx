@@ -2791,6 +2791,10 @@ function FeatureIconsInspector({
 const TEXT_FIELD_OPTIONS = [
   { value: 'name', label: 'Name' },
   { value: 'code', label: 'Code' },
+  { value: 'brand', label: 'Brand' },
+  { value: 'description', label: 'Description' },
+  { value: 'spec_sheet_description', label: 'Spec sheet description' },
+  { value: 'dimensions', label: 'Dimensions' },
   { value: 'spec', label: 'Spec lines' },
   { value: 'remark', label: 'Remark' },
   { value: 'price', label: 'Price' },

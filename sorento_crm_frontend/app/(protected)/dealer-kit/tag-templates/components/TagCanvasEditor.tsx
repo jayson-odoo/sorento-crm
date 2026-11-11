@@ -1998,7 +1998,7 @@ export function TagCanvasEditor({
         return;
       }
       // An accessories box steps into its card (card rule V1).
-      if (target.props.kind === 'accessories' && !specSheet && !embedded?.readOnly) {
+      if (target.props.kind === 'accessories' && !embedded?.readOnly) {
         enterAccessoryEdit(target.id, 'card');
         return;
       }
@@ -2034,7 +2034,7 @@ export function TagCanvasEditor({
       const pick = childId ?? fallback;
       if (pick) setSelectedIds(new Set([pick]));
     },
-    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit, specSheet],
+    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit],
   );
 
   // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
@@ -3713,7 +3713,7 @@ export function TagCanvasEditor({
       // in, if select mode is showing the Transformer's anchors; back out,
       // if the vertex/edge handles are already up.
       // Enter on a selected accessories box steps into its card.
-      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && !specSheet && selectedIds.size === 1) {
+      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && selectedIds.size === 1) {
         const only = layers.find((l) => selectedIds.has(l.id));
         if (only && only.props.kind === 'accessories') {
           e.preventDefault();
@@ -3872,7 +3872,6 @@ export function TagCanvasEditor({
     deleteAccessoryElement,
     nudgeAccessoryElement,
     enterAccessoryEdit,
-    specSheet,
     layers,
     activeHeaderSel,
   ]);
@@ -5425,11 +5424,9 @@ export function TagCanvasEditor({
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessories={specSheet ? undefined : handleAddAccessories}
+        onAddAccessories={handleAddAccessories}
         accessoryTemplates={accessoryTemplates}
-        onInsertAccessoryTemplate={
-          specSheet || !hasQueryClient ? undefined : handleInsertAccessoryTemplate
-        }
+        onInsertAccessoryTemplate={!hasQueryClient ? undefined : handleInsertAccessoryTemplate}
         accessoryEdit={
           accessoryEdit
             ? {
@@ -5701,10 +5698,10 @@ export function TagCanvasEditor({
               onManageIcons={() => setIconLibraryOpen(true)}
               featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
               accessoryFit={selectedLayer ? accessoryFits.fits.get(selectedLayer.id) : undefined}
-              onEditAccessoryCard={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'card')}
-              onEditAccessoryFooter={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'footer')}
+              onEditAccessoryCard={(id) => enterAccessoryEdit(id, 'card')}
+              onEditAccessoryFooter={(id) => enterAccessoryEdit(id, 'footer')}
               onSaveAccessoryTemplate={
-                specSheet || !hasQueryClient
+                !hasQueryClient
                   ? undefined
                   : (id) => {
                       const target = layers.find((l) => l.id === id);

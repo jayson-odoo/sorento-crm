@@ -300,6 +300,14 @@ export function cardFieldValue(item: TagAccessory, field: CardField): string | s
       return item.topup_amount != null ? formatTagPrice(item.topup_amount) : null;
     case 'price_with_upgrade':
       return item.price_with_upgrade != null ? formatTagPrice(item.price_with_upgrade) : null;
+    case 'brand':
+      return item.brand ?? null;
+    case 'description':
+      return item.description ?? null;
+    case 'spec_sheet_description':
+      return item.spec_sheet_description ?? null;
+    case 'dimensions':
+      return item.dimensions ?? null;
   }
 }
 

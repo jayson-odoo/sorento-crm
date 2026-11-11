@@ -191,6 +191,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
   { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
   { path: 'product.description', label: 'Description', group: 'Product' },
+  { path: 'product.spec_sheet_description', label: 'Spec sheet description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
   { path: 'product.currency', label: 'Currency', group: 'Product' },
@@ -347,6 +348,17 @@ function resolvePath(
     const subject = subjectOf(data, layer);
     if (subject?.kind === 'product') return subject.product.description ?? '';
     if (subject?.kind === 'line') return subject.line.description ?? '';
+    return subject ? '' : null;
+  }
+
+  // The spec sheet text: the field, else the plain description (the backend already falls back;
+  // this covers a row frozen before it).
+  if (path === 'product.spec_sheet_description') {
+    const subject = subjectOf(data, layer);
+    if (subject?.kind === 'product') {
+      return subject.product.spec_sheet_description ?? subject.product.description ?? '';
+    }
+    if (subject?.kind === 'line') return subject.line.spec_sheet_description ?? subject.line.description ?? '';
     return subject ? '' : null;
   }
 

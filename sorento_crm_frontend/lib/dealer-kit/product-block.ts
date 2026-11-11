@@ -209,6 +209,7 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     currency: line.currency,
     price_tag_description: line.price_tag_description,
     description: line.description ?? null,
+    spec_sheet_description: line.spec_sheet_description ?? null,
     brand: line.brand,
     drawing: line.drawing ?? null,
   };
@@ -233,6 +234,7 @@ function productFromPart(part: TagPartData): ProductTagData {
     currency: part.currency,
     price_tag_description: part.price_tag_description,
     description: part.description ?? null,
+    spec_sheet_description: part.spec_sheet_description ?? null,
     brand: part.brand,
     drawing: part.drawing ?? null,
   };

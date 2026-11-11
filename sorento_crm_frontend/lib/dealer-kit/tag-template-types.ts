@@ -469,7 +469,12 @@ export type CardField =
   | 'colours'
   // PRICETAG-UPGRADE-VARIANTS S1: an upgrade's top-up, and the tag SP plus it.
   | 'topup'
-  | 'price_with_upgrade';
+  | 'price_with_upgrade'
+  // SPEC-SHEET-DESIGNER-PARITY B2: a catalogue product's own fields on a spec sheet page.
+  | 'brand'
+  | 'description'
+  | 'spec_sheet_description'
+  | 'dimensions';
 
 export interface CardElement {
   id: string;
@@ -845,6 +850,8 @@ export interface ProductTagData {
   /** `products.description`, the plain catalogue description ({{product.description}}).
    *  Optional: a row frozen before it existed reads as empty. */
   description?: string | null;
+  /** `products.spec_sheet_description`, else `description` ({{product.spec_sheet_description}}). */
+  spec_sheet_description?: string | null;
   /** `products.currency` (AC-A5). Optional so an older pinned/cached row
    *  (frozen before this field existed) still renders - `resolvePath` falls
    *  back to `MYR` when absent (AC-A7). */
@@ -961,6 +968,11 @@ export interface TagAccessory {
   sell_price?: number | null;
   spec_lines?: string[];
   price_tag_description?: string | null;
+  /** SPEC-SHEET-DESIGNER-PARITY B2, a catalogue product on a spec sheet page. */
+  brand?: string | null;
+  description?: string | null;
+  spec_sheet_description?: string | null;
+  dimensions?: string | null;
   /** An upgrade's top-up, and the tag's SP plus it (null when either is missing). */
   topup_amount?: number | null;
   price_with_upgrade?: number | null;
@@ -1038,6 +1050,8 @@ export interface TagPartData {
   /** `products.description`, the plain catalogue description ({{product.description}}).
    *  Optional: a row frozen before it existed reads as empty. */
   description?: string | null;
+  /** `products.spec_sheet_description`, else `description` ({{product.spec_sheet_description}}). */
+  spec_sheet_description?: string | null;
   /** PS-SPEC-SHEET: the part's brand name and technical drawing. */
   brand?: string;
   drawing?: TagImage | null;
@@ -1123,6 +1137,8 @@ export interface LineTagData {
   /** `products.description`, the plain catalogue description ({{product.description}}).
    *  Optional: a row frozen before it existed reads as empty. */
   description?: string | null;
+  /** `products.spec_sheet_description`, else `description` ({{product.spec_sheet_description}}). */
+  spec_sheet_description?: string | null;
   /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
   combo?: TagCombo | null;
   /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */
