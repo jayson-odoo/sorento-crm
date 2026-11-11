@@ -761,6 +761,10 @@ class ConfirmManyOrderResult(BaseModel):
     #: `was`), rendered by the same builder the real send uses. The guided Confirm prints them.
     email_lines: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
+    #: NON-CANCELLABLE-ITEMS: set only for a `non_cancellable_line` refusal, with its
+    #: details (`can_override`, `lines`), so the board can offer the override and retry.
+    error_code: Optional[str] = None
+    error_details: Optional[Dict[str, Any]] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.
     failing_lines: Optional[List[SupplyFailingLine]] = None

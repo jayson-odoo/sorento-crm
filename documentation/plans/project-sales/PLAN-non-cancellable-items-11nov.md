@@ -59,7 +59,13 @@ were; some are internal). The screen shows the remark beside the line's own note
   Amendment rows carry `non_cancellable` for the screen. Declining the row is the other way out.
 - Board Transfer to Cancel SO (`cancelled_lines[].non_cancellable_override_reason`); a line
   AutoCount already cancelled (`awaits_cancel_so`) is not refused.
-- Remove a line from a WON quotation scope (`DELETE .../lines/{id}?non_cancellable_override_reason=`).
+- A quotation line a PUBLISHED project SO already consumes (a scope carries no outcome of its
+  own, so "confirmed" is read off the SO): removing it, lowering its quantity, turning it into a
+  heading or swapping its product, through `DELETE .../lines/{id}`, `PUT .../lines/{id}` and the
+  bulk `PUT .../lines` (query param `non_cancellable_override_reason`). This also keeps the SO
+  line's `quotation_line_id`, through which every other gate reads the flag, from being cut.
+- Board Confirm all answers per order, so a refusal there comes back as
+  `results[].error_code = "non_cancellable_line"` with `error_details`, not as an HTTP 409.
 
 SO lines read the flag through `quotation_line_id`; an adopted line with no quotation line is
 not protected (no series answer exists for it).
@@ -79,5 +85,5 @@ Delivered / settled lines (`CLOSED`) are never alerted.
 ## Not in scope
 
 - Blocking AutoCount itself (it owns SO cancels).
-- Quantity reduction by editing a line on a won quotation (only removal is gated; editing a won
-  scope opens a revision).
+- Matrix-scope column edits (`set_columns`) that move quantities; and the quotation document
+  form save, which reaches the bulk gate but sends no override reason (refusal names the line).

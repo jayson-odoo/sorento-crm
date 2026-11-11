@@ -23,8 +23,9 @@ Plan: `PLAN-non-cancellable-items-11nov.md`.
 
 ## CRM gate
 
-- NC9 Before acceptance, removing a flagged line is free.
-- NC10 On a won scope, removing a flagged line is refused (409) with a message naming the line.
+- NC9 Before the SO is confirmed (published), changing or removing a flagged quotation line is free.
+- NC10 Once a published SO consumes a flagged quotation line, removing it, lowering its quantity,
+  turning it into a heading or swapping its product is refused (409) naming the line.
 - NC11 Publishing an amendment whose accepted rows reduce or cancel a flagged line is refused
   (409); declining those rows publishes normally.
 - NC12 Transfer to Cancel SO of a flagged line on the board is refused (409); a line AutoCount

@@ -3132,3 +3132,29 @@ register(
         label="Delete party contact",
     )
 )
+
+
+def _delete_non_cancellable_rule(db: Session, payload: dict):
+    """NON-CANCELLABLE-ITEMS: the hard delete `DELETE /config/non-cancellable-rules/{id}` runs,
+    behind the countdown (D7). Lines already priced keep their stored flag."""
+    from app.models.projects import NonCancellableRule
+    from app.services.error_handler import handle_not_found
+
+    row = db.query(NonCancellableRule).filter(NonCancellableRule.id == _entity_id(payload)).first()
+    if row is None:
+        raise handle_not_found("Non-cancellable rule", _entity_id(payload))
+    db.delete(row)
+    db.flush()
+    return {"deleted": True}
+
+
+register(
+    FormAction(
+        key="non_cancellable_rule.delete",
+        entity_types=("non_cancellable_rule",),
+        execute=_delete_non_cancellable_rule,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.types.edit",
+        label="Delete non-cancellable rule",
+    )
+)

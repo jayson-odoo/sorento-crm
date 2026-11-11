@@ -488,6 +488,28 @@ def so_lines_non_cancellable(db: Session, so_lines: Iterable[Any]) -> Set[str]:
     return {so_id for qid in flagged for so_id in by_quote[qid]}
 
 
+def confirmed_quotation_line_ids(db: Session, line_ids: Iterable[str]) -> Set[str]:
+    """The quotation lines a published (confirmed) project SO already consumes."""
+    from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
+
+    ids = [str(i) for i in line_ids if i]
+    if not ids:
+        return set()
+    return {
+        str(qid)
+        for (qid,) in db.query(ProjectSalesOrderLine.quotation_line_id)
+        .join(
+            ProjectSalesOrder,
+            ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
+        )
+        .filter(
+            ProjectSalesOrderLine.quotation_line_id.in_(ids),
+            ProjectSalesOrder.published_at.isnot(None),
+        )
+        .distinct()
+    }
+
+
 def _refusal(reductions: Sequence[Reduction], *, can_override: bool) -> AppException:
     names = ", ".join(r.label for r in reductions[:5])
     more = f" and {len(reductions) - 5} more" if len(reductions) > 5 else ""
@@ -707,6 +729,7 @@ __all__ = [
     "can_override",
     "product_is_non_cancellable",
     "series_setting",
+    "confirmed_quotation_line_ids",
     "create_rule",
     "effective_for_products",
     "list_rules",

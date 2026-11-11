@@ -314,12 +314,37 @@ def test_pdf_scope_prints_the_remark_cell(world):
 # ------------------------------------------------------------------ the gate
 
 
-def _won(db, quotation):
-    quotation.outcome = "won"
+def _confirmed(db, quotation, line):
+    """A published project SO whose line consumes ``line`` (the order is confirmed)."""
+    from datetime import datetime
+
+    from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
+
+    order = ProjectSalesOrder(
+        id=_uid(),
+        company_id=quotation.company_id,
+        project_id=quotation.project_id,
+        provisional_ref=f"ZZT-{_uid()[:8]}",
+        status="published",
+        published_at=datetime.utcnow(),
+    )
+    db.add(order)
     db.flush()
+    db.add(
+        ProjectSalesOrderLine(
+            id=_uid(),
+            company_id=quotation.company_id,
+            project_sales_order_id=order.id,
+            line_no=1,
+            qty=line.quantity,
+            quotation_line_id=line.id,
+        )
+    )
+    db.flush()
+    return order
 
 
-def test_removing_a_line_before_acceptance_is_free(world):
+def test_removing_a_line_before_the_so_is_confirmed_is_free(world):
     from app.services import project_quotation_service as quotes
 
     db, cid, owner = world["db"], world["company_id"], world["owner"]
@@ -330,7 +355,7 @@ def test_removing_a_line_before_acceptance_is_free(world):
     quotes.delete_line(db, version=version, line=line, user_id=owner)
 
 
-def test_removing_a_non_cancellable_line_from_a_won_scope_needs_an_override(world, monkeypatch):
+def test_removing_a_confirmed_non_cancellable_line_needs_an_override(world, monkeypatch):
     from app.services import project_quotation_service as quotes
 
     db, cid, owner = world["db"], world["company_id"], world["owner"]
@@ -338,7 +363,7 @@ def test_removing_a_non_cancellable_line_from_a_won_scope_needs_an_override(worl
     series = _series(db, cid, [world["bath"].id], [world["bath"].id])
     quotation, version = _scope(db, cid, owner, series_id=series.id)
     line = _line(db, version, owner, tub)
-    _won(db, quotation)
+    _confirmed(db, quotation, line)
 
     monkeypatch.setattr(nc, "can_override", lambda _db, _uid: False)
     with pytest.raises(AppException) as refused:
@@ -372,6 +397,39 @@ def test_removing_a_non_cancellable_line_from_a_won_scope_needs_an_override(worl
     )
     assert len(logged) == 1
     assert logged[0].reason == "Customer pays the restocking charge"
+
+
+def test_bulk_save_cannot_drop_or_cut_a_confirmed_non_cancellable_line(world, monkeypatch):
+    from app.services import project_quotation_service as quotes
+
+    db, cid, owner = world["db"], world["company_id"], world["owner"]
+    tub = _product(db, cid, world["bath"].id, world["uom"])
+    series = _series(db, cid, [world["bath"].id], [world["bath"].id])
+    quotation, version = _scope(db, cid, owner, series_id=series.id)
+    line = _line(db, version, owner, tub, qty=53)
+    _confirmed(db, quotation, line)
+    monkeypatch.setattr(nc, "can_override", lambda _db, _uid: False)
+
+    for lines in (
+        [],  # dropped
+        [{"id": line.id, "product_id": tub.id, "unit_price": "1950.00", "quantity": 40}],
+        [{"id": line.id, "is_section": True, "band_label": "OPTION"}],
+    ):
+        with pytest.raises(AppException) as refused:
+            quotes.replace_lines(db, version=version, actor_user_id=owner, lines=lines)
+        assert refused.value.code == "non_cancellable_line"
+
+    # Raising the quantity, or a single-line edit that keeps it, is free.
+    quotes.replace_lines(
+        db,
+        version=version,
+        actor_user_id=owner,
+        lines=[{"id": line.id, "product_id": tub.id, "unit_price": "1950.00", "quantity": 60}],
+    )
+    with pytest.raises(AppException):
+        quotes.upsert_line(
+            db, version=version, actor_user_id=owner, line=line, payload={"quantity": 10}
+        )
 
 
 def test_assert_may_reduce_passes_when_nothing_is_non_cancellable(world):

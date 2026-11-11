@@ -885,7 +885,8 @@ class ProjectSODeltaService:
             line = self._line_or_none(row.get("so_line_id"))
             if line is None:
                 continue
-            if _dec(row.get("to_value"), _dec(line.qty)) < _dec(line.qty):
+            # Same default as `_apply_rows`: a missing to_value is written as 0.
+            if _dec(row.get("to_value")) < _dec(line.qty):
                 out.append((row, line))
         return out
 

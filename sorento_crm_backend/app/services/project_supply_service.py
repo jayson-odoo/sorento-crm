@@ -12299,6 +12299,18 @@ class ProjectSupplyService:
                         "ok": False,
                         "error": message,
                         "failing_lines": failing_lines,
+                        # NON-CANCELLABLE-ITEMS: the refusal's code and details, so the board
+                        # can offer the override on `non_cancellable_line` and retry.
+                        **(
+                            {
+                                "error_code": exc.code,
+                                "error_details": (getattr(exc, "detail", None) or {}).get(
+                                    "details"
+                                ),
+                            }
+                            if getattr(exc, "code", None) == "non_cancellable_line"
+                            else {}
+                        ),
                         **({"preview": True} if observe else {}),
                         # Simulate only (SIMULATE-CONFIRM-SPEED): tells an order-level
                         # refusal from a line's; the route pops it before replying.

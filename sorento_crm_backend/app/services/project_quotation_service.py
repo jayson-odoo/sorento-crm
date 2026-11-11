@@ -31,7 +31,6 @@ from app.models.product import Product
 from app.models.product_set import ProductSet
 from app.models.projects import (
     QUOTATION_LOSS_REASON_SET_KEY,
-    QUOTATION_OUTCOME_WON,
     UNIT_TYPES,
     Project,
     ProjectQuotation,
@@ -1189,6 +1188,7 @@ def upsert_line(
     actor_user_id: str,
     payload: Dict[str, Any],
     line: Optional[ProjectQuotationLine] = None,
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> ProjectQuotationLine:
     """Add or edit one line on the CURRENT version, in place (AC-E2).
 
@@ -1197,11 +1197,85 @@ def upsert_line(
     """
     assert_editable(db, version)
     quotation = _quotation_of(db, version)
+    if line is not None:
+        _assert_no_non_cancellable_cut(
+            db,
+            quotation=quotation,
+            stored={line.id: line},
+            incoming=[{**payload, "id": line.id}],
+            user_id=actor_user_id,
+            override_reason=non_cancellable_override_reason,
+        )
     line = _write_line(
         db, version=version, quotation=quotation, payload=payload, line=line
     )
     _recalculate_total(db, version)
     return line
+
+
+def _assert_no_non_cancellable_cut(
+    db: Session,
+    *,
+    quotation: ProjectQuotation,
+    stored: Dict[str, ProjectQuotationLine],
+    incoming: Sequence[Dict[str, Any]],
+    user_id: Optional[str],
+    override_reason: Optional[str],
+) -> None:
+    """NON-CANCELLABLE-ITEMS: refuse, BEFORE anything is written, a save that drops, zeroes,
+    lowers, turns into a heading, or swaps the product of a Non-cancellable line that a
+    confirmed (published) SO already consumes, unless an override holder gives a reason.
+
+    ``stored`` holds the lines the save may touch; a stored line absent from ``incoming`` is
+    being removed (``incoming`` is the full set for a bulk save, empty for a delete).
+    "Confirmed" is read off the SO, not the quotation: a scope carries no outcome of its own,
+    and the SO line's ``quotation_line_id`` is what every CRM cancel path reads the flag
+    through, so guarding the quotation line also keeps that link from being cut.
+    """
+    flagged = [
+        row for row in stored.values() if row.is_non_cancellable and not row.is_section
+    ]
+    if not flagged:
+        return
+    confirmed = non_cancellable.confirmed_quotation_line_ids(db, [row.id for row in flagged])
+    if not confirmed:
+        return
+    wanted = {str(item.get("id")): item for item in incoming if item.get("id")}
+    reductions = []
+    for row in flagged:
+        if str(row.id) not in confirmed:
+            continue
+        item = wanted.get(str(row.id))
+        before = Decimal(row.quantity or 0)
+        if item is None or item.get("is_section"):
+            to_qty = Decimal("0")
+        elif (item.get("product_id") and str(item["product_id"]) != str(row.product_id or "")) or (
+            item.get("product_set_id")
+            and str(item["product_set_id"]) != str(row.product_set_id or "")
+        ):
+            to_qty = Decimal("0")  # swapped for another item: the confirmed one is cancelled
+        elif item.get("quantity") is not None:
+            to_qty = Decimal(str(item["quantity"]))
+        else:
+            continue
+        if to_qty < before:
+            reductions.append(
+                non_cancellable.Reduction(
+                    label=row.product_code_snapshot or row.description_snapshot or "line",
+                    entity_type="project_quotation_lines",
+                    entity_id=str(row.id),
+                    from_qty=str(row.quantity),
+                    to_qty=str(to_qty),
+                )
+            )
+    non_cancellable.assert_may_reduce(
+        db,
+        reductions=reductions,
+        user_id=user_id,
+        override_reason=override_reason,
+        action="quotation_line_change",
+        company_id=quotation.company_id,
+    )
 
 
 def replace_lines(
@@ -1210,6 +1284,7 @@ def replace_lines(
     version: ProjectQuotationVersion,
     actor_user_id: str,
     lines: Sequence[Dict[str, Any]],
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> List[ProjectQuotationLine]:
     """The whole desired line set for one version, written in ONE transaction (S10).
 
@@ -1242,6 +1317,14 @@ def replace_lines(
     quotation = _quotation_of(db, version)
 
     stored = {row.id: row for row in list_lines(db, version.id)}
+    _assert_no_non_cancellable_cut(
+        db,
+        quotation=quotation,
+        stored=stored,
+        incoming=lines,
+        user_id=actor_user_id,
+        override_reason=non_cancellable_override_reason,
+    )
     kept: Set[str] = set()
     written: List[ProjectQuotationLine] = []
 
@@ -1342,28 +1425,16 @@ def delete_line(
     non_cancellable_override_reason: Optional[str] = None,
 ) -> None:
     assert_editable(db, version)
-    # NON-CANCELLABLE-ITEMS: once the customer accepted (outcome won), removing a
-    # Non-cancellable line is a cancel and needs an override with a reason. Quoting before
-    # acceptance stays free.
-    if line.is_non_cancellable and not line.is_section:
-        quotation = _quotation_of(db, version)
-        if quotation.outcome == QUOTATION_OUTCOME_WON:
-            non_cancellable.assert_may_reduce(
-                db,
-                reductions=[
-                    non_cancellable.Reduction(
-                        label=line.product_code_snapshot or line.description_snapshot or "line",
-                        entity_type="project_quotation_lines",
-                        entity_id=str(line.id),
-                        from_qty=str(line.quantity),
-                        to_qty="0",
-                    )
-                ],
-                user_id=user_id,
-                override_reason=non_cancellable_override_reason,
-                action="quotation_line_remove",
-                company_id=quotation.company_id,
-            )
+    # NON-CANCELLABLE-ITEMS: removing a Non-cancellable line a confirmed SO already consumes
+    # needs an override with a reason. Quoting before that stays free.
+    _assert_no_non_cancellable_cut(
+        db,
+        quotation=_quotation_of(db, version),
+        stored={line.id: line},
+        incoming=[],
+        user_id=user_id,
+        override_reason=non_cancellable_override_reason,
+    )
     db.delete(line)
     db.flush()
     _recalculate_total(db, version)

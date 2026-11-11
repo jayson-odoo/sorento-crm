@@ -549,6 +549,7 @@ def create_line(
 def replace_lines(
     version_id: str,
     payload: ProjectQuotationLineBulkWrite,
+    non_cancellable_override_reason: Optional[str] = Query(None, max_length=2000),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -578,6 +579,7 @@ def replace_lines(
             version=version,
             actor_user_id=current_user["id"],
             lines=[item.model_dump(exclude_unset=True) for item in payload.lines],
+            non_cancellable_override_reason=non_cancellable_override_reason,
         )
         for line in lines:
             _notify_breaches(db, line, current_user["id"])
@@ -598,6 +600,7 @@ def update_line(
     version_id: str,
     line_id: str,
     payload: ProjectQuotationLineUpdate,
+    non_cancellable_override_reason: Optional[str] = Query(None, max_length=2000),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -615,6 +618,7 @@ def update_line(
             actor_user_id=current_user["id"],
             line=line,
             payload=body,
+            non_cancellable_override_reason=non_cancellable_override_reason,
         )
         _notify_breaches(db, line, current_user["id"])
         db.commit()
