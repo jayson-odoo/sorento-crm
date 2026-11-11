@@ -7,6 +7,7 @@
  * listing pattern (DataGrid + search + filters + row click to detail).
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
@@ -207,12 +208,19 @@ function StaffPriceTagRequestsList() {
           <DataGridColumnHeader title="Customer" column={column} />
         ),
         size: 200,
-        cell: ({ row }) => (
-          // A portal draft has no dealer yet (D48a).
-          <span className="truncate" title={row.original.debtor_name ?? '-'}>
-            {row.original.debtor_name ?? '-'}
-          </span>
-        ),
+        cell: ({ row }) => {
+          // A portal draft has no dealer yet (D48a); several customers read "First +2", every
+          // name in the tooltip (PRICETAG-REQUEST-LAYOUT).
+          const customers = requestCustomers(row.original);
+          return (
+            <span
+              className="truncate"
+              title={customers.map((c) => c.name).join(', ') || '-'}
+            >
+              {customersLabel(customers) ?? '-'}
+            </span>
+          );
+        },
         meta: {
           headerTitle: 'Customer',
           skeleton: <Skeleton className="h-4 w-32" />,
