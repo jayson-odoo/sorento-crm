@@ -180,23 +180,24 @@ section.map h2 { font-size: 1.125rem; margin: 0 0 8px; }
   <p class="notice" id="dataNotice"></p>
 
   <section class="map">
-    <h2>TOWN-PROJECT-CITY, element to component map</h2>
+    <h2>TOWN-PROJECT-CITY card v2 (the Malaysia map), element to component map</h2>
     <div class="scroll"><table>
-      <thead><tr><th>Element</th><th>Behaviour</th><th>Reuses (repo path)</th><th>Snapshot data</th></tr></thead>
+      <thead><tr><th>Element</th><th>Behaviour</th><th>Component (repo path)</th><th>Snapshot data</th></tr></thead>
       <tbody>
-        <tr><td>Split board</td><td>Under "Sold today": three columns Dealers / Projects / Other that add up to the total. No amounts variant: invoice counts. Same three rows in the sales lightbox and the first card.</td><td><code>townWorld.ts</code> scoreboard canvas <code>drawBoard()</code> (one more row, same fonts and colours); <code>TownLightbox.tsx</code> <code>body()</code> case <code>'sales'</code> + <code>Rows</code>; <code>TownCards.tsx</code> sales <code>Card</code></td><td><code>today.split.{dealer,project,other}.{amount,invoice_count}</code> (amount absent on the redacted variant)</td></tr>
-        <tr><td>District island + bridge</td><td>A second island at the end of the existing bridge (287 degrees); its main street; the default view zooms out 20% and recentres so both islands and the port fit.</td><td><code>townWorld.ts</code> island (<code>rIsland</code>, <code>slab</code>), bridge block (<code>BRIDGE_D</code>, shortened to land on the island), <code>radialRoad</code>, <code>dashLine</code>; camera <code>resize()</code> <code>baseDist</code> fit + <code>lib/townCamera.ts</code> <code>DEFAULT_VIEW</code></td><td>none</td></tr>
-        <tr><td>Project site</td><td>One per open project, up to 30. The building follows the project's own timeline: plain plot (dates not set), fenced plot with board (before launch), groundworks, frame + tower crane, cladding + crane, finished. Never the sales stage.</td><td><code>townWorld.ts</code> <code>P()</code> / <code>merge()</code> geometry, one <code>inst()</code> InstancedMesh per look (6 looks), rise on intro via <code>riseDelay</code>/<code>applyRise</code></td><td><code>projects.sites[].{key, look, progress}</code> (look computed server-side from <code>launch_date</code> + <code>expected_delivery_from</code>/<code>_to</code>)</td></tr>
-        <tr><td>Site gate flag + pennant</td><td>Small flag coloured by our sales stage (6 rungs); red pennant above it = final negotiation (<code>is_critical</code>).</td><td><code>townWorld.ts</code> <code>makeFlag(x, y, z, color)</code> (smaller), waving in the existing flag loop</td><td><code>projects.sites[].stage</code>, <code>.final_negotiation</code></td></tr>
-        <tr><td>Trading house tower</td><td>Tall, flat-roofed, slate-blue glass block on the district waterfront, up to 12; lit (warm windows + light pool) when it has a Project-type invoice today.</td><td><code>townWorld.ts</code> <code>P()</code>/<code>merge()</code> + <code>inst()</code>; lit = the shop light: <code>WIN.litDay</code>/<code>litNight</code>, <code>lightShop()</code>, <code>addPool()</code> light pool</td><td><code>trading_houses.rows[].{key, open_projects, today_docs}</code>, <code>name</code> on the full variant only; <code>trading_houses.more</code></td></tr>
-        <tr><td>Gate sign</td><td>"+N more projects · +N dormant" at the bridge landing; click opens the district list.</td><td><code>townWorld.ts</code> <code>addLabel()</code> pill (fixed), new <code>DOT</code>/<code>TONE</code> slate entry</td><td><code>projects.more</code>, <code>projects.dormant</code></td></tr>
-        <tr><td>Lorries</td><td>Project-type orders cross the bridge to the district gate (never to one site); dealer orders to their shop as today; out-of-town orders leave by the port road instead of the bridge. Depot label "12 to deliver · 3 projects".</td><td><code>townWorld.ts</code> <code>centreline()</code> (exit by <code>PA</code> instead of <code>BRIDGE_D</code>, plus a bridge route), <code>animLorries</code>; depot <code>addLabel</code></td><td><code>deliveries.project_orders</code>; <code>deliveries.customers[].kind</code> = <code>project</code> for a project lorry</td></tr>
-        <tr><td>Site lightbox</td><td>Name and code, Stage, Final negotiation, State, Timeline ("Launch Mar 2025 · Delivery Mar 2028 · 55% of the way"), Estimated value, "Open project" (<code>/project-sales/{id}</code>). No amounts / Wallboard: no name, code, value or link.</td><td><code>TownLightbox.tsx</code> new <code>TownTarget</code> <code>{ kind: 'site'; key }</code>, <code>body()</code> case + <code>Rows</code> + <code>link()</code>; stage dot = <code>components/ui/badge.tsx</code></td><td><code>projects.sites[]</code> (<code>name</code>, <code>code</code>, <code>estimated_value</code>, <code>id</code> on the full variant only; opaque <code>key</code> otherwise)</td></tr>
-        <tr><td>Trading house lightbox</td><td>Name (full only), open projects it is on (names on full only), project invoices today.</td><td><code>TownLightbox.tsx</code> <code>{ kind: 'trading_house'; key }</code> + <code>Rows</code></td><td><code>trading_houses.rows[]</code></td></tr>
-        <tr><td>Hover tips</td><td>Site: title + "stage · look"; tower: title + "bought today · on N open projects"; full names only on the full variant.</td><td><code>lib/townTips.ts</code> <code>townTip()</code> new <code>TipSubject</code> kinds</td><td>as above</td></tr>
-        <tr><td>Legend</td><td>"Office block = trading house, lit = bought today"; "Project site: building = its own timeline" + the 6 flag colours and the pennant.</td><td>legend in <code>TownScene.tsx</code> (same <code>i</code> swatch rows)</td><td>none</td></tr>
-        <tr><td>Seventh card</td><td>"What projects are open?" opens the district list (also the no-WebGL path).</td><td><code>TownCards.tsx</code> <code>Card</code></td><td><code>projects.open_count</code>, <code>projects.dormant</code>, <code>trading_houses.rows[].today_docs</code></td></tr>
-        <tr><td>Variant switch (mock only)</td><td>Full / No amounts / Wallboard: what each viewer is sent. Not in the product.</td><td>mock control</td><td><code>redact()</code> / <code>strip_names()</code> in <code>app/services/town/snapshot.py</code></td></tr>
+        <tr><td>State land patches (NEW)</td><td>Peninsular states, Kuala Lumpur and Putrajaya as raised enclaves, Sarawak, Sabah, Labuan; each its own slightly raised patch with a per-state tint, thin pale borders, beach and foam on every coast, the v6 shallow sea fading to haze. Click a state: "Selangor: 16 dealers (5 bought today) · 1 project site · 2 trading houses" (counts only).</td><td>NEW <code>town/lib/townMap.ts</code>: a static polygon table (lon, lat; shared border points) + <code>geo(lon, lat)</code>, the schematic transform (Selangor/KL blown up around Shah Alam, East Malaysia pulled closer). Drawn in <code>townWorld.ts</code> with <code>THREE.ExtrudeGeometry</code>; beach and foam with <code>P()</code>/<code>merge()</code> (replaces the round island <code>rIsland</code>/<code>slab</code>)</td><td>none (the shapes are code, not data); counts from <code>shops[].state</code>, <code>projects.sites[].state</code>, <code>trading_houses.rows[].state</code></td></tr>
+        <tr><td>State placement helper (NEW)</td><td>Each state has anchor points for its dealer street(s), project quarter and trading houses; Selangor gets two streets for 16 shops beside HQ. Anything with no state goes to the "State not set" islet off Port Klang.</td><td>NEW <code>town/lib/townMap.ts</code> <code>PLACE</code> table + a <code>street()</code>/<code>quarter()</code> layout helper used by <code>townWorld.ts</code></td><td><code>shops[].state</code>, <code>projects.sites[].state</code>, <code>trading_houses.rows[].state</code> (null = State not set)</td></tr>
+        <tr><td>HQ at Shah Alam + Port Klang</td><td>Plaza, approvals office, warehouses, depot; the v5 port (quay, crane, late containers, ships at anchor in the Strait, a ship that docks) at Port Klang beside it.</td><td>reused <code>townWorld.ts</code> depot / office / warehouse meshes and the port group (<code>port</code>, <code>PL()</code>, dock animation), placed by <code>geo()</code></td><td>unchanged: <code>warehouses</code>, <code>reorder</code>, <code>approvals</code>, <code>incoming</code></td></tr>
+        <tr><td>Split board</td><td>Sold today, then Dealers / Projects / Other that add up; counts only without the sales permission. A billboard over the South China Sea (wide) or north of the map (narrow) so it is readable at map scale.</td><td>reused <code>drawBoard()</code> canvas (v0 split rows), on a constant-size sprite</td><td><code>today.split.{dealer,project,other}</code></td></tr>
+        <tr><td>Dealer shops and stalls</td><td>Same cream pitched-roof shops and stalls, lit rule unchanged, on a short street inside their state. One pill per state with a lit shop: "Selangor: 16 dealers, 5 lit"; no per-shop labels at the default zoom.</td><td>reused shop and stall geometry, <code>inst()</code>, <code>lightShop()</code> / light pool; pill = <code>addLabel()</code></td><td><code>shops[].state</code> (new), rest unchanged</td></tr>
+        <tr><td>Project quarter + sites</td><td>v0 site looks from the project's own timeline (NEW tidy prepared plot when no dates: levelled pad, edging, survey pegs, painted board, hoarding with a blue band, site cabin; "Launching" board + marked-out footprint before launch), v0 stage flag + final negotiation pennant.</td><td>v0 <code>siteGeo(look)</code>, <code>makeFlag()</code>; <code>townWorld.ts</code> <code>P()</code>/<code>merge()</code>/<code>inst()</code></td><td><code>projects.sites[].{state, look, stage, final_negotiation}</code></td></tr>
+        <tr><td>Trading houses</td><td>v0 slate-blue glass towers in the customer's state; lit on a Project-type invoice today.</td><td>v0 tower geometry + light pool</td><td><code>trading_houses.rows[].{state, today_docs}</code></td></tr>
+        <tr><td>Highway spine + lorries</td><td>North-south along the west coast, a branch to the east coast, the Penang bridge. Dealer orders drive to the shop; project orders to the state's project quarter gate (never a site); no-shop orders to the state's edge or the islet.</td><td>reused lorry route helper (<code>centreline()</code> / <code>along()</code>) over a spine node table in <code>townMap.ts</code>; road ribbons with <code>P()</code>/<code>merge()</code></td><td><code>deliveries.customers[].{key, state, kind}</code>, <code>deliveries.project_orders</code></td></tr>
+        <tr><td>Coaster ship (NEW)</td><td>From Port Klang down the Strait, round Johor, across the South China Sea to Kuching and Kota Kinabalu and back: orders for Sabah, Sarawak and Labuan.</td><td>reuses the ship hull mesh (smaller, teal) and the lorry route timing</td><td>same as lorries, for East Malaysia states</td></tr>
+        <tr><td>"+N more" sign</td><td>One sign at HQ: "+14 more projects · +3 dormant".</td><td><code>addLabel()</code></td><td><code>projects.more</code>, <code>projects.dormant</code></td></tr>
+        <tr><td>Label declutter</td><td>Labels keep a constant size on screen; when two overlap, the higher priority stays (state pill, then HQ signs, then state names) and the other shows on zoom.</td><td>extends the existing <code>separateLabels</code> / <code>updateLabels()</code> pass in <code>townWorld.ts</code></td><td>none</td></tr>
+        <tr><td>Lightboxes</td><td>Site (v0), trading house (v0 + "State" row), dealer shop (+ "State" row: a state name or "not set", never a postcode or address), state (counts only).</td><td><code>TownLightbox.tsx</code> <code>body()</code> cases + <code>Rows</code>; new <code>TownTarget</code> <code>{ kind: 'state'; key }</code></td><td>as above</td></tr>
+        <tr><td>Legend</td><td>Dealer shop, stall, trading house, project site, the six stage colours, final negotiation pennant, HQ, lorry, coaster ship; over the sea on a wide stage, behind a "Legend" button at 375.</td><td>legend in <code>TownScene.tsx</code></td><td>none</td></tr>
+        <tr><td>Variant switch (mock only)</td><td>Full / No amounts / Wallboard. Wallboard keeps state names, counts, flags, looks and lit state; no dealer, project or trading-house names.</td><td>mock control</td><td><code>redact()</code> / <code>strip_names()</code></td></tr>
       </tbody>
     </table></div>
   </section>
@@ -406,7 +407,7 @@ function buildScene() {
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const knob = document.getElementById('knob');
   let LOOK = new THREE.Vector3(0, 0, 0), FIT = { w: 80, d: 54 };
-  const labels = []; let LOOK0 = null;
+  const labels = []; let LOOK0 = null; let boardSp = null;
   const placeCam = () => {
     cam.position.set(LOOK.x + Math.cos(yaw) * Math.cos(el) * RADIUS, LOOK.y + Math.sin(el) * RADIUS, LOOK.z + Math.sin(yaw) * Math.cos(el) * RADIUS);
     cam.lookAt(LOOK); cam.zoom = zoom; cam.updateProjectionMatrix(); fitLabels();
@@ -448,11 +449,27 @@ function buildScene() {
     g.fillText(text, c.width / 2, 50);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false })); sp.renderOrder = opts.order ?? 10;
     if (opts.center) sp.center.set(...opts.center);
-    const k = canvas.clientWidth < 640 ? 0.8 : 1; sp.userData.px = [c.width * px * k / 52, c.height * px * k / 52]; sp.position.set(x, y, z); scene.add(sp); labels.push(sp); fitOne(sp); return sp;
+    const k = canvas.clientWidth < 640 ? 0.72 : 1; sp.userData.px = [c.width * px * k / 52, c.height * px * k / 52]; sp.userData.prio = opts.prio ?? 1; sp.userData.text = text; sp.userData.free = !!opts.free; sp.position.set(x, y, z); scene.add(sp); labels.push(sp); fitOne(sp); declutterSoon(); return sp;
   }
   const upp = () => (cam.top - cam.bottom) / (zoom * Math.max(1, canvas.clientHeight)); // world units per screen pixel
   const fitOne = (sp) => { const u = upp(); sp.scale.set(sp.userData.px[0] * u, sp.userData.px[1] * u, 1); };
-  function fitLabels() { labels.forEach(fitOne); dirty = true; }
+  function fitLabels() { labels.forEach(fitOne); declutterSoon(); dirty = true; }
+  // declutter: labels never pile up; the higher priority keeps its place, a lower one hides until the view has room
+  let declutterQueued = false;
+  function declutterSoon() { if (declutterQueued) return; declutterQueued = true; queueMicrotask(() => { declutterQueued = false; declutter(); }); }
+  function declutter() {
+    if (!cam || !canvas.clientWidth) return; cam.updateMatrixWorld(); const W0 = canvas.clientWidth, H0 = canvas.clientHeight, kept = [];
+    const rectOf = (sp, w, h) => { const p = sp.position.clone().project(cam); const x = (p.x + 1) / 2 * W0, y = (1 - p.y) / 2 * H0; return [x - sp.center.x * w, y - (1 - sp.center.y) * h, w, h]; };
+    const hit = (a, b) => a[0] < b[0] + b[2] + 3 && b[0] < a[0] + a[2] + 3 && a[1] < b[1] + b[3] + 2 && b[1] < a[1] + a[3] + 2;
+    if (boardSp) { const w = boardPx(); kept.push(rectOf(boardSp, w, w * 520 / 1024)); }
+    [...labels].filter(sp => !sp.userData.free).sort((a, b) => b.userData.prio - a.userData.prio).forEach(sp => {
+      if (sp.userData.off) { sp.visible = false; return; }
+      const r = rectOf(sp, sp.userData.px[0], sp.userData.px[1]);
+      const out = r[0] < 0 || r[1] < 0 || r[0] + r[2] > W0 || r[1] + r[3] > H0;
+      sp.visible = !out && !kept.some(k => hit(k, r)); if (sp.visible) kept.push(r);
+    });
+    dirty = true;
+  }
   const dropLabel = (sp) => { scene.remove(sp); const i = labels.indexOf(sp); if (i >= 0) labels.splice(i, 1); sp.material.map.dispose(); sp.material.dispose(); };
 
   /* ======== the map: a static polygon table (lon, lat), transformed to a schematic ========
@@ -483,10 +500,10 @@ function buildScene() {
     { key: 'perak', name: 'Perak', poly: ['PG2', 'PG3', 'KP', 'J1', 'J2', 'J5', 'J4', 'J3', [100.62, 4.32], [100.55, 4.75]], at: [101.15, 4.75] },
     { key: 'kelantan', name: 'Kelantan', poly: ['J2', [101.90, 5.95], 'KC', 'KT', 'KTi', 'J6', [101.95, 4.55], 'J5'], at: [102.0, 5.35] },
     { key: 'terengganu', name: 'Terengganu', poly: ['KT', [103.10, 5.35], [103.40, 4.78], 'TPc', 'TP2', 'TP1', 'J6', 'KTi'], at: [102.95, 4.85] },
-    { key: 'pahang', name: 'Pahang', poly: ['J5', [101.95, 4.55], 'J6', 'TP1', 'TP2', 'TPc', [103.45, 3.60], [103.45, 3.00], 'PJc', 'PJ2', 'PJ1', 'J7', 'J8', 'SPa', 'J4'], at: [102.75, 3.75] },
+    { key: 'pahang', name: 'Pahang', poly: ['J5', [101.95, 4.55], 'J6', 'TP1', 'TP2', 'TPc', [103.45, 3.60], [103.45, 3.00], 'PJc', 'PJ2', 'PJ1', 'J7', 'J8', 'SPa', 'J4'], at: [103.2, 3.3] },
     { key: 'selangor', name: 'Selangor', poly: ['J3', 'J4', 'SPa', 'J8', 'SN1', 'SNc', [101.55, 2.72], [101.30, 2.92], [101.22, 3.20], [101.05, 3.55]], at: [101.25, 3.5] },
-    { key: 'ns', name: 'Negeri Sembilan', poly: ['SNc', 'SN1', 'J8', 'J7', 'NMJ', 'NM2', 'NM1'], at: [102.2, 2.72] },
-    { key: 'melaka', name: 'Melaka', poly: ['NM1', 'NM2', 'NMJ', 'MJc', [102.25, 2.15]], at: [102.3, 2.28] },
+    { key: 'ns', name: 'Negeri Sembilan', poly: ['SNc', 'SN1', 'J8', 'J7', 'NMJ', 'NM2', 'NM1'], at: [102.48, 2.8] },
+    { key: 'melaka', name: 'Melaka', poly: ['NM1', 'NM2', 'NMJ', 'MJc', [102.25, 2.15]], at: [102.25, 2.02] },
     { key: 'johor', name: 'Johor', poly: ['MJc', 'NMJ', 'J7', 'PJ1', 'PJ2', 'PJc', [103.85, 2.25], [104.15, 1.85], [104.28, 1.42], [103.75, 1.43], [103.50, 1.28], [103.35, 1.50], [102.90, 1.85]], at: [103.3, 2.2] },
     { key: 'kl', name: 'Kuala Lumpur', poly: circle(101.82, 3.2, 0.13, 16), raised: 0.18, at: [101.82, 3.2] },
     { key: 'putrajaya', name: 'Putrajaya', poly: circle(101.72, 2.93, 0.05, 10), raised: 0.18, at: [101.72, 2.93], small: true },
@@ -556,7 +573,7 @@ function buildScene() {
   // state name labels (fine on the wallboard): plain text, no pill
   const stateLabels = [];
   STATES.forEach(s => { const [x, z] = geo(...s.at); stateLabels.push(label(s.name, x, stateTop[s.key] + 0.3, z, null, '#4b5d50', s.small ? 8.5 : 10, { order: 6 })); });
-  label('State not set', NS_ISLE.centre[0], LAND + 0.3, NS_ISLE.centre[1] + 3.2, null, '#6b7280', 10, { order: 6 });
+  stateLabels.push(label('State not set', NS_ISLE.centre[0], LAND + 0.3, NS_ISLE.centre[1] + 3.2, null, '#6b7280', 10, { order: 6 }));
 
   /* ======== counts per state (for the state lightbox and the lit-count pills) ======== */
   const stateKey = (k) => k || 'notset';
@@ -572,15 +589,15 @@ function buildScene() {
   const W2 = (lon, lat, dx = 0, dz = 0) => { const [x, z] = geo(lon, lat); return [x + dx, z + dz]; };
   const H = W2(101.52, 3.07);
   const PLACE = {
-    selangor: { street: W2(101.42, 3.42), quarter: W2(101.62, 2.85, 0.5, 0.5), towers: W2(101.36, 3.62) },
+    selangor: { streets: [W2(101.42, 3.53), W2(101.45, 3.31)], quarter: W2(101.62, 2.85, 0.5, 0.5), towers: W2(101.42, 3.76) },
     kl: { street: W2(101.82, 3.2, 0, -1.9), quarter: W2(101.82, 3.2, -0.6, 1.6), towers: W2(101.82, 3.2, 3.1, 0.2) },
-    johor: { street: W2(103.25, 1.95), quarter: W2(103.7, 1.75, 0, 0.2), towers: W2(102.95, 2.2, 0, 0.6) },
+    johor: { pill: W2(103.85, 2.3), street: W2(103.25, 1.95), quarter: W2(103.7, 1.75, 0, 0.2), towers: W2(102.95, 2.2, 0, 0.6) },
     penang: { street: W2(100.12, 5.38, 0, 0.2), quarter: W2(100.47, 5.36) },
     perak: { street: W2(100.95, 4.45), quarter: W2(101.25, 4.05) },
     kedah: { street: W2(100.62, 6.0, 0, 1.4) }, ns: { street: W2(102.2, 2.72, 0, 1.4) }, melaka: { street: W2(102.3, 2.28, 0, 0.9) },
     pahang: { street: W2(102.75, 3.75, 0, 1.6) }, sabah: { street: W2(116.4, 5.75), quarter: W2(117.6, 5.2) },
     sarawak: { street: W2(110.45, 1.75, 0, -0.6), quarter: W2(112.9, 2.7) },
-    notset: { street: [NS_ISLE.centre[0] - 2.2, NS_ISLE.centre[1] - 0.4], quarter: [NS_ISLE.centre[0] + 1.6, NS_ISLE.centre[1] - 0.6], towers: [NS_ISLE.centre[0] - 0.2, NS_ISLE.centre[1] - 2.6] },
+    notset: { pill: [NS_ISLE.centre[0] + 5.5, NS_ISLE.centre[1] - 3.0], street: [NS_ISLE.centre[0] - 2.2, NS_ISLE.centre[1] - 0.4], quarter: [NS_ISLE.centre[0] + 1.6, NS_ISLE.centre[1] - 0.6], towers: [NS_ISLE.centre[0] - 0.2, NS_ISLE.centre[1] - 2.6] },
   };
   const topOf = (k) => stateTop[k] ?? LAND;
 
@@ -615,10 +632,10 @@ function buildScene() {
     g.fillStyle = '#ffffff'; g.font = '700 132px Inter, sans-serif'; g.fillText(state.redact ? n(T.invoice_count + boardInv) + ' invoices' : rm0(Number(T.amount) + boardExtra), 512, 214);
     g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 4; g.beginPath(); g.moveTo(60, 258); g.lineTo(964, 258); g.stroke();
     [['DEALERS', 'dealer', '#fbbf24'], ['PROJECTS', 'project', '#9fb6d3'], ['OTHER', 'other', '#94a3b8']].forEach(([cap, k, dot], i) => {
-      const x = 176 + i * 336; g.font = '600 46px Inter, sans-serif'; const w = g.measureText(cap).width;
+      const x = 176 + i * 336; g.font = '600 40px Inter, sans-serif'; const w = g.measureText(cap).width;
       g.fillStyle = dot; g.beginPath(); g.arc(x - w / 2 - 6, 312, 13, 0, Math.PI * 2); g.fill();
       g.fillStyle = '#94a3b8'; g.fillText(cap, x + 14, 328);
-      g.fillStyle = '#f1f5f9'; g.font = '700 70px Inter, sans-serif';
+      g.fillStyle = '#f1f5f9'; g.font = '700 54px Inter, sans-serif';
       g.fillText(state.redact ? n(SPLIT[k].invoice_count + (k === 'dealer' ? boardInv : 0)) : rm0(Number(SPLIT[k].amount) + (k === 'dealer' ? boardExtra : 0)), x, 412);
     });
     g.font = '600 46px Inter, sans-serif'; g.fillStyle = '#cbd5e1';
@@ -626,12 +643,12 @@ function buildScene() {
     boardTex.needsUpdate = true; dirty = true;
   }
   drawBoard();
-  const boardSp = new THREE.Sprite(new THREE.SpriteMaterial({ map: boardTex, depthTest: false })); boardSp.renderOrder = 12; boardSp.center.set(1, 0);
+  boardSp = new THREE.Sprite(new THREE.SpriteMaterial({ map: boardTex, depthTest: false })); boardSp.renderOrder = 12; boardSp.center.set(1, 0);
   const placeBoard = () => {
     if (canvas.clientWidth / Math.max(1, canvas.clientHeight) < 1) { boardSp.center.set(0.5, 0); boardSp.position.set(LOOK.x, 1, LOOK.z - FIT.d / 2 - 3); }
     else { boardSp.center.set(0, 0); const [bx, bz] = geo(104.0, 5.2); boardSp.position.set(bx, 1, bz); }
   };
-  const boardPx = () => canvas.clientWidth < 640 ? 150 : 210;
+  function boardPx() { return canvas.clientWidth < 640 ? 150 : 210; }
   boardSp.userData.px = null; scene.add(boardSp);
   const fitBoard = () => { const u = upp(), w = boardPx(); boardSp.scale.set(w * u, w * 520 / 1024 * u, 1); placeBoard(); };
   const fitLabels0 = fitLabels; fitLabels = () => { fitLabels0(); fitBoard(); };
@@ -644,13 +661,16 @@ function buildScene() {
   const slot = [];
   const stateKeys = [...new Set(DATA.shops.map(s => stateKey(s.state)))];
   stateKeys.forEach(k => {
-    const list = DATA.shops.filter(s => stateKey(s.state) === k).sort((a, b) => (a.kind === 'shop' ? 0 : 1) - (b.kind === 'shop' ? 0 : 1) || (a.rank ?? 99) - (b.rank ?? 99));
-    const at0 = PLACE[k]?.street; if (!at0) return; const y = topOf(k);
-    const cols = Math.ceil(list.length / 2), L = cols * 1.75 + 0.6;
-    roadParts.push(part(BOX, 0xd8d1c4, at0[0], y, at0[1], L, 0.05, 0.75));
-    list.forEach((s, i) => {
-      const c = Math.floor(i / 2), north = i % 2 === 0; const x = at0[0] - (cols - 1) * 0.875 + c * 1.75, z = at0[1] + (north ? -1.05 : 1.05);
-      slot.push({ s, k, x, y, z, ry: north ? 0 : Math.PI, lit: !!s.today_docs, stall: s.kind !== 'shop', h: s.kind === 'shop' ? 1 + (s.rank ? (30 - s.rank) / 30 * 0.8 : 0.3) : 1 });
+    const all = DATA.shops.filter(s => stateKey(s.state) === k).sort((a, b) => (a.kind === 'shop' ? 0 : 1) - (b.kind === 'shop' ? 0 : 1) || (a.rank ?? 99) - (b.rank ?? 99));
+    const streets = PLACE[k]?.streets || (PLACE[k]?.street ? [PLACE[k].street] : []); if (!streets.length) return; const y = topOf(k);
+    const per = Math.ceil(all.length / streets.length);
+    streets.forEach((at0, si) => {
+      const list = all.slice(si * per, (si + 1) * per); const cols = Math.ceil(list.length / 2), L = cols * 1.75 + 0.6;
+      roadParts.push(part(BOX, 0xd8d1c4, at0[0], y, at0[1], L, 0.05, 0.75));
+      list.forEach((s, i) => {
+        const c = Math.floor(i / 2), north = i % 2 === 0; const x = at0[0] - (cols - 1) * 0.875 + c * 1.75, z = at0[1] + (north ? -1.05 : 1.05);
+        slot.push({ s, k, x, y, z, ry: north ? 0 : Math.PI, lit: !!s.today_docs, stall: s.kind !== 'shop', h: s.kind === 'shop' ? 1 + (s.rank ? (30 - s.rank) / 30 * 0.8 : 0.3) : 1 });
+      });
     });
   });
   const shopSlots = slot.filter(o => !o.stall), stallSlots = slot.filter(o => o.stall);
@@ -667,9 +687,11 @@ function buildScene() {
   const litPills = [];
   function drawLitPills() {
     litPills.forEach(dropLabel); litPills.length = 0;
-    stateKeys.forEach(k => { const c = slot.filter(o => o.k === k && o.lit).length; const at0 = PLACE[k]?.street; if (!c || !at0) return;
-      litPills.push(label(`${c} bought today`, at0[0], topOf(k) + 2.6, at0[1] - 0.6, 'rgba(255,251,235,0.97)', '#92400e', 10)); });
-    if (othersToday) { const [x, z] = W2(102.75, 3.75, 0, -2.6); litPills.push(label(`+${othersToday} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 10)); }
+    stateKeys.forEach(k => { const c = slot.filter(o => o.k === k && o.lit).length, nd = slot.filter(o => o.k === k).length; if (!c) return;
+      const at0 = PLACE[k]?.pill || PLACE[k]?.streets?.[0] || PLACE[k]?.street; const nm = STATE_INFO(k).name;
+      litPills.push(label(`${nm}: ${nd} dealer${nd === 1 ? '' : 's'}, ${c} lit`, at0[0], topOf(k) + 2.6, at0[1] - 1.2, 'rgba(255,251,235,0.97)', '#92400e', 10, { prio: 3 }));
+      const sl = k === 'notset' ? stateLabels[stateLabels.length - 1] : stateLabels[STATES.findIndex(s => s.key === k)]; if (sl) sl.userData.off = true; });
+    if (othersToday) { const [x, z] = geo(104.9, 4.25); litPills.push(label(`+${othersToday} more dealers bought today`, x, 1, z, 'rgba(255,251,235,0.97)', '#92400e', 10, { prio: 2 })); }
     dirty = true;
   }
   drawLitPills();
@@ -735,7 +757,7 @@ function buildScene() {
 
   /* ======== the highway spine (west-coast north-south, a branch to the east coast) and the Penang bridge ======== */
   const CHAIN = {
-    north: [[101.42, 3.45], [101.12, 3.9], [101.0, 4.35], [100.75, 4.85], [100.5, 5.35], [100.55, 5.95], [100.3, 6.45]],
+    north: [[101.26, 3.25], [101.12, 3.9], [101.0, 4.35], [100.75, 4.85], [100.5, 5.35], [100.55, 5.95], [100.3, 6.45]],
     south: [[101.75, 2.82], [102.05, 2.65], [102.3, 2.38], [102.85, 2.05], [103.6, 1.62]],
     east: [[101.82, 3.2], [102.4, 3.5], [103.25, 3.75], [103.15, 4.6], [102.6, 5.3], [102.15, 5.85]],
   };
@@ -772,11 +794,11 @@ function buildScene() {
     for (let i = 0; i < nShip; i++) { const x = 8 + (i % 3) * 8 + (i >= 3 ? 4 : 0), z = -11 - (i >= 3 ? 6 : 0) - (i % 2) * 1.5; shipBase.push({ x, z, ry: 0.3 + i * 0.4 }); M.compose(V.set(x, 0, z), Q.setFromEuler(E.set(0, 0.3 + i * 0.4, 0)), S.setScalar(1)); shipMesh.setMatrixAt(i, M); }
     shipMesh.count = nShip; shipMesh.instanceMatrix.needsUpdate = true;
     if (portSignSprite) dropLabel(portSignSprite); if (lateSprite) { dropLabel(lateSprite); lateSprite = null; }
-    const ps = PW(0, 7, 0); portSignSprite = label(portSign(), ps.x - 3.5, ps.y, ps.z - 1.5, '#0e7490', '#ffffff', 10);
+    const ps = PW(0, 7, 0); portSignSprite = label(portSign(), ps.x - 6.5, ps.y - 3, ps.z - 1.0, '#0e7490', '#ffffff', 10, { prio: 2.2 });
     portSignSprite.userData.port = true;
     for (let i = pickables.length - 1; i >= 0; i--) if (pickables[i][0].userData.port === true) pickables.splice(i, 1);
     pickables.push([portSignSprite, () => open.port(), portTip]);
-    if (IN.late) { const ls = PW(0, 2.4, 0); lateSprite = label(`${IN.late} late`, ls.x - 3.5, ls.y, ls.z + 1.2, '#dc2626', '#ffffff', 9.5); lateSprite.userData.port = true; pickables.push([lateSprite, () => open.port(), () => ['Late shipments', `${n(IN.late)} past their ETA, not yet received`]]); }
+    if (IN.late) { const ls = PW(0, 2.4, 0); lateSprite = label(`${IN.late} late`, ls.x - 9.5, ls.y, ls.z + 2.8, '#dc2626', '#ffffff', 9.5, { prio: 2.1 }); lateSprite.userData.port = true; pickables.push([lateSprite, () => open.port(), () => ['Late shipments', `${n(IN.late)} past their ETA, not yet received`]]); }
     dirty = true;
   }
   pickables.push([contMesh, () => open.port(), (i) => { const r = shipRows.boxes[i]; return r ? [`${r.shipment_number} · late`, `ETA ${fmtDay(r.eta)} · ${r.products} products${supplierOf(r) ? ' · ' + supplierOf(r) : ''}`] : portTip(); }]);
@@ -784,11 +806,11 @@ function buildScene() {
   drawPort();
 
   // HQ labels: low stock, approvals, to deliver, and the one "+N more" sign
-  const bang = label(`! ${n(R.below_count)} low`, H[0] + 7.6, hqY + 1.6, H[1] - 0.2, '#dc2626', '#ffffff', 10);
+  const bang = label(`! ${n(R.below_count)} low`, H[0] + 8.6, hqY + 1.4, H[1] + 0.6, '#dc2626', '#ffffff', 10, { prio: 2.3 });
   pickables.push([bang, () => open.low(), () => ['Low stock', `${n(R.below_count)} products below reorder level`]]);
-  const badge = label(A.total ? `Approvals ${A.total}` : 'Approvals: all clear', ox, hqY + 2.6, oz, A.total ? '#7c3aed' : '#dcfce7', A.total ? '#ffffff' : '#166534', 10); pickables.push([badge, () => open.approve(), aTip]);
-  const dsign = label(deliverText(), dx + 0.6, hqY + 1.9, dz + 0.9, '#1d4ed8', '#ffffff', 10); pickables.push([dsign, () => open.deliver(), dTip]);
-  const gate = label(gateText(), H[0] + 3.0, hqY + 0.4, H[1] + 6.6, '#51657f', '#ffffff', 10);
+  const badge = label(A.total ? `Approvals ${A.total}` : 'Approvals: all clear', ox - 3.6, hqY + 1.2, oz + 0.4, A.total ? '#7c3aed' : '#dcfce7', A.total ? '#ffffff' : '#166534', 10, { prio: 2.4 }); pickables.push([badge, () => open.approve(), aTip]);
+  const dsign = label(deliverText(), dx + 2.2, hqY + 1.0, dz + 2.6, '#1d4ed8', '#ffffff', 10, { prio: 2.7 }); pickables.push([dsign, () => open.deliver(), dTip]);
+  const gate = label(gateText(), H[0] + 0.5, hqY + 0.2, H[1] + 8.8, '#51657f', '#ffffff', 10, { prio: 2.65 });
   pickables.push([gate, () => open.district(), () => ['Projects', `${n(PJ.open_count)} open · ${n(PJ.sites.length)} on the map · ${n(PJ.dormant)} dormant not shown`]]);
 
   // trees on the empty states, so plain land still reads as land
@@ -820,7 +842,7 @@ function buildScene() {
   const SPEED = 4.0, WAIT_AT = 2.4, WAIT_HOME = 3.0;
   const trip = (r, o, kind, label2, k) => { const leg = r.len / SPEED; return { r, o, kind, label2, leg, cycle: 2 * leg + WAIT_AT + WAIT_HOME, offset: k * 3.7, at: false }; };
   const trips = [];
-  ['penang', 'johor', 'kl'].forEach((k, i) => { const o = litSlots.find(s => s.k === k); if (o) trips.push(trip(roadRoute(k, [o.x, o.z + (o.ry ? -0.6 : 0.6)]), o, 'shop', shopLabel(o.s), i)); });
+  ['johor', 'kl', 'selangor'].forEach((k, i) => { const o = litSlots.find(s => s.k === k); if (o) trips.push(trip(roadRoute(k, [o.x, o.z + (o.ry ? -0.6 : 0.6)]), o, 'shop', shopLabel(o.s), i)); });
   ['johor', 'perak'].slice(0, D?.project_orders || 0).forEach((k, i) => { if (quarterGate[k]) trips.push(trip(roadRoute(k, quarterGate[k]), null, 'project', STATE_INFO(k).name, 3 + i)); });
   trips.push(trip(roadRoute('kelantan', geo(102.1, 5.75)), null, 'out', 'Kelantan', 5));
   for (let i = 0; i < lorryN; i++) { M.compose(V.set(dx - 1.1 + (i % 5) * 0.55, hqY, dz + 1.25 + Math.floor(i / 5) * 0.6), Q.setFromEuler(E.set(0, Math.PI / 2, 0)), S.setScalar(0.42)); lorries.setMatrixAt(i, M); }
@@ -882,7 +904,7 @@ function buildScene() {
   const pops = []; let nextPop = 3.2, boardAnim = null;
   function spawnPop(t) {
     if (!litSlots.length) return; const o = litSlots[Math.floor(Math.random() * litSlots.length)], amt = 800 + Math.round(Math.random() * 9000);
-    const sp = label(state.redact || state.wallboard ? '+1 invoice' : `+ ${rm0(amt)}`, o.x, o.y + 1.8, o.z, '#fef3c7', '#92400e', 9.5);
+    const sp = label(state.redact || state.wallboard ? '+1 invoice' : `+ ${rm0(amt)}`, o.x, o.y + 1.8, o.z, '#fef3c7', '#92400e', 9.5, { free: true });
     sp.material.opacity = 0; pops.push({ sp, t0: t, y0: o.y + 1.8 }); flashShop(o); boardAnim = { from: boardExtra, to: boardExtra + amt, t0: t + 0.7 };
   }
   function animPops(t) {
@@ -953,6 +975,7 @@ function buildScene() {
     refresh() { drawBoard(); drawLitPills(); drawPort(); }, setHour, intro, sites, towers,
     setNight(on) { hemi.intensity = on ? 0.55 : 2.0; sun.intensity = on ? 0.2 : 1.3; dirty = true; },
     view(y, e, z) { yaw = y ?? yaw; el = e != null ? e * DEG : el; zoom = z ?? zoom; placeCam(); },
+    labelBoxes() { cam.updateMatrixWorld(); return labels.map(sp => { const p = sp.position.clone().project(cam); return [sp.userData.text, sp.visible, Math.round((p.x + 1) / 2 * canvas.clientWidth), Math.round((1 - p.y) / 2 * canvas.clientHeight), Math.round(sp.userData.px[0])]; }); },
     focus(lon, lat, z) { const [x, zz] = geo(lon, lat); LOOK.set(x, 1.5, zz); zoom = z; placeCam(); },
     tipAt(name) {
       const o = name === 'site' ? sites.find(s => s.p.key === 'p1') : name === 'tower' ? towers[0] : null; if (!o) return;
