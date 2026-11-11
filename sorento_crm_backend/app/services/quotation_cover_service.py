@@ -515,6 +515,7 @@ def source_values(
         # The document's creator, never the owner or the typed signatory (owner ruling 11 Nov).
         "prepared_by_name": clean(preparer.name if preparer is not None else None),
         "prepared_by_phone": clean(preparer.contact_number if preparer is not None else None),
+        "prepared_by_email": clean(preparer.email if preparer is not None else None),
         "terms": clean_terms_html(issue.terms_rendered),
         "payment_terms": clean(issue.payment_terms),
         "validity": clean(issue.validity),
@@ -525,7 +526,12 @@ def source_values(
 
 #: A salesperson field a design saved before the 11 Nov ruling uses for Prepared By -> the
 #: creator field it prints instead.
-_PREPARED_BY_INSTEAD = {"salesperson_name": "prepared_by_name", "salesperson_mobile": "prepared_by_phone"}
+_PREPARED_BY_INSTEAD = {
+    "salesperson_name": "prepared_by_name",
+    "salesperson_mobile": "prepared_by_phone",
+    # Not offered in the picker: it exists so a saved "Prepared by" block is one person.
+    "salesperson_email": "prepared_by_email",
+}
 
 
 def _says_prepared_by(text: Any) -> bool:

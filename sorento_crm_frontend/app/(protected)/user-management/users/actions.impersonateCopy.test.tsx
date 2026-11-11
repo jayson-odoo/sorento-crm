@@ -3,8 +3,8 @@
  * The backend makes the target the effective user, so records are saved as them, and the audit
  * log keeps the admin (`dependencies.py` `_maybe_apply_impersonation`, `audit_logs.real_user_id`).
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { UserStatus, type User } from '@/app/models/user';
 
@@ -21,7 +21,7 @@ vi.mock('@/hooks/useImpersonation', () => ({
 }));
 
 // The deletion action lives in the same hook; stubbed inert so this file stays
-// about the invite dialog alone (deletion has no test surface here).
+// about the impersonation confirm copy alone.
 vi.mock('@/hooks/useDeferredAction', () => ({
   useDeferredAction: () => ({
     pending: null,
@@ -39,18 +39,6 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetchMock(...a) 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { useUserActions } from './actions';
-
-function testUser(over: Partial<User> = {}): User {
-  return {
-    id: 'user-1',
-    email: 'kia@zzt.test',
-    name: 'Kia Yee',
-    status: UserStatus.ACTIVE,
-    isTrashed: false,
-    isProtected: false,
-    ...over,
-  } as unknown as User;
-}
 
 function Harness({ user }: { user: User }) {
   const { actions, dialogs } = useUserActions(user);

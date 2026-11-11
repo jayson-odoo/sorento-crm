@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from ._pg_fixture import blank_session
 from .test_project_quotation_cover_page import MARKER, _full_document
+from .test_project_quotation_document_routes import api  # noqa: F401  (a fixture)
 from .test_project_quotation_pdf import _issue, _setup, _user
 
 
@@ -105,7 +106,8 @@ def _saved_design():
             {"style": "fields", "label": "", "columns": 1,
              "rows": [row("salesperson_name", "Prepared By"), row("salesperson_name", "Sales")]},
             {"style": "signature", "label": "Prepared by,", "columns": 1,
-             "rows": [row("salesperson_name", "Name"), row("salesperson_mobile", "Phone No")]},
+             "rows": [row("salesperson_name", "Name"), row("salesperson_mobile", "Phone No"),
+                      row("salesperson_email", "Email")]},
         ],
     }
 
@@ -125,9 +127,11 @@ def test_a_saved_design_prepared_by_on_the_salesperson_field_prints_the_creator(
         prepared, sales = fields["cells"][0]
         assert (prepared["label"], prepared["text"]) == ("Prepared By", creator.name)
         assert (sales["label"], sales["text"]) == ("Sales", owner.name)
-        name, phone = signature["cells"][0]
+        name, phone, email = signature["cells"][0]
         assert name["text"] == creator.name
         assert phone["text"] == "012-000 0777"
+        # The whole block is one person: never the creator's name over the owner's email.
+        assert email["text"] == creator.email
 
 
 def test_an_unsaved_proposal_preview_prints_the_viewer_as_prepared_by():
@@ -144,3 +148,20 @@ def test_an_unsaved_proposal_preview_prints_the_viewer_as_prepared_by():
             for c in col
         }
         assert texts.get("prepared_by_name") == f"{MARKER} Viewer Creator"
+
+
+def test_the_cover_preview_route_names_the_requester_on_an_unsaved_proposal(api):  # noqa: F811
+    """The route hands the effective user to the preview (a save would record them as creator)."""
+    from app.models.user import User
+
+    client, db, _company_id, user_id, project, _party = api
+    me = db.query(User).filter(User.id == user_id).first()
+    res = client.post(f"/api/v1/project-sales/projects/{project.id}/quotation-documents/cover-preview", json={})
+    assert res.status_code == 200, res.text
+    texts = {
+        c["source"]: c.get("text")
+        for s in res.json()["cover_sections"]
+        for col in s["cells"]
+        for c in col
+    }
+    assert texts.get("prepared_by_name") == me.name

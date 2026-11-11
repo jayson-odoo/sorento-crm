@@ -91,7 +91,7 @@ describe('ContactImpersonateDialog S8', () => {
     mount();
     const text = screen.getByRole('alertdialog').textContent ?? '';
     expect(text).toContain(
-      'What you submit is saved as Test Salesperson A, except comments, which carry your name; the audit log shows you did it.',
+      'What you submit is saved as Test Salesperson A; comments also show your name, and the audit log shows you did it.',
     );
     expect(text).not.toContain('attributed to you');
   });
