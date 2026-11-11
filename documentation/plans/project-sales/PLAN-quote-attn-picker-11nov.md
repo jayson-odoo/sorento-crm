@@ -1,6 +1,6 @@
 # PLAN: quote Attn picker, standard multi-select + add-contact CTA (QUOTE-ATTN-PICKER)
 
-Status: in progress. Track: small fix (FE only, no migration, no auth/RBAC change).
+Status: in review (PR #2335). Track: small fix (no migration, no auth/RBAC change).
 
 ## Owner feedback (11 Nov 2026)
 The "Attn at <company>" popup used a hand-rolled checkbox list (no search, no Select all), and
@@ -28,3 +28,18 @@ the one dialog behind every Attn picker (quotation + proposal, create + edit, vi
 - U4 Adding a contact ticks it and Done returns; Done saves it.
 - U5 Cancelling the add form brings Done back with nothing added.
 - U6 A contact already on the project shows ticked and cannot be unticked.
+
+## Crew additions (same PR, 11 Nov)
+
+4. Impersonation banner (`components/impersonation/ImpersonationBanner.tsx`) now says records are
+   saved as the impersonated user and the audit log shows the admin. Verified first:
+   `dependencies.py` stamps `real_user_id`, written to `audit_logs.real_user_id`.
+5. Owner ruling 11 Nov ("prepared by should always be the one who create, this is compliance"):
+   Prepared By = the document's `created_by` on the document response, the cover page (legacy row
+   and the Prepared by name/phone sources), the spec sheet and the new-quotation form (the effective
+   user, the impersonated one during a view-as). Not editable. Salesperson sources keep the owner.
+   Stored PDFs are not rewritten. UAC line A4 of `quote-cover-page-02nov-acceptance-criteria.md` updated.
+6. Found in the browser pass: a disabled `SearchableMultiSelect` (or a disabled option) still let a
+   chip X remove a pick; neither offers the X now.
+
+- U7 Prepared By on an owner-owned project, document created by another salesperson = the creator.
