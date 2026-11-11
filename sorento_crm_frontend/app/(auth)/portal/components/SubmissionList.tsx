@@ -247,6 +247,8 @@ function pickCardMeta(row: PortalSubmissionSummary): {
   product?: string;
   project?: string;
   customer?: string;
+  /** The hover: every customer of a price tag request, else the line itself. */
+  customerTitle?: string;
 } {
   if (row.kind === 'complaint') {
     return {
@@ -268,7 +270,10 @@ function pickCardMeta(row: PortalSubmissionSummary): {
     row.kind === 'sample_request' ||
     row.kind === 'new_product_application'
   ) {
-    return { customer: row.customer_name ?? undefined };
+    return {
+      customer: row.customer_name ?? undefined,
+      customerTitle: row.customer_names ?? undefined,
+    };
   }
   return {
     project: row.project_title ?? row.sponsor_subject ?? undefined,
@@ -754,8 +759,11 @@ function submissionTableColumns(
         header: header(field),
         cell: ({ row }) => {
           const value = landingFieldValue(row.original, field) ?? '-';
+          // A price tag request for several customers shows "First +N"; the hover names all.
+          const hover =
+            field.key === 'customer_name' ? (row.original.customer_names ?? value) : value;
           return (
-            <span className="block truncate" title={value}>
+            <span className="block truncate" title={hover}>
               {value}
             </span>
           );
@@ -907,12 +915,14 @@ function SubmissionCard({
           </p>
           {revisionBadgeLabel(row.revision_no) && (
             <Badge variant="secondary">
-              {revisionBadgeLabel(row.revision_no)}
+              {/* Owner hand test 11 Nov: a salesperson edits their own price tag request; the
+                  word revision never shows for it. */}
+              {row.kind === 'price_tag_request' ? 'Edited' : revisionBadgeLabel(row.revision_no)}
             </Badge>
           )}
           {row.has_revision_draft && (
             <Badge variant="warning" data-testid="revising-chip">
-              Revising
+              {row.kind === 'price_tag_request' ? 'Editing' : 'Revising'}
             </Badge>
           )}
         </div>
@@ -939,7 +949,7 @@ function SubmissionCard({
         {meta.customer && (
           <p
             className="text-sm text-foreground/80 break-words"
-            title={meta.customer}
+            title={meta.customerTitle ?? meta.customer}
           >
             <span className="text-muted-foreground">Customer: </span>
             {meta.customer}
@@ -971,7 +981,7 @@ function SubmissionCard({
         )}
         {row.last_revised_at ? (
           <p className="text-xs text-muted-foreground">
-            Revised{' '}
+            {row.kind === 'price_tag_request' ? 'Edited' : 'Revised'}{' '}
             {formatDateInMalaysia(row.last_revised_at)}
           </p>
         ) : (
@@ -1023,7 +1033,7 @@ function SubmissionPreviewDialog({
     if (meta.product) entries.push({ label: 'Product', value: meta.product });
     if (meta.project) entries.push({ label: 'Project', value: meta.project });
     if (meta.customer)
-      entries.push({ label: 'Customer', value: meta.customer });
+      entries.push({ label: 'Customer', value: meta.customerTitle ?? meta.customer });
     if (row.delivery_order_number)
       entries.push({ label: 'DO number', value: row.delivery_order_number });
     if (row.item_description)

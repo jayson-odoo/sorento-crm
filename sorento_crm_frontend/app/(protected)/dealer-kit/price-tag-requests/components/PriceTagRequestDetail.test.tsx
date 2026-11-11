@@ -437,8 +437,8 @@ describe('PriceTagRequestDetail', () => {
     switchTab('Lines');
     expect(await screen.findByText('No lines in this request.')).toBeTruthy();
 
-    switchTab('Sales Order');
-    expect(await screen.findByText('No sales order files attached.')).toBeTruthy();
+    switchTab('Files');
+    expect(await screen.findByText('No files attached.')).toBeTruthy();
   });
 
   it('voids on a countdown rather than asking first', async () => {
@@ -522,7 +522,7 @@ describe('PriceTagRequestDetail', () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
-    switchTab('Sales Order');
+    switchTab('Files');
 
     expect(await screen.findByText('ZZT-po.pdf')).toBeInTheDocument();
     expect(
@@ -541,7 +541,7 @@ describe('PriceTagRequestDetail', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tabs (D25, D10, AC-S1-6, AC-S1-7): Request / Lines / Sales Order replace
+// Tabs (D25, D10, AC-S1-6, AC-S1-7): Request / Lines / Files replace
 // the four stacked cards; the standalone Proof card, the Proof TAB and their
 // duplicate "Open the designer" button are gone - the design lives in the
 // designer, one click away through the header's own primary CTA. The Lines
@@ -549,13 +549,13 @@ describe('PriceTagRequestDetail', () => {
 // ---------------------------------------------------------------------------
 
 describe('PriceTagRequestDetail - tabs', () => {
-  it('renders the tabs in order: Request, Lines, Sales Order', async () => {
+  it('renders the tabs in order: Request, Lines, Files', async () => {
     mockGet.mockResolvedValue(requestWith());
     renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
-    expect(tabLabels).toEqual(['Request', 'Lines', 'Sales Order']);
+    expect(tabLabels).toEqual(['Request', 'Lines', 'Files']);
   });
 
   it('has no standalone Proof card and no Proof tab at all, at any status (D10)', async () => {
@@ -572,7 +572,7 @@ describe('PriceTagRequestDetail - tabs', () => {
       expect(screen.queryByRole('heading', { name: 'Proof' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
       const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
-      expect(tabLabels).toEqual(['Request', 'Lines', 'Sales Order']);
+      expect(tabLabels).toEqual(['Request', 'Lines', 'Files']);
 
       unmount();
     }

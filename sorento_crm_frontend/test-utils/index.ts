@@ -113,3 +113,46 @@ export async function tickCheckbox(
   await waitFor(() => expect(isTicked(screen.getByLabelText(label))).toBe(true));
   return screen.getByLabelText(label);
 }
+
+/**
+ * PRICETAG-REQUEST-LAYOUT: on the price tag request form, reach the typed lines (Add line): open
+ * "Price tags" if it is folded, then answer its one question with "Type the items" (or follow the
+ * switch link when the upload path is showing). A no-op once Add line is already on screen.
+ */
+export function chooseTypedItems(): void {
+  if (screen.queryByRole('button', { name: /Add line/ })) return;
+  const reachable = () =>
+    screen.queryByRole('button', { name: 'Type the items' }) ??
+    screen.queryByRole('button', { name: 'Type the items instead' });
+  if (!reachable()) fireEvent.click(screen.getByRole('button', { name: /^Price tags/ }));
+  const choice = reachable();
+  if (choice) fireEvent.click(choice);
+}
+
+/**
+ * PRICETAG-REQUEST-LAYOUT: the price tag request form approves through its preview. Clicks the
+ * page's Preview, then the popup's Approve (the suite's PriceTagLivePreview stand-in must render
+ * `popup.footer` while `popup.open`). Returns false when Preview opened nothing (a problem held it).
+ */
+export async function approveViaPreview(): Promise<boolean> {
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+  const approve = await screen
+    .findByRole('button', { name: /^approve$/i }, { timeout: 1000 })
+    .catch(() => null);
+  if (!approve) return false;
+  fireEvent.click(approve);
+  return true;
+}
+
+/**
+ * PRICETAG-REQUEST-LAYOUT: on the price tag request form, reach the existing Sales Order upload:
+ * open "Price tags" if folded, then pick "Upload a file" (or the switch link from typed lines).
+ */
+export function chooseUpload(): void {
+  const reachable = () =>
+    screen.queryByRole('button', { name: 'Upload a file' }) ??
+    screen.queryByRole('button', { name: 'Upload a file instead' });
+  if (!reachable()) fireEvent.click(screen.getByRole('button', { name: /^Price tags/ }));
+  const choice = reachable();
+  if (choice) fireEvent.click(choice);
+}
