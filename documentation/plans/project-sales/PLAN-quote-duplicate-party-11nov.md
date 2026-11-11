@@ -76,3 +76,13 @@ approved; carried when issued and unchanged since; NOT carried when source lines
 no approval state when none is needed; History entries on both; quotation source copies as a proposal.
 Vitest: action present for editors only, dialog disables Duplicate until a party is picked, posts the pick, header
 shows Copied from, History sheet renders an event entry without Restore.
+
+## Assistant coverage (DoD 6-8)
+
+No new list screen (6: n/a). No `ActionDef` (7): the repo has no ActionDef registry, and a duplicate needs a party
+and Attn picked on screen. Trigger to add one: the first quotation write the assistant gets. No gold eval file for
+project-sales actions exists to extend (8: n/a).
+
+## Owner questions left open (crew-ask on #2340)
+
+Q1 a quotation source copies as a proposal (built). Q2 the signature is not copied (built).

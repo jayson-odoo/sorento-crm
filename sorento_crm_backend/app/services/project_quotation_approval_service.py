@@ -582,7 +582,11 @@ def source_prices_approved(db: Session, source: ProjectQuotationDocument) -> boo
 
 
 def carry_approval(
-    db: Session, *, copy: ProjectQuotationDocument, source: ProjectQuotationDocument
+    db: Session,
+    *,
+    copy: ProjectQuotationDocument,
+    source: ProjectQuotationDocument,
+    actor_user_id: Optional[str] = None,
 ) -> bool:
     """Give a duplicate the source's approval when it needs one and the source's prices were
     approved as they stand. The copy then sits on ``approved`` like any approved document:
@@ -593,6 +597,19 @@ def carry_approval(
         return False
     _set_status(db, copy, _status_by_key(db, STATUS_APPROVED))
     copy.approver_user_id = source.approver_user_id
+    # Its own event (security review N1): the copy's approver never saw the copy, so the feed
+    # says whose approval it is and who carried it, rather than a second "approved".
+    _record(
+        db,
+        copy,
+        template="quotation_approval_carried",
+        body_text=(
+            f"{_actor_name(db, actor_user_id)} carried the approval of {source.document_no} "
+            f"to {copy.document_no}"
+        ),
+        actor_user_id=actor_user_id,
+        payload={"source_document_id": str(source.id), "source_document_no": source.document_no},
+    )
     db.flush()
     return True
 

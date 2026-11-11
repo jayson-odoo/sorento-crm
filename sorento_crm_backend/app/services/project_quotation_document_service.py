@@ -1236,6 +1236,10 @@ def duplicate_document(
             code="quotation_duplicate_party_required",
         )
     _form_drafts.assert_no_pending_draft(db, source)
+    # Security review S1: the approval is read from the row as it stands NOW, locked until this
+    # transaction ends, so a Revise committed after the source was loaded cannot be missed and
+    # cannot land between the line copy and the carry.
+    db.refresh(source, with_for_update=True)
     project = db.query(Project).filter(Project.id == source.project_id).first()
     if project is None:
         raise AppException(status_code=404, message="Project not found.", code="project_not_found")
@@ -1327,7 +1331,7 @@ def duplicate_document(
     _form_drafts.record_event(
         db, document=copy_doc, note=f"Copied from {source_ref}", user_id=actor_user_id
     )
-    if approvals.carry_approval(db, copy=copy_doc, source=source):
+    if approvals.carry_approval(db, copy=copy_doc, source=source, actor_user_id=actor_user_id):
         _form_drafts.record_event(
             db, document=copy_doc, note=f"Approval carried from {source_ref}", user_id=actor_user_id
         )

@@ -504,3 +504,40 @@ def test_serializer_carries_copied_from_label():
         payload = qdocs.serialize_document(db, copy)
         assert payload["copied_from_document_id"] == str(w.source.id)
         assert w.source.document_no in payload["copied_from_label"]
+
+
+def test_approval_read_fresh_not_from_a_stale_source_object():
+    """Security review S1: a Revise committed after the source was loaded must win. The status is
+    re-read (row locked) before the carry, so a source moved back to draft carries nothing."""
+    from app.services import project_quotation_approval_service as approvals
+
+    with blank_session() as db:
+        w = _world(db)
+        _discount(w)
+        _approve(w)
+        draft = approvals._status_by_key(db, approvals.STATUS_DRAFT)
+        # Another transaction's Revise, written past this session's loaded object.
+        db.query(ProjectQuotationDocument).filter(ProjectQuotationDocument.id == w.source.id).update(
+            {"approval_status_id": draft.id}, synchronize_session=False
+        )
+        assert _key(db, w.source) == "approved"  # the loaded object is stale
+        copy = _duplicate(w)
+        assert _key(db, copy) != "approved"
+
+
+def test_carried_approval_is_on_the_project_feed():
+    """Security review N1: the carry is recorded as its own event, naming source and actor."""
+    from app.models.activities import ActivityEvent
+
+    with blank_session() as db:
+        w = _world(db)
+        _discount(w)
+        _approve(w)
+        copy = _duplicate(w)
+        rows = (
+            db.query(ActivityEvent)
+            .filter(ActivityEvent.system_template == "quotation_approval_carried")
+            .all()
+        )
+        mine = [r for r in rows if (r.system_payload or {}).get("document_id") == str(copy.id)]
+        assert mine and w.source.document_no in (mine[0].body_text or "")
