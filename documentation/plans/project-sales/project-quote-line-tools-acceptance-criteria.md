@@ -17,9 +17,13 @@ Plan: `PLAN-project-quote-line-tools-11nov.md`.
   shows "Below default price" once the live verdict answers; typing it back to the default removes it.
 - AC-7 The live verdict returns `is_discounted` by the same rule as the save: below the series price
   where the series names the product or set, else below the list price; false when neither exists.
-- AC-8 The lines toolbar has a multi-select "Flags" filter with "Non-standard" and
-  "Below default price"; choosing options shows only lines matching any of them, AND-ed with the
+- AC-8 The lines toolbar has a multi-select "Flags" filter with "Non-standard",
+  "Below default price" and "Below minimum price"; choosing options shows only lines matching any of them, AND-ed with the
   search; numbering and totals do not change; each option shows its count on the tab.
 - AC-9 On a saved, unedited quotation, the number of "Below default price" pills across all tabs
   equals the banner's "N lines are priced below the default price".
 - AC-10 Usable at 375px and 1280px.
+- AC-11 Each "N lines are" count in the approval banner (outside the series, below the minimum
+  price, below the default price) is a link: it sets the filter to that flag and opens the first
+  area tab holding such a line. The sentence reads exactly as the server's `approval_reasons`.
+- AC-12 The filter stays on when switching area tabs, on the read page and on the form page.

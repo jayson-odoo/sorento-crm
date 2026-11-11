@@ -1,6 +1,6 @@
 # PLAN: project quote line tools (duplicate line, below-default badge, line filter)
 
-Status: Build. Small fix track by diff (no migration, no auth/RBAC change, no new ingest surface;
+Status: Review (built; reviewer + cloud browser pass running). Small fix track by diff (no migration, no auth/RBAC change, no new ingest surface;
 one read-only field added to an existing verdict response). Lane PROJECT-QUOTE-LINE-TOOLS.
 UAC: `project-quote-line-tools-acceptance-criteria.md`.
 
@@ -62,12 +62,23 @@ Non-standard / Below default price.
    live verdict, which now also returns `is_discounted` computed by the same default-price rule the
    save runs (one backend function, `default_price_for`). Edit and view modes, also on a new unsaved
    scope.
-3. **Filter.** A `SearchableMultiSelect` ("Flags") beside "Search lines" with options "Non-standard"
-   and "Below default price" (see question 2 for "Below minimum price"). Several options = a line
+3. **Filter.** A `SearchableMultiSelect` ("Flags") beside "Search lines" with options "Non-standard",
+   "Below default price" and "Below minimum price". Several options = a line
    matching ANY of them; combined with the search box by AND. Each option shows how many lines on
    this tab match it (`badgeText`). Rows hide the same way search hides them: numbers and totals do
    not change. A line duplicated while the filter is on stays visible until the filter changes, so
    the new copy cannot vanish under the caret. Edit and view modes.
+
+## Owner rulings (11 Nov 2026 ~14:45, answers to the card)
+
+- Q1 yes: each "N lines are" count in the approval banner is a link. It sets the Flags filter to
+  what it counts, opens the Header tab, and opens the first area tab (by sort order) whose current
+  version holds such a line by its STORED flags (the ones the banner counts). The below-proposal
+  count has no filter, so it stays text.
+- Q2 yes: "Below minimum price" is a third filter option (stored / live `is_below_floor`), so every
+  banner clause has its filter.
+- Q3 yes: the filter stays on across area tabs. It is held by the page (document context on the
+  read page, `FormLines` on the form page), not by the per-scope editor.
 
 ## Edge cases
 
