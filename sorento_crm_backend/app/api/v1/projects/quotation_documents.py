@@ -330,7 +330,7 @@ def preview_quotation_cover(
         body = payload.model_dump(exclude_unset=True)
         if body.get("document_id"):
             body["document_id"] = validate_uuid_path(str(body["document_id"]), resource="Quotation")
-        return svc.preview_cover(db, project=project, payload=body)
+        return svc.preview_cover(db, project=project, payload=body, viewer_id=_user["id"])
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
