@@ -1,10 +1,9 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
-import { PageHeader } from '@/components/common/PageHeader';
-import BackToList from '@/components/common/BackToList';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 import SampleRequestDetail from '../components/SampleRequestDetail';
 import SampleRequestDetailTabs from '../components/SampleRequestDetailTabs';
+import { SampleRequestPageHeader } from '../components/SampleRequestPageHeader';
 
 export const metadata: Metadata = {
   title: 'Sample Request',
@@ -19,12 +18,7 @@ export default async function SampleRequestDetailPage({
   const { id } = await params;
   return (
     <Container>
-      <PageHeader
-        title="Sample Request"
-        actions={
-          <BackToList hideForLimited="sample_request" listPath="/project-sales/sample-requests" label="Back to sample requests" />
-        }
-      />
+      <SampleRequestPageHeader title="Sample Request" mode="back" />
       <div className="mt-6">
         <SampleRequestDetailTabs id={id}>
           <RecordEntityRegistrar entityType="sample_request" id={id} />

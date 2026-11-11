@@ -163,6 +163,8 @@ export interface SampleRequestRow extends SampleRequestDateAnswer {
   salesperson_name: string | null;
   line_count: number;
   board_mounting: boolean;
+  /** The day it was delivered (the list shows it instead of the planned date once delivered). */
+  delivered_at?: string | null;
 }
 
 /** The source quotation a product search is narrowed to (SFQ-27). */

@@ -27,6 +27,32 @@ describe('shownDeliveryDate', () => {
   });
 });
 
+describe('shownDeliveryDate once delivered (crew, 11 Nov 19:40)', () => {
+  it('a delivered request shows the real delivered date and no New date badge', () => {
+    expect(
+      shownDeliveryDate({
+        delivery_date: '2026-11-18',
+        date_feasible: false,
+        proposed_delivery_date: '2026-11-21',
+        status: 'delivered',
+        delivered_at: '2026-11-20',
+      }),
+    ).toEqual({ date: '2026-11-20', isNew: false });
+  });
+
+  it('delivered without a recorded day falls back to the agreed date, still no badge', () => {
+    expect(
+      shownDeliveryDate({
+        delivery_date: '2026-11-18',
+        date_feasible: false,
+        proposed_delivery_date: '2026-11-21',
+        status: 'delivered',
+        delivered_at: null,
+      }),
+    ).toEqual({ date: '2026-11-21', isNew: false });
+  });
+});
+
 describe('dateAnswerText', () => {
   it('reads each answer', () => {
     expect(dateAnswerText({ date_feasible: true, proposed_delivery_date: null }, fmt)).toBe(

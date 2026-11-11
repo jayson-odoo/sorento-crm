@@ -1540,6 +1540,7 @@ def _row_common(req: SampleRequest, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "stage": stage_for(key),
         "date_feasible": req.date_feasible,
         "proposed_delivery_date": req.proposed_delivery_date,
+        "delivered_at": req.delivered_at,
     }
 
 

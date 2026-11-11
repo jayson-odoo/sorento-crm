@@ -14,16 +14,20 @@ import { DELIVERY_MODE_LABELS, type SampleRequestRow } from '@/types/sampleReque
 import { useProjectSampleRequestsQuery } from '../../sample-requests/hooks/useSampleRequests';
 import { DeliveryCell, deliveryText } from '../../sample-requests/components/SampleRequestsList';
 import type { Project } from '../../_shared/types/project.types';
+import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 /**
- * This project's sample requests, every status. The row opens the request page; Create opens
- * the full New Sample Request page with this project already picked.
+ * This project's sample requests, every status (a project has as many as it needs). The row opens
+ * the request page; Create opens the full New Sample Request page with this project already
+ * picked. Both carry this tab as the origin, so Back, Save and Submit come back here (owner 11 Nov
+ * 16:30 and 19:40).
  */
 export function SampleRequestsPanel({ project }: { project: Project }) {
   const router = useRouter();
   const canCreate = useHasPermission('projects.sample_requests.create');
   const requests = useProjectSampleRequestsQuery(project.id);
   const rows = React.useMemo(() => requests.data?.data ?? [], [requests.data]);
+  const origin = projectTabOriginHref(project.id, 'sample-requests');
 
   const columns = React.useMemo<ColumnDef<SampleRequestRow>[]>(
     () => [
@@ -63,7 +67,7 @@ export function SampleRequestsPanel({ project }: { project: Project }) {
         accessorFn: (row) => deliveryText(row),
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
         cell: ({ row }) => <DeliveryCell row={row.original} />,
-        size: 120,
+        size: 190,
         meta: { headerTitle: 'Delivery' },
       },
       {
@@ -119,7 +123,9 @@ export function SampleRequestsPanel({ project }: { project: Project }) {
           <Button
             size="sm"
             onClick={() =>
-              router.push(`/project-sales/sample-requests/new?project_id=${project.id}`)
+              router.push(
+                withReviewOrigin(`/project-sales/sample-requests/new?project_id=${project.id}`, origin),
+              )
             }
           >
             <Plus />
@@ -134,7 +140,9 @@ export function SampleRequestsPanel({ project }: { project: Project }) {
       isLoading={requests.isLoading}
       error={requests.isError ? requests.error : undefined}
       emptyTitle="No sample requests on this project"
-      onRowClick={(row) => router.push(`/project-sales/sample-requests/${row.id}`)}
+      onRowClick={(row) =>
+        router.push(withReviewOrigin(`/project-sales/sample-requests/${row.id}`, origin))
+      }
     />
   );
 }

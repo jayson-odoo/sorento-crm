@@ -58,6 +58,9 @@ import {
   type SampleRequestStatus,
 } from '@/types/sampleRequest';
 import { OrderInquiryStockGrid } from '../../_shared/components/OrderInquiryStockGrid';
+import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
+import { withReviewOrigin } from '../../_shared/lib/reviewOrigin';
+import { projectFromOrigin, projectPagerQuery } from './SampleRequestPageHeader';
 import {
   sampleRequestsPagerQuery,
   useSampleRequestMutations,
@@ -459,6 +462,8 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
 
 function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const router = useRouter();
+  const origin = useReviewOriginHref();
+  const originProject = projectFromOrigin(origin);
   const { data: request, isLoading, isError, error } = useSampleRequestQuery(requestId);
   const { submit, move, saveInternal, answerDate, linkConsignment } =
     useSampleRequestMutations();
@@ -485,7 +490,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
     watchFromMount: true,
     successMessage: 'Draft deleted',
     invalidateKeys: [['sample-requests']],
-    onCommitted: () => router.push(BASE_PATH),
+    onCommitted: () => router.push(origin ?? BASE_PATH),
   });
 
   const lineColumns = useMemo<ColumnDef<SampleRequestLine>[]>(
@@ -661,7 +666,10 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
         </div>
         <DetailActions
           pager={{
-            ...sampleRequestsPagerQuery,
+            // From a project's tab, prev/next walks that project's requests (owner 11 Nov 19:40).
+            ...(originProject && origin
+              ? projectPagerQuery(originProject, origin)
+              : sampleRequestsPagerQuery),
             detailPath: BASE_PATH,
             currentId: requestId,
             ariaLabel: 'sample request',
@@ -741,7 +749,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
               ))}
               {isDraft && ownerActs && (
                 <Button variant="outline" asChild>
-                  <Link href={`${BASE_PATH}/${r.id}/edit`}>Edit</Link>
+                  <Link href={withReviewOrigin(`${BASE_PATH}/${r.id}/edit`, origin)}>Edit</Link>
                 </Button>
               )}
             </div>

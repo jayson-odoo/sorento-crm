@@ -9,8 +9,20 @@ export const STAGE_LABELS = { processing: 'Processing', delivery: 'Delivery' } a
 
 /** The date the list shows and sorts by: the team's proposed date when it gave one. */
 export function shownDeliveryDate(
-  row: SampleRequestDateAnswer & { delivery_date: string | null },
+  row: SampleRequestDateAnswer & {
+    delivery_date: string | null;
+    status?: string | null;
+    delivered_at?: string | null;
+  },
 ): { date: string | null; isNew: boolean } {
+  // Delivered: the day it actually arrived, and the "New date" question is over (crew, 11 Nov).
+  if (row.status === 'delivered') {
+    const agreed =
+      row.date_feasible === false && row.proposed_delivery_date
+        ? row.proposed_delivery_date
+        : row.delivery_date;
+    return { date: row.delivered_at || agreed, isNew: false };
+  }
   if (row.date_feasible === false && row.proposed_delivery_date) {
     return { date: row.proposed_delivery_date, isNew: true };
   }

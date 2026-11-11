@@ -787,7 +787,12 @@ describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
       { projectId: 'p1', toStatusId: 's-sample' },
       expect.anything(),
     );
-    expect(push).toHaveBeenCalledWith('/project-sales/sample-requests/new?project_id=p1');
+    // SAMPLE-REQUEST-V2 (owner 16:30): the project tab rides along so Submit comes back here.
+    expect(push).toHaveBeenCalledWith(
+      `/project-sales/sample-requests/new?project_id=p1&from=${encodeURIComponent(
+        '/project-sales/p1?tab=sample-requests',
+      )}`,
+    );
   });
 
   it('AC-PS-21: Sponsorship moves, then opens a new sponsorship form for this project', () => {
