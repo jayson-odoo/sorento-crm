@@ -233,10 +233,13 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   a chatbot-module surface mounted in a shared router, not core reaching in - the asymmetry
   the rule protects (core never imports the package) is unchanged.
 
-  `app/services/dealer_access_screen.py` was listed at MAIN-RED-11NOV (11 Nov 2026): #2294's
-  Dealer access screen writes through the agent's own grant path (`agent.contact_grant`,
-  `agent.writes`) by design, the same doorway shape as `contact_service.py`. Its tests moved
-  to `tests/chatbot/agent/`.
+  Exception, recorded at MAIN-RED-11NOV (11 Nov 2026): `app/services/dealer_access_screen.py`
+  IS a core caller. #2294's Dealer access screen writes through the agent's own grant path
+  (`agent.contact_grant`, `agent.writes`) by design, so the checks, texts and audit rows are
+  the agent's, as `app/services/contact_service.py` (listed earlier, not recorded here until
+  now) does for profile facts. Lift trigger: when the package moves behind HTTP, or a second
+  core caller needs the grant path, that path moves into a core service and both entries go.
+  The screen's tests moved to `tests/chatbot/agent/`.
 - AC-003 `[BE]` Given the `chatbot` migration, when applied, then schema `chatbot` exists and
   table `chatbot.turns` exists with `id, contact_respond_id, envelope (jsonb), status
   (queued|processing|delegated|done|failed), stage, branch_kind, error, attempt (int, default

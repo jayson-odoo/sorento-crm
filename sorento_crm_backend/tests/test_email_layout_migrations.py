@@ -195,7 +195,8 @@ def test_system_codes_inserted_once_and_never_overwrite():  # AC-EM096
 #: A system layout changed after eml_0002 froze its copy, with a later data migration that moves a
 #: still-seeded row from eml_0002's document to the new one: code -> (revision, old attr, new attr).
 #: The frozen copy is an applied migration and never changes, so the check is the chain: eml_0002's
-#: copy is that migration's "old", and its "new" is what the registry holds now.
+#: copy is that migration's "old", and its "new" is what the registry holds now. One move per code;
+#: a second later move of the same code turns the tuple into an ordered list.
 LATER_LAYOUT_MOVES = {
     # NPA-FORM-SLA (#2261): the NPA sends this notice too, so the button reads `button_label`.
     "stock_inquiry_created": ("npasla_0001_seed_configs", "SEEDED_LAYOUT", "LABELLED_LAYOUT"),
@@ -218,6 +219,9 @@ def test_frozen_documents_match_registry():
         if code in LATER_LAYOUT_MOVES:
             revision, old_attr, new_attr = LATER_LAYOUT_MOVES[code]
             later = scripts[revision]
+            sd = ScriptDirectory.from_config(Config("alembic.ini"))
+            ancestors = {r.revision for r in sd.walk_revisions(base="base", head=revision)}
+            assert "eml_0002_seed_layouts" in ancestors, (code, revision)
             assert mig.SYSTEM[code]["layout"] == json.loads(getattr(later, old_attr)), code
             assert t.document() == json.loads(getattr(later, new_attr)), code
         else:

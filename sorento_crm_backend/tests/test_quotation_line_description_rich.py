@@ -321,5 +321,3 @@ def test_line_text_of_a_styled_list_reads_one_item_per_line():
     assert quotes.line_text(SimpleNamespace(description_snapshot=value)) == (
         "• WC c/w seat\n• angle valve"
     )
-
-
