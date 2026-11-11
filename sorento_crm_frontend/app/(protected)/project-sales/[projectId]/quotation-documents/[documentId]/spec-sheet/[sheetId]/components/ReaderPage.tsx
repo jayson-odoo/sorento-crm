@@ -21,6 +21,7 @@ import { normalizeLayers } from '@/lib/dealer-kit/tag-template-types';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { cn } from '@/lib/utils';
+import { codeWithName } from '@/lib/product-display';
 
 import {
   specSheetDetailKey,
@@ -52,6 +53,36 @@ function editableField(layer: TagLayer): EditableField | null {
       FIELD_TOKENS[f].test(text),
     ) ?? null
   );
+}
+
+/**
+ * The page's "Add accessory" choices: another page's item with no picks of its own, or one this
+ * page already picked. A catalogue product's name is often its code, so the label is the code
+ * once, with the name only when it says something more (`codeWithName`, the shared builder).
+ */
+export function accessoryOptionsFor(
+  page: Pick<SpecSheetPage, 'key' | 'accessories'>,
+  pages: ReadonlyArray<Pick<SpecSheetPage, 'key' | 'code' | 'name' | 'picked'>>,
+): SearchableSelectOption[] {
+  return [
+    ...pages
+      .filter(
+        (other) =>
+          other.key !== COVER &&
+          other.key !== page.key &&
+          other.picked.length === 0,
+      )
+      .map((other) => ({
+        value: other.key,
+        label: codeWithName(other.code, other.name, ' ').trim(),
+      })),
+    ...page.accessories
+      .filter((a) => a.source === 'picked' && a.key)
+      .map((a) => ({
+        value: a.key as string,
+        label: codeWithName(a.code, a.name, ' ').trim(),
+      })),
+  ];
 }
 
 export function ResetPageButton({
@@ -339,26 +370,7 @@ export const ReaderPage = React.memo(function ReaderPage({
     setEditing(null);
   };
 
-  // Another page's item with no picks of its own, or one this page already picked.
-  const accessoryOptions: SearchableSelectOption[] = [
-    ...pages
-      .filter(
-        (other) =>
-          other.key !== COVER &&
-          other.key !== page.key &&
-          other.picked.length === 0,
-      )
-      .map((other) => ({
-        value: other.key,
-        label: `${other.code} ${other.name}`.trim(),
-      })),
-    ...page.accessories
-      .filter((a) => a.source === 'picked' && a.key)
-      .map((a) => ({
-        value: a.key as string,
-        label: `${a.code} ${a.name}`.trim(),
-      })),
-  ];
+  const accessoryOptions = accessoryOptionsFor(page, pages);
 
   const title = isCover ? 'Cover' : page.code || page.name;
   const showActions = canEdit && (current || hover);
