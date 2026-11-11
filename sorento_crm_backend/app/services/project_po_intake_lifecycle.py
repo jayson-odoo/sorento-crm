@@ -36,6 +36,7 @@ from app.models.projects import (
 from app.services.error_handler import AppException
 from app.services.document_extraction import page_failure_reason
 from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
+    PO_PAGE_SCHEMA,
     STATE_QUEUED,
     STATE_RUNNING,
     STATE_DONE,
@@ -88,6 +89,16 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
 )
 
 logger = logging.getLogger(__name__)
+
+# What the panel says when a read stops for a reason the person cannot fix by hand. The
+# exception itself is logged; its text never reaches the screen (owner standing rule).
+_READ_STOPPED = (
+    "The reader stopped before it finished. Read it again; if it stops again, upload it "
+    "again. The file is stored and the lines can also be filled in by hand."
+)
+_STORED_DOCUMENT_UNREADABLE = (
+    "The stored file could not be opened for reading. Upload the document again."
+)
 
 
 class POIntakeLifecycleMixin:
@@ -494,11 +505,9 @@ class POIntakeLifecycleMixin:
             content, mime = self._document_bytes(version)
         except AppException as exc:
             return self._fail(version, _reason(exc))
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("could not fetch the document for PO version %s", version.id)
-            return self._fail(
-                version, f"The stored document could not be read back ({str(exc)[:200]})."
-            )
+            return self._fail(version, _STORED_DOCUMENT_UNREADABLE)
 
         def _on_page(page) -> None:
             """Progress, visible mid-read: reuses the exact shape ``persist_pages``
@@ -523,28 +532,38 @@ class POIntakeLifecycleMixin:
 
         try:
             result = extract_document(
-                self.db, content, mime, prompt_key="po_extractor", on_page=_on_page
+                self.db,
+                content,
+                mime,
+                prompt_key="po_extractor",
+                on_page=_on_page,
+                json_schema=PO_PAGE_SCHEMA,
             )
         except ExtractionUnavailable as exc:
             return self._fail(version, str(exc))
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
+            # The exception's own text goes to the log, never to the screen: it is a
+            # Python sentence the person reading the panel cannot act on.
             logger.exception("PO extraction failed for version %s", version.id)
-            return self._fail(
-                version,
-                f"The document reader failed ({str(exc)[:200]}). The document is stored "
-                "and the lines can be filled in by hand.",
-            )
+            return self._fail(version, _READ_STOPPED)
 
-        summary = self.persist_pages(
-            version,
-            result.pages,
-            model=result.model,
-            page_count=result.page_count,
-            tokens_in=result.prompt_tokens,
-            tokens_out=result.completion_tokens,
-            elapsed_ms=result.elapsed_ms,
-        )
-        self.db.commit()
+        try:
+            summary = self.persist_pages(
+                version,
+                result.pages,
+                model=result.model,
+                page_count=result.page_count,
+                tokens_in=result.prompt_tokens,
+                tokens_out=result.completion_tokens,
+                elapsed_ms=result.elapsed_ms,
+            )
+            self.db.commit()
+        except Exception:  # noqa: BLE001
+            # Outside the read's own guard until 11 Nov 2026: one odd page answer raised
+            # here, escaped this method, and the task's last-resort write put
+            # "'list' object has no attribute 'get'" on screen for a whole document.
+            logger.exception("PO lines could not be saved for version %s", version.id)
+            return self._fail(version, _READ_STOPPED)
         return summary
 
     def _document_bytes(self, version: ProjectPOVersion) -> Tuple[bytes, str]:

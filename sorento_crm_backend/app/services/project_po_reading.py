@@ -126,6 +126,76 @@ _HEADER_ALIASES = {
 }
 
 
+def _strict_object(properties: Dict[str, Any]) -> Dict[str, Any]:
+    """An object every structured-output provider accepts: OpenAI strict mode refuses one
+    that leaves a property out of ``required`` or allows extras; ``propertyOrdering``
+    keeps Gemini writing the fields in the prompt's order (stripped for the others)."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": list(properties),
+        "propertyOrdering": list(properties),
+    }
+
+
+def _nullable(kind: str) -> Dict[str, Any]:
+    return {"type": [kind, "null"]}
+
+
+# The page shape the `po_extractor` prompt asks for (ai_prompt_registry
+# `_po_extractor_fallback`), sent as the reader's structured-output schema. JSON mode
+# alone lets a model answer a top-level array: on 11 Nov 2026 a 22-page customer PO
+# came back with page 5 as an array holding one page object, and the read failed with
+# "'list' object has no attribute 'get'". The keys are the prompt's own, so a page read
+# under the schema persists exactly as one read without it.
+PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
+    {
+        "header": _strict_object(
+            {
+                key: _nullable("string")
+                for key in (
+                    "po_number", "po_date", "term", "sales_person", "cust_order_no", "remark",
+                )
+            }
+        ),
+        "lines": {
+            "type": "array",
+            "items": _strict_object(
+                {
+                    "no": _nullable("integer"),
+                    "stock_code": _nullable("string"),
+                    "description": _nullable("string"),
+                    "qty": _nullable("number"),
+                    "uom": _nullable("string"),
+                    "unit_price": _nullable("number"),
+                    "amount": _nullable("number"),
+                    "struck_through": {"type": "boolean"},
+                    "struck_parts": {"type": "array", "items": {"type": "string"}},
+                }
+            ),
+        },
+        "annotations": {
+            "type": "array",
+            "items": _strict_object(
+                {
+                    "text": {"type": "string"},
+                    "date": _nullable("string"),
+                    "refers_to_items": {"type": "array", "items": {"type": "integer"}},
+                    "meaning": _nullable("string"),
+                    "kind": {
+                        "type": ["string", "null"],
+                        "enum": sorted(INTERPRETATIONS) + [None],
+                    },
+                    "proposed_code": _nullable("string"),
+                    "successor_po_number": _nullable("string"),
+                }
+            ),
+        },
+    }
+)
+
+
 
 # --------------------------------------------------------------- number handling
 
