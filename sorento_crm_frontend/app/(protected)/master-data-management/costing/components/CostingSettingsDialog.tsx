@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
@@ -23,6 +24,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { FOREIGN_CURRENCY_CODES } from '@/lib/currencies';
+import { formatLocalDateToYyyyMmDd } from '@/lib/helpers';
 import { toast } from '@/lib/toast';
 import {
   COSTING_RATES_KEY,
@@ -135,7 +137,13 @@ function RateForm() {
           <Label htmlFor="costing-rate-from" className="text-xs text-muted-foreground">
             Effective from
           </Label>
-          <Input id="costing-rate-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <DatePicker
+            id="costing-rate-from"
+            ariaLabel="Effective from"
+            portal
+            value={parseDateInput(from)}
+            onChange={(d) => setFrom(d ? formatLocalDateToYyyyMmDd(d) : '')}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="costing-rate-value" className="text-xs text-muted-foreground">
@@ -209,21 +217,24 @@ function RatesTab() {
       {
         id: 'currency',
         accessorFn: (r) => r.currency,
-        header: ({ column }) => <DataGridColumnHeader title="Currency" column={column} />,
+        sortUndefined: 'last',
+    header: ({ column }) => <DataGridColumnHeader title="Currency" column={column} />,
         cell: ({ row }) => <span className="font-medium">{row.original.currency}</span>,
         size: 90,
       },
       {
         id: 'effective_from',
         accessorFn: (r) => r.effective_from,
-        header: ({ column }) => <DataGridColumnHeader title="Effective from" column={column} />,
+        sortUndefined: 'last',
+    header: ({ column }) => <DataGridColumnHeader title="Effective from" column={column} />,
         cell: ({ row }) => <span className="whitespace-nowrap">{shortDate(row.original.effective_from)}</span>,
         size: 130,
       },
       {
         id: 'units',
         accessorFn: (r) => r.units_per_base ?? undefined,
-        header: ({ column }) => <DataGridColumnHeader title="Units per MYR 1" column={column} />,
+        sortUndefined: 'last',
+    header: ({ column }) => <DataGridColumnHeader title="Units per MYR 1" column={column} />,
         cell: ({ row }) => trimmed(row.original.units_per_base, 4),
         size: 140,
         meta: RIGHT,
@@ -231,7 +242,8 @@ function RatesTab() {
       {
         id: 'myr',
         accessorFn: (r) => r.rate_to_base,
-        header: ({ column }) => <DataGridColumnHeader title="MYR per unit" column={column} />,
+        sortUndefined: 'last',
+    header: ({ column }) => <DataGridColumnHeader title="MYR per unit" column={column} />,
         cell: ({ row }) => trimmed(row.original.rate_to_base, 6),
         size: 130,
         meta: RIGHT,
@@ -239,7 +251,8 @@ function RatesTab() {
       {
         id: 'status',
         accessorFn: (r) => STATUS[r.status].label,
-        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        sortUndefined: 'last',
+    header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <Badge variant={STATUS[row.original.status].variant} appearance="light" size="sm">
             {STATUS[row.original.status].label}
@@ -250,7 +263,8 @@ function RatesTab() {
       {
         id: 'note',
         accessorFn: (r) => r.note ?? undefined,
-        header: ({ column }) => <DataGridColumnHeader title="Note" column={column} />,
+        sortUndefined: 'last',
+    header: ({ column }) => <DataGridColumnHeader title="Note" column={column} />,
         cell: ({ row }) =>
           row.original.note ? (
             <span className="block truncate" title={row.original.note}>
@@ -445,6 +459,7 @@ const RULE_COLUMNS: ColumnDef<CategoryRule>[] = [
   {
     id: 'category',
     accessorFn: (r) => r.category_name,
+    sortUndefined: 'last',
     header: ({ column }) => <DataGridColumnHeader title="Category" column={column} />,
     cell: ({ row }) => (
       <span className="block truncate" title={row.original.category_name}>
@@ -453,8 +468,8 @@ const RULE_COLUMNS: ColumnDef<CategoryRule>[] = [
     ),
     size: 220,
   },
-  { id: 'mode', accessorFn: (r) => r.mode ?? undefined, header: ({ column }) => <DataGridColumnHeader title="Mode" column={column} />, cell: ({ row }) => <RuleMode rule={row.original} />, size: 190 },
-  { id: 'value', accessorFn: (r) => r.value ?? undefined, header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />, cell: ({ row }) => <RuleValue rule={row.original} />, size: 130, meta: RIGHT },
+  { id: 'mode', accessorFn: (r) => r.mode ?? undefined, sortUndefined: 'last', header: ({ column }) => <DataGridColumnHeader title="Mode" column={column} />, cell: ({ row }) => <RuleMode rule={row.original} />, size: 190 },
+  { id: 'value', accessorFn: (r) => r.value ?? undefined, sortUndefined: 'last', header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />, cell: ({ row }) => <RuleValue rule={row.original} />, size: 130, meta: RIGHT },
 ];
 
 function RulesForm({ rules }: { rules: CategoryRule[] }) {

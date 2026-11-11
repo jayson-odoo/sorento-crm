@@ -48,19 +48,18 @@ export function CostingSupplierGrid({
     () => [
       {
         id: 'supplier',
-        accessorFn: (r) => r.supplier_code,
+        accessorFn: (r) => r.supplier_name?.toLowerCase() ?? undefined,
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
         sortUndefined: 'last',
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate font-medium" title={row.original.supplier_code}>
-              {row.original.supplier_code}
+        // One line: the NAME, cut with an ellipsis, the code in the title (as the main grid shows it).
+        cell: ({ row }) => {
+          const { supplier_name: name, supplier_code: code } = row.original;
+          return (
+            <span className="block truncate font-medium" title={name ? `${name} (${code})` : code}>
+              {name ?? code}
             </span>
-            <span className="block truncate text-xs text-muted-foreground" title={row.original.supplier_name}>
-              {row.original.supplier_name}
-            </span>
-          </div>
-        ),
+          );
+        },
         size: 180,
       },
       {

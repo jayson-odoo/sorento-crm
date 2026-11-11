@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -46,6 +46,8 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { formatLocalDateToYyyyMmDd } from '@/lib/helpers';
 import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { toast } from '@/lib/toast';
@@ -115,6 +117,11 @@ const SERVER_SORT: Record<string, string> = {
   list_price: 'list_price',
   margin: 'margin_pct',
 };
+
+/** The column id behind a server sort key (the URL holds the key). */
+const SORT_ID_OF: Record<string, string> = Object.fromEntries(
+  Object.entries(SERVER_SORT).map(([id, key]) => [key, id]),
+);
 
 // ------------------------------------------------------------------ drafts
 
@@ -533,18 +540,33 @@ function CostingPage() {
   const costOne = splitMulti(cost).length === 1 ? splitMulti(cost)[0] : '';
   const asOf = params.get('as_of') ?? '';
 
+  // Writes build on the last query written, not on the render's `params`: two writes in one tick
+  // (a filter change, and the page reset that follows it) must both land, and `params` only catches
+  // up once the navigation does.
+  const urlNow = params.toString();
+  const urlRef = useRef(urlNow);
+  useEffect(() => {
+    urlRef.current = urlNow;
+  }, [urlNow]);
   const writeUrl = (next: Record<string, string>) => {
-    const sp = new URLSearchParams(params.toString());
+    const sp = new URLSearchParams(urlRef.current);
     for (const [key, value] of Object.entries(next)) {
       if (value) sp.set(key, value);
       else sp.delete(key);
     }
     const qs = sp.toString();
+    if (qs === urlRef.current) return;
+    urlRef.current = qs;
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
-  const { value: searchText, setValue: setSearchText, debouncedValue: debouncedSearch, isSettling } =
-    useDebouncedSearch();
+  const {
+    value: searchText,
+    setValue: setSearchText,
+    debouncedValue: debouncedSearch,
+    isSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [expanded, setExpanded] = useState<ExpandedState>({});
@@ -598,11 +620,38 @@ function CostingPage() {
     invalidateKeys: [[...COSTING_ROWS_KEY], [...COSTING_PARTY_KEY]],
   });
 
+  // The address bar holds the grid's sort, search and page like the filters (standing rule): read
+  // back on Back or a pasted link (the shared hook), and written as they change.
+  useListStateFromUrl((state) => {
+    setPagination((p) =>
+      p.pageIndex === state.pageIndex && p.pageSize === state.pageSize
+        ? p
+        : { pageIndex: state.pageIndex, pageSize: state.pageSize },
+    );
+    const restored = state.sorting
+      .map((x) => ({ id: SORT_ID_OF[x.id], desc: x.desc }))
+      .filter((x): x is { id: string; desc: boolean } => !!x.id);
+    setSorting((now) =>
+      now[0]?.id === restored[0]?.id && !!now[0]?.desc === !!restored[0]?.desc ? now : restored,
+    );
+    if (state.searchQuery !== debouncedSearch) resetSearch(state.searchQuery);
+  });
   const filterKey = [partyId, debouncedSearch, category, brand, method, cost, asOf].join('|');
+  useResetPageOnFilterChange(setPagination, [filterKey]);
   useEffect(() => {
-    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
     setExpanded({});
   }, [filterKey]);
+  useEffect(() => {
+    writeUrl({
+      sort: sortKey ?? '',
+      dir: sortKey ? (sortDesc ? 'desc' : 'asc') : '',
+      query: debouncedSearch,
+      page: pagination.pageIndex > 0 ? String(pagination.pageIndex + 1) : '',
+      limit: pagination.pageSize !== 50 ? String(pagination.pageSize) : '',
+    });
+    // writeUrl reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortKey, sortDesc, debouncedSearch, pagination.pageIndex, pagination.pageSize]);
   useEffect(() => {
     if (view !== 'party') setSorting((all) => (all.some((x) => x.id === 'margin') ? all.filter((x) => x.id !== 'margin') : all));
   }, [view]);
