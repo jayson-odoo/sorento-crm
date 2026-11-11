@@ -7,8 +7,8 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -27,8 +27,9 @@ if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
   };
 }
 
+const router = { push: vi.fn(), replace: vi.fn(), back: vi.fn() };
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  useRouter: () => router,
   usePathname: () => '/project-sales/p1/quotation-documents/d1/certification/cert-1',
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -154,6 +155,8 @@ beforeEach(() => {
   saveBoxes.mutate.mockReset();
   detailQuery.mockReset();
   pdf.loadMs = 0;
+  router.push.mockReset();
+  router.replace.mockReset();
 });
 
 describe('CertificateReader (CERT-TAB-UX)', () => {
@@ -322,6 +325,130 @@ describe('every open lands on the first box', () => {
     openStrict('cert-1', detail({ boxes: [] }));
     await new Promise((r) => setTimeout(r, 80));
     expect(document.querySelector('[data-flashed]')).toBeNull();
+  });
+});
+
+describe('unsaved boxes ask before leaving (shared useUnsavedChangesGuard)', () => {
+  const LIST = '/project-sales/p1/quotation-documents/d1/certification';
+  const leaveTitle = () => screen.queryByText('Leave with unsaved changes?');
+  /** Delete a box, which leaves an unsaved change. */
+  async function makeUnsaved() {
+    fireEvent.contextMenu(boxesOnPage()[0] as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /delete/i }));
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    // The box menu hides the page from the accessibility tree until it has closed.
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  }
+  function click(link: Element) {
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    link.dispatchEvent(event);
+    return event;
+  }
+  const went = () => [...router.push.mock.calls, ...router.replace.mock.calls].map((c) => c[0]);
+  /** A link outside the reader: the sidebar, or another certificate. */
+  function outsideLink(href: string) {
+    const a = document.createElement('a');
+    a.href = href;
+    a.textContent = 'outside';
+    document.body.appendChild(a);
+    return a;
+  }
+  afterEach(() => {
+    document.querySelectorAll('body > a').forEach((a) => a.remove());
+    vi.restoreAllMocks();
+  });
+
+  it('closing the editor (Back to certification) asks, Keep editing keeps the changes', async () => {
+    renderReader();
+    await makeUnsaved();
+    const back = screen.getByRole('link', { name: /back to certification/i });
+    expect(click(back).defaultPrevented).toBe(true);
+    expect(leaveTitle()).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(leaveTitle()).toBeNull();
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(went()).toEqual([]);
+  });
+
+  it('Leave without saving goes back to the certification list', async () => {
+    renderReader();
+    await makeUnsaved();
+    click(screen.getByRole('link', { name: /back to certification/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(went()).toEqual([LIST]);
+  });
+
+  it('a breadcrumb asks first', async () => {
+    renderReader();
+    await makeUnsaved();
+    const crumb = screen.getByRole('link', { name: 'Certification' });
+    expect(click(crumb).defaultPrevented).toBe(true);
+    expect(leaveTitle()).toBeInTheDocument();
+  });
+
+  it('switching to another certificate asks first, then opens it', async () => {
+    renderReader();
+    await makeUnsaved();
+    expect(click(outsideLink(`${LIST}/cert-2`)).defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(went()).toEqual([`${LIST}/cert-2`]);
+  });
+
+  it('a sidebar link asks first', async () => {
+    renderReader();
+    await makeUnsaved();
+    expect(click(outsideLink('/project-sales')).defaultPrevented).toBe(true);
+    expect(leaveTitle()).toBeInTheDocument();
+  });
+
+  it('the browser Back asks first', async () => {
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    renderReader();
+    await makeUnsaved();
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    });
+    expect(leaveTitle()).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(back).toHaveBeenCalled();
+  });
+
+  it('a refresh or closing the tab gets the browser leave prompt', async () => {
+    renderReader();
+    const clean = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(clean);
+    expect(clean.defaultPrevented).toBe(false);
+    await makeUnsaved();
+    const dirty = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(dirty);
+    expect(dirty.defaultPrevented).toBe(true);
+  });
+
+  it('nothing asks once Save boxes has saved', async () => {
+    vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    renderReader();
+    await makeUnsaved();
+    fireEvent.click(screen.getByRole('button', { name: /save boxes/i }));
+    const [, options] = saveBoxes.mutate.mock.calls[0];
+    act(() => (options as { onSuccess: () => void }).onSuccess());
+    expect(click(screen.getByRole('link', { name: /back to certification/i })).defaultPrevented).toBe(false);
+    expect(leaveTitle()).toBeNull();
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(false);
+  });
+
+  it('nothing asks when no box was changed', () => {
+    renderReader();
+    expect(click(screen.getByRole('link', { name: /back to certification/i })).defaultPrevented).toBe(false);
+    expect(leaveTitle()).toBeNull();
+  });
+
+  it('keeps Save boxes the one main button and no Remove button in the editor', async () => {
+    renderReader();
+    await makeUnsaved();
+    expect(screen.getAllByRole('button', { name: /save boxes/i })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull();
   });
 });
 
