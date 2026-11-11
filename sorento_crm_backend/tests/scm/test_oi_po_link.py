@@ -291,7 +291,8 @@ def test_oi_options_with_only_rows_outside_autocount_are_refused(scm_app, fake_s
 
 
 def test_oi_link_sends_one_write_per_so_line_and_the_worklist_names_the_po(scm_app, fake_ss):
-    w = _oi_world(scm_app)
+    # The rebook needs the auto-place grant too (security review, lead sign-off).
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, "projects.order_inquiry.action"))
     fake_ss.answers[PO_LINKS] = _two_step_answer()
     resp = _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)])
     assert resp.status_code == 200, resp.text
