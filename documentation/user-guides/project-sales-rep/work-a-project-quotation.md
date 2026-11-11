@@ -49,7 +49,7 @@ The card at the top reads like an order inquiry:
   every scope at once).
 
 The lines sit on the **Header** tab under the letterhead, one tab per scope above them, with
-**Search lines** and **Columns** on the table. **Edit proposal** shows the same card at the top
+**Search lines**, **Flags** and **Columns** on the table. **Edit proposal** shows the same card at the top
 (number, status, version); **Recheck alerts** is in the actions menu of the proposal itself, not
 on the edit page.
 
@@ -155,6 +155,20 @@ on the cover page, or after the price table when the design hides the Terms row.
 keeps the design it was sent with, so changing the design later never changes a sent quotation,
 and quotations sent before the cover page existed keep their old layout.
 
+## Work with lines while editing
+
+* **Duplicate line** (right-click a line, or its **...** menu) puts a copy right below it, with
+  the same product, rate, text, notes and every area quantity. The copy's product picker is
+  ready: start typing a product code to change it. The new product's description, brand and UOM
+  follow it, and its rate starts at the series price (or blank) like a new line.
+* **Remove line** takes the line out at once. There is no question and no struck-through row.
+* **Undo** and **Redo** (the curved arrows on the table, or Cmd+Z / Ctrl+Z and Shift+Cmd+Z /
+  Shift+Ctrl+Z) step back and forward through your line changes: a removed or duplicated line,
+  a product pick, an edited value. Each edit is one step. Inside a text box, Cmd+Z / Ctrl+Z
+  undoes your typing in that box instead.
+* Undo starts afresh each time you open the quotation for editing or switch scope tab, and when
+  you change the grid's columns.
+
 ## Every line must be a catalogue product or set
 
 A quotation line must name a product or a product set from the catalogue. You cannot type a
@@ -167,13 +181,31 @@ free-text description as a line.
   is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed, but
   the quotation then needs approval before it can be sent (see below).
 
-### Minimum price, while you type
+### Minimum price and default price, while you type
 
-* Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
-  lowest price allowed for that item. It shows on a new quotation too, before the first save.
+* Under a line's rate, **Below minimum price** appears as soon as the price you type is
+  below the lowest price allowed for that item. It shows on a new quotation too, before the
+  first save.
+* Under a line's product code, **Below default price** appears when the price is below the
+  line's default price (see below) but not below the minimum price. It sits beside
+  **Non-standard** when both apply.
 * **Non-standard** also appears while you pick, on a new quotation as on a saved one.
 * A quotation with a line below the minimum price says *One line is priced below the minimum
-  price* (or *N lines are ...*) and needs approval before it can be sent.
+  price* (or *N lines are ...*) and needs approval before it can be sent. The number of
+  **Below default price** flags across all scopes is the number in the banner's *... priced
+  below the default price*.
+
+### Find the flagged lines
+
+* **Flags**, beside **Search lines**, narrows the table to **Non-standard**, **Below default
+  price** and/or **Below minimum price** lines. Each option shows how many lines on the open
+  scope match it. Pick several to see lines matching any of them. Item numbers and the total do
+  not change.
+* The filter stays on when you switch scope tabs, so you can walk the tabs looking for them.
+* In the approval banner, click **One line is** / **N lines are** in front of a reason: the
+  table filters to those lines, opens the first scope that has one, and scrolls to it.
+* While editing, a line you change or add stays on screen until you change the filter, even if
+  it no longer matches.
 
 ### Which quotations need approval, and who approves
 

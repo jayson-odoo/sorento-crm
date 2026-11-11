@@ -1375,6 +1375,12 @@ function FormLines({
 }) {
   const active = scopes.find((scope) => scope.key === activeKey) ?? scopes[0] ?? null;
   const savedRow = active?.id ? (quotations.find((row) => row.id === active.id) ?? null) : null;
+  // The lines filter, held here so it stays on across the scope tabs (PROJECT-QUOTE-LINE-TOOLS).
+  const [lineFlags, setLineFlags] = React.useState<string[]>([]);
+  const lineFlagFilter = React.useMemo(
+    () => ({ value: lineFlags, onChange: setLineFlags }),
+    [lineFlags],
+  );
 
   // Whether any version of the open scope was sent: such a scope cannot be removed (#1341, owner
   // on Q2: "yes can", while nothing in it has been issued). The same cached query its editor uses.
@@ -1478,6 +1484,7 @@ function FormLines({
             seriesId={active.series_id || null}
             edit={scopeEditing}
             feedback={feedback}
+            flagFilter={lineFlagFilter}
             // The version is the record card's (PROPOSAL-HEADER-LAYOUT): no version row here, and
             // the form always works on the current version.
             headerVersion={{ versionNo: null }}
