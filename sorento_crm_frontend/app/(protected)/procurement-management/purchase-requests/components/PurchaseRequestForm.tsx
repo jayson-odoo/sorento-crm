@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray } from "react-hook-form";
 import type { FieldArrayWithId } from "react-hook-form";
@@ -69,7 +70,17 @@ import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { useProject } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
-import type { SubmissionInitialValues } from '@/app/(auth)/portal/components/SubmissionForm';
+import {
+  SubmissionForm,
+  type SubmissionInitialValues,
+} from '@/app/(auth)/portal/components/SubmissionForm';
+import {
+  SubmissionClientProvider,
+  type SubmissionClient,
+} from '@/app/(auth)/portal/lib/submission-client';
+import { SPONSORSHIPS_KEY } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
+import type { Project } from '@/app/(protected)/project-sales/_shared/types/project.types';
+import { createStaffSponsorshipClient } from '../services/staffSponsorshipSubmissionClient';
 
 const PURCHASE_REQUESTS_EDIT = "/procurement-management/purchase-requests";
 const SPONSORSHIP_FORMS_EDIT = "/procurement-management/sponsorship-forms";
@@ -105,7 +116,88 @@ export default function PurchaseRequestForm(props: PurchaseRequestFormProps) {
       <NewOwnRequestForm kind={kind} projectId={props.defaultProjectId} />
     );
   }
+  // A project's Sponsorship stage: the salesperson's own form for staff too, never the free-text
+  // staff form (owner, 11 Nov: "use the sponsorship form salesperson is using").
+  if (!props.requestId && kind === "sponsorship_form" && props.defaultProjectId) {
+    return <StaffProjectSponsorshipForm projectId={props.defaultProjectId} />;
+  }
   return <StaffPurchaseRequestForm {...props} />;
+}
+
+/**
+ * What a sponsorship form written from a project starts with, the salesperson's and staff's
+ * alike: the project, its title, customer, contact person, address and value. Empty values are
+ * left out, so the form keeps its own defaults for them.
+ */
+export function projectSponsorshipSeed(project: Project): SubmissionInitialValues {
+  const pic = [project.customer_attn, project.customer_phone]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+  const candidates: Record<string, string | null | undefined> = {
+    project_id: project.id,
+    project_title: project.title,
+    customer_name: project.customer_name,
+    customer_id: project.customer_id,
+    pic,
+    delivery_address: project.address,
+    total_project_value: project.estimated_sales_value,
+  };
+  const fields: Record<string, string> = {};
+  for (const [name, value] of Object.entries(candidates)) {
+    if (value && value.trim()) fields[name] = value.trim();
+  }
+  return { fields, labels: { project_code: projectCodeLabel(project) } };
+}
+
+/**
+ * Staff writing a project's sponsorship form: the portal SubmissionForm, on behalf of the
+ * project's salesperson, through the staff routes (`staffSponsorshipSubmissionClient`).
+ */
+function StaffProjectSponsorshipForm({ projectId }: { projectId: string }) {
+  const { data: project, isLoading } = useProject(projectId);
+  const queryClient = useQueryClient();
+  const client = useMemo<SubmissionClient | null>(() => {
+    if (!project) return null;
+    const base = createStaffSponsorshipClient(project);
+    // The project's Sponsorship Form tab and the sponsorship lists show the new form at once.
+    const refresh = () => {
+      void queryClient.invalidateQueries({ queryKey: [SPONSORSHIPS_KEY] });
+      void queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
+    };
+    return {
+      ...base,
+      saveDraft: async (...args) => {
+        const saved = await base.saveDraft(...args);
+        refresh();
+        return saved;
+      },
+      submitDraft: async (...args) => {
+        const submitted = await base.submitDraft(...args);
+        refresh();
+        return submitted;
+      },
+    };
+  }, [project, queryClient]);
+  const initialValues = useMemo(
+    () => (project ? projectSponsorshipSeed(project) : undefined),
+    [project],
+  );
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <LoaderCircleIcon className="size-6 animate-spin" />
+      </div>
+    );
+  }
+  if (!project || !client) {
+    return <p className="text-sm text-muted-foreground">This project could not be opened.</p>;
+  }
+  return (
+    <SubmissionClientProvider client={client}>
+      <SubmissionForm kind="sponsorship_form" initialValues={initialValues} />
+    </SubmissionClientProvider>
+  );
 }
 
 /**
@@ -123,13 +215,15 @@ function NewOwnRequestForm({
   const { data: project, isLoading } = useProject(projectId);
   const initialValues = useMemo<SubmissionInitialValues | undefined>(
     () =>
-      project
-        ? {
-            fields: { project_id: project.id, project_title: project.title ?? "" },
-            labels: { project_code: projectCodeLabel(project) },
-          }
-        : undefined,
-    [project],
+      !project
+        ? undefined
+        : kind === "sponsorship_form"
+          ? projectSponsorshipSeed(project)
+          : {
+              fields: { project_id: project.id, project_title: project.title ?? "" },
+              labels: { project_code: projectCodeLabel(project) },
+            },
+    [project, kind],
   );
   if (projectId && isLoading) {
     return (

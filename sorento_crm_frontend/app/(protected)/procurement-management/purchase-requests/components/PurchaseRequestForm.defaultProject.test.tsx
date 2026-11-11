@@ -1,6 +1,10 @@
 /**
- * PROJECT-STAGES-SAMPLE AC-PS-21 (prefill) and AC-PS-27 (no project in the link).
- * `defaultProjectId` seeds the "Registered project (optional)" link; absent, it stays null.
+ * PROJECT-STAGES-SAMPLE AC-PS-27 (no project in the link): without `defaultProjectId` the staff
+ * form's project link stays null.
+ *
+ * AC-PS-21 (a sponsorship form opened from a project) is superseded by PROJECT-STAGE-ACTIONS:
+ * that form is now the salesperson's form for staff too, never this staff form. Its tests live in
+ * PurchaseRequestForm.projectSponsorship.test.tsx.
  * Harness copied from PurchaseRequestForm.customerLink.test.tsx.
  */
 import React from 'react';
@@ -105,54 +109,16 @@ async function submitSponsorship() {
   return createMutateAsync.mock.calls[0][0] as { project_id?: string | null };
 }
 
-const PROJECT_ID = '3f2b8c1e-7a4d-4c2e-9b1f-6d5e4a3c2b10';
-
 describe('PurchaseRequestForm default project', () => {
-  it('AC-PS-21: defaultProjectId seeds project_id in the create payload', async () => {
-    renderForm(PROJECT_ID);
-    const payload = await submitSponsorship();
-    expect(payload.project_id).toBe(PROJECT_ID);
-  });
-
   it('AC-PS-27: without defaultProjectId project_id stays null', async () => {
     renderForm();
     const payload = await submitSponsorship();
     expect(payload.project_id ?? null).toBeNull();
   });
 
-  it('AC-PS-21: the picker shows the project and the empty title takes its title', async () => {
-    vi.mocked(getProject).mockResolvedValue({
-      id: PROJECT_ID,
-      project_code: 'PPF2610003',
-      title: 'Setia Alam',
-    } as never);
-    renderForm(PROJECT_ID);
-    await waitFor(() => expect(getProject).toHaveBeenCalledWith(PROJECT_ID));
-    expect(await screen.findByText('PPF2610003 - Setia Alam')).toBeTruthy();
-    expect(screen.queryByText('Search a project by code or title')).toBeNull();
-    const title = document.querySelector('input[name="project_title"]') as HTMLInputElement;
-    await waitFor(() => expect(title.value).toBe('Setia Alam'));
-  });
-
   it('AC-PS-27: getProject is not called without defaultProjectId', async () => {
     renderForm();
     await screen.findByLabelText('Customer Name');
     expect(getProject).not.toHaveBeenCalled();
-  });
-
-  it('AC-PS-21: a typed title is never overwritten by the project title', async () => {
-    let resolveProject: (p: unknown) => void = () => undefined;
-    vi.mocked(getProject).mockReturnValue(
-      new Promise((resolve) => {
-        resolveProject = resolve;
-      }) as never,
-    );
-    renderForm(PROJECT_ID);
-    await waitFor(() => expect(getProject).toHaveBeenCalledWith(PROJECT_ID));
-    const title = document.querySelector('input[name="project_title"]') as HTMLInputElement;
-    fireEvent.change(title, { target: { value: 'My own title' } });
-    resolveProject({ id: PROJECT_ID, project_code: 'PPF2610003', title: 'Setia Alam' });
-    expect(await screen.findByText('PPF2610003 - Setia Alam')).toBeTruthy();
-    expect(title.value).toBe('My own title');
   });
 });
