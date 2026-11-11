@@ -239,11 +239,11 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'The DataGridTable of the same grid, not a second one',
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/PoLinkDialog.tsx',
+    'app/(protected)/project-sales/_shared/po-link/PoLinkDialog.tsx',
     'AC-LINK-CRM-UI: the Link to PO / Unlink / Move popup opened from the Stock Debt snapshot drill, one row per ticked line. Already scrollerMaxHeight={false}.',
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/PoLinkDialog.tsx#2',
+    'app/(protected)/project-sales/_shared/po-link/PoLinkDialog.tsx#2',
     'The DataGridTable of the same grid, not a second one',
   ],
   [
