@@ -90,13 +90,17 @@ def test_the_day_of_a_written_date_in_a_result_backs_nothing(db, contact):
         ]
     )
     result = run(db, contact, provider, Mcp({"items": [{"eta": "15 Nov 2026"}], "has_result": True}))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
 
 
 def test_redaction_leaves_written_dates_alone():
     from app.services.chatbot.agent.loop import _redact_written
 
-    assert _redact_written("Ships 15 Nov 2026 with 9 units", {"9 units"}) == "Ships 15 Nov 2026 with (not verified)"
+    from app.services.chatbot.agent.loop import LEFT_OUT_NOTE
+
+    # The date's digits are not the bad figure: its sentence stays, the one holding 9 units is left out.
+    out = _redact_written("Ships 15 Nov 2026. It has 9 units.", {"9 units"})
+    assert out == f"Ships 15 Nov 2026.\n\n{LEFT_OUT_NOTE}"
 
 
 def test_clean_detail_keeps_a_time_of_day():

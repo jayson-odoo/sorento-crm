@@ -173,7 +173,7 @@ def test_a_result_the_cap_cut_is_verified_against_what_the_model_saw(db, contact
     shown = _tool_payloads(provider.seen[1]["messages"])[0]
     assert len(json.dumps(shown["data"])) <= RESULT_CHAR_CAP
     # 777 sat in a row the model was never shown, so it cannot be backed
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
 
 
 @pytest.mark.parametrize("key", ["display", "label", "title", "name"])

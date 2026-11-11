@@ -180,7 +180,7 @@ def test_a_made_up_total_is_still_flagged(db, contact):
         [asks(call(STOCK, {"query": "x"}, "c1")), answer6("9,999 units in total."), answer6("9,999 units in total.", cid="a2")]
     )
     result = run(db, contact, provider, Mcp(rows))
-    assert "(not verified)" in result.reply_text and "9,999" not in result.reply_text
+    assert "could not check" in result.reply_text and "9,999" not in result.reply_text
 
 
 def test_headings_with_list_numbers_are_not_figures():
@@ -375,15 +375,17 @@ def test_bookkeeping_numbers_back_nothing(db, contact):
         "score": 0.93,
     }
     reply = _reply_after(db, contact, "2 units in stock, 0 incoming", products)
-    assert "0 incoming" not in reply and "(not verified) incoming" in reply
-    assert "2 units in stock" in reply  # two product rows
+    # The sentence holding the unbacked 0 is left out whole (AGENT-PROJECT-SCOPE: a repair never writes into one).
+    assert "0 incoming" not in reply and "could not check" in reply
+    reply = _reply_after(db, contact, "2 units in stock.", products)
+    assert "2 units in stock" in reply and "could not check" not in reply  # two product rows
     for key_number in ("50", "77", "0.93"):
-        assert "(not verified)" in _reply_after(db, contact, f"There are {key_number} units.", products)
+        assert "could not check" in _reply_after(db, contact, f"There are {key_number} units.", products)
 
 
 def test_a_name_with_a_number_does_not_back_a_quantity(db, contact):
     result = {"items": [{"name": "Basin 600", "product_name": "Basin 600 white", "label": "Size 600"}], "has_result": True}
-    assert "(not verified)" in _reply_after(db, contact, "There are 600 units.", result)
+    assert "could not check" in _reply_after(db, contact, "There are 600 units.", result)
 
 
 def test_a_real_zero_quantity_still_backs_zero(db, contact):
@@ -393,12 +395,12 @@ def test_a_real_zero_quantity_still_backs_zero(db, contact):
 
 def test_a_key_ending_in_id_backs_nothing(db, contact):
     result = {"items": [{"warehouse_id": 4321, "qty": 5}], "has_result": True}
-    assert "(not verified)" in _reply_after(db, contact, "There are 4321 units.", result)
+    assert "could not check" in _reply_after(db, contact, "There are 4321 units.", result)
 
 
 def test_a_three_row_column_backs_the_sum_of_all_three_only(db, contact):
     rows = {"items": [{"qty": 5}, {"qty": 7}, {"qty": 9}], "has_result": True}
-    assert "(not verified)" in _reply_after(db, contact, "12 units in total.", rows)
+    assert "could not check" in _reply_after(db, contact, "12 units in total.", rows)
     assert _reply_after(db, contact, "21 units in total.", rows) == "21 units in total."
 
 

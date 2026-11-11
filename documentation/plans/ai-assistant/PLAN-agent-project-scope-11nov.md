@@ -43,3 +43,17 @@ and the router guard removed, 8 go red (kill test).
 - a project of another owner: not found.
 - admin: unchanged.
 - kill test: removing the filter turns a test red.
+
+## Fix round after the crew browser pass on b9852915 (11 Nov)
+Scoping passed. Two answers misled:
+1. A salesperson with 0 projects read "... ((not verified) projects found)": an EMPTY result did not back 0, and the
+   repair wrote "(not verified)" into the sentence. Now an empty result backs 0 (`loop.verify_answer`), and the
+   repair (`loop._redact_written`) leaves out each sentence or line holding an unbacked figure and adds one closing
+   note (`LEFT_OUT_NOTE`; `ALL_LEFT_OUT_NOTE` when nothing is left). Crew ruling: a repair never writes into a
+   sentence. The ~30 older tests pinned to the in-sentence placeholder were updated to this rule.
+2. "Who owns them" answered 16 right but 10 / 6 against 8 / 8: 16 full rows are larger than the result cap
+   (`tools.cap_result`), so the model counted the rows left. `tools.with_owner_counts` adds `count_by_owner` from
+   every row before the cap (a note asking for `limit=<total>` when the page does not hold every match), the tool
+   description tells the model to quote it, and `loop._group_count_misses` holds a figure written after an
+   owner's name to that owner's count.
+Tests: `tests/chatbot/agent/test_agent_project_counts.py`.

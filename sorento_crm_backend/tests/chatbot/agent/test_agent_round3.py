@@ -373,7 +373,7 @@ def test_a_repair_call_cannot_outlast_the_turn(db, contact):
     result = run(db, contact, prov, clock=lambda: clock["t"])
     # 60 s used of 45: the repair round is skipped and the figure is redacted
     assert len(prov.seen) == 2
-    assert "99" not in result.reply_text and "(not verified)" in result.reply_text
+    assert "99" not in result.reply_text and "could not check" in result.reply_text
 
 
 def test_a_second_turn_for_the_same_contact_is_busy(db, contact):

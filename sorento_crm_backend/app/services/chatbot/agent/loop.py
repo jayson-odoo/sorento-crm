@@ -751,6 +751,7 @@ def _group_count_misses(text: str, ledger: dict[str, dict], blank: Any = None) -
 
 #: What a repair adds instead of writing into a sentence (crew pass on 2343: "((not verified) projects found)").
 LEFT_OUT_NOTE = "I left out a figure I could not check against the data."
+ALL_LEFT_OUT_NOTE = "I could not check the figures in my answer against the data, so I left them out. Ask me again."
 _SENTENCE_SPLIT = re.compile(r"\n|(?<=[.!?])[ \t]+")
 
 
@@ -770,7 +771,7 @@ def _redact_written(text: str, bad: set[str], blank: Any = None) -> str:
             kept.append(text[pos:end] + joiner)
         pos = sep.end() if sep is not None else len(text)
     body = re.sub(r"\n{3,}", "\n\n", "".join(kept)).strip()
-    return f"{body}\n\n{LEFT_OUT_NOTE}".strip()
+    return f"{body}\n\n{LEFT_OUT_NOTE}" if body else ALL_LEFT_OUT_NOTE
 
 
 def _same_part(a: str, b: str) -> bool:

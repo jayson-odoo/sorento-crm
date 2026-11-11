@@ -121,3 +121,10 @@ def test_the_right_per_owner_counts_pass():
 def test_per_owner_counts_in_lists_and_tables(line):
     bad, _ = _check(f"Owners:\n{line}", _counts_ledger(), "who owns them")
     assert bad == []
+
+
+def test_when_every_sentence_is_left_out_the_reply_says_what_happened_and_what_to_do():
+    from app.services.chatbot.agent.loop import ALL_LEFT_OUT_NOTE, _redact_written
+
+    assert _redact_written("You own 99 projects.", {"99"}) == ALL_LEFT_OUT_NOTE
+    assert "again" in ALL_LEFT_OUT_NOTE

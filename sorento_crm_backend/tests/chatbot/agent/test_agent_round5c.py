@@ -137,7 +137,7 @@ def test_a_uuid_with_digits_backs_nothing(db, contact):
          answer_call(text, figures=figures, cid="a2")]
     )
     result = run(db, contact, provider, Mcp(envelope))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
 
 
 def test_an_all_digit_uuid_and_a_date_string_back_nothing(db, contact):
@@ -150,7 +150,7 @@ def test_an_all_digit_uuid_and_a_date_string_back_nothing(db, contact):
              answer_call(text, figures=figures, cid="a2")]
         )
         result = run(db, contact, provider, Mcp(envelope))
-        assert "(not verified)" in result.reply_text, number
+        assert "could not check" in result.reply_text, number
 
 
 def test_a_key_that_is_a_number_still_backs_nothing(db, contact):
@@ -161,7 +161,7 @@ def test_a_key_that_is_a_number_still_backs_nothing(db, contact):
          answer_call(text, figures=figures, cid="a2")]
     )
     result = run(db, contact, provider, Mcp({"items": [{"12": "label"}], "has_result": True}))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
 
 
 # ------------------------------------------------------------------ V2
@@ -205,8 +205,11 @@ def test_only_the_real_figure_is_checked_and_identifiers_stay_intact(db, contact
 def test_redaction_leaves_identifiers_alone():
     from app.services.chatbot.agent.loop import _redact_written
 
-    out = _redact_written("SO2610-0127 has 9 of SRTWC8357-300-RL", {"9"})
-    assert out == "SO2610-0127 has (not verified) of SRTWC8357-300-RL"
+    from app.services.chatbot.agent.loop import LEFT_OUT_NOTE
+
+    # The identifier's digits are not the bad figure: its sentence stays, the one holding 9 is left out.
+    out = _redact_written("SO2610-0127 is open. It has 9 of SRTWC8357-300-RL.", {"9"})
+    assert out == f"SO2610-0127 is open.\n\n{LEFT_OUT_NOTE}"
 
 
 # ------------------------------------------------------------------ S5-1

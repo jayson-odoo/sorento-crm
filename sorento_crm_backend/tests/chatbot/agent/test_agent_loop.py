@@ -414,7 +414,7 @@ def test_a_figure_still_unsupported_after_the_repair_is_replaced(db, contact):
     result = run(db, contact, provider)
 
     assert "99" not in result.reply_text
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
     assert len(provider.seen) == 3  # one repair round only
 
 
