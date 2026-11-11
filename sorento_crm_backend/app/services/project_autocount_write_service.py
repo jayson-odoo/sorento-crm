@@ -312,7 +312,7 @@ class ProjectAutocountWriteService:
         except FoundryxPullError as exc:
             return {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message}
 
-    def _send_attempts(self, base_key: str, call) -> Dict[str, Any]:
+    def _send_attempts(self, base_key: str, call, *, edit: bool = False) -> Dict[str, Any]:
         """One write under the intent's current attempt key (#2223's shared helper).
 
         Attempt 0 is the plain `base_key`; a definite refusal moves the next press of the same
@@ -321,6 +321,13 @@ class ProjectAutocountWriteService:
         answer = send_with_attempts(
             attempt_store(), base_key, lambda key: self._call(lambda c: call(c, key))
         )
+        if edit and answer.get("errorCode") == "IDEMPOTENCY_CONFLICT":
+            # AC-E2E-DB3 B14: SS holds this key for an older body (a 6 Nov edit, before the
+            # bodies changed), so it can never be replayed. An edit sets absolute values, so it is
+            # safe to send under its own fresh line of keys; a create or an add never is.
+            answer = send_with_attempts(
+                attempt_store(), f"{base_key}-r", lambda key: self._call(lambda c: call(c, key))
+            )
         if answer.get("outcome") not in _DONE:
             # One line per write that did not land, so a refusal on a live stack can be read back.
             logger.warning(
@@ -763,6 +770,7 @@ class ProjectAutocountWriteService:
         answer = self._send_attempts(
             f"crm-amd-{amendment.id}-update-edit",
             lambda c, key: c.patch(path, body, idempotency_key=key),
+            edit=True,
         )
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
@@ -1133,6 +1141,7 @@ class ProjectAutocountWriteService:
             answer = self._send_attempts(
                 f"{base_key}-edit",
                 lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
+                edit=True,
             )
             answer = self._done_if_only_mirrored_remarks_ignored(answer)
             if not self._is_done(answer):
