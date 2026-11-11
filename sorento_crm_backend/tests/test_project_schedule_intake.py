@@ -2355,3 +2355,32 @@ def test_force_overrides_the_duplicate_guard(scenario, stored_document):
     )
 
     assert second.version_no == first.version_no + 1
+
+
+def test_a_schedule_read_that_dies_shows_a_plain_sentence(scenario, monkeypatch):
+    """PO-EXTRACT-LIST-FIX review: the schedule reader's catch-all wrote ``str(exc)``,
+    so a Python sentence reached the delivery-schedule screen exactly as
+    "'list' object has no attribute 'get'" reached the PO one."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    monkeypatch.setattr(
+        ProjectScheduleService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(project_schedule_service, "parse_text_matrix", lambda *a, **k: {})
+
+    def boom(*args, **kwargs):
+        raise AttributeError("ZZT-internal 'list' object has no attribute 'get'")
+
+    monkeypatch.setattr(document_extraction, "_render_pages_rich", boom)
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+
+    result = service.run_extraction(scenario["version"].id)
+
+    assert result["status"] == "failed"
+    db.refresh(scenario["version"])
+    message = scenario["version"].extraction_error
+    assert message
+    for word in ("ZZT-internal", "'list'", "attribute", "object has no", "Traceback", "Error"):
+        assert word not in message, f"{word!r} reached the screen: {message!r}"

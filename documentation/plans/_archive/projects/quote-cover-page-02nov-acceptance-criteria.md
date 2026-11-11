@@ -1,7 +1,8 @@
 # UAC: Quotation cover page + terms print (QUOTE-COVER-PAGE)
 
 **Status:** Final. Owner approved sample v2 (`documentation/mockups/QUOTE-COVER-PAGE/index.html`)
-on 2 Nov with every point settled: 1a Prepared By = project salesperson, 2a Payment Terms and
+on 2 Nov with every point settled: 1a Prepared By = project salesperson (superseded 11 Nov 2026:
+Prepared By = the document's creator, see A4), 2a Payment Terms and
 Validity defaults beside the company T&C template, 3a letterhead on page 1, terms on page 1 only
 (countersign bottom panel goes, tick box stays), Your Ref stays. Plan:
 `PLAN-quote-cover-page-02nov.md`.
@@ -21,7 +22,9 @@ Validity defaults beside the company T&C template, 3a letterhead on page 1, term
   string.
 - **A4** Date = the quotation date; Attn = Attn; Company = recipient name; Contact = recipient
   phone; Add = recipient address (line breaks kept); Email = the quotation's Email; Purpose,
-  Payment Terms, Validity = the quotation's fields; Prepared By = the project salesperson's name.
+  Payment Terms, Validity = the quotation's fields; Prepared By = the name of whoever created the
+  document (`created_by`; owner ruling 11 Nov 2026, compliance, replacing "the project
+  salesperson"). The Salesperson cover sources keep the project owner.
 - **A5** A row with no value is left out entirely.
 - **A6** Every printed value is escaped (`<script>` typed in Purpose prints as text).
 - **A7** Terms & Conditions print on page 1 only; the price pages have no terms block.
