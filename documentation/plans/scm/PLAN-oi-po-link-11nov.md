@@ -81,6 +81,17 @@ Order Inquiry (main 110e494f):
    follow-up is one small change. Retry rule kept: a refusal releases (Try again = new attempt), only a confirmed
    success locks, an unknown answer keeps its key so the retry replays.
 
+6. **Actor trace (crew addition, owner: every db1 write traced to the person).** `PoLinkService(db, scope,
+   actor={id, name})`: every SS write call carries `X-Request-ID` (the press's request id, already sent) plus
+   `X-Actor-User-Id` / `X-Actor-Name` (header names provisional until lane AC-DB1-READY's crew-note; one constant
+   to change). Each write also stores one audit EVENT `scm.po_line.crm_link_write` on the PO line (actor = the
+   pressing user, `new_values` = action, outcome, SO number/line, qty, `request_id`, `operation_id`), rolled up to
+   the PO header like the ingest's link events (`po_link_history.py`).
+7. **Batch op shape (PO-LINK-BATCH crew-note 6799080814, provisional):** `POST po-links/batch`
+   `{companyCode, poDocKey, poDtlKey, docDate, links:[{soDocKey, soDtlKey, qty, soDocDate}]}`, all or nothing,
+   1..20 links. Not merged in the SS yet, so this lane ships the grouping with the per-line send inside
+   `_send_group`; the switch to the batch call is the one small follow-up.
+
 ### Frontend
 1. Move `PoLinkDialog.tsx`, `poLinkWording.ts` and the po-link hooks to `project-sales/_shared/po-link/`. The dialog
    takes a `PoLinkTarget` (`{ key, api: { options, link, unlink, change, relink? } }`) and lines in a shared

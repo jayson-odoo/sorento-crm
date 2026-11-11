@@ -14,6 +14,12 @@ real AutoCount run, done by lane AC-E2E-DB3).
   batch op exists it sends the existing per-line write for each member, in request order, with the same body and
   idempotency key as before.
 
+- AC-3a Every SS write call (link, unlink, change halves, relink, relocate, resume) carries `X-Request-ID`,
+  `X-Actor-User-Id` (the CRM user id) and `X-Actor-Name` (the user's name), from both screens.
+- AC-3b Every SS write the CRM makes writes one audit EVENT `scm.po_line.crm_link_write` on the PO line, with the
+  pressing user as actor and `request_id`, `operation_id`, action, outcome, SO number + line and qty in
+  `new_values`, rolled up to the PO header.
+
 ## Order Inquiry scope
 - AC-4 `POST /api/v1/project-sales/order-inquiries/po-link/options` with `row_ids` answers the same shape as Stock
   Debt's options (capabilities, open PO lines of the product with free qty, `so_books`) plus `lines`: one per
