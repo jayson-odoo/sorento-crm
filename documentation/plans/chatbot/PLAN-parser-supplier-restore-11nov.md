@@ -1,6 +1,6 @@
 # PLAN: restore the supplier lines in the production-candidate parser prompt (PARSER-SUPPLIER-RESTORE)
 
-Status: built, gate passed, reviewed READY, publish package ready for the owner. Track: small fix, grown past it (see
+Status: round 2 (prod regression 11 Nov evening): recommend C = v72 + supplier lines (0f727510); stale typo is an engine carry, separate lane. Round 1 reviewed READY. Track: small fix, grown past it (see
 "Track note"). Plan created: 2026-11-11T15:50:07+08:00. Package: `PROMPT-parser-supplier-restore-b1c59343.md`.
 
 ## Track note

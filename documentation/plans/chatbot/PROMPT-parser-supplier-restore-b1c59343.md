@@ -1,7 +1,49 @@
 # Prompt publish package: restore the supplier lines (PARSER-SUPPLIER-RESTORE, 11 Nov 2026)
 
+Round 2 supersedes round 1's choice: publish C (`prompt-parser-v72-supplier.txt`).
+
 Only the owner publishes. Crew did not touch prod. Pin by md5, never by version number: version numbers differ per
 database.
+
+## Round 2 (11 Nov evening, after the prod regression report): publish C, not b1c59343
+
+**Publish now: `prompt-parser-v72-supplier.txt`, md5 `0f7275103f96c85535b2208de8bb54db`** = prod v72 (d29c1983) plus
+ONLY the two v71 lines after `== LOOKUP SPANS ==` (and v71's trailing blank line). Same text as dev v73. Keep the span
+supplier version the owner already published (it is not the cause).
+
+What the stale "ffullshun" was (owner's 4-turn flow as salesperson Fanny, reproduced in process on the dev copy):
+- Not the prompt. At T4 the parser emitted NO "ffullshun" on any arm (C's T4 parse had zero entities). The engine
+  re-adds it: T1's unplaced word is stored on the focus (`turn/apply.py:174-181`, `focus.extra["specification"]`, or
+  `focus.products` with no id), and a later turn with no entities gets every focus row back
+  (`turn_runtime.py:5428-5449`, from `engine.py:7564-7578`); an unresolved spec becomes `unknown_values`
+  (`lanes/business/resolve_gate.py:857-868`) and the "Couldn't find" sentence outranks the report
+  (`lanes/business/answer.py:4674-4694`). Nothing drops a row that never resolved.
+- It needs T1 to place the typo, which varies run to run on every text (x5, dev copy): b1c59343 + span v3 3/5,
+  C + span v3 1/5, b1c59343 + span v2 1/5, **old prod pair v72 + span v2 2/5**. So old prod has it too; the owner's
+  v72 retry most likely started without the typo turn.
+- Full 4-turn runs (x1): re-emitted on v72 + span v3 and on C + span v3 (both had placed the typo at T1); not on
+  b1c59343 + v3, b1c59343 + v2, v72 + v2 (T1 went to the SO/DO ask).
+- No text carries the `## Conversation state and state_changes` heading, so every arm runs the legacy carry
+  (`head/parser.py:1273`); the state-block carry would skip a spec (`chat_state.py:1349-1351`).
+
+Why C over b1c59343: both fix the supplier asks equally (supplier gold 10/12 each, taiyang rows 5/5 each); C changes
+nothing else the owner has been running, while b1c59343 also brings REPORT-FILTER-ALL's report edits (17 of its 40
+gold rows still fail). Neither fixes the stale typo: that needs an engine fix (separate lane, proposed to crew).
+
+### Owner steps for C (Prompts page)
+1. `chatbot_semantic_parser` > **Edit** (opens on the production text, v72 since the roll back).
+2. Clear, paste the whole of `prompt-parser-v72-supplier.txt`.
+3. **Diff** against production: exactly the two lines below added right after `== LOOKUP SPANS ==`, plus one empty
+   line at the end. Nothing else.
+4. Commit message `PARSER-SUPPLIER-RESTORE C: v72 + v71 supplier lines, md5 0f727510`, **Save as new version**,
+   then **Publish vN** > **Publish to production**.
+5. Check: "outstanding for taiyang" answers about TAIYANG's purchase orders (not `Couldn't find "taiyang" (customer)`);
+   "outstanding for fullshun" > "1" > "SO" gives the report when turn 1 had no typo. The typo flow can still come back
+   on ANY text until the engine fix lands; do not judge C by it.
+6. Roll back: publish v72 again.
+
+The b1c59343 section below stays for the record; publish it only after the engine fix, with the console case
+`tests/chatbot/console_cases/2026-11-11-stale-typo-carry.yaml` run 3 times.
 
 ## Why
 

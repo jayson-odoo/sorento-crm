@@ -1,0 +1,29 @@
+# Console case for PARSER-SUPPLIER-RESTORE (PR #2341), prod regression report 11 Nov 2026 ~19:10: a typo the bot could
+# not place on turn 1 must never come back on a later turn whose own message does not name it.
+#
+# HOW TO RUN (by hand, never in CI; the case is `live_only`), against a crew test copy:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-11-11-stale-typo-carry.yaml --live \
+#       --base-url http://127.0.0.1:<be port> --sleep-seconds 8
+#
+# Swap `contact:` for a salesperson contact WITHOUT the supplier reveal (the owner played one). "fullshun" must be a
+# company name that matches two customer companies on the copy, so turn 2 asks which one and turn 3 picks the first.
+# Turn 1's reading varies run to run (x1 on the dev copy, 11 Nov: 2 of 5 runs placed the typo as a product or a
+# specification and answered "Couldn't find"); the defect only shows on a run where it did, so run the case 3 times.
+# Seen on prod with parser b1c59343 and on the dev copy with parser v72 (d29c1983) and 0f727510 as well: the carry is
+# the engine's, not one prompt's. No phone or personal name is quoted.
+
+contact: "900000008"
+
+cases:
+  - name: a turn-1 typo the bot could not find never returns once the report is picked
+    live_only: true
+    cold: true
+    turns:
+      - text: "outsitng ffullshun"
+      - text: "outstanding for fullshun"
+      - text: "1"
+      - text: "SO"
+        expect:
+          reply_not_contains: ["ffullshun", "Couldn't find", "flush type", "problem understanding", "busy right now"]
