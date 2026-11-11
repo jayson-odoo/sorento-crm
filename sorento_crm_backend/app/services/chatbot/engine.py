@@ -7712,6 +7712,14 @@ def _run_stages_body(  # noqa: PLR0915
             not_checked_tokens = resolve_outcome.not_checked
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            # TRACE-ENTITY-TOOL (owner, 11 Nov 2026, turn #8322): what each typed word matched
+            # in the code lookup, for the drawer's "Entity match". Written off the resolver's
+            # own listing, BEFORE the availability filter below rewrites the engine's copy.
+            resolve_note = trace_mod.resolve_event(
+                resolver_payload, unplaced=unplaced_tokens, not_checked=not_checked_tokens
+            )
+            if resolve_note is not None:
+                turn_trace.add("resolve", resolve_note)
             # ROGUE-CONVO-REVIEW-R2 (crew review on PR #1506): "did THIS message name a
             # product token the resolver could not place?" is asked ONCE, here, over the
             # resolver's OWN listing (`turn_runtime.named_unplaced`, before
