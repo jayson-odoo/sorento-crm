@@ -538,6 +538,16 @@ export function SpecSheetReader({
     ? (selectedLayers.find((l) => l.id === selection.layerId) ?? null)
     : null;
   const targetKey = selection?.pageKey ?? editing.lastKey() ?? null;
+  // The page the keyboard and clipboard act on: the page the user last pressed on (a click on an
+  // empty spot included, or a right-click), not the page scrolled into view nor one still holding
+  // an old selection off-screen (crew pass on #2331). Pressing a page clears another page's
+  // selection, so the two never point at different pages.
+  const [pressedKey, setPressedKey] = React.useState<string | null>(null);
+  const onPressPage = React.useCallback((key: string) => {
+    setPressedKey(key);
+    setSelection((prev) => (prev && prev.pageKey !== key ? null : prev));
+  }, []);
+  const inputKey = pressedKey ?? selection?.pageKey ?? activeKey;
   // Keyboard undo from a page's canvas does exactly what the Undo / Redo buttons do: it steps
   // `targetKey` (the selected page, else the page edited last), whichever canvas heard the key.
   // Stable for the memoised pages; it reads the latest `editing` and target through a ref.
@@ -1052,7 +1062,7 @@ export function SpecSheetReader({
                           draftLayers={editing.draftOf(page.key)}
                           externalLayers={editing.externalOf(page.key)}
                           current={page.key === activeKey}
-                          active={page.key === (selection?.pageKey ?? activeKey)}
+                          active={page.key === inputKey}
                           sharp={page.key === settledKey ? sharpData : null}
                           canEdit={
                             canEdit &&
@@ -1065,6 +1075,7 @@ export function SpecSheetReader({
                           onSelectLayer={onSelectLayer}
                           onLayersReport={onLayersReport}
                           onHistory={onHistory}
+                          onPressPage={onPressPage}
                           controllerRefFor={controllerRefFor}
                         />
                       ))}

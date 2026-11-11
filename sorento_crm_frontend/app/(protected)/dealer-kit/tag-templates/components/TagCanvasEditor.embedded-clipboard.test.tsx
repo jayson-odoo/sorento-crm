@@ -361,6 +361,41 @@ describe('context menu Paste reads the system clipboard (both designers)', () =>
     expect(uploadAsset).not.toHaveBeenCalled();
   });
 
+  it('pastes copied layers at the right-click point, on the page that was right-clicked', async () => {
+    stubClipboardRead([]);
+    setTagClipboard({ layers: [shape('x1')], roots: ['x1'], sourceDocId: 'elsewhere' });
+    const state: Record<string, TagLayer[]> = {};
+    render(<TwoPages state={state} active="a" />);
+    const stageHost = screen
+      .getByTestId('page-b')
+      .querySelector('[data-konva="stage"]')!.parentElement!.parentElement!;
+    // 2 px per mm and no pan on an embedded page: (120, 80) px is (60, 40) mm.
+    fireEvent.contextMenu(stageHost, { clientX: 120, clientY: 80 });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Paste/ }));
+    await waitFor(() => expect(state.b).toHaveLength(2));
+    expect(state.b[1]).toMatchObject({ type: 'shape', x_mm: 60, y_mm: 40 });
+    expect(state.a ?? [shape('a1')]).toHaveLength(1);
+  });
+
+  it('a picture pasted from the menu lands at the click point, kept inside the page', async () => {
+    stubClipboardRead([{ types: ['image/png'], get: () => png() }]);
+    const state: Record<string, TagLayer[]> = {};
+    render(<TwoPages state={state} active="b" />);
+    const stageHost = screen
+      .getByTestId('page-b')
+      .querySelector('[data-konva="stage"]')!.parentElement!.parentElement!;
+    // (180, 100) px = (90, 50) mm; the 200 x 100 px picture is 52.9 x 26.5 mm, so it is pulled
+    // back to fit inside the 100 x 60 mm page.
+    fireEvent.contextMenu(stageHost, { clientX: 180, clientY: 100 });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Paste/ }));
+    await waitFor(() => expect(state.b).toHaveLength(2));
+    const image = state.b[1];
+    expect(image.type).toBe('image');
+    expect(image.x_mm + image.width_mm).toBeLessThanOrEqual(100.001);
+    expect(image.y_mm + image.height_mm).toBeLessThanOrEqual(60.001);
+    expect(image.x_mm).toBeGreaterThan(40);
+  });
+
   it('the same menu on an active spec sheet page pastes onto that page', async () => {
     stubClipboardRead([{ types: ['text/plain'], get: () => new Blob(['Promo'], { type: 'text/plain' }) }]);
     const state: Record<string, TagLayer[]> = {};

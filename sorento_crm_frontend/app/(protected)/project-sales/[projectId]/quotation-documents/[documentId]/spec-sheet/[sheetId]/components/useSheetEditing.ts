@@ -204,7 +204,12 @@ export function useSheetEditing(
       if (to < 0 || to >= history.stack.length) return;
       history.index = to;
       last.current = key;
-      const layers = history.stack[to];
+      // A fresh array every step: the canvas adopts host layers only when the array differs from
+      // the one it holds, so undoing to the same step twice (undo, edit, undo) handed it the same
+      // array and the second undo never reached the screen while the page saved it (crew pass on
+      // #2331). Stored back in the stack, so the canvas echoing it is still "no change".
+      const layers = [...history.stack[to]];
+      history.stack[to] = layers;
       drafts.current.set(key, layers);
       setExternal((prev) => ({ ...prev, [key]: layers }));
       schedule(key);
