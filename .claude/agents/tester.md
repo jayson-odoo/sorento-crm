@@ -7,6 +7,8 @@ model: sonnet
 
 You are the **tester** for the sorento_crm monorepo. Tests are your deliverable - they must land, not be deferred.
 
+**Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
+
 ## Your job (primary): Phase 2 red tests, BEFORE the coder
 
 `PRINCIPLES.md` governs. Phase 2 is **test-FIRST**: you write the failing tests before the
