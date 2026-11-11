@@ -19,6 +19,7 @@ Usage (from sorento_crm_backend, with the target database's env loaded):
     venv/bin/python scripts/seed_spec_sheet_handtest.py --find
     venv/bin/python scripts/seed_spec_sheet_handtest.py --with-set [--min-items 7]
     venv/bin/python scripts/seed_spec_sheet_handtest.py --company <company> [--apply]
+    venv/bin/python scripts/seed_spec_sheet_handtest.py --company <company> --fix-parts [--apply]
 
 Idempotent: re-running creates nothing new. It never edits or deletes an existing template.
 """
@@ -121,7 +122,9 @@ def _product_block(start: int) -> list:
 
 def _accessory_rows(start: int) -> list:
     rows = []
-    for i, part in enumerate((1, 2)):
+    # Parts are 0-based (`subjectPart` and `show_when.part` both index the page's accessories):
+    # 0 and 1 are Accessory 1 and 2.
+    for i, part in enumerate((0, 1)):
         y = 124 + i * 22
         rows += [
             _image(start + i * 3, 126, y, 18, 18, "product_image", part=part, show_part=part),
@@ -157,6 +160,68 @@ def _company(db, value: str):
     raise SystemExit(f"No company matches {value!r}. Known: " + ", ".join(
         f"{getattr(r, 'code', '')}/{getattr(r, 'name', '')}" for r in rows
     ))
+
+
+# The seeded accessory rows (``_accessory_rows(20)``): ht-20..22 are Accessory 1 (part 0),
+# ht-23..25 Accessory 2 (part 1).
+_ACCESSORY_PART = {f"ht-{n}": (n - 20) // 3 for n in range(20, 26)}
+_ACCESSORY_IDS = set(_ACCESSORY_PART)
+
+
+def shift_accessory_parts(layers: list) -> int:
+    """Move a template made by the old seed (parts 1 and 2) to parts 0 and 1, in place. Each
+    seeded row is set to its own part, so a second run changes nothing; a layer that is not one
+    of the seed's rows is never touched. Returns how many layers changed."""
+    changed = 0
+    for layer in layers or []:
+        if not isinstance(layer, dict) or layer.get("id") not in _ACCESSORY_IDS:
+            continue
+        props = layer.get("props") or {}
+        when = layer.get("show_when") or {}
+        want = _ACCESSORY_PART[layer["id"]]
+        if props.get("subjectPart") in (0, 1, 2) and (props.get("subjectPart"), when.get("part")) != (want, want):
+            props["subjectPart"] = want
+            when["part"] = want
+            changed += 1
+    return changed
+
+
+def fix_parts(db, company, apply: bool) -> None:
+    """``--fix-parts``: the "Item with accessories" templates this script created before the
+    0-based fix, their draft and every version (a sheet pins a version), set to Accessory 1 and 2."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.base import company_scope
+    from app.models.dealer_kit import TagTemplate, TagTemplateVersion
+
+    with company_scope(db, frozenset({company.id})):
+        templates = (
+            db.query(TagTemplate)
+            .filter(
+                TagTemplate.company_id == company.id,
+                TagTemplate.family == "spec_page",
+                TagTemplate.name == "Item with accessories",
+            )
+            .all()
+        )
+        for template in templates:
+            rows = [template] + db.query(TagTemplateVersion).filter(
+                TagTemplateVersion.template_id == template.id
+            ).all()
+            for row in rows:
+                doc = dict(row.doc or {})
+                layers = [dict(l, props=dict(l.get("props") or {}), show_when=dict(l.get("show_when") or {}))
+                          if isinstance(l, dict) and l.get("id") in _ACCESSORY_IDS else l
+                          for l in doc.get("layers") or []]
+                changed = shift_accessory_parts(layers)
+                label = f"v{row.version_no}" if isinstance(row, TagTemplateVersion) else "draft"
+                print(f"{'fix' if apply else 'would fix'} {template.name!r} {label}: {changed} layers")
+                if apply and changed:
+                    doc["layers"] = layers
+                    row.doc = doc
+                    flag_modified(row, "doc")
+        if apply:
+            db.commit()
 
 
 def seed(db, company, apply: bool) -> None:
@@ -281,6 +346,11 @@ def main() -> int:
     )
     parser.add_argument("--company", help="Company id, code or name to create the templates in.")
     parser.add_argument("--apply", action="store_true", help="Write the templates (default: report only).")
+    parser.add_argument(
+        "--fix-parts",
+        action="store_true",
+        help="With --company: move templates made by the old seed from Accessory 2/3 to Accessory 1/2.",
+    )
     args = parser.parse_args()
     if not args.find and not args.with_set and not args.company:
         parser.error("give --find, --with-set and/or --company")
@@ -289,7 +359,9 @@ def main() -> int:
 
     db = SessionLocal()
     try:
-        if args.company:
+        if args.company and args.fix_parts:
+            fix_parts(db, _company(db, args.company), args.apply)
+        elif args.company:
             seed(db, _company(db, args.company), args.apply)
         if args.find:
             find(db, min_items=args.min_items)

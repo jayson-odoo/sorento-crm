@@ -519,8 +519,9 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_the_quot
         assert doc["quotation_no"] == quotation_no(
             c["document"].document_no, c["issue"].issue_no, c["issue"].revision_label
         )
-        assert doc["prepared_by"] == f"{MARKER} Signer"
-        assert doc["prepared_by_phone"] == "012-000 0000"
+        # Prepared By is the document's creator, not the typed signatory (owner ruling 11 Nov 2026).
+        assert doc["prepared_by"] == "zzt-qpdf Baser Ramli"
+        assert doc["prepared_by_phone"] == ""
         # No doc date on this quotation: the issue date.
         from app.services.pdf_render import in_malaysia
 

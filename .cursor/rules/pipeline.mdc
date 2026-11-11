@@ -18,7 +18,7 @@ The order:
    the contract. Then the plan at `documentation/plans/<domain>/PLAN-<slug>.md`. No plan ships
    without its UAC file.
 2. **Reuse before inventing.** A new variant is a prop on the shared component, never a parallel
-   one-off. `extractApiError`, `buildDataGridParams`, `userSelectService`, `ConfirmDeleteDialog`,
+   one-off. `extractApiError`, `buildDataGridParams`, `userSelectService`, `DeferredActionButton`,
    `DataGrid`, the mutation-hook factories.
 3. **Phase 1 — frontend first, mocked.** UI to hook to service to mock. Every state tuned
    (loading / empty / error / partial / success) with no backend running. No tests yet, no backend

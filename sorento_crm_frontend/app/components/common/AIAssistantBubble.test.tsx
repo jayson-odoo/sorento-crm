@@ -19,6 +19,24 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug?: string) => hasPermission(slug),
 }));
 
+// AGENT-PANEL-FIXES F: the route pill, steps, reply meta and View trace are for the admin roles only.
+let isAdmin: boolean | null = true;
+vi.mock('@/hooks/useEffectiveIsSuperadmin', () => ({
+  useEffectiveIsSuperadmin: () => isAdmin,
+}));
+
+// AGENT-PANEL-FIXES E: View trace opens the chat history drawer over the page, in this tab.
+vi.mock('@/app/(protected)/system-management/chat-history/components/TurnDetailDrawer', () => ({
+  TurnDetailDrawer: ({ turnId, onOpenChange }: { turnId: string | null; onOpenChange: (open: boolean) => void }) =>
+    turnId ? (
+      <div data-testid="turn-detail-drawer-stub" data-turn={turnId}>
+        <button type="button" onClick={() => onOpenChange(false)}>
+          close drawer
+        </button>
+      </div>
+    ) : null,
+}));
+
 let currentSearchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
@@ -304,6 +322,12 @@ const ROUTE_DECISION = { side: 'agent', reason: 'classified', score: 0.93, model
 function grant(...slugs: string[]) {
   const held = new Set([USE_SLUG, ...slugs]);
   hasPermission.mockImplementation((slug?: string) => held.has(String(slug)));
+  isAdmin = false;
+}
+
+function grantAdmin() {
+  grant();
+  isAdmin = true;
 }
 
 async function openThread(messages: unknown[]) {
@@ -383,7 +407,7 @@ describe('AIAssistantBubble: which renderer a reply gets (AC-21, AC-26)', () => 
   });
 });
 
-describe('AIAssistantBubble: cards for everyone, the trace for the settings slug (AC-22, AC-23)', () => {
+describe('AIAssistantBubble: cards for everyone, the trace for admins (AC-22, AC-23, AGENT-PANEL-FIXES E/F)', () => {
   const proposing = () => brain({}, { agent: { ...FULL_AGENT, pending_action: PENDING } });
 
   it('shows Confirm and Cancel on a reply holding a pending action, without the settings slug', async () => {
@@ -413,8 +437,8 @@ describe('AIAssistantBubble: cards for everyone, the trace for the settings slug
     expect(screen.queryByTestId('agent-proposal')).toBeNull();
   });
 
-  it('shows the route pill, steps and reply meta with the settings slug', async () => {
-    grant(VIEW_SLUG);
+  it('shows the route pill, steps and reply meta to an admin', async () => {
+    grantAdmin();
     await openThread([user(), brain({}, { route_decision: ROUTE_DECISION, agent: FULL_AGENT })]);
 
     expect(screen.getByRole('button', { name: 'Agent' })).toBeDefined();
@@ -422,8 +446,8 @@ describe('AIAssistantBubble: cards for everyone, the trace for the settings slug
     expect(screen.getByTestId('agent-reply-meta')).toBeDefined();
   });
 
-  it('hides the pill, steps and reply meta without the settings slug, even when the data is present', async () => {
-    grant();
+  it('hides the pill, steps, reply meta and View trace from a non-admin, even one holding the settings slug', async () => {
+    grant(VIEW_SLUG);
     await openThread([user(), brain({}, { route_decision: ROUTE_DECISION, agent: FULL_AGENT })]);
 
     expect(screen.queryByRole('button', { name: 'Agent' })).toBeNull();
@@ -432,17 +456,26 @@ describe('AIAssistantBubble: cards for everyone, the trace for the settings slug
     expect(screen.queryByTestId('bubble-view-trace')).toBeNull();
   });
 
-  it('links a brain reply to the chat history turn, with the settings slug', async () => {
-    grant(VIEW_SLUG);
+  it('opens the turn trace drawer in place on View trace: no link, no new tab', async () => {
+    grantAdmin();
     await openThread([user(), brain({}, { route_decision: ROUTE_DECISION, agent: FULL_AGENT })]);
 
-    expect(screen.getByTestId('bubble-view-trace').getAttribute('href')).toBe(
-      `/system-management/chat-history?turn=${TURN}`,
-    );
+    const trigger = screen.getByTestId('bubble-view-trace');
+    expect(trigger.tagName).toBe('BUTTON');
+    expect(trigger.getAttribute('href')).toBeNull();
+    expect(trigger.getAttribute('target')).toBeNull();
+    expect(screen.queryByTestId('turn-detail-drawer-stub')).toBeNull();
+
+    fireEvent.click(trigger);
+    expect(screen.getByTestId('turn-detail-drawer-stub').getAttribute('data-turn')).toBe(TURN);
+    expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
+
+    fireEvent.click(screen.getByText('close drawer'));
+    expect(screen.queryByTestId('turn-detail-drawer-stub')).toBeNull();
   });
 
-  it('keeps the usage trace link on an old reply', async () => {
-    grant(VIEW_SLUG);
+  it('keeps the usage trace link on an old reply, for an admin', async () => {
+    grantAdmin();
     await openThread([
       user(),
       { id: 'm-old', role: 'assistant', content: 'ZZT old', created_at: '2026-10-30T09:00:05Z', metadata_json: {} },
@@ -773,8 +806,8 @@ describe('AIAssistantBubble: a countdown\'s end reads the thread again (review r
 });
 
 describe('AIAssistantBubble: the trace link needs a turn to point at (review round 1)', () => {
-  it('has no trace link on a brain reply with no chatbot_turn_id, with the settings slug', async () => {
-    grant(VIEW_SLUG);
+  it('has no trace link on a brain reply with no chatbot_turn_id, for an admin', async () => {
+    grantAdmin();
     await openThread([
       user(),
       { id: 'm-noturn', role: 'assistant', content: 'ZZT reply', created_at: '2026-10-30T09:00:05Z', metadata_json: { route: 'agent', status: 'done', route_decision: ROUTE_DECISION } },
@@ -783,10 +816,10 @@ describe('AIAssistantBubble: the trace link needs a turn to point at (review rou
     expect(screen.queryByTestId('bubble-view-trace')).toBeNull();
   });
 
-  it('control: the same reply with a turn id has the link', async () => {
-    grant(VIEW_SLUG);
+  it('control: the same reply with a turn id has the trace button', async () => {
+    grantAdmin();
     await openThread([user(), brain({}, { route_decision: ROUTE_DECISION })]);
-    expect(screen.getByTestId('bubble-view-trace').getAttribute('href')).toBe(`/system-management/chat-history?turn=${TURN}`);
+    expect(screen.getByTestId('bubble-view-trace').tagName).toBe('BUTTON');
   });
 });
 

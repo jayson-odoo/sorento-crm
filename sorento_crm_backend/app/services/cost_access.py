@@ -40,6 +40,7 @@ COST_AUDIT_KEYS: tuple[str, ...] = (
     "supplier_name",
     "margin",
     "margin_percent",
+    "markup_pct",
 )
 
 _COST_HIDDEN: ContextVar[bool] = ContextVar("cost_hidden", default=False)
