@@ -812,6 +812,30 @@ def with_owner_counts(name: str, data: Any) -> Any:
     return {**data, "count_by_owner": [{"owner": o, "projects": n} for o, n in ordered]}
 
 
+#: Crew pass on 2343: a project was named by its short name in one answer and its long legal title in the next.
+#: The model is handed one label, `name`, by the Projects list's rule (`project_service.project_display_name`).
+PROJECT_NAME_TOOLS = frozenset({"crm_projects_list", "crm_project_detail"})
+
+
+def _named_project(row: Any) -> Any:
+    if not isinstance(row, dict) or "title" not in row:
+        return row
+    from app.services.project_service import clean_project_name
+
+    out = {k: v for k, v in row.items() if k != "title"}
+    out["name"] = clean_project_name(row.get("name")) or (row.get("title") or "")
+    return out
+
+
+def with_project_names(name: str, data: Any) -> Any:
+    """Each project row with `name` as the Projects list shows it and no `title`, for a project tool."""
+    if name not in PROJECT_NAME_TOOLS or not isinstance(data, dict):
+        return data
+    if isinstance(data.get("data"), list):
+        return {**data, "data": [_named_project(r) for r in data["data"]]}
+    return _named_project(data)
+
+
 def _is_self(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() == SELF_WORD
 
@@ -1536,7 +1560,7 @@ def _dispatch_inner(
     if failure is not None:
         return failure
     # Before the cap below cuts rows: the counts are over every row the route returned.
-    data = with_owner_counts(name, data)
+    data = with_owner_counts(name, with_project_names(name, data))
     if tool.render:
         # Fail closed: a presenter tool's result that is not a render envelope has not been
         # through the presenter, so nothing in it can be trusted to be field-scoped.

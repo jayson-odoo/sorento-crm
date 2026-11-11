@@ -57,3 +57,16 @@ Scoping passed. Two answers misled:
    description tells the model to quote it, and `loop._group_count_misses` holds a figure written after an
    owner's name to that owner's count.
 Tests: `tests/chatbot/agent/test_agent_project_counts.py`.
+
+## Fix round after the crew re-pass on 2bf85995 (11 Nov)
+Fixes (1) and (2) passed. Four more, each with a test in `tests/chatbot/agent/test_agent_project_counts.py`:
+- (a) "my projects" answers appended unrequested company-wide totals: `loop.ANSWER_SCOPE_RULE` ("ANSWER ONLY WHAT
+  WAS ASKED", owner standing rule) is appended to the agent prompt at runtime, staff and contact.
+- (b) "project pursuits": the four project tool descriptions say "project" (`sorento_crm_mcp/catalog.py` and its
+  backend copy `app/services/mcp_catalog_copy.py`, kept identical); the rule above also says to call them projects.
+- (c) the trace said 9 rows for 8 projects: a second `_row_count` in `agent/loop.py` shadowed the first and summed
+  every list, `count_by_owner` included. One counter now, the longest list (result rows only).
+- (d) a project was named by its short name and its long title in turn: `tools.with_project_names` hands the model
+  one `name` per project row by the Projects list's rule (short name, else title) and drops `title`, for
+  `crm_projects_list` and `crm_project_detail`; `crm_projects_find` returns the same `name`.
+Follow-up (out of scope): conversation history shows "8h ago" for a fresh message (timezone).

@@ -194,3 +194,52 @@ def test_the_note_never_asks_for_more_than_the_route_allows():
 
     out = agent_tools.with_owner_counts(LIST, {"data": _rows([ALI]), "pagination": {"total": MAX_PAGE_LIMIT + 5}})
     assert f"limit={MAX_PAGE_LIMIT + 5}" not in out["count_by_owner_note"]
+
+
+# --- crew re-pass on 2bf85995 (a)-(d) -------------------------------------------------------------
+def test_c_the_trace_counts_result_rows_not_the_owner_counts():
+    from app.services.chatbot.agent import loop
+
+    data = {"data": _rows([ALI] * 8), "pagination": {"total": 8}, "count_by_owner": [{"owner": ALI, "projects": 8}]}
+    assert loop._row_count(data) == 8
+    assert loop._row_count({"items": []}) == 0 or loop._row_count({"items": []}) is None
+
+
+def test_c_there_is_one_row_counter():
+    import inspect
+
+    from app.services.chatbot.agent import loop
+
+    assert inspect.getsource(loop).count("def _row_count(") == 1
+
+
+@pytest.mark.parametrize("name", [LIST, "crm_project_detail"])
+def test_d_a_project_is_named_as_the_projects_list_names_it(name):
+    rows = [
+        {"project_code": "PPF2611010", "title": "ZZT Long Legal Title Sdn Bhd Phase 2", "name": "ZZT Melur"},
+        {"project_code": "PPF2611011", "title": "ZZT Only A Title", "name": None},
+    ]
+    out = agent_tools.with_project_names(name, {"data": rows, "pagination": {"total": 2}})
+    assert [(r.get("name"), "title" in r) for r in out["data"]] == [("ZZT Melur", False), ("ZZT Only A Title", False)]
+    one = agent_tools.with_project_names(name, dict(rows[0]))
+    assert one["name"] == "ZZT Melur" and "title" not in one
+
+
+def test_d_other_tools_keep_their_titles():
+    row = {"title": "ZZT complaint", "name": "x"}
+    assert agent_tools.with_project_names("crm_complaints_list", {"data": [dict(row)]})["data"] == [row]
+
+
+def test_a_the_agent_answers_only_what_was_asked():
+    from app.services.chatbot.agent import loop
+
+    assert "ANSWER ONLY WHAT WAS ASKED" in loop.ANSWER_SCOPE_RULE
+    assert "company-wide total" in loop.ANSWER_SCOPE_RULE
+
+
+def test_b_the_project_tools_never_call_a_project_a_pursuit():
+    from app.services.mcp_catalog_copy import CATALOG
+
+    for spec in CATALOG:
+        if getattr(spec, "name", "").startswith(("crm_project", "crm_projects")):
+            assert "pursuit" not in spec.description.lower(), spec.name

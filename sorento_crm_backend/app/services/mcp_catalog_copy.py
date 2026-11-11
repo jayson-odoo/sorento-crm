@@ -1663,11 +1663,11 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_projects_list",
         (
-            "List PROJECT SALES pursuits (property developments, hotels, fitouts we are trying to win) "
+            "List PROJECT SALES projects (property developments, hotels, fitouts we are trying to win) "
             "with UUID filters, stage filter and pagination. "
             "PRIMARY TOOL for 'which projects are we chasing', 'my pipeline', 'projects for "
             "<developer>', 'projects at sample submission stage', 'critical projects', 'what is <salesperson> "
-            "working on'. NOT for delivery orders or purchase orders -- a project is a pursuit, not a "
+            "working on'. NOT for delivery orders or purchase orders -- a project is a sale we are chasing, not a "
             "transaction.\n\n"
             "Only APPROVED projects are listed: a portal project registration still waiting for "
             "approval (or rejected) is not a project yet and is left out, so every row carries a "
@@ -1720,7 +1720,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_project_detail",
         (
-            "Full detail for ONE project sales pursuit: registration facts (developer, registered "
+            "Full detail for ONE project: registration facts (developer, registered "
             "company / SPV, location, architect, main contractor, brands, estimated value, launch date, "
             "expected delivery window), the funnel stage, the outcome (open / won / lost) and the loss reason when lost, the owner, the critical "
             "flag with its management notes, activity recency and the derived next action, plus the "
@@ -1779,7 +1779,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Also returns `by_year` (the same three per delivery year, derived from launch date plus the "
             "configured lag unless a project states its own window) and `undated` for projects with no "
             "derivable year -- report `undated` rather than dropping it, or the years will not "
-            "reconcile with the totals. `project_count` counts live pursuits only; lost projects "
+            "reconcile with the totals. `project_count` counts live projects only; lost projects "
             "contribute nothing. No filters: it is the whole company's forecast."
         ),
         "/api/v1/project-sales/reports/forecast",

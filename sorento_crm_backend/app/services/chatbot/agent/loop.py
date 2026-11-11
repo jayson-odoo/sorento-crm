@@ -1334,14 +1334,24 @@ def _context_record(db, *, system: str, context_before: str, context_after: str,
     }
 
 
-def _row_count(data: Any) -> int | None:
-    """Rows a tool returned: a list's length, or the longest list in a dict (rows, items, documents); None for none."""
+def _row_count(data: Any) -> int:
+    """Rows a tool returned: a list's length, or the longest list in a dict (rows, items, documents); 0 for none.
+    The longest, never the sum: a result's side lists (`count_by_owner`) are not rows (crew pass on 2343: 9 for 8)."""
     if isinstance(data, list):
         return len(data)
     if isinstance(data, dict):
         sizes = [len(v) for v in data.values() if isinstance(v, list)]
-        return max(sizes) if sizes else None
-    return None
+        return max(sizes) if sizes else 0
+    return 0
+
+
+#: Owner standing rule (crew pass on 2343: "my projects" answers ended with "Across the CRM, there are 16 total ...
+#: owned by ..."). Appended at runtime so a saved prompt version cannot drop it.
+ANSWER_SCOPE_RULE = (
+    "ANSWER ONLY WHAT WAS ASKED: give the figures, records and lists the question asks for, nothing more. Never add a "
+    "company-wide total, other people's records or a breakdown the user did not ask for, even when a tool returned it: "
+    "\"my projects\" is about the user's own projects only. Call a project a \"project\", as the CRM screens do."
+)
 
 
 def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
@@ -1359,6 +1369,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
             text = f"{text.rstrip()}\n\n{knowledge_service.KNOWLEDGE_CONTACT_PROTOCOL}"
         if any(portal_writes.is_portal_tool(n) for n in tool_names):
             text = f"{text.rstrip()}\n\n{DEALER_REQUESTS_PROTOCOL}"
+        if "ANSWER ONLY WHAT WAS ASKED" not in text:
+            text = f"{text.rstrip()}\n\n{ANSWER_SCOPE_RULE}"
         return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     if "USER GUIDE PROTOCOL" not in text:
         text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
@@ -1377,6 +1389,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
             f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
             "are outside this user's or this contact's access; never say the CRM lacks them, and never list them in no_tool."
         )
+    if "ANSWER ONLY WHAT WAS ASKED" not in text:
+        text = f"{text.rstrip()}\n\n{ANSWER_SCOPE_RULE}"
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
@@ -1427,14 +1441,6 @@ def _collect_names(data: Any, names: dict[str, str]) -> None:
     elif isinstance(data, list):
         for v in data:
             _collect_names(v, names)
-
-
-def _row_count(data: Any) -> int:
-    if isinstance(data, list):
-        return len(data)
-    if isinstance(data, dict):
-        return sum(len(v) for v in data.values() if isinstance(v, list))
-    return 0
 
 
 def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) -> str:

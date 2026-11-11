@@ -1916,7 +1916,8 @@ def _projects_find(db, ctx, args: dict) -> ToolResult:
             {
                 "id": str(r.get("id") or ""),
                 "project_code": r.get("project_code"),
-                "title": _line(r.get("title")),
+                # The Projects list's name (short name, else title): AGENT-PROJECT-SCOPE crew pass.
+                "name": _line(r.get("name") or r.get("title")),
                 "status": r.get("status_label"),
                 "customer": _line(r.get("customer_name")),
             }
