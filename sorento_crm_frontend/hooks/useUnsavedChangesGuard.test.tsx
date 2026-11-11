@@ -19,7 +19,7 @@ vi.mock('next/navigation', () => ({
 import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
 
 function Page({ dirty }: { dirty: boolean }) {
-  const dialog = useUnsavedChangesGuard(dirty);
+  const dialog = useUnsavedChangesGuard(dirty, { fallbackHref: '/the/list' });
   return (
     <div>
       <a href="/elsewhere/page">Sidebar link</a>
@@ -131,5 +131,16 @@ describe('useUnsavedChangesGuard', () => {
     });
     expect(dialogTitle()).toBeNull();
     expect(beforeUnload().defaultPrevented).toBe(false);
+  });
+
+  it('Leave after Back goes to the fallback page when there is no earlier page (opened in a new tab)', async () => {
+    // history.back() goes nowhere: the tab has no page before this one.
+    vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    render(<Page dirty />);
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/the/list'));
   });
 });

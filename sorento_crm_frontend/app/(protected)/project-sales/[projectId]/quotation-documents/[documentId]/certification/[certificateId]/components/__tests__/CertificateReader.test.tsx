@@ -320,6 +320,18 @@ describe('every open lands on the first box', () => {
     await waitFor(() => expect(flashedIndex()).toBe('2'));
   });
 
+  it('a jump the user asked for wins: a later refetch does not pull the view back to the first box', async () => {
+    pdf.loadMs = 30;
+    const view = openStrict('cert-1', detail());
+    // Before the file has loaded, so the landing jump is still waiting.
+    fireEvent.click(screen.getByRole('button', { name: /go to the box of SRTWCY8840-SH/i }));
+    await waitFor(() => expect(flashedIndex()).toBe('0'));
+    detailQuery.mockReturnValue({ data: detail(), isLoading: false, error: null });
+    view.switchTo('cert-1');
+    await new Promise((r) => setTimeout(r, 80));
+    expect(flashedIndex()).toBe('0');
+  });
+
   it('a certificate with no boxes opens with nothing outlined and nothing waiting', async () => {
     pdf.loadMs = 30;
     openStrict('cert-1', detail({ boxes: [] }));

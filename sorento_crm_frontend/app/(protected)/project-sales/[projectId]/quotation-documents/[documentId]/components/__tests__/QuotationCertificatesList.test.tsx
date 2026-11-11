@@ -450,8 +450,34 @@ describe('Rows marked filter buckets (owner, 11 Nov 2026)', () => {
       ok([row()]);
       renderList();
       await screen.findByText('ZZT-0119');
-      fireEvent.contextMenu(screen.getByRole('columnheader', { name: /certificate/i }));
-      expect(screen.queryByRole('menuitem', { name: 'Open' })).toBeNull();
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      screen.getByRole('columnheader', { name: /certificate/i }).dispatchEvent(event);
+      // No app menu at all (not even an empty one), and the browser's own menu is not blocked.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('a long-press on a row (touch) opens the same menu for that row', async () => {
+      ok([row(), row({ certificate_id: 'cert-2', certificate_number: 'ZZT-0200' })]);
+      renderList();
+      fireEvent.pointerDown(await screen.findByText('ZZT-0200'), { pointerType: 'touch', button: 0 });
+      const items = await screen.findAllByRole('menuitem', {}, { timeout: 2000 });
+      expect(items.map((i) => i.textContent?.trim())).toEqual(['Open', 'Download', 'Remove']);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open' }));
+      expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/certification/cert-2');
+    });
+
+    it('a long-press outside a row opens no empty menu', async () => {
+      ok([row()]);
+      renderList();
+      await screen.findByText('ZZT-0119');
+      fireEvent.pointerDown(screen.getByRole('columnheader', { name: /certificate/i }), {
+        pointerType: 'touch',
+        button: 0,
+      });
+      await new Promise((r) => setTimeout(r, 900));
+      expect(screen.queryByRole('menu')).toBeNull();
     });
   });
 });
