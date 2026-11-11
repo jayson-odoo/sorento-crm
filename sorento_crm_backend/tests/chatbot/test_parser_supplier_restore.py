@@ -79,3 +79,19 @@ def test_every_committed_span_pass_parser_text_keeps_the_supplier_id_sentence() 
     missing = [t.name for t in span_pass if t.name not in _SUPPLIER_LESS_HISTORY
                and parser_mod.SUPPLIER_ID_ASK not in t.read_text(encoding="utf-8")]
     assert missing == [], f"span-pass parser texts without parser.SUPPLIER_ID_ASK: {missing}"
+
+
+# Prod regression round (11 Nov ~19:10): the owner's alternative candidate is prod v72 plus ONLY the two v71 lines
+# (dev v73, md5 0f727510; v71's own trailing blank line kept), without REPORT-FILTER-ALL's edits.
+V72_MD5 = "d29c19830b22aa47403a88ddcb8e817d"
+V72_SUPPLIER_MD5 = "0f7275103f96c85535b2208de8bb54db"
+
+
+def test_the_v72_candidate_is_prod_v72_plus_the_two_v71_lines_and_nothing_else() -> None:
+    sask = _sask()
+    base, cand = _PLANS / "prompt-prod-v72-d29c1983.txt", _PLANS / "prompt-parser-v72-supplier.txt"
+    assert _md5(base) == V72_MD5 and _md5(cand) == V72_SUPPLIER_MD5
+    base_text, cand_text = base.read_text(encoding="utf-8"), cand.read_text(encoding="utf-8")
+    assert cand_text == sask.with_after_year(sask.with_supplier_line(base_text)) + "\n", "v71's trailing blank line kept"
+    assert parser_mod.SUPPLIER_ID_ASK in cand_text and parser_mod.PARTY_SIDE_LINE in cand_text
+    assert "ALL" not in parser_mod.report_ask_defined_in(cand_text), "no REPORT-FILTER-ALL edit rides along"
