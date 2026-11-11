@@ -651,7 +651,10 @@ def test_every_company_id_table_is_registered():
     #   company exactly as `item_classes` = 183.
     # + 1 (NON-CANCELLABLE-ITEMS): `non_cancellable_rules`, one company's default list of
     #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 184.
-    expected_owned = 184
+    # + 5 (PRODUCT-COSTING, merged to main without updating this count): `costing_category_rules`,
+    #   `costing_product_overrides`, `costing_settings`, `customer_costing_products`,
+    #   `customer_costing_profiles`, one company's costing setup = 189.
+    expected_owned = 189
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
