@@ -90,7 +90,9 @@ export const LOOK_WORDS: Record<SiteLook, string> = {
 export const siteTitle = (site: { name?: string; code?: string | null }) =>
   site.name ? (site.code ? `${site.name} · ${site.code}` : site.name) : 'Project site';
 
-const MONTH = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+// date-format-ok: a month-name table; "Mar 2025" straight from the ISO date, no time zone involved
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 
 /** "Launch Mar 2025 · Delivery Mar 2028 · 56% of the way" (the project's own dates). */
 export function siteTimeline(site: { launch_date: string | null; delivery_date: string | null }, day: string): string {
