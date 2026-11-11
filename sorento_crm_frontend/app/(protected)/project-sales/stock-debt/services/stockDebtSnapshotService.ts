@@ -184,6 +184,15 @@ export async function relinkPoLines(
   return postJson(poLinkUrl(id, rowId, '/relink'), { moves }, 'Failed to move the PO');
 }
 
+/** STOCKDEBT-LIVE-ACTIONS: cover each SO line with another PO line instead of its one now. */
+export async function changePoLines(
+  id: string,
+  rowId: string,
+  changes: Array<{ sales_order_line_id: string; po_line_id: string }>,
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(poLinkUrl(id, rowId, '/change'), { changes }, 'Failed to change the PO');
+}
+
 /** Move a linked PO line to its sales order line's location. */
 export async function relocatePoLine(poLineId: string): Promise<PoLinkResult> {
   return postJson(`${PO_LINK_BASE}/relocate`, { po_line_id: poLineId }, 'Failed to move the PO line');

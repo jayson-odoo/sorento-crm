@@ -12,6 +12,7 @@ import {
   getPoLinkSwitch,
   getSnapshotRowLines,
   linkPoLines,
+  changePoLines,
   relinkPoLines,
   relocatePoLine,
   resumePoLink,
@@ -153,6 +154,11 @@ export function usePoLinkMutations(id: string, rowId: string) {
     }),
     relink: useMutation({
       mutationFn: (moves: Parameters<typeof relinkPoLines>[2]) => relinkPoLines(id, rowId, moves),
+      onSuccess: refresh,
+      onError,
+    }),
+    change: useMutation({
+      mutationFn: (changes: Parameters<typeof changePoLines>[2]) => changePoLines(id, rowId, changes),
       onSuccess: refresh,
       onError,
     }),

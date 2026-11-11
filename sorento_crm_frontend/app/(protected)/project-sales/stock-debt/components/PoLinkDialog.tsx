@@ -76,8 +76,9 @@ const TITLE: Record<PoLinkKind, string> = {
   link: 'Link to PO',
   unlink: 'Unlink from PO',
   relink: 'Move PO to another sales order',
+  change: 'Change PO',
 };
-const SEND: Record<PoLinkKind, string> = { link: 'Link', unlink: 'Unlink', relink: 'Move' };
+const SEND: Record<PoLinkKind, string> = { link: 'Link', unlink: 'Unlink', relink: 'Move', change: 'Change' };
 
 function soLine(line: SnapshotLine): string {
   return line.line_no != null ? String(line.line_no) : '-';
@@ -189,7 +190,7 @@ export function PoLinkDialog({
   soBooks,
   onClose,
 }: PoLinkDialogProps) {
-  const { link, unlink, relink } = usePoLinkMutations(snapshotId, rowId);
+  const { link, unlink, relink, change } = usePoLinkMutations(snapshotId, rowId);
   const rows = React.useMemo<DialogRow[]>(() => {
     if (mode === 'link') {
       return lines.map((line) => ({
@@ -201,7 +202,10 @@ export function PoLinkDialog({
       }));
     }
     return lines.flatMap((line) =>
-      (line.now.po_links ?? []).map((po) => ({
+      (line.now.po_links ?? [])
+        // Change PO (owner, 11 Nov, card 1a): only a line covered by exactly one PO line.
+        .filter(() => mode !== 'change' || (line.now.po_links ?? []).length === 1)
+        .map((po) => ({
         id: `${line.sales_order_line_id}:${po.po_line_id}`,
         line,
         poLineId: po.po_line_id,
@@ -252,6 +256,22 @@ export function PoLinkDialog({
 
   function rowError(row: DialogRow): string | undefined {
     if (mode === 'relink') return target[row.id] ? undefined : 'Pick the sales order line';
+    if (mode === 'change') {
+      const po = poById.get(picked[row.id] ?? '');
+      if (!po) return 'No PO line picked';
+      const needs = row.linkedQty ?? 0;
+      if (needs === po.po_qty && !capabilities.link_row.enabled) {
+        return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
+      }
+      // Card 3a: the new PO line must have the whole linked qty free (shared across lines).
+      const total = rows
+        .filter((other) => rowSelection[other.id] && picked[other.id] === po.po_line_id)
+        .reduce((sum, other) => sum + (other.linkedQty ?? 0), 0);
+      if (needs > po.free_qty || total > po.free_qty) {
+        return `PO ${po.po_number} has only ${po.free_qty.toLocaleString()} free`;
+      }
+      return undefined;
+    }
     if (mode !== 'link') return undefined;
     const po = poById.get(picked[row.id] ?? '');
     if (!po) return 'No PO line picked';
@@ -438,6 +458,50 @@ export function PoLinkDialog({
       },
     ];
     if (mode === 'unlink') return linkedCols;
+    if (mode === 'change') {
+      return [
+        ...linkedCols,
+        {
+          id: 'change_to',
+          header: 'Change to',
+          size: 240,
+          cell: ({ row }) => (
+            <>
+              <Label htmlFor={`po-link-change-${row.original.id}`} className="sr-only">
+                Change to
+              </Label>
+              <SearchableSelect
+                id={`po-link-change-${row.original.id}`}
+                value={stateRef.current.picked[row.original.id] ?? ''}
+                disabled={!row.getIsSelected()}
+                placeholder="Pick a PO line"
+                clearable
+                truncateTriggerLabel
+                onChange={(value) => setPicked((prev) => ({ ...prev, [row.original.id]: value }))}
+                options={optionsFor(row.original.line).filter(
+                  (option) => option.value !== row.original.poLineId,
+                )}
+              />
+              {stateRef.current.showErrors && row.getIsSelected() && stateRef.current.rowError(row.original) ? (
+                <p className="mt-1 truncate text-xs text-destructive" role="alert">
+                  {stateRef.current.rowError(row.original)}
+                </p>
+              ) : null}
+            </>
+          ),
+        },
+        {
+          id: 'free',
+          header: 'Free',
+          size: 80,
+          meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+          cell: ({ row }) => {
+            const po = poById.get(stateRef.current.picked[row.original.id] ?? '');
+            return <span className="tabular-nums">{po ? po.free_qty.toLocaleString() : '-'}</span>;
+          },
+        },
+      ];
+    }
     return [
       ...linkedCols,
       {
@@ -481,7 +545,7 @@ export function PoLinkDialog({
   });
 
   const ticked = rows.filter((row) => rowSelection[row.id]);
-  const sending = link.isPending || unlink.isPending || relink.isPending;
+  const sending = link.isPending || unlink.isPending || relink.isPending || change.isPending;
 
   async function handleSend() {
     if (ticked.some((row) => rowError(row))) {
@@ -500,6 +564,13 @@ export function PoLinkDialog({
               qty: Number(qty[row.id] ?? String(qtyCap(row.line, po))),
             };
           }),
+        );
+      } else if (mode === 'change') {
+        out = await change.mutateAsync(
+          ticked.map((row) => ({
+            sales_order_line_id: row.line.sales_order_line_id,
+            po_line_id: picked[row.id],
+          })),
         );
       } else if (mode === 'unlink') {
         out = await unlink.mutateAsync(ticked.map((row) => row.poLineId as string));
@@ -533,7 +604,7 @@ export function PoLinkDialog({
                 <ResultCard
                   key={`${result.sales_order_line_id}-${index}`}
                   result={result}
-                  kind={mode}
+                  kind={result.action ?? mode}
                   snapshotId={snapshotId}
                   rowId={rowId}
                 />

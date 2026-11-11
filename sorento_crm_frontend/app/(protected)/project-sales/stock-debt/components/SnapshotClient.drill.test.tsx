@@ -1003,7 +1003,7 @@ describe('AC-LINK-CRM-UI the "AutoCount links from Stock Debt" switch (owner, 5 
     fireEvent.keyDown(decide, { key: 'Enter' });
     const items = (await screen.findAllByRole('menuitem')).map((item) => (item.textContent ?? '').split('…')[0]);
     expect(items).toEqual([
-      'Request CS to reserve', 'Link to PO', 'Unlink from PO', 'Move PO to another sales order',
+      'Request CS to reserve', 'Link to PO', 'Change PO', 'Unlink from PO', 'Move PO to another sales order',
     ]);
   });
 

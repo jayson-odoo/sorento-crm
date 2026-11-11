@@ -291,6 +291,7 @@ function OiGroupGrid({
   const menu = poLinkMenu({
     ticked: tickedLines.length,
     linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
+    singleLinked: tickedLines.filter((line) => (line.now.po_links ?? []).length === 1).length,
     capabilities: options.data?.capabilities ?? null,
     loading: options.isFetching,
     // Crew round 3: every ticked line already covered by POs -> Link greyed, naming them.
@@ -314,6 +315,7 @@ function OiGroupGrid({
     canLinkPo
       ? [
           { key: 'link', label: 'Link to PO…', ...menu.link, onSelect: () => setPoDialog('link') },
+          { key: 'change', label: 'Change PO…', ...menu.change, onSelect: () => setPoDialog('change') },
           { key: 'unlink', label: 'Unlink from PO…', ...menu.unlink, onSelect: () => setPoDialog('unlink') },
           {
             key: 'relink',

@@ -52,12 +52,14 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 const linkPoLines = vi.fn();
+const changePoLines = vi.fn();
 const relocatePoLine = vi.fn();
 const resumePoLink = vi.fn();
 vi.mock('../services/stockDebtSnapshotService', () => ({
   linkPoLines: (...args: unknown[]) => linkPoLines(...args),
   unlinkPoLines: vi.fn(),
   relinkPoLines: vi.fn(),
+  changePoLines: (...args: unknown[]) => changePoLines(...args),
   relocatePoLine: (...args: unknown[]) => relocatePoLine(...args),
   resumePoLink: (...args: unknown[]) => resumePoLink(...args),
   getPoLinkOptions: vi.fn(),
@@ -115,13 +117,13 @@ function result(over: Partial<PoLinkResult>): PoLinkResult {
   };
 }
 
-function renderDialog(lines = [soLine({})]) {
+function renderDialog(lines = [soLine({})], mode: 'link' | 'change' = 'link') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onClose = vi.fn();
   render(
     <QueryClientProvider client={client}>
       <PoLinkDialog
-        mode="link"
+        mode={mode}
         snapshotId="snap"
         rowId="row"
         lines={lines}
@@ -138,6 +140,7 @@ function renderDialog(lines = [soLine({})]) {
 
 beforeEach(() => {
   linkPoLines.mockReset();
+  changePoLines.mockReset();
   relocatePoLine.mockReset();
   resumePoLink.mockReset();
 });
@@ -320,5 +323,54 @@ describe('Link to PO popup', () => {
     );
     expect(linkPoLines).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByTestId('po-link-result')).toHaveTextContent('Linked'));
+  });
+});
+
+describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
+  const covered = soLine({
+    status: 'pinned', short_qty: 0, assigned_qty: 120,
+    now: {
+      so_status: 'open', open_qty: 120,
+      po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 120, location_code: 'MWH-BB' }],
+    },
+  });
+
+  it('shows the PO now covering the line and a picker without it', () => {
+    const { dialog } = renderDialog([covered], 'change');
+    const headers = within(dialog).getAllByRole('columnheader').map((cell) => cell.textContent);
+    expect(headers.slice(1)).toEqual([
+      'Sales order', 'Line', 'Location', 'Delivery date', 'Outstanding', 'PO', 'PO qty', 'Change to', 'Free',
+    ]);
+    expect(dialog).toHaveTextContent('202610-S0007 · line 1');
+    const options = [...(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement).options];
+    expect(options.slice(1).map((o) => o.value)).toEqual(['po-3', 'po-live']);
+  });
+
+  it('refuses a PO line with less free than the linked qty, and sends nothing', async () => {
+    const { dialog } = renderDialog([{ ...covered, now: { ...covered.now, po_links: [{ ...covered.now.po_links![0], qty: 400 }] } }], 'change');
+    fireEvent.change(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Change 1 line' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('PO 202609-S0029 has only 380 free');
+    expect(changePoLines).not.toHaveBeenCalled();
+  });
+
+  it('sends the SO line and the new PO line, then shows both halves in plain words', async () => {
+    changePoLines.mockResolvedValue({
+      results: [
+        result({ action: 'link', po_number: '202609-S0029' }),
+        result({ action: 'unlink', po_number: '202610-S0007' }),
+      ],
+    });
+    const { dialog } = renderDialog([covered], 'change');
+    fireEvent.change(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Change 1 line' }));
+    await waitFor(() => expect(changePoLines).toHaveBeenCalledWith('snap', 'row', [
+      { sales_order_line_id: 'sol-1', po_line_id: 'po-3' },
+    ]));
+    const cards = await within(dialog).findAllByTestId('po-link-result');
+    expect(cards.map((card) => card.textContent)).toEqual([
+      'LinkedSO425045 line 140 now covered by PO 202609-S0029 (120).',
+      'UnlinkedSO425045 line 140 is no longer covered by PO 202610-S0007 (120).',
+    ]);
   });
 });

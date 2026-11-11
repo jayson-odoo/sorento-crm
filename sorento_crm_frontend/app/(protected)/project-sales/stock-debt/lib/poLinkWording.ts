@@ -4,7 +4,7 @@
  */
 import type { PoLinkCapabilities, PoLinkResult } from '../types/stockDebtSnapshot.types';
 
-export type PoLinkKind = 'link' | 'unlink' | 'relink';
+export type PoLinkKind = 'link' | 'unlink' | 'relink' | 'change';
 
 export interface PoLinkResultText {
   tone: 'ok' | 'warn' | 'error';
@@ -18,11 +18,13 @@ const DONE_TITLE: Record<PoLinkKind, string> = {
   link: 'Linked',
   unlink: 'Unlinked',
   relink: 'Moved',
+  change: 'Changed',
 };
 const FAIL_TITLE: Record<PoLinkKind, string> = {
   link: 'Not linked',
   unlink: 'Not unlinked',
   relink: 'Not moved',
+  change: 'Not changed',
 };
 
 function soLabel(r: PoLinkResult): string {
@@ -95,15 +97,17 @@ export function poLinkMenu(input: {
   loading: boolean;
   /** When every ticked line is already fully covered by POs: those PO numbers. */
   coveredBy?: string[] | null;
-}): { link: MenuItemState; unlink: MenuItemState; relink: MenuItemState } {
+  /** Ticked lines covered by exactly one PO line (Change PO needs every ticked line so). */
+  singleLinked?: number;
+}): { link: MenuItemState; unlink: MenuItemState; relink: MenuItemState; change: MenuItemState } {
   const off = (reason: string): MenuItemState => ({ enabled: false, reason });
   if (input.ticked === 0) {
     const none = off('Tick the lines to decide on');
-    return { link: none, unlink: none, relink: none };
+    return { link: none, unlink: none, relink: none, change: none };
   }
   if (!input.capabilities) {
     const wait = off(input.loading ? 'Checking AutoCount…' : 'Could not reach AutoCount');
-    return { link: wait, unlink: wait, relink: wait };
+    return { link: wait, unlink: wait, relink: wait, change: wait };
   }
   const caps = input.capabilities;
   const from = (cap: { enabled: boolean; reason: string | null }, needsLink: boolean): MenuItemState => {
@@ -114,9 +118,19 @@ export function poLinkMenu(input: {
   const covered = input.coveredBy?.length
     ? off(`Already covered by PO ${input.coveredBy.join(', ')}`)
     : null;
+  // Owner, 11 Nov (card 1a): Change PO links the new PO line, then unlinks the old one, so
+  // it needs both writes; greyed unless every ticked line has exactly one PO line on it.
+  const change = !caps.split_link.enabled
+    ? off(caps.split_link.reason ?? 'Waiting for AutoCount')
+    : !caps.unlink_row.enabled
+      ? off(caps.unlink_row.reason ?? 'Waiting for AutoCount')
+      : (input.singleLinked ?? 0) !== input.ticked
+        ? off('Each ticked line needs exactly one PO linked')
+        : { enabled: true, reason: null };
   return {
     link: covered ?? from(caps.split_link, false),
     unlink: from(caps.unlink_row, true),
     relink: from(caps.relink_row, true),
+    change,
   };
 }
