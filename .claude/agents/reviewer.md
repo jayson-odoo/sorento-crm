@@ -39,7 +39,7 @@ sequentially.
 - Layering UI → hooks → service → api-client → backend honored.
 - `extractApiError` / `buildDataGridParams` used, not hand-rolled.
 - User selects via `userSelectService`. DataGrid uses fixed layout + explicit `size` + `truncate`/`title`.
-- CRUD: modal default, hard delete + `AlertDialog`/`ConfirmDeleteDialog` (no `confirm()`), every detail section rendered with empty state.
+- CRUD: modal default, hard delete as a server-deferred countdown with Cancel (`components/common/DeferredActionButton.tsx`; no confirm dialog, never `confirm()`), every detail section rendered with empty state.
 - No UUIDs in UI; no feature explanations in UI.
 
 **Design pass (UI diffs)** - output the `emil-design-eng` Before / After / Why markdown table

@@ -214,7 +214,7 @@ Do not duplicate shared primitives:
 
 Per `documentation/reference/ADR-PRODUCT-STANDARDS.md`:
 
-- List pages use a DataGrid/table with search, filters, pagination, and an Add/Create toolbar action.
+- List pages use a DataGrid/table with search, filters, pagination, and a toolbar button labelled just "Create".
 - Create and edit use modals by default.
 - Dedicated create/edit pages are for complex, nested, multi-tab, or file-centric flows.
 - View uses a dedicated detail page.
@@ -251,7 +251,7 @@ If Playwright/browser verification is unavailable, state that explicitly and rep
 - API error handling and DataGrid query params: `sorento_crm_frontend/lib/api-client.ts`.
 - Feature service using `apiFetch`, `buildDataGridParams`, and `extractApiError`: `sorento_crm_frontend/app/(protected)/master-data-management/lookup-sets/services/lookupSetService.ts`.
 - Deferred delete countdown (replaces the retired confirm dialog): `sorento_crm_frontend/components/common/DeferredActionButton.tsx`.
-- DataGrid list with explicit column sizes, truncation, modal create/edit, and delete dialog: `sorento_crm_frontend/app/(protected)/system-management/email-templates/components/EmailTemplatesList.tsx`.
+- DataGrid list with explicit column sizes, truncation, modal create/edit and deferred delete: `sorento_crm_frontend/app/(protected)/system-management/email-templates/components/EmailTemplatesList.tsx` (its per-row icon buttons predate `documentation/owner-standing-rules.md`; copy the rules, not those).
 - Backend application entry and global handlers: `sorento_crm_backend/app/main.py`.
 - Backend route mounting and module guards: `sorento_crm_backend/app/api/v1/__init__.py`.
 - Backend error contract: `sorento_crm_backend/app/services/error_handler.py`.

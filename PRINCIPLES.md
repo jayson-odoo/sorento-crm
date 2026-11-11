@@ -253,7 +253,7 @@ the same axis as the module decision - not a separate schema axis.
 **Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
 
 - **CRUD standard** (`documentation/reference/ADR-PRODUCT-STANDARDS.md`): list = DataGrid + search/filters +
-  Add; create/edit = **modal by default** (dedicated page only for complex/multi-tab/file flows);
+  Create; create/edit = **modal by default** (dedicated page only for complex/multi-tab/file flows);
   view = dedicated `/{module}/{id}` detail page rendering **every section** with an explicit empty
   state + next-step CTA (never hide a section on missing data).
 - **Delete = hard delete, no confirmation dialog** (D7, Apple Alignment S6). A destructive or

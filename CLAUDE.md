@@ -151,7 +151,7 @@ Mutation hooks: shared `useCreateMutation` / `useUpdateMutation` / `useDeleteMut
 `documentation/reference/DESIGN-LANGUAGE.md` are the contract.** Summary only, so the three
 cannot drift:
 
-- List = DataGrid + search/filters + Add. Create/edit = **modal by default**; dedicated page only
+- List = DataGrid + search/filters + Create. Create/edit = **modal by default**; dedicated page only
   for complex/multi-tab/file-centric flows. View = `/{module}/{id}` detail page rendering **every**
   section, with an explicit empty state (heading + hint, no button: one CTA per page, in the
   header, and no subtitle; `DESIGN-LANGUAGE.md` section 6).
@@ -232,8 +232,8 @@ writes the red tests from the UAC + captain's test list BEFORE the `coder` agent
 kept alive for the whole lane, makes them green; pytest + vitest land here, never deferred) →
 **Phase 3** `reviewer` + browser verification in parallel, once per lane (`security-reviewer`
 joins only when the diff touches auth, RBAC, external ingest, uploads or multi-company scoping;
-otherwise it is skipped and the PR body says so) → DoD gate → PR. User guides: every PR that changes what a user sees or does updates its user guide under `documentation/user-guides/` in the same PR (owner ruling, 31 Oct 2026)
-- see `.claude/agents/guide-writer.md`.
+otherwise it is skipped and the PR body says so) → DoD gate → PR. User guides: every PR that changes what a user sees or does updates its user guide under `documentation/user-guides/` in the same PR (owner ruling, 31 Oct 2026);
+see `.claude/agents/guide-writer.md`.
 
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.

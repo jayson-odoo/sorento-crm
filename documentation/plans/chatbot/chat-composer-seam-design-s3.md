@@ -4,7 +4,7 @@ Lane CHAT-COMPOSER, plan `PLAN-chat-composer-17oct.md`, card `chat-composer-beha
 clarify / hand-over", UAC S3 line. Builds on `chat-composer-seam-design.md` (S0+S1, "Lead decisions 17 Oct" binds) and
 `chat-composer-seam-design-s2.md` (section 10a hands S3 the bare-vs-named quantity question and the word "inventory").
 Read-only design. Line numbers on HEAD 2831bc58e5 (S0+S1 landed, S2 in red). Open PR hunks read with
-`gh pr diff 1744|1747|1755 --repo jayson-odoo/sorento-crm` on 17 Oct.
+`gh pr diff 1744|1747|1755 --repo foundryx-sdn-bhd/sorento-crm` on 17 Oct.
 Paths: B = `sorento_crm_backend/app/services/chatbot`, A = `B/lanes/business/answer.py`, C = `B/turn/compose.py`,
 E = `B/engine.py`, AB = `B/answer_bridge.py`, F = `B/lanes/business/fetch.py`, G = `B/lanes/business/gate.py`,
 T = `B/turn/task.py`, TA = `B/turn/apply.py`, TR = `B/turn_runtime.py`, LC = `B/label_catalog.py`, K = `B/composers/`,

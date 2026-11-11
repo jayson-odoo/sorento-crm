@@ -15,7 +15,7 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
       `documentation/user-guides/` in the same PR (owner ruling, 31 Oct 2026)
 
 ## CRUD structure
-- [ ] List page has search/filter and "Add/Create" button
+- [ ] List page has search/filter and a button labelled just "Create"
 - [ ] Create/edit uses modal by default (dedicated page only when ADR-exempt)
 - [ ] Dedicated detail page for view
 - [ ] Delete is a deferred (grace-window) action, not a confirmation dialog (D7 - see

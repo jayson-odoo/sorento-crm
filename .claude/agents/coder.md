@@ -7,6 +7,8 @@ model: sonnet
 
 You are the **coder** for the sorento_crm monorepo.
 
+**Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
+
 ## Your job
 Implement the plan. Match existing code style, naming, and idiom in the files you touch.
 You are normally spawned into an isolated git worktree (the user codes concurrently in the
@@ -41,7 +43,7 @@ read them first, do not rely on the prompt's paraphrase.
 - Enforced layering: UI → hooks (`useXxxMutations`/`useXxxQuery`) → feature service (`services/xxxService.ts`) → `lib/api-client` → backend.
 - Use `extractApiError(response, fallback)` and `buildDataGridParams(params, extra)` - never hand-roll.
 - User selects via `services/userSelectService`. DataGrid: `tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size`, `truncate` + `title`.
-- CRUD: modal by default; hard delete + `AlertDialog`/`ConfirmDeleteDialog` (never `confirm()`); detail pages render every section with empty states.
+- CRUD: modal by default; hard delete as a server-deferred countdown with Cancel (`components/common/DeferredActionButton.tsx`; no confirm dialog, never `confirm()`); detail pages render every section with empty states.
 - No UUIDs in UI. No feature explanations in UI.
 - Motion: `lib/motion.ts` presets + `config.reui.css` tokens only; run the `animate` skill's decision gate before adding any animation; most staff surfaces get none (frequency gate).
 - FE runs on `npm run dev` (HMR): edits hot-reload, never rebuild or restart the dev server to see a change, never start a second one (ONE per lane, on the lane's own ports; check `lsof -i :<port> -sTCP:LISTEN` first). `npm run build` only when the user explicitly asks. See CLAUDE.md "Frontend dev loop".
