@@ -605,12 +605,18 @@ class PoLinkService:
             ref: sorted(lines, key=lambda l: l.line_status == "cancelled")[0]
             for ref, lines in by_ref.items() if lines
         }
-        so_keys = _keys(so_ref)
+        # One SO ref (link / unlink / relink / resume), or {FromSODtlKey: ref} for a batch.
+        if isinstance(so_ref, dict):
+            so_map = so_ref
+        else:
+            so_keys = _keys(so_ref)
+            so_map = {so_keys[2]: so_ref} if so_keys is not None else {}
         doc = answer.get("document") or {}
         linked_line = None
+        linked_by_dtl: Dict[int, PurchaseOrderLine] = {}
         for detail in doc.get("Details") or []:
             ref = f"{prefix}{detail.get('DtlKey')}"
-            linked = so_keys is not None and detail.get("FromSODtlKey") == so_keys[2]
+            linked = detail.get("FromSODtlKey") in so_map
             line = siblings.get(ref)
             if line is None:
                 if not linked:
@@ -635,8 +641,9 @@ class PoLinkService:
             if detail.get("Qty") is not None:
                 line.qty_ordered = Decimal(str(detail["Qty"]))
             if linked:
-                line.from_so_line_ref = so_ref
+                line.from_so_line_ref = so_map[detail.get("FromSODtlKey")]
                 linked_line = line
+                linked_by_dtl[detail.get("FromSODtlKey")] = line
             # B13 (db3, 10 Nov): AutoCount answers 0, not null, for a row with no link.
             elif detail.get("FromSODtlKey") in (None, 0):
                 line.from_so_line_ref = None
@@ -650,7 +657,7 @@ class PoLinkService:
                 if warehouse is not None:
                     line.warehouse_id = warehouse.id
         self.db.flush()
-        return linked_line
+        return linked_by_dtl if isinstance(so_ref, dict) else linked_line
 
     def link(self, lines: List[Dict[str, Any]]) -> Dict[str, Any]:
         plan = []
@@ -705,8 +712,75 @@ class PoLinkService:
                 by_step[id(step)] = result
         return {"results": [by_step[id(step)] for step in plan]}
 
+    #: SS refusal codes of one skipped line, in the words staff read (never the code).
+    _SKIP_WHY = {
+        "QTY_ABOVE_OUTSTANDING": "it needs less than that now",
+        "QTY_ABOVE_FREE": "the PO line has less free",
+        "ITEM_MISMATCH": "the PO line is a different item",
+    }
+
     def _send_group(self, po_line, po, members: List[Tuple]) -> List[Dict[str, Any]]:
-        return [self._send_link(*member) for member in members]
+        """All the links of one PO line in ONE Shared Service batch call (`po-links/batch`, all
+        or nothing for the whole answer, lines it cannot take come back `skipped`). An SS that
+        does not have the route yet answers 404: the per-line writes run instead."""
+        company_code = self._company_code(po_line.company_id)
+        _db, po_doc, po_dtl = _keys(po_line.source_ref)
+        links = []
+        for so_line, so, _pl, _po, qty in members:
+            _d, so_doc, so_dtl = _keys(so_line.source_ref)
+            link = {"soDocKey": so_doc, "soDtlKey": so_dtl, "qty": float(qty) if qty != qty.to_integral() else int(qty)}
+            if so.order_date:
+                link["soDocDate"] = so.order_date.isoformat()
+            links.append(link)
+        body: Dict[str, Any] = {
+            "companyCode": company_code, "poDocKey": po_doc, "poDtlKey": po_dtl,
+            "expectedLastModified": None, "links": links,
+        }
+        if po.issue_date:
+            body["docDate"] = po.issue_date.isoformat()
+        row_qty = Decimal(str(po_line.qty_ordered or 0))
+        total = sum((m[4] for m in members), Decimal("0"))
+        if total < row_qty:  # split: the row keeps the rest and its own link
+            po_replace_hint.remember(po_line.source_ref, qty=row_qty - total, from_so_ref=po_line.from_so_line_ref)
+        elif len(members) == 1:  # whole row: the row itself moves onto the SO line
+            po_replace_hint.remember(po_line.source_ref, qty=row_qty, from_so_ref=members[0][0].source_ref)
+        answer = self._send_intent("po-links/batch", body, po_line)
+        if answer.get("outcome") == "vendor_error" and answer.get("errorCode") in ("NOT_FOUND", "NOT_CONFIGURED"):
+            # The gateway reads a 404 (route missing) as NOT_CONFIGURED; a really unconfigured
+            # connection fails the per-line write the same way.
+            return [self._send_link(*member) for member in members]  # SS without the batch route
+
+        done = answer.get("outcome") == "done"
+        so_refs = {_keys(m[0].source_ref)[2]: m[0].source_ref.strip() for m in members}
+        linked_by_dtl = (self._apply_safely(answer, po_line, so_refs) if done else None) or {}
+        taken = {int(l.get("soDtlKey")) for l in (answer.get("links") or []) if str(l.get("soDtlKey", "")).isdigit()}
+        skipped = {
+            int(k.get("soDtlKey")): str(k.get("code") or "")
+            for k in (answer.get("skipped") or []) if str(k.get("soDtlKey", "")).isdigit()
+        }
+        results = []
+        for so_line, so, _pl, _po, qty in members:
+            dtl = _keys(so_line.source_ref)[2]
+            if not done:
+                line_answer = answer
+            elif dtl in taken:
+                line_answer = answer
+            else:
+                code = skipped.get(dtl, "")
+                so_label = f"{so.so_number} line {so_line.line_no}" if so_line.line_no is not None else so.so_number
+                why = self._SKIP_WHY.get(code, "AutoCount did not accept it")
+                line_answer = {
+                    **answer, "outcome": "skipped", "errorCode": code or None, "warnings": [],
+                    "message": f"{so_label} was not linked: {why}.",
+                }
+            results.append(self._result(
+                line_answer, so_line=so_line, so=so, po_line=po_line, po=po, qty=_num(qty),
+                company_code=company_code, linked_line=linked_by_dtl.get(dtl),
+            ))
+            self._log_write("link", line_answer, po_line, so_line, so, qty)
+        if is_definite_refusal(answer):
+            po_replace_hint.forget(po_line.source_ref)
+        return results
 
     def _send_link(self, so_line, so, po_line, po, qty: Decimal) -> Dict[str, Any]:
         """One link write (whole row or split, AutoCount decides by the qty) and its read-back."""
