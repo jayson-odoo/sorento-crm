@@ -1074,6 +1074,8 @@ class QuotationLineVerdictResponse(BaseModel):
 
     is_non_standard: bool
     is_below_floor: bool
+    # Below the default price (series price, else list price): the save's `is_discounted`.
+    is_discounted: bool = False
     floor_value: Optional[Decimal] = None
     floor_level: Optional[str] = None
 
