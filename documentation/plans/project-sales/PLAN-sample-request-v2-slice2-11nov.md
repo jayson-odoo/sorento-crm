@@ -1,6 +1,6 @@
 # PLAN: sample request v2, slice 2: the limited salesperson's form (lane SAMPLE-REQUEST-V2)
 
-Status: Review (built; reviewer + security round 1 findings fixed, round 2 next; browser pass next). Slice 1 (PR #2338) is green on CI and frozen; this branch stacks on it.
+Status: Review done (reviewer READY round 3, security READY round 2; cloud browser pass as a limited salesperson done, evidence `evidence-sample-request-v2/slice2-*`). Waiting on the owner's hand test. Slice 1 (PR #2338) is green on CI and frozen; this branch stacks on it.
 Track: full (auth / own-scope surface: My Requests routes).
 
 Owner Q1 (a), 11 Nov: the salesperson who sees only their own sample requests gets the same experience
