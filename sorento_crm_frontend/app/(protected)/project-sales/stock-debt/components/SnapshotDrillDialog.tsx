@@ -27,11 +27,12 @@ import { reserveIneligibleReason } from '../../_shared/lib/reserveEligibility';
 import { reserveRowsOfLines } from '../../_shared/lib/orderInquiryLineFold';
 import {
   SNAPSHOTS_KEY,
-  usePoLinkOptions,
-  usePoLinkSwitch,
   useSnapshotLinesQuery,
 } from '../hooks/useStockDebtSnapshots';
-import { poLinkMenu, type PoLinkKind } from '../lib/poLinkWording';
+import { PoLinkDialog, coveredText } from '../../_shared/po-link/PoLinkDialog';
+import { usePoLinkOptions, usePoLinkSwitch } from '../../_shared/po-link/usePoLink';
+import { poLinkMenu, type PoLinkKind } from '../../_shared/po-link/poLinkWording';
+import { snapshotPoLinkTarget } from '../lib/poLinkTarget';
 import { buildDemandColumns, sumDemand } from '../lib/stockDebtDemandColumns';
 import { signed } from '../lib/stockDebtColumns';
 import type {
@@ -41,7 +42,6 @@ import type {
 } from '../types/stockDebtSnapshot.types';
 import { decisionText } from './SnapshotDecisionPopover';
 import { SnapshotDecideControl, type DecideItem } from './SnapshotDecideControl';
-import { PoLinkDialog, coveredText } from './PoLinkDialog';
 
 const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 /** AC-LINK-CRM-UI: link / unlink / move a PO line through AutoCount. */
@@ -286,8 +286,9 @@ function OiGroupGrid({
     ]),
   ];
 
+  const poTarget = React.useMemo(() => snapshotPoLinkTarget(snapshotId, rowId), [snapshotId, rowId]);
   // The capabilities are read when the menu opens and while a PO popup is up: never cached.
-  const options = usePoLinkOptions(snapshotId, rowId, canLinkPo && (menuOpen || poDialog !== null));
+  const options = usePoLinkOptions(poTarget, canLinkPo && (menuOpen || poDialog !== null));
   const menu = poLinkMenu({
     ticked: tickedLines.length,
     linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
@@ -381,8 +382,7 @@ function OiGroupGrid({
       {poDialog && options.data ? (
         <PoLinkDialog
           mode={poDialog}
-          snapshotId={snapshotId}
-          rowId={rowId}
+          target={poTarget}
           lines={tickedLines}
           allLines={group.lines}
           capabilities={options.data.capabilities}

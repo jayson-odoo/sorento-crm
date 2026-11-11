@@ -11,7 +11,7 @@ import type {
   PoLinkOption,
   PoLinkResult,
   SnapshotLine,
-} from '../types/stockDebtSnapshot.types';
+} from '../../stock-debt/types/stockDebtSnapshot.types';
 
 class ResizeObserverStub {
   observe() {}
@@ -55,7 +55,7 @@ const linkPoLines = vi.fn();
 const changePoLines = vi.fn();
 const relocatePoLine = vi.fn();
 const resumePoLink = vi.fn();
-vi.mock('../services/stockDebtSnapshotService', () => ({
+vi.mock('../../stock-debt/services/stockDebtSnapshotService', () => ({
   linkPoLines: (...args: unknown[]) => linkPoLines(...args),
   unlinkPoLines: vi.fn(),
   relinkPoLines: vi.fn(),
@@ -73,6 +73,7 @@ vi.mock('../services/stockDebtSnapshotService', () => ({
 }));
 
 import { PoLinkDialog } from './PoLinkDialog';
+import { snapshotPoLinkTarget } from '../../stock-debt/lib/poLinkTarget';
 
 const CAPS: PoLinkCapabilities = {
   split_link: { enabled: true, reason: null },
@@ -124,8 +125,7 @@ function renderDialog(lines = [soLine({})], mode: 'link' | 'change' = 'link') {
     <QueryClientProvider client={client}>
       <PoLinkDialog
         mode={mode}
-        snapshotId="snap"
-        rowId="row"
+        target={snapshotPoLinkTarget('snap', 'row')}
         lines={lines}
         allLines={lines}
         capabilities={CAPS}
@@ -177,7 +177,7 @@ describe('Link to PO popup', () => {
     render(
       <QueryClientProvider client={client}>
         <PoLinkDialog
-          mode="link" snapshotId="snap" rowId="row" lines={[soLine({})]} allLines={[soLine({})]}
+          mode="link" target={snapshotPoLinkTarget('snap', 'row')} lines={[soLine({})]} allLines={[soLine({})]}
           capabilities={CAPS}
           poLines={[PO_LINES[0], { ...PO_LINES[0], po_line_id: 'po-3b', po_line_no: 5, free_qty: 40 }]}
           soBooks={{ 'sol-1': 'DB3' }}

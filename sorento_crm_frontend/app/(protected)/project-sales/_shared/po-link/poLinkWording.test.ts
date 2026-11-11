@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { poLinkResultText, poLinkMenu } from './poLinkWording';
-import type { PoLinkCapabilities, PoLinkResult } from '../types/stockDebtSnapshot.types';
+import type { PoLinkCapabilities, PoLinkResult } from '../../stock-debt/types/stockDebtSnapshot.types';
 
 function result(over: Partial<PoLinkResult>): PoLinkResult {
   return {

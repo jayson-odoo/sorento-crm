@@ -26,14 +26,14 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
 import { cn } from '@/lib/utils';
-import { usePoLinkMutations } from '../hooks/useStockDebtSnapshots';
-import { poLinkResultText, type PoLinkKind } from '../lib/poLinkWording';
 import type {
   PoLinkCapabilities,
   PoLinkOption,
   PoLinkResult,
-  SnapshotLine,
-} from '../types/stockDebtSnapshot.types';
+} from '../../stock-debt/types/stockDebtSnapshot.types';
+import { usePoLinkMutations } from './usePoLink';
+import type { PoLinkLine, PoLinkSkippedRow, PoLinkTarget } from './poLink.types';
+import { poLinkResultText, type PoLinkKind } from './poLinkWording';
 
 /**
  * AC-LINK-CRM-UI: the Decide menu's PO popup (mock v4, approved 4 Nov). The same shell as
@@ -50,22 +50,24 @@ import type {
  */
 export interface PoLinkDialogProps {
   mode: PoLinkKind;
-  snapshotId: string;
-  rowId: string;
+  /** Where this screen's PO link calls go (Stock Debt snapshot row, Order Inquiry rows). */
+  target: PoLinkTarget;
   /** The ticked lines. */
-  lines: SnapshotLine[];
+  lines: PoLinkLine[];
   /** Every line of the group: the targets a PO can be moved to. */
-  allLines: SnapshotLine[];
+  allLines: PoLinkLine[];
   capabilities: PoLinkCapabilities;
   poLines: PoLinkOption[];
   /** sales_order_line_id -> its AutoCount book: a PO line links only within its own book. */
   soBooks?: Record<string, string>;
+  /** Order Inquiry: ticked rows left out, named with the reason. */
+  skipped?: PoLinkSkippedRow[];
   onClose: () => void;
 }
 
 interface DialogRow {
   id: string;
-  line: SnapshotLine;
+  line: PoLinkLine;
   /** Unlink / relink: the PO line linked to `line`. */
   poLineId: string | null;
   poLabel: string | null;
@@ -80,7 +82,7 @@ const TITLE: Record<PoLinkKind, string> = {
 };
 const SEND: Record<PoLinkKind, string> = { link: 'Link', unlink: 'Unlink', relink: 'Move', change: 'Change' };
 
-function soLine(line: SnapshotLine): string {
+function soLine(line: PoLinkLine): string {
   return line.line_no != null ? String(line.line_no) : '-';
 }
 
@@ -92,20 +94,20 @@ function poOptionLabel(po: PoLinkOption, ambiguous: boolean): string {
 
 /** What the line still needs from a PO: outstanding now, less what POs already cover
  *  (crew round 3: the same line could be linked twice and over-allocated in AutoCount). */
-export function stillNeeds(line: SnapshotLine): number {
+export function stillNeeds(line: PoLinkLine): number {
   const outstanding = Math.floor(line.now?.open_qty ?? line.open_qty);
   const linked = (line.now?.po_links ?? []).reduce((sum, po) => sum + po.qty, 0);
   return Math.max(0, outstanding - linked);
 }
 
 /** "Already covered by PO X (10)" for a line POs fully cover, else null. */
-export function coveredText(line: SnapshotLine): string | null {
+export function coveredText(line: PoLinkLine): string | null {
   const links = line.now?.po_links ?? [];
   if (!links.length || stillNeeds(line) > 0) return null;
   return `Already covered by ${links.map((po) => `PO ${po.po_number} (${po.qty.toLocaleString()})`).join(', ')}`;
 }
 
-function qtyCap(line: SnapshotLine, po: PoLinkOption | undefined): number {
+function qtyCap(line: PoLinkLine, po: PoLinkOption | undefined): number {
   const needs = stillNeeds(line);
   return po ? Math.min(needs, Math.floor(po.free_qty)) : needs;
 }
@@ -121,15 +123,13 @@ const TONE = {
 function ResultCard({
   result,
   kind,
-  snapshotId,
-  rowId,
+  target,
 }: {
   result: PoLinkResult;
   kind: PoLinkKind;
-  snapshotId: string;
-  rowId: string;
+  target: PoLinkTarget;
 }) {
-  const { relocate, resume } = usePoLinkMutations(snapshotId, rowId);
+  const { relocate, resume } = usePoLinkMutations(target);
   const [current, setCurrent] = React.useState(result);
   const text = poLinkResultText(current, kind);
   const busy = relocate.isPending || resume.isPending;
@@ -181,16 +181,16 @@ function ResultCard({
 
 export function PoLinkDialog({
   mode,
-  snapshotId,
-  rowId,
+  target: poTarget,
   lines,
   allLines,
   capabilities,
   poLines,
   soBooks,
+  skipped,
   onClose,
 }: PoLinkDialogProps) {
-  const { link, unlink, relink, change } = usePoLinkMutations(snapshotId, rowId);
+  const { link, unlink, relink, change } = usePoLinkMutations(poTarget);
   const rows = React.useMemo<DialogRow[]>(() => {
     if (mode === 'link') {
       return lines.map((line) => ({
@@ -202,9 +202,9 @@ export function PoLinkDialog({
       }));
     }
     return lines.flatMap((line) =>
-      (line.now.po_links ?? [])
+      (line.now?.po_links ?? [])
         // Change PO (owner, 11 Nov, card 1a): only a line covered by exactly one PO line.
-        .filter(() => mode !== 'change' || (line.now.po_links ?? []).length === 1)
+        .filter(() => mode !== 'change' || (line.now?.po_links ?? []).length === 1)
         .map((po) => ({
         id: `${line.sales_order_line_id}:${po.po_line_id}`,
         line,
@@ -241,7 +241,7 @@ export function PoLinkDialog({
   );
   /** The PO choices for one SO line: a PO of another AutoCount book is greyed with why. */
   const optionsFor = React.useCallback(
-    (line: SnapshotLine): SearchableSelectOption[] => {
+    (line: PoLinkLine): SearchableSelectOption[] => {
       const book = soBooks?.[line.sales_order_line_id];
       return poOptions.map((option) => {
         const po = poById.get(option.value);
@@ -606,8 +606,7 @@ export function PoLinkDialog({
                   key={`${result.sales_order_line_id}-${index}`}
                   result={result}
                   kind={result.action ?? mode}
-                  snapshotId={snapshotId}
-                  rowId={rowId}
+                  target={poTarget}
                 />
               ))
             ) : (
@@ -639,6 +638,15 @@ export function PoLinkDialog({
               </DataGrid>
             </>
           )}
+          {!results && skipped?.length ? (
+            <ul className="space-y-0.5 text-xs text-muted-foreground" data-testid="po-link-skipped">
+              {skipped.map((row, index) => (
+                <li key={`${row.inquiry_no}-${row.item_code}-${index}`} className="truncate">
+                  {`${row.inquiry_no ?? '-'} ${row.item_code ?? ''}: ${row.reason}`}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </DialogBody>
         <DialogFooter className="flex-wrap items-center gap-2">
           {results ? (

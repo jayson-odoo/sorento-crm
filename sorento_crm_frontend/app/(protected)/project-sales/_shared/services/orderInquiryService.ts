@@ -3,6 +3,7 @@ import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { MyDownload } from '@/services/myDownloadsService';
 import type { RecordHistoryEvent } from '@/types/recordHistory.types';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
+import type { OiPoLinkOptions, PoLinkAnswer } from '../po-link/poLink.types';
 import type {
   AcknowledgeResult,
   AutoPlaceRequest,
@@ -997,3 +998,38 @@ export async function getOrderInquiryHeaderRelatedDocuments(
   return response.json();
 }
 
+
+/* ------------------------------------------------------------ PO link (OI-PO-LINK) */
+// The Stock Debt link function, driven from ticked rows. Needs `projects.stock_debt.link_po`.
+
+async function postPoLink<T>(tail: string, body: unknown, fallback: string): Promise<T> {
+  const response = await apiFetch(`${BASE}/order-inquiries/po-link/${tail}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, fallback));
+  return (await response.json()) as T;
+}
+
+export function getOrderInquiryPoLinkOptions(rowIds: string[]): Promise<OiPoLinkOptions> {
+  return postPoLink('options', { row_ids: rowIds }, 'Failed to load the PO lines');
+}
+
+export function linkOrderInquiryPoLines(
+  rowIds: string[],
+  lines: Array<{ sales_order_line_id: string; po_line_id: string; qty: number }>,
+): Promise<PoLinkAnswer> {
+  return postPoLink('link', { row_ids: rowIds, lines }, 'Failed to link to PO');
+}
+
+export function unlinkOrderInquiryPoLines(rowIds: string[], poLineIds: string[]): Promise<PoLinkAnswer> {
+  return postPoLink('unlink', { row_ids: rowIds, po_line_ids: poLineIds }, 'Failed to unlink from PO');
+}
+
+export function changeOrderInquiryPoLines(
+  rowIds: string[],
+  changes: Array<{ sales_order_line_id: string; po_line_id: string }>,
+): Promise<PoLinkAnswer> {
+  return postPoLink('change', { row_ids: rowIds, changes }, 'Failed to change the PO');
+}

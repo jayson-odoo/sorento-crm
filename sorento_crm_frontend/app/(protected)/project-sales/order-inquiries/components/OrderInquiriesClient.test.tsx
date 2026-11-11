@@ -566,15 +566,15 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is 
 });
 
 describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0', () => {
-  it('Actions holds Auto link all, Link selected, Unlink selected, Reject selected, Unlink all, Export Excel', async () => {
+  it('Actions holds Auto link all, Recheck in AutoCount, Remove link in CRM, Reject selected, Unlink all, Export Excel', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
     openActionsMenu();
     for (const name of [
       /Auto link all/,
-      /Link selected \(0\)/,
-      /Unlink selected \(0\)/,
+      /Recheck in AutoCount \(0\)/,
+      /Remove link in CRM \(0\)/,
       /Reject selected \(0\)/,
       /Unlink all/,
       /Export Excel/,
@@ -609,14 +609,14 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     await screen.findByText('SO385126');
 
     openActionsMenu();
-    let item = screen.getByRole('menuitem', { name: 'Link selected (0)' });
+    let item = screen.getByRole('menuitem', { name: 'Recheck in AutoCount (0)' });
     expect(item).toHaveAttribute('aria-disabled', 'true');
     expect(item).toHaveAttribute('title', 'Tick rows to recalculate against AutoCount.');
     await closeMenu();
 
     fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
     openActionsMenu();
-    item = screen.getByRole('menuitem', { name: 'Link selected (1)' });
+    item = screen.getByRole('menuitem', { name: 'Recheck in AutoCount (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
     expect(item).not.toHaveAttribute('title');
   });
@@ -688,7 +688,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByLabelText('Select SRTWB5400 on SO385126'));
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Link selected (2)' }),
+      screen.getByRole('menuitem', { name: 'Recheck in AutoCount (2)' }),
     );
 
     await waitFor(() =>
@@ -744,9 +744,9 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByLabelText('Select ZZT-BUNDLED on SO-BUNDLED'));
     openActionsMenu();
     expect(
-      screen.getByRole('menuitem', { name: 'Link selected (1)' }),
+      screen.getByRole('menuitem', { name: 'Recheck in AutoCount (1)' }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1)' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Recheck in AutoCount (1)' }));
 
     await waitFor(() =>
       expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({
@@ -767,7 +767,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     );
     openActionsMenu();
     expect(
-      screen.getByRole('menuitem', { name: 'Unlink selected (0 of 1)' }),
+      screen.getByRole('menuitem', { name: 'Remove link in CRM (0 of 1)' }),
     ).toHaveAttribute('aria-disabled', 'true');
     await closeMenu();
 
@@ -776,7 +776,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
     expect(
-      screen.getByRole('menuitem', { name: 'Unlink selected (1 of 2)' }),
+      screen.getByRole('menuitem', { name: 'Remove link in CRM (1 of 2)' }),
     ).not.toHaveAttribute('aria-disabled', 'true');
   });
 
@@ -831,7 +831,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
 
     // Link selected: every ticked row counts, whether or not it holds a suggestion.
     expect(
-      screen.getByRole('menuitem', { name: 'Link selected (3)' }),
+      screen.getByRole('menuitem', { name: 'Recheck in AutoCount (3)' }),
     ).toBeInTheDocument();
     // Reject selected: row-1 (actioned) has nothing left to refuse - only row-2 and
     // row-3 are still owed an answer -> 2 of 3.
@@ -850,7 +850,7 @@ describe('Unlink selected asks first', () => {
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Unlink selected (1)' }),
+      screen.getByRole('menuitem', { name: 'Remove link in CRM (1)' }),
     );
 
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
@@ -865,7 +865,7 @@ describe('Unlink selected asks first', () => {
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Unlink selected (1)' }),
+      screen.getByRole('menuitem', { name: 'Remove link in CRM (1)' }),
     );
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unlink' }));
@@ -882,7 +882,7 @@ describe('Unlink selected asks first', () => {
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Unlink selected (1)' }),
+      screen.getByRole('menuitem', { name: 'Remove link in CRM (1)' }),
     );
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -1062,10 +1062,10 @@ describe('AC-D8: a CS user (no acknowledge grant) sees the column, not the actio
       screen.queryByRole('menuitem', { name: /Reject selected/ }),
     ).toBeNull();
     expect(
-      screen.queryByRole('menuitem', { name: /Link selected/ }),
+      screen.queryByRole('menuitem', { name: /Recheck in AutoCount/ }),
     ).toBeNull();
     expect(
-      screen.queryByRole('menuitem', { name: /Unlink selected/ }),
+      screen.queryByRole('menuitem', { name: /Remove link in CRM/ }),
     ).toBeNull();
     // Auto link all and Unlink all/Export are still theirs - they read Found/Not found
     // and un-draft nothing that was confirmed.

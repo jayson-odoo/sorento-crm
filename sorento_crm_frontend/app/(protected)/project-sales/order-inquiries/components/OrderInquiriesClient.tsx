@@ -68,6 +68,9 @@ import {
 } from '@/lib/list-filters/multiValue';
 
 import { useHasPermission } from '@/hooks/usePermissions';
+import { usePoLinkSwitch } from '../../_shared/po-link/usePoLink';
+import type { PoLinkKind } from '../../_shared/po-link/poLinkWording';
+import { OiPoLinkHost } from './OiPoLinkHost';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
@@ -195,6 +198,8 @@ interface DraftLine {
 
 /** "Link selected (2 of 3)", or "Link selected (3)" when every ticked row is eligible
  * (S4, AC-T2): the count is never "of n" when a === n, which would say the obvious. */
+const LINK_PO_PERMISSION = 'projects.stock_debt.link_po';
+
 function countLabel(base: string, eligible: number, ticked: number): string {
   return eligible === ticked ? `${base} (${ticked})` : `${base} (${eligible} of ${ticked})`;
 }
@@ -381,6 +386,11 @@ export function OrderInquiriesClient({
   );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  // OI-PO-LINK: the Stock Debt PO link, one permission and one Settings switch for both screens.
+  const holdsLinkPo = useHasPermission(LINK_PO_PERMISSION);
+  const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
+  const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
+  const [poDialog, setPoDialog] = React.useState<PoLinkKind | null>(null);
   const { linkNow, acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
   const [linkingSelected, setLinkingSelected] = React.useState(false);
@@ -1183,6 +1193,28 @@ export function OrderInquiriesClient({
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
+  // OI-PO-LINK: Link to PO / Change PO / Unlink from PO for the ticked rows, one product at a time.
+  const tickedProducts = new Set(selectedRows.map((row) => row.product_id ?? row.item_code));
+  const poLinkWhyNot =
+    selectedRows.length === 0
+      ? 'Tick the rows to link to a PO.'
+      : tickedProducts.size > 1
+        ? 'Tick rows of one product.'
+        : undefined;
+  const poLinkItems = (
+    [
+      ['po-link', 'link', 'Link to PO...', Link2],
+      ['po-change', 'change', 'Change PO...', Wand2],
+      ['po-unlink', 'unlink', 'Unlink from PO...', Unlink],
+    ] as const
+  ).map(([key, kind, base, icon]) => ({
+    key,
+    label: countLabel(base, selectedRows.length, selectedRows.length),
+    icon,
+    disabled: Boolean(poLinkWhyNot),
+    disabledReason: poLinkWhyNot,
+    onClick: () => setPoDialog(kind),
+  }));
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
   // unlinked ones would refuse almost nothing.
@@ -1872,7 +1904,7 @@ export function OrderInquiriesClient({
                 key: 'link-selected',
                 // R18: acts on every ticked row, whatever its state - no eligible
                 // subset any more, so the count is never "of n".
-                label: `Link selected (${selectedRows.length})`,
+                label: `Recheck in AutoCount (${selectedRows.length})`,
                 icon: Wand2,
                 disabled: selectedRows.length === 0 || linkingSelected,
                 disabledReason:
@@ -1881,7 +1913,7 @@ export function OrderInquiriesClient({
               },
               {
                 key: 'unlink-selected',
-                label: countLabel('Unlink selected', selectedLinked.length, selectedRows.length),
+                label: countLabel('Remove link in CRM', selectedLinked.length, selectedRows.length),
                 icon: Unlink,
                 disabled:
                   selectedLinked.length === 0 || unlinkingSelected,
@@ -1892,6 +1924,9 @@ export function OrderInquiriesClient({
                 onClick: () => setUnlinkingSelectedOpen(true),
               },
             ]
+          : []),
+        ...(canLinkPo
+          ? poLinkItems
           : []),
         ...(canAcknowledge
           ? [
@@ -2422,7 +2457,7 @@ export function OrderInquiriesClient({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Unlink selected</AlertDialogTitle>
+            <AlertDialogTitle>Remove link in CRM</AlertDialogTitle>
             <AlertDialogDescription>
               {selectedLinked.length === 1
                 ? 'Remove this row\u2019s links? That quantity goes back to demand, and the next reorder suggestion counts it again.'
@@ -2445,6 +2480,17 @@ export function OrderInquiriesClient({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {poDialog ? (
+        <OiPoLinkHost
+          kind={poDialog}
+          rowIds={selectedRows.map((row) => row.id)}
+          onClose={() => {
+            setPoDialog(null);
+            void list.refetch();
+            void summary.refetch();
+          }}
+        />
+      ) : null}
       <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}

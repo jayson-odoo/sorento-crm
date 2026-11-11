@@ -2,7 +2,7 @@
  * AC-LINK-CRM-UI: what a PO link answer and the Decide menu say, in plain words (owner, Lavish
  * mock v1: "dont use jargon"). The Shared Service's codes are branched on here and never shown.
  */
-import type { PoLinkCapabilities, PoLinkResult } from '../types/stockDebtSnapshot.types';
+import type { PoLinkCapabilities, PoLinkResult } from '../../stock-debt/types/stockDebtSnapshot.types';
 
 export type PoLinkKind = 'link' | 'unlink' | 'relink' | 'change';
 
