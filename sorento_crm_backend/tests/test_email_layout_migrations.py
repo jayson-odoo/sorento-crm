@@ -192,17 +192,36 @@ def test_system_codes_inserted_once_and_never_overwrite():  # AC-EM096
         assert inv[2]["blocks"][0]["type"] == "brand_header"
 
 
+#: A system layout changed after eml_0002 froze its copy, with a later data migration that moves a
+#: still-seeded row from eml_0002's document to the new one: code -> (revision, old attr, new attr).
+#: The frozen copy is an applied migration and never changes, so the check is the chain: eml_0002's
+#: copy is that migration's "old", and its "new" is what the registry holds now.
+LATER_LAYOUT_MOVES = {
+    # NPA-FORM-SLA (#2261): the NPA sends this notice too, so the button reads `button_label`.
+    "stock_inquiry_created": ("npasla_0001_seed_configs", "SEEDED_LAYOUT", "LABELLED_LAYOUT"),
+}
+
+
 def test_frozen_documents_match_registry():
-    """The migration carries a frozen copy; at this revision it equals the registry."""
+    """The migration carries a frozen copy; it equals the registry, or a later migration moves it there."""
+    import json
+
     from app.services.email_system_templates import CREDENTIAL_CODES, SYSTEM_TEMPLATES
 
-    mig = _scripts()["eml_0002_seed_layouts"]
+    scripts = _scripts()
+    mig = scripts["eml_0002_seed_layouts"]
     # credential mails are never seeded as editable rows (PLAN D11)
     assert set(mig.SYSTEM) == set(SYSTEM_TEMPLATES) - CREDENTIAL_CODES
     for code, t in SYSTEM_TEMPLATES.items():
         if code in CREDENTIAL_CODES:
             continue
-        assert mig.SYSTEM[code]["layout"] == t.document(), code
+        if code in LATER_LAYOUT_MOVES:
+            revision, old_attr, new_attr = LATER_LAYOUT_MOVES[code]
+            later = scripts[revision]
+            assert mig.SYSTEM[code]["layout"] == json.loads(getattr(later, old_attr)), code
+            assert t.document() == json.loads(getattr(later, new_attr)), code
+        else:
+            assert mig.SYSTEM[code]["layout"] == t.document(), code
         assert mig.SYSTEM[code]["subject"] == t.subject, code
 
 
