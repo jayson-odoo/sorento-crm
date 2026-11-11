@@ -18,3 +18,28 @@ Card: `CARD-sample-request-v2-11nov.md`. Plan: `PLAN-sample-request-v2-11nov.md`
 | U12 | From the project tab, the detail page's Back and breadcrumb go to the tab, prev/next walks the project's requests | browser pass 09 (Back to project), `SampleRequestPageHeader.tsx` |
 | U13 | Every list row one line; the Delivery pill inline; a Delivered row shows its delivered day, no pill | `lib/sample-request-tracking.test.ts` "once delivered"; browser pass 02, 12 (cell height 20-24 px) |
 | U14 | The proposal "To" picker and the Ship to picker are one component | `QuotationRecipientPicker.test.tsx` (14) on `_shared/components/ProjectPartyPicker.tsx` |
+| U15 | Owner ruling 11 Nov ~19:55: no Customer confirmed status, move or button; existing rows moved to Processing with a History entry (migration `srv2_0002_status_ruling`) | `test_the_graph_has_no_customer_confirmed_move`, `test_a_fresh_install_seeds_no_customer_confirmed`, `test_existing_customer_confirmed_rows_move_to_processing_with_a_history_entry`; vitest `SampleRequestDetail.consignment.test.tsx` |
+| U16 | Delivered only by linking the AutoCount consignment; a hand move to Delivered is refused | `test_nobody_marks_delivered_by_hand`, `test_linking_a_live_consignment_from_processing_delivers`, core AC-SR-30 matrix |
+| U17 | A voided consignment stays voided: request back to Processing, unlinked, History names the void; a restore never re-delivers; a new consignment delivers | `test_a_voided_consignment_unlinks_and_takes_the_request_back_to_processing`, `test_a_restored_voided_consignment_never_delivers_again`, `test_a_new_consignment_delivers_after_the_void`, `test_the_void_is_in_the_requests_history`, pipeline `test_a_cg_voided_in_autocount_takes_the_request_back` |
+
+## Owner standing rules (documentation/owner-standing-rules.md), slice 1
+
+Checked, applicable lines (22), all pass; 0 open:
+- Lists: one toolbar row with "Create" (project tab, unchanged); row click opens the record; every row ONE line
+  (Delivery pill inline, browser pass 20-24 px rows); long text truncated with hover (Ship to); prev/next follows
+  the list it came from (project tab pager); standard record header (unchanged); History shows every tracked
+  action (status changes audited; consignment void writes its own History entry).
+- Filters: pickers searchable by name and code (debtor name / code; parties by name, they carry no code).
+- Forms: previews and secondary editors in a centred popup (Preview, contacts); minimal default view; Edit is the
+  same form as Create with the same Preview step; header fields on top, products in the shared line table;
+  number fields unchanged (round 9 tests green); nothing hangs (loading, error and empty states unchanged).
+- Dates: dd/mm/yyyy everywhere touched; the shared date picker, no native date input.
+- Wording: ONE main button per screen (Preview; Submit inside its popup); plain business words; no explaining
+  headings; no UUIDs shown; "Requested by" is the creator, read-only.
+- Data: only owner-ruled refusals (consignment-only Delivered); explicit links only (party and consignment picked
+  by a person); catalogue product lines only.
+
+Skipped as not applicable to this diff: bulk ticking/actions, column chooser and server sort (no grid columns
+changed beyond the Delivery cell), exports, images, scheduled jobs, ERP-write switches, notifications, sales
+figures, AI/chatbot. Portal/CRM parity (forms line 39): the owner ruled (Q1 a) that external portal contacts keep
+today's form; the limited salesperson's form is slice 2 (#2348).
