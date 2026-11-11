@@ -49,6 +49,10 @@ vi.mock('../lib/portal-client', () => ({
 // options only exist while open. `id` maps to the field's accessible name the
 // same way the existing sibling test files do it (decoupled from the real
 // visible `<Label>` text, which is a plain association here, not a lookup).
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -143,7 +147,7 @@ import {
   lookupTagItems,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems } from '@/test-utils';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -174,7 +178,7 @@ beforeEach(() => {
 // Item picker and Add line button live.
 async function fillMinimalRequiredFields() {
   await selectOption('Customer', 'ZZTD01');
-  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+  chooseTypedItems();
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
   await pickPrinting();
@@ -204,21 +208,21 @@ beforeEach(() => {
 
 async function withALine() {
   await selectOption('Customer', 'ZZTD01');
-  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ }));
+  chooseTypedItems();
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
 }
 
 describe('O2: the whole-request preview is a button, not an always-on card', () => {
-  it('has a Preview button beside Lines, disabled until there is a line to draw', async () => {
+  // PRICETAG-REQUEST-LAYOUT (owner, 10 Nov): the button moved from beside Lines to the action row,
+  // where it is the page's main button; its click checks the request before the popup opens.
+  it('is live with no line; its click says what is missing and opens nothing', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ }));
-    expect(screen.getByRole('button', { name: 'Preview' })).toBeDisabled();
-
-    fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
-    await selectOption('Search a set or product...', 'product:prod-uuid-1');
     expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(await screen.findByText('Add at least one line.')).toBeInTheDocument();
+    expect(screen.queryByTestId('sheet-popup')).toBeNull();
   });
 
   it('draws no inline sheet; the Preview button opens it', async () => {
@@ -230,23 +234,16 @@ describe('O2: the whole-request preview is a button, not an always-on card', () 
     expect(whole.every((c) => c.popup !== undefined)).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    expect(screen.getByTestId('sheet-popup')).toBeInTheDocument();
-  });
-
-  it('Approve still follows the readiness the hidden preview reports', async () => {
-    render(<PriceTagRequestForm />);
-    await withALine();
-    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
+    expect(await screen.findByTestId('sheet-popup')).toBeInTheDocument();
   });
 });
 
 describe('O4: no reason line under the buttons', () => {
-  it('shows no approve-blocked paragraph, and Approve keeps the reason as its tooltip', async () => {
+  it('shows no approve-blocked paragraph', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
-    const approve = screen.getByRole('button', { name: /^approve$/i });
+    chooseTypedItems();
     expect(screen.queryByTestId('approve-blocked')).toBeNull();
-    expect(approve).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
   });
 });
