@@ -649,7 +649,9 @@ def test_every_company_id_table_is_registered():
     # + 1 (SORENTO-TOWN): `town_days`, one company's frozen day snapshot and event log = 182.
     # + 1 (QUOTE-TERMS-SELECT, #2305): `payment_terms`, AutoCount Terms reference data, owned per
     #   company exactly as `item_classes` = 183.
-    expected_owned = 183
+    # + 1 (NON-CANCELLABLE-ITEMS): `non_cancellable_rules`, one company's default list of
+    #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 184.
+    expected_owned = 184
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
