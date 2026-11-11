@@ -2210,3 +2210,25 @@ def test_the_last_resort_failure_write_never_shows_python(seeded):
     db.refresh(version)
     assert version.extraction_state == "failed"
     _assert_plain(version.extraction_error)
+
+
+def test_a_refusal_after_the_read_keeps_its_own_sentence(seeded, monkeypatch):
+    """An ``AppException`` already carries a sentence written for the user (the PO was
+    removed mid-read, say); the persist guard passes it on rather than replacing it."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-REFUSAL"))
+    _read_with(monkeypatch, _RecordingReader([_page_json(1)]), 1)
+
+    def refuse(*args, **kwargs):
+        raise AppException(
+            status_code=404, message="ZZT this purchase order was removed.", code="zzt_gone"
+        )
+
+    monkeypatch.setattr(ProjectPOExtractionService, "persist_pages", refuse)
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == "failed"
+    db.refresh(version)
+    assert version.extraction_error == "ZZT this purchase order was removed."

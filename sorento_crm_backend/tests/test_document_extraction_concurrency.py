@@ -292,7 +292,7 @@ def test_a_page_answered_as_several_page_objects_fails_only_that_page_plainly(mo
     assert [p.page_no for p in result.ok_pages] == [1, 3]
 
 
-@pytest.mark.parametrize("answer", ['[{"no": 1}, {"no": 2}]', "[1, 2]", "[]", '"page"', "42", "null"])
+@pytest.mark.parametrize("answer", ['[{"no": 1}, {"no": 2}]', "[1, 2]", '"page"', "42", "null"])
 def test_a_page_answered_as_anything_but_one_object_fails_only_that_page_plainly(
     monkeypatch, answer
 ):
@@ -332,3 +332,16 @@ def test_without_a_schema_the_page_read_stays_in_json_mode(monkeypatch):
         call.get("response_format") == {"type": "json_object"} and call.get("json_schema") is None
         for call in provider.kwargs
     )
+
+
+def test_a_page_answered_as_an_empty_array_is_an_empty_page(monkeypatch):
+    """Nothing on the page, said as ``[]``. It reads exactly as ``{}`` always did: a
+    page that answered with nothing, not a page whose answer was unusable (review of
+    #2347: the schedule reader counts it as an answered empty page)."""
+    provider = _AnswerProvider({2: "[]"})
+    with blank_session() as db:
+        result = _run(db, monkeypatch, provider, page_count=3, concurrency=1)
+
+    page_two = next(p for p in result.pages if p.page_no == 2)
+    assert page_two.data == {}
+    assert page_two.error is None
