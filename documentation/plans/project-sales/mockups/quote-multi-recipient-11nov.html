@@ -4,221 +4,117 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quote multi recipient</title>
-<!-- QUOTE-MULTI-RECIPIENT Lavish mock v1. Annotated mockup, not shipped code. Plain inline CSS so it opens
-     from a file (styles copied from mockups/project-party-roles-10nov.html).
-     Card: documentation/plans/project-sales/CARD-quote-multi-recipient-11nov.md
-     Company names: owner samples. Every person name, phone and address is fake (repo is public). -->
+<!-- QUOTE-MULTI-RECIPIENT Lavish mock v3 (owner 11 Nov 15:51: "too complext of a design"; v3 is the minimal one).
+     Annotated mockup, not shipped code. Card: documentation/plans/project-sales/CARD-quote-multi-recipient-11nov.md
+     Company names: owner samples. Every person name is fake (public repo). -->
 <style>
-:root{
-  --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
-  --primary:#1b84ff; --primary-soft:#e9f3ff;
-  --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fde68a;
-  --green:#15803d; --green-soft:#f0fdf4; --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
-  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-}
+:root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--primary:#1b84ff;--primary-soft:#e9f3ff;--callout:#e11d74;--radius:8px;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
-.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
-.doc>h1{font-size:22px;margin:0 0 4px}
-.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+.doc{max-width:1500px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
 h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
-.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
 .frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
-.w1280{width:1280px}.w375{width:375px;flex:none}
-.notes{flex:1 1 360px;min-width:300px;max-width:560px}
+.w900{width:900px;max-width:100%}.w375{width:375px;flex:none}
+.content{padding:20px 24px}
+.notes{flex:1 1 320px;min-width:280px;max-width:480px}
 .notes ol{margin:0;padding:0;list-style:none}
 .notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
-.notes li b{display:block;margin-bottom:2px}
-.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
-.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
-.content{padding:20px 28px 28px}
-.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
-.phrow h1{font-size:20px;margin:0}
-.crumbs{color:var(--muted);font-size:13px;margin-top:2px}
-.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:500 13px var(--font);color:var(--fg);white-space:nowrap}
+.notes li b{display:block;margin-bottom:2px}.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:6px 12px;font-size:13px;background:#fff}
 .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
-.pill{display:inline-flex;align-items:center;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--grey-soft);color:#374151}
-.pill.blue{background:var(--primary-soft);color:var(--primary)}
-.pill.green{background:var(--green-soft);color:var(--green)}
-.section{border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px}
-.section>.hd{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);font-weight:600}
-.section>.bd{padding:16px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.m375 .grid2{grid-template-columns:1fr}
-.field label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
-.sel{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px;border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:#fff;font-size:13px}
-.sel .ph{color:var(--muted)}
-.sel .chev{margin-left:auto;color:var(--muted)}
-.chip{display:inline-flex;align-items:center;gap:4px;background:var(--grey-soft);border-radius:4px;padding:1px 6px;font-size:12px}
-.menu{border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.12);background:#fff;margin-top:4px;font-size:13px}
-.menu div{padding:7px 10px;display:flex;justify-content:space-between;gap:12px}
-.menu div.on{background:var(--primary-soft)}
-.menu .role{color:var(--muted);font-size:12px}
-.menu .grp{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:6px 10px 2px}
-.ro dt{font-size:12px;color:var(--muted)}
-.ro dd{margin:0 0 10px;font-size:14px}
-.card{border:1px solid var(--line);border-radius:var(--radius);padding:16px}
-.input{border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;background:#fff;min-height:34px}
-.ef{margin-bottom:10px}
-.ef label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;color:var(--muted);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafafa}
-td{padding:9px 10px;border-bottom:1px solid var(--line)}
-.sw{display:inline-block;width:30px;height:17px;border-radius:999px;background:#d1d5db;position:relative;vertical-align:middle}
-.sw::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
-.sw.on{background:var(--primary)}.sw.on::after{left:15px}
-.m375 .content{padding:14px 16px}
-.abs{position:absolute}
-.pc{margin:6px 0 0 14px;padding-left:10px;border-left:2px solid var(--line)}
-.pc .pn{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
-.fill{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--amber);margin-top:6px}
-.input.sm{min-height:28px;padding:4px 8px;color:var(--muted)}
+.phrow{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.phrow h1{font-size:20px;margin:0}
 .cap{font-size:12px;font-weight:600;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
-.fill.info{color:var(--primary)}
-.sel.mini{display:inline-flex;min-height:26px;padding:2px 8px;font-size:12px}
-.opt{border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:10px;font-size:13px}
-.opt.on{border-color:var(--primary);background:var(--primary-soft)}
-.opt .input{margin-top:6px}
-.hint{display:block;font-size:12px;color:var(--muted);margin-top:4px}
-.print{border:1px dashed var(--line);border-radius:6px;padding:10px;font-size:12px;font-family:ui-monospace,monospace}
-.out{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:6px;padding:10px;align-self:start}
-.lr{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.lk{color:var(--primary);font-size:12px;font-weight:500;white-space:nowrap}
-.lk.mut{color:var(--muted)}
-.dimbg{background:rgba(17,24,39,.35);padding:24px 16px}
-.dlg{background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);max-width:520px;margin:0 auto}
+.to{margin-bottom:14px}.to .nm{font-weight:500}.to .mut{color:var(--muted);font-size:13px}
+.x{color:var(--muted);margin-left:8px}
+.lk{color:var(--primary);font-size:13px;font-weight:500}
+.grid{display:grid;grid-template-columns:1.4fr 1fr;gap:24px}
+.m375 .grid{grid-template-columns:1fr}
+dt{font-size:12px;color:var(--muted)}dd{margin:0 0 8px}
+.dim{background:rgba(17,24,39,.35);padding:24px 16px;border-radius:12px;flex:1 1 520px}
+.dlg{background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);max-width:420px;margin:0 auto}
 .dlg .hd{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600}
-.dlg .bd{padding:8px 18px}
+.dlg .bd{padding:10px 18px}
 .dlg .ft{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
-.crow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
-.crow .cn{flex:1;display:flex;flex-direction:column;font-size:13px}.crow .cn span{color:var(--muted);font-size:12px}
-.cb{width:16px;height:16px;border:1.5px solid #9ca3af;border-radius:4px;flex:none}
-.cb.on{background:var(--primary);border-color:var(--primary)}.cb.dis{opacity:.5}
-.addrow{padding:10px 0}
-.gone{font-size:12px;color:var(--muted);text-decoration:line-through;margin:14px 0 0}
-.pill.amber{background:var(--amber-soft);color:var(--amber)}
-.rcp{border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;position:relative}
-.rcp .top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.rcp .nm{font-weight:600}
-.rcp .mut{color:var(--muted);font-size:13px}
-.x{color:var(--muted);font-size:16px;line-height:1;cursor:pointer}
-.radio{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;margin-right:6px}
-.radio.on{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
-.warn{background:var(--amber-soft);border:1px solid var(--amber-line);color:var(--amber);border-radius:6px;padding:8px 10px;font-size:12px;margin:10px 0}
-.hdr{display:grid;grid-template-columns:1.4fr 1fr;gap:24px}
-.m375 .hdr{grid-template-columns:1fr}
+.row{display:flex;gap:10px;align-items:center;padding:7px 0}
+.cb{width:16px;height:16px;border:1.5px solid #9ca3af;border-radius:4px}.cb.on{background:var(--primary);border-color:var(--primary)}
+.rd{width:16px;height:16px;border:1.5px solid #9ca3af;border-radius:50%}.rd.on{border:5px solid var(--primary)}
+.hist{border-top:1px solid var(--line);padding:10px 0;font-size:13px}.hist .mut{color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>Quote multi recipient: header with two To parties, the Send popup, the Sent log</h1>
-<p class="sub">One proposal, one set of lines, one approval. Recipients live on the header; Send only offers the listed ones;
-every send is a row per recipient per revision. Pink numbers map to the notes on the right. Person names, phones and addresses are fake.</p>
+<h1>Quote multi recipient, v3 (simple)</h1>
+<p class="sub">One proposal, several To. The To block is today's block, once per recipient. One Send button, one small popup.
+Every send is a line in the existing History. Nothing else is new on screen.</p>
 
-<h2 class="ft">Screen 1. Proposal view, Header tab, 1280px (rev A sent to both, VERITAS ARCHITECTS added after)</h2>
+<h2 class="ft">1. Header tab, view (two recipients)</h2>
 <div class="layout">
-<div class="scroll"><div class="frame w1280"><div class="content">
-  <div class="phrow">
-    <div><h1>Proposal Q-2026-0141</h1><div class="crumbs">Project sales / PGB GROUP HQ / Proposals</div></div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <span class="btn">&#9881;</span>
-      <span class="btn primary" style="position:relative">Send rev B to PGB GROUP +2<span class="co abs" style="top:-10px;right:-10px">1</span></span>
+<div class="frame w900"><div class="content">
+  <div class="phrow"><h1>Proposal Q-2026-0141</h1>
+    <div style="display:flex;gap:8px"><span class="btn">&#9881;</span><span class="btn primary">Send rev B to PGB GROUP &amp; AHMAD ZAKI RESOURCES BERHAD</span><span class="co">1</span></div></div>
+  <div class="grid">
+    <div>
+      <div class="cap">To <span class="co" style="margin-left:6px">2</span></div>
+      <div class="to"><div class="nm">PGB GROUP</div><div class="mut">Attn: MS. LINDA TAN &amp; MS. NUR AINA</div></div>
+      <div class="to"><div class="nm">AHMAD ZAKI RESOURCES BERHAD</div><div class="mut">Attn: -</div></div>
     </div>
+    <dl><dt>Our Ref</dt><dd>Q-2026-0141 (A)</dd><dt>Date</dt><dd>11 Nov 2026</dd><dt>Total</dt><dd>RM 696,923.00</dd></dl>
   </div>
-  <div class="section"><div class="hd">Header</div><div class="bd">
-    <div class="hdr">
-      <div>
-        <div class="cap" style="position:relative">To <span class="co" style="margin-left:6px">2</span></div>
-        <div class="rcp">
-          <div class="top"><div><div class="nm">PGB GROUP <span class="pill">Developer</span></div>
-            <div class="mut">Level 12, Menara PGB, Jalan Tun Razak, 50400 Kuala Lumpur</div>
-            <div class="mut">03-1234 5678</div>
-            <div style="margin-top:6px;font-size:13px"><span class="mut">Attn: </span><b>MS. LINDA TAN &amp; MS. NUR AINA</b></div></div>
-            <div style="text-align:right"><span class="pill green">rev A sent 11 Nov</span><span class="co" style="margin-left:6px">3</span></div></div>
-        </div>
-        <div class="rcp">
-          <div class="top"><div><div class="nm">AHMAD ZAKI RESOURCES BERHAD <span class="pill">Main contractor</span></div>
-            <div class="mut">Wisma AZRB, Jalan Pahang, 53000 Kuala Lumpur</div>
-            <div style="margin-top:6px;font-size:13px"><span class="mut">Attn: </span><b>-</b></div></div>
-            <div style="text-align:right"><span class="pill green">rev A sent 11 Nov</span></div></div>
-        </div>
-        <div class="rcp">
-          <div class="top"><div><div class="nm">VERITAS ARCHITECTS <span class="pill">Architect</span></div>
-            <div class="mut">No. 8, Jalan SS2/24, 47300 Petaling Jaya</div>
-            <div style="margin-top:6px;font-size:13px"><span class="mut">Attn: </span><b>Ar. Daniel Lee</b></div></div>
-            <div style="text-align:right"><span class="pill amber">Not sent yet</span></div></div>
-        </div>
-      </div>
-      <div class="ro"><dl>
-        <dt>Our Ref</dt><dd>Q-2026-0141 (A)</dd><dt>Your Ref</dt><dd>-</dd><dt>Date</dt><dd>11 Nov 2026</dd>
-        <dt>Total</dt><dd>RM 696,923.00</dd><dt>Approval</dt><dd><span class="pill green">Approved</span></dd>
-      </dl></div>
-    </div>
-    <div class="cap" style="margin-top:16px">Sent <span class="co" style="margin-left:6px">4</span></div>
-    <table><thead><tr><th>Revision</th><th>To</th><th>Attn</th><th>Channel</th><th>By</th><th>When</th></tr></thead><tbody>
-      <tr><td>A</td><td>AHMAD ZAKI RESOURCES BERHAD</td><td>-</td><td>Email</td><td>Hafiz Kamal</td><td>11 Nov 2026 16:52</td></tr>
-      <tr><td>A</td><td>PGB GROUP</td><td>MS. LINDA TAN &amp; MS. NUR AINA</td><td>WhatsApp</td><td>Hafiz Kamal</td><td>11 Nov 2026 16:50</td></tr>
-    </tbody></table>
-  </div></div>
-</div></div></div>
+</div></div>
 <div class="notes"><ol>
-  <li><span class="co">1</span><div><b>Send CTA names recipients + revision</b>One: "Send rev B to PGB GROUP"; two: "... PGB GROUP &amp; AHMAD ZAKI RESOURCES BERHAD"; 3+: "+N". Same slot as today; opens the Send popup instead of the Email / WhatsApp dropdown.<span class="ref">QuotationDocumentClient.tsx:614-640 (label), _shared/lib/quotationDecision.ts nextAction (unchanged)</span></div></li>
-  <li><span class="co">2</span><div><b>TO is a list</b>One card per recipient; read mode prints what the PDF prints. Edit session: each card is today's TO fields + Party picker + Attn popup, an (x) remove, "+ Add recipient" under the last.<span class="ref">QuotationDocumentHeader.tsx:199-320 (TO block, repeated per recipient), quotation-documents/components/QuotationRecipientPicker.tsx, _shared/components/PartyContactsDialog.tsx (#2335)</span></div></li>
-  <li><span class="co">3</span><div><b>Per-recipient sent state</b>green "rev A sent 11 Nov", amber "Not sent yet" or "has rev A, latest is B".<span class="ref">components/ui/badge (Badge pill)</span></div></li>
-  <li><span class="co">4</span><div><b>Sent log</b>One row per recipient per revision, newest first. Legacy revisions show channel "Not recorded".<span class="ref">plain table like QuotationViewCount list; data from new GET .../sends</span></div></li>
+  <li><span class="co">1</span><div><b>One CTA, names who and which revision</b>"Send rev B to PGB GROUP" for one; "... &amp; ..." for two; "PGB GROUP +2" for three or more. Opens popup 3.<span class="ref">QuotationDocumentClient.tsx:614-640 (today's "Send to Customer A" button, same slot)</span></div></li>
+  <li><span class="co">2</span><div><b>To = today's block, repeated</b>Name + Attn per recipient. No pills, no Sent section.<span class="ref">QuotationDocumentHeader.tsx:283-318 (read block, rendered per recipient)</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="ft">Screen 2. Send popup (main CTA, or gear "Send rev A again")</h2>
+<h2 class="ft">2. Header tab, edit</h2>
 <div class="layout">
-<div class="dimbg" style="flex:1 1 600px;border-radius:12px"><div class="dlg">
+<div class="frame w900"><div class="content">
+  <div class="cap">To</div>
+  <div class="to"><div class="nm">PGB GROUP <span class="x">&#10005;</span></div><div class="mut">Attn: MS. LINDA TAN &amp; MS. NUR AINA &middot; <span class="lk">Choose contacts</span></div></div>
+  <div class="to"><div class="nm">AHMAD ZAKI RESOURCES BERHAD <span class="x">&#10005;</span> <span class="co">4</span></div><div class="mut">Attn: - &middot; <span class="lk">Choose contacts</span></div></div>
+  <span class="lk">+ Add recipient</span> <span class="co">3</span>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">3</span><div><b>One action</b>Opens today's Party picker (project parties first); picking adds a block filled from the party, as today.<span class="ref">quotation-documents/components/QuotationRecipientPicker.tsx; Attn popup _shared/components/PartyContactsDialog.tsx (#2335)</span></div></li>
+  <li><span class="co">4</span><div><b>Remove = x</b>No confirm. Saved with the header; each add / remove is a History entry. The last one cannot be removed once sent.<span class="ref">QuotationHistorySheet.tsx</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">3. Send popup (lightbox)</h2>
+<div class="layout">
+<div class="dim"><div class="dlg">
   <div class="hd">Send rev B</div>
   <div class="bd">
-    <div class="cap" style="margin-top:8px">To <span class="co" style="margin-left:6px">5</span></div>
-    <div class="crow"><span class="cb on"></span><div class="cn">PGB GROUP<span>Attn MS. LINDA TAN &amp; MS. NUR AINA &middot; has rev A</span></div></div>
-    <div class="crow"><span class="cb on"></span><div class="cn">AHMAD ZAKI RESOURCES BERHAD<span>No Attn &middot; has rev A</span></div></div>
-    <div class="crow"><span class="cb"></span><div class="cn">VERITAS ARCHITECTS<span>Attn Ar. Daniel Lee &middot; not sent yet</span></div></div>
-    <div class="cap" style="margin-top:14px">Channel <span class="co" style="margin-left:6px">6</span></div>
-    <div><span class="radio on">Email</span><span class="radio">WhatsApp</span><span class="radio">Download</span></div>
-    <div class="warn">The letter names PGB GROUP; AHMAD ZAKI RESOURCES BERHAD will see that. <span class="co" style="margin-left:4px">7</span></div>
+    <div class="row"><span class="cb on"></span>PGB GROUP</div>
+    <div class="row"><span class="cb on"></span>AHMAD ZAKI RESOURCES BERHAD</div>
+    <div style="border-top:1px solid var(--line);margin:8px 0"></div>
+    <div class="row"><span class="rd on"></span>Email <span class="rd" style="margin-left:14px"></span>WhatsApp <span class="rd" style="margin-left:14px"></span>Download</div>
   </div>
-  <div class="ft"><span class="btn">Cancel</span><span class="btn primary">Send to 2</span></div>
+  <div class="ft"><span class="btn">Cancel</span><span class="btn primary">Send</span></div>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">5</span><div><b>Only listed recipients</b>All ticked by default; untick to send to fewer. No party search here: another party is added on the header first.<span class="ref">components/ui/dialog + components/ui/checkbox (rows styled as PartyContactsDialog)</span></div></li>
-  <li><span class="co">6</span><div><b>Channel</b>Email / Download: one PDF per ticked recipient queued to My Downloads. WhatsApp: QuotationWhatsAppDialog once per recipient, in order, its To prefilled. Every channel writes the Sent rows.<span class="ref">components/ui/radio-group; QuotationWhatsAppDialog.tsx; actions.tsx issuePdf mutation</span></div></li>
-  <li><span class="co">7</span><div><b>Letter warning (Q2 a)</b>Only with 2+ ticked and the letter text containing a ticked recipient's name or Attn. Not a block.<span class="ref">components/ui/alert</span></div></li>
+  <li><span class="co">5</span><div><b>Listed recipients only, all ticked, plus channel</b>Nothing else. Email / Download: one PDF per ticked recipient in My Downloads, each addressed to it. WhatsApp: today's WhatsApp popup once per recipient.<span class="ref">components/ui/dialog, checkbox, radio-group; QuotationWhatsAppDialog.tsx</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="ft">Screen 3. Project page, Proposals list</h2>
+<h2 class="ft">4. History (existing sheet), send entries</h2>
 <div class="layout">
-<div class="scroll"><div class="frame w1280"><div class="content">
-  <table><thead><tr><th>Proposal</th><th>Revision</th><th>Sent to <span class="co" style="margin-left:4px">8</span></th><th>Total</th><th>Status</th></tr></thead><tbody>
-    <tr><td>Q-2026-0141</td><td>B</td><td>PGB GROUP (B), AHMAD ZAKI RESOURCES BERHAD (B), VERITAS ARCHITECTS (A)</td><td>RM 688,410.00</td><td><span class="pill blue">Sent</span></td></tr>
-    <tr><td>Q-2026-0098</td><td>R2</td><td>PARAGON VIEW SDN BHD (R2)</td><td>RM 120,500.00</td><td><span class="pill blue">Sent</span></td></tr>
-  </tbody></table>
-</div></div></div>
-<div class="notes"><ol>
-  <li><span class="co">8</span><div><b>Sent to column</b>Each party with the latest revision it holds; truncate + title for long lists.<span class="ref">[projectId]/components/QuotationsPanel.tsx</span></div></li>
-</ol></div>
-</div>
-
-<h2 class="ft">Screen 4. 375px, Header tab</h2>
-<div class="layout">
-<div class="frame w375 m375"><div class="content">
-  <div style="font-weight:600;font-size:17px">Proposal Q-2026-0141</div>
-  <div style="margin:10px 0"><span class="btn primary" style="width:100%;justify-content:center">Send rev B to PGB GROUP +2</span></div>
-  <div class="cap">To</div>
-  <div class="rcp"><div class="nm">PGB GROUP</div><div class="mut">Attn MS. LINDA TAN &amp; MS. NUR AINA</div><span class="pill green" style="margin-top:6px">rev A sent 11 Nov</span></div>
-  <div class="rcp"><div class="nm">AHMAD ZAKI RESOURCES BERHAD</div><div class="mut">Attn -</div><span class="pill green" style="margin-top:6px">rev A sent 11 Nov</span></div>
-  <div class="rcp"><div class="nm">VERITAS ARCHITECTS</div><div class="mut">Attn Ar. Daniel Lee</div><span class="pill amber" style="margin-top:6px">Not sent yet</span></div>
-  <div class="cap" style="margin-top:12px">Sent</div>
-  <div class="rcp"><div class="nm">rev A &middot; AHMAD ZAKI RESOURCES BERHAD</div><div class="mut">Email &middot; Hafiz Kamal &middot; 11 Nov 16:52</div></div>
-  <div class="rcp"><div class="nm">rev A &middot; PGB GROUP</div><div class="mut">WhatsApp &middot; Hafiz Kamal &middot; 11 Nov 16:50</div></div>
+<div class="frame w375"><div class="content">
+  <div style="font-weight:600;margin-bottom:6px">History</div>
+  <div class="hist">rev B sent to PGB GROUP via Email<div class="mut">Hafiz Kamal &middot; 11 Nov 16:52</div></div>
+  <div class="hist">rev B sent to AHMAD ZAKI RESOURCES BERHAD via Email<div class="mut">Hafiz Kamal &middot; 11 Nov 16:52</div></div>
+  <div class="hist">Added AHMAD ZAKI RESOURCES BERHAD to To<div class="mut">Hafiz Kamal &middot; 11 Nov 16:40</div></div>
+  <div class="hist">rev A sent to PGB GROUP via WhatsApp<div class="mut">Hafiz Kamal &middot; 10 Nov 10:05</div></div>
 </div></div>
-<div class="notes"><ol><li><span class="co">&#8226;</span><div><b>Narrow</b>Recipient cards stack; the Sent table becomes one card per row; CTA full width.</div></li></ol></div>
+<div class="notes"><ol>
+  <li><span class="co">6</span><div><b>One standard History view</b>Sends and To changes are entries in the document's existing History sheet, newest first. The project's Proposals list keeps its existing Recipient column, now listing every To.<span class="ref">QuotationHistorySheet.tsx; [projectId]/components/QuotationsPanel.tsx:174 (Recipient column)</span></div></li>
+</ol></div>
 </div>
 </div>
 </body>
