@@ -3128,6 +3128,15 @@ function shownCodes(): string[] {
 }
 
 describe('PROJECT-QUOTE-LINE-TOOLS', () => {
+  it('the Rate column is wide enough for "Below minimum price" on one line (crew verify, 1280 px)', async () => {
+    // The one-line pill measured 131 px in the browser; the cell adds px-1.5 (6 px a side).
+    listQuotationLines.mockResolvedValue([line({ is_below_floor: true, is_discounted: true })]);
+    renderEditor();
+    await screen.findByText('Below minimum price');
+    const th = screen.getByRole('columnheader', { name: 'Rate (RM)' });
+    expect(parseFloat(th.style.width || '0')).toBeGreaterThanOrEqual(148);
+  });
+
   it('AC-5: a saved line below its default price shows the pill under the product code, in view mode', async () => {
     listQuotationLines.mockResolvedValue([line({ is_discounted: true })]);
     renderEditor();
