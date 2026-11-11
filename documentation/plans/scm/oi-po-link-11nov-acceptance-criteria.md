@@ -10,10 +10,12 @@ real AutoCount run, done by lane AC-E2E-DB3).
 - AC-2 Stock Debt behaviour unchanged: every existing Stock Debt po-link test passes with no assertion edit
   (`tests/scm/test_stock_debt_po_link*.py`, `test_stock_debt_snapshot_live_cover.py`, FE `PoLinkDialog.test.tsx`,
   `poLinkWording.test.ts`, moved path only).
-- AC-3 Link lines are grouped by PO line; the group is sent through one send point (`_send_group`). Until the SS
-  batch op exists it sends the existing per-line write for each member, in request order, with the same body and
-  idempotency key as before.
-
+- AC-3 Link lines are grouped by PO line; each group is sent through one send point (`_send_group`), groups in
+  the order of their first line in the request, lines within a group in request order (review S2: grouping is
+  what the SS batch op needs, so a request po1, po2, po1 sends po1, po1, po2). Results are answered in request
+  order. Until the SS batch op exists the group sends the existing per-line write for each member with the same
+  body and the same idempotency key as before this lane (the key's `rowQty` stays the stored 4-decimal form, so an
+  operation left unknown before a deploy replays after it, review B2).
 - AC-3a Every SS write call (link, unlink, change halves, relink, relocate, resume) carries `X-Request-ID`,
   `X-Acting-User-Id` (the CRM user id) and `X-Acting-User-Name` (the user's display name, percent-encoded with
   `urllib.parse.quote(name, safe="")`), one request id per press, from both screens (AC-DB1-READY, SS plan 63).
