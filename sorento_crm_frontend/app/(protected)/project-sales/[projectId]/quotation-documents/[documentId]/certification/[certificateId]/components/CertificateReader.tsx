@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Crosshair, Pencil, Save } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,24 +34,44 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 
 const STATE_BADGE: Record<ProductState, { label: string; variant: 'success' | 'warning' | 'secondary' | 'destructive' }> = {
-  found: { label: 'Found', variant: 'success' },
-  suggested: { label: 'Suggested, check', variant: 'warning' },
+  // A box found by a guessed code is just Marked (owner, 11 Nov 2026): no "Suggested, check".
+  found: { label: 'Marked', variant: 'success' },
   edited: { label: 'Edited', variant: 'secondary' },
-  not_found: { label: 'Not found', variant: 'destructive' },
+  not_found: { label: 'Code not found', variant: 'destructive' },
   no_text: { label: 'No text', variant: 'secondary' },
   code_needed: { label: 'Code needed', variant: 'warning' },
 };
+
+/** The boxes in reading order (page, then top to bottom), as indices into `boxes`. */
+export function boxOrder(boxes: PageBox[], productId?: string): number[] {
+  return boxes
+    .map((box, index) => ({ box, index }))
+    .filter(
+      ({ box }) =>
+        productId === undefined ||
+        box.product_id === productId ||
+        Boolean(box.product_ids?.includes(productId)),
+    )
+    .sort((a, b) => a.box.page - b.box.page || a.box.y - b.box.y || a.box.x - b.box.x)
+    .map(({ index }) => index);
+}
+
+/** How long a box stays outlined after "Go to box". */
+const FLASH_MS = 1600;
 
 function ProductRow({
   product,
   certificateId,
   canEditCodes,
   onSaved,
+  onGoToBox,
 }: {
   product: CertificateProductDetail;
   certificateId: string;
   canEditCodes: boolean;
   onSaved: () => void;
+  /** Absent when the product has no box on the page. */
+  onGoToBox?: () => void;
 }) {
   const badge = STATE_BADGE[product.state];
   return (
@@ -60,9 +80,24 @@ function ProductRow({
         <span className="truncate font-medium" title={product.product_code}>
           {product.product_code}
         </span>
-        <Badge variant={badge.variant} appearance="light" size="sm" className="shrink-0">
-          {badge.label}
-        </Badge>
+        <span className="flex shrink-0 items-center gap-1">
+          <Badge variant={badge.variant} appearance="light" size="sm" className="shrink-0">
+            {badge.label}
+          </Badge>
+          {onGoToBox && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              mode="icon"
+              aria-label={`Go to the box of ${product.product_code}`}
+              title="Go to box"
+              onClick={onGoToBox}
+            >
+              <Crosshair className="size-4" aria-hidden />
+            </Button>
+          )}
+        </span>
       </div>
       <div className="flex flex-col gap-0.5 text-sm">
         <span className="text-xs text-muted-foreground">Code on certificate</span>
@@ -105,6 +140,9 @@ export function CertificateReader({
   const [boxes, setBoxes] = React.useState<PageBox[]>([]);
   const [dirty, setDirty] = React.useState(false);
   const [selected, setSelected] = React.useState<number | null>(null);
+  const [flashed, setFlashed] = React.useState<number | null>(null);
+  const [savedOnce, setSavedOnce] = React.useState(false);
+  const rootRef = React.useRef<HTMLDivElement>(null);
   const [drawing, setDrawing] = React.useState(false);
   const [scope, setScope] = React.useState<BoxScope>('quote');
   const [drawProduct, setDrawProduct] = React.useState('');
@@ -124,7 +162,40 @@ export function CertificateReader({
   const change = React.useCallback((next: PageBox[]) => {
     setBoxes(next);
     setDirty(true);
+    setFlashed(null);
   }, []);
+
+  // "Go to box": bring the box into the middle of the viewer and outline it for a moment. The
+  // pages (and their boxes) exist only once the file has loaded, so a jump asked for on open
+  // waits for its box to appear.
+  const goToBox = React.useCallback((index: number) => {
+    setFlashed(index);
+    let tries = 0;
+    const seek = () => {
+      const node = rootRef.current?.querySelector<HTMLElement>(`[data-box-index="${index}"]`);
+      if (node) {
+        node.scrollIntoView?.({ block: 'center', inline: 'center' });
+        return;
+      }
+      if (tries++ < 100) window.setTimeout(seek, 100);
+    };
+    seek();
+  }, []);
+
+  React.useEffect(() => {
+    if (flashed === null) return;
+    const timer = window.setTimeout(() => setFlashed(null), FLASH_MS);
+    return () => window.clearTimeout(timer);
+  }, [flashed]);
+
+  // Opening a certificate from the list lands on its first box: one click from the row.
+  const landedRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!detail || landedRef.current === detail.certificate_id) return;
+    landedRef.current = detail.certificate_id;
+    const first = boxOrder(detail.boxes)[0];
+    if (first !== undefined) goToBox(first);
+  }, [detail, goToBox]);
 
   const removeAt = React.useCallback(
     (index: number) => {
@@ -162,7 +233,12 @@ export function CertificateReader({
     const payload = scope === 'default' ? expandBoxesForDefault(boxes, productId) : boxes;
     saveBoxes.mutate(
       { certificateId, scope, boxes: payload },
-      { onSuccess: () => setDirty(false) },
+      {
+        onSuccess: () => {
+          setDirty(false);
+          setSavedOnce(true);
+        },
+      },
     );
   };
 
@@ -186,7 +262,7 @@ export function CertificateReader({
   const productOptions = detail.products.map((p) => ({ value: p.product_id, label: p.product_code }));
 
   return (
-    <div className="flex min-w-0 flex-col gap-3" data-testid="certificate-reader">
+    <div ref={rootRef} className="flex min-w-0 flex-col gap-3" data-testid="certificate-reader">
       <PageHeader
         title={title}
         crumbs={projectCrumbs(
@@ -196,7 +272,31 @@ export function CertificateReader({
           { title: detail.certificate_number },
         )}
         titleClassName="truncate"
-        actions={<BackToList listPath={listHref} label="Back to certification" appendListState={false} />}
+        actions={
+          <>
+            <BackToList listPath={listHref} label="Back to certification" appendListState={false} />
+            {canEdit && (
+              <>
+                <span
+                  role="status"
+                  className={dirty ? 'text-sm font-medium text-warning' : 'text-sm text-muted-foreground'}
+                >
+                  {saveBoxes.isPending
+                    ? 'Saving...'
+                    : dirty
+                      ? 'Unsaved changes'
+                      : savedOnce
+                        ? 'Saved'
+                        : ''}
+                </span>
+                <Button size="sm" disabled={!dirty || saveBoxes.isPending} onClick={save}>
+                  <Save className="size-4" aria-hidden />
+                  Save boxes
+                </Button>
+              </>
+            )}
+          </>
+        }
       />
 
       <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -211,15 +311,6 @@ export function CertificateReader({
               >
                 <Pencil className="size-4" aria-hidden />
                 Draw box
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={selected === null}
-                onClick={() => selected !== null && removeAt(selected)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Remove box
               </Button>
               {drawing && scope === 'default' && productOptions.length > 1 && (
                 <SearchableSelect
@@ -250,6 +341,7 @@ export function CertificateReader({
                   editable={canEdit}
                   drawing={drawing}
                   selected={selected}
+                  flashed={flashed}
                   drawProductId={scope === 'default' ? productId : null}
                   onSelect={setSelected}
                   onChange={change}
@@ -292,6 +384,10 @@ export function CertificateReader({
                 certificateId={certificateId}
                 canEditCodes={canDefaults}
                 onSaved={refresh}
+                onGoToBox={(() => {
+                  const first = boxOrder(boxes, p.product_id)[0];
+                  return first === undefined ? undefined : () => goToBox(first);
+                })()}
               />
             ))}
           </ul>
@@ -314,11 +410,9 @@ export function CertificateReader({
                   </ToggleGroupItem>
                 </ToggleGroup>
               </div>
+              {detail.box_source === 'quote' && (
               <div className="flex flex-wrap items-center gap-2">
-                <Button size="sm" disabled={!dirty || saveBoxes.isPending} onClick={save}>
-                  Save boxes
-                </Button>
-                {detail.box_source === 'quote' && (
+                {(
                   <Button
                     size="sm"
                     variant="outline"
@@ -331,6 +425,7 @@ export function CertificateReader({
                   </Button>
                 )}
               </div>
+              )}
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="include-in-pdf"

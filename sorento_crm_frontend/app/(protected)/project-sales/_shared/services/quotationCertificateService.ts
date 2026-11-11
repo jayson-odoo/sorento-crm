@@ -27,13 +27,11 @@ export type MarkedState =
   | 'no_text'
   | 'not_found'
   | 'no_file'
-  | 'suggested'
   | 'code_needed'
   | 'not_on_certificate';
 
 export type ProductState =
   | 'found'
-  | 'suggested'
   | 'edited'
   | 'not_found'
   | 'no_text'

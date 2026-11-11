@@ -537,18 +537,19 @@ def test_05_a_new_revision_invalidates_the_quote_override_and_the_cache(files):
             assert len(d["boxes"]) == 1 and d["boxes"][0]["y"] != pytest.approx(0.2)
 
 
-def test_05_a_suggested_code_is_persisted_on_first_read_and_marks_the_row_suggested(files):
+def test_05_a_suggested_code_is_persisted_on_first_read_and_its_box_is_just_marked(files):
+    # CERT-TAB-UX (owner, 11 Nov): no "Suggested, check" state; a guessed code's box is "found".
     with blank_session() as db:
         c = _draft(db)
         cr = _cert(db, c, files, covers=[(c["a"], None, None)], pdf=_pdf("XX 1", "WB 1515"))
         cp = cr.cps[c["a"].id]
         with _api(db, c) as client:
             row = _items(client, c)[0]
-            assert row["marked"]["state"] == "suggested" and row["marked"]["count"] == 1
+            assert row["marked"]["state"] == "found" and row["marked"]["count"] == 1
             db.expire_all()
             assert cp.model_code == "WB 1515" and cp.model_code_source == "ai"
             d = _detail(client, c, cr.id)
-            assert d["products"][0]["state"] == "suggested"
+            assert d["products"][0]["state"] == "found"
             assert d["products"][0]["model_code_source"] == "ai"
 
 
@@ -1253,7 +1254,7 @@ def test_r3_a_new_revision_discards_the_negative_cache(files):
             _new_revision(db, cr, files, _pdf("XX 1", "WB 1515"))
             db.commit()
             row = _items(client, c)[0]
-            assert row["marked"] == {"count": 1, "state": "suggested"}
+            assert row["marked"] == {"count": 1, "state": "found"}
             db.expire_all()
             assert cp.model_code == "WB 1515" and cp.model_code_source == "ai"
 

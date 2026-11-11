@@ -281,7 +281,7 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
     override = marker.boxes if marker is not None and marker.boxes and rev_id and marker.boxes.get("revision_id") == rev_id else None
     products: List[dict] = []
     all_boxes: List[dict] = []
-    any_manual = any_ai_box = any_needed = False
+    any_manual = any_needed = False
 
     for pid, (cp, owner) in sorted(group.coverage.items(), key=lambda kv: quoted.get(kv[0], "")):
         owner_rev = owner.current_revision
@@ -365,8 +365,9 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
             if not has_text:
                 entry["state"] = "no_text"
             elif boxes:
-                entry["state"] = "suggested" if cp.model_code_source == "ai" else "found"
-                any_ai_box = any_ai_box or cp.model_code_source == "ai"
+                # CERT-TAB-UX (owner, 11 Nov): a box found by a guessed (`ai`) code is just marked;
+                # there is no separate "Suggested, check" state. The pencil still fixes a wrong code.
+                entry["state"] = "found"
             else:
                 entry["state"] = "not_found"
         all_boxes.extend(boxes)
@@ -388,8 +389,6 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
         or (any(p["code_used"] for p in products) and all(p["state"] == "no_text" for p in products if p["code_used"]))
     ):
         state = "no_text"
-    elif count > 0 and any_ai_box:
-        state = "suggested"
     elif count > 0:
         state = "found"
     elif any_needed:
