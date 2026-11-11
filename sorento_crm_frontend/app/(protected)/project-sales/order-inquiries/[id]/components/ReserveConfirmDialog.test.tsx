@@ -36,7 +36,21 @@ beforeEach(() => vi.clearAllMocks());
 describe('AC-SN-41 ReserveConfirmDialog', () => {
   it('titles the dialog with the line count and OI number', () => {
     renderDialog();
-    expect(screen.getByRole('dialog', { name: 'Reserve 2 lines on OI-2609-0612' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Reserve 2 lines on OI-2609-0612?' })).toBeInTheDocument();
+  });
+
+  // UIUX-QUICK-WINS item 6: the line under the question says what happens, never "Are you sure".
+  it('says what happens under the title, and the safe button keeps the edits', () => {
+    renderDialog();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAccessibleDescription(
+      'Each line is reserved or rejected as shown, and purchasing is told right away.',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Keep editing' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByLabelText(/park notice first/i));
+    expect(dialog).toHaveAccessibleDescription(
+      'Each line is reserved or rejected as shown. The notice to purchasing waits in Parked until you send it.',
+    );
   });
 
   it('lists the staged lines under the six columns', () => {
@@ -74,9 +88,9 @@ describe('AC-SN-41 ReserveConfirmDialog', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(true));
   });
 
-  it('Cancel closes without confirming', () => {
+  it('Keep editing closes without confirming', () => {
     renderDialog();
-    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onConfirm).not.toHaveBeenCalled();
   });
@@ -188,7 +202,7 @@ describe('F8 ReserveConfirmDialog multi-OI mode', () => {
   it('titles the dialog with the line count and the order inquiry count', () => {
     renderMulti();
     expect(
-      screen.getByRole('dialog', { name: 'Reserve 3 lines on 2 order inquiries' }),
+      screen.getByRole('dialog', { name: 'Reserve 3 lines on 2 order inquiries?' }),
     ).toBeInTheDocument();
   });
 
@@ -198,7 +212,7 @@ describe('F8 ReserveConfirmDialog multi-OI mode', () => {
       inquiries: [{ inquiry_id: 'oi-1', inquiry_no: 'OI-2609-0001', reserve_count: 1, reject_count: 0 }],
     });
     expect(
-      screen.getByRole('dialog', { name: 'Reserve 1 line on 1 order inquiry' }),
+      screen.getByRole('dialog', { name: 'Reserve 1 line on 1 order inquiry?' }),
     ).toBeInTheDocument();
     expect(screen.getByText('1 line on 1 order inquiry · Reserve 1 · Reject 0')).toBeInTheDocument();
   });
@@ -300,7 +314,7 @@ describe('F8 ReserveConfirmDialog multi-OI mode', () => {
     renderMulti({ done: true, lines: MIXED });
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).queryByRole('button', { name: /^reserve and/i })).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Keep editing' })).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText(/park notice first/i)).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -339,7 +353,7 @@ describe('F8 ReserveConfirmDialog with 100 lines across 7 order inquiries', () =
   it('titles it and prints the summary with Reserve 90 and Reject 10', () => {
     renderMulti({ lines: HUNDRED, inquiries: HUNDRED_INQUIRIES });
     expect(
-      screen.getByRole('dialog', { name: 'Reserve 100 lines on 7 order inquiries' }),
+      screen.getByRole('dialog', { name: 'Reserve 100 lines on 7 order inquiries?' }),
     ).toBeInTheDocument();
     expect(
       screen.getByText('100 lines on 7 order inquiries · Reserve 90 · Reject 10'),

@@ -1500,8 +1500,9 @@ export interface OrderInquiryHeaderListParams {
    * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
    * registered project. One title or several (OR-ed), each sent whole. */
   project?: string | string[];
-  /** OIs with a reserve request row in this status (AC-SN-30). */
-  reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
+  /** OIs with a reserve request row in one of these statuses (AC-SN-30), comma-joined
+   * (UIUX-QUICK-WINS item 2: parked, needs_reserve, notice_parked, reserved). */
+  reserve?: string;
   /** Exact OI numbers, comma-joined (the reserve emails' button). */
   inquiry_no?: string;
   page?: number;

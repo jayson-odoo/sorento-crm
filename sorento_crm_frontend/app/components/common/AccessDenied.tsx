@@ -59,10 +59,8 @@ export default function AccessDenied({
       </div>
       <h1 className="mt-6 text-xl font-bold text-foreground">{title}</h1>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">{description}</p>
-      <Button
-        asChild
-        className="mt-6 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-      >
+      {/* The way back is a plain button: going home is not a destructive act. */}
+      <Button asChild variant="outline" className="mt-6">
         <Link href="/">Back to dashboard</Link>
       </Button>
     </div>

@@ -185,6 +185,59 @@ describe('AC-SN-42 Reserve filter, chip and column', () => {
   });
 });
 
+describe('UIUX-QUICK-WINS item 2: Reserve filter multi-select, column sortable', () => {
+  it('choosing two statuses sends both, comma-joined, and the chip names both', async () => {
+    renderList();
+    await waitFor(() => expect(getSummarySpy).toHaveBeenCalled());
+    await openReserveOptions();
+    fireEvent.click(await screen.findByRole('option', { name: 'Needs reserve (0)' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Reserved (0)' }));
+
+    await waitFor(() =>
+      expect(listSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reserve: 'needs_reserve,reserved', state: 'all' }),
+      ),
+    );
+    expect(await screen.findByText('Reserve: Needs reserve, Reserved')).toBeInTheDocument();
+  });
+
+  it('landing with ?reserve=parked,reserved has both applied, unknown values dropped', async () => {
+    searchParamsValue = 'reserve=parked,bogus,reserved';
+    renderList();
+    await waitFor(() =>
+      expect(listSpy).toHaveBeenCalledWith(expect.objectContaining({ reserve: 'parked,reserved' })),
+    );
+  });
+
+  it('landing with ?sort=reserve_status sends that sort, and the Reserve header sorts', async () => {
+    searchParamsValue = 'sort=reserve_status&dir=desc';
+    renderList();
+    await waitFor(() =>
+      expect(listSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'reserve_status', dir: 'desc' }),
+      ),
+    );
+    const th = (await screen.findAllByRole('columnheader')).find((el) =>
+      /Reserve/.test(el.textContent ?? ''),
+    ) as HTMLElement;
+    expect(within(th).getByRole('button', { name: 'Reserve' })).toBeInTheDocument();
+  });
+
+  it('clicking the Reserve header asks the server to sort by it', async () => {
+    renderList();
+    await screen.findByText('OI-0001');
+    const th = (await screen.findAllByRole('columnheader')).find((el) =>
+      /Reserve/.test(el.textContent ?? ''),
+    ) as HTMLElement;
+    fireEvent.click(within(th).getByRole('button', { name: 'Reserve' }));
+    await waitFor(() =>
+      expect(listSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'reserve_status', dir: 'asc' }),
+      ),
+    );
+  });
+});
+
 describe('AC-SN-43 toolbar Actions menu', () => {
   it('an acknowledge holder sees "Send all parked requests to CS (17)" inside Actions, never as a top-bar button', async () => {
     permissions = new Set(['projects.order_inquiries.acknowledge']);

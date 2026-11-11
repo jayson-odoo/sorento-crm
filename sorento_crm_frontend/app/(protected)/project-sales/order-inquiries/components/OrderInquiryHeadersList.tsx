@@ -27,7 +27,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   idFilterLabels,
   joinMulti,
@@ -56,7 +55,7 @@ import {
   orderInquiryHeaderStatusLabel,
   orderInquiryHeaderStatusVariant,
   orderInquiryReserveStatusLabel,
-  reserveStatusFrom,
+  reserveStatusesFrom,
   orderInquiryReserveStatusVariant,
   type OrderInquiryReserveStatus,
 } from '../../_shared/lib/orderInquiryHeaderStatus';
@@ -98,8 +97,10 @@ export function OrderInquiryHeadersList() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [reserveFilter, setReserveFilter] = useState<OrderInquiryReserveStatus | ''>(() =>
-    reserveStatusFrom(searchParams.get('reserve')),
+  // UIUX-QUICK-WINS item 2: several reserve statuses, comma-joined like raised_by (owner rule:
+  // every dropdown filter is multi-select). Unknown values in a pasted URL are dropped.
+  const [reserveFilter, setReserveFilter] = useState(() =>
+    reserveStatusesFrom(searchParams.get('reserve')),
   );
   // The reserve emails' button lists exactly their OIs by number (comma-joined, like raised_by).
   const [inquiryNoFilter, setInquiryNoFilter] = useState(() =>
@@ -109,7 +110,7 @@ export function OrderInquiryHeadersList() {
   // landing on one (the email link) with no explicit state shows All.
   const [stateFilter, setStateFilter] = useState<StateFilter>(() =>
     searchParams.get('state') == null &&
-    (reserveStatusFrom(searchParams.get('reserve')) !== '' ||
+    (reserveStatusesFrom(searchParams.get('reserve')) !== '' ||
       splitMulti(searchParams.get('inquiry_no')).length > 0)
       ? 'all'
       : stateFrom(searchParams.get('state')),
@@ -486,9 +487,10 @@ export function OrderInquiryHeadersList() {
       },
       {
         id: 'reserve_status',
-        header: () => <span>Reserve</span>,
+        // An accessor is what lets TanStack sort the column (getCanSort); the server orders it.
+        accessorFn: (row) => row.reserve_status ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Reserve" column={column} />,
         size: 190,
-        enableSorting: false,
         meta: { headerTitle: 'Reserve' },
         cell: ({ row }) => {
           const { reserve_status, parked_by_name } = row.original;
@@ -642,7 +644,12 @@ export function OrderInquiryHeadersList() {
                 ...(reserveFilter
                   ? [
                       {
-                        label: `Reserve: ${orderInquiryReserveStatusLabel(reserveFilter)}`,
+                        label: multiChipLabel(
+                          'Reserve',
+                          splitMulti(reserveFilter).map((value) =>
+                            orderInquiryReserveStatusLabel(value as OrderInquiryReserveStatus),
+                          ),
+                        ),
                         onClear: () => setReserveFilter(''),
                       },
                     ]
@@ -662,12 +669,12 @@ export function OrderInquiryHeadersList() {
                     <Label htmlFor="oi-header-reserve" className="mb-1 block">
                       Reserve
                     </Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       id="oi-header-reserve"
-                      value={reserveFilter}
+                      value={splitMulti(reserveFilter)}
                       onChange={(value) => {
-                        setReserveFilter(reserveStatusFrom(value));
-                        if (value) setStateFilter('all');
+                        setReserveFilter(reserveStatusesFrom(joinMulti(value)));
+                        if (value.length) setStateFilter('all');
                       }}
                       options={filterOptions.reserve}
                       placeholder="Any reserve status"

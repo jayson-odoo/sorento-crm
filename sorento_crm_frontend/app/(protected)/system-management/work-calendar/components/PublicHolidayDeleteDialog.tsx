@@ -38,15 +38,15 @@ export default function PublicHolidayDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>Delete public holiday?</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete <strong>{holiday?.name}</strong> on{' '}
-          <strong>{holiday?.date}</strong>? This action cannot be undone.
+          <strong>{holiday?.name}</strong> on <strong>{holiday?.date}</strong> is
+          deleted for good. This cannot be undone.
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            Keep public holiday
           </Button>
           <Button
             variant="destructive"
@@ -54,7 +54,7 @@ export default function PublicHolidayDeleteDialog({
             disabled={deleteMutation.isPending}
           >
             {deleteMutation.isPending && <LoaderCircleIcon className="animate-spin mr-2" />}
-            Delete
+            Delete public holiday
           </Button>
         </DialogFooter>
       </DialogContent>

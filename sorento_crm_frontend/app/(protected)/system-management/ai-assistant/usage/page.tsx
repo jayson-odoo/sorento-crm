@@ -1,5 +1,6 @@
 'use client';
 
+import AccessDenied from '@/app/components/common/AccessDenied';
 import { Fragment, useMemo, useState, type ComponentProps } from 'react';
 import { useTraceDrawer } from '../../chat-history/components/TraceDrawer';
 import { format } from 'date-fns';
@@ -138,9 +139,7 @@ export default function AIUsagePage() {
   if (!hasPermission) {
     return (
       <Container>
-        <div className="rounded-md border p-6 text-sm text-muted-foreground">
-          Forbidden - you don&apos;t have permission to view AI assistant usage.
-        </div>
+        <AccessDenied description="Only people whose role includes AI assistant settings can open this. Ask an administrator if you need it." />
       </Container>
     );
   }

@@ -16,11 +16,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   priceTagStatusLabel,
-  priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { portalBase, portalNewPath, portalDetailPath } from '../lib/portal-paths';
 import { listRequests, type PriceTagRequestSummary } from '../lib/price-tag-request-service';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { Badge } from '@/components/ui/badge';
 
 interface Props {
   slug?: string;
@@ -111,11 +111,9 @@ export function PriceTagRequestList({ slug }: Props) {
                     <span className="font-medium text-sm truncate" title={req.doc_number}>
                       {req.doc_number}
                     </span>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(req.status)}`}
-                    >
+                    <Badge status={req.status} appearance="light">
                       {priceTagStatusLabel(req.status)}
-                    </span>
+                    </Badge>
                   </div>
                   {/* A draft may have no dealer yet (D48a), so the line says so
                       rather than sitting blank. */}

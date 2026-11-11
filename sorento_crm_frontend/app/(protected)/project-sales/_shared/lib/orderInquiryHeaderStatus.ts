@@ -37,6 +37,16 @@ export function reserveStatusFrom(value: string | null | undefined): OrderInquir
     : '';
 }
 
+/** UIUX-QUICK-WINS item 2: the known statuses in a comma-joined `?reserve=`, joined back. */
+export function reserveStatusesFrom(value: string | null | undefined): string {
+  const out: OrderInquiryReserveStatus[] = [];
+  for (const part of (value ?? '').split(',')) {
+    const status = reserveStatusFrom(part.trim());
+    if (status && !out.includes(status)) out.push(status);
+  }
+  return out.join(',');
+}
+
 export function orderInquiryReserveStatusLabel(status: OrderInquiryReserveStatus): string {
   switch (status) {
     case 'parked':

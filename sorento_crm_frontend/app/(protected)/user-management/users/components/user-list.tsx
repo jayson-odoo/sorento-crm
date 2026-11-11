@@ -451,38 +451,44 @@ const UserList = () => {
     }
   };
 
+  const selectedUsers = `${selectedRowIds.length} ${selectedRowIds.length === 1 ? 'user' : 'users'}`;
   const bulkConfirmConfig =
     bulkConfirmAction === 'delete'
       ? {
-          title: 'Confirm delete',
-          description: `Are you sure you want to trash ${selectedRowIds.length} user(s)? They can be restored from the Trashed filter.`,
-          actionLabel: 'Trash',
+          title: `Trash ${selectedUsers}?`,
+          description: 'They move to trash and can be restored from the Trashed filter.',
+          cancelLabel: 'Keep users',
+          actionLabel: 'Trash users',
         }
       : bulkConfirmAction === 'resend_invite'
         ? {
-            title: 'Confirm resend invitation',
-            description: `Are you sure you want to send invitation links to ${selectedRowIds.length} user(s)?`,
+            title: `Send invitations to ${selectedUsers}?`,
+            description: 'Each one gets a new invitation link by email.',
+            cancelLabel: 'Not now',
             actionLabel: 'Send invitations',
           }
       : bulkConfirmAction === 'permanent_delete'
         ? {
-            title: 'Permanently delete users',
-            description: `Are you sure you want to permanently delete ${selectedRowIds.length} trashed user(s)? This cannot be undone.`,
-            actionLabel: 'Permanently delete',
+            title: `Delete ${selectedUsers} for good?`,
+            description: 'They are deleted for good. This cannot be undone.',
+            cancelLabel: 'Keep users',
+            actionLabel: 'Delete users',
           }
         : bulkConfirmAction === 'activate'
           ? {
-              title: 'Confirm activate',
-              description: `Are you sure you want to activate ${selectedRowIds.length} user(s)?`,
-              actionLabel: 'Activate',
+              title: `Activate ${selectedUsers}?`,
+              description: 'They can sign in again.',
+              cancelLabel: 'Keep inactive',
+              actionLabel: 'Activate users',
             }
           : bulkConfirmAction === 'deactivate'
             ? {
-                title: 'Confirm deactivate',
-                description: `Are you sure you want to deactivate ${selectedRowIds.length} user(s)?`,
-                actionLabel: 'Deactivate',
+                title: `Deactivate ${selectedUsers}?`,
+                description: 'They can no longer sign in.',
+                cancelLabel: 'Keep active',
+                actionLabel: 'Deactivate users',
               }
-            : { title: '', description: '', actionLabel: '' };
+            : { title: '', description: '', cancelLabel: '', actionLabel: '' };
 
   const columns = useMemo<ColumnDef<User>[]>(
     () => [
@@ -840,7 +846,7 @@ const UserList = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={bulkActionPending}>
-              Cancel
+              {bulkConfirmConfig.cancelLabel}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {

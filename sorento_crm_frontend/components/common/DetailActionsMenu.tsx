@@ -1,5 +1,6 @@
 'use client';
 
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Children, isValidElement, ReactNode, Ref, useState } from 'react';
 import { Cog, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -112,20 +113,26 @@ export function DetailActionsMenu({
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          ref={triggerRef}
-          type="button"
-          variant={trigger === 'ellipsis' ? 'ghost' : 'outline'}
-          size="icon"
-          aria-label={ariaLabel}
-          title={ariaLabel}
-          disabled={disabled}
-          className={className}
-        >
-          <TriggerIcon className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
+      {/* UIUX-QUICK-WINS item 9: the icon button's label is the shared styled Tooltip, not
+          the browser's native title. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              ref={triggerRef}
+              type="button"
+              variant={trigger === 'ellipsis' ? 'ghost' : 'outline'}
+              size="icon"
+              aria-label={ariaLabel}
+              disabled={disabled}
+              className={className}
+            >
+              <TriggerIcon className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{ariaLabel}</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end">
         {actions ? (
           <RecordActionMenuItems actions={actions} onRequestClose={() => setOpen(false)} />

@@ -247,7 +247,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
           inspection_status: 'pending',
           notes: data.notes || undefined,
           picking_lines: lines?.length ? lines : [],
-        } as any);
+        } as unknown as Parameters<typeof createMutation.mutateAsync>[0]);
       }
       if (onSuccess) {
         onSuccess();
@@ -600,14 +600,16 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
             <AlertDialogTitle>Remove line(s)?</AlertDialogTitle>
             <AlertDialogDescription>
               {removeConfirm.type === 'single'
-                ? 'Are you sure you want to remove this line?'
+                ? 'The line is removed from this GRN.'
                 : removeConfirm.type === 'bulk'
-                  ? `Are you sure you want to remove ${removeConfirm.indices.length} line(s)?`
+                  ? `${removeConfirm.indices.length} line(s) are removed from this GRN.`
                   : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>
+              {removeConfirm.type === 'bulk' ? 'Keep lines' : 'Keep line'}
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={(e) => {

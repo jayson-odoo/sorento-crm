@@ -183,6 +183,25 @@ async function stageAndPressReserve() {
 
 beforeEach(() => vi.clearAllMocks());
 
+// UIUX-QUICK-WINS item 1: at most one filled header button, the one the state waits for.
+describe('one filled header CTA', () => {
+  const filled = (el: HTMLElement) => el.className.includes('bg-primary');
+  it('exactly one of Confirm / Reserve is filled; with nothing to confirm it is Reserve, staged or not', async () => {
+    renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+    const confirm = await screen.findByTestId('confirm-cta');
+    expect(confirm).toBeDisabled();
+    expect(filled(screen.getByTestId('reserve-cta'))).toBe(true);
+    expect(filled(confirm)).toBe(false);
+
+    const gridRow = screen.getAllByText('ZZT-REQUESTED').map((e) => e.closest('tr')).find(Boolean) as HTMLElement;
+    fireEvent.click(within(gridRow).getByLabelText('Reserve'));
+    await screen.findByText('Reserve 107 @ BRW');
+    expect(filled(screen.getByTestId('reserve-cta'))).toBe(true);
+    expect(filled(screen.getByTestId('confirm-cta'))).toBe(false);
+  });
+});
+
 describe('AC-SN-41 reserve confirmation', () => {
   it('Reserve (N) opens the confirmation and does not commit', async () => {
     renderDetail();
@@ -194,11 +213,11 @@ describe('AC-SN-41 reserve confirmation', () => {
     expect(commitSpy).not.toHaveBeenCalled();
   });
 
-  it('Cancel commits nothing and keeps the staged chip', async () => {
+  it('Keep editing commits nothing and keeps the staged chip', async () => {
     renderDetail();
     await stageAndPressReserve();
     const dialog = await screen.findByRole('dialog', { name: /reserve 1 line/i });
-    fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
 
     expect(commitSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /reserve 1 line/i })).not.toBeInTheDocument());

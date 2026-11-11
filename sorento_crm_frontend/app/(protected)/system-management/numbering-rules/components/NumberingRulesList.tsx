@@ -1,5 +1,6 @@
 'use client';
 
+import AccessDenied from '@/app/components/common/AccessDenied';
 import { useMemo, useState } from 'react';
 import {
   ColumnDef,
@@ -122,14 +123,7 @@ export default function NumberingRulesList() {
 
   if (isForbidden) {
     return (
-      <Card>
-        <CardTable>
-          <div className="p-8 text-center text-muted-foreground">
-            <p className="font-medium">You don&apos;t have permission to view running numbers.</p>
-            <p className="text-sm mt-1">Ask your administrator to assign the &quot;View Running Numbers&quot; permission to your role.</p>
-          </div>
-        </CardTable>
-      </Card>
+      <AccessDenied inline description="Only people whose role includes View Running Numbers can open this. Ask an administrator if you need it." />
     );
   }
 

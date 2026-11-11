@@ -101,8 +101,8 @@ test('CRUD a complaint root cause through the sidebar', async ({ page }) => {
 
   // Delete via ConfirmDeleteDialog.
   await row.getByRole('button', { name: /^delete$/i }).click();
-  await expect(page.getByText('Confirm delete')).toBeVisible();
-  await page.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByText('Delete root cause?')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete root cause' }).click();
   await expect(page.getByText('Root cause deleted')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(name)).toHaveCount(0, { timeout: 10_000 });
 
@@ -134,8 +134,8 @@ test('CRUD a complaint resolution through the sidebar', async ({ page }) => {
 
   const row = page.locator('tr', { hasText: name }).first();
   await row.getByRole('button', { name: /^delete$/i }).click();
-  await expect(page.getByText('Confirm delete')).toBeVisible();
-  await page.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByText('Delete resolution?')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete resolution' }).click();
   await expect(page.getByText('Resolution deleted')).toBeVisible({ timeout: 10_000 });
 
   expect(cons.errors).toEqual([]);

@@ -196,8 +196,8 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       toast.success('Event log deleted successfully');
       setDeleteDialogOpen(false);
       setLogToDelete(null);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete event log');
+    } catch (error) {
+      toast.error((error instanceof Error && error.message) || 'Failed to delete event log');
     }
   };
 
@@ -445,9 +445,9 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Event Log</AlertDialogTitle>
+            <AlertDialogTitle>Delete event log?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this event log? This action cannot be undone.
+              The event log is deleted for good. This cannot be undone.
               {logToDelete && (
                 <div className="mt-2 text-sm">
                   <strong>Event Type:</strong> {logToDelete.event_type}
@@ -458,7 +458,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Keep event log</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"

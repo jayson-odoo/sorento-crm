@@ -35,7 +35,6 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   priceTagStatusLabel,
-  priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -247,16 +246,17 @@ function StaffPriceTagRequestsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Status" column={column} />
         ),
-        size: 140,
+        // Fits the widest status pill on one line: "Changes Requested" measures 152px, plus the
+        // cell's 32px padding and the header's ~13px overhead. 140 clipped "Design Ready"
+        // (crew pass, 10 Nov).
+        size: 210,
         cell: ({ row }) => {
           const status = displayStatus(row.original);
           if (!status) return '-';
           return (
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(status)}`}
-            >
+            <Badge status={status} appearance="light">
               {priceTagStatusLabel(status)}
-            </span>
+            </Badge>
           );
         },
         meta: {

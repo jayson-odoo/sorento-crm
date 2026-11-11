@@ -47,10 +47,9 @@ export default function ComplaintDeleteDialog({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete Complaint</AlertDialogTitle>
+          <AlertDialogTitle>Delete complaint?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete this complaint? This action cannot be
-            undone.
+            The complaint is deleted for good. This cannot be undone.
             {complaint.delivery_order_number && (
               <div className="mt-2">
                 <strong>DO Number:</strong> {complaint.delivery_order_number}
@@ -59,13 +58,13 @@ export default function ComplaintDeleteDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep complaint</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isDeleting ? 'Deleting...' : 'Delete'}
+            {isDeleting ? 'Deleting...' : 'Delete complaint'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

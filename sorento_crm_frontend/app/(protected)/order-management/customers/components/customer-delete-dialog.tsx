@@ -50,11 +50,11 @@ const CustomerDeleteDialog = ({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+          <AlertDialogTitle>Delete customer?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete the customer{' '}
+            Customer{' '}
             <strong className="text-foreground">{customer.customer_name}</strong> (
-            {customer.customer_code})? This action cannot be undone.
+            {customer.customer_code}) is deleted for good. This cannot be undone.
             {customer.orders_count && customer.orders_count > 0 && (
               <span className="block mt-2 text-destructive">
                 Warning: This customer has {customer.orders_count} delivery order(s).
@@ -63,7 +63,7 @@ const CustomerDeleteDialog = ({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep customer</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}

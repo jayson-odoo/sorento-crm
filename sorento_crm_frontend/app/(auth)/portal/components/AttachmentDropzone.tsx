@@ -115,6 +115,9 @@ export function AttachmentDropzone({
   const [previewIndex, setPreviewIndex] = useState(0);
   const [unlinkTarget, setUnlinkTarget] = useState<PortalAttachment | null>(null);
   const [unlinking, setUnlinking] = useState(false);
+  // UIUX-QUICK-WINS item 8: each file that failed to upload stays as its own row, with why
+  // and "Try again", instead of one toast that is gone before it is read.
+  const [failedUploads, setFailedUploads] = useState<{ file: File; message: string }[]>([]);
 
   // Local blob: urls for the files buffered before a draft exists, so a pending
   // row previews in place too instead of opening a tab. Created once per
@@ -229,15 +232,24 @@ export function AttachmentDropzone({
       }
       setBusy(true);
       const next = [...attachments];
+      const failed: { file: File; message: string }[] = [];
       for (const file of files) {
         try {
           const att = await client.uploadAttachment(kind, submissionId, file);
           next.push(att);
           onChange([...next]);
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : 'Upload failed.');
+          failed.push({
+            file,
+            message: e instanceof Error && e.message ? e.message : 'The upload did not go through.',
+          });
         }
       }
+      // A retried file replaces its own old row; any other failed row stays.
+      setFailedUploads((prev) => [
+        ...prev.filter((row) => !files.includes(row.file)),
+        ...failed,
+      ]);
       setBusy(false);
     },
     [allowedExtensions, attachments, client, kind, onChange, onPendingFilesChange, pendingFiles, submissionId]
@@ -382,6 +394,43 @@ export function AttachmentDropzone({
 
   return (
     <div className="space-y-3">
+      {!readOnly && failedUploads.length > 0 && (
+        <ul className="space-y-1.5" aria-label="Uploads that failed">
+          {failedUploads.map(({ file, message }) => (
+            <li
+              key={`${file.name}-${file.size}-${file.lastModified}`}
+              data-testid={`upload-failed-${file.name}`}
+              className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium" title={file.name}>
+                  {file.name}
+                </span>
+                <span className="block text-xs text-destructive">{message}</span>
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy || disabled}
+                aria-label={`Try again: ${file.name}`}
+                onClick={() => void addFiles([file])}
+              >
+                Try again
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Dismiss: ${file.name}`}
+                onClick={() => setFailedUploads((prev) => prev.filter((row) => row.file !== file))}
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
       {!readOnly && (
         <div
           onDragOver={(e) => {

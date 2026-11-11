@@ -36,13 +36,13 @@ export default function CompanyDeleteDialog({
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm delete</DialogTitle>
+          <DialogTitle>Delete company?</DialogTitle>
         </DialogHeader>
         <div className="space-y-2">
           <DialogDescription>
-            Are you sure you want to delete the company{' '}
-            <strong className="text-foreground">{company.name}</strong> ({company.code})? This
-            action cannot be undone.
+            Company{' '}
+            <strong className="text-foreground">{company.name}</strong> ({company.code}) is
+            deleted for good. This cannot be undone.
           </DialogDescription>
           {((company.user_count ?? 0) > 0 || (company.contact_count ?? 0) > 0) && (
             <p className="text-sm text-muted-foreground">
@@ -53,7 +53,7 @@ export default function CompanyDeleteDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={closeDialog}>
-            Cancel
+            Keep company
           </Button>
           <Button
             variant="destructive"

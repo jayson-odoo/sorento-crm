@@ -50,11 +50,11 @@ const OrderStatusDeleteDialog = ({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+          <AlertDialogTitle>Delete delivery order status?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete the delivery order status{' '}
+            Delivery order status{' '}
             <strong className="text-foreground">{orderStatus.status_name}</strong> (
-            {orderStatus.status_code})? This action cannot be undone.
+            {orderStatus.status_code}) is deleted for good. This cannot be undone.
             {orderStatus.orders_count && orderStatus.orders_count > 0 && (
               <span className="block mt-2 text-destructive">
                 Warning: This status is currently used by {orderStatus.orders_count} delivery order(s).
@@ -63,7 +63,7 @@ const OrderStatusDeleteDialog = ({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep status</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}

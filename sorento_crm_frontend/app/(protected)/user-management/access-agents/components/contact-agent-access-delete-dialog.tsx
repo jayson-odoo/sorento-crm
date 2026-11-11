@@ -47,14 +47,14 @@ const ContactAgentAccessDeleteDialog = ({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+          <AlertDialogTitle>Delete contact access agent?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete the contact access agent for{' '}
-            <strong className="text-foreground">{contactAccess.respond_contact_phone}</strong>? This action cannot be undone.
+            The contact access agent for{' '}
+            <strong className="text-foreground">{contactAccess.respond_contact_phone}</strong> is deleted for good. This cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep access agent</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}
@@ -66,7 +66,7 @@ const ContactAgentAccessDeleteDialog = ({
                 Deleting...
               </>
             ) : (
-              'Delete'
+              'Delete access agent'
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

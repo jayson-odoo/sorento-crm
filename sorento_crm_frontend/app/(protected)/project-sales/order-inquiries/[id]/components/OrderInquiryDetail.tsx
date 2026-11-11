@@ -99,6 +99,7 @@ import { ReserveDecideControl } from './ReserveDecideControl';
 import { BulkRejectReserveDialog } from './BulkRejectReserveDialog';
 import { OrderInquiryLineHistoryDialog } from './OrderInquiryLineHistoryDialog';
 import type { StagedReserveEntry } from './orderInquiryHeaderLinesColumns';
+import { orderInquiryMainAction } from '../../../_shared/lib/orderInquiryMainAction';
 import {
   OrderInquiryRelatedPurchaseOrdersTab,
   OrderInquiryRelatedSposTab,
@@ -657,6 +658,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     ? selectedConfirmable.length === 0 && selectedUsedToConfirm.length === 0
     : (header?.lines_to_confirm ?? 0) === 0;
 
+  // UIUX-QUICK-WINS item 1: one filled button at a time, the one the state waits for.
+  const mainAction = orderInquiryMainAction({
+    showConfirm: canAcknowledge,
+    confirmDisabled,
+    showReserve: canReserve && (Boolean(openReserveRequest) || stagedCount > 0),
+    stagedCount,
+  });
+
   function runConfirm() {
     // G6 (owner ruling 26 Sep): the ticked lines' live rows; the server takes on each
     // line's waiting used rows in the same call (S1, AC-ND-24). Review S2: plus the used
@@ -958,11 +967,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 </DetailActionsMenu>
               }
               primary={
-                canAcknowledge || (canReserve && (Boolean(openReserveRequest) || stagedCount > 0)) ? (
+                mainAction ? (
                   <div className="flex items-center gap-2">
                     {canAcknowledge ? (
                       <Button
                         size="sm"
+                        data-testid="confirm-cta"
+                        variant={mainAction === 'confirm' ? 'primary' : 'outline'}
                         onClick={runConfirm}
                         disabled={confirmDisabled || acknowledge.isPending}
                       >
@@ -976,6 +987,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       <Button
                         size="sm"
                         data-testid="reserve-cta"
+                        variant={mainAction === 'reserve' ? 'primary' : 'outline'}
                         onClick={() => setReserveConfirmOpen(true)}
                         disabled={stagedCount === 0 || commitReserveMutation.isPending}
                       >

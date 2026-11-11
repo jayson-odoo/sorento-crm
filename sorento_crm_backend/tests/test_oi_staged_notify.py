@@ -821,6 +821,49 @@ def test_AC_SN_30_unknown_reserve_status_is_422(sn):
     assert client.get(HEADERS_URL, params={"reserve": "bogus"}).status_code == 422
 
 
+def test_UIUX_QW2_reserve_filter_is_multi_select(sn, monkeypatch):
+    """UIUX-QUICK-WINS item 2: every dropdown filter is multi-select (owner rule). Several
+    reserve statuses are OR-ed, repeated or comma-joined, like the other header filters."""
+    client, world = sn
+    _register()
+    _captured_dispatches(monkeypatch)
+    w = _status_world(client, world)
+    ids = {k: v.id for k, v in w.items()}
+
+    want = {ids["parked"], ids["reserved"]}
+    assert set(_headers(client, reserve=["parked", "reserved"])) == want
+    assert set(_headers(client, reserve="parked,reserved")) == want
+    assert client.get(HEADERS_URL, params={"reserve": ["parked", "bogus"]}).status_code == 422
+
+
+def test_UIUX_QW2_reserve_column_sorts_server_side(sn, monkeypatch):
+    """UIUX-QUICK-WINS item 2: every column sorts server-side (owner rule). Reserve sorts by
+    the status order the cell shows (parked, needs reserve, notice parked, reserved), and an
+    OI with no reserve status sorts last either way."""
+    client, world = sn
+    _register()
+    _captured_dispatches(monkeypatch)
+    w = _status_world(client, world)
+    ours = {v.id for v in w.values()}
+
+    def order(direction):
+        body = _ok(
+            client.get(
+                HEADERS_URL,
+                params={"state": "all", "limit": 100, "sort": "reserve_status", "dir": direction},
+            )
+        )
+        return [row["reserve_status"] for row in body["data"] if row["id"] in ours]
+
+    rank = {"parked": 0, "needs_reserve": 1, "notice_parked": 2, "reserved": 3}
+    asc = order("asc")
+    assert asc[-1] is None
+    assert [rank[s] for s in asc[:-1]] == sorted(rank[s] for s in asc[:-1])
+    desc = order("desc")
+    assert desc[-1] is None
+    assert [rank[s] for s in desc[:-1]] == sorted((rank[s] for s in desc[:-1]), reverse=True)
+
+
 def test_AC_SN_31_summary_counts(sn, monkeypatch):
     client, world = sn
     _register()

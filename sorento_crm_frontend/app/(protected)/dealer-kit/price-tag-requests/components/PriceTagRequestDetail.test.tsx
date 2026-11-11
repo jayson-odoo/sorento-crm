@@ -360,6 +360,8 @@ describe('PriceTagRequestDetail', () => {
       await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 }),
     ).toBeTruthy();
     expect(screen.getByText('Designing')).toBeTruthy();
+    // UIUX-QUICK-WINS item 4: the status pill is the shared Badge (PR-CHECKLIST status pill).
+    expect(screen.getByText('Designing').closest('[data-slot="badge"]')).not.toBeNull();
     expect(screen.getByText(/Assigned to: Marketing Mei/)).toBeTruthy();
   });
 

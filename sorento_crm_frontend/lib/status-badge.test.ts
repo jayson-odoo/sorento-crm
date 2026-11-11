@@ -27,4 +27,16 @@ describe('getStatusBadgeVariant - sales opportunity stages (fix2 should-fix 3)',
   it('fix2 3: lost is destructive', () => {
     expect(getStatusBadgeVariant('lost')).toBe('destructive');
   });
+
+  // UIUX-QUICK-WINS item 4: the price tag statuses resolve through the shared Badge map.
+  it.each([
+    ['designing', 'warning'],
+    ['proof_ready', 'info'],
+    ['changes_requested', 'warning'],
+    ['ready_for_collection', 'info'],
+    ['collected', 'success'],
+    ['void', 'secondary'],
+  ] as const)('price tag %s is %s', (status, variant) => {
+    expect(getStatusBadgeVariant(status)).toBe(variant);
+  });
 });

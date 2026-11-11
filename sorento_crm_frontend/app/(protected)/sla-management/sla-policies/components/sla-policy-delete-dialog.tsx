@@ -50,15 +50,15 @@ const SLAPolicyDeleteDialog = ({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+          <AlertDialogTitle>Delete SLA policy?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete the SLA policy{' '}
+            SLA policy{' '}
             <strong className="text-foreground">{slaPolicy.name}</strong> (
-            {slaPolicy.code})? This action cannot be undone. All associated tiers will also be deleted.
+            {slaPolicy.code}) is deleted for good, along with all its tiers. This cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep SLA policy</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}
@@ -70,7 +70,7 @@ const SLAPolicyDeleteDialog = ({
                 Deleting...
               </>
             ) : (
-              'Delete'
+              'Delete SLA policy'
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

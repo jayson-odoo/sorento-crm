@@ -226,21 +226,21 @@ export function Info() {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Remove Shipping Address</DialogTitle>
+                  <DialogTitle>Remove shipping address?</DialogTitle>
                 </DialogHeader>
                 <DialogBody className="text-sm">
-                  Are you sure you want to remove this shipping address? This
-                  action cannot be undone.
+                  The shipping address is removed from your account. This cannot
+                  be undone.
                 </DialogBody>
                 <DialogFooter>
                   <Button
                     variant="destructive"
                     onClick={() => handleRemove(index)}
                   >
-                    Yes, Remove
+                    Remove shipping address
                   </Button>
                   <DialogClose asChild>
-                    <Button variant="outline">Cancel</Button>
+                    <Button variant="outline">Keep shipping address</Button>
                   </DialogClose>
                 </DialogFooter>
               </DialogContent>

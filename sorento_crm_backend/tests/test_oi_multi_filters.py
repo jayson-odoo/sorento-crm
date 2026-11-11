@@ -259,8 +259,11 @@ def test_headers_filters_and_across(client, world):
     assert got == {o["b"]["inquiry"].id}
 
 
-def test_headers_reserve_stays_single(client, world):
-    assert get(client, HEADERS, [("reserve", "parked,reserved")]).status_code == 422
+def test_headers_reserve_takes_several(client, world):
+    """UIUX-QUICK-WINS item 2 reverses the single-select Reserve: every dropdown filter is
+    multi-select (owner rule). Results are covered in test_oi_staged_notify.py (UIUX_QW2)."""
+    assert get(client, HEADERS, [("reserve", "parked,reserved")]).status_code == 200
+    assert get(client, HEADERS, [("reserve", "parked,bogus")]).status_code == 422
 
 
 # ---- per-project rows: Instruction, State (already List[str]; guard) --------------------------------

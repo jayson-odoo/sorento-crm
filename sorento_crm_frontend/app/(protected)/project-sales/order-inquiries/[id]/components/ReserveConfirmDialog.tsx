@@ -9,6 +9,7 @@ import {
   DialogBody,
   DialogContent,
   DialogFooter,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -223,9 +224,15 @@ export function ReserveConfirmDialog({
   const plural = (count: number, one: string, many: string) => (count === 1 ? one : many);
   const inquiryCount = inquiries?.length ?? 0;
   const lineNoun = plural(lines.length, 'line', 'lines');
-  const title = inquiries
-    ? `Reserve ${lines.length} ${lineNoun} on ${inquiryCount} ${plural(inquiryCount, 'order inquiry', 'order inquiries')}`
-    : `Reserve ${lines.length} ${lineNoun} on ${inquiryNo}`;
+  const subject = inquiries
+    ? `${lines.length} ${lineNoun} on ${inquiryCount} ${plural(inquiryCount, 'order inquiry', 'order inquiries')}`
+    : `${lines.length} ${lineNoun} on ${inquiryNo}`;
+  // UIUX-QUICK-WINS item 6 (playbook dialog wording): while it asks, the title is a question
+  // about what happens and the line under it says what happens; once done it names the result.
+  const title = done ? `Reserve ${subject}` : `Reserve ${subject}?`;
+  const whatHappens = park
+    ? 'Each line is reserved or rejected as shown. The notice to purchasing waits in Parked until you send it.'
+    : 'Each line is reserved or rejected as shown, and purchasing is told right away.';
   const rejectCount = lines.filter((line) => Number(line.qty_reserved) === 0).length;
   const summary = `${lines.length} ${lineNoun} on ${inquiryCount} ${plural(inquiryCount, 'order inquiry', 'order inquiries')} \u00b7 Reserve ${lines.length - rejectCount} \u00b7 Reject ${rejectCount}`;
 
@@ -241,6 +248,7 @@ export function ReserveConfirmDialog({
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          {done ? null : <DialogDescription>{whatHappens}</DialogDescription>}
         </DialogHeader>
         <DialogBody className="flex-1 space-y-4 overflow-y-auto">
           {inquiries ? <p className="text-sm font-medium">{summary}</p> : null}
@@ -282,7 +290,7 @@ export function ReserveConfirmDialog({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
-                Cancel
+                Keep editing
               </Button>
               <Button onClick={handleConfirm} disabled={isPending || lines.length === 0}>
                 {park

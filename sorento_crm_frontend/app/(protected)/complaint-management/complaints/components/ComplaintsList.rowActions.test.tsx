@@ -135,7 +135,7 @@ describe('ComplaintsList row actions', () => {
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }));
 
     const dialog = within(await screen.findByRole('alertdialog'));
-    expect(dialog.getByText('Delete Complaint')).toBeInTheDocument();
+    expect(dialog.getByText('Delete complaint?')).toBeInTheDocument();
     expect(dialog.getByText(/DO-9001/)).toBeInTheDocument();
   });
 
