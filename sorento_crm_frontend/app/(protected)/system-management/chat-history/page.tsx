@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   type ColumnDef,
@@ -93,8 +93,17 @@ export default function ChatHistoryPage() {
   // is opened by id straight into its own drawer instead of being looked for in a list
   // that can never hold it (browser pass 2, step 3).
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const linkedTurnId = searchParams.get('turn');
-  const { openTrace, traceDrawer } = useTraceDrawer(linkedTurnId);
+  // Closing drops `turn` from the address, so the same link followed again re-opens it.
+  const { openTrace, traceDrawer } = useTraceDrawer(linkedTurnId, () => {
+    if (!searchParams.has('turn')) return;
+    const rest = new URLSearchParams(searchParams.toString());
+    rest.delete('turn');
+    const query = rest.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  });
   useEffect(() => {
     openTrace(linkedTurnId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the link changes

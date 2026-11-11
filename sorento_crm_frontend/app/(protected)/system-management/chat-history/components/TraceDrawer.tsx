@@ -20,12 +20,14 @@ type OpenTrace = { kind: 'turn'; id: string } | { kind: 'message'; id: string };
  * - `openTrace(turnId)`: a chatbot turn, in the shared `TurnDetailDrawer`.
  * - `openMessageTrace(messageId)`: an AI assistant reply's span trace (`TraceView`).
  */
-export function useTraceDrawer(initialTurnId: string | null = null) {
+export function useTraceDrawer(initialTurnId: string | null = null, onClose?: () => void) {
   const [open, setOpen] = useState<OpenTrace | null>(
     initialTurnId ? { kind: 'turn', id: initialTurnId } : null,
   );
   const close = (next: boolean) => {
-    if (!next) setOpen(null);
+    if (next) return;
+    setOpen(null);
+    onClose?.();
   };
   // Mounted only while open, so a page with many trace links runs no closed drawer's query.
   const traceDrawer = !open ? null : open.kind === 'turn' ? (
@@ -37,7 +39,7 @@ export function useTraceDrawer(initialTurnId: string | null = null) {
         aria-describedby={undefined}
       >
         <SheetHeader className="px-4 sm:px-6 py-4 border-b">
-          <SheetTitle>Turn trace</SheetTitle>
+          <SheetTitle>Trace</SheetTitle>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4">
           <TraceView messageId={open.id} />
