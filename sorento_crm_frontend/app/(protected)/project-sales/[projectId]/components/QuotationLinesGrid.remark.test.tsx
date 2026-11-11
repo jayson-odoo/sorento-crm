@@ -84,15 +84,25 @@ function renderGrid(lines: StagedQuotationLine[]) {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('Remark column', () => {
-  it('shows Non-cancellable for a flagged line', () => {
+describe('Non-cancellable flag', () => {
+  it('shows the badge under the description of a flagged line', () => {
     renderGrid([staged({ ...BASE, is_non_cancellable: true })]);
-    expect(screen.getByRole('columnheader', { name: 'Remark' })).toBeInTheDocument();
-    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+    const badge = screen.getByText('Non-cancellable');
+    const description = screen.getByText('BATHTUB');
+    expect(badge.className).toContain('whitespace-nowrap');
+    expect(
+      description.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(badge.closest('td')).toBe(description.closest('td'));
   });
 
-  it('leaves the cell blank for an unflagged line', () => {
+  it('shows no badge for an unflagged line', () => {
     renderGrid([staged({ ...BASE, is_non_cancellable: false })]);
     expect(screen.queryByText('Non-cancellable')).toBeNull();
+  });
+
+  it('has no Remark column on screen at all', () => {
+    renderGrid([staged({ ...BASE, is_non_cancellable: true })]);
+    expect(screen.queryByRole('columnheader', { name: 'Remark' })).toBeNull();
   });
 });

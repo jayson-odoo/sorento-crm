@@ -279,19 +279,6 @@ function fileLine(row: GridRow, kind: LineFileKind): QuotationLine | null {
 
 // ------------------------------------------------------------------------------ cells
 
-/**
- * The REMARK column: "Non-cancellable" for a bulky item (the server decides and stores it on the
- * line, so a line not saved yet shows nothing until it is). Blank otherwise.
- */
-function RemarkCell({ row }: CellContext<GridRow, unknown>) {
-  if (!row.original.staged.line?.is_non_cancellable) return null;
-  return (
-    <Badge variant="warning" appearance="light" size="sm" className="whitespace-normal text-start leading-tight">
-      Non-cancellable
-    </Badge>
-  );
-}
-
 function ItemCell({ row }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const notes = grid.itemNotes(row.original);
@@ -510,7 +497,25 @@ export function descriptionFromEditor(html: string): string {
  * One step to type (owner hand test, 10 Nov): the click on the cell opens the editor with its caret
  * at the character clicked; Tab into the cell, Enter or Space opens it with the caret at the end.
  */
-function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
+function DescriptionCell(context: CellContext<GridRow, unknown>) {
+  const { staged } = context.row.original;
+  return (
+    <>
+      <DescriptionBody {...context} />
+      {/* On screen the flag sits under the description, not in a column of its own (the PDF,
+          sign page and Excel keep their REMARK column). */}
+      {staged.line?.is_non_cancellable && !isSectionDraft(staged.draft) ? (
+        <div className="mt-1">
+          <Badge variant="warning" appearance="light" size="sm" className="whitespace-nowrap">
+            Non-cancellable
+          </Badge>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function DescriptionBody({ row: tableRow }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const row = tableRow.original;
   const { staged } = row;
@@ -1243,18 +1248,6 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     enableResizing: false,
     enableHiding: false,
     meta: { headerTitle: 'Quantities', draggable: false },
-  },
-  {
-    id: 'remark',
-    accessorFn: (row) => Boolean(row.staged.line?.is_non_cancellable),
-    header: 'Remark',
-    cell: RemarkCell,
-    size: 104,
-    minSize: 84,
-    meta: {
-      headerTitle: 'Remark',
-      cellClassName: `${NARROW} align-top`,
-    },
   },
   {
     id: 'total',

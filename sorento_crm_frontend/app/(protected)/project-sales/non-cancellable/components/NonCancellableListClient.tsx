@@ -78,7 +78,7 @@ export function NonCancellableListClient() {
         id: 'target',
         accessorFn: (row) => targetOf(row),
         header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
-        size: 300,
+        size: 260,
         meta: { headerTitle: 'Target', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="block truncate font-medium" title={targetOf(row.original)}>
@@ -90,14 +90,14 @@ export function NonCancellableListClient() {
         id: 'type',
         accessorFn: (row) => (row.product_id ? 'Product' : 'Category'),
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        size: 120,
+        size: 100,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-16" /> },
         cell: ({ row }) => <span>{row.original.product_id ? 'Product' : 'Category'}</span>,
       },
       {
         accessorKey: 'non_cancellable',
         header: ({ column }) => <DataGridColumnHeader title="Non-cancellable" column={column} />,
-        size: 150,
+        size: 130,
         meta: { headerTitle: 'Non-cancellable', skeleton: <Skeleton className="h-4 w-12" /> },
         cell: ({ row }) =>
           row.original.non_cancellable ? (
@@ -111,7 +111,7 @@ export function NonCancellableListClient() {
       {
         accessorKey: 'notes',
         header: ({ column }) => <DataGridColumnHeader title="Notes" column={column} />,
-        size: 260,
+        size: 220,
         meta: { headerTitle: 'Notes', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.notes ?? ''}>
@@ -122,7 +122,7 @@ export function NonCancellableListClient() {
       {
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
-        size: 130,
+        size: 120,
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => (
           <span className="tabular-nums">
@@ -135,7 +135,7 @@ export function NonCancellableListClient() {
       cols.push({
         id: 'actions',
         header: () => <span className="sr-only">Actions</span>,
-        size: 60,
+        size: 56,
         enableSorting: false,
         enableResizing: false,
         meta: { headerTitle: 'Actions' },
