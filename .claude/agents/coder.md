@@ -44,7 +44,7 @@ read them first, do not rely on the prompt's paraphrase.
 - CRUD: modal by default; hard delete + `AlertDialog`/`ConfirmDeleteDialog` (never `confirm()`); detail pages render every section with empty states.
 - No UUIDs in UI. No feature explanations in UI.
 - Motion: `lib/motion.ts` presets + `config.reui.css` tokens only; run the `animate` skill's decision gate before adding any animation; most staff surfaces get none (frequency gate).
-- FE runs on `npm run dev` (HMR): edits hot-reload, never rebuild or restart the dev server to see a change, never start a second one (ONE machine-wide; check `lsof -i :3000 -sTCP:LISTEN` first). `npm run build` only when the user explicitly asks. See CLAUDE.md "Frontend dev loop".
+- FE runs on `npm run dev` (HMR): edits hot-reload, never rebuild or restart the dev server to see a change, never start a second one (ONE per lane, on the lane's own ports; check `lsof -i :<port> -sTCP:LISTEN` first). `npm run build` only when the user explicitly asks. See CLAUDE.md "Frontend dev loop".
 
 ## Rules
 - Implement exactly what the plan/contract specifies. If a deviation is unavoidable, update the contract doc + adjust both sides in the same change, and say so.

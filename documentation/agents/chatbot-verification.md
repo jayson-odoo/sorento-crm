@@ -3,7 +3,8 @@
 The chatbot has no screen to click, so browser verification cannot cover it. Its equivalent is
 `sorento_crm_backend/scripts/chatbot_console_check.py`: a YAML file of real turns, run against a
 real backend, graded line by line. Every chatbot PR runs the case file against a LANE backend
-before the PR is opened, and once against PRODUCTION after the deploy; the output of both goes in
+before the PR is opened, and once against the DEV COPY (the local backend on the copy of prod data,
+never production itself) after the deploy; the output of both goes in
 the PR (or the deploy note). A case that fails is a finding to fix or to explain - never one to
 soften.
 
@@ -70,7 +71,7 @@ Two limits worth knowing before reading a red line as a defect:
 
 - **The MCP tool search needs `OPENAI_API_KEY`**, which is empty in every local `.env`. Without it
   any turn that has to pick a tool fails with "no embedding provider is configured" and the case
-  cannot be graded locally. Those cases are graded on the production run.
+  cannot be graded without it. Those cases are graded on the post-deploy dev-copy run, with the key set.
 - **Access is decided before routing.** A turn whose agent the contact has no grant for (or whose
   `access_agents` row does not exist at all) comes back `access_denied` whatever the lane does.
   That is a data prerequisite, and the check naming it is the check working.

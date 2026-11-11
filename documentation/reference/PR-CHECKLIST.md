@@ -11,8 +11,8 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] If `security-reviewer` did not run, the body says so ("security-reviewer: not run,
       diff outside its surface") - it runs only when the diff touches auth, RBAC, external
       ingest, uploads or multi-company scoping
-- [ ] `guide-writer` is not expected per lane (retired from the per-lane pipeline, 24 Sep
-      2026 ruling) - Outline updates are on-request or a weekly batch instead
+- [ ] A PR that changes what a user sees or does updates its user guide under
+      `documentation/user-guides/` in the same PR (owner ruling, 31 Oct 2026)
 
 ## CRUD structure
 - [ ] List page has search/filter and "Add/Create" button

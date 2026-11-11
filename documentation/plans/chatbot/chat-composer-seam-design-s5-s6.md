@@ -4,7 +4,7 @@ Lane CHAT-COMPOSER, plan `PLAN-chat-composer-17oct.md`, card `chat-composer-beha
 status", "Product info / spec", "Price", rules R1-R13, crew answer Q3 (section 9); UAC S5 and S6 lines. Builds on
 `chat-composer-seam-design.md` ("Lead decisions 17 Oct" binds), `-s2.md` section 10a and `-s3.md` section 7a. Read-only
 design. Line numbers on HEAD 0eb8361c1f (S0-S3a landed). Open PR hunks read with `gh pr diff 1744|1747|1755 --repo
-foundryx-sdn-bhd/sorento-crm` on 17 Oct (heads 3f3bf8101e, f3b0c5dc21, ef8f12f320).
+jayson-odoo/sorento-crm` on 17 Oct (heads 3f3bf8101e, f3b0c5dc21, ef8f12f320).
 Paths: B = `sorento_crm_backend/app/services/chatbot`, A = `B/lanes/business/answer.py`, F = `B/lanes/business/fetch.py`,
 BI = `B/lanes/business/__init__.py`, SB = `B/tail/scope_block.py`, SO = `B/so_status.py`, DA = `B/do_ask.py`,
 SA = `B/turn/sub_asks.py`, LC = `B/label_catalog.py`, K = `B/composers/`, LF = `app/services/ledger_family.py`,

@@ -3,7 +3,7 @@
 Lane CHAT-COMPOSER, plan `PLAN-chat-composer-17oct.md` (slice "Sets"), card `chat-composer-behaviour-card.md` R2, R9,
 R12, Q1 and Q4 (section 9). Builds on `chat-composer-seam-design.md` ("Lead decisions 17 Oct" binds), `-s3.md` 7a and
 `-s5-s6.md`. Read-only design. Line numbers on HEAD 176d8684fe (`crew/chat-composer-sets` = #1760 + #1747 merged). Open
-PR hunks read with `gh pr diff 1744|1755 --repo foundryx-sdn-bhd/sorento-crm` on 17 Oct (heads 3f3bf8101e, f0f94bc385).
+PR hunks read with `gh pr diff 1744|1755 --repo jayson-odoo/sorento-crm` on 17 Oct (heads 3f3bf8101e, f0f94bc385).
 TRAIN evidence from `crew/state/eval/cp0/train_followups/` only (items + recorded turns); no held-out file read.
 Paths: B = `sorento_crm_backend/app/services/chatbot`, A = `B/lanes/business/answer.py`, F = `B/lanes/business/fetch.py`,
 TR = `B/turn_runtime.py`, AP = `B/turn/apply.py`, CS = `B/turn/chat_state.py`, T = `B/turn/tail.py`,
