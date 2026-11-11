@@ -879,3 +879,44 @@ def test_a_single_line_group_also_goes_through_batch(scm_app, fake_ss):
     assert resp.status_code == 200, resp.text
     assert resp.json()["results"][0]["outcome"] == "done"
     assert len(fake_ss.bodies(BATCH)) == 1 and fake_ss.bodies(PO_LINKS) == []
+
+
+def test_try_again_on_a_skipped_line_sends_only_that_line_under_a_new_key(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "QTY_ABOVE_OUTSTANDING")])
+    first = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert [r["outcome"] for r in first.json()["results"]] == ["done", "skipped"]
+    fake_ss.answers[BATCH] = _batch_answer(links=((11999, 12001, 3, 12081),))
+    again = _oi_link(w, [_item(w, "other", 3)], rows=("c",))
+    assert again.status_code == 200, again.text
+    assert again.json()["results"][0]["outcome"] == "done"
+    first_body, second_body = fake_ss.bodies(BATCH)
+    assert [l["soDtlKey"] for l in first_body["links"]] == [11990, 12001]
+    assert [l["soDtlKey"] for l in second_body["links"]] == [12001]
+    k1, k2 = _keys_sent(fake_ss, BATCH)
+    assert k1 and k2 and k1 != k2
+
+
+def test_every_line_skipped_gives_each_line_its_own_plain_reason(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {
+        "operationId": "op-s", "actionId": None, "outcome": "refused", "errorCode": "ALL_LINKS_SKIPPED",
+        "message": "No link could be made.", "warnings": [], "links": [], "freeLine": None,
+        "skipped": [
+            {"soDocKey": 11988, "soDtlKey": 11990, "code": "ITEM_MISMATCH"},
+            {"soDocKey": 11999, "soDtlKey": 12001, "code": "DOC_CANCELLED"},
+        ],
+        "document": None,
+    })
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    first, second = resp.json()["results"]
+    assert [first["outcome"], second["outcome"]] == ["skipped", "skipped"]
+    assert "the PO line is a different item" in first["message"]
+    assert "the sales order is cancelled" in second["message"]
+    text = json.dumps([first, second])
+    assert "ITEM_MISMATCH" not in text and "DOC_CANCELLED" not in text and "ALL_LINKS_SKIPPED" not in text
+    k1, = _keys_sent(fake_ss, BATCH)
+    _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert len(set(_keys_sent(fake_ss, BATCH))) == 2  # refused released the key: a new attempt
