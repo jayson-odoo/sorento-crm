@@ -1040,29 +1040,50 @@ def enforce_agent_rate_limit(operator_user_id: str) -> None:
         )
 
 
+#: How long a turn's busy lock lives if its release never runs (a killed process): the longest turn
+#: the settings allow (`chatbot_agent_max_seconds` <= 300, api/v1/user_management/settings.py) plus a margin.
+BUSY_LOCK_TTL_SECONDS = 360
+BUSY_LOCK_PREFIX = "agent:busy:"
+# Compare-and-delete: only the turn that took the lock frees it, never a later turn's lock after a TTL lapse.
+_RELEASE_IF_OURS = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+
+def _busy_redis():
+    """The app's Redis client (a function so a test can hand each call its own connection)."""
+    from app.services.queue_service import redis_conn
+
+    return redis_conn
+
+
 @contextmanager
-def single_flight(contact_respond_id: str):
-    """One agent turn at a time per contact: a Postgres advisory lock held on a connection of
-    its own (the session's connection goes back to the pool between commits)."""
-    from sqlalchemy import text as sql_text
+def single_flight(contact_respond_id: str, *, ttl_seconds: float = BUSY_LOCK_TTL_SECONDS):
+    """One agent turn at a time per contact: a Redis key set NX with a TTL, freed by compare-and-delete.
 
-    from app.database import engine
-
-    key = {"k": f"agent:{contact_respond_id}"}
-    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    It was a Postgres session advisory lock. The app's database goes through pgbouncer in transaction mode
+    (api/v1/external/chat.py), so the lock and its unlock could land on different server connections: the
+    unlock silently failed and the chat answered "still working on your earlier message" until pgbouncer
+    recycled the connection (owner, 11 Nov). A Redis key is not tied to a connection and cannot outlive
+    its TTL. Redis down: the turn runs unlocked (the rate limiter's fail-open rule), with a warning."""
+    key = f"{BUSY_LOCK_PREFIX}{contact_respond_id}"
+    token = uuid.uuid4().hex
     try:
-        if not conn.execute(sql_text("SELECT pg_try_advisory_lock(hashtext(:k))"), key).scalar():
+        taken = _busy_redis().set(key, token, nx=True, px=max(1, int(ttl_seconds * 1000)))
+    except Exception:  # noqa: BLE001 - infra: the turn still runs
+        logger.warning("agent: busy lock unavailable for %s, running unlocked", contact_respond_id, exc_info=True)
+        held = False
+    else:
+        if not taken:
             raise AgentBusy()
-        try:
-            yield
-        finally:
-            try:
-                conn.execute(sql_text("SELECT pg_advisory_unlock(hashtext(:k))"), key)
-            except Exception:  # noqa: BLE001 - a dead connection drops its locks with it
-                logger.warning("agent: advisory unlock failed", exc_info=True)
-                conn.invalidate()
+        held = True
+    try:
+        yield
     finally:
-        conn.close()
+        if held:
+            try:
+                if not _busy_redis().eval(_RELEASE_IF_OURS, 1, key, token):
+                    logger.warning("agent: busy lock for %s was already gone at release (TTL lapsed)", contact_respond_id)
+            except Exception:  # noqa: BLE001 - the TTL frees it
+                logger.warning("agent: busy lock release failed for %s", contact_respond_id, exc_info=True)
 
 
 _CATALOG_CACHE: dict[str, tuple[float, dict]] = {}
