@@ -26,9 +26,11 @@ export function isOverridableRefusal(error: unknown): error is NonCancellableRef
  * gets an unread body.
  */
 export async function refusalAwareError(response: Response, fallback: string): Promise<Error> {
-  const clone = response.clone();
+  // Only a 409 can be the refusal, so only then is the body read twice.
+  const clone =
+    response.status === 409 && typeof response.clone === 'function' ? response.clone() : null;
   const message = await extractApiError(response, fallback);
-  if (response.status === 409) {
+  if (clone) {
     try {
       const body = (await clone.json()) as {
         code?: unknown;
