@@ -20,7 +20,6 @@ import {
   MoreHorizontal,
   Pencil,
   Settings,
-  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -35,21 +34,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
+import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
 import { Container } from '@/components/common/container';
-import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { formatLocalDateToYyyyMmDd } from '@/lib/helpers';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { toast } from '@/lib/toast';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
@@ -74,7 +72,6 @@ import {
   trimmed,
 } from '../lib/format';
 import { searchCustomersSelect } from '../../../order-management/customers/services/customerService';
-import type { DebtorLookupItem } from '@/app/(auth)/portal/lib/portal-client';
 import type {
   CostingParty,
   CostingReason,
@@ -100,13 +97,21 @@ const MODE_OPTIONS = (Object.keys(TRANSPORT_LABEL) as TransportMode[]).map((valu
   label: TRANSPORT_LABEL[value],
 }));
 
-/** Columns the server can order by, keyed by column id. */
+/** Every data column sorts on the server (owner rule: all columns sortable), keyed by column id. */
 const SERVER_SORT: Record<string, string> = {
   category: 'category_name',
   code: 'product_code',
+  name: 'product_name',
+  supplier: 'supplier_name',
+  cost: 'unit_cost',
+  rate: 'units_per_base',
+  sst: 'sst_factor',
+  transport: 'transport',
   landing: 'landing',
+  method: 'cost_method',
   markup: 'markup_pct',
   final: 'final',
+  list_price: 'list_price',
   margin: 'margin_pct',
 };
 
@@ -228,9 +233,17 @@ function Muted({ children }: { children: string }) {
   return <span className="text-muted-foreground">{children}</span>;
 }
 
-function TextCell({ value, className }: { value: string | null | undefined; className?: string }) {
+function TextCell({
+  value,
+  className,
+  title,
+}: {
+  value: string | null | undefined;
+  className?: string;
+  title?: string;
+}) {
   return value ? (
-    <span className={`block truncate ${className ?? ''}`} title={value}>
+    <span className={`block truncate ${className ?? ''}`} title={title ?? value}>
       {value}
     </span>
   ) : (
@@ -258,7 +271,9 @@ function Reason({ reason }: { reason: CostingReason | undefined }) {
   );
 }
 
-const blockingReason = (row: CostingRow) => row.reasons.find((r) => r.code !== 'no_transport_rule');
+const blockingReason = (row: CostingRow) =>
+  row.reasons.find((r) => r.code !== 'no_transport_rule' && r.code !== 'no_list_price');
+const noPriceReason = (row: CostingRow) => row.reasons.find((r) => r.code === 'no_list_price');
 const transportReason = (row: CostingRow) => row.reasons.find((r) => r.code === 'no_transport_rule');
 
 function EditHint() {
@@ -379,7 +394,8 @@ function MarkupCell({ row }: { row: CostingRow }) {
   }
   const f = figures(row);
   const markup = f ? f.markup : row.markup_pct;
-  return markup === null ? <Muted>-</Muted> : <Num marker={row.markup_source === 'row'}>{percent(markup)}</Num>;
+  if (markup === null) return noPriceReason(row) && view === 'standard' ? <Reason reason={noPriceReason(row)} /> : <Muted>-</Muted>;
+  return <Num marker={row.markup_source === 'row'}>{percent(markup)}</Num>;
 }
 
 function LandingCell({ row }: { row: CostingRow }) {
@@ -400,7 +416,7 @@ function MarginCell({ row }: { row: CostingRow }) {
   const { figures } = useEdit();
   const f = figures(row);
   const margin = f ? f.margin : row.margin_pct;
-  return margin === null ? <Muted>-</Muted> : <Num>{percent(margin)}</Num>;
+  return margin === null ? <Reason reason={noPriceReason(row)} /> : <Num>{percent(margin)}</Num>;
 }
 
 function RowMenu({ row }: { row: CostingRow }) {
@@ -455,14 +471,24 @@ function partyMethodText(party: CostingParty, defaultMethod: CostMethod): string
   return party.cost_method ? METHOD_LABEL[party.cost_method] : `${METHOD_LABEL[defaultMethod]} (company)`;
 }
 
-/** The party picker's search: the shared server-searched customers select, in the combobox's shape. */
-async function lookupParties(query: string): Promise<DebtorLookupItem[]> {
-  const options = await searchCustomersSelect(query);
+/**
+ * The party select's search: the shared server-searched customers select, one line per option,
+ * "NAME (CODE)", found by code or name.
+ */
+async function fetchParties(query: string, pageIndex: number): Promise<SearchableSelectOption[]> {
+  const options = await searchCustomersSelect(query, pageIndex);
   return options.map((o) => {
+    // The shared option's label is "CODE - NAME".
     const [code, ...rest] = o.label.split(' - ');
-    return { customer_id: o.value, debtor_name: rest.join(' - ') || o.label, customer_code: code, sales_type: null };
+    const name = rest.join(' - ') || o.label;
+    return { value: o.value, label: `${name} (${code})`, searchText: `${code} ${name}` };
   });
 }
+
+const COST_OPTIONS = [
+  { value: 'has', label: 'Has cost' },
+  { value: 'none', label: 'No cost' },
+];
 
 // ------------------------------------------------------------------ the view
 
@@ -501,7 +527,9 @@ function CostingPage() {
   const category = params.get('category') ?? '';
   const brand = params.get('brand') ?? '';
   const method = params.get('method') ?? '';
-  const hasCost = params.get('has_cost') === '1';
+  const cost = params.get('cost') ?? '';
+  // Both, or neither, is no narrowing; one is sent to the server.
+  const costOne = splitMulti(cost).length === 1 ? splitMulti(cost)[0] : '';
   const asOf = params.get('as_of') ?? '';
 
   const writeUrl = (next: Record<string, string>) => {
@@ -537,13 +565,13 @@ function CostingPage() {
       ...(category ? { category_id: category } : {}),
       ...(brand ? { brand_id: brand } : {}),
       ...(method ? { cost_method: method } : {}),
-      ...(hasCost ? { has_cost: true } : {}),
+      ...(costOne ? { cost: costOne } : {}),
       ...(asOf ? { as_of: asOf } : {}),
       page: pagination.pageIndex + 1,
       limit: pagination.pageSize,
       ...(sortKey ? { sort: sortKey, dir: sortDesc ? ('desc' as const) : ('asc' as const) } : {}),
     }),
-    [partyId, debouncedSearch, category, brand, method, hasCost, asOf, pagination, sortKey, sortDesc],
+    [partyId, debouncedSearch, category, brand, method, costOne, asOf, pagination, sortKey, sortDesc],
   );
 
   const { data, isLoading, isFetching, isPlaceholderData, isError, error } = useCostingRows(rowsParams);
@@ -566,7 +594,7 @@ function CostingPage() {
     invalidateKeys: [[...COSTING_ROWS_KEY], [...COSTING_PARTY_KEY]],
   });
 
-  const filterKey = [partyId, debouncedSearch, category, brand, method, hasCost, asOf].join('|');
+  const filterKey = [partyId, debouncedSearch, category, brand, method, cost, asOf].join('|');
   useEffect(() => {
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
     setExpanded({});
@@ -711,6 +739,7 @@ function CostingPage() {
       },
       {
         id: 'name',
+        accessorFn: (r) => r.product_name,
         ...sortable('name', 'Name'),
         cell: ({ row }) => <TextCell value={row.original.product_name} />,
         size: 200,
@@ -718,13 +747,24 @@ function CostingPage() {
       },
       {
         id: 'supplier',
+        accessorFn: (r) => r.supplier_name?.toLowerCase(),
         ...sortable('supplier', 'Supplier'),
-        cell: ({ row }) => <TextCell value={row.original.supplier_code} />,
+        cell: ({ row }) => (
+          <TextCell
+            value={row.original.supplier_name ?? row.original.supplier_code}
+            title={
+              row.original.supplier_name && row.original.supplier_code
+                ? `${row.original.supplier_name} (${row.original.supplier_code})`
+                : undefined
+            }
+          />
+        ),
         size: 110,
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'cost',
+        accessorFn: (r) => r.unit_cost,
         ...sortable('cost', 'Cost'),
         cell: ({ row }) =>
           row.original.unit_cost === null ? (
@@ -737,6 +777,7 @@ function CostingPage() {
       },
       {
         id: 'rate',
+        accessorFn: (r) => r.units_per_base,
         ...sortable('rate', 'Rate'),
         cell: ({ row }) =>
           row.original.units_per_base === null ? <Muted>-</Muted> : <Num>{trimmed(row.original.units_per_base, 4)}</Num>,
@@ -745,6 +786,7 @@ function CostingPage() {
       },
       {
         id: 'sst',
+        accessorFn: (r) => r.sst_factor,
         ...sortable('sst', 'SST'),
         cell: ({ row }) => <Num>{money(row.original.sst_factor)}</Num>,
         size: 70,
@@ -752,6 +794,7 @@ function CostingPage() {
       },
       {
         id: 'transport',
+        accessorFn: (r) => (r.transport_mode ? `${r.transport_mode} ${String(r.transport_value ?? 0).padStart(12, '0')}` : null),
         ...sortable('transport', 'Transport', true),
         cell: ({ row }) => <TransportCell row={row.original} />,
         size: 190,
@@ -767,6 +810,7 @@ function CostingPage() {
       },
       {
         id: 'method',
+        accessorFn: (r) => METHOD_LABEL[r.cost_method],
         ...sortable('method', 'Cost method', true),
         cell: ({ row }) => <MethodCell row={row.original} />,
         size: 200,
@@ -790,6 +834,7 @@ function CostingPage() {
       },
       {
         id: 'list_price',
+        accessorFn: (r) => (r.list_price === null ? null : r.list_price),
         ...sortable('list_price', 'List price (AutoCount)'),
         cell: ({ row }) =>
           row.original.list_price === null ? <Muted>-</Muted> : <Num>{money(row.original.list_price)}</Num>,
@@ -837,7 +882,19 @@ function CostingPage() {
     enableColumnResizing: true,
   });
 
-  const filterCount = [category, brand, method, hasCost ? '1' : '', asOf].filter(Boolean).length;
+  const categoryOptions = (categories.data ?? []).map((c) => ({ value: c.id, label: c.category_name }));
+  const brandOptions = (brands.data ?? []).map((b) => ({ value: b.id, label: b.brand_name }));
+  // One chip per active filter, each with its own clear (the list pages' activeSummary).
+  const chip = (title: string, key: string, raw: string, name: (v: string) => string) => {
+    const values = splitMulti(raw);
+    return values.length ? [{ label: multiChipLabel(title, values.map(name)), onClear: () => writeUrl({ [key]: '' }) }] : [];
+  };
+  const activeChips = [
+    ...chip('Category', 'category', category, (v) => categoryOptions.find((o) => o.value === v)?.label ?? 'selected'),
+    ...chip('Brand', 'brand', brand, (v) => brandOptions.find((o) => o.value === v)?.label ?? 'selected'),
+    ...chip('Cost method', 'method', method, (v) => METHOD_LABEL[v as CostMethod] ?? v),
+    ...(costOne ? chip('Cost', 'cost', costOne, (v) => COST_OPTIONS.find((o) => o.value === v)?.label ?? v) : []),
+  ];
   const exportParams: CostingRowsParams = { ...rowsParams, page: undefined, limit: undefined };
 
   const secondaryActions: ToolbarAction[] = [
@@ -900,51 +957,22 @@ function CostingPage() {
       </Container>
       <Container>
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex w-full items-center gap-1 sm:w-80">
-              <div className="min-w-0 flex-1">
-                <CustomerDebtorCombobox
-                  ariaLabel="Party"
-                  value={party?.customer_name ?? ''}
-                  placeholder="Company standard"
-                  pickOnly
-                  lookup={lookupParties}
-                  onChange={(name, item) => {
-                    if (item) writeUrl({ party: item.customer_id });
-                    else if (!name) writeUrl({ party: '' });
-                  }}
-                />
-              </div>
-              {partyId ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  mode="icon"
-                  size="sm"
-                  aria-label="Clear party"
-                  onClick={() => writeUrl({ party: '' })}
-                >
-                  <X className="size-4" />
-                </Button>
-              ) : null}
+          {party ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip
+                label="Party mark-up"
+                value={party.markup_pct === null ? 'Not set' : percent(party.markup_pct)}
+                onClick={canManage ? () => setProfileOpen(true) : undefined}
+              />
+              <Chip
+                label="Cost method"
+                value={partyMethodText(party, defaultMethod)}
+                onClick={canManage ? () => setProfileOpen(true) : undefined}
+              />
+              <Chip label="Rates as of" value={shortDate(resolvedAsOf)} />
+              <Chip label="Products" value={String(party.product_count)} />
             </div>
-            {party ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Chip
-                  label="Party mark-up"
-                  value={party.markup_pct === null ? 'Not set' : percent(party.markup_pct)}
-                  onClick={canManage ? () => setProfileOpen(true) : undefined}
-                />
-                <Chip
-                  label="Cost method"
-                  value={partyMethodText(party, defaultMethod)}
-                  onClick={canManage ? () => setProfileOpen(true) : undefined}
-                />
-                <Chip label="Rates as of" value={shortDate(resolvedAsOf)} />
-                <Chip label="Products" value={String(party.product_count)} />
-              </div>
-            ) : null}
-          </div>
+          ) : null}
           <DataGrid
             table={table}
             recordCount={total}
@@ -963,86 +991,96 @@ function CostingPage() {
                   key={view}
                   table={table}
                   searchSlot={
-                    <ListSearchInput
-                      value={searchText}
-                      onChange={setSearchText}
-                      isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
-                      placeholder="Search code or name"
-                      className="w-full sm:w-64"
-                    />
+                    <div data-testid="costing-search-slot" className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                      <div className="w-full sm:w-72">
+                        <SearchableSelect
+                          id="costing-party"
+                          aria-label="Party"
+                          value={partyId}
+                          onChange={(v) => writeUrl({ party: v })}
+                          fetchOptions={fetchParties}
+                          paginated
+                          clearable
+                          placeholder="Company standard"
+                          selectedOption={
+                            party
+                              ? { value: partyId, label: `${party.customer_name} (${party.customer_code})` }
+                              : undefined
+                          }
+                        />
+                      </div>
+                      <DatePicker
+                        ariaLabel="As of"
+                        className="w-full sm:w-40"
+                        value={parseDateInput(asOf || resolvedAsOf || '')}
+                        onChange={(d) => writeUrl({ as_of: d ? formatLocalDateToYyyyMmDd(d) : '' })}
+                      />
+                      <ListSearchInput
+                        value={searchText}
+                        onChange={setSearchText}
+                        isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
+                        placeholder="Search code or name"
+                        className="w-full sm:w-64"
+                      />
+                    </div>
                   }
                   filters={{
                     kind: 'custom',
-                    active: filterCount > 0,
-                    activeCount: filterCount,
+                    active: activeChips.length > 0,
+                    activeCount: activeChips.length,
+                    activeSummary: activeChips,
                     content: (
-                      <div className="flex w-72 flex-col gap-3">
-                        <SearchableMultiSelect
-                          aria-label="Category"
-                          value={splitMulti(category)}
-                          onChange={(v) => writeUrl({ category: joinMulti(v) })}
-                          placeholder="Category"
-                          loadError={categories.error}
-                          onRetry={() => void categories.refetch()}
-                          options={(categories.data ?? []).map((c) => ({ value: c.id, label: c.category_name }))}
-                          clearable
-                          renderTriggerLabel={(chosen) =>
-                            chosen.length ? (
-                              <span className="block truncate">{multiChipLabel('Category', idFilterLabels(chosen))}</span>
-                            ) : (
-                              <span className="text-muted-foreground">Category: any</span>
-                            )
-                          }
-                        />
-                        <SearchableMultiSelect
-                          aria-label="Brand"
-                          value={splitMulti(brand)}
-                          onChange={(v) => writeUrl({ brand: joinMulti(v) })}
-                          placeholder="Brand"
-                          loadError={brands.error}
-                          onRetry={() => void brands.refetch()}
-                          options={(brands.data ?? []).map((b) => ({ value: b.id, label: b.brand_name }))}
-                          clearable
-                          renderTriggerLabel={(chosen) =>
-                            chosen.length ? (
-                              <span className="block truncate">{multiChipLabel('Brand', idFilterLabels(chosen))}</span>
-                            ) : (
-                              <span className="text-muted-foreground">Brand: any</span>
-                            )
-                          }
-                        />
-                        <SearchableMultiSelect
-                          aria-label="Cost method"
-                          value={splitMulti(method)}
-                          onChange={(v) => writeUrl({ method: joinMulti(v) })}
-                          placeholder="Cost method"
-                          options={METHOD_OPTIONS}
-                          clearable
-                          renderTriggerLabel={(chosen) =>
-                            chosen.length ? (
-                              <span className="block truncate">
-                                {multiChipLabel('Cost method', chosen.map((c) => METHOD_LABEL[c.value as CostMethod] ?? c.value))}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">Cost method: any</span>
-                            )
-                          }
-                        />
-                        <div className="flex flex-col gap-1.5">
-                          <Label htmlFor="costing-as-of">As of</Label>
-                          <Input
-                            id="costing-as-of"
-                            type="date"
-                            value={asOf}
-                            onChange={(e) => writeUrl({ as_of: e.target.value })}
+                      <div className="space-y-4">
+                        <div>
+                          <Label htmlFor="costing-filter-category">Category</Label>
+                          <SearchableMultiSelect
+                            id="costing-filter-category"
+                            value={splitMulti(category)}
+                            onChange={(v) => writeUrl({ category: joinMulti(v) })}
+                            options={categoryOptions}
+                            placeholder="All categories"
+                            loadError={categories.error}
+                            onRetry={() => void categories.refetch()}
+                            triggerClassName="mt-1"
+                            clearable
                           />
                         </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <Label htmlFor="costing-has-cost">Has cost</Label>
-                          <Switch
-                            id="costing-has-cost"
-                            checked={hasCost}
-                            onCheckedChange={(on) => writeUrl({ has_cost: on ? '1' : '' })}
+                        <div>
+                          <Label htmlFor="costing-filter-brand">Brand</Label>
+                          <SearchableMultiSelect
+                            id="costing-filter-brand"
+                            value={splitMulti(brand)}
+                            onChange={(v) => writeUrl({ brand: joinMulti(v) })}
+                            options={brandOptions}
+                            placeholder="All brands"
+                            loadError={brands.error}
+                            onRetry={() => void brands.refetch()}
+                            triggerClassName="mt-1"
+                            clearable
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="costing-filter-method">Cost method</Label>
+                          <SearchableMultiSelect
+                            id="costing-filter-method"
+                            value={splitMulti(method)}
+                            onChange={(v) => writeUrl({ method: joinMulti(v) })}
+                            options={METHOD_OPTIONS}
+                            placeholder="All cost methods"
+                            triggerClassName="mt-1"
+                            clearable
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="costing-filter-cost">Cost</Label>
+                          <SearchableMultiSelect
+                            id="costing-filter-cost"
+                            value={splitMulti(cost)}
+                            onChange={(v) => writeUrl({ cost: joinMulti(v) })}
+                            options={COST_OPTIONS}
+                            placeholder="All rows"
+                            triggerClassName="mt-1"
+                            clearable
                           />
                         </div>
                       </div>

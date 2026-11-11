@@ -51,6 +51,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
@@ -261,6 +265,51 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
     await screen.findByRole('tab', { name: 'Exchange rates' });
     await waitFor(() => expect(service.getExchangeRates).toHaveBeenCalled());
     expect(screen.queryByText('Workbook rate')).toBeNull();
+  });
+});
+
+describe('standard grids (round 5)', () => {
+  const bodyRows = () => screen.getAllByRole('row').slice(1);
+
+  it('the exchange rates grid sorts by header, searches and pages', async () => {
+    mount();
+    await screen.findByText('Workbook rate');
+    for (const title of ['Currency', 'Effective from', 'Units per MYR 1', 'MYR per unit', 'Status', 'Note']) {
+      const header = screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === title)!;
+      expect(within(header).getByRole('button', { name: title })).toBeTruthy();
+    }
+    const currency = () =>
+      within(screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === 'Currency')!).getByRole('button', { name: 'Currency' });
+    fireEvent.click(currency());
+    fireEvent.click(currency());
+    await waitFor(() => expect(bodyRows()[0].textContent).toMatch(/^USD/));
+    fireEvent.change(screen.getByPlaceholderText('Search currency'), { target: { value: 'usd' } });
+    await waitFor(() => expect(bodyRows()).toHaveLength(1));
+    expect(screen.getByText(/1 - 1 of 1|1-1 of 1/i)).toBeTruthy();
+  });
+
+  it('the transport grid sorts, searches and pages', async () => {
+    mount();
+    openTab('Transport by category');
+    await screen.findByLabelText('Transport mode for Ceramics');
+    for (const title of ['Category', 'Mode', 'Value']) {
+      const header = screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === title)!;
+      expect(within(header).getByRole('button', { name: title })).toBeTruthy();
+    }
+    fireEvent.change(screen.getByPlaceholderText('Search category'), { target: { value: 'tap' } });
+    await waitFor(() => expect(screen.queryByLabelText('Transport mode for Ceramics')).toBeNull());
+    expect(screen.getByLabelText('Transport mode for Taps')).toBeTruthy();
+    expect(screen.getByText(/1 - 1 of 1|1-1 of 1/i)).toBeTruthy();
+  });
+
+  it('Enter in the category search only searches, it does not save', async () => {
+    mount();
+    openTab('Transport by category');
+    await screen.findByLabelText('Transport mode for Ceramics');
+    type('Transport value for Ceramics', '9');
+    fireEvent.submit(screen.getByPlaceholderText('Search category').closest('form')!);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(service.saveCategoryRule).not.toHaveBeenCalled();
   });
 });
 

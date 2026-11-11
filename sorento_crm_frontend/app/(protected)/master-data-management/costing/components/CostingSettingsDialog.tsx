@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo, useState, type FormEvent } from 're
 import type { ColumnDef } from '@tanstack/react-table';
 import { Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -207,33 +208,38 @@ function RatesTab() {
     () => [
       {
         id: 'currency',
-        header: 'Currency',
+        accessorFn: (r) => r.currency,
+        header: ({ column }) => <DataGridColumnHeader title="Currency" column={column} />,
         cell: ({ row }) => <span className="font-medium">{row.original.currency}</span>,
         size: 90,
       },
       {
         id: 'effective_from',
-        header: 'Effective from',
+        accessorFn: (r) => r.effective_from,
+        header: ({ column }) => <DataGridColumnHeader title="Effective from" column={column} />,
         cell: ({ row }) => <span className="whitespace-nowrap">{shortDate(row.original.effective_from)}</span>,
         size: 130,
       },
       {
         id: 'units',
-        header: 'Units per MYR 1',
+        accessorFn: (r) => r.units_per_base ?? undefined,
+        header: ({ column }) => <DataGridColumnHeader title="Units per MYR 1" column={column} />,
         cell: ({ row }) => trimmed(row.original.units_per_base, 4),
         size: 140,
         meta: RIGHT,
       },
       {
         id: 'myr',
-        header: 'MYR per unit',
+        accessorFn: (r) => r.rate_to_base,
+        header: ({ column }) => <DataGridColumnHeader title="MYR per unit" column={column} />,
         cell: ({ row }) => trimmed(row.original.rate_to_base, 6),
         size: 130,
         meta: RIGHT,
       },
       {
         id: 'status',
-        header: 'Status',
+        accessorFn: (r) => STATUS[r.status].label,
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <Badge variant={STATUS[row.original.status].variant} appearance="light" size="sm">
             {STATUS[row.original.status].label}
@@ -243,7 +249,8 @@ function RatesTab() {
       },
       {
         id: 'note',
-        header: 'Note',
+        accessorFn: (r) => r.note ?? undefined,
+        header: ({ column }) => <DataGridColumnHeader title="Note" column={column} />,
         cell: ({ row }) =>
           row.original.note ? (
             <span className="block truncate" title={row.original.note}>
@@ -293,11 +300,15 @@ function RatesTab() {
         columns={columns}
         rows={rows}
         getRowId={(r) => r.id}
-        listingKey={null}
+        listingKey="products.cost.view::costing-rates"
         isLoading={isLoading}
         error={isError ? error : undefined}
         emptyTitle="No exchange rates yet"
         emptyBody="Add the first rate above."
+        sortable
+        searchPlaceholder="Search currency"
+        searchOf={(r) => `${r.currency} ${r.note ?? ''}`}
+        paginate
         pageSize={10}
       />
     </div>
@@ -433,7 +444,8 @@ function RuleValue({ rule }: { rule: CategoryRule }) {
 const RULE_COLUMNS: ColumnDef<CategoryRule>[] = [
   {
     id: 'category',
-    header: 'Category',
+    accessorFn: (r) => r.category_name,
+    header: ({ column }) => <DataGridColumnHeader title="Category" column={column} />,
     cell: ({ row }) => (
       <span className="block truncate" title={row.original.category_name}>
         {row.original.category_name}
@@ -441,8 +453,8 @@ const RULE_COLUMNS: ColumnDef<CategoryRule>[] = [
     ),
     size: 220,
   },
-  { id: 'mode', header: 'Mode', cell: ({ row }) => <RuleMode rule={row.original} />, size: 190 },
-  { id: 'value', header: 'Value', cell: ({ row }) => <RuleValue rule={row.original} />, size: 130, meta: RIGHT },
+  { id: 'mode', accessorFn: (r) => r.mode ?? undefined, header: ({ column }) => <DataGridColumnHeader title="Mode" column={column} />, cell: ({ row }) => <RuleMode rule={row.original} />, size: 190 },
+  { id: 'value', accessorFn: (r) => r.value ?? undefined, header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />, cell: ({ row }) => <RuleValue rule={row.original} />, size: 130, meta: RIGHT },
 ];
 
 function RulesForm({ rules }: { rules: CategoryRule[] }) {
@@ -453,7 +465,7 @@ function RulesForm({ rules }: { rules: CategoryRule[] }) {
   const patch = (rule: CategoryRule, next: Partial<RuleDraft>) =>
     setDrafts((d) => ({ ...d, [rule.category_id]: { ...(d[rule.category_id] ?? draftOf(rule)), ...next } }));
 
-  const submit = async (e: FormEvent) => {
+  const submit = async (e: { preventDefault: () => void }) => {
     e.preventDefault();
     const changed = rules.filter((r) => {
       const d = drafts[r.category_id];
@@ -487,17 +499,22 @@ function RulesForm({ rules }: { rules: CategoryRule[] }) {
 
   return (
     <RulesContext.Provider value={{ canManage, current, patch }}>
-      <form onSubmit={(e) => void submit(e)} className="space-y-4">
+      {/* Not submitted by Enter: the grid's search box lives in this form and Enter there must only search. */}
+      <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
         <PanelDataGrid<CategoryRule>
           columns={RULE_COLUMNS}
           rows={rules}
           getRowId={(r) => r.category_id}
-          listingKey={null}
+          listingKey="products.cost.view::costing-rules"
           emptyTitle="No categories yet"
-          pageSize={25}
+          sortable
+          searchPlaceholder="Search category"
+          searchOf={(r) => r.category_name}
+          paginate
+          pageSize={10}
         />
         {canManage ? (
-          <Button type="submit" disabled={save.isPending}>
+          <Button type="button" onClick={(e) => void submit(e)} disabled={save.isPending}>
             Save
           </Button>
         ) : null}

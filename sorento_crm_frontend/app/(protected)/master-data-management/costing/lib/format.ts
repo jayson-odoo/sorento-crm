@@ -60,6 +60,8 @@ export function reasonText(reason: CostingReason): string {
       return 'No PO price';
     case 'no_transport_rule':
       return 'No transport rule';
+    case 'no_list_price':
+      return 'No list price';
   }
 }
 

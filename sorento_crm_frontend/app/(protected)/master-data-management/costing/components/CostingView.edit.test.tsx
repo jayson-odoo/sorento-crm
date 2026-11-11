@@ -59,33 +59,39 @@ vi.mock('@/components/common/PageHeader', () => ({
     </header>
   ),
 }));
-vi.mock('@/components/common/CustomerDebtorCombobox', () => ({
-  CustomerDebtorCombobox: (p: {
-    value: string; ariaLabel?: string; placeholder?: string; pickOnly?: boolean;
-    onChange: (v: string, item?: unknown) => void;
-  }) => (
-    <div data-testid="party-picker" data-pickonly={String(!!p.pickOnly)}>
-      <input aria-label={p.ariaLabel ?? 'Party'} placeholder={p.placeholder} value={p.value} readOnly />
-      <button type="button" onClick={() => p.onChange('RELATED - BATHPLUS SDN BHD', {
-        customer_id: 'cust-1', debtor_name: 'RELATED - BATHPLUS SDN BHD', customer_code: '304-R017', sales_type: null,
-      })}>pick-bathplus</button>
-      <button type="button" onClick={() => p.onChange('')}>clear-party</button>
-    </div>
-  ),
-}));
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string; value: string; onChange: (v: string) => void;
     options?: { value: string; label: string }[]; placeholder?: string; disabled?: boolean;
     'aria-label'?: string;
-  }) => (
-    <select id={props.id} aria-label={props['aria-label']} value={props.value} disabled={props.disabled}
-      onChange={(e) => props.onChange(e.target.value)}>
-      <option value="">{props.placeholder ?? ''}</option>
-      {(props.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  ),
+    fetchOptions?: (q: string, page: number) => Promise<{ value: string; label: string }[]>;
+    selectedOption?: { value: string; label: string };
+  }) => {
+    const [fetched, setFetched] = React.useState<{ value: string; label: string }[]>([]);
+    React.useEffect(() => {
+      if (props.fetchOptions) props.fetchOptions('', 0).then(setFetched);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const options = props.fetchOptions ? fetched : (props.options ?? []);
+    const extra = props.selectedOption && !options.some((o) => o.value === props.selectedOption!.value)
+      ? [props.selectedOption] : [];
+    return (
+      <>
+        {props.fetchOptions ? (
+          <input aria-label={`${props['aria-label']} search`}
+            onChange={(e) => props.fetchOptions!(e.target.value, 0).then(setFetched)} />
+        ) : null}
+        <select id={props.id} aria-label={props['aria-label']} value={props.value} disabled={props.disabled}
+          onChange={(e) => props.onChange(e.target.value)}>
+          <option value="">{props.placeholder ?? ''}</option>
+          {[...extra, ...options].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </>
+    );
+  },
 }));
+const customers = vi.hoisted(() => ({ searchCustomersSelect: vi.fn() }));
+vi.mock('../../../order-management/customers/services/customerService', () => customers);
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: (props: {
     id?: string; 'aria-label'?: string; value: string[]; onChange: (v: string[]) => void;
@@ -184,6 +190,9 @@ beforeEach(() => {
   service.getCategoryRules.mockResolvedValue({ data: [] });
   service.getExchangeRates.mockResolvedValue({ data: [] });
   service.getParty.mockResolvedValue(PARTY);
+  customers.searchCustomersSelect.mockImplementation(async (q: string) =>
+    [{ value: 'cust-1', label: '304-R017 - RELATED - BATHPLUS SDN BHD' },
+     { value: 'cust-2', label: '304-R018 - OTHER DEBTOR' }].filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase())));
 });
 
 describe('entering and leaving edit', () => {

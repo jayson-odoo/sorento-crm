@@ -15,7 +15,8 @@ export type ReasonCode =
   | 'no_primary'
   | 'selected_not_linked'
   | 'no_po_price'
-  | 'no_transport_rule';
+  | 'no_transport_rule'
+  | 'no_list_price';
 
 export interface CostingReason {
   code: ReasonCode;
@@ -41,6 +42,7 @@ export interface CostingRow {
   list_price: number | null;
   supplier_id: string | null;
   supplier_code: string | null;
+  supplier_name: string | null;
   currency: string | null;
   unit_cost: number | null;
   rate_to_base: number | null;

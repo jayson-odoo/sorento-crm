@@ -47,6 +47,7 @@ export function CostingSupplierGrid({
     () => [
       {
         id: 'supplier',
+        accessorFn: (r) => r.supplier_code,
         header: 'Supplier',
         cell: ({ row }) => (
           <div className="min-w-0">
@@ -62,12 +63,14 @@ export function CostingSupplierGrid({
       },
       {
         id: 'primary',
+        accessorFn: (r) => (r.is_primary ? 1 : 0),
         header: 'Primary',
         cell: ({ row }) => (row.original.is_primary ? 'Yes' : 'No'),
         size: 80,
       },
       {
         id: 'lead_time',
+        accessorFn: (r) => r.lead_time_days ?? undefined,
         header: 'Lead time',
         cell: ({ row }) => (row.original.lead_time_days === null ? '-' : `${row.original.lead_time_days} days`),
         size: 100,
@@ -75,6 +78,7 @@ export function CostingSupplierGrid({
       },
       {
         id: 'cost',
+        accessorFn: (r) => r.unit_cost ?? undefined,
         header: 'Cost',
         cell: ({ row }) =>
           row.original.unit_cost === null ? (
@@ -87,6 +91,7 @@ export function CostingSupplierGrid({
       },
       {
         id: 'landing',
+        accessorFn: (r) => r.landing ?? undefined,
         header: 'Landing (RM)',
         cell: ({ row }) => figure(row.original.landing, row.original.reasons),
         size: 140,
@@ -94,6 +99,7 @@ export function CostingSupplierGrid({
       },
       {
         id: 'final',
+        accessorFn: (r) => r.final ?? undefined,
         header: 'Final (RM)',
         cell: ({ row }) => figure(row.original.final, row.original.reasons),
         size: 120,
@@ -102,6 +108,7 @@ export function CostingSupplierGrid({
       partyId
         ? {
             id: 'margin',
+            accessorFn: (r) => r.margin_pct ?? undefined,
             header: 'Margin if bought here',
             cell: ({ row }) =>
               row.original.margin_pct === null ? (
@@ -114,6 +121,7 @@ export function CostingSupplierGrid({
           }
         : {
             id: 'markup',
+            accessorFn: (r) => r.markup_pct ?? undefined,
             header: 'Mark-up if bought here',
             cell: ({ row }) =>
               row.original.markup_pct === null ? (
@@ -139,6 +147,7 @@ export function CostingSupplierGrid({
         error={error}
         emptyTitle="No suppliers for this product"
         paginate={false}
+        sortable
       />
     </div>
   );

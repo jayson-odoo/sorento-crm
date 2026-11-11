@@ -10,8 +10,8 @@
  *    getExchangeRates(), createExchangeRate(body), updateExchangeRate(id, body), getParty(customerId),
  *    saveParty(customerId, body), addPartyProducts(customerId, productIds).
  *  - Service params use the API query names: party_id, q, category_id, brand_id, cost_method (comma
- *    joined), has_cost (true only when the switch is on; the key is absent otherwise), as_of, page, limit.
- *  - URL params: party, category, brand, method, has_cost=1, as_of. The page writes them with
+ *    joined), cost (has or none when exactly one is picked; the key is absent otherwise), as_of, page, limit.
+ *  - URL params: party, category, brand, method, cost=has,none, as_of. The page writes them with
  *    router.push or router.replace.
  *  - Permissions via useHasPermission from '@/hooks/usePermissions'.
  *  - PageHeader receives `actions`; the party picker is CustomerDebtorCombobox with pickOnly and
@@ -64,33 +64,39 @@ vi.mock('@/components/common/PageHeader', () => ({
     </header>
   ),
 }));
-vi.mock('@/components/common/CustomerDebtorCombobox', () => ({
-  CustomerDebtorCombobox: (p: {
-    value: string; ariaLabel?: string; placeholder?: string; pickOnly?: boolean;
-    onChange: (v: string, item?: unknown) => void;
-  }) => (
-    <div data-testid="party-picker" data-pickonly={String(!!p.pickOnly)}>
-      <input aria-label={p.ariaLabel ?? 'Party'} placeholder={p.placeholder} value={p.value} readOnly />
-      <button type="button" onClick={() => p.onChange('RELATED - BATHPLUS SDN BHD', {
-        customer_id: 'cust-1', debtor_name: 'RELATED - BATHPLUS SDN BHD', customer_code: '304-R017', sales_type: null,
-      })}>pick-bathplus</button>
-      <button type="button" onClick={() => p.onChange('')}>clear-party</button>
-    </div>
-  ),
-}));
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string; value: string; onChange: (v: string) => void;
     options?: { value: string; label: string }[]; placeholder?: string; disabled?: boolean;
     'aria-label'?: string;
-  }) => (
-    <select id={props.id} aria-label={props['aria-label']} value={props.value} disabled={props.disabled}
-      onChange={(e) => props.onChange(e.target.value)}>
-      <option value="">{props.placeholder ?? ''}</option>
-      {(props.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  ),
+    fetchOptions?: (q: string, page: number) => Promise<{ value: string; label: string }[]>;
+    selectedOption?: { value: string; label: string };
+  }) => {
+    const [fetched, setFetched] = React.useState<{ value: string; label: string }[]>([]);
+    React.useEffect(() => {
+      if (props.fetchOptions) props.fetchOptions('', 0).then(setFetched);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const options = props.fetchOptions ? fetched : (props.options ?? []);
+    const extra = props.selectedOption && !options.some((o) => o.value === props.selectedOption!.value)
+      ? [props.selectedOption] : [];
+    return (
+      <>
+        {props.fetchOptions ? (
+          <input aria-label={`${props['aria-label']} search`}
+            onChange={(e) => props.fetchOptions!(e.target.value, 0).then(setFetched)} />
+        ) : null}
+        <select id={props.id} aria-label={props['aria-label']} value={props.value} disabled={props.disabled}
+          onChange={(e) => props.onChange(e.target.value)}>
+          <option value="">{props.placeholder ?? ''}</option>
+          {[...extra, ...options].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </>
+    );
+  },
 }));
+const customers = vi.hoisted(() => ({ searchCustomersSelect: vi.fn() }));
+vi.mock('../../../order-management/customers/services/customerService', () => customers);
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: (props: {
     id?: string; 'aria-label'?: string; value: string[]; onChange: (v: string[]) => void;
@@ -198,6 +204,9 @@ beforeEach(() => {
   service.getCategoryRules.mockResolvedValue({ data: [] });
   service.getExchangeRates.mockResolvedValue({ data: [] });
   service.getParty.mockResolvedValue(PARTY);
+  customers.searchCustomersSelect.mockImplementation(async (q: string) =>
+    [{ value: 'cust-1', label: '304-R017 - RELATED - BATHPLUS SDN BHD' },
+     { value: 'cust-2', label: '304-R018 - OTHER DEBTOR' }].filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase())));
 });
 
 describe('Company standard view (AC-CG-01, AC-CG-03)', () => {
@@ -205,9 +214,11 @@ describe('Company standard view (AC-CG-01, AC-CG-03)', () => {
     mount();
     expect(await screen.findByText('CGB9032B')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Costing' })).toBeTruthy();
-    const picker = screen.getByTestId('party-picker');
-    expect(picker.getAttribute('data-pickonly')).toBe('true');
-    expect(within(picker).getByPlaceholderText('Company standard')).toBeTruthy();
+    const slot = screen.getByTestId('costing-search-slot'); // inside the toolbar's search slot
+    const picker = within(slot).getByLabelText('Party') as HTMLSelectElement;
+    expect(picker.value).toBe('');
+    expect(within(picker).getByText('Company standard')).toBeTruthy();
+    expect(within(slot).getByPlaceholderText('Search code or name')).toBeTruthy();
     expect(screen.queryByText('Party mark-up')).toBeNull();
     expect(screen.queryByText('Rates as of')).toBeNull();
   });
@@ -324,48 +335,110 @@ describe('Picking the party (AC-CG-02)', () => {
   it('writes party into the URL when a customer is picked', async () => {
     mount();
     await screen.findByText('CGB9032B');
-    fireEvent.click(screen.getByText('pick-bathplus'));
+    const party = screen.getByLabelText('Party');
+    await waitFor(() => expect(within(party).getByText('RELATED - BATHPLUS SDN BHD (304-R017)')).toBeTruthy());
+    fireEvent.change(party, { target: { value: 'cust-1' } });
     await waitFor(() => expect(urlsWritten().some((u) => /[?&]party=cust-1/.test(u))).toBe(true));
   });
 
   it('drops party from the URL when the picker is cleared', async () => {
-    url.search = 'party=cust-1&has_cost=1';
+    url.search = 'party=cust-1&cost=has';
     service.getCostingRows.mockResolvedValue(partyEnvelope());
     mount();
     await screen.findByText('CGB9032B');
-    fireEvent.click(screen.getByText('clear-party'));
+    fireEvent.change(screen.getByLabelText('Party'), { target: { value: '' } });
     await waitFor(() => expect(urlsWritten().length).toBeGreaterThan(0));
     const written = urlsWritten().at(-1)!;
     expect(written).not.toMatch(/party=/);
-    expect(written).toMatch(/has_cost=1/);
+    expect(written).toMatch(/cost=has/);
+  });
+
+  it('offers one-line "NAME (CODE)" options and searches the shared customer select by what is typed', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
+    const party = screen.getByLabelText('Party');
+    await waitFor(() => expect(within(party).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Company standard', 'RELATED - BATHPLUS SDN BHD (304-R017)', 'OTHER DEBTOR (304-R018)',
+    ]));
+    fireEvent.change(screen.getByLabelText('Party search'), { target: { value: 'bath' } });
+    await waitFor(() => expect(customers.searchCustomersSelect).toHaveBeenCalledWith('bath', 0));
+    await waitFor(() => expect(within(party).queryByText(/OTHER DEBTOR/)).toBeNull());
+    expect(within(party).getByText('RELATED - BATHPLUS SDN BHD (304-R017)')).toBeTruthy();
   });
 });
 
 describe('Filters (AC-CG-07)', () => {
-  it('opens with Has cost OFF: nothing narrows the list', async () => {
+  it('opens with nothing narrowing the list and Cost empty', async () => {
     mount();
     await screen.findByText('CGB9032B');
-    expect(service.getCostingRows.mock.calls[0][0].has_cost ?? undefined).toBeUndefined();
+    expect(service.getCostingRows.mock.calls[0][0].cost ?? undefined).toBeUndefined();
     openFilters();
-    const sw = await screen.findByRole('switch', { name: 'Has cost' });
-    expect(sw.getAttribute('aria-checked')).toBe('false');
+    const cost = (await screen.findByLabelText('Cost')) as HTMLSelectElement;
+    expect(Array.from(cost.selectedOptions)).toHaveLength(0);
+    expect(Array.from(cost.options).map((o) => o.textContent)).toEqual(['Has cost', 'No cost']);
   });
 
-  it('turning Has cost on writes has_cost=1 to the URL', async () => {
+  it('turning Has cost on writes cost=has to the URL', async () => {
     mount();
     await screen.findByText('CGB9032B');
     openFilters();
-    fireEvent.click(await screen.findByRole('switch', { name: 'Has cost' }));
-    await waitFor(() => expect(urlsWritten().some((u) => /has_cost=1/.test(u))).toBe(true));
+    const cost = (await screen.findByLabelText('Cost')) as HTMLSelectElement;
+    Array.from(cost.options).find((o) => o.value === 'has')!.selected = true;
+    fireEvent.change(cost);
+    await waitFor(() => expect(urlsWritten().some((u) => /cost=has/.test(u))).toBe(true));
   });
 
-  it('has_cost=1 in the URL narrows the request and shows the switch on', async () => {
-    url.search = 'has_cost=1';
+  it('cost=has narrows the request, cost=none asks for the costless, both is no narrowing', async () => {
+    url.search = 'cost=has';
+    const first = mount();
+    await screen.findByText('CGB9032B');
+    expect(lastParams().cost).toBe('has');
+    first.unmount();
+    url.search = 'cost=none';
+    const second = mount();
+    await screen.findByText('CGB9032B');
+    expect(lastParams().cost).toBe('none');
+    second.unmount();
+    service.getCostingRows.mockClear();
+    url.search = 'cost=has,none';
     mount();
     await screen.findByText('CGB9032B');
-    expect([true, 'true', 1]).toContain(lastParams().has_cost);
+    expect(lastParams().cost ?? undefined).toBeUndefined();
+  });
+
+  it('is the standard pattern: a labelled multi-select per filter', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
     openFilters();
-    expect((await screen.findByRole('switch', { name: 'Has cost' })).getAttribute('aria-checked')).toBe('true');
+    for (const label of ['Category', 'Brand', 'Cost method', 'Cost']) {
+      expect((await screen.findByLabelText(label)).tagName).toBe('SELECT');
+    }
+    expect(screen.queryByRole('switch')).toBeNull();
+  });
+
+  it('shows a chip per active filter, each with its own clear', async () => {
+    url.search = 'category=cat-1&method=average&cost=none';
+    mount();
+    await screen.findByText('CGB9032B');
+    expect(screen.getByText('Category: Ceramics')).toBeTruthy();
+    expect(screen.getByText('Cost method: Average of supplier prices')).toBeTruthy();
+    expect(screen.getByText('Cost: No cost')).toBeTruthy();
+    expect(screen.queryByText(/^Brand:/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filter: Category: Ceramics' }));
+    await waitFor(() => expect(urlsWritten().length).toBeGreaterThan(0));
+    const written = urlsWritten().at(-1)!;
+    expect(written).not.toMatch(/category=/);
+    expect(written).toMatch(/method=average/);
+  });
+
+  it('puts As of in the toolbar row as the shared date picker, defaulting to the rows date', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
+    const slot = screen.getByTestId('costing-search-slot');
+    expect((within(slot).getByLabelText('As of') as HTMLInputElement).value).toBe('11/11/2026');
+    openFilters();
+    await screen.findByLabelText('Category');
+    expect(screen.queryByLabelText('As of', { selector: '#costing-as-of' })).toBeNull();
   });
 
   it('maps category, brand, method and as_of from the URL onto the request', async () => {
@@ -432,52 +505,74 @@ describe('A party without a profile (D2)', () => {
   });
 });
 
-describe('Clearing the party (D3)', () => {
-  it('has a clear control that drops party from the URL and keeps the other filters', async () => {
-    url.search = 'party=cust-1&has_cost=1';
+describe('Every column sorts on the server (round 5)', () => {
+  const SORT_OF: Record<string, string> = {
+    Category: 'category_name', Code: 'product_code', Name: 'product_name', Supplier: 'supplier_name',
+    Cost: 'unit_cost', Rate: 'units_per_base', SST: 'sst_factor', Transport: 'transport',
+    'Landing (RM)': 'landing', 'Cost method': 'cost_method', 'Mark-up': 'markup_pct',
+    'Final (RM)': 'final', 'List price (AutoCount)': 'list_price', Margin: 'margin_pct',
+  };
+
+  it('every header has a sort control that puts its key in the request', async () => {
+    url.search = 'party=cust-1';
     service.getCostingRows.mockResolvedValue(partyEnvelope());
     mount();
     await screen.findByText('CGB9032B');
-    fireEvent.click(screen.getByRole('button', { name: 'Clear party' }));
-    await waitFor(() => expect(urlsWritten().length).toBeGreaterThan(0));
-    const written = urlsWritten().at(-1)!;
-    expect(written).not.toMatch(/party=/);
-    expect(written).toMatch(/has_cost=1/);
-  });
-
-  it('has no clear control on the Company standard', async () => {
-    mount();
-    await screen.findByText('CGB9032B');
-    expect(screen.queryByRole('button', { name: 'Clear party' })).toBeNull();
+    expect(Object.keys(SORT_OF)).toEqual([...STANDARD_HEADERS, 'Margin'].sort((a, b) =>
+      Object.keys(SORT_OF).indexOf(a) - Object.keys(SORT_OF).indexOf(b)));
+    for (const [title, key] of Object.entries(SORT_OF)) {
+      const header = screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === title)!;
+      fireEvent.click(within(header).getByRole('button', { name: title }));
+      await waitFor(() => expect(lastParams().sort).toBe(key));
+      expect(lastParams().dir).toBe('asc');
+    }
+    // a second press on the same header turns it round
+    const margin = screen.getAllByRole('columnheader').find((h) => h.textContent?.trim() === 'Margin')!;
+    fireEvent.click(within(margin).getByRole('button', { name: 'Margin' }));
+    await waitFor(() => expect(lastParams().dir).toBe('desc'));
   });
 });
 
-describe('Leaving the party view (round 3)', () => {
-  it('logs no "column does not exist" after sorting by Margin and going back to Company standard', async () => {
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    url.search = 'party=cust-1';
-    service.getCostingRows.mockResolvedValue(partyEnvelope());
-    const { rerender } = mount();
+describe('Supplier name and no selling price (round 5)', () => {
+  it('shows the supplier NAME, truncated, with "NAME (CODE)" as its title', async () => {
+    mount();
     await screen.findByText('CGB9032B');
-    fireEvent.click(screen.getByRole('button', { name: 'Margin' }));
-    await waitFor(() => expect(lastParams().sort).toBe('margin_pct'));
+    const cell = within(rowOf('CGB9032B')).getByText('Supplier A');
+    expect(cell.getAttribute('title')).toBe('Supplier A (SUP-A01)');
+    expect(cell.className).toMatch(/truncate/);
+    expect(within(rowOf('CGB9032B')).queryByText('SUP-A01')).toBeNull();
+  });
 
-    url.search = '';
-    service.getCostingRows.mockResolvedValue(standardEnvelope());
-    rerender(<QueryClientProvider client={new QueryClient()}><CostingView /></QueryClientProvider>);
-    await waitFor(() => expect(headers()).toEqual(STANDARD_HEADERS));
-    const logged = [...errors.mock.calls, ...warns.mock.calls].map((c) => c.map(String).join(' '));
-    expect(logged.filter((m) => /does not exist/.test(m))).toEqual([]);
-    expect(service.getCostingRows.mock.calls.at(-1)![0].sort).toBeUndefined();
-    errors.mockRestore();
-    warns.mockRestore();
+  const noPrice = (over: Record<string, unknown> = {}) => costingRow({
+    product_code: 'NP-1xx', product_name: 'Unpriced', list_price: null, markup_pct: null, markup_source: 'achieved',
+    final: null, margin_pct: null, reasons: [{ code: 'no_list_price' }], party_product_id: null, ...over,
+  });
+
+  it('company standard: a landing but no selling price shows "-" and "No list price", never -100 %', async () => {
+    service.getCostingRows.mockResolvedValue(standardEnvelope([noPrice()]));
+    mount();
+    await screen.findByText('NP-1xx');
+    const tr = rowOf('NP-1xx');
+    expect(within(tr).getByText('No list price')).toBeTruthy();
+    expect(within(tr).getByText('31.72')).toBeTruthy();
+    expect(tr.textContent).not.toMatch(/-100/);
+  });
+
+  it('party view: the margin is "-" with the reason, never -100 %', async () => {
+    url.search = 'party=cust-1';
+    service.getCostingRows.mockResolvedValue(partyEnvelope([noPrice({ markup_pct: 8, markup_source: 'party', final: 34.25625, party_product_id: 'cpp-9' })]));
+    mount();
+    await screen.findByText('NP-1xx');
+    const tr = rowOf('NP-1xx');
+    expect(within(tr).getByText('No list price')).toBeTruthy();
+    expect(within(tr).getByText('34.26')).toBeTruthy();
+    expect(tr.textContent).not.toMatch(/-100/);
   });
 });
 
 describe('Toolbar actions (AC-CG-09, AC-CG-10, AC-CG-12)', () => {
   it('Export downloads with the current party and filters', async () => {
-    url.search = 'party=cust-1&has_cost=1';
+    url.search = 'party=cust-1&cost=has';
     service.getCostingRows.mockResolvedValue(partyEnvelope());
     mount();
     await screen.findByText('CGB9032B');
@@ -485,7 +580,7 @@ describe('Toolbar actions (AC-CG-09, AC-CG-10, AC-CG-12)', () => {
     await waitFor(() => expect(service.exportCosting).toHaveBeenCalledTimes(1));
     const sent = service.exportCosting.mock.calls[0][0] as Params;
     expect(sent.party_id).toBe('cust-1');
-    expect([true, 'true', 1]).toContain(sent.has_cost);
+    expect(sent.cost).toBe('has');
   });
 
   it('Export is there in the company standard view too', async () => {
