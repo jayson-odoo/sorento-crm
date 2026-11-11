@@ -700,6 +700,22 @@ def _name_map(db: Session, user_ids) -> Dict[str, str]:
     }
 
 
+def _contact_map(db: Session, user_ids) -> Dict[str, str]:
+    """Each user's linked contact (``users.respond_contact_id``), for a form written on their
+    behalf: a project's Sponsorship stage opens the salesperson's form with them as Requested by
+    (PROJECT-STAGE-ACTIONS)."""
+    ids = [uid for uid in set(user_ids) if uid]
+    if not ids:
+        return {}
+    from app.models.user import User
+
+    return {
+        u.id: u.respond_contact_id
+        for u in db.query(User.id, User.respond_contact_id).filter(User.id.in_(ids)).all()
+        if u.respond_contact_id
+    }
+
+
 def _party_name_map(db: Session, party_ids) -> Dict[str, str]:
     ids = [pid for pid in set(party_ids) if pid]
     if not ids:
@@ -746,6 +762,7 @@ def serialize_projects(
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
+    owner_contacts = _contact_map(db, [p.owner_user_id for p in projects])
 
     profiles = {
         row.project_id: row
@@ -901,6 +918,7 @@ def serialize_projects(
                 "status_label": status.label if status else None,
                 "owner_user_id": project.owner_user_id,
                 "owner_name": owner_names.get(project.owner_user_id),
+                "owner_contact_id": owner_contacts.get(project.owner_user_id),
                 "is_critical": project.is_critical,
                 "critical_at": project.critical_at,
                 "management_support": project.management_support,

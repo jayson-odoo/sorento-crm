@@ -318,6 +318,40 @@ def create_purchase_request(
         raise handle_internal_error(str(e))
 
 
+@router.post(
+    "/{request_id}/submit",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
+def submit_purchase_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Submit a draft written in the salesperson's form by staff (PROJECT-STAGE-ACTIONS).
+
+    The portal's submit rules and side effects (``PortalService.submit_staff_request``). Needs the
+    kind's ``.add``, as the create does; a salesperson limited to their own rows is refused by
+    the router's own-scope guard and submits through /api/v1/my-requests.
+    """
+    from app.services.portal_service import PortalService
+    from app.services.user_service import UserPermissionService
+
+    validate_uuid_path(request_id, resource="Request")
+    service = PurchaseRequestService(db)
+    header = service.get_request(request_id)
+    slug = (
+        "procurement.sponsorship_forms.add"
+        if header.request_type == "sponsorship_form"
+        else "procurement.purchase_requests.add"
+    )
+    if not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {slug}")
+    assert_can_act_on_form(db, request_id, current_user)
+    PortalService(db).submit_staff_request(header, actor_user_id=current_user.get("id"))
+    return service.get_request(request_id)
+
+
 @router.put(
     "/{request_id}",
     response_model=PurchaseRequestHeaderResponse,
