@@ -14,8 +14,9 @@ Plan: `PLAN-stockdebt-live-actions-11nov.md`.
 - AC-8 Decide shows "Change PO..." under "Link to PO...". It is greyed with the reason unless
   every ticked line is covered by exactly one PO line and AutoCount can link and unlink.
 - AC-9 The popup shows each line's current PO and a picker of the other open PO lines of the
-  product (same book), with Free. Change sends the new link first and unlinks the old PO line only
-  when the link is done; the old PO line stays open with its qty.
+  product (same book), with Free. Change unlinks the old PO line first and sends the new link only
+  when the unlink is done; the old PO line stays open with its qty. A refused unlink changes
+  nothing; a link refused after the unlink says the line is now uncovered.
 - AC-10 A new PO line with less free than the linked qty is refused: "PO Y has only N free", and
   nothing is sent to AutoCount.
 - AC-11 With "AutoCount links from Stock Debt" off, the change route answers 403 and Decide is

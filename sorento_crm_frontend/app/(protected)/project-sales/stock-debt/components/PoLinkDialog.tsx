@@ -260,7 +260,7 @@ export function PoLinkDialog({
       const po = poById.get(picked[row.id] ?? '');
       if (!po) return 'No PO line picked';
       const needs = row.linkedQty ?? 0;
-      if (needs === po.po_qty && !capabilities.link_row.enabled) {
+      if (needs >= po.po_qty && !capabilities.link_row.enabled) {
         return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
       }
       // Card 3a: the new PO line must have the whole linked qty free (shared across lines).

@@ -37,8 +37,16 @@ function poLabel(r: PoLinkResult): string {
   return r.po_number ? `PO ${r.po_number}${qty}` : `the PO${qty}`;
 }
 
-/** One line's answer as a callout: title, sentence and the follow-up it offers. */
+/** One line's answer as a callout: title, sentence and the follow-up it offers. Change PO
+ *  unlinks the old PO first; when the new link then fails, it says the line is uncovered. */
 export function poLinkResultText(r: PoLinkResult, kind: PoLinkKind): PoLinkResultText {
+  const out = resultText(r, kind);
+  return r.unlinked_po
+    ? { ...out, text: `${out.text} It was unlinked from PO ${r.unlinked_po}, so the line is now uncovered.` }
+    : out;
+}
+
+function resultText(r: PoLinkResult, kind: PoLinkKind): PoLinkResultText {
   const so = soLabel(r);
   if (r.outcome === 'done') {
     const text =

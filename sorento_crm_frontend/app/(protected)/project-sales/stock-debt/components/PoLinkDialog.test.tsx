@@ -354,11 +354,11 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     expect(changePoLines).not.toHaveBeenCalled();
   });
 
-  it('sends the SO line and the new PO line, then shows both halves in plain words', async () => {
+  it('sends the SO line and the new PO line, then shows both halves in plain words, unlink first', async () => {
     changePoLines.mockResolvedValue({
       results: [
-        result({ action: 'link', po_number: '202609-S0029' }),
         result({ action: 'unlink', po_number: '202610-S0007' }),
+        result({ action: 'link', po_number: '202609-S0029' }),
       ],
     });
     const { dialog } = renderDialog([covered], 'change');
@@ -369,8 +369,8 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     ]));
     const cards = await within(dialog).findAllByTestId('po-link-result');
     expect(cards.map((card) => card.textContent)).toEqual([
-      'LinkedSO425045 line 140 now covered by PO 202609-S0029 (120).',
       'UnlinkedSO425045 line 140 is no longer covered by PO 202610-S0007 (120).',
+      'LinkedSO425045 line 140 now covered by PO 202609-S0029 (120).',
     ]);
   });
 });

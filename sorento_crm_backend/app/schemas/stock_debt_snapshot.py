@@ -258,6 +258,9 @@ class PoLinkResult(BaseModel):
     po_line_id: Optional[str] = None
     #: Change PO only: which half of the change this answer is ("link" or "unlink").
     action: Optional[str] = None
+    #: Change PO only, on a link that was not done: the PO already unlinked from the line, so
+    #: the line is now uncovered.
+    unlinked_po: Optional[str] = None
 
 
 class PoLinkResults(BaseModel):

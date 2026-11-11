@@ -350,10 +350,13 @@ class StockDebtPoLinkService:
         """The same intent on the same PO row state gives the same key, so a retry after a
         timeout (or a second tab) replays the Shared Service's stored answer instead of
         writing twice. The row's qty is in it: once AutoCount changed the row, a new link is
-        a new intent."""
-        raw = "|".join(
-            [path, *(f"{k}={body[k]}" for k in sorted(body)), f"rowQty={po_line.qty_ordered}"]
-        )
+        a new intent. An unlink also carries the link it removes (STOCKDEBT-LIVE-ACTIONS
+        review): its body names no sales order, so unlinking the same row again after it was
+        linked elsewhere would otherwise repeat the key and replay the first answer."""
+        parts = [path, *(f"{k}={body[k]}" for k in sorted(body)), f"rowQty={po_line.qty_ordered}"]
+        if path == "po-links/unlink":
+            parts.append(f"fromSo={(po_line.from_so_line_ref or '').strip()}")
+        raw = "|".join(parts)
         return hashlib.sha256(raw.encode()).hexdigest()[:64]
 
     def _send_intent(self, path: str, body: Dict[str, Any], po_line: PurchaseOrderLine) -> Dict[str, Any]:
@@ -622,10 +625,15 @@ class StockDebtPoLinkService:
         ONE PO line covering an SO line for another PO line, for the same qty.
 
         Refused, with nothing sent, unless the line is covered by exactly one PO line and the
-        new PO line has that qty free. The new link goes first; the old PO line is unlinked
-        only once AutoCount answered the link done, so a refused link leaves the line as it
-        was. The old PO line keeps its qty and stays open as free supply."""
+        new PO line has that qty free. The old PO line is unlinked FIRST: while it covers the
+        line, AutoCount refuses any new link as above the SO row's outstanding
+        (QTY_ABOVE_OUTSTANDING, AC-E2E-DB3 on db3, 11 Nov). The new link is sent only once the
+        unlink is done; if it then fails, the answer names the PO that was unlinked, so the
+        user knows the line is uncovered. The old PO line keeps its qty and stays open."""
         row = self._row(snapshot_id, row_id)
+        named = [str(item["sales_order_line_id"]) for item in changes]
+        if len(set(named)) != len(named):
+            raise AppException(status_code=422, message="Name each sales order line once.")
         plan = []
         asked: Dict[str, Decimal] = {}
         for item in changes:
@@ -646,7 +654,9 @@ class StockDebtPoLinkService:
                 raise AppException(
                     status_code=422, message=f"{so_label} is not covered by exactly one PO line."
                 )
-            old_line, old_po = current[0]
+            # The old row is written to (unlinked) as well: the same open-AutoCount-line checks
+            # as the new one, before anything is sent.
+            old_line, old_po = self._po_line(row, str(current[0][0].id))
             new_line, new_po = self._po_line(row, item["po_line_id"])
             if str(new_line.id) == str(old_line.id):
                 raise AppException(status_code=422, message=f"{so_label} is already covered by that PO line.")
@@ -667,10 +677,16 @@ class StockDebtPoLinkService:
             plan.append((so_line, so, old_line, old_po, new_line, new_po, qty))
         results = []
         for so_line, so, old_line, old_po, new_line, new_po, qty in plan:
+            unlinked = self._send_unlink(old_line, old_po, so_line, so)
+            results.append({**unlinked, "action": "unlink"})
+            if unlinked["outcome"] != "done":
+                continue  # nothing changed: the old PO still covers the line
             linked = self._send_link(so_line, so, new_line, new_po, qty)
-            results.append({**linked, "action": "link"})
-            if linked["outcome"] == "done":
-                results.append({**self._send_unlink(old_line, old_po, so_line, so), "action": "unlink"})
+            results.append({
+                **linked,
+                "action": "link",
+                "unlinked_po": None if linked["outcome"] == "done" else old_po.po_number,
+            })
         return {"results": results}
 
     def relink(self, snapshot_id: str, row_id: str, moves: List[Dict[str, Any]]) -> Dict[str, Any]:

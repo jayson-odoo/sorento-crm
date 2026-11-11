@@ -206,26 +206,41 @@ def _unlink_done(w):
     }
 
 
-def test_change_links_the_new_po_line_then_unlinks_the_old_one(scm_app, fake_ss):
+def _refuse_link_while_covered(w):
+    """AutoCount's own rule (AC-E2E-DB3, db3, 11 Nov): a link is QTY_ABOVE_OUTSTANDING while
+    the old PO row still covers the SO row; once the unlink went through it is done."""
+    def answer(request):
+        if not fake_ss_unlinked(w):
+            return 409, {"operationId": None, "outcome": "refused", "errorCode": "QTY_ABOVE_OUTSTANDING",
+                         "message": "quantity above the SO row outstanding"}
+        return _link_done(w)(request)
+    return answer
+
+
+def fake_ss_unlinked(w) -> bool:
+    return any(r.url.path == "/api/v1/autocount/po-links/unlink" for r in w["fake"].calls)
+
+
+def test_change_unlinks_the_old_po_line_then_links_the_new_one(scm_app, fake_ss):
     from app.models.procurement import PurchaseOrderLine
 
-    w = _covered_world(scm_app, fake_ss)
-    fake_ss.answers["/api/v1/autocount/po-links"] = _link_done(w)
+    w = {**_covered_world(scm_app, fake_ss), "fake": fake_ss}
+    fake_ss.answers["/api/v1/autocount/po-links"] = _refuse_link_while_covered(w)
     fake_ss.answers["/api/v1/autocount/po-links/unlink"] = _unlink_done(w)
     resp = _change(w)
     assert resp.status_code == 200, resp.text
-    link, unlink = resp.json()["results"]
-    assert (link["action"], link["outcome"], link["qty"]) == ("link", "done", 120)
+    unlink, link = resp.json()["results"]
     assert (unlink["action"], unlink["outcome"]) == ("unlink", "done")
+    assert (link["action"], link["outcome"], link["qty"]) == ("link", "done", 120)
+    assert link["unlinked_po"] is None
 
+    (unbody,) = fake_ss.bodies("/api/v1/autocount/po-links/unlink")
+    assert (unbody["poDocKey"], unbody["poDtlKey"]) == (12008, 12009)
     (body,) = fake_ss.bodies("/api/v1/autocount/po-links")
     assert (body["poDocKey"], body["poDtlKey"], body["qty"]) == (12100, 12101, 120)
     assert (body["soDocKey"], body["soDtlKey"]) == (11988, 11990)
-    (unbody,) = fake_ss.bodies("/api/v1/autocount/po-links/unlink")
-    assert (unbody["poDocKey"], unbody["poDtlKey"]) == (12008, 12009)
-    # Order: the link was sent before the unlink.
     paths = [r.url.path for r in fake_ss.calls if "po-links" in r.url.path]
-    assert paths == ["/api/v1/autocount/po-links", "/api/v1/autocount/po-links/unlink"]
+    assert paths == ["/api/v1/autocount/po-links/unlink", "/api/v1/autocount/po-links"]
 
     db = w["db"]
     db.expire_all()
@@ -273,20 +288,31 @@ def test_change_to_the_same_po_line_is_refused(scm_app, fake_ss):
     assert resp.status_code == 422
 
 
-def test_a_refused_link_leaves_the_old_po_line_linked(scm_app, fake_ss):
+def test_a_refused_unlink_sends_no_link_and_leaves_the_old_po_line_linked(scm_app, fake_ss):
     from app.models.procurement import PurchaseOrderLine
 
     w = _covered_world(scm_app, fake_ss)
-    fake_ss.answers["/api/v1/autocount/po-links"] = (409, {
+    fake_ss.answers["/api/v1/autocount/po-links/unlink"] = (409, {
         "operationId": None, "outcome": "refused", "errorCode": "DOC_STALE", "message": "",
     })
     resp = _change(w)
     assert resp.status_code == 200, resp.text
-    (link,) = resp.json()["results"]
-    assert (link["action"], link["outcome"]) == ("link", "refused")
-    assert not fake_ss.bodies("/api/v1/autocount/po-links/unlink"), "no unlink after a refused link"
+    (unlink,) = resp.json()["results"]
+    assert (unlink["action"], unlink["outcome"]) == ("unlink", "refused")
+    assert not fake_ss.bodies("/api/v1/autocount/po-links"), "no link after a refused unlink"
     w["db"].expire_all()
     assert w["db"].get(PurchaseOrderLine, w["po_line"].id).from_so_line_ref == w["so_line"].source_ref
+
+
+def test_a_refused_link_after_the_unlink_names_the_po_unlinked(scm_app, fake_ss):
+    w = _covered_world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links/unlink"] = _unlink_done(w)
+    fake_ss.answers["/api/v1/autocount/po-links"] = (409, {
+        "operationId": None, "outcome": "refused", "errorCode": "DOC_STALE", "message": "",
+    })
+    unlink, link = _change(w).json()["results"]
+    assert unlink["outcome"] == "done"
+    assert (link["outcome"], link["unlinked_po"]) == ("refused", w["po"].po_number)
 
 
 def test_change_needs_the_switch_on(scm_app, fake_ss):
@@ -295,3 +321,139 @@ def test_change_needs_the_switch_on(scm_app, fake_ss):
     w = _covered_world(scm_app, fake_ss)
     _switch(w["db"], False)
     assert _change(w).status_code == 403
+
+
+# --------------------------------------------------------------------------- review round 1
+
+def _snap(w, **filters):
+    c = w["c"]
+    resp = c.post(SNAP, json={"name": "filtered", "filters": {"query": w["marker"], "only_debt": False, **filters}})
+    assert resp.status_code == 201, resp.text
+    sid = resp.json()["id"]
+    row_id = next(r["row_id"] for r in c.get(f"{SNAP}/{sid}/rows", params={"limit": 200}).json()["data"]
+                  if r["product_code"] == f"{w['marker']}-A")
+    return sid, row_id
+
+
+def test_live_cover_walks_under_the_snapshots_date_from(scm_app, fake_ss):
+    """A line due before `date_from` is out of the snapshot; today's walk must leave it out too,
+    or it takes the stock first and the snapshot's line reads less covered than it is."""
+    from datetime import date as _date
+
+    from tests.scm.test_stock_debt_routes import _stock
+
+    w = _world(scm_app, fake_ss)
+    db = w["db"]
+    _stock(db, w["product"], w["mwh"], 120)
+    _demand(db, w["product"], w["mwh"], qty=100, required_date=_date.today(), so_number=f"{w['marker']}-EARLY")
+    db.flush()
+    sid, row_id = _snap(w, date_from=w["so_line"].required_date.isoformat())
+    assert _drill(w, sid, row_id)[w["so_line"].id]["assigned_qty"] == 120
+    # Without the filter the early line takes 100 of the 120 first.
+    sid_all, row_all = _snap(w)
+    assert _drill(w, sid_all, row_all)[w["so_line"].id]["assigned_qty"] == 20
+
+
+def test_live_cover_walks_under_the_snapshots_location(scm_app, fake_ss):
+    """Narrowed to MWH, an HQ line is outside the span: today's walk must not let it take
+    the stock first."""
+    from datetime import date as _date
+
+    from tests.scm.test_stock_debt_routes import _stock
+
+    w = _world(scm_app, fake_ss)
+    db = w["db"]
+    _stock(db, w["product"], w["mwh"], 120)
+    _demand(db, w["product"], w["hq"], qty=100, required_date=_date.today(), so_number=f"{w['marker']}-HQ")
+    db.flush()
+    sid, row_id = _snap(w, location=[w["mwh"].id])
+    narrowed = _drill(w, sid, row_id)[w["so_line"].id]["assigned_qty"]
+    sid_all, row_all = _snap(w)
+    unfiltered = _drill(w, sid_all, row_all)[w["so_line"].id]["assigned_qty"]
+    assert (narrowed, unfiltered) == (120, 20)
+
+
+def test_two_changes_onto_one_po_line_share_its_free(scm_app, fake_ss):
+    """Owner card 3a over a whole request: two lines of 120 onto a PO line with 200 free."""
+    w = _covered_world(scm_app, fake_ss)
+    db = w["db"]
+    _o2, line2 = _demand(db, w["product"], w["mwh"], qty=120, required_date=_months_ahead(1),
+                         so_number=f"{w['marker']}-SO2")
+    _o2.source_system = "autocount"
+    _o2.source_ref = f"{DB}:11999"
+    line2.source_system = "autocount"
+    line2.source_ref = f"{DB}:11999:12001"
+    _po_line(db, w["product"], w["hq"], qty=120, so_ref=line2.source_ref, doc_key=12200, dtl_key=12201)
+    db.flush()
+    sid, row_id = _snap(w)
+    resp = w["c"].post(f"{SNAP}/{sid}/rows/{row_id}/po-link/change", json={"changes": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["new_line"].id},
+        {"sales_order_line_id": line2.id, "po_line_id": w["new_line"].id},
+    ]})
+    assert resp.status_code == 422
+    assert resp.json()["message"] == f"PO {w['new_po'].po_number} has only 200 free."
+    assert not [r for r in fake_ss.calls if "po-links" in r.url.path], "nothing is sent"
+
+
+def test_change_moves_the_linked_qty_less_what_was_cancelled(scm_app, fake_ss):
+    w = _covered_world(scm_app, fake_ss)
+    w["po_line"].qty_cancelled = Decimal("20")
+    w["db"].flush()
+    fake_ss.answers["/api/v1/autocount/po-links"] = _link_done(w)
+    fake_ss.answers["/api/v1/autocount/po-links/unlink"] = _unlink_done(w)
+    assert _change(w).status_code == 200
+    (body,) = fake_ss.bodies("/api/v1/autocount/po-links")
+    assert body["qty"] == 100
+
+
+def test_change_refuses_the_same_sales_order_line_twice(scm_app, fake_ss):
+    w = _covered_world(scm_app, fake_ss)
+    resp = w["c"].post(_url(w, "/change"), json={"changes": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["new_line"].id},
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["new_line"].id},
+    ]})
+    assert resp.status_code == 422
+    assert resp.json()["message"] == "Name each sales order line once."
+    assert not [r for r in fake_ss.calls if "po-links" in r.url.path]
+
+
+def test_change_checks_the_old_po_line_before_anything_is_sent(scm_app, fake_ss):
+    """An old PO line AutoCount cannot address (no keys) is refused up front, never after the
+    new link already went out."""
+    w = _covered_world(scm_app, fake_ss)
+    w["po_line"].source_ref = None
+    w["db"].flush()
+    resp = _change(w)
+    assert resp.status_code == 422
+    assert not [r for r in fake_ss.calls if "po-links" in r.url.path]
+
+
+def test_unlinking_one_row_again_after_a_relink_is_a_new_key(scm_app, fake_ss):
+    """The unlink body names no sales order; its key carries the link it removes, so the same
+    row unlinked from another SO line later is a new intent, not a replay."""
+    from app.services.scm.stock_debt_po_link_service import StockDebtPoLinkService
+
+    w = _world(scm_app, fake_ss)
+    body = {"companyCode": "X", "poDocKey": 12008, "poDtlKey": 12009}
+    w["po_line"].from_so_line_ref = f"{DB}:11988:11990"
+    first = StockDebtPoLinkService._intent_key("po-links/unlink", body, w["po_line"])
+    w["po_line"].from_so_line_ref = f"{DB}:11999:12001"
+    second = StockDebtPoLinkService._intent_key("po-links/unlink", body, w["po_line"])
+    assert first != second
+    # The link path's key is unchanged by the PO line's own link.
+    link_body = {**body, "soDocKey": 1, "soDtlKey": 2, "qty": 5}
+    assert StockDebtPoLinkService._intent_key("po-links", link_body, w["po_line"]) == (
+        StockDebtPoLinkService._intent_key("po-links", link_body, w["po_line"])
+    )
+
+
+def test_change_needs_the_link_permission(scm_app, fake_ss):
+    from tests.scm.test_stock_debt_po_link import _client as _po_client
+    from tests.scm.test_stock_debt_routes import VIEW
+
+    w = _covered_world(scm_app, fake_ss)
+    c, _db = _po_client(scm_app, permissions=(VIEW,))
+    resp = c.post(_url(w, "/change"), json={"changes": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["new_line"].id},
+    ]})
+    assert resp.status_code == 403

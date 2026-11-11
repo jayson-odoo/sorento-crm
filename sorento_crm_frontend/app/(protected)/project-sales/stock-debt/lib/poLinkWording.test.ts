@@ -137,3 +137,31 @@ describe('poLinkMenu', () => {
     expect(menu.change.enabled).toBe(true);
   });
 });
+
+describe('Change PO answers (STOCKDEBT-LIVE-ACTIONS review, unlink first)', () => {
+  it('a link refused after the old PO was unlinked says the line is now uncovered', () => {
+    const text = poLinkResultText(
+      result({ outcome: 'refused', error_code: 'DOC_STALE', action: 'link', unlinked_po: 'PO-OLD' }),
+      'link',
+    );
+    expect(text.title).toBe('Not linked');
+    expect(text.text).toMatch(/It was unlinked from PO PO-OLD, so the line is now uncovered\.$/);
+  });
+
+  it('a link that stopped part way says so, and still offers Resume', () => {
+    const text = poLinkResultText(
+      result({ outcome: 'needs_attention', operation_id: 'op-1', action: 'link', unlinked_po: 'PO-OLD' }),
+      'link',
+    );
+    expect(text.text).toBe(
+      'SO425045 line 140: AutoCount stopped part way. It was unlinked from PO PO-OLD, so the line is now uncovered.',
+    );
+    expect(text.action).toBe('resume');
+  });
+
+  it('a done answer adds nothing', () => {
+    expect(poLinkResultText(result({ action: 'link', unlinked_po: null }), 'link').text).toBe(
+      'SO425045 line 140 now covered by PO 202609-S0029 (120).',
+    );
+  });
+});

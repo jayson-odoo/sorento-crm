@@ -180,4 +180,7 @@ export interface PoLinkResult {
   po_line_id: string | null;
   /** Change PO only: which half of the change this answer is. */
   action?: 'link' | 'unlink' | null;
+  /** Change PO only, on a link that was not done: the PO already unlinked, so the line is
+   *  now uncovered. */
+  unlinked_po?: string | null;
 }
