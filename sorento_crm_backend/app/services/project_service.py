@@ -945,6 +945,9 @@ def serialize_projects(
                 "stale_reason": project.stale_reason,
                 "stale_since": project.stale_since,
                 "is_unattended": int(project.stale_level or 0) >= 3,
+                # Whose project it is, from the reader's side (AGENT-PROJECT-SCOPE): the AI panel reads every project a
+                # full-view salesperson may see, and this is how it tells their own rows from everyone else's.
+                "owner_is_viewer": bool(actor_user_id) and project.owner_user_id == actor_user_id,
                 "can_edit": (
                     is_manager
                     or (

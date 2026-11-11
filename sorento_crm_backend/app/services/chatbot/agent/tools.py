@@ -784,13 +784,26 @@ SELF_TOOL_NOTE = (
 #: Crew pass on 2343: "who owns them" was answered by the model counting rows, and 16 full rows do not fit the
 #: result cap, so it counted the rows it could see. The count per owner is computed here from every row.
 COUNT_TOOLS = frozenset({"crm_projects_list"})
-COUNT_NOTE = ' The result carries `count_by_owner` (every matching project): quote it, never count the rows yourself.'
+COUNT_NOTE = (
+    ' The result carries `count_by_owner` (every matching project) and `your_projects` (how many are the asker\'s):'
+    ' quote them, never count the rows yourself. A row is the asker\'s only when `owner_is_viewer` is true.'
+)
 NO_OWNER = "No owner"
 
 
-def with_owner_counts(name: str, data: Any) -> Any:
-    """`data` with `count_by_owner` when the page holds every matching row, else a note saying how to get it."""
-    if name not in COUNT_TOOLS or not isinstance(data, dict) or not isinstance(data.get("data"), list):
+#: An empty read of the asker's own rows ("me"): that IS the answer about their own projects (crew pass on 6aef629d:
+#: the model fell back to an unfiltered list and called another owner's rows the asker's).
+NONE_OF_YOURS = (
+    "The person asking owns none: that is the answer about their own projects. Do not answer it from another read "
+    "or from the screen."
+)
+
+
+def with_owner_counts(name: str, data: Any, *, filtered: bool = False) -> Any:
+    """`data` with `count_by_owner` and `your_projects` (rows whose `owner_is_viewer` is true) when the page holds every
+    matching row, else a note saying how to get them. A read already filtered by owner gets neither: its one owner
+    needs no breakdown, and a breakdown is a figure nobody asked for."""
+    if name not in COUNT_TOOLS or filtered or not isinstance(data, dict) or not isinstance(data.get("data"), list):
         return data
     rows = [r for r in data["data"] if isinstance(r, dict)]
     pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
@@ -809,7 +822,11 @@ def with_owner_counts(name: str, data: Any) -> Any:
         owner = str(row.get("owner_name") or "").strip() or NO_OWNER
         counts[owner] = counts.get(owner, 0) + 1
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return {**data, "count_by_owner": [{"owner": o, "projects": n} for o, n in ordered]}
+    return {
+        **data,
+        "count_by_owner": [{"owner": o, "projects": n} for o, n in ordered],
+        "your_projects": sum(1 for row in rows if row.get("owner_is_viewer") is True),
+    }
 
 
 #: Crew pass on 2343: a project was named by its short name in one answer and its long legal title in the next.
@@ -1560,7 +1577,7 @@ def _dispatch_inner(
     if failure is not None:
         return failure
     # Before the cap below cuts rows: the counts are over every row the route returned.
-    data = with_owner_counts(name, with_project_names(name, data))
+    data = with_owner_counts(name, with_project_names(name, data), filtered=bool(clean.get("owner_user_ids")))
     if tool.render:
         # Fail closed: a presenter tool's result that is not a render envelope has not been
         # through the presenter, so nothing in it can be trusted to be field-scoped.
@@ -1570,7 +1587,7 @@ def _dispatch_inner(
         axis = clean.get("group_by")
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
-        return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
+        return ToolResult("empty", data={"applied_filters": filters}, message=NONE_OF_YOURS if self_ids else NO_ROWS_MESSAGE)
     data, more = cap_result(_tidy_read_data(data))
     _collect_uuids(data, seen)
     message = (

@@ -70,3 +70,18 @@ Fixes (1) and (2) passed. Four more, each with a test in `tests/chatbot/agent/te
   one `name` per project row by the Projects list's rule (short name, else title) and drops `title`, for
   `crm_projects_list` and `crm_project_detail`; `crm_projects_find` returns the same `name`.
 Follow-up (out of scope): conversation history shows "8h ago" for a fresh message (timezone).
+
+## Fix round after the crew pass on 6aef629d (11 Nov)
+Fail: S (owns 0) asked "my projects" with the Projects page open; the "me" read returned 0, then the model listed all
+16 unfiltered and presented another owner's rows and count as S's own (3 of 3 such turns re-listed, 2 of 3 named the
+wrong owner; from the Users page 2 of 2 right). Fixed in the data, not by word lists (owner rule):
+- the projects route says on every row whether the reader owns it (`owner_is_viewer`, `project_service.serialize_projects`,
+  `ProjectResponse`); it survives the MCP slimming;
+- a complete unfiltered list carries `your_projects` (rows the reader owns) beside `count_by_owner`, and the tool
+  description says a row is the asker's only when `owner_is_viewer` is true;
+- an empty "me" read answers `NONE_OF_YOURS` ("The person asking owns none: that is the answer ..."), not the plain
+  "no rows" line;
+- a read filtered by owner carries no `count_by_owner`: one owner needs no breakdown, and it is a figure nobody asked for;
+- the page note's header says a list on screen is what the user can see, not what is theirs (`panel_service.SCREEN_NOT_YOURS`).
+Not fixed by data: unrequested breakdowns in other answers (step 10 per-project, J per-scope totals) rest on the
+answer-scope rule; the live set measures them. Live set: `agent-project-scope-live-set.md` (crew runs it).

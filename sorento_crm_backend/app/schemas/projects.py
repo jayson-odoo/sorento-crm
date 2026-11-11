@@ -397,6 +397,7 @@ class ProjectResponse(BaseModel):
 
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
+    owner_is_viewer: bool = False
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None

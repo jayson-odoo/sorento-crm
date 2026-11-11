@@ -282,3 +282,82 @@ def test_a_the_prompt_the_agent_gets_carries_the_answer_scope_rule(world, princi
     from app.services.chatbot.agent import loop
 
     assert "ANSWER ONLY WHAT WAS ASKED" in loop._system_prompt(world.db, "ZZT User", (), principal)
+
+
+# --- crew pass on 6aef629d: a "my projects" ask with the Projects page open --------------------------
+# S owns 0 projects. The "me" read returned 0 rows; the model then listed all 16 unfiltered and presented another
+# owner's rows (and count) as S's own. The fix is in the data, not in words: every row says whether the viewer owns
+# it, a complete read says how many are the asker's, an empty "me" read says that is the answer, and an
+# owner-filtered read carries no per-owner breakdown to repeat.
+def test_e_every_project_row_says_whether_the_viewer_owns_it(world):
+    rows = {r["id"]: r for r in _list(world, world.owner)["data"]}
+    assert rows[world.mine.id]["owner_is_viewer"] is False
+    assert all(rows[p.id]["owner_is_viewer"] is True for p in world.theirs)
+
+
+def test_e_the_detail_says_it_too(world):
+    body = world.client.get(f"{BASE}/projects/{world.mine.id}", headers=world.ident(world.sales)).json()
+    assert body["owner_is_viewer"] is True
+
+
+def _dispatch_rows(world, args, rows, total=None):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rec = Recorder(result={"data": rows, "pagination": {"total": len(rows) if total is None else total}})
+    with panel_turn(world.sales):
+        return agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, dict(args), call=rec,
+                                    catalog=_list_catalog(), timeout=5.0)
+
+
+def _row(i, owner, mine=False):
+    return {"id": f"p{i}", "project_code": f"PPF{i}", "name": f"ZZT P{i}", "owner_name": owner, "owner_is_viewer": mine}
+
+
+def test_e_a_complete_read_says_how_many_are_the_askers_own(world):
+    rows = [_row(i, "ZZT Oscar") for i in range(8)] + [_row(9, "ZZT Sally", True)]
+    out = _dispatch_rows(world, {}, rows)
+    assert out.data["your_projects"] == 1
+
+
+def test_e_a_complete_read_says_zero_when_none_is_theirs(world):
+    out = _dispatch_rows(world, {}, [_row(i, "ZZT Oscar") for i in range(8)])
+    assert out.data["your_projects"] == 0
+
+
+def test_e_an_owner_filtered_read_carries_no_per_owner_breakdown(world):
+    out = _dispatch_rows(world, {"owner_user_ids": "me"}, [_row(1, "ZZT Sally", True)])
+    assert "count_by_owner" not in out.data
+
+
+def test_e_an_empty_me_read_says_it_is_the_answer(world):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rec = Recorder(result={"data": [], "pagination": {"total": 0}, "empty": True})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, {"owner_user_ids": "me"}, call=rec,
+                                   catalog=_list_catalog(), timeout=5.0)
+    assert out.status == "empty"
+    assert out.message == agent_tools.NONE_OF_YOURS
+
+
+def test_e_an_empty_read_of_someone_else_keeps_the_plain_message(world):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    seen = {world.owner.lower()}
+    rec = Recorder(result={"data": [], "pagination": {"total": 0}, "empty": True})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, {"owner_user_ids": world.owner}, call=rec,
+                                   catalog=_list_catalog(), timeout=5.0, seen_ids=seen)
+    assert out.status == "empty" and out.message == agent_tools.NO_ROWS_MESSAGE
+
+
+def test_e_the_page_note_says_screen_rows_are_not_the_users_own(world):
+    from app.schemas.ai_assistant import PageSnapshotPayload
+    from app.services.chatbot import panel_service
+
+    snap = PageSnapshotPayload(title="Projects", path="/project-sales/projects", visible_text="PPF1 Oscar Owner")
+    _, note = panel_service._page_context(world.db, world.sales, snap)
+    assert panel_service.SCREEN_NOT_YOURS in note
