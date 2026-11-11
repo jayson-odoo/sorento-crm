@@ -216,3 +216,31 @@ describe('TraceView', () => {
     expect(screen.queryByText('crm_inventory_stock_balance_list')).not.toBeInTheDocument();
   });
 });
+
+// TRACE-SIDEBAR crew pass: inside the ~672px side drawer a screen-width `lg:` breakpoint still
+// split the trace into two ~304px columns (span names shrank to nothing). The drawer passes
+// `stacked`: one column there; the full trace page keeps its two columns on a wide screen.
+describe('TraceView layout (TRACE-SIDEBAR)', () => {
+  function renderWith(stacked: boolean | undefined) {
+    useQueryTrace.mockReturnValue({ isLoading: false, isError: false, data: buildTrace() });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <TraceView messageId="msg-1" stacked={stacked} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('stacked (the side drawer): waterfall and span detail are one column at every width', () => {
+    renderWith(true);
+    const panels = screen.getByTestId('trace-panels');
+    expect(panels.className).not.toMatch(/grid-cols-2/);
+    expect(screen.getByTestId('trace-span-io').className).not.toMatch(/lg:flex-row/);
+  });
+
+  it('full page (default): keeps two columns on a wide screen', () => {
+    renderWith(undefined);
+    expect(screen.getByTestId('trace-panels').className).toMatch(/lg:grid-cols-2/);
+    expect(screen.getByTestId('trace-span-io').className).toMatch(/lg:flex-row/);
+  });
+});

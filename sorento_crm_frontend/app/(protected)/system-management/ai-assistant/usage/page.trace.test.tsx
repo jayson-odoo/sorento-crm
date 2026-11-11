@@ -46,7 +46,9 @@ vi.mock('../hooks/useAIUsage', () => ({
   useQueryDetail: () => ok({ reply: 'ok', tools_used: [] }),
 }));
 vi.mock('../components/TraceView', () => ({
-  TraceView: ({ messageId }: { messageId: string }) => <div data-testid="trace-view-stub" data-message={messageId} />,
+  TraceView: ({ messageId, stacked }: { messageId: string; stacked?: boolean }) => (
+    <div data-testid="trace-view-stub" data-message={messageId} data-stacked={String(stacked === true)} />
+  ),
 }));
 
 import AIUsagePage from './page';
@@ -62,7 +64,10 @@ describe('AI Usage View full trace opens in the side drawer (TRACE-SIDEBAR)', ()
     expect(trigger.getAttribute('href')).toBeNull();
     fireEvent.click(trigger);
     const drawer = await screen.findByRole('dialog');
-    expect(within(drawer).getByTestId('trace-view-stub').getAttribute('data-message')).toBe('msg-1');
+    const stub = within(drawer).getByTestId('trace-view-stub');
+    expect(stub.getAttribute('data-message')).toBe('msg-1');
+    // One column in the drawer: the trace is not split by the screen-width breakpoint.
+    expect(stub.getAttribute('data-stacked')).toBe('true');
     expect(push).not.toHaveBeenCalled();
   });
 });

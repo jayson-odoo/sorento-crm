@@ -39,8 +39,8 @@ vi.mock('@/app/(protected)/system-management/chat-history/components/TurnDetailD
 
 // TRACE-SIDEBAR: an old (non-routed) reply's View trace opens its AI trace in a side drawer too.
 vi.mock('@/app/(protected)/system-management/ai-assistant/components/TraceView', () => ({
-  TraceView: ({ messageId }: { messageId: string }) => (
-    <div data-testid="message-trace-stub" data-message={messageId} />
+  TraceView: ({ messageId, stacked }: { messageId: string; stacked?: boolean }) => (
+    <div data-testid="message-trace-stub" data-message={messageId} data-stacked={String(stacked === true)} />
   ),
 }));
 
@@ -493,6 +493,7 @@ describe('AIAssistantBubble: cards for everyone, the trace for admins (AC-22, AC
     expect(trigger.getAttribute('href')).toBeNull();
     fireEvent.click(trigger);
     expect(screen.getByTestId('message-trace-stub').getAttribute('data-message')).toBe('m-old');
+    expect(screen.getByTestId('message-trace-stub').getAttribute('data-stacked')).toBe('true');
     expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
   });
 });
