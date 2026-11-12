@@ -1396,6 +1396,47 @@ class SalesOrderService:
                 continue
             row["plannable_lines"] = int(plannable or 0)
             row["planned_lines"] = int(planned or 0)
+
+        # OI-WHOLE-SO-CANCEL v2: the lines the board admits through a PENDING, unapplied planning
+        # change (a cancelled or deleted SO's lines, which are no longer undecided demand), by the
+        # board's own `_cancelled_pending_change_rows` predicate. Lines already counted above are
+        # left out, so none counts twice. One more grouped query for the page.
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+        from app.models.project_so import ProjectSalesOrderLine
+        from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+        from app.services.scm.demand import demand_qty
+
+        pending = (
+            self.db.query(
+                SalesOrderLine.sales_order_id,
+                func.count(func.distinct(SalesOrderLine.id)),
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .join(
+                PlanningChangeRow,
+                PlanningChangeRow.project_line_id == ProjectSalesOrderLine.id,
+            )
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .filter(
+                SalesOrderLine.sales_order_id.in_(list(by_id)),
+                SalesOrder.status.in_(["open", "closed", "cancelled"]),
+                admitted_to_planning(),
+                (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
+                ~is_undecided_demand(),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                PlanningChangeBatch.applied_at.is_(None),
+            )
+            .group_by(SalesOrderLine.sales_order_id)
+            .all()
+        )
+        for sales_order_id, extra in pending:
+            row = by_id.get(str(sales_order_id))
+            if row is not None:
+                row["plannable_lines"] += int(extra or 0)
         return rows
 
     def with_planning_changes(self, rows: list[dict]) -> list[dict]:
