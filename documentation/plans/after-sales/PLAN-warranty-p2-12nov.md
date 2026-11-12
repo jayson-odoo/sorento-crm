@@ -1,6 +1,6 @@
 # PLAN: After-sales P2, warranty (is this covered?)
 
-Status: plan + mock, waiting for owner approval of the mock. No code. Track: L (new tables, migration, new
+Status: plan + mock v1 (`documentation/mockups/after-sales-p2/index.html`), waiting for owner approval. No code. Track: L (new tables, migration, new
 screens, new permissions). Lane AFTER-SALES-REVIVE, slice P2, own branch `claude/after-sales-p2-warranty`
 and own PR, titled "AFTER-SALES-P2: warranty".
 
