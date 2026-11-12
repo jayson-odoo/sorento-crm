@@ -5,6 +5,7 @@ import type {
   AmendmentCreateBody,
   AmendmentCreated,
   AmendmentDetail,
+  AmendmentPublished,
   AmendmentPreview,
   AmendmentPreviewBody,
   AmendmentRowDecisionInput,
@@ -525,7 +526,7 @@ export async function getAmendment(amendmentId: string): Promise<AmendmentDetail
   return response.json();
 }
 
-export async function publishAmendment(amendmentId: string): Promise<AmendmentDetail> {
+export async function publishAmendment(amendmentId: string): Promise<AmendmentPublished> {
   const response = await apiFetch(`${BASE}/amendments/${amendmentId}/publish`, {
     method: 'POST',
   });

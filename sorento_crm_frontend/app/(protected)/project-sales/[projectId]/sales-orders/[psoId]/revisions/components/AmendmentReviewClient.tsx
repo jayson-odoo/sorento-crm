@@ -426,6 +426,11 @@ function AmendmentSection({
   }
 
   const detail = amendment.data;
+  // The API keeps the rows and the unmatched list under `delta` (the stored envelope).
+  const rows = detail.delta?.rows ?? [];
+  const unmatched = detail.delta?.unmatched ?? [];
+  const from = detail.delta?.from;
+  const to = detail.delta?.to;
 
   return (
     <div className="space-y-4">
@@ -454,21 +459,21 @@ function AmendmentSection({
             {(detail.status ?? 'proposed').replace(/_/g, ' ')}
           </Badge>
         </CardHeader>
-        {detail.reason && (
+        {detail.ocn_reason && (
           <CardContent>
-            <p className="break-words text-sm text-muted-foreground">{detail.reason}</p>
+            <p className="break-words text-sm text-muted-foreground">{detail.ocn_reason}</p>
           </CardContent>
         )}
       </Card>
 
       <AmendmentDeltaSummary
-        rows={detail.rows}
+        rows={rows}
         verbSummary={detail.verb_summary ?? {}}
-        unmatchedCount={(detail.unmatched ?? []).length}
-        fromLabel={detail.from?.label || `version ${detail.from?.version_no ?? ''}`}
-        toLabel={detail.to?.label || `version ${detail.to?.version_no ?? ''}`}
+        unmatchedCount={unmatched.length}
+        fromLabel={detail.from_version_label || from?.label || `version ${from?.version_no ?? ''}`}
+        toLabel={detail.to_version_label || to?.label || `version ${to?.version_no ?? ''}`}
       />
-      <AmendmentDeltaTable rows={detail.rows} onDecide={onDecide} disabled={!canEdit || published} />
+      <AmendmentDeltaTable rows={rows} onDecide={onDecide} disabled={!canEdit || published} />
       <AmendmentAutocountChangeList
         rows={changeList.data?.rows ?? []}
         declinedCount={changeList.data?.declined_count ?? 0}
@@ -477,7 +482,7 @@ function AmendmentSection({
         onExport={onExport}
         update={update}
       />
-      <AmendmentUnmatchedSection unmatched={detail.unmatched ?? []} />
+      <AmendmentUnmatchedSection unmatched={unmatched} />
     </div>
   );
 }

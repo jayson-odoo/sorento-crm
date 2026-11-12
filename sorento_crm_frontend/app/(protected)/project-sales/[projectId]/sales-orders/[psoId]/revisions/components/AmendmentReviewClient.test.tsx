@@ -446,18 +446,45 @@ describe('AmendmentReviewClient', () => {
  * address it by `row_key`, and the compare/create flow is replaced by the amendment itself.
  */
 describe('AmendmentReviewClient, once the amendment is created', () => {
+  /** The backend's `AmendmentDetail` (get_amendment): rows and unmatched under `delta`
+   *  (round 12: the page used to read them at the top level and crashed). `rows` in the
+   *  overrides lands in the delta, as the API carries it. */
   function amendmentDetail(overrides: Record<string, unknown> = {}) {
+    const { rows, ...rest } = overrides as { rows?: unknown[] } & Record<string, unknown>;
+    const { rows: _previewRows, unmatched, from, to, verb_summary } = preview();
     return {
-      ...preview(),
       id: 'am-1',
+      project_sales_order_id: 'so-1',
+      provisional_ref: 'SO-PROV-1',
+      autocount_doc_no: null,
       status: 'proposed',
-      reason: 'Main contractor pushed every date by twelve months.',
+      from_version_kind: 'schedule',
+      from_version_label: 'R1',
+      to_version_label: 'REVISED 1',
+      verb_summary,
+      delta: {
+        from,
+        to,
+        verb_summary,
+        unmatched,
+        phase_summary: [],
+        rows: rows ?? [
+          { ...DATE_ROWS[0], row_key: 'row-1', decision: 'accepted', declined_reason: null },
+          { ...DATE_ROWS[1], row_key: 'row-2', decision: 'accepted', declined_reason: null },
+        ],
+      },
+      accepted_count: 2,
+      declined_count: 0,
+      ocn_id: null,
       ocn_number: 'OCN-000045',
-      rows: [
-        { ...DATE_ROWS[0], row_key: 'row-1', decision: 'accepted', declined_reason: null },
-        { ...DATE_ROWS[1], row_key: 'row-2', decision: 'accepted', declined_reason: null },
-      ],
-      ...overrides,
+      ocn_reason: 'Main contractor pushed every date by twelve months.',
+      ocn_approver_name: null,
+      ocn_approved_at: null,
+      ocn_status: null,
+      ocn_approval_status: null,
+      published_at: null,
+      created_at: '2026-11-12T20:10:00',
+      ...rest,
     };
   }
 
@@ -479,6 +506,25 @@ describe('AmendmentReviewClient, once the amendment is created', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create the amendment' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
   }
+
+  // Round 12 (browser pass 3): the page reads the rows where the API keeps them, under
+  // `delta`. On the old reads (`detail.rows`) this crashed the page in AmendmentDeltaSummary.
+  it('renders the API response as it really is: the rows, the notice and Publish', async () => {
+    getAmendment.mockResolvedValue(
+      amendmentDetail({ ocn_id: 'ocn-1', ocn_status: 'approved', ocn_approval_status: 'approved' }),
+    );
+    getAmendmentAutocountChangeList.mockResolvedValue({ rows: [], declined_count: 0 });
+    await createTheAmendment();
+    const link = await screen.findByRole('link', { name: 'Change notice OCN-000045' });
+    expect(link.getAttribute('href')).toBe('/procurement-management/order-change-notices/ocn-1');
+    expect(screen.getByText('Approved')).toBeInTheDocument();
+    expect(screen.getByTestId('delta-headline')).toBeInTheDocument();
+    expect(screen.getAllByText(DATE_ROWS[0].product_code as string).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Main contractor pushed every date by twelve months.')).toBeInTheDocument();
+    const publish = screen.getByRole('button', { name: 'Publish the amendment' });
+    expect((publish as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/something went wrong/i)).toBeNull();
+  });
 
   // OCN-ORDER-CHANGE-NOTICE round 4 (review B1): the amendment links back to its notice and
   // shows where the notice stands, the word the notice's own pages use.

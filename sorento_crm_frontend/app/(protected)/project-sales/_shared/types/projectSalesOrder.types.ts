@@ -438,24 +438,54 @@ export interface AmendmentCreated {
   verb_summary: Record<string, number>;
 }
 
+/** The stored delta an amendment was written from: the preview's envelope, its rows carrying
+ *  each one's `row_key` and decision. */
+export interface AmendmentDelta {
+  from?: AmendmentVersionRef | null;
+  to?: AmendmentVersionRef | null;
+  verb_summary?: Record<string, number>;
+  rows?: AmendmentDeltaRow[];
+  unmatched?: AmendmentUnmatched[];
+}
+
 /**
- * `GET /amendments/{amendment_id}`. The contract names the route but not its body, so this
- * is the preview shape plus the review state the route must carry to be useful.
+ * `GET /amendments/{amendment_id}` (and the row-decisions PUT), as the backend's
+ * `AmendmentDetail` schema answers it: the rows and the unmatched list live under `delta`,
+ * not at the top level as the preview has them.
  */
-export interface AmendmentDetail extends AmendmentPreview {
+export interface AmendmentDetail {
   id: string;
+  project_sales_order_id?: string;
+  provisional_ref?: string | null;
+  autocount_doc_no?: string | null;
   status?: string | null;
-  reason?: string | null;
-  ocn_id?: string | null;
-  ocn_number?: string | null;
-  ocn_status?: string | null;
-  ocn_approval_status?: string | null;
-  ocn_approver_name?: string | null;
-  created_by_name?: string | null;
-  created_at?: string | null;
-  /** GUESS (section 9.3): counted server-side off `rows[].decision`. */
+  from_version_kind?: string | null;
+  from_version_label?: string | null;
+  to_version_label?: string | null;
+  verb_summary?: Record<string, number>;
+  delta?: AmendmentDelta | null;
   accepted_count?: number;
   declined_count?: number;
+  ocn_id?: string | null;
+  ocn_number?: string | null;
+  /** The notice's reason: for a drafted notice, the reason the amendment was created with. */
+  ocn_reason?: string | null;
+  ocn_approver_name?: string | null;
+  ocn_approved_at?: string | null;
+  ocn_status?: string | null;
+  ocn_approval_status?: string | null;
+  published_at?: string | null;
+  created_at?: string | null;
+}
+
+/** `POST /amendments/{amendment_id}/publish` (`AmendmentPublishResponse`). */
+export interface AmendmentPublished {
+  status: string;
+  sales_order_status: string;
+  provisional_ref: string;
+  applied_rows: number;
+  ocn_number?: string | null;
+  order_inquiry_id?: string | null;
 }
 
 /** `PUT /amendments/{id}/rows` body: one entry per row being decided, keyed by `row_key`. */
