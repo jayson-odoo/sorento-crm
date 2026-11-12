@@ -83,3 +83,22 @@ def test_a_patched_constructor_gets_its_fake_not_a_cached_client(transport):
 
     with patch("app.services.integration_service.httpx.Client", return_value=_Fake()):
         assert _client().get_contact_by_identifier("id:2") == {"fake": True}
+
+
+def test_a_cookie_one_call_got_is_never_sent_on_the_next(monkeypatch):
+    """The per-call client threw cookies away; a shared one must too, or a respond.io / CloudFront Set-Cookie from one
+    workspace's call would ride along on every later call in the process (reviewer, 12 Nov)."""
+    sent: list[str | None] = []
+
+    def handle(self, request):
+        sent.append(request.headers.get("cookie"))
+        return httpx.Response(200, json={"id": 1}, headers={"set-cookie": "zzt_waf=abc; Path=/"}, request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle)
+    http_keepalive.reset()
+    try:
+        _client().get_contact_by_identifier("id:1")
+        _client().get_contact_by_identifier("id:2")
+    finally:
+        http_keepalive.reset()
+    assert sent == [None, None], sent
