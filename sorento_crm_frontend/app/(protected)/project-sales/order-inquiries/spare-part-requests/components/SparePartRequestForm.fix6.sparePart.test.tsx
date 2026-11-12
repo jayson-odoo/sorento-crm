@@ -100,8 +100,6 @@ import * as FormModule from './SparePartRequestForm';
 const SparePartRequestForm = ((FormModule as Record<string, unknown>).SparePartRequestForm ??
   (FormModule as Record<string, unknown>).default) as React.ComponentType<Record<string, unknown>>;
 
-const FIXED = /(?:^|\s)(?:min-)?w-\[(\d+)px\]/;
-
 function mount() {
   cleanup();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
