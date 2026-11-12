@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { useTraceDrawer } from '@/app/(protected)/system-management/chat-history/components/TraceDrawer';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
@@ -774,6 +775,7 @@ function ConversationsCard({
   isLoading: boolean;
 }) {
   const episodes = memory?.episodes;
+  const { openTrace, traceDrawer } = useTraceDrawer();
   const rows = useMemo(() => {
     const openRow = (current: ContactChatbotEpisodeCurrent | null | undefined, console: boolean) =>
       current
@@ -898,11 +900,9 @@ function ConversationsCard({
       isLoading={isLoading}
       listingKey={null}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
-      // Chat History deep-links a turn via `?turn=<id>` (`system-management/chat-history/
-      // page.tsx`) - the same param the Chatbot Console's own trace link already uses,
-      // opened straight into the turn's own drawer rather than searched for in the
-      // WhatsApp message list.
-      rowHref={(row) => `/system-management/chat-history?turn=${row.first_turn_id}`}
+      // TRACE-SIDEBAR (owner 11 Nov): the row opens its first turn in the shared trace
+      // drawer over this contact page, instead of navigating away to Chat History.
+      onRowClick={(row) => openTrace(row.first_turn_id)}
       emptyMessage={
         noAccess
           ? "You do not have permission to view this contact's conversation history."
@@ -925,6 +925,7 @@ function ConversationsCard({
           <DataGridTable />
         </CardTable>
       </Card>
+      {traceDrawer}
     </DataGrid>
   );
 }

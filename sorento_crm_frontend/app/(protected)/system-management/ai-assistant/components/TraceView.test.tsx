@@ -216,3 +216,42 @@ describe('TraceView', () => {
     expect(screen.queryByText('crm_inventory_stock_balance_list')).not.toBeInTheDocument();
   });
 });
+
+// TRACE-SIDEBAR crew pass: inside the ~672px side drawer a screen-width `lg:` breakpoint still
+// split the trace into two ~304px columns (span names shrank to nothing). The drawer passes
+// `stacked`: one column there; the full trace page keeps its two columns on a wide screen.
+describe('TraceView layout (TRACE-SIDEBAR)', () => {
+  function renderWith(stacked: boolean | undefined) {
+    useQueryTrace.mockReturnValue({ isLoading: false, isError: false, data: buildTrace() });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <TraceView messageId="msg-1" stacked={stacked} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('stacked (the side drawer): waterfall and span detail are one column at every width', () => {
+    renderWith(true);
+    const panels = screen.getByTestId('trace-panels');
+    expect(panels.className).not.toMatch(/grid-cols-2/);
+    expect(screen.getByTestId('trace-span-io').className).not.toMatch(/lg:flex-row/);
+  });
+
+  it('a column never grows past its space: a long unbroken span value wraps inside it (crew re-check)', () => {
+    // A grid with no column size takes its content's min-content width, so a ~225-char string
+    // with no spaces pushed the one column to ~1045px in a 623px drawer. grid-cols-1 is
+    // minmax(0, 1fr): the column keeps the space it has and the value wraps inside the panel.
+    for (const stacked of [true, undefined]) {
+      cleanup();
+      renderWith(stacked);
+      expect(screen.getByTestId('trace-panels').className).toMatch(/(^|\s)grid-cols-1(\s|$)/);
+    }
+  });
+
+  it('full page (default): keeps two columns on a wide screen', () => {
+    renderWith(undefined);
+    expect(screen.getByTestId('trace-panels').className).toMatch(/lg:grid-cols-2/);
+    expect(screen.getByTestId('trace-span-io').className).toMatch(/lg:flex-row/);
+  });
+});
