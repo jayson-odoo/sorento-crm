@@ -8,6 +8,8 @@ Open **[Procurement → Purchase Requests](/procurement-management/purchase-requ
 
 The DataGrid lists every purchase request. Filter by **Approval Status** to find the ones waiting on you. The full set of statuses is: **Draft**, **Pending approval**, **Approved**, **Rejected**.
 
+The list has a **Last activity** column: the date and time (for example 12/11/2026, 3:05 pm) of the newest thing a person did on the request. That counts creating it, editing it, changing its status, approving or rejecting it, changing a line, attaching or removing a file, and posting a comment (staff, or the customer through the portal). Background jobs, SLA timers, ERP sync and automations do not count. The list opens sorted by **Last activity**, newest first; click the column header to change the sort, and your choice is kept. To narrow by date, open **Filters** and set the **Last activity** date range.
+
 ## Review
 
 
