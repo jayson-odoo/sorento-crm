@@ -307,6 +307,8 @@ def make_env(monkeypatch):
         try:
             with TestClient(app) as client:
                 env = PasskeyEnv(db, client, monkeypatch)
+                # The real limiter, for the test that proves no per-IP gate runs at all.
+                env.real_hit = rate_limit.hit
 
                 def _fake_hit(bucket, ident, *, limit, window_seconds):
                     env.rate_buckets.append(bucket)

@@ -155,11 +155,43 @@ def test_ac02_options_issue_no_challenge_for_a_refused_origin(env, origin):
     assert "challenge_id" not in res.text
 
 
-def test_ac10_options_are_rate_limited_per_ip(env):
+def test_ac10_options_are_rate_limited_per_ip_when_trusted_proxies_is_set(env, monkeypatch):
+    """AC-10 (review round, M1): the per-IP gate only runs when the IP is the real client."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "trusted_proxies", "127.0.0.0/8")
     env.deny_rate = True
     res = env.sign_in_options(ORIGIN)
     assert res.status_code == 429, res.text
     assert "challenge_id" not in res.text
+
+
+def test_ac10_no_per_ip_gate_when_trusted_proxies_is_unset(env, monkeypatch):
+    """Every request would share the proxy's address, so one caller could 429 every staff
+    sign-in: with `trusted_proxies` unset the options route consults no per-IP limiter."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "trusted_proxies", "")
+    env.deny_rate = True
+    res = env.sign_in_options(ORIGIN)
+    assert res.status_code == 200, res.text
+    assert env.rate_buckets == [], f"per-IP limiter consulted: {env.rate_buckets}"
+
+
+def test_ac10_forty_rapid_options_calls_all_answer_200_without_trusted_proxies(env, monkeypatch):
+    """Against the REAL limiter: 40 calls from one address in a burst are all served."""
+    from app.config import settings
+    from app.services import rate_limit
+    from app.services.queue_service import redis_conn
+
+    monkeypatch.setattr(settings, "trusted_proxies", "")
+    monkeypatch.setattr(rate_limit, "hit", env.real_hit)
+    try:
+        statuses = [env.sign_in_options(ORIGIN).status_code for _ in range(40)]
+    finally:
+        for key in redis_conn.keys("rate_limit:v1:*passkey*"):
+            redis_conn.delete(key)
+    assert statuses == [200] * 40, statuses
 
 
 # --------------------------------------------------------------------------------------
@@ -167,19 +199,21 @@ def test_ac10_options_are_rate_limited_per_ip(env):
 # --------------------------------------------------------------------------------------
 
 
-def test_ac14_verify_is_rate_limited_in_its_own_bucket(env):
+def test_ac14_verify_has_no_per_ip_limit(env, monkeypatch):
+    """AC-14 (review round): verify is called server-to-server by NextAuth; the single-use
+    challenge and the signature bound it, not a per-IP bucket (same as `/phone/verify`).
+    Even with trusted proxies set and every limiter saying no, a valid assertion signs in."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "trusted_proxies", "127.0.0.0/8")
     user, _row, auth = _enabled_user_with_passkey(env)
     challenge_id, challenge = env.sign_in_challenge()
-    options_buckets = set(env.rate_buckets)
-    assert options_buckets, "AC-10: options must go through rate_limit.hit"
 
     env.rate_buckets.clear()
     env.deny_rate = True
     res = env.verify(challenge_id, env.assertion(auth, user, challenge, sign_count=1))
-    assert res.status_code == 429, res.text
-    assert res.headers.get("Retry-After"), "AC-14: 429 carries Retry-After"
-    assert set(env.rate_buckets).isdisjoint(options_buckets), "AC-14: verify has its own bucket"
-    assert [s for s in env.sessions(user.id) if s.auth_method == "passkey"] == []
+    assert res.status_code == 200, res.text
+    assert env.rate_buckets == [], f"verify consulted a per-IP limiter: {env.rate_buckets}"
 
 
 def test_ac14_redis_down_options_fail_closed(env):
@@ -437,3 +471,26 @@ def test_ac15_switching_back_on_makes_the_stored_passkey_work_again(env):
     res = env.verify(challenge_id, env.assertion(auth, user, challenge, sign_count=2))
     assert res.status_code == 200, res.text
     assert env.passkey(row.id).sign_count == 2
+
+
+# --------------------------------------------------------------------------------------
+# AC-29: the assertion's userHandle must name the passkey's owner
+# --------------------------------------------------------------------------------------
+
+
+def test_ac29_user_handle_of_another_user_is_refused(env):
+    from tests._soft_authenticator import user_handle_for
+
+    user, row, auth = _enabled_user_with_passkey(env)
+    other = env.make_user()
+    challenge_id, challenge = env.sign_in_challenge()
+
+    res = env.verify(
+        challenge_id,
+        env.assertion(auth, user, challenge, sign_count=1, user_handle=user_handle_for(other.id)),
+    )
+
+    _assert_refused(env, res, user)
+    assert [s for s in env.sessions(other.id) if s.auth_method == "passkey"] == []
+    pk = env.passkey(row.id)
+    assert pk.sign_count == 0 and pk.last_used_at is None

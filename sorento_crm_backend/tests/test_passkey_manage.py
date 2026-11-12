@@ -761,3 +761,185 @@ def test_ac22_default_name_follows_the_user_agent():
     from app.services.user_session_service import device_label_from_ua
 
     assert device_label_from_ua(IPHONE_SAFARI_UA) == "Safari on iPhone"
+
+
+# --------------------------------------------------------------------------------------
+# AC-27 (review round): a re-check code and a sign-in code are never interchangeable
+# (`portal_otp_codes.purpose`)
+# --------------------------------------------------------------------------------------
+
+
+def _contact_of(env, user):
+    from app.models.access import RespondContact
+
+    return env.db.query(RespondContact).filter(RespondContact.id == user.respond_contact_id).one()
+
+
+def test_ac27_reauth_code_cannot_sign_in_even_with_the_code_requested_marker(env, phone_user):
+    user, digits, _sent = phone_user
+    headers = env.auth(user)
+    assert env.client.post("/api/v1/auth/passkeys/reauth-code", headers=headers).status_code == 200
+    # The sign-in route's own "a code was requested for this number" marker, set the real way.
+    requested = env.client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+    assert requested.status_code == 200, requested.text
+    before = len(env.sessions(user.id))
+
+    res = env.client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": "424242"})
+
+    assert res.status_code == 401, res.text
+    assert len(env.sessions(user.id)) == before
+    # Still a live re-check code: the refusal was the purpose, not a spent or expired code.
+    assert env.register_options(headers, {"phone_code": "424242"}).status_code == 200
+
+
+def test_ac27_reauth_code_cannot_sign_in_with_redis_down(env, phone_user):
+    user, digits, _sent = phone_user
+    headers = env.auth(user)
+    assert env.client.post("/api/v1/auth/passkeys/reauth-code", headers=headers).status_code == 200
+    before = len(env.sessions(user.id))
+
+    # Redis down: the marker check and the attempt counter fail open, so only the stored
+    # code's purpose stands between this code and a session.
+    env.break_redis()
+    res = env.client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": "424242"})
+
+    assert res.status_code == 401, res.text
+    assert len(env.sessions(user.id)) == before
+
+
+def test_ac27_a_phone_sign_in_code_cannot_pass_the_recheck(env, phone_user, monkeypatch):
+    from app.models.portal import PortalOtpCode
+    from app.models.respond_workspace import RespondWorkspace
+    from app.services.portal_service import _hash_otp, _utcnow
+
+    user, _digits, _sent = phone_user
+    headers = env.auth(user)
+    contact = _contact_of(env, user)
+    space_id = env.db.query(RespondWorkspace).filter(RespondWorkspace.id == contact.workspace_id).one().space_id
+    # A live phone SIGN-IN code for the same contact (default purpose), past the send cooldown.
+    env.db.add(
+        PortalOtpCode(
+            contact_id=contact.id,
+            space_id=space_id,
+            code_hash=_hash_otp("555555"),
+            expires_at=_utcnow() + timedelta(minutes=8),
+            created_at=_utcnow() - timedelta(minutes=2),
+        )
+    )
+    env.db.commit()
+    assert env.client.post("/api/v1/auth/passkeys/reauth-code", headers=headers).status_code == 200
+
+    res = env.register_options(headers, {"phone_code": "555555"})
+
+    assert res.status_code == 401, res.text
+    assert res.json().get("code") == "REAUTH_FAILED"
+    assert "challenge_id" not in res.text
+    # The re-check code itself still works.
+    assert env.register_options(headers, {"phone_code": "424242"}).status_code == 200
+
+
+# --------------------------------------------------------------------------------------
+# AC-28: removing a passkey / switching OFF ends the user's passkey sessions
+# --------------------------------------------------------------------------------------
+
+
+def _passkey_sessions(env, user, n=2):
+    from app.services.user_session_service import mint_session
+
+    return [mint_session(env.db, str(user.id), auth_method="passkey").id for _ in range(n)]
+
+
+def _revoked(env, session_ids):
+    from app.models.user_session import UserSession
+
+    env.db.expire_all()
+    rows = env.db.query(UserSession).filter(UserSession.id.in_([str(i) for i in session_ids])).all()
+    return {str(r.id): r.revoked_at is not None for r in rows}
+
+
+def _token_session_id(env, user):
+    from app.models.user_session import UserSession
+
+    token = env.auth(user)["Authorization"].split(" ", 1)[1]
+    return env.db.query(UserSession).filter(UserSession.token == token).one().id
+
+
+def test_ac28_removing_a_passkey_revokes_that_users_passkey_sessions_only(env):
+    me = env.make_user()
+    row, _ = env.seed_passkey(me)
+    headers = env.auth(me)  # a password session, the one doing the removal
+    password_session = _token_session_id(env, me)
+    passkey_sessions = _passkey_sessions(env, me)
+    bystander = env.make_user()
+    bystander_session = _passkey_sessions(env, bystander, n=1)
+
+    _parked, body = _remove(env, headers, row.id)
+
+    assert body["last_outcome"]["status"] == "committed", body
+    assert env.passkey(row.id) is None
+    assert _revoked(env, passkey_sessions) == {str(i): True for i in passkey_sessions}
+    assert _revoked(env, [password_session]) == {str(password_session): False}
+    assert _revoked(env, bystander_session) == {str(bystander_session[0]): False}
+
+
+def test_ac28_switching_off_revokes_passkey_sessions_and_keeps_password_ones(env):
+    editor = env.make_user()
+    env.grant(editor, EDIT)
+    target = env.make_user()
+    env.seed_passkey(target)
+    env.auth(target)
+    password_session = _token_session_id(env, target)
+    passkey_sessions = _passkey_sessions(env, target)
+
+    res = env.client.patch(f"{USERS}/{target.id}/passkey-enabled", json={"enabled": False}, headers=env.auth(editor))
+
+    assert res.status_code == 200, res.text
+    assert _revoked(env, passkey_sessions) == {str(i): True for i in passkey_sessions}
+    assert _revoked(env, [password_session]) == {str(password_session): False}
+    assert len(env.passkeys_of(target.id)) == 1, "AC-15: switching off keeps stored passkeys"
+
+
+# --------------------------------------------------------------------------------------
+# AC-29: stored transports keep only the known values
+# --------------------------------------------------------------------------------------
+
+
+def test_ac29_unknown_transports_are_dropped_on_register(env):
+    me = env.make_user()
+    challenge_id, options = env.register_challenge(me)
+    reg = env.registration(
+        SoftAuthenticator(),
+        options["challenge"],
+        transports=["internal", "bogus", "hybrid", "<script>", "usb", "x" * 300],
+    )
+
+    res = env.register(env.auth(me), challenge_id, reg)
+
+    assert res.status_code == 201, res.text
+    (row,) = env.passkeys_of(me.id)
+    assert list(row.transports or []) == ["internal", "hybrid", "usb"]
+
+
+# --------------------------------------------------------------------------------------
+# AC-24 / AC-20: an admin removing their OWN passkey while viewing as someone else
+# --------------------------------------------------------------------------------------
+
+
+def test_ac24_removal_while_impersonating_is_requested_by_the_real_user(env):
+    from app.models.sla import SlaFormAction
+
+    admin = env.make_admin()
+    target = env.make_user()
+    row, _ = env.seed_passkey(admin, name="Admin key")
+    headers = env.impersonate(admin, target)
+
+    parked = _park(env, headers, row.id)
+
+    assert parked.status_code == 202, parked.text
+    env.db.expire_all()
+    action = env.db.query(SlaFormAction).filter(SlaFormAction.id == parked.json()["id"]).one()
+    assert str(action.requested_by_id) == str(admin.id), "the real user asked, not the viewed-as user"
+
+    body = _lapse_and_poll(env, headers, row.id, parked.json()["id"])
+    assert body["last_outcome"]["status"] == "committed", body
+    assert env.passkey(row.id) is None
