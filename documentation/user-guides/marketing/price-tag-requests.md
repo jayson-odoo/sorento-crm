@@ -25,6 +25,8 @@ leaves your queue.
 1. On the list, use the status filter (**All statuses**, **New**, **Designing**, **Design Ready**,
    **Changes Requested**, **Approved**, **Ready for collection**, **Collected**, **Rejected**,
    **Void**) to find the request, and click the row.
+   The list remembers your sort order and the status filter, per user, and restores them when you
+   come back to it or reload the page. Press the cross on the filter chip to go back to all statuses.
 2. Press **Claim** if nobody owns it yet. Claiming (or being assigned it automatically) moves the
    request to **Designing**, and at that moment the product data on every line is pinned to the
    tags - see [When product data changes](#when-product-data-changes).

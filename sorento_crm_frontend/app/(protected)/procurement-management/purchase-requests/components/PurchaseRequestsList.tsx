@@ -1,8 +1,8 @@
 'use client';
 
 import { APPEALED_LABEL } from '@/lib/submission-status';
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useMemo, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   type Column,
   type ColumnDef,
@@ -39,7 +39,7 @@ import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUserLookup } from '@/services/userSelectService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
-import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
@@ -47,6 +47,7 @@ import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -83,6 +84,23 @@ function getDisplayStatus(row: PurchaseRequest): string {
 }
 
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
+
+/** The listing's shipped default, used until the user has left one behind. */
+const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
+ * LIST-FILTER-MEMORY-4). BUMP whenever `PurchaseRequestsFilters` changes, so a blob written
+ * by the old shape is discarded rather than applied (AC-B4). `request_type` is only read on
+ * the combined list: a single-type page (Purchase Requests, Sponsorship Forms) pins its own.
+ */
+const FILTERS_VERSION = 1;
+
+type PurchaseRequestsFilters = {
+  request_type?: string;
+  approval_status?: string;
+  assigned_to?: string;
+};
 
 /** The single "variable" column between Project Title and Requested By:
  *  Sponsor Subject for sponsorship forms, Purpose for purchase requests
@@ -163,13 +181,11 @@ function StaffPurchaseRequestsList({
   reportPermission,
 }: PurchaseRequestsListProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
   });
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
-  ]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -177,20 +193,52 @@ function StaffPurchaseRequestsList({
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
-  const [requestTypeFilter, setRequestTypeFilter] = useState<string>(
-    requestType ?? '',
-  );
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [assignedToFilter, setAssignedToFilter] = useState<string>('');
 
-  // Back hands the list its own query string back, and the pager keeps
-  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  // The sort and every filter are remembered per user, per listing, the same way Stock
+  // Inquiries and Sales Orders do. `pathname` is the key DataGrid uses for the column
+  // preferences, so Purchase Requests and Sponsorship Forms (one component, two routes)
+  // each keep their own. Page number and search text are deliberately NOT remembered.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<PurchaseRequestsFilters>({
+    listingKey: pathname,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+  const requestTypeFilter = requestType ?? viewFilters?.request_type ?? '';
+  const statusFilter = viewFilters?.approval_status ?? '';
+  const assignedToFilter = viewFilters?.assigned_to ?? '';
+
+  // Merges a change over the current filters, drops empties, resets to page 1. Every filter
+  // control goes through this ONE path, so the chip's Clear and "Clear filters" agree.
+  const applyFilters = useCallback(
+    (partial: Partial<PurchaseRequestsFilters>) => {
+      const merged: PurchaseRequestsFilters = { ...(viewFilters ?? {}), ...partial };
+      const cleaned: PurchaseRequestsFilters = {};
+      if (!requestType && merged.request_type) cleaned.request_type = merged.request_type;
+      if (merged.approval_status) cleaned.approval_status = merged.approval_status;
+      if (merged.assigned_to) cleaned.assigned_to = merged.assigned_to;
+      setViewFilters(Object.keys(cleaned).length ? cleaned : null);
+      setPagination((p) => ({ ...p, pageIndex: 0 }));
+    },
+    [viewFilters, setViewFilters, requestType],
+  );
+
+  const clearFilters = useCallback(() => {
+    setViewFilters(null);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [setViewFilters]);
+
+  // Back hands the list its own query string back, and the pager keeps rewriting it
+  // (S3-01). Only pagination and search are restored from it: sort and filters come from
+  // the remembered view, which already holds what was active when the row was clicked.
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.approval_status ?? '');
-    setAssignedToFilter(state.filters.assigned_to ?? '');
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -214,11 +262,14 @@ function StaffPurchaseRequestsList({
     requestType: effectiveRequestType,
     approvalStatus: effectiveStatusFilter,
     assignedTo: assignedToFilter || undefined,
+    // One fetch, with the remembered view already applied (AC-B3).
+    enabled: !isViewPrefsLoading,
   });
 
-  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
-  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [requestTypeFilter, statusFilter, assignedToFilter, searchQuery]);
+  // Page one when the search CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL. Filter
+  // changes reset the page themselves (`applyFilters`/`clearFilters`).
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   // The whole row opens the record, carrying the list query the pager rebuilds its
   // key from. request_type rides along so a PR pager stays in PRs and an SF one in SFs.
@@ -317,7 +368,7 @@ function StaffPurchaseRequestsList({
         ),
         cell: ({ row }) =>
           row.original.submitted_at
-            ? formatDate(new Date(row.original.submitted_at))
+            ? formatDateInMalaysia(row.original.submitted_at)
             : '-',
         size: 140,
         meta: { headerTitle: 'Submitted date', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -460,6 +511,26 @@ function StaffPurchaseRequestsList({
   const filtersActiveCount =
     (!requestType && requestTypeFilter ? 1 : 0) + (statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0);
 
+  // The chip above the grid that states the remembered filter in plain words, with Clear.
+  const activeFilterLabel = (() => {
+    const parts: string[] = [];
+    const types = requestType
+      ? []
+      : splitMulti(requestTypeFilter).map((v) => REQUEST_TYPE_LABELS[v] ?? 'Selected');
+    if (types.length) parts.push(multiChipLabel('Type', types));
+    const statuses = splitMulti(statusFilter).map(
+      (v) => STATUS_FILTER_OPTIONS.find((o) => o.value === v)?.label ?? 'Selected',
+    );
+    if (statuses.length) parts.push(multiChipLabel('Status', statuses));
+    const assignees = splitMulti(assignedToFilter).map((v) =>
+      v === '__unassigned__'
+        ? 'Unassigned'
+        : assigneeOptions.find((u) => u.id === v)?.name?.trim() || 'Selected',
+    );
+    if (assignees.length) parts.push(multiChipLabel('Assigned to', assignees));
+    return parts.join(', ');
+  })();
+
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
@@ -473,7 +544,7 @@ function StaffPurchaseRequestsList({
     <DataGrid
       table={table}
       recordCount={data?.pagination?.total ?? 0}
-      isLoading={isLoading}
+      isLoading={isLoading || isViewPrefsLoading}
       error={error}
       onRetry={() => void refetch()}
       isPlaceholderData={isPlaceholderData}
@@ -498,6 +569,9 @@ function StaffPurchaseRequestsList({
               kind: 'custom',
               active: filtersActiveCount > 0,
               activeCount: filtersActiveCount,
+              activeSummary: activeFilterLabel
+                ? { label: activeFilterLabel, onClear: clearFilters }
+                : undefined,
               content: (
                 <div className="space-y-4">
                   {!requestType && (
@@ -505,7 +579,7 @@ function StaffPurchaseRequestsList({
                       <Label>Type</Label>
                       <SearchableMultiSelect
                         value={splitMulti(requestTypeFilter)}
-                        onChange={(v) => setRequestTypeFilter(joinMulti(v))}
+                        onChange={(v) => applyFilters({ request_type: joinMulti(v) })}
                         placeholder="Type"
                         triggerClassName="mt-1 w-full"
                         clearable
@@ -520,7 +594,7 @@ function StaffPurchaseRequestsList({
                     <Label>Status</Label>
                     <SearchableMultiSelect
                       value={splitMulti(statusFilter)}
-                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      onChange={(v) => applyFilters({ approval_status: joinMulti(v) })}
                       placeholder="Status"
                       triggerClassName="mt-1 w-full"
                       clearable
@@ -534,7 +608,7 @@ function StaffPurchaseRequestsList({
                     <Label>Assigned to</Label>
                     <SearchableMultiSelect
                       value={splitMulti(assignedToFilter)}
-                      onChange={(v) => setAssignedToFilter(joinMulti(v))}
+                      onChange={(v) => applyFilters({ assigned_to: joinMulti(v) })}
                       placeholder="Assigned to"
                       triggerClassName="mt-1 w-full"
                       clearable
@@ -560,11 +634,7 @@ function StaffPurchaseRequestsList({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          setStatusFilter('');
-                          setAssignedToFilter('');
-                          if (!requestType) setRequestTypeFilter('');
-                        }}
+                        onClick={clearFilters}
                       >
                         Clear filters
                       </Button>
