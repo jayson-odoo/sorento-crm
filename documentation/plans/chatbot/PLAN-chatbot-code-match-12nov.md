@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-CODE-MATCH (stock code matching, close-code offers)
 
-Status: Plan, on hold (card v2 pending owner approval; no build until his go). Track: size M, lead pattern, cloud lane.
+Status: Parked by the owner 12 Nov ~16:15 (full chatbot plan first); card v2 committed, no build. Track: size M, lead pattern, cloud lane.
 
 Lane brief: owner 12 Nov 2026. Goal: fewer stock "Couldn't find" replies, no wrong answers.
 Code lookup change in the tool/resolver layer only; no parser prompt change.
