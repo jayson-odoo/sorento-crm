@@ -314,14 +314,15 @@ def _declare_approval_chain(
 
 
 _declare_approval_chain("pr", PR_TYPES, _get_request, _pr_service, "request_id")
-# OCN-ORDER-CHANGE-NOTICE: the order change notice's Done also stores the CS comment.
+# OCN-ORDER-CHANGE-NOTICE: the order change notice's decision also stamps its approver id, and
+# its Done stores the CS comment, so an undo restores those too.
 _declare_approval_chain(
     "ocn",
     OCN_TYPES,
     _get_ocn,
     _ocn_service,
     "ocn_id",
-    extra_columns={"finalize": ("cs_comment",)},
+    extra_columns={"approval_decision": ("approver_id",), "finalize": ("cs_comment",)},
 )
 
 # --------------------------------------------------------------------------------------
