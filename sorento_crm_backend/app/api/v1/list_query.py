@@ -21,7 +21,12 @@ from app.schemas.list_query import (
     UserListColumnConfigResponse,
 )
 from app.schemas.saved_view import SavedView, SavedViewCreate, SavedViewPublish, SavedViews
-from app.services.error_handler import AppException, handle_internal_error, handle_not_found
+from app.services.error_handler import (
+    AppException,
+    handle_internal_error,
+    handle_not_found,
+    handle_unprocessable,
+)
 from app.services.list_query_export_service import ListQueryExportService
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_registry import get_adapter, require_adapter
@@ -34,6 +39,7 @@ from app.services.workflow_submission_dynamic_list_query import (
     get_published_schema_for_definition,
 )
 from app.utils.heavy_work import heavy
+from app.utils.list_search import search_values
 
 router = APIRouter()
 
@@ -386,6 +392,15 @@ def field_options(
     }
 
 
+def _clean_quick_search(body: ListSearchRequest | ListExportRequest) -> None:
+    """`orders` reads several search values (SEARCH-CHIPS), capped and cleaned by
+    `search_values` (a 422 otherwise); every other resource still takes one string."""
+    if body.resource == "orders":
+        body.quick_search = search_values(body.quick_search, "Search")
+    elif isinstance(body.quick_search, list):
+        raise handle_unprocessable("Search: this list takes one value")
+
+
 @router.post("/search")
 def advanced_search(
     body: ListSearchRequest,
@@ -404,6 +419,7 @@ def advanced_search(
     if body.sort and body.sort in _cost_fields_hidden(db, current_user["id"], body.resource):
         body.sort = None
     _refuse_cost_fields(db, current_user["id"], body.resource, _filter_keys(body.filter))
+    _clean_quick_search(body)
     _t1 = time.perf_counter() if _profile else 0.0
     try:
         result = ListQuerySearchService(db).search(body)
@@ -464,6 +480,7 @@ def export_rows(
             current_user["id"], "finance.billing_documents.view"
         ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    _clean_quick_search(body)
     try:
         rows = ListQueryExportService(db).export_rows(body)
     except ValueError as e:
