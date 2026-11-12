@@ -242,7 +242,7 @@ export function useMoveFiles() {
             </Button>
           )}
           <Button onClick={() => choose('rename')} disabled={!forAll && !trimmed}>
-            {forAll ? 'Keep both' : 'Rename'}
+            {forAll ? 'Rename all' : 'Rename'}
           </Button>
         </DialogFooter>
       </DialogContent>

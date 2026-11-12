@@ -61,7 +61,7 @@ A folder can hold only one file with a given name. Before anything moves, the sy
 | **Skip** | The file stays where it is. |
 | **Cancel** | The whole move is cancelled: nothing moves, not even the files without a clash. Closing the window or pressing Esc does the same. |
 
-Tick **Apply to all … remaining conflicts** to give the same answer to every other clash at once; no more windows open. The buttons then read **Keep both**, **Skip all** and **Replace all**. With **Keep both**, each file keeps its own name with a number added, for example `photo (1).jpg` (or `(2)` when `(1)` is already taken). Untick the box to type a name for the file the window is showing.
+Tick **Apply to all … remaining conflicts** to give the same answer to every other clash at once; no more windows open. The buttons then read **Rename all**, **Skip all** and **Replace all**. With **Rename all**, each file keeps its own name with a number added, for example `photo (1).jpg` (or `(2)` when `(1)` is already taken). Untick the box to type a name for the file the window is showing.
 
 When the move is done, one message sums it up, for example: *6 moved, 3 renamed, 1 replaced. 1 skipped: photo.jpg.*
 
