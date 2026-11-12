@@ -47,6 +47,8 @@ class RelatedType:
     #: (me, access) -> a select of kind, id, number, status, approval_status, date, raised_by,
     #: subject, value. With access "own" it narrows to the viewer's own rows.
     select: Callable[[Me, str], Any]
+    #: The record's own page, "{id}" filled in (the assistant's row link); "" = no link.
+    screen_path: str = ""
 
 
 RELATED_TYPES: "OrderedDict[str, RelatedType]" = OrderedDict()
@@ -154,19 +156,28 @@ def _register_builtin_types() -> None:
     from app.models.procurement import PurchaseRequestHeader, StockInquiry
 
     for rt in (
-        RelatedType("stock_inquiry", "Stock Inquiry", "stock_inquiry", StockInquiry, _stock_inquiry_select),
-        RelatedType("complaint", "Complaint", "complaint", Complaint, _complaint_select),
+        RelatedType(
+            "stock_inquiry", "Stock Inquiry", "stock_inquiry", StockInquiry, _stock_inquiry_select,
+            "/procurement-management/stock-inquiries/{id}",
+        ),
+        RelatedType(
+            "complaint", "Complaint", "complaint", Complaint, _complaint_select,
+            "/complaint-management/complaints/{id}",
+        ),
         RelatedType(
             "purchase_request", "Purchase request", "purchase_request", PurchaseRequestHeader,
             _request_select("purchase_request", "project_title"),
+            "/procurement-management/purchase-requests/{id}",
         ),
         RelatedType(
             "sponsorship_form", "Sponsorship form", "sponsorship_form", PurchaseRequestHeader,
             _request_select("sponsorship_form", "purpose"),
+            "/procurement-management/sponsorship-forms/{id}",
         ),
         RelatedType(
             "new_product_application", "New product application", "new_product_application",
             NewProductApplication, _npa_select,
+            "/procurement-management/new-product-applications/{id}",
         ),
     ):
         register_related_type(rt)
@@ -290,6 +301,62 @@ def list_related_records(
         "types": types_out,
         "statuses": statuses_out,
     }
+
+
+# ------------------------------------------------------------------ the assistant
+
+
+def assistant_rows(db: Session, user_id: str, own_only: bool, _date_from, _date_to, *, limit: int) -> List[dict]:
+    """The assistant's `project_related_record` rows (PROJECT-RELATED-RECORDS AC-E1): every record
+    linked to a project this user may read, under the same per-type rules as the Related tab, with
+    the project's code and title so "what is linked to PS26-0001" filters on them. `own_only` =
+    the user holds only `projects.projects.view_own`: their own projects (`own_scope.project_clause`).
+    Newest first; no date window (a project's records span years)."""
+    from app.models.base import get_company_scope
+    from app.models.projects import Project
+    from app.services.company_scope import build_company_predicate
+    from app.services.user_service import UserPermissionService
+
+    me = own_scope.me(db, user_id)
+    visible = visible_types(UserPermissionService(db).get_user_permission_slugs(user_id))
+    if not visible:
+        return []
+    company = build_company_predicate(Project, get_company_scope(db))
+    selects = []
+    for rt, access in visible:
+        sel = (
+            rt.select(me, access)
+            .join(Project, Project.id == rt.model.project_id)
+            .add_columns(Project.project_code.label("project_code"), Project.title.label("project_title"))
+        )
+        if company is not None:
+            sel = sel.where(company)
+        if own_only:
+            sel = sel.where(own_scope.project_clause(me))
+        selects.append(sel)
+    rows = union_all(*selects).subquery("linked")
+    result = db.execute(
+        select(rows).order_by(rows.c.date.desc().nulls_last(), rows.c.number, rows.c.id).limit(limit)
+    ).mappings().all()
+    types = {rt.kind: rt for rt, _ in visible}
+    out = []
+    for r in result:
+        rt = types.get(r["kind"])
+        out.append({
+            "id": str(r["id"]),
+            "path": rt.screen_path.format(id=r["id"]) if rt and rt.screen_path else "",
+            "type": rt.label if rt else r["kind"],
+            "number": r["number"],
+            "status": r["status"],
+            "approval_status": r["approval_status"],
+            "date": r["date"],
+            "raised_by": r["raised_by"],
+            "subject": r["subject"],
+            "value": r["value"],
+            "project_code": r["project_code"],
+            "project_title": r["project_title"],
+        })
+    return out
 
 
 # ------------------------------------------------------------------ set the link (D2)
