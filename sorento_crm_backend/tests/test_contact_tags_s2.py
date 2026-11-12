@@ -53,6 +53,7 @@ AGENTS_EDIT = "user_management.access_agents.edit"
 STOCK_EDIT = "inventory.stock.edit"
 OUTBOUND_EDIT = "system.respond_workspaces.edit"
 COST = "purchase_orders.cost"
+SELLABLE = "inventory.sellable"
 
 
 @pytest.fixture
@@ -368,10 +369,12 @@ def test_current_agents_allow_and_deny(client, db):
 
 
 def test_current_field_reveal_granted_row_matches(client, db):
-    tag = _stag(client, db, {"field_reveals": {COST: True}})
+    # COST-ACCESS-UNIFIED: the cost key follows the linked user's permission now, so the stored-row
+    # case is pinned on a key that still follows its stored row.
+    tag = _stag(client, db, {"field_reveals": {SELLABLE: True}})
     contact = _holder(client, db, [tag])
     assert _read(client, contact)["status"] == "differs"
-    db.add(ContactFieldReveal(respond_contact_id=contact.id, field_key=COST, granted=True))
+    db.add(ContactFieldReveal(respond_contact_id=contact.id, field_key=SELLABLE, granted=True))
     db.flush()
     assert _read(client, contact)["status"] == "matches"
 
@@ -470,3 +473,105 @@ def test_t4_5_tag_differs_count_equals_the_list_filter_total(client, db):
     assert client.get(f"{TAGS}/{tag['id']}").json()["differs_count"] == 2
     listed = {r["id"]: r for r in client.get(TAGS, params={"limit": 1000}).json()["data"]}
     assert listed[tag["id"]]["differs_count"] == 2
+
+
+# ---------------------------------------------------------------- COST-ACCESS-UNIFIED: tags drop the cost key
+# The cost key follows the linked user's `products.cost.view` (AC-6, Q1 a). A tag no longer offers it,
+# no longer writes it, no longer counts it toward Matches / Differs. Tag settings that still name it
+# (stored before the change) are seeded with raw SQL, as the other tests here seed settings.
+
+COST_PERM = "products.cost.view"
+
+
+def _cost_rows(db, contact) -> list[tuple[str, bool]]:
+    db.expire_all()
+    return sorted(
+        (r.field_key, bool(r.granted))
+        for r in db.query(ContactFieldReveal).filter(
+            ContactFieldReveal.respond_contact_id == str(contact.id), ContactFieldReveal.field_key == COST
+        )
+    )
+
+
+def test_cost_unified_tag_settings_catalog_does_not_offer_the_cost_key(client, db):
+    resp = client.get(f"{TAGS}/settings-catalog")
+    assert resp.status_code == 200, resp.text
+    values = {o["value"] for o in resp.json()["field_reveals"]}
+    assert COST not in values
+    assert SELLABLE in values  # the rest of the options are intact
+
+
+def test_cost_unified_a_tag_save_naming_the_cost_key_is_refused_as_an_unknown_reveal(client, db, all_perms):
+    """Chosen shape: the existing validator (`_v_bool_map(_reveal_keys)`) already answers an unknown
+    key with 422, so the retired key is refused rather than silently dropped."""
+    resp = client.post(TAGS, json={"name": f"ZZT {unique_code('tag')}", "settings": {"field_reveals": {COST: True}}})
+    assert resp.status_code == 422, resp.text
+    assert COST in resp.text
+    ok = client.post(TAGS, json={"name": f"ZZT {unique_code('tag')}", "settings": {"field_reveals": {SELLABLE: True}}})
+    assert ok.status_code == 201, ok.text
+    patched = client.patch(f"{TAGS}/{ok.json()['id']}", json={"settings": {"field_reveals": {SELLABLE: True, COST: True}}})
+    assert patched.status_code == 422, patched.text
+
+
+def test_cost_unified_applying_a_tag_that_names_cost_writes_no_cost_row(client, db, all_perms):
+    tag = _stag(client, db, {"field_reveals": {COST: True, SELLABLE: True}})
+    contact = _holder(client, db, [tag])
+    resp = client.post(f"{CONTACTS}/bulk-apply-tag-settings", json={"contact_ids": [str(contact.id)], "dry_run": False})
+    assert resp.status_code == 200, resp.text
+    assert _cost_rows(db, contact) == []
+    assert not [c for row in resp.json()["results"] for c in row["changes"] if c.get("key") == COST], resp.text
+    # the apply itself still ran for the other key
+    assert (SELLABLE, True) in [
+        (r.field_key, bool(r.granted)) for r in db.query(ContactFieldReveal).filter_by(respond_contact_id=str(contact.id))
+    ]
+
+
+def test_cost_unified_applying_a_tag_that_names_cost_leaves_an_existing_cost_row_alone(client, db, all_perms):
+    tag = _stag(client, db, {"field_reveals": {COST: True, SELLABLE: True}})
+    contact = _holder(client, db, [tag])
+    db.add(ContactFieldReveal(respond_contact_id=str(contact.id), field_key=COST, granted=False))
+    db.flush()
+    resp = client.post(f"{CONTACTS}/bulk-apply-tag-settings", json={"contact_ids": [str(contact.id)], "dry_run": False})
+    assert resp.status_code == 200, resp.text
+    assert _cost_rows(db, contact) == [(COST, False)]
+
+
+def test_cost_unified_a_contact_without_a_cost_user_is_not_drifted_by_the_cost_key(client, db):
+    tag = _stag(client, db, {"field_reveals": {COST: True, SELLABLE: True}})
+    contact = _holder(client, db, [tag])
+    db.add(ContactFieldReveal(respond_contact_id=str(contact.id), field_key=SELLABLE, granted=True))
+    db.flush()
+    body = _read(client, contact)
+    assert body["status"] == "matches", body
+    assert not [i for i in body["items"] if COST in str(i.get("key") or "")], body["items"]
+
+
+def test_cost_unified_a_contact_with_a_cost_user_is_not_drifted_by_the_cost_key(client, db, perms):
+    from tests._cost_viewer_seed import link_user
+
+    perms["granted"].add(COST_PERM)  # the mocked check answers for every user: the linked user holds it
+    tag = _stag(client, db, {"field_reveals": {COST: False, SELLABLE: True}})  # the tag says "off", the user says "on"
+    contact = _holder(client, db, [tag])
+    link_user(db, str(contact.id))
+    db.add(ContactFieldReveal(respond_contact_id=str(contact.id), field_key=SELLABLE, granted=True))
+    db.flush()
+    body = _read(client, contact)
+    assert body["status"] == "matches", body
+    assert not [i for i in body["items"] if COST in str(i.get("key") or "")], body["items"]
+
+
+def test_stored_cost_key_on_a_tag_is_never_served_and_the_served_copy_saves_back(client, db, all_perms):
+    """A tag stored before the cost key was retired still names it in the database. The list and the
+    detail serve it without the key, and a save that echoes back exactly what was served is accepted."""
+    tag = _stag(client, db, {"field_reveals": {COST: True, SELLABLE: True}})
+    listed = client.get(TAGS + "/", params={"limit": 1000})
+    assert listed.status_code == 200, listed.text
+    row = next(r for r in listed.json()["data"] if r["id"] == tag["id"])
+    assert row["settings"] == {"field_reveals": {SELLABLE: True}}
+    detail = client.get(f"{TAGS}/{tag['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["settings"] == {"field_reveals": {SELLABLE: True}}
+    assert COST not in detail.text
+    echoed = client.patch(f"{TAGS}/{tag['id']}", json={"settings": detail.json()["settings"]})
+    assert echoed.status_code == 200, echoed.text
+    assert COST not in echoed.text
