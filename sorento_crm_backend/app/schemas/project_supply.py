@@ -498,6 +498,8 @@ class ConfirmedLine(BaseModel):
 
 
 class CancelledLineEcho(BaseModel):
+    #: The mirror line the entry is about, so the board can match it to the line it posted.
+    project_line_id: Optional[str] = None
     line_no: Optional[int] = None
     so_line_no: Optional[int] = None
     item_code: Optional[str] = None

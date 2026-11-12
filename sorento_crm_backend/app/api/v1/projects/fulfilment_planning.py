@@ -1612,7 +1612,12 @@ def _confirm_with_possible_rejects(
         ]
         body["planning_change_applied"] = bool(applied_now)
         body["lines_retired"] = [
-            {"line_no": row.line_no, "item_code": row.item_code}
+            {
+                "line_no": row.line_no,
+                "item_code": row.item_code,
+                # The board matches each posted line to the result by this id.
+                "project_line_id": str(row.project_line_id) if row.project_line_id else None,
+            }
             for row in sorted(applied_now, key=lambda r: r.line_no or 0)
             if row.kind == "cancelled"
         ]

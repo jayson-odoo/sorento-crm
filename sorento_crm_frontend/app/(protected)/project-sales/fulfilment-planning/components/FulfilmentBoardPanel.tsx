@@ -3624,7 +3624,11 @@ export function FulfilmentBoardPanel({
                       );
                     }
                     const posted = postedLines[result.pso_id] ?? [];
-                    const echoed = new Set(result.lines_confirmed.map((line) => line.project_line_id));
+                    // A saved cancel comes back retired, not confirmed (F2): both count as done.
+                    const echoed = new Set([
+                      ...result.lines_confirmed.map((line) => line.project_line_id),
+                      ...(result.lines_retired ?? []).map((line) => line.project_line_id),
+                    ]);
                     // A posted line the server did not name. Comparing lengths would flag a
                     // planning-change echo that carries lines the board never posted.
                     const missing = posted.filter((line) => !echoed.has(line.project_line_id));

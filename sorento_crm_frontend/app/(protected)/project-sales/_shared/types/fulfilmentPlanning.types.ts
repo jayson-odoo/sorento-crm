@@ -685,6 +685,8 @@ export interface CancelledLineBody {
 
 /** A line a press transferred to Cancel SO, as the server echoes it. */
 export interface CancelledLineEcho {
+  /** The mirror line this entry is about (set on `lines_retired`). */
+  project_line_id?: string | null;
   line_no?: number | null;
   /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
   so_line_no?: number | null;
