@@ -820,3 +820,68 @@ def test_failure_to_write_a_success_row_returns_http_error_and_stops(db, factory
     actions = [{"kind": "send_message", "text": "first"}, _NEXT]
     assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_HTTP_ERROR
     assert fake.names() == ["send_message"], "no later step once a send cannot be recorded"
+
+
+# --------------------------------------------------------------------------- #
+# Round 5 R1: the lookup window starts at the ORIGINAL attempt, whatever happens in between
+# --------------------------------------------------------------------------- #
+
+
+class _Died(BaseException):
+    """The process dying mid-request: not an Exception, so nothing in the sender catches it."""
+
+
+def _as_utc(value):
+    from datetime import datetime, timezone
+
+    dt = value if not isinstance(value, str) else datetime.fromisoformat(value)
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _age_turn_rows(db, turn_id, hours=1):
+    from datetime import timedelta
+
+    from app.models.integration import IntegrationLog
+
+    delta = timedelta(hours=hours)
+    for row in db.query(IntegrationLog).filter(IntegrationLog.business_id == turn_id).all():
+        row.created_at = row.created_at - delta
+        body = json.loads(row.request_payload)
+        if "attempted_at" in body:
+            body["attempted_at"] = (_as_utc(body["attempted_at"]) - delta).isoformat()
+        row.request_payload = json.dumps(body)
+    db.commit()
+
+
+def test_r1_a_failed_lookup_does_not_make_the_original_message_unfindable(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    # The request was stamped, respond.io delivered it, and the process died before any result.
+    with pytest.raises(_Died):
+        _run(factory, turn_id, _ONE, FakeClient(always=_Died()))
+    _age_turn_rows(db, turn_id)  # an hour passes
+
+    # Try again, the lookup raises.
+    assert _run(factory, turn_id, _ONE, FakeClient(lookup=httpx.ConnectError("down"))) == direct_ingress.SEND_TIMEOUT
+    # Try again, the lookup works and returns the message created at the original attempt.
+    third = FakeClient(lookup=[_outgoing_text("Hello customer", age_seconds=3600)])
+    assert _run(factory, turn_id, _ONE, third) == direct_ingress.SEND_OK
+    assert third.calls == [], "found in the conversation: it must not be sent again"
+
+
+def test_r1_the_rows_carry_the_original_attempt_time_unchanged_by_later_lookups(db, factory, turn_id):
+    from app.models.integration import IntegrationLog
+
+    with pytest.raises(_Died):
+        _run(factory, turn_id, _ONE, FakeClient(always=_Died()))
+    _age_turn_rows(db, turn_id)
+    bodies = [json.loads(r.request_payload) for r in db.query(IntegrationLog).filter(IntegrationLog.business_id == turn_id)]
+    assert bodies and all("attempted_at" in b for b in bodies), "the stamp must carry an ISO attempted_at"
+    original = _as_utc(bodies[0]["attempted_at"])
+
+    _run(factory, turn_id, _ONE, FakeClient(lookup=httpx.ConnectError("down")))
+    _run(factory, turn_id, _ONE, FakeClient(lookup=[_outgoing_text("Hello customer", age_seconds=3600)]))
+    rows = db.query(IntegrationLog).filter(IntegrationLog.business_id == turn_id).all()
+    assert rows
+    for row in rows:
+        assert _as_utc(json.loads(row.request_payload)["attempted_at"]) == original

@@ -722,7 +722,7 @@ def test_t5_crm_try_again_leaves_the_trace_note_and_the_audit_row(
 
     audit = (
         db.query(IntegrationLog)
-        .filter(IntegrationLog.business_id == turn_id, IntegrationLog.integration_channel == "n8n")
+        .filter(IntegrationLog.business_id == turn_id, IntegrationLog.endpoint.like("%/retry"))
         .all()
     )
     assert len(audit) == 1
@@ -957,3 +957,164 @@ def test_t7_unknown_outcome_with_a_failed_lookup_still_ends_at_send_unconfirmed(
     assert len(fake_respond["client"].calls) == 1
     assert row.status == "failed"
     assert row.stage == inbox_queue.SEND_UNCONFIRMED_STAGE
+
+
+# --------------------------------------------------------------------------- #
+# Round 5
+# --------------------------------------------------------------------------- #
+
+
+def _drain_turn(db, factory, monkeypatch, turn_id, claimed_at, run_turn):
+    from app.services.chatbot import direct_ingress, engine, inbox_queue
+
+    monkeypatch.setattr(direct_ingress, "_lookup_contact", lambda d, c: {"id": c, "custom_fields": []})
+    monkeypatch.setattr(inbox_queue, "_routed_to_agent", lambda *a, **k: None)
+    monkeypatch.setattr(inbox_queue, "RESEND_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr(engine, "run_turn", run_turn)
+    inbox_queue._run_row(turn_id, claimed_at, CONTACT, factory)
+    db.expire_all()
+    return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+
+
+# R2 ------------------------------------------------------------------------ #
+
+
+def test_r2_a_sent_failure_reply_does_not_swallow_the_real_answers_first_part(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from datetime import datetime
+
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id, claimed_at = _claimed_row(db)
+
+    def boom(*a, **k):
+        raise RuntimeError("engine blew up")
+
+    _drain_turn(db, factory, monkeypatch, turn_id, claimed_at, boom)
+    first = fake_respond["client"]
+    assert [c[1][1] for c in first.calls if c[0] == "send_message"] == [CHATBOT_REPLY_TURN_FAILED]
+
+    # The row is recovered and the engine now answers.
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+    row.status, row.stage, row.error = "processing", "received", None
+    row.started_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    second = FakeClient()
+    fake_respond["client"] = second
+    _drain_turn(
+        db, factory, monkeypatch, turn_id, row.started_at,
+        lambda *a, **k: _answer([{"kind": "send_message", "text": "The real answer"}]),
+    )
+    assert [c[1][1] for c in second.calls if c[0] == "send_message"] == ["The real answer"]
+
+
+# R3 ------------------------------------------------------------------------ #
+
+
+def test_r3_try_again_with_an_unrecorded_send_says_not_confirmed_and_ignores_older_reasons(
+    api, db, workspace, fake_respond, session_patch, monkeypatch
+):
+    from app.services.integration_service import IntegrationLogService
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id = _failed_crm_turn(db)  # step 0.0 confirmed; 0.1 still to send
+    db.add(
+        IntegrationLog(
+            integration_channel="chatbot_sender",
+            business_table="chatbot.turns",
+            business_id=turn_id,
+            direction="outbound",
+            endpoint="respond.io:send_message",
+            http_method="POST",
+            request_payload=json.dumps({"sender": "crm", "step": "0.1", "kind": "send_message"}),
+            status="failed",
+            status_code=400,
+            error_message="OLD-REASON respond.io refused the request (HTTP 400).",
+        )
+    )
+    db.commit()
+
+    original = IntegrationLogService.create_integration_log
+
+    def flaky(self, data, *a, **k):
+        if data.status == "success":
+            raise RuntimeError("log table unavailable")
+        return original(self, data, *a, **k)
+
+    monkeypatch.setattr(IntegrationLogService, "create_integration_log", flaky)
+
+    resp = api.post(f"{TURNS_BASE}/{turn_id}/retry")
+    assert resp.status_code == 502, resp.text
+    assert "not confirmed" in resp.text.lower()
+    assert "was not sent" not in resp.text.lower()
+    assert "OLD-REASON" not in resp.text
+
+
+# R4 ------------------------------------------------------------------------ #
+
+
+def test_r4_the_24_hour_limit_counts_from_when_the_turn_was_created(
+    api, db, workspace, fake_respond, session_patch
+):
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id = _failed_crm_turn(db)
+    db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).update(
+        {ChatbotTurn.created_at: func.now() - timedelta(hours=25), ChatbotTurn.finished_at: func.now()},
+        synchronize_session=False,
+    )
+    db.commit()
+    _assert_refused_without_sending(api, db, turn_id, fake_respond["client"])
+
+
+def test_r4_a_turn_created_two_hours_ago_may_be_retried(api, db, workspace, fake_respond, session_patch):
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id = _failed_crm_turn(db)
+    db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).update(
+        {ChatbotTurn.created_at: func.now() - timedelta(hours=2), ChatbotTurn.finished_at: func.now()},
+        synchronize_session=False,
+    )
+    db.commit()
+    resp = api.post(f"{TURNS_BASE}/{turn_id}/retry")
+    assert resp.status_code == 200, resp.text
+
+
+# R5 ------------------------------------------------------------------------ #
+
+
+def test_r5_n8n_mode_an_engine_that_raises_sends_nothing_through_the_crm_sender(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    _settings(db, chatbot_reply_sender_mode="n8n")
+    post = MagicMock()
+    monkeypatch.setattr(httpx, "post", post)
+    turn_id, claimed_at = _claimed_row(db)
+
+    def boom(*a, **k):
+        raise RuntimeError("engine blew up")
+
+    _drain_turn(db, factory, monkeypatch, turn_id, claimed_at, boom)
+    assert fake_respond["client"].calls == []
+    rows = db.query(IntegrationLog).filter(IntegrationLog.business_id == turn_id).all()
+    assert [r for r in rows if '"sender": "crm"' in (r.request_payload or "")] == []
+
+
+# R6 ------------------------------------------------------------------------ #
+
+
+def test_r6_the_crm_try_again_audit_row_does_not_claim_the_n8n_channel(
+    api, db, workspace, fake_respond, session_patch
+):
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id = _failed_crm_turn(db)
+    assert api.post(f"{TURNS_BASE}/{turn_id}/retry").status_code == 200
+    audit = (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_id == turn_id, IntegrationLog.endpoint.like("%/retry"))
+        .all()
+    )
+    assert len(audit) == 1
+    assert audit[0].integration_channel != "n8n"
+    assert "crm_sender" in audit[0].integration_channel
