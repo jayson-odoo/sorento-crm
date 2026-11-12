@@ -72,7 +72,7 @@ Required: `ps_number`, `customer`, `po_number`. Header aliases are seeded for th
   - `project_and_po_created`, `po_added`, `no_project_name`, `placeholder`, `other_year`, `cancelled`, `mapped_skip`;
   - `project_unmapped`, `customer_unmapped`, `developer_unmapped`, `customer_conflict`, `customer_same_shop_so_used`, `developer_conflict`, `registration_lock`, `po_number_taken`, `so_on_other_project`;
   - `ps_duplicate_in_file`, `ps_duplicate_in_crm`, `changed_in_file`, `so_linked`, `so_not_synced`, `po_number_numeric`;
-  - `date_other_year`, `date_other_month`, `owner_defaulted`, `clash_check_skipped`, `missing_header`, `revert_kept_edited`.
+  - `developer_exists`, `date_other_year`, `date_other_month`, `owner_defaulted`, `clash_check_skipped`, `missing_header`, `revert_kept_edited`.
 - Task `process_project_import(job_id)` in `app/tasks/import_tasks.py`: calls `service.apply`. Restart the worker after editing it.
 - The run is the audit actor: `stamp_actor(AuditActor(actor_type="user", user_id=..., job_id=run id))` (`app/audit_context.py:70`).
 - Revert in the gear menu: register the record action `project_import_run.revert` in `app/services/record_actions.py` and park it through the existing `POST /api/v1/pending-actions` (`app/api/v1/system/pending_actions.py`). The handler calls `service.revert`.

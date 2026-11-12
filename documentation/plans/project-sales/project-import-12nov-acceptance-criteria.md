@@ -84,6 +84,11 @@ Terms:
   - "create" makes exactly one developer party per line, named as the line's text, and rewrites the line to link;
   - "none" gives no developer.
   - Rows of one new project whose developer lines differ are `needs_review: developer_conflict`.
+- AC-PI-23a: A "create" developer line whose name an active party already carries is never linked to that party silently. This would happen because `create_party` returns an existing same-name party.
+  - The line's rows are `needs_review: developer_exists`, and the message names the existing party.
+  - Nothing is created or linked.
+  - The person then links the line to that party, or keeps "create" after the party is renamed.
+  - This refusal is the only place a name is compared, and it never links anything.
 - AC-PI-24: A new project that would hit the registration lock (same company + developer + normalised title as a staff or approved project) is `needs_review: registration_lock`. The message names that project's code. Nothing is bypassed.
 - AC-PI-25: The PO gets:
   - `po_number` as text;
