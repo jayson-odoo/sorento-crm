@@ -1,6 +1,6 @@
 # PLAN: OI-WHOLE-SO-CANCEL - whole-SO cancel and SO delete from AutoCount raise a board item
 
-Status: Hand test (built, reviewed, browser pass PASS; owner Q1 still open, switch WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC kept True). Track: M (LEAD pattern).
+Status: Build v2 (owner rule 12 Nov 12:45, crew decisions on card v2). Track: M. Track: M (LEAD pattern).
 
 ## Problem
 
