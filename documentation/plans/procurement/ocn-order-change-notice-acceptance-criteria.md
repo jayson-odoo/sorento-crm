@@ -61,20 +61,26 @@ follow-up PR titled `OCN-ORDER-CHANGE-NOTICE B: ...`.
 
 ## D. Permissions and scope (slice 1)
 
-- **D1** Slugs `procurement.order_change_notices.{view, view_own, create, edit, delete, approve, report}`
-  exist; the migration grants each to the roles that hold the matching purchase request slug.
+- **D1** Slugs `procurement.order_change_notices.{view, view_own, create, edit, process, delete, approve,
+  report}` exist; the migration grants each to the roles that hold the matching purchase request slug
+  (`edit` only from `purchase_requests.send_for_approval`, `process` from `purchase_requests.process`).
 - **D2** Without `view` or `view_own`, list and detail are 403. With `view_own` only, the list shows only
   OCNs the user raised or is named on (sales in charge / C.S. in charge), and another's detail is 404.
 - **D3** Approve / reject needs `.approve`; send for approval / send back needs `.edit`; done needs
-  `.edit` (CS); the handling lock (`assert_can_act_on_form`) applies to every stage move.
+  `.process` (CS); the permission is checked BEFORE a move is held for the undo window; the handling lock
+  (`assert_can_act_on_form`) applies to every stage move. Ownership only narrows `.view_own`: without
+  `.view` or `.view_own` nothing is visible, and Conversation, SLA and History follow the same rule.
 - **D4** Company scope: a user of company X never sees, opens or acts on company Y's OCN (404).
 
 ## E. Amendment link, one change one notice (slice 1, owner d2)
 
 - **E1** Creating an amendment without an OCN pick drafts a new OCN exactly as today (prefilled change
   table, project, SO, PO links, `source = amendment`, status draft).
-- **E2** Creating an amendment with an existing OCN id (same project, not linked to another amendment)
-  links it and drafts no second OCN; an OCN of another project or already linked is refused.
+- **E2** Creating an amendment with an existing OCN id (same project, not linked to another amendment,
+  visible to the author) links it and drafts no second OCN. Pickable: draft, submitted, resubmitted,
+  rejected, approved; picking an approved OCN revises it back to draft first, so the change is approved
+  before publish (lead ruling on the security review). Pending approval, voided, done, another project's
+  or an already linked OCN is refused, and the dialog lists only pickable ones.
 - **E3** Publishing an amendment is refused until its OCN is approved (status approved); after approval
   it publishes. A voided or rejected OCN keeps it refused.
 - **E4** An amendment-born OCN shows its project, SO and PO links read-only; edit cannot change them.
@@ -97,7 +103,8 @@ follow-up PR titled `OCN-ORDER-CHANGE-NOTICE B: ...`.
   title, two-column field grid, line items with Add row, Cancel / Save as draft / Submit); Edit opens the
   same form; dates through the shared date picker and formatter (dd/mm/yyyy).
 - **G4** Detail: record header (number + status pill, one subtitle, pager, one main button per status and
-  permission), tabs Details / Conversation / SLA / Revisions / History, CS comment block with empty
+  permission), tabs Details / Conversation / SLA / History (Revisions comes with the portal in slice 2),
+  attachments, the linked amendment's change rows read-only, CS comment block with empty
   state, sign-off block (decision, name, date, remarks).
 - **G5** Usable at 375 px and 1280 px; no UUIDs on screen.
 
