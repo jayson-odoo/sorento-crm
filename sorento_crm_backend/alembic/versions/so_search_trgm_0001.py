@@ -12,7 +12,7 @@ still SUCCEEDS; ``scripts/ensure_goods_chain_indexes.py`` retries the sales_orde
 backend start. Until they are VALID the search still answers, at the old speed.
 
 Revision ID: so_search_trgm_0001
-Revises: il_0002_integration_log_search
+Revises: acqs_0001_project_ac_write
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from alembic import op
 from app.utils import online_index
 
 revision = "so_search_trgm_0001"
-down_revision = "il_0002_integration_log_search"
+down_revision = "acqs_0001_project_ac_write"
 branch_labels = None
 depends_on = None
 
