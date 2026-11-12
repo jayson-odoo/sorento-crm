@@ -121,6 +121,12 @@ Lane UI-V2-PLAN, branch `claude/ui-v2-design-plan-3cmy20`, PR #2323.
 - `FE/components/v2/shell/{AppShell,Sidebar,Topbar,FloatingAction,SystemBanner,MobileNavSheet,usePageView}.tsx` +
   tests.
 - `FE/components/v2/{Lightbox,PanelTabs}.tsx` + tests.
+- **Floating action registration (R16):** `components/v2/shell/PrimaryActionContext.tsx` holds at most one registered primary
+  `{label, onAction, blockedReason?, headerRef}`. `AppShell` mounts the single `FloatingAction` from it. A page never
+  mounts its own: in phase 1+ the v2 `PageHeader` / `RecordHeader` register automatically. `SystemBanner` urgency:
+  offline before impersonation.
+- **Hex rule:** only `lib/theme/presets.ts` may hold hex literals (incl. the light and dark page backgrounds the
+  generator measures against).
 - `FE/app/(protected)/user-management/settings/appearance/page.tsx`, a new settings tab "Appearance" in
   `settings/layout.tsx`, gated on `user_management.settings.edit`.
 - **Guards:**
