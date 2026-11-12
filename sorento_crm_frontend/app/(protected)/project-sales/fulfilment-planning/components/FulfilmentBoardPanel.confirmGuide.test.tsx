@@ -578,11 +578,13 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
   it('B2: a covered book-cancelled line with no draft is not counted and raises no note', async () => {
     const board = mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
       entry.project_line_id === 'pl-1-2'
-        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL', pending_change_batch_id: 'b-1' }
         : entry,
     );
-    await mountWith(board, ['SO000001']);
-    await screen.findByTestId('board-confirm');
+    // Confirm (0) is disabled, so `mountWith` (which waits for it to enable) does not apply.
+    getPlanningBoard.mockResolvedValue(board);
+    renderPanel(['SO000001']);
+    await screen.findByTestId('fulfilment-board-matrix');
     expect(screen.queryByTestId('board-autocount-change-note')).toBeNull();
     // Nothing else is decided, so the button reads Confirm (0), never Apply AutoCount change.
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');

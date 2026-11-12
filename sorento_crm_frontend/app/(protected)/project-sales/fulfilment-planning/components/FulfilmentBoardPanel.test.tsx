@@ -1736,8 +1736,12 @@ describe('FulfilmentBoardPanel: states', () => {
     expect(
       screen.queryByText('No lines to plan on these sales orders'),
     ).not.toBeInTheDocument();
-    expect((await screen.findAllByText(/Cancelled/)).length).toBeGreaterThan(0);
-    expect(await screen.findByTestId('board-confirm')).toBeEnabled();
+    // F2 12/13 Nov: the cancel is "Change proposed" until CS saves it, then it counts in Confirm.
+    expect(await screen.findByText('Change proposed')).toBeInTheDocument();
+    expect(await screen.findByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
+    fireEvent.click(screen.getByRole('button', { name: /save all suggested/i }));
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
   });
 
   /**
@@ -1766,6 +1770,10 @@ describe('FulfilmentBoardPanel: states', () => {
     });
 
     renderPanel(['SO403340']);
+    // F2 12/13 Nov: a cancel is saved like any change before Confirm.
+    await screen.findByText('Change proposed');
+    fireEvent.click(screen.getByRole('button', { name: /save all suggested/i }));
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
     await pressPreviewThenConfirm();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
@@ -5493,7 +5501,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
       withContribution(
         batchedBoard(),
         (entry) => entry.line_no === 1,
-        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null, pending_change_batch_id: 'b-1' }),
       ),
     );
     confirmMany.mockResolvedValue({
@@ -5516,12 +5524,12 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
   }
 
   it('BATCH-HELD-CANCEL (crew item 3): an order with only a line the book cancelled still posts its batch', async () => {
-    batchNaming('pl-so-a-1');
+    batchNaming('pl-so-a-2');
     getPlanningBoard.mockResolvedValue(
       withContribution(
         batchedBoard({ onlyCancel: true }),
         (entry) => entry.line_no === 2,
-        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null, pending_change_batch_id: 'b-1' }),
       ),
     );
     confirmMany.mockResolvedValue({
@@ -5556,7 +5564,10 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
       { orders: { batch_id: string | null; lines: unknown[]; cancelled_lines: unknown[] }[] },
     ];
     expect(body.orders[0].batch_id).toBe('b-1');
-    expect(body.orders[0].lines).toEqual([]);
+    // F2: the saved cancel rides in the body as an ordinary line with nothing to compose.
+    expect(body.orders[0].lines).toEqual([
+      expect.objectContaining({ project_line_id: 'pl-so-a-2', buy_qty: '0' }),
+    ]);
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('1 of 1 orders confirmed');
     expect(block).toHaveTextContent(
@@ -5571,7 +5582,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     return withContribution(
       batchedBoard({ onlyCancel: true }),
       (entry) => entry.line_no === 2,
-      (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      (entry) => ({ ...entry, cancelled: true, covered: false, draft: null, pending_change_batch_id: 'b-1' }),
     );
   }
 
@@ -5669,7 +5680,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
           ),
         },
         (entry) => entry.sales_order_id !== 'so-a',
-        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null, pending_change_batch_id: 'b-1' }),
       ),
     );
     renderPanel(['SO403340', 'SO398322', 'SO400001']);
@@ -5704,7 +5715,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
           orders: built.orders.map((order) => ({ ...order, pending_change_batch_id: 'b-1' })),
         },
         () => true,
-        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null, pending_change_batch_id: 'b-1' }),
       ),
     );
     renderPanel(['SO403340', 'SO398322']);

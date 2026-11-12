@@ -202,15 +202,21 @@ describe('committed Cancel SO line (AC-F16)', () => {
     const summary = board.confirmSummaryFor([committed], {});
     expect(summary.orderCount).toBe(0);
     expect(summary.toConfirm).toBe(0);
-    expect(board.confirmSummaryFor([bookCancelled], {}).orderCount).toBe(1);
+    // F2 12/13 Nov: an UNSAVED book-cancelled line does not admit its order either; saved, it does.
+    expect(board.confirmSummaryFor([bookCancelled], {}).orderCount).toBe(0);
+    const saved = { [bookCancelled.key]: { verdict: 'approved' } as never };
+    expect(board.confirmSummaryFor([bookCancelled], saved).orderCount).toBe(1);
   });
 
-  it('control: a book-cancelled line is still retired by the press', () => {
-    // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): not counted as a decision; it
-    // is the AutoCount change note, and the press still retires it.
+  it('control: a book-cancelled line is retired by the press only once saved', () => {
+    // F2 12/13 Nov: a cancel is saved like any change before Confirm; no AutoCount change note.
     expect(plannedLineCount([bookCancelled], 'so-1', {})).toBe(0);
-    expect(board.autocountChangeNotes([bookCancelled], {})).toHaveLength(1);
-    expect(confirmDialogRowsFor([bookCancelled], {}, ctx).cancelled).toHaveLength(1);
+    expect(board.autocountChangeNotes([bookCancelled], {})).toHaveLength(0);
+    const saved = { [bookCancelled.key]: { verdict: 'approved' } as never };
+    expect(plannedLineCount([bookCancelled], 'so-1', saved)).toBe(1);
+    expect(confirmLinesFor([bookCancelled], 'so-1', saved).map((l) => l.project_line_id)).toEqual([
+      bookCancelled.project_line_id,
+    ]);
   });
 });
 
