@@ -291,14 +291,29 @@ def verify_sign_in(
 
     # AC-29: the counter moves under a row lock, so two parallel assertions carrying the same
     # counter cannot both pass. The lock is re-read and re-compared, then released by the
-    # commit inside the shared tail.
+    # commit inside the shared tail. A passkey removed since the first read, or an owner whose
+    # passkey sign-in was switched off meanwhile (the owner row is locked too, so a switch-off
+    # waits for this commit and then revokes the new session), is the AC-12 refusal.
     locked = (
         db.query(UserPasskey)
         .filter(UserPasskey.id == passkey.id)
         .populate_existing()
         .with_for_update()
-        .one()
+        .first()
     )
+    owner = (
+        db.query(User)
+        .filter(User.id == passkey.user_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+        if locked is not None
+        else None
+    )
+    if owner is None or bool(owner.is_trashed) or not bool(owner.passkey_enabled):
+        db.rollback()
+        raise _sign_in_failed()
+    user = owner
     new_count, stored_count = int(verified.new_sign_count), int(locked.sign_count or 0)
     if (new_count > 0 or stored_count > 0) and new_count <= stored_count:
         db.rollback()
