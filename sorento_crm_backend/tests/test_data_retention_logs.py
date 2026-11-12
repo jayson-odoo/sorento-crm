@@ -65,10 +65,10 @@ def db():
 # R2 integration log
 # --------------------------------------------------------------------------- #
 
-def _ilog(db, *, days, status="success", filled=True) -> IntegrationLog:
+def _ilog(db, *, days, status="success", filled=True, channel="zzt") -> IntegrationLog:
     body = "body" if filled else None
     row = IntegrationLog(
-        integration_channel="zzt", business_table="zzt", business_id=_u(),
+        integration_channel=channel, business_table="zzt", business_id=_u(),
         direction="outbound", endpoint="/zzt", http_method="POST", status=status,
         request_payload=body, response_payload=body,
         request_headers=body, response_headers=body,
@@ -124,6 +124,28 @@ def test_integration_log_pending_and_processing_rows_are_never_touched(db, statu
     assert result["payloads_cleared"] == 0 and result["rows_deleted"] == 0
     assert _ilog_fields(db, mid) == ("body",) * 4
     assert _ilog_fields(db, old) == ("body",) * 4
+
+
+def test_integration_log_audit_failure_rows_are_never_touched(db):
+    """Security review: a channel-`audit` row is the record of a failed audit capture
+    (audit_trail_gaps.integration_log_id points at it), so retention never blanks or
+    deletes it however old, and dry-run does not count it either."""
+    from app.services.audit_service import AUDIT_FAILURE_CHANNEL
+
+    audit_mid = _ilog(db, days=45, channel=AUDIT_FAILURE_CHANNEL)
+    audit_old = _ilog(db, days=400, channel=AUDIT_FAILURE_CHANNEL)
+    _ilog(db, days=45)
+    _ilog(db, days=400)
+    db.commit()
+
+    dry = _integration_rule(db, dry_run=True)
+    assert dry["payloads_cleared"] == 1 and dry["rows_deleted"] == 1
+
+    live = _integration_rule(db)
+
+    assert live["payloads_cleared"] == 1 and live["rows_deleted"] == 1
+    assert _ilog_fields(db, audit_mid) == ("body",) * 4
+    assert _ilog_fields(db, audit_old) == ("body",) * 4
 
 
 def test_integration_log_rerun_does_not_recount_blanked_rows(db):

@@ -108,10 +108,11 @@ def _run(db, *, days_ago: float = 0, superseded_by: str | None = None) -> Reorde
     return run
 
 
-def _batch(db, *, run_id, days: float = 0, hours: float = 0) -> PlanExceptionBatch:
+def _batch(db, *, run_id, days: float = 0, hours: float = 0, company_id=None) -> PlanExceptionBatch:
     at = _ago(days=days, hours=hours)
     b = PlanExceptionBatch(
         id=_u(), run_id=run_id, as_of=at.date(), generated_at=at, created_at=at, delta_count=0,
+        company_id=company_id,  # None: stamped with the incumbent company at flush
     )
     db.add(b)
     db.flush()
@@ -122,7 +123,7 @@ def _exc(db, batch, product, *, status="open", decided_at=None) -> PlanException
     e = PlanException(
         id=_u(), batch_id=batch.id, product_id=product.id,
         exception_type="shortfall_earlier", quantity=1,
-        status=status, decided_at=decided_at,
+        status=status, decided_at=decided_at, company_id=batch.company_id,
     )
     db.add(e)
     db.flush()
@@ -190,6 +191,35 @@ def test_batches_with_no_run_form_one_group_whose_newest_is_kept(db, product):
     assert _exc_ids(db, null_newest) == {str(kept.id)}
     assert len(_exc_ids(db, run_batch)) == 1
     assert not _batch_exists(db, null_older)
+
+
+def test_plan_exception_newest_batch_is_kept_per_company(db, product):
+    """The screen reads the newest batch under a company-scoped session (latest_batch with
+    the session's company filter), so each company's newest no-run batch is what that
+    company sees. Company A's newest is older than company B's newest; pruned under the
+    all-companies scope, A's newest must still keep every undecided row."""
+    from app.models.company import Company
+
+    company_a = Company(id=_u(), name=f"{MARKER} Co A", code=_code("A")[:20])
+    db.add(company_a)
+    db.flush()
+    a_newest = _batch(db, run_id=None, days=20, company_id=company_a.id)
+    a_older = _batch(db, run_id=None, days=30, company_id=company_a.id)
+    b_newest = _batch(db, run_id=None, days=5)  # incumbent company
+    b_older = _batch(db, run_id=None, days=10)
+    a_kept = {_exc(db, a_newest, product).id, _exc(db, a_newest, product).id}
+    _exc(db, a_older, product)
+    b_kept = _exc(db, b_newest, product).id
+    _exc(db, b_older, product)
+    db.commit()
+    assert _pk(a_newest) and str(db.get(PlanExceptionBatch, _pk(b_newest)).company_id) != company_a.id
+
+    result = _svc().prune_plan_exceptions(db, grace_days=0)
+
+    assert _exc_ids(db, a_newest) == {str(i) for i in a_kept}, "company A lost its newest batch"
+    assert _exc_ids(db, b_newest) == {str(b_kept)}
+    assert not _batch_exists(db, a_older) and not _batch_exists(db, b_older)
+    assert result["rows_deleted"] == 2 and result["batches_deleted"] == 2
 
 
 def test_decided_plan_exception_rows_are_never_deleted(db, product):
