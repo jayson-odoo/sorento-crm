@@ -136,6 +136,7 @@ GET /reports/dashboard
 GET /reports/forecast
 GET /sales-orders/{pso_id}
 GET /sales-orders/{pso_id}/allocations
+GET /sales-orders/{pso_id}/history
 GET /sales-orders/{pso_id}/import-file
 GET /sales-orders/{pso_id}/line-splits
 GET /sales-orders/{pso_id}/order-inquiry

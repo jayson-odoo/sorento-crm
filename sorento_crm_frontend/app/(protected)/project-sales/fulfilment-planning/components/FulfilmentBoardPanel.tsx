@@ -4235,7 +4235,7 @@ export function FulfilmentBoardPanel({
             <DialogHeader>
               <DialogTitle className="truncate">{`History ${orderHistory.soNumber}`}</DialogTitle>
             </DialogHeader>
-            <DialogBody className="max-h-[70vh] overflow-y-auto">
+            <DialogBody className="max-h-[70dvh] overflow-y-auto">
               <SalesOrderHistory source="project" id={orderHistory.psoId} />
             </DialogBody>
           </DialogContent>
