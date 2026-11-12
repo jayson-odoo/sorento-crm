@@ -312,23 +312,32 @@ function StaffSampleRequestForm({
     }
   }, [requestId, existing.data, existing.isFetching, hydrated]);
 
-  // Each rule opens the NEXT section once the one before it holds what it needs; a loaded draft
-  // opens the sections that already hold values the same way. A section shut by hand stays shut.
-  const hasCustomer = Boolean(state.customer_id);
+  // The price tag request's rules (owner 12 Nov ~15:45, crew passes round 3 and its re-pass):
+  // - the NEXT section opens when the person fills the one before it, by their own pick (customer
+  //   > Ship to, party > Items, a product > Delivery); a value the form prefills (the project's
+  //   customer, the quotation's lines) is not the person's;
+  // - a loaded draft opens the sections that hold values of their own, once, and a section with
+  //   nothing in it stays collapsed;
+  // - a section shut by hand stays shut.
   const hasParty = Boolean(state.ship_to_party_id);
   const hasLine = state.lines.some((l) => l.product_id) || state.board_mounting;
-  const hasDelivery = Boolean(state.delivery_date);
-  // The customer the project prefills is not "filled" by the person (crew pass round 3): Ship to
-  // opens on their own pick (the Customer field below), or for a loaded draft that holds one.
   useEffect(() => {
-    if (Boolean(requestId) && hasCustomer) openOnce('shipTo');
-  }, [requestId, hasCustomer, openOnce]);
-  useEffect(() => {
-    if (hasParty || (Boolean(requestId) && hasLine)) openOnce('items');
-  }, [hasParty, hasLine, requestId, openOnce]);
-  useEffect(() => {
-    if ((hasParty && hasLine) || (Boolean(requestId) && hasDelivery)) openOnce('delivery');
-  }, [hasParty, hasLine, hasDelivery, requestId, openOnce]);
+    if (!requestId || !hydrated) return;
+    if (state.ship_to_party_id || state.ship_to_name || state.ship_to_address || state.site_contact_name) {
+      openOnce('shipTo');
+    }
+    if (hasLine) openOnce('items');
+    if (state.delivery_date || state.delivery_mode) openOnce('delivery');
+    // Once, as the draft loads: later edits open sections by the rules above, not this one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId, hydrated]);
+  /** A product the person picked (not the quotation's prefill) opens Delivery once Ship to holds a party. */
+  const patchLines = (next: Partial<FormState>) => {
+    const before = new Set(state.lines.map((l) => l.product_id).filter(Boolean));
+    const picked = (next.lines ?? []).some((l) => l.product_id && !before.has(l.product_id));
+    patch(next);
+    if (picked && hasParty) openOnce('delivery');
+  };
 
   // Every chosen contact's phone (owner 12 Nov ~15:45): the chooser hands back the first one's only.
   const shipToContacts = usePartyContacts(state.ship_to_party_id || null);
@@ -605,7 +614,13 @@ function StaffSampleRequestForm({
             role={state.ship_to_role}
             fallbackName={state.ship_to_name}
             error={errors.ship_to_party_id ?? errors.ship_to_role}
-            onPick={(party, role, onProject) =>
+            onPick={(party, role, onProject) => {
+              // The person's own pick fills Ship to: Items opens next, and Delivery too when the
+              // lines are already there (a quotation's prefill).
+              if (party) {
+                openOnce('items');
+                if (hasLine) openOnce('delivery');
+              }
               setState((prev) =>
                 withShipToParty(
                   prev,
@@ -622,8 +637,8 @@ function StaffSampleRequestForm({
                       }
                     : null,
                 ),
-              )
-            }
+              );
+            }}
             onRoleChange={(role) => patch({ ship_to_role: role ?? '' })}
           />
           {state.ship_to_typed_before && !state.ship_to_party_id && (
@@ -712,7 +727,7 @@ function StaffSampleRequestForm({
         )}
         <SampleRequestLines
           value={state}
-          onChange={patch}
+          onChange={patchLines}
           search={searchProductsForRequest}
           listWhenEmpty={Boolean(sourceDoc)}
           captions={{ no: 'No.', item: 'Item Code', qty: 'Qty' }}

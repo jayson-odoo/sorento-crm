@@ -9557,7 +9557,7 @@ class PurchaseRequestService:
         header from the latest unresolved form-SLA tracker (project-sales
         pre-approval, CS post-approval). `handled_by_name` is the form-handling-lock
         holder (separate from the assignee). Mirrors complaint's
-        `_latest_unresolved_sla_assignee_name`, batched per page.
+        `effective_assignee_key` (complaints_service), batched per page.
         """
         ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
         if not ids:
