@@ -55,6 +55,18 @@ class SystemSettingUpdate(BaseModel):
     notify_system_error_role_ids: Optional[list[str]] = None
     complaint_do_delivered_notify_tiers: Optional[str] = None
     import_job_rows_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    # DB retention jobs (PLAN-db-retention-12nov).
+    integration_log_payload_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    integration_log_row_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    chatbot_turn_trace_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    scheduled_task_run_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    reorder_run_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    embedding_superseded_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    plan_exception_superseded_grace_days: Optional[int] = Field(None, ge=0, le=3650)
+    data_retention_dry_run: Optional[bool] = None
+    data_retention_batch_size: Optional[int] = Field(None, ge=1, le=100000)
+    data_retention_batch_sleep_ms: Optional[int] = Field(None, ge=0, le=60000)
+    data_retention_max_run_minutes: Optional[int] = Field(None, ge=1, le=1440)
     smtp_host: Optional[str] = None
     smtp_port: Optional[str] = None
     smtp_secure: Optional[bool] = None
@@ -448,6 +460,24 @@ def get_settings(
                 )
                 if settings
                 else None,
+                # DB retention jobs (PLAN-db-retention-12nov); a new column reaches the FE
+                # only through this manual dict (LESSONS).
+                **{
+                    name: (getattr(settings, name, default) if settings else None)
+                    for name, default in (
+                        ("integration_log_payload_retention_days", 30),
+                        ("integration_log_row_retention_days", 180),
+                        ("chatbot_turn_trace_retention_days", 90),
+                        ("scheduled_task_run_retention_days", 90),
+                        ("reorder_run_retention_days", 90),
+                        ("embedding_superseded_retention_days", 90),
+                        ("plan_exception_superseded_grace_days", 1),
+                        ("data_retention_dry_run", False),
+                        ("data_retention_batch_size", 5000),
+                        ("data_retention_batch_sleep_ms", 200),
+                        ("data_retention_max_run_minutes", 30),
+                    )
+                },
                 "ai_trace_ttl_days": getattr(settings, "ai_trace_ttl_days", 30) if settings else None,
                 "ai_trace_error_ttl_days": getattr(settings, "ai_trace_error_ttl_days", 90) if settings else None,
                 "ai_trace_max_payload_bytes": getattr(settings, "ai_trace_max_payload_bytes", 16384) if settings else None,
