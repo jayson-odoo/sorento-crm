@@ -150,6 +150,13 @@ import { PurchaseOrderDetail } from './PurchaseOrderDetail';
 import PurchaseOrderDetailPage from '../page';
 import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
 
+/** Type a YYYY-MM-DD day into the shared date field as dd/mm/yyyy and commit it (blur). */
+function typeDay(el: HTMLElement, iso: string) {
+  const [y, m, d] = iso.split('-');
+  fireEvent.change(el, { target: { value: `${d}/${m}/${y}` } });
+  fireEvent.blur(el);
+}
+
 function po(over: Partial<PurchaseOrder> = {}): PurchaseOrder {
   return {
     id: 'po-1',
@@ -732,7 +739,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
   it('writes the header alone when no line moved', async () => {
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
+    typeDay(screen.getByLabelText('Order date'), '2026-05-04');
     fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     await waitFor(() => expect(updatePurchaseOrderMutateAsync).toHaveBeenCalled());
@@ -826,7 +833,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
   it('leaves the record alone on Cancel', () => {
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
+    typeDay(screen.getByLabelText('Order date'), '2026-05-04');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(updatePurchaseOrderMutateAsync).not.toHaveBeenCalled();

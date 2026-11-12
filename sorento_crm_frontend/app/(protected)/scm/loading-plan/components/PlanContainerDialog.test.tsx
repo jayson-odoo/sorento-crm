@@ -103,6 +103,17 @@ import { toast } from '@/lib/toast';
 import { PlanContainerDialog } from './PlanContainerDialog';
 import type { ImportMappingProbe, ImportMappingField } from '@/components/common/ImportColumnMapper';
 
+const RANGE_PH = 'DD/MM/YYYY - DD/MM/YYYY';
+
+/** Type a range into the shared field as dd/mm/yyyy and commit it (blur); a null end is left
+ *  open (`dd/mm/yyyy -` / `- dd/mm/yyyy`) and two nulls empty the field. */
+function typeRange(input: HTMLElement, from: string | null, to: string | null) {
+  const dm = (iso: string) => iso.split('-').reverse().join('/');
+  const text = from && to ? `${dm(from)} - ${dm(to)}` : from ? `${dm(from)} -` : to ? `- ${dm(to)}` : '';
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.blur(input);
+}
+
 function renderDialog() {
   const onOpenChange = vi.fn();
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -152,8 +163,7 @@ describe('PlanContainerDialog', () => {
     expect(screen.getByRole('combobox', { name: /Supplier/i })).toBeTruthy();
     // AC-N7: the cut-off is a From/To window now, worded like reorder planning's own.
     expect(screen.getByText('Sales orders needed')).toBeTruthy();
-    expect(screen.getByLabelText('From')).toBeTruthy();
-    expect(screen.getByLabelText('To')).toBeTruthy();
+    expect(screen.getAllByPlaceholderText(RANGE_PH)).toHaveLength(1);
     expect(screen.getByText('Empty = every open order counts.')).toBeTruthy();
     for (const kind of ['Stock list', 'Proforma invoice', 'No file']) {
       expect(screen.getByLabelText(kind)).toBeTruthy();
@@ -206,8 +216,7 @@ describe('PlanContainerDialog', () => {
     renderDialog();
     fireEvent.click(screen.getByLabelText('No file'));
     await chooseSupplier();
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-09-01' } });
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-30' } });
+    typeRange(screen.getByLabelText('Sales orders needed'), '2026-09-01', '2026-09-30');
 
     fireEvent.click(screen.getByTestId('plan-container-confirm'));
 
@@ -229,8 +238,7 @@ describe('PlanContainerDialog', () => {
     await chooseSupplier();
 
     expect(screen.getByText('Sales orders needed')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-01' } });
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+    typeRange(screen.getByLabelText('Sales orders needed'), '2026-10-01', '2026-10-31');
 
     fireEvent.click(screen.getByTestId('plan-container-confirm'));
 

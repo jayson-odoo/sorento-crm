@@ -277,6 +277,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const RANGE_PH = 'DD/MM/YYYY - DD/MM/YYYY';
+const delivery = () => screen.getByLabelText('Project delivery range');
+const raised = () => screen.findByLabelText('Inquiries raised');
+
+/** Type a range into the shared field as dd/mm/yyyy and commit it (blur); a null end is left
+ *  open (`dd/mm/yyyy -` / `- dd/mm/yyyy`) and two nulls empty the field. */
+function typeRange(input: HTMLElement, from: string | null, to: string | null) {
+  const dm = (iso: string) => iso.split('-').reverse().join('/');
+  const text = from && to ? `${dm(from)} - ${dm(to)}` : from ? `${dm(from)} -` : to ? `- ${dm(to)}` : '';
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.blur(input);
+}
+
 describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   it('shows the three inputs, and no cash budget, market toggle or buy_scope', async () => {
     await renderModal();
@@ -434,24 +447,25 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   });
 
   describe('Sales orders needed - To (B2: a past date silently plans zero demand)', () => {
-    it('sets the date input\'s own min to today, so the picker cannot offer the past', async () => {
-      await renderModal();
-      const input = screen.getByLabelText('To') as HTMLInputElement;
-      // Local calendar date, matching the component's own `todayDateInputValue()` - never
-      // `toISOString()`'s UTC one, which can read a day off near midnight.
-      const now = new Date();
-      const today = [
-        now.getFullYear(),
-        String(now.getMonth() + 1).padStart(2, '0'),
-        String(now.getDate()).padStart(2, '0'),
-      ].join('-');
-      expect(input.min).toBe(today);
+    it('refuses yesterday and accepts today as the To cut-off (the clock is fixed at 15 Jul 2026)', async () => {
+      const { onSubmit } = await renderModal();
+      fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
+      typeRange(delivery(), null, '2026-07-14');
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(screen.getByText(/cut-off cannot be in the past/i)).toBeInTheDocument();
+
+      typeRange(delivery(), null, '2026-07-15');
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_horizon_date: '2026-07-15' }),
+      );
     });
 
     it('blocks submit with a past cutoff and explains why, even if typed past the min', async () => {
       const { onSubmit } = await renderModal();
       fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2000-01-01' } });
+      typeRange(delivery(), null, '2000-01-01');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).not.toHaveBeenCalled();
@@ -461,7 +475,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     it('accepts today and a future date', async () => {
       const { onSubmit } = await renderModal();
       fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2099-12-31' } });
+      typeRange(delivery(), null, '2099-12-31');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).toHaveBeenCalledWith({
@@ -479,11 +493,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   // ===========================================================================
 
   describe('Sales orders needed - From/To window (AC-S4.4)', () => {
-    it('shows the section (relabelled "Project delivery range" by Lane D/AC-D1b) with separate From and To date inputs', async () => {
+    it('shows the section (relabelled "Project delivery range" by Lane D/AC-D1b) with ONE typeable range field', async () => {
       await renderModal();
       expect(screen.getByText('Project delivery range')).toBeInTheDocument();
-      expect(screen.getByLabelText('From')).toBeInTheDocument();
-      expect(screen.getByLabelText('To')).toBeInTheDocument();
+      expect(delivery()).toBeInTheDocument();
+      expect(screen.getAllByPlaceholderText(RANGE_PH)).toHaveLength(1);
     });
 
     it('the helper text reads "Empty = every open order counts."', async () => {
@@ -501,8 +515,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
 
     it('To before From is refused inline and blocks submit', async () => {
       const { onSubmit } = await renderModal();
-      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-06-01' } });
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-01-01' } });
+      typeRange(delivery(), '2026-06-01', '2026-01-01');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).not.toHaveBeenCalled();
@@ -511,8 +524,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
 
     it('submits both dates in ManualPlanInputs when both are set', async () => {
       const { onSubmit } = await renderModal();
-      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-12-31' } });
+      typeRange(delivery(), '2026-01-01', '2026-12-31');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).toHaveBeenCalledWith(
@@ -572,8 +584,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
         },
       ]);
       const { onSubmit } = await renderModal();
-      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+      typeRange(delivery(), '2026-08-01', '2026-10-31');
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
 
       await waitFor(() =>
@@ -687,14 +698,13 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       });
       const { onSubmit } = await renderModal();
       // From/To are set BEFORE Demand switches to Project (mirrors V2).
-      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-08-31' } });
+      typeRange(delivery(), '2026-08-01', '2026-08-31');
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
       expect(await screen.findByLabelText('SO1 - C1 / P1')).toBeInTheDocument();
 
       // Range changes BEFORE the user has touched the list: the new pre-selection replaces
       // the old one. Only `To` moves, so this is exactly one more fetch (one new queryKey).
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-30' } });
+      typeRange(delivery(), '2026-08-01', '2026-09-30');
       expect(await screen.findByLabelText('SO2 - C2 / P2')).toBeInTheDocument();
       expect((screen.getByLabelText('SO2 - C2 / P2') as HTMLInputElement).checked).toBe(true);
 
@@ -721,7 +731,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           last_delivery: '2026-09-05',
         },
       ]);
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+      typeRange(delivery(), '2026-08-01', '2026-10-31');
 
       // Wait on the EFFECT'S VISIBLE RESULT - the third payload's own awaiting count has
       // rendered, so the re-derive effect has definitely run again with fresh
@@ -753,15 +763,13 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   describe('Inquiries raised window (AC-RF-5..8)', () => {
     it('AC-RF-5: "Raised from"/"Raised to" render only while Demand = Project', async () => {
       await renderModal();
-      expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument();
-      expect(screen.queryByLabelText('Raised to')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Inquiries raised')).not.toBeInTheDocument();
 
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      expect(await screen.findByLabelText('Raised from')).toBeInTheDocument();
-      expect(screen.getByLabelText('Raised to')).toBeInTheDocument();
+      expect(await raised()).toBeInTheDocument();
 
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
-      await waitFor(() => expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByLabelText('Inquiries raised')).not.toBeInTheDocument());
       expect(screen.queryByLabelText('Raised to')).not.toBeInTheDocument();
 
       // And absent again for the empty/"All" reading (V1 default), not just Dealer.
@@ -789,8 +797,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       ]);
       await renderModal();
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
-      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+      typeRange(await raised(), '2026-09-17', '2026-09-18');
 
       // Matched with a leading-anchor regex, not an exact string: the plan's own S2
       // ("the picker option label appends 'raised N' only when a window is set") means
@@ -835,8 +842,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
 
       await renderModal();
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
-      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+      typeRange(await raised(), '2026-09-17', '2026-09-18');
 
       // Windowed: only A qualifies.
       await waitFor(() => {
@@ -846,8 +852,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
 
       // Clear both raise inputs - the buyer has not touched the Orders list by hand, so
       // the pre-selection re-derives on the wider (unwindowed) result (V4's own guard).
-      fireEvent.change(screen.getByLabelText('Raised from'), { target: { value: '' } });
-      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '' } });
+      typeRange(await raised(), null, null);
 
       await waitFor(() => {
         expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
@@ -889,11 +894,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     it('AC-RF-7: typing a raise window calls getCandidateOrders with raised_from/raised_to alongside from/to', async () => {
       getCandidateOrders.mockResolvedValue([]);
       await renderModal();
-      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
-      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+      typeRange(delivery(), '2026-08-01', '2026-10-31');
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
-      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+      typeRange(await raised(), '2026-09-17', '2026-09-18');
 
       await waitFor(() =>
         expect(getCandidateOrders).toHaveBeenLastCalledWith({
