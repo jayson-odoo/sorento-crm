@@ -150,14 +150,21 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
     return user, contact
 
 
-def send_signin_code(db: Session, contact: RespondContact, *, dispatch_inline: bool = False) -> None:
+def send_signin_code(
+    db: Session,
+    contact: RespondContact,
+    *,
+    dispatch_inline: bool = False,
+    purpose: str = "sign_in",
+) -> None:
     """Create + dispatch a sign-in OTP for an eligible contact.
 
     Swallows every failure (the contact's own DB cooldown/cap, or a
     dispatch/send failure) - AC-21's 200 answer never depends on whether a
     send actually went out. ``dispatch_inline`` (security round S1) is set by
     :func:`app.tasks.respond_io_tasks.dispatch_phone_signin_code`, which is
-    already running inside the ``respond_io`` queue's own job.
+    already running inside the ``respond_io`` queue's own job. ``purpose`` is ``"reauth"``
+    for the passkey re-check (PASSKEY-LOGIN AC-27), so that code can never sign anyone in.
     """
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
@@ -170,6 +177,7 @@ def send_signin_code(db: Session, contact: RespondContact, *, dispatch_inline: b
         PortalService(db).create_and_dispatch_otp(
             contact, space_id, SIGNIN_OTP_TEXT, send_login_otp_respond_message,
             dispatch_inline=dispatch_inline,
+            purpose=purpose,
         )
     except Exception as e:  # noqa: BLE001
         # Fix lane round 2 (reviewer Nit 3): the type only above DEBUG. A
@@ -299,6 +307,37 @@ def rate_limited_minutes_message(retry_after_seconds: int) -> str:
     return f"Too many tries. Try again in {minutes} {word}."
 
 
+def rate_limited_body(retry_after_seconds: int) -> dict:
+    """The RATE_LIMITED body every code check answers with its 429."""
+    return {
+        "code": "RATE_LIMITED",
+        "message": rate_limited_minutes_message(retry_after_seconds),
+        "retry_after_seconds": retry_after_seconds,
+    }
+
+
+def wrong_code_refusal(num: str, reservation: WrongAttemptResult, *, code: str) -> tuple[int, dict]:
+    """(status, body) for a wrong WhatsApp code, against the typed number's attempt budget.
+
+    The ONE place phone sign-in (``/auth/phone/verify``) and the passkey re-check build this
+    answer, so the lock-on-the-5th and the "N tries left" wording cannot drift apart.
+
+    Fix lane round 2 (reviewer B1): the 5th wrong answer spends the budget, so it answers the
+    lock itself (429), not "0 tries left". Redis down (no count): fail open on the count, not
+    on the refusal itself.
+    """
+    if reservation.attempts_left == 0:
+        return 429, rate_limited_body(check_locked(num) or _TRIES_LOCK_SECONDS)
+    if reservation.attempts_left is not None:
+        tries_word = "try" if reservation.attempts_left == 1 else "tries"
+        return 401, {
+            "code": code,
+            "message": f"That code is not right. {reservation.attempts_left} {tries_word} left.",
+            "attempts_left": reservation.attempts_left,
+        }
+    return 401, {"code": code, "message": "That code is not right."}
+
+
 def is_salesperson(db: Session, user: User) -> bool:
     """An active, untrashed salesperson (roles within salesperson + portal_user) with a linked contact."""
     from app.services.user_service import UserPermissionService
@@ -380,6 +419,17 @@ def build_login_response(db: Session, user: User, session_row: UserSession) -> L
     )
 
 
+def require_active(user: User) -> None:
+    """The 403 `/auth/login` has always answered a user who is not ACTIVE."""
+    from fastapi import HTTPException, status
+
+    if str(getattr(user, "status", "") or "") != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account not activated. Please verify your email.",
+        )
+
+
 def finish_sign_in(
     db: Session,
     user: User,
@@ -395,16 +445,9 @@ def finish_sign_in(
     ``last_sign_in_at`` is stamped, the 30-day sliding session is minted and the shared
     login shape is returned.
     """
-    from fastapi import HTTPException, status
-
     from app.services.user_session_service import mint_session
 
-    if str(getattr(user, "status", "") or "") != "ACTIVE":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account not activated. Please verify your email.",
-        )
-
+    require_active(user)
     user.last_sign_in_at = _utcnow()
     db.add(user)
     db.commit()
@@ -419,8 +462,10 @@ def finish_sign_in(
     return build_login_response(db, user, session_row)
 
 
-def check_code(db: Session, contact: Optional[RespondContact], code: str) -> bool:
-    """Whether ``code`` is the contact's outstanding WhatsApp code, consuming it if so.
+def check_code(db: Session, contact: Optional[RespondContact], code: str, *, purpose: str) -> bool:
+    """Whether ``code`` is the contact's outstanding WhatsApp code for ``purpose``
+    (``"sign_in"`` or ``"reauth"``), consuming it if so. A code is only ever checked against
+    its own purpose, so a re-check code never mints a session (PASSKEY-LOGIN AC-27).
 
     The one reserve / compare / consume path, shared by phone sign-in
     (:func:`attempt_verify`) and the passkey re-check (``passkey_service``), which proves
@@ -451,6 +496,7 @@ def check_code(db: Session, contact: Optional[RespondContact], code: str) -> boo
         .filter(
             PortalOtpCode.contact_id == (contact.id if contact is not None else NIL_OTP_ID),
             PortalOtpCode.consumed_at.is_(None),
+            PortalOtpCode.purpose == purpose,
         )
         .order_by(PortalOtpCode.created_at.desc())
         .first()
@@ -498,7 +544,7 @@ def attempt_verify(
     checked by :func:`check_code`.
     """
     eligible = find_eligible(db, num)
-    if not check_code(db, eligible[1] if eligible else None, code) or eligible is None:
+    if not check_code(db, eligible[1] if eligible else None, code, purpose="sign_in") or eligible is None:
         return None
     user = eligible[0]
 

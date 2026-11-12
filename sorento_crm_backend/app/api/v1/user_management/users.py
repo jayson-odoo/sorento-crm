@@ -16,6 +16,7 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.models.auth import VerificationToken
+from app.schemas.auth import PasskeyItem
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.user import (
     UserCreate,
@@ -54,6 +55,11 @@ class DailySummarySubscriptionUpdateRequest(BaseModel):
 
 class PasskeyEnabledUpdateRequest(BaseModel):
     enabled: bool
+
+
+class PasskeyEnabledResponse(BaseModel):
+    user_id: str
+    passkey_enabled: bool
 
 router = APIRouter()
 
@@ -390,7 +396,7 @@ def update_user_daily_sla_summary_subscription(
         raise handle_internal_error(str(e))
 
 
-@router.get("/{user_id}/passkeys")
+@router.get("/{user_id}/passkeys", response_model=list[PasskeyItem])
 def get_user_passkeys(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.view")),
@@ -398,7 +404,6 @@ def get_user_passkeys(
 ):
     """Admin: that user's passkeys, newest first (PASSKEY-LOGIN AC-30). Removal is the
     `user_passkey.delete` record action; there is no admin add or rename."""
-    from app.schemas.auth import PasskeyItem
     from app.services import passkey_service
 
     validate_uuid_path(user_id, resource="User")
@@ -408,7 +413,9 @@ def get_user_passkeys(
     ]
 
 
-@router.patch("/{user_id}/passkey-enabled", status_code=status.HTTP_200_OK)
+@router.patch(
+    "/{user_id}/passkey-enabled", response_model=PasskeyEnabledResponse, status_code=status.HTTP_200_OK
+)
 def update_user_passkey_enabled(
     user_id: str,
     body: PasskeyEnabledUpdateRequest,
@@ -416,7 +423,8 @@ def update_user_passkey_enabled(
     db: Session = Depends(get_db),
 ):
     """Admin: the per-user "Passkey sign-in" switch (PASSKEY-LOGIN AC-33). Off keeps the
-    stored passkeys. An admin may set it on their own row."""
+    stored passkeys and ends the user's passkey sessions (AC-28). An admin may set it on their
+    own row."""
     from app.services import passkey_service
 
     validate_uuid_path(user_id, resource="User")

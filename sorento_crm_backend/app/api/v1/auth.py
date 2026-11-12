@@ -517,15 +517,11 @@ def revoke_other_sessions(request: Request, current_user: dict = Depends(get_cur
 # --------------------------------------------------------------------------- #
 
 def _rate_limited_response(retry_after_seconds: int) -> JSONResponse:
-    from app.services.phone_signin_service import rate_limited_minutes_message
+    from app.services.phone_signin_service import rate_limited_body
 
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={
-            "code": "RATE_LIMITED",
-            "message": rate_limited_minutes_message(retry_after_seconds),
-            "retry_after_seconds": retry_after_seconds,
-        },
+        content=rate_limited_body(retry_after_seconds),
         headers={"Retry-After": str(retry_after_seconds)},
     )
 
@@ -622,22 +618,10 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
         svc.clear_redis_state(num)
         return login_response
 
-    if reservation.attempts_left == 0:
-        # Fix lane round 2 (reviewer B1): the 5th wrong answer spends the
-        # budget, so it answers the lock itself, not "0 tries left".
-        return _rate_limited_response(svc.check_locked(num) or 900)
-
-    if reservation.attempts_left is not None:
-        tries_word = "try" if reservation.attempts_left == 1 else "tries"
-        content = {
-            "code": "CODE_WRONG",
-            "message": f"That code is not right. {reservation.attempts_left} {tries_word} left.",
-            "attempts_left": reservation.attempts_left,
-        }
-    else:
-        # Redis down: fail open on the count, not on the refusal itself.
-        content = {"code": "CODE_WRONG", "message": "That code is not right."}
-    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
+    status_code, content = svc.wrong_code_refusal(num, reservation, code="CODE_WRONG")
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        return _rate_limited_response(content["retry_after_seconds"])
+    return JSONResponse(status_code=status_code, content=content)
 
 
 @router.post("/portal-link", response_model=LoginResponse)
@@ -753,8 +737,15 @@ def set_password(
 # --------------------------------------------------------------------------- #
 
 def _passkey_rate_limit(bucket: str, ip: str) -> JSONResponse | None:
+    """Per-IP gate for the passkey options route, ONLY when `trusted_proxies` is set.
+
+    Security review M1 (12 Nov): unset, every request carries the proxy's one address, so a
+    single caller could 429 every staff sign-in; the single-use challenge already bounds it.
+    """
     from app.services import rate_limit
 
+    if not (app_settings.trusted_proxies or "").strip():
+        return None
     gate = rate_limit.hit(
         bucket, ip,
         limit=app_settings.rate_limit_passkey_max,
@@ -799,13 +790,15 @@ def passkey_sign_in_options(request: Request):
 @router.post("/passkey/verify", response_model=LoginResponse)
 def passkey_verify(payload: PasskeyVerifyRequest, request: Request, db: Session = Depends(get_db)):
     """Called server-to-server by NextAuth's `passkey` provider, which forwards the browser's
-    address; the origin checked is the one stored with the challenge."""
+    address; the origin checked is the one stored with the challenge.
+
+    No per-IP rate limit here (AC-14), for the same reason as `/phone/verify` (security round
+    S4): NextAuth calls it server-to-server, and a per-IP bucket is weaker than the real bound,
+    a single-use challenge that lives 300 s plus the passkey's own signature.
+    """
     from app.services import passkey_service
 
     ip = client_ip(request)
-    limited = _passkey_rate_limit("passkey_verify", ip)
-    if limited is not None:
-        return limited
     return passkey_service.verify_sign_in(
         db, payload.challenge_id, payload.credential,
         user_agent=request.headers.get("user-agent"),

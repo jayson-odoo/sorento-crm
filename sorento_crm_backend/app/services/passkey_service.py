@@ -44,6 +44,9 @@ _KIND_REGISTER = "register"
 
 PASSKEY_FAILED_MESSAGE = "That passkey didn't work. Sign in another way."
 
+# AC-29: the WebAuthn transport hints a browser may report; anything else is dropped.
+KNOWN_TRANSPORTS = ("usb", "nfc", "ble", "internal", "hybrid", "smart-card", "cable")
+
 
 def _unavailable() -> AppException:
     return AppException(
@@ -236,7 +239,7 @@ def verify_sign_in(
     from webauthn import verify_authentication_response
 
     from app.services.audit_service import log_audit
-    from app.services.phone_signin_service import finish_sign_in
+    from app.services.phone_signin_service import finish_sign_in, require_active
     from app.services.user_session_service import _utcnow
 
     _require_enabled()
@@ -284,26 +287,38 @@ def verify_sign_in(
     user = db.query(User).filter(User.id == passkey.user_id).first()
     if user is None or bool(user.is_trashed) or not bool(user.passkey_enabled):
         raise _sign_in_failed()
+    require_active(user)
 
-    response = finish_sign_in(
-        db, user, user_agent=user_agent, ip_address=ip_address, auth_method="passkey"
+    # AC-29: the counter moves under a row lock, so two parallel assertions carrying the same
+    # counter cannot both pass. The lock is re-read and re-compared, then released by the
+    # commit inside the shared tail.
+    locked = (
+        db.query(UserPasskey)
+        .filter(UserPasskey.id == passkey.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
     )
-
-    passkey.sign_count = int(verified.new_sign_count)
-    passkey.last_used_at = _utcnow()
-    db.add(passkey)
+    new_count, stored_count = int(verified.new_sign_count), int(locked.sign_count or 0)
+    if (new_count > 0 or stored_count > 0) and new_count <= stored_count:
+        db.rollback()
+        raise _sign_in_failed()
+    locked.sign_count = new_count
+    locked.last_used_at = _utcnow()
+    db.add(locked)
     log_audit(
         db,
         "user_passkeys",
-        str(passkey.id),
+        str(locked.id),
         "UPDATE",
         user_id=str(user.id),
         ip_address=ip_address,
         event="passkey_sign_in",
         description="Signed in with a passkey",
     )
-    db.commit()
-    return response
+    return finish_sign_in(
+        db, user, user_agent=user_agent, ip_address=ip_address, auth_method="passkey"
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -369,8 +384,8 @@ def _no_phone() -> AppException:
 
 def send_reauth_code(db: Session, user: User) -> dict:
     """AC-27: send a WhatsApp code to the user's OWN verified phone, through the phone
-    sign-in send path. No sign-in marker is set, so `/auth/phone/verify` answers this code
-    CODE_EXPIRED rather than minting a session."""
+    sign-in send path. It is stored with purpose 'reauth', so `/auth/phone/verify` can never
+    consume it (Redis up or down)."""
     from app.services import phone_signin_service as phone
 
     _require_enabled()
@@ -378,7 +393,7 @@ def send_reauth_code(db: Session, user: User) -> dict:
     contact = _own_phone_contact(db, user)
     if contact is None:
         raise _no_phone()
-    phone.send_signin_code(db, contact)
+    phone.send_signin_code(db, contact, purpose="reauth")
     return {"sent_to": phone.mask(phone.normalize_msisdn(contact.phone_number) or "") or ""}
 
 
@@ -413,15 +428,11 @@ def _check_phone_code(db: Session, user: User, code: str) -> None:
     reservation = phone.reserve_verify_attempt(num)
     if reservation.locked:
         raise _too_many(reservation.retry_after_seconds or 900)
-    if phone.check_code(db, contact, code):
+    if phone.check_code(db, contact, code, purpose="reauth"):
         phone.clear_redis_state(num)
         return
-    if reservation.attempts_left == 0:
-        raise _too_many(phone.check_locked(num) or 900)
-    if reservation.attempts_left is not None:
-        word = "try" if reservation.attempts_left == 1 else "tries"
-        raise _reauth_failed(f"That code is not right. {reservation.attempts_left} {word} left.")
-    raise _reauth_failed("That code is not right.")
+    status_code, body = phone.wrong_code_refusal(num, reservation, code="REAUTH_FAILED")
+    raise AppException(status_code=status_code, message=body["message"], code=body["code"])
 
 
 def registration_options(
@@ -519,13 +530,14 @@ def register(
     if db.query(UserPasskey.id).filter(UserPasskey.credential_id == credential_id).first():
         raise _already_added()
 
-    transports = (credential.get("response") or {}).get("transports")
+    reported = (credential.get("response") or {}).get("transports")
+    transports = [t for t in reported if t in KNOWN_TRANSPORTS] if isinstance(reported, list) else None
     row = UserPasskey(
         user_id=str(user.id),
         credential_id=credential_id,
         public_key=verified.credential_public_key,
         sign_count=int(verified.sign_count or 0),
-        transports=transports if isinstance(transports, list) else None,
+        transports=transports,
         aaguid=verified.aaguid or None,
         backed_up=bool(verified.credential_backed_up),
         name=((name or "").strip() or device_label_from_ua(user_agent))[:100],
@@ -596,14 +608,24 @@ def remove_passkey(db: Session, passkey_id: str) -> Any:
         from app.services.error_handler import handle_not_found
 
         raise handle_not_found("Passkey", passkey_id)
+    from app.services.user_session_service import revoke_for_auth_method
+
+    user_id = str(row.user_id)
     db.delete(row)
     db.commit()
+    # AC-28: a removed passkey ends the user's passkey sessions; password / phone ones stay.
+    revoke_for_auth_method(db, user_id, "passkey")
     return None
 
 
 def set_enabled(db: Session, user: User, enabled_value: bool) -> dict:
     """AC-33: the per-user switch. Turning it off keeps the stored passkeys."""
+    from app.services.user_session_service import revoke_for_auth_method
+
     user.passkey_enabled = bool(enabled_value)
     db.add(user)
     db.commit()
+    if not user.passkey_enabled:
+        # AC-28: switching off ends the user's passkey sessions too.
+        revoke_for_auth_method(db, str(user.id), "passkey")
     return {"user_id": str(user.id), "passkey_enabled": bool(user.passkey_enabled)}

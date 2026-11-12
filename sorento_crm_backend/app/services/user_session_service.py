@@ -174,6 +174,26 @@ def revoke_all_for_user(
     return count
 
 
+def revoke_for_auth_method(db: Session, user_id: str, auth_method: str) -> int:
+    """Revoke a user's active sessions minted by one sign-in method, keeping the rest.
+
+    Used by PASSKEY-LOGIN AC-28: removing a passkey, or turning the user's passkey sign-in
+    off, ends their `passkey` sessions while password and phone sessions stay. Returns the
+    count revoked.
+    """
+    count = (
+        db.query(UserSession)
+        .filter(
+            UserSession.user_id == str(user_id),
+            UserSession.auth_method == auth_method,
+            UserSession.revoked_at.is_(None),
+        )
+        .update({UserSession.revoked_at: _utcnow()}, synchronize_session=False)
+    )
+    db.commit()
+    return count
+
+
 def device_label_from_ua(user_agent: Optional[str]) -> str:
     """Best-effort human label from a User-Agent (browser on OS). Never expose raw UA in UI."""
     ua = (user_agent or "").lower()

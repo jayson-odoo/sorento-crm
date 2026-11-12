@@ -1,9 +1,13 @@
-"""user_passkeys table, users.passkey_enabled, user_sessions.auth_method accepts 'passkey'
+"""user_passkeys table, users.passkey_enabled, portal_otp_codes.purpose, 'passkey' sessions
 
-PASSKEY-LOGIN (AC-04, AC-05, AC-06). Additive: one new table, one new column defaulting every
-existing user to OFF, and the auth_method CHECK widened. `user_sessions` is read on every
-request, so the widened CHECK is added NOT VALID (no scan under the lock) and then VALIDATEd
-(a scan that only takes SHARE UPDATE EXCLUSIVE, so reads and writes carry on).
+PASSKEY-LOGIN (AC-04, AC-05, AC-06, AC-27). Additive: one new table, a column defaulting every
+existing user to OFF, a column marking every existing OTP code as a sign-in code, and the
+auth_method CHECK widened.
+
+Alembic runs this revision in one transaction, so adding the CHECK NOT VALID and then
+VALIDATEing it holds the ACCESS EXCLUSIVE lock from the ADD until COMMIT either way: it buys no
+lock benefit here and is kept only as the standard spelling. The cost is the VALIDATE scan of
+`user_sessions`, measured at 58 ms on 500k rows (PLAN-passkey-login-12nov.md).
 
 Revision ID: passkey_0001_user_passkeys
 Revises: il_0002_integration_log_search
@@ -44,6 +48,10 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS passkey_enabled BOOLEAN NOT NULL DEFAULT false"
     )
+    op.execute(
+        "ALTER TABLE portal_otp_codes ADD COLUMN IF NOT EXISTS purpose VARCHAR(20) NOT NULL "
+        "DEFAULT 'sign_in'"
+    )
     op.execute("ALTER TABLE user_sessions DROP CONSTRAINT IF EXISTS ck_user_sessions_auth_method")
     op.execute(
         "ALTER TABLE user_sessions ADD CONSTRAINT ck_user_sessions_auth_method "
@@ -61,5 +69,21 @@ def downgrade() -> None:
         f"CHECK (auth_method IN {_OLD}) NOT VALID"
     )
     op.execute("ALTER TABLE user_sessions VALIDATE CONSTRAINT ck_user_sessions_auth_method")
+    # A re-check code is never a sign-in code; with the column gone it would read as one.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'portal_otp_codes' AND column_name = 'purpose'
+            ) THEN
+                DELETE FROM portal_otp_codes WHERE purpose = 'reauth';
+            END IF;
+        END $$
+        """
+    )
+    op.execute("ALTER TABLE portal_otp_codes DROP COLUMN IF EXISTS purpose")
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS passkey_enabled")
     op.execute("DROP TABLE IF EXISTS user_passkeys")
