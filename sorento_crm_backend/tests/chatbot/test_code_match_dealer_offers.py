@@ -296,3 +296,83 @@ def test_ac2b_a_code_differing_only_by_a_dash_or_space_is_answered_directly(sess
     assert "Did you mean" not in staff_text, staff_text
     assert "Couldn't find" not in staff_text, staff_text
     assert code in staff_text, staff_text
+
+
+# --------------------------------------------------------------------------- review round: AC-20b/c, AC-15c/d
+
+
+def _dym_tail(text: str) -> str:
+    """Everything from the first "Did you mean" on (empty when there is none)."""
+    at = text.find("Did you mean")
+    return text[at:] if at >= 0 else ""
+
+
+def _option_codes(c: Console) -> list[str]:
+    return [str(o.get("code")) for o in ((c.stored_question or {}).get("options") or [])]
+
+
+def test_ac20b_same_family_inactive_code_is_never_offered_but_its_active_sibling_is(session_factory, monkeypatch, stub_access):  # noqa: F811
+    inactive, active = "TWC8354-SH-UF", "TWC8354-SH-UP"
+    c = _console(session_factory, monkeypatch, stub_access, [inactive, active])
+    _hide(session_factory, inactive, "inactive")
+    typed = "TWC8354-SH-UZ"
+    for who in ("dealer", "staff"):
+        if who == "staff":
+            c.as_staff()
+            c.stock_on_hand = 12
+        text = c.say(f"{typed} x 3", stock(product(typed, 3)))
+        assert not _word(inactive, text), (who, text)
+        assert inactive not in _option_codes(c), (who, c.stored_question)
+        assert _word(active, text), (who, text)
+        assert active in _option_codes(c), (who, c.stored_question)
+
+
+def test_ac20c_the_inactive_filter_is_chat_only_list_search_still_resolves_a_typo_to_an_inactive_code(session_factory):  # noqa: F811
+    """`resolve_entities_to_filters` (list search tools) reaches the same `_trgm_lookup` through its
+    Tier 2.5. A typo of an inactive code resolved to that code there before the slice and must still."""
+    from app.services import entity_resolver as er
+    from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+
+    inactive = "TWC8354-SH-UF"
+    _seed(session_factory, [inactive])
+    _hide(session_factory, inactive, "inactive")
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    try:
+        buckets = er.resolve_entities_to_filters(db, ["TWC8354SHUZ"], allowed_entity_types=["product"])
+    finally:
+        db.close()
+    assert inactive in buckets.product_codes, (buckets.product_codes, buckets.unresolved, buckets.resolved)
+
+
+def test_ac15c_a_code_already_answered_is_not_offered_again_for_dealer_and_staff(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, [TARGET], **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    ask = f"{TARGET} x 2, {TYPO} x 1"
+    parsed = stock(product(TARGET, 2), product(TYPO, 1))
+    text = c.say(ask, parsed)
+    assert f"{TARGET} x 2: {TICK} Got stock." in text, text
+    assert TARGET not in _dym_tail(text), f"dealer: the answered code was offered again: {text!r}"
+    assert TARGET not in _option_codes(c), c.stored_question
+
+    c.as_staff()
+    c.stock_on_hand = 12
+    staff_text = c.say(ask, stock(product(TARGET, 2), product(TYPO, 1)))
+    assert TARGET in staff_text, staff_text
+    assert TARGET not in _dym_tail(staff_text), f"staff: the answered code was offered again: {staff_text!r}"
+    assert TARGET not in _option_codes(c), c.stored_question
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac15d_two_misses_each_get_their_did_you_mean_in_one_numbered_on_reply(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    first, second = "TWC8354-SH-UF", "TWC8152"
+    c = _console(session_factory, monkeypatch, stub_access, [first, second])
+    if who == "staff":
+        c.as_staff()
+        c.stock_on_hand = 12
+    text = c.say("SWTWC8354-SH-UF x 1, SWTWC8152 x 2", stock(product(TYPO, 1), product("SWTWC8152", 2)))
+    assert text.count("Did you mean") == 2, text
+    assert f"1. {first}" in text and f"2. {second}" in text, text
+    if who == "dealer":
+        assert "escalate" not in text.lower(), text
+    assert _option_codes(c) == [first, second], c.stored_question
+    assert [o["position"] for o in c.stored_question["options"]] == [1, 2], c.stored_question
