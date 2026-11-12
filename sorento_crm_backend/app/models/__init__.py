@@ -128,6 +128,7 @@ from app.models.media import (
     MediaExtractionJob,
 )
 from app.models.user_session import UserSession
+from app.models.user_passkey import UserPasskey
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
 from app.models.email_template import EmailTemplate
@@ -380,6 +381,7 @@ __all__ = [
     "ContactMediaUsage",
     "MediaExtractionJob",
     "UserSession",
+    "UserPasskey",
     "ActivityEvent",
     "InternalNote",
     "ActivityMention",

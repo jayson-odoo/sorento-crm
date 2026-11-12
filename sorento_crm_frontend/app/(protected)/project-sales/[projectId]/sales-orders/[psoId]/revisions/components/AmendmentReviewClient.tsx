@@ -22,7 +22,18 @@ import {
 import { useNonCancellableOverride } from '../../../../../_shared/hooks/useNonCancellableOverride';
 import { useProject, usePurchaseOrders } from '../../../../../_shared/hooks/useProjects';
 import type { AmendmentPreview } from '../../../../../_shared/types/projectSalesOrder.types';
-import { AmendmentAutocountChangeList } from '../../../../components/AmendmentAutocountChangeList';
+import {
+  AmendmentAutocountChangeList,
+  type AmendmentAutocountUpdate,
+} from '../../../../components/AmendmentAutocountChangeList';
+import { AutocountWriteDialog } from '../../../../../_shared/components/AutocountWriteDialog';
+import { updateInAutocountState } from '../../../../../_shared/lib/autocountWriteRules';
+import {
+  useAutocountWriteAccess,
+  useAutocountWriteCapabilities,
+  useUpdateSalesOrderInAutocount,
+} from '../../../../../_shared/hooks/useProjectAutocountWrite';
+import type { AutocountWriteResult } from '../../../../../_shared/types/projectAutocountWrite.types';
 import { AmendmentCreateDialog } from '../../../../components/AmendmentCreateDialog';
 import { AmendmentDeltaSummary } from '../../../../components/AmendmentDeltaSummary';
 import { AmendmentDeltaTable } from '../../../../components/AmendmentDeltaTable';
@@ -87,6 +98,28 @@ export function AmendmentReviewClient({
   const changeList = useAmendmentAutocountChangeList(amendmentId ?? undefined);
   const exportChangeList = useAmendmentAutocountChangeListExport(amendmentId ?? '');
   const published = amendment.data?.status === 'published';
+
+  // R3: only a published amendment of an order already in AutoCount updates the document.
+  const writeAccess = useAutocountWriteAccess();
+  const capabilities = useAutocountWriteCapabilities(writeAccess);
+  const updateInAutocount = useUpdateSalesOrderInAutocount();
+  const [updateResult, setUpdateResult] = React.useState<AutocountWriteResult | null>(null);
+  const updateState = updateInAutocountState({
+    caps: capabilities.data,
+    capsLoading: capabilities.isLoading,
+  });
+  const autocountUpdate =
+    writeAccess && published && so?.in_autocount && amendmentId
+      ? {
+          pending: updateInAutocount.isPending,
+          disabledReason: updateState.reason,
+          onUpdate: () =>
+            updateInAutocount
+              .mutateAsync(amendmentId)
+              .then(setUpdateResult)
+              .catch(() => undefined),
+        }
+      : undefined;
 
   const options = React.useMemo(
     () => [
@@ -228,6 +261,7 @@ export function AmendmentReviewClient({
           changeList={changeList}
           exporting={exportChangeList.isPending}
           onExport={() => exportChangeList.mutate(reference)}
+          update={autocountUpdate}
         />
       ) : (
         <>
@@ -333,6 +367,17 @@ export function AmendmentReviewClient({
           }}
         />
       )}
+
+      <AutocountWriteDialog
+        open={updateResult !== null}
+        onOpenChange={(open) => {
+          if (!open) setUpdateResult(null);
+        }}
+        title="Update in AutoCount"
+        result={updateResult}
+        onRetry={autocountUpdate?.onUpdate}
+        retrying={updateInAutocount.isPending}
+      />
     </div>
   );
 }
@@ -349,6 +394,7 @@ function AmendmentSection({
   changeList,
   exporting,
   onExport,
+  update,
 }: {
   amendment: ReturnType<typeof useAmendment>;
   canEdit: boolean;
@@ -357,6 +403,7 @@ function AmendmentSection({
   changeList: ReturnType<typeof useAmendmentAutocountChangeList>;
   exporting: boolean;
   onExport: () => void;
+  update?: AmendmentAutocountUpdate;
 }) {
   if (amendment.isLoading) {
     return (
@@ -414,6 +461,7 @@ function AmendmentSection({
         isLoading={changeList.isLoading}
         exporting={exporting}
         onExport={onExport}
+        update={update}
       />
       <AmendmentUnmatchedSection unmatched={detail.unmatched ?? []} />
     </div>

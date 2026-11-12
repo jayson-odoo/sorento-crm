@@ -624,6 +624,7 @@ class PortalService:
         task,
         *,
         dispatch_inline: bool = False,
+        purpose: str = "sign_in",
     ) -> PortalOtpCode:
         """Cooldown + daily-cap check, code creation and Respond.io dispatch.
 
@@ -673,6 +674,7 @@ class PortalService:
             space_id=space_id,
             code_hash=_hash_otp(code),
             expires_at=_utcnow() + OTP_TTL,
+            purpose=purpose,
         )
         self.db.add(otp)
         self.db.commit()
@@ -812,6 +814,8 @@ class PortalService:
             .filter(
                 PortalOtpCode.contact_id == contact.id,
                 PortalOtpCode.consumed_at.is_(None),
+                # A passkey re-check code never opens the portal (PASSKEY-LOGIN AC-27).
+                PortalOtpCode.purpose == "sign_in",
             )
             .order_by(PortalOtpCode.created_at.desc())
             .first()
