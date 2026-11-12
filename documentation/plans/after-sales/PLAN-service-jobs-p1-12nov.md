@@ -21,7 +21,7 @@ CS gets a complaint that needs someone on site. From the complaint they raise a 
 customer and confirm a date (and who agreed it), then assign a technician. On the day they record On the way,
 Arrived and Completed, then Verify the work. If the customer turns the date down, the job goes back to
 Proposed and the first try stays in History. The dispatch board shows each day's jobs per technician, with
-stalled jobs on top.
+the jobs still waiting for a date on top.
 
 ## Simplest-thing decisions (what #163 had and P1 leaves out)
 
@@ -68,8 +68,9 @@ PLAN-project-sales-polish-13oct).
    time) for Confirm date and the board's day picker. No browser-native date input (#163 used one on the
    board and in its dialogs).
 7. **Plain states, no special logic.** Seven plain states (Proposed, Confirmed, On the way, Arrived,
-   Completed, Verified, Cancelled). "Stalled" means only "Proposed and past its date", with no windows or
-   buckets. A Confirmed job past its date is not stalled.
+   Completed, Verified, Cancelled). "Waiting for a date" means only "in Proposed" (no agreed date yet), with
+   no windows or buckets. (Review round 1: #163's "Proposed and past its date" can never happen, because a
+   Proposed job has no date.)
 8. **Reuse existing functions and components.**
    - Numbering: `NumberingService.get_next_number` (`app/services/numbering_service.py:14`) with a seeded
      `service_job` rule `SV{yy}/{mm}-{seq:4}`.
@@ -89,7 +90,7 @@ PLAN-project-sales-polish-13oct).
 | Complaint detail: Site card + Service Jobs section | 2, 3 (Site edited in the complaint's edit form, same order), 1 (one "Raise service job" button), 5 (each job is one line: number, status pill, scheduled date, technician; click opens it) |
 | Service Jobs list | 5, 6, 8; no Create (raised from a complaint) |
 | Service job page | 1 (next-step button), 2 (Confirm / Assign dialogs), 4 (History tab), 6, 7, 8 (PageHeader + prev/next following the list's filter and sort) |
-| Dispatch board | 6 (shared date picker, dd/mm/yyyy), 7 (stalled = Proposed past its date), 2 (cards open the job page; no inline editing) |
+| Dispatch board | 6 (shared date picker, dd/mm/yyyy), 7 (waiting for a date = Proposed), 2 (cards open the job page; no inline editing) |
 | Technicians list + dialog | 3 (one dialog for create and edit), 5, 8 (countdown delete, archive when in use) |
 | Resolutions master | one "Requires service job" checkbox in the existing dialog, plus a column |
 
@@ -147,14 +148,24 @@ See the UAC. Summary:
 - Only the graph's moves are allowed.
 - Rejected / Revisit go to Proposed with a reason.
 - Every job is numbered on create.
-- Stalled = Proposed with `scheduled_from < now`.
+- Waiting for a date = every job in Proposed, oldest raised first, on top of the board whatever the day.
 - The board shows jobs whose `scheduled_from` falls on the day (MYT), unassigned first.
-- A Proposed job with no date is listed under Unassigned only on the day it was raised, never as stalled.
+
+## Review round 1 decisions
+
+- "Raise service job" appears only in the complaint's gear menu, and only while the complaint has no live job.
+  The Service Jobs section has no button (one filled button per page; an empty state has no CTA).
+- One live job per complaint applies across companies, because complaints are company-global.
+- A job cannot go On the way or Arrived without a technician. "Change technician" is offered in the gear on
+  Proposed and Confirmed jobs.
+- The site pin is stored and returned but is not shown or edited in P1. P4 adds the map.
+- A user limited to their own complaints still sees the full technician list (names, phones) when they hold
+  service_jobs.view. This is accepted: the technicians are the company's own staff and contractors.
 
 ## Out of P1 (named)
 
 - Not taken by the owner: G4 WhatsApp the customer, G5 send the job to the technician, G6 completion report,
-  G7 charges and costs, G8 job sheet PDF, G10 stalled alert notification, G11 week view, G12 reports,
+  G7 charges and costs, G8 job sheet PDF, G10 alert for jobs waiting for a date, G11 week view, G12 reports,
   G13 assistant, G14 Excel export.
 - "Reported by" column + filter (decision 5): it needs a source for the value, which arrives with P4 (the
   portal lodge).

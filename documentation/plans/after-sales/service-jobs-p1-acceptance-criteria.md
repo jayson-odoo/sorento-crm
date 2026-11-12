@@ -82,7 +82,8 @@ Dates in examples are dd/mm/yyyy. Times are MYT.
 - **D6.** The complaint detail page has a Service Jobs section listing the complaint's jobs, one line each
   (job no., status pill, scheduled, technician), and one "Raise service job" button. When a live job exists,
   the button is not shown. When there are no jobs, the section shows a heading + a hint with no CTA, as in
-  `DESIGN-LANGUAGE.md` section 6.
+  `DESIGN-LANGUAGE.md` section 6. (Round 1: Raise is offered only in the complaint gear, only while there is no
+  live job, and the section has no button.)
 - **D7.** The sidebar's Complaint Management group gains Service Jobs, Dispatch Board and Technicians. They
   are visible only with service_jobs.view (Technicians: also with technicians.manage).
 
@@ -92,8 +93,8 @@ Dates in examples are dd/mm/yyyy. Times are MYT.
   Today buttons.
 - **E2.** Columns: "Unassigned" first, then one per active technician who has a job that day (by name).
   Jobs scheduled that day (MYT) are listed in time order.
-- **E3.** "Stalled jobs" on top lists every job that is Proposed with `scheduled_from` before now, oldest
-  first, whatever the selected day is. A Confirmed job past its date is not stalled.
+- **E3.** "Waiting for a date" on top lists every job in Proposed, oldest raised first, whatever day is
+  picked. A Confirmed job is never listed there.
 - **E4.** A card shows job no., time, city and status pill. Clicking it opens the job page.
 
 ## F. Technicians
