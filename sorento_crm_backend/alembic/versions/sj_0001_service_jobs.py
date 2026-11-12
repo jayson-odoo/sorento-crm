@@ -10,7 +10,7 @@ Plan: documentation/plans/after-sales/PLAN-service-jobs-p1-12nov.md. Additive on
   ``complaint_management.complaints.edit`` (sync_permissions creates slugs but never grants them).
 
 Revision ID: sj_0001_service_jobs
-Revises: qdp_0001_duplicate_party
+Revises: il_0002_integration_log_search
 Create Date: 2026-11-12
 """
 import sqlalchemy as sa
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "sj_0001_service_jobs"
-down_revision = "qdp_0001_duplicate_party"
+down_revision = "il_0002_integration_log_search"
 branch_labels = None
 depends_on = None
 

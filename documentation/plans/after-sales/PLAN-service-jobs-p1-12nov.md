@@ -94,7 +94,7 @@ PLAN-project-sales-polish-13oct).
 | Technicians list + dialog | 3 (one dialog for create and edit), 5, 8 (countdown delete, archive when in use) |
 | Resolutions master | one "Requires service job" checkbox in the existing dialog, plus a column |
 
-## Data (one additive migration on main's head `qdp_0001_duplicate_party`)
+## Data (one additive migration on main's head, re-parented by `scripts/alembic-reparent.sh`; last: `il_0002_integration_log_search`)
 
 - `technicians`: `id` uuid, `name` (not null), `phone`, `employment_type` (employee | contractor), `is_active`
   (default true), `company_id` (company-scoped like complaints), `created_at`, `updated_at`.
