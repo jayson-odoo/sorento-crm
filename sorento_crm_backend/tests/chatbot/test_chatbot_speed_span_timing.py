@@ -105,3 +105,64 @@ def test_the_prep_measures_its_own_time():
     with prep_world(load_rows=slow_rows), mock.patch.object(span_extract, "extract", return_value=_answer()):
         prep = _run_prep()
     assert prep is not None and isinstance(prep.prep_ms, int) and prep.prep_ms >= 50
+
+
+# --- the span call starts as soon as its config is read, and the row loading overlaps it ---------------------------
+
+def test_the_span_call_is_already_running_while_the_rows_load():
+    import threading
+
+    started = threading.Event()
+    seen_while_loading: list[bool] = []
+
+    def call(config, message):
+        started.set()
+        time.sleep(0.1)
+        return _answer()
+
+    def rows(*a, **k):
+        seen_while_loading.append(started.wait(1.0))
+        return _rows()
+
+    with prep_world(load_rows=rows), mock.patch.object(span_extract, "extract", side_effect=call) as extract:
+        prep = _run_prep()
+        _l, _e, event = engine_mod._span_lookup(prep, session_factory=None, contact_respond_id="ZZ", dry_run=True,
+                                                turn_id=None)
+    assert seen_while_loading == [True], "the span call had not started when the rows began to load"
+    assert extract.call_count == 1, "the span call ran twice"
+    assert [s["text"] for s in event["spans"]] == ["zzkimlan"]
+
+
+def test_the_overlap_takes_the_longer_of_the_two_not_their_sum():
+    def call(config, message):
+        time.sleep(0.3)
+        return _answer()
+
+    def rows(*a, **k):
+        time.sleep(0.3)
+        return _rows()
+
+    with prep_world(load_rows=rows), mock.patch.object(span_extract, "extract", side_effect=call):
+        began = time.perf_counter()
+        prep = _run_prep()
+        engine_mod._span_lookup(prep, session_factory=None, contact_respond_id="ZZ", dry_run=True, turn_id=None)
+        took = time.perf_counter() - began
+    assert took < 0.5, f"prep + span call took {took:.2f} s: serial, not overlapped"
+
+
+def test_the_span_call_gets_the_same_config_and_message():
+    with prep_world(), mock.patch.object(span_extract, "extract", return_value=_answer()) as extract:
+        prep = _run_prep()
+        engine_mod._span_lookup(prep, session_factory=None, contact_respond_id="ZZ", dry_run=True, turn_id=None)
+    (config, message), _kw = extract.call_args
+    assert config is prep.config and message == "zz message"
+
+
+def test_no_span_config_means_no_span_call():
+    with prep_world(), mock.patch.object(span_extract, "resolve_config", side_effect=ValueError("no key")), \
+            mock.patch.object(span_extract, "extract", return_value=_answer()) as extract:
+        prep = _run_prep()
+        _l, _e, event = engine_mod._span_lookup(prep, session_factory=None, contact_respond_id="ZZ", dry_run=True,
+                                                turn_id=None)
+    assert extract.call_count == 0
+    assert event["fallback_reason"] == "no_config"
