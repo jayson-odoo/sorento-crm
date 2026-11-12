@@ -14774,6 +14774,8 @@ class ProjectOrderInquiryService:
         placement, so only CANCELLED - a row nobody can point at a document any more -
         is refused.
         """
+        # A spare part request's line before final approval is nobody's work yet.
+        _refuse_draft_rows([row])
         if row.verb not in _LINKABLE_VERBS:
             raise AppException(
                 status_code=409,

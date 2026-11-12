@@ -342,6 +342,8 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
     from app.services.project_service import resolve_user_names
 
     rows = _rows(db, inquiry)
+    show_prices = prices_visible(db, inquiry, user_id)
+    changes = photo_changes(db, [inquiry]).get(str(inquiry.id), {})
     names = resolve_user_names(
         db, {u for u in (inquiry.requested_by, inquiry.approved_by) if u}
     )
@@ -365,12 +367,13 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
                 "description": row.description,
                 "stock_location": row.stock_location,
                 "qty": _num(row.qty) or "0",
-                "unit_price": _num(row.unit_price),
-                "total": _num(_line_total(row)) or "0",
+                "unit_price": _num(row.unit_price) if show_prices else None,
+                "total": (_num(_line_total(row)) or "0") if show_prices else None,
                 "requested_qty": _num(row.requested_qty),
-                "requested_unit_price": _num(row.requested_unit_price),
+                "requested_unit_price": _num(row.requested_unit_price) if show_prices else None,
                 "state": row.state,
                 "ack_state": row.ack_state,
+                "photo_changes": changes.get(str(row.id), _NO_PHOTO_CHANGE),
             }
         )
     return {
@@ -392,7 +395,7 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
         "can_decide": can_decide(db, inquiry, user_id),
         "can_edit": can_edit(inquiry, user_id),
         "can_revise": can_revise(db, inquiry, user_id),
-        "total": _num(total) or "0",
+        "total": (_num(total) or "0") if show_prices else None,
         "lines": lines,
     }
 
@@ -600,6 +603,16 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     # A stage left open by an earlier round never decides this one: approval starts again.
     _void_stages(db, inquiry, "Submitted again")
     _emit(db, inquiry, "submitted", actor)
+    # Fail closed: a request no level is open on would wait for nobody.
+    if not _open_stages(db, inquiry.id):
+        raise AppException(
+            status_code=422,
+            message=(
+                "The first approval level has no one to assign it to. Ask an admin to add "
+                "members to its team in Form SLA configuration."
+            ),
+            code="spr_first_stage_not_started",
+        )
     return inquiry
 
 
@@ -619,6 +632,58 @@ def _require_pending(inquiry: OrderInquiry, verb: str) -> None:
         raise _conflict(f"Only a request pending approval can be {verb}.")
 
 
+def _lock(db: Session, inquiry: OrderInquiry) -> OrderInquiry:
+    """The inquiry, re-read under SELECT ... FOR UPDATE: two decisions on one request take
+    turns, and the second sees what the first did (security review B1)."""
+    return (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.id == inquiry.id)
+        .with_for_update()
+        .populate_existing()
+        .one()
+    )
+
+
+def _actor_stage(db: Session, inquiry: OrderInquiry, user_id: Optional[str]):
+    """The open stage this user decides on: the oldest one whose team they sit on, or for an
+    admin on no such team the oldest open stage. None when there is none."""
+    stages = list(reversed(_open_stages(db, inquiry.id)))  # oldest first
+    if not user_id or is_requester(inquiry, user_id):
+        return None
+    for tracker in stages:
+        if _on_stage_team(db, tracker, user_id, inquiry.company_id):
+            return tracker
+    if stages and is_admin(db, user_id):
+        return stages[0]
+    return None
+
+
+def _authorise(db: Session, inquiry: OrderInquiry, actor: str, verb: str, *, need_stage: bool):
+    """Lock the request, name the stage the actor decides on, authorise, then check that
+    stage is STILL open: a decision is bound to the stage it was authorised on, so a second
+    approve racing the first cannot carry over to the next level (security review B1)."""
+    inquiry = _lock(db, inquiry)
+    _require_pending(inquiry, verb)
+    stage = _actor_stage(db, inquiry, actor)
+    if not can_decide(db, inquiry, actor):
+        raise _forbidden("Only the current approver can decide on this request.")
+    db.refresh(inquiry)
+    _require_pending(inquiry, verb)
+    if stage is not None:
+        db.refresh(stage)
+        if stage.is_resolved or stage.voided_at is not None:
+            raise _conflict(
+                "This approval level has already been decided.", "SPARE_PART_REQUEST_STAGE_DECIDED"
+            )
+    elif need_stage:
+        raise _conflict(
+            "No approval level is open on this request. Ask an admin to check its approval "
+            "stages in Form SLA configuration.",
+            "SPARE_PART_REQUEST_NO_OPEN_STAGE",
+        )
+    return inquiry, stage
+
+
 def edit_line(
     db: Session,
     inquiry: OrderInquiry,
@@ -629,16 +694,15 @@ def edit_line(
     unit_price: Any = None,
 ) -> OrderInquiryRow:
     """A3: the approver changes a line's qty (0 allowed) or unit price. The submitted values
-    stay on the row; each change is a History entry."""
-    _require_pending(inquiry, "changed")
-    if not can_decide(db, inquiry, actor):
-        raise _forbidden("Only the current approver can change this request.")
+    stay on the row; each change is a History entry. The price is audited under the COST key
+    `unit_cost` (it is the expected supplier cost), so History masks it like any cost."""
+    inquiry, _stage = _authorise(db, inquiry, actor, "changed", need_stage=False)
     row = _row_or_404(db, inquiry, row_id)
     changes = (
-        ("qty", "Qty", _decimal(qty, "qty")),
-        ("unit_price", "Unit price", _decimal(unit_price, "unit_price")),
+        ("qty", "qty", "Qty", _decimal(qty, "qty")),
+        ("unit_price", "unit_cost", "Unit price", _decimal(unit_price, "unit_price")),
     )
-    for field, label, value in changes:
+    for field, audit_key, label, value in changes:
         if value is None:
             continue
         before = getattr(row, field)
@@ -649,11 +713,35 @@ def edit_line(
             db, inquiry, "SPR_LINE_CHANGED",
             f"{label} of {row.item_code or 'a line'} changed",
             actor,
-            old={"row_id": str(row.id), "item_code": row.item_code, field: _plain(before)},
-            new={"row_id": str(row.id), "item_code": row.item_code, field: _plain(value)},
+            old={"row_id": str(row.id), "item_code": row.item_code, audit_key: _plain(before)},
+            new={"row_id": str(row.id), "item_code": row.item_code, audit_key: _plain(value)},
         )
     db.flush()
     return row
+
+
+_NEXT_STAGE_CANNOT_START = (
+    "The next approval level has no one to assign it to, so this approval was not recorded. "
+    "Ask an admin to add members to its team in Form SLA configuration."
+)
+
+
+def _assert_stage_can_start(db: Session, config, company_id: Optional[str]) -> None:
+    """Fail closed (security review S2): the next level must have a team with someone on it
+    before this level is closed, or the request would be raised on one level of sign-off."""
+    from app.models.access import AccessAgent, TeamMember
+    from app.services.user_service import AccessAgentService
+
+    agent = db.query(AccessAgent).filter(AccessAgent.code == config.agent_code).first()
+    resolved = (
+        AccessAgentService(db).resolve_team_with_tier_fallback(
+            str(agent.id), 1, team_set_code=config.team_set_code, company_id=company_id
+        )
+        if agent is not None
+        else None
+    )
+    if not resolved or db.query(TeamMember.id).filter(TeamMember.team_id == resolved[0]).first() is None:
+        raise _conflict(_NEXT_STAGE_CANNOT_START, "SPARE_PART_REQUEST_NEXT_STAGE")
 
 
 def _notify_purchasing(db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow]) -> None:
@@ -689,24 +777,41 @@ def _notify_purchasing(db: Session, inquiry: OrderInquiry, rows: List[OrderInqui
 
 
 def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] = None) -> OrderInquiry:
-    """A6: approve the current stage. A further stage keeps it pending; the last one raises
-    it: lines with qty go to purchasing, lines at 0 are cancelled."""
-    _require_pending(inquiry, "approved")
-    if not can_decide(db, inquiry, actor):
-        raise _forbidden("Only the current approver can approve this request.")
+    """A6: approve the stage the actor decides on, and only that stage (parallel levels each
+    decide their own, security review S1). The request is raised only when no level is left
+    open AND the configured chain has no next level for this one (S2: finality comes from
+    the chain, never from "nothing is open"); then lines with qty go to purchasing, lines at
+    0 are cancelled."""
+    from app.services.form_sla_service import FormSLAOrchestrator
+
+    inquiry, stage = _authorise(db, inquiry, actor, "approved", need_stage=True)
     rows = [r for r in _rows(db, inquiry) if r.state != INQUIRY_CANCELLED]
     if not any(Decimal(r.qty or 0) > 0 for r in rows):
         raise _invalid("lines", "Every line is at 0. Reject the request instead.")
+    orchestrator = FormSLAOrchestrator(db)
+    next_config = orchestrator.next_stage_config(stage, "approved")
+    if next_config is not None:
+        _assert_stage_can_start(db, next_config, inquiry.company_id)
     note = _text(note)
     _audit(
         db, inquiry, "SPR_APPROVED", "Approved" + (f": {note}" if note else ""), actor,
         new={"note": note} if note else None,
     )
     db.flush()
-    _emit(db, inquiry, "approved", actor)
-    db.refresh(inquiry)
-    if _open_stages(db, inquiry.id):
-        return inquiry  # the next stage's team is told by the SLA machinery
+    try:
+        orchestrator.resolve_stage(
+            stage, "approved", actor_user_id=actor, company_id=inquiry.company_id
+        )
+    except AppException:
+        raise _conflict(_NEXT_STAGE_CANNOT_START, "SPARE_PART_REQUEST_NEXT_STAGE")
+    inquiry = _lock(db, inquiry)
+    still_open = _open_stages(db, inquiry.id)
+    if next_config is not None and not any(
+        t.team_set_code == next_config.team_set_code for t in still_open
+    ):
+        raise _conflict(_NEXT_STAGE_CANNOT_START, "SPARE_PART_REQUEST_NEXT_STAGE")
+    if still_open:
+        return inquiry  # the next (or a parallel) level decides; its team is told by the SLA machinery
 
     from app.services.project_order_inquiry_service import _record_cancel
 
@@ -743,9 +848,9 @@ def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] 
 
 def reject(db: Session, inquiry: OrderInquiry, actor: str, reason: Optional[str]) -> OrderInquiry:
     """A5: rejected with a reason; the requester edits and resubmits from the first stage."""
-    _require_pending(inquiry, "rejected")
-    if not can_decide(db, inquiry, actor):
-        raise _forbidden("Only the current approver can reject this request.")
+    from app.services.form_sla_service import FormSLAOrchestrator
+
+    inquiry, stage = _authorise(db, inquiry, actor, "rejected", need_stage=False)
     reason = _text(reason)
     if not reason:
         raise _invalid("reason", "Enter the reason for rejecting.")
@@ -753,8 +858,14 @@ def reject(db: Session, inquiry: OrderInquiry, actor: str, reason: Optional[str]
     inquiry.reject_reason = reason
     _audit(db, inquiry, "SPR_REJECTED", f"Rejected: {reason}", actor, new={"reason": reason})
     db.flush()
-    _emit(db, inquiry, "rejected", actor)
-    # A stage that does not resolve on 'rejected' must not stay open on a rejected request.
+    if stage is not None:
+        try:
+            FormSLAOrchestrator(db).resolve_stage(
+                stage, "rejected", actor_user_id=actor, company_id=inquiry.company_id
+            )
+        except AppException:
+            logger.warning("spare part request %s: rejecting stage did not resolve", inquiry.id)
+    # Every other level stops too: a rejected request goes back to its requester.
     _void_stages(db, inquiry, "Rejected")
     db.flush()
     return inquiry
@@ -790,3 +901,119 @@ def revise(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     _audit(db, inquiry, "SPR_REVISED", "Revised: back to draft", actor)
     db.flush()
     return inquiry
+
+
+# ------------------------------------------------------------------ delete draft (G1)
+
+
+def assert_deletable(db: Session, inquiry_id: str, user_id: Optional[str]) -> OrderInquiry:
+    """Delete draft: the requester's own Draft or Rejected request, nothing else (404 not a
+    spare part request, 403 not theirs, 409 once submitted). Checked when the countdown is
+    parked and again when it commits."""
+    inquiry = db.query(OrderInquiry).filter(OrderInquiry.id == str(inquiry_id)).first()
+    if inquiry is None or inquiry.inquiry_type != KIND:
+        raise AppException(404, "This spare part request no longer exists.", code="spr_not_found")
+    if not is_requester(inquiry, user_id):
+        raise _forbidden("Only the requester can delete this request.")
+    if inquiry.state not in _EDITABLE:
+        raise _conflict(
+            "Only a draft or rejected request can be deleted.", "SPARE_PART_REQUEST_NOT_DRAFT"
+        )
+    return inquiry
+
+
+def delete_draft(db: Session, inquiry_id: str, user_id: Optional[str]) -> None:
+    """Hard delete: the header, its lines and the lines' photo links. Runs when the
+    pending-action window lapses."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from app.services.so_line_attachments import OI_ROW
+
+    inquiry = assert_deletable(db, inquiry_id, user_id)
+    links = EntityAttachmentService(db)
+    for row in _rows(db, inquiry):
+        links.delete_links_for_entity(OI_ROW.entity_type, str(row.id))
+        db.delete(row)
+    _void_stages(db, inquiry, "Deleted by the requester")
+    db.flush()
+    db.delete(inquiry)
+    db.commit()
+
+
+# ------------------------------------------------------------------ photo changes (G2)
+
+_NO_PHOTO_CHANGE = {"added": 0, "removed": 0}
+
+
+def photo_changes(db: Session, inquiries: Iterable[Any]) -> Dict[str, Dict[str, Dict[str, int]]]:
+    """`{inquiry_id: {row_id: {added, removed}}}`: photos added to / removed from each line
+    since the request was last submitted (what the requester attached while drafting is the
+    request itself, not a change). Read off the request's own History rows, in the order they
+    were written, so no clock is compared with another."""
+    from app.models.audit import AuditLog
+
+    ids = {str(getattr(i, "id", i)) for i in inquiries if i is not None}
+    if not ids:
+        return {}
+    audits = (
+        db.query(AuditLog.entity_id, AuditLog.event, AuditLog.old_values, AuditLog.new_values)
+        .filter(AuditLog.entity_type == AUDIT_ENTITY, AuditLog.entity_id.in_(sorted(ids)))
+        .order_by(AuditLog.changed_at, AuditLog.id)
+        .all()
+    )
+    out: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for entity_id, event, old, new in audits:
+        key = str(entity_id)
+        if event == "SPR_SUBMITTED":
+            out[key] = {}
+            continue
+        if event == "SPR_REVISED":
+            out.pop(key, None)
+            continue
+        if key not in out:
+            continue  # not submitted yet: a drafting photo
+        old, new = old or {}, new or {}
+        if "attachment_added" in new:
+            row_id, field = str(new.get("row_id") or ""), "added"
+        elif "attachment_removed" in old:
+            row_id, field = str(old.get("row_id") or ""), "removed"
+        else:
+            continue
+        counts = out[key].setdefault(row_id, dict(_NO_PHOTO_CHANGE))
+        counts[field] += 1
+    return out
+
+
+# ------------------------------------------------------------------ price visibility (G8)
+
+
+def prices_visible(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
+    """A spare part request's unit price is the expected supplier COST (crew ruling (b)): its
+    requester and anyone who can decide on it always see it, anyone else only with
+    `products.cost.view` (`cost_access`, read off this request's own stamp)."""
+    from app.services.cost_access import cost_hidden
+
+    if not cost_hidden():
+        return True
+    return is_requester(inquiry, user_id) or can_decide(db, inquiry, user_id)
+
+
+#: The worklist (Lines tab) row keys that carry a spare part request's price.
+_ROW_PRICE_KEYS = ("unit_price", "line_total", "submitted_unit_price")
+
+
+def mask_row_prices(db: Session, items: List[Dict[str, Any]], user_id: Optional[str]) -> None:
+    """Null a spare part row's prices for a reader who may not see them (`prices_visible`),
+    in place. One check per request on the page, never per row."""
+    from app.services.cost_access import cost_hidden
+
+    if not cost_hidden():
+        return
+    ids = {str(item.get("order_inquiry_id")) for item in items if item.get("inquiry_type") == KIND}
+    if not ids:
+        return
+    inquiries = db.query(OrderInquiry).filter(OrderInquiry.id.in_(sorted(ids))).all()
+    shown = {str(i.id) for i in inquiries if prices_visible(db, i, user_id)}
+    for item in items:
+        if item.get("inquiry_type") == KIND and str(item.get("order_inquiry_id")) not in shown:
+            for key in _ROW_PRICE_KEYS:
+                item[key] = None

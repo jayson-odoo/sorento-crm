@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +17,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/lib/toast';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   useApproveSparePartRequest,
   useRejectSparePartRequest,
@@ -29,7 +31,12 @@ import type {
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
 
-/** "line 1 qty 10 to 6": every change the approver made against what was submitted. */
+function photoCount(count: number, verb: string): string {
+  return `${count} photo${count === 1 ? '' : 's'} ${verb}`;
+}
+
+/** "SP-SEAL-40 qty 10 to 6", "SP-HINGE 1 photo added": every change the approver made
+ *  against what was submitted, per line. */
 export function approverChanges(rows: OrderInquiryWorklistRow[]): string[] {
   const out: string[] = [];
   rows.forEach((row, index) => {
@@ -42,6 +49,10 @@ export function approverChanges(rows: OrderInquiryWorklistRow[]): string[] {
         `${name} unit price ${plainNumber(row.submitted_unit_price)} to ${plainNumber(row.unit_price)}`,
       );
     }
+    const added = row.photo_changes?.added ?? 0;
+    const removed = row.photo_changes?.removed ?? 0;
+    if (added > 0) out.push(`${name} ${photoCount(added, 'added')}`);
+    if (removed > 0) out.push(`${name} ${photoCount(removed, 'removed')}`);
   });
   return out;
 }
@@ -60,7 +71,21 @@ export function SparePartRequestActions({
   rows: OrderInquiryWorklistRow[];
 }) {
   const id = header.id;
+  const router = useRouter();
   const submit = useSubmitSparePartRequest();
+  // Delete draft (D7): a server-deferred countdown with Cancel, never a confirm.
+  const deletion = useDeferredAction({
+    actionKey: 'spare_part_request.delete',
+    entityType: 'spare_part_request',
+    entityId: id,
+    verb: 'Deleting',
+    subject: header.inquiry_no ?? 'this request',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Request deleted',
+    invalidateKeys: [['order-inquiry-headers']],
+    onCommitted: () => router.push('/project-sales/order-inquiries'),
+  });
   const approve = useApproveSparePartRequest(id);
   const reject = useRejectSparePartRequest(id);
   const revise = useReviseSparePartRequest(id);
@@ -193,8 +218,17 @@ export function SparePartRequestActions({
   }
 
   if (header.can_edit) {
+    if (deletion.countdown) return <div className="flex items-center gap-2">{deletion.countdown}</div>;
     return (
       <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={deletion.isBlocked}
+          onClick={() => deletion.start()}
+        >
+          Delete draft
+        </Button>
         <Button size="sm" variant="outline" asChild>
           <Link href={`/project-sales/order-inquiries/spare-part-requests/${id}/edit`}>Edit</Link>
         </Button>

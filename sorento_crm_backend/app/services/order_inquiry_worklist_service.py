@@ -1948,26 +1948,39 @@ class OrderInquiryWorklistService:
         oi_service = ProjectOrderInquiryService(self.db)
         open_qty = oi_service.open_qty_by_row(rows)
         reserve_labels = oi_service.reserve_labels_for_rows([row.id for row in rows])
-        return {
-            "data": [
-                self._serialize(
-                    row,
-                    product_by_row,
-                    link_candidates,
-                    flow,
-                    links,
-                    bundle_map,
-                    anchor_headline_by_id,
-                    host_changes_by_row_id,
-                    suggested_links,
-                    raise_events_by_row,
-                    splits_by_line,
-                    split_views,
-                    open_qty,
-                    reserve_labels,
+        # SPARE-PART-ORDER-REQUEST (G2): the approver's photo changes, one read per page.
+        from app.services.spare_part_request_service import KIND as _SPR, photo_changes
+
+        spr_changes = photo_changes(
+            self.db, {row.order_inquiry_id for row in rows if row.inquiry_type == _SPR}
+        )
+        data = [
+            self._serialize(
+                row,
+                product_by_row,
+                link_candidates,
+                flow,
+                links,
+                bundle_map,
+                anchor_headline_by_id,
+                host_changes_by_row_id,
+                suggested_links,
+                raise_events_by_row,
+                splits_by_line,
+                split_views,
+                open_qty,
+                reserve_labels,
+            )
+            for row in rows
+        ]
+        for item, row in zip(data, rows):
+            if row.inquiry_type == _SPR:
+                item["photo_changes"] = (
+                    spr_changes.get(str(row.order_inquiry_id), {}).get(str(row.id))
+                    or {"added": 0, "removed": 0}
                 )
-                for row in rows
-            ],
+        return {
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }

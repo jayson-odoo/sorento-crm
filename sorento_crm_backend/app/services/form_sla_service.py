@@ -458,6 +458,68 @@ class FormSLAOrchestrator:
         finally:
             self._started_in_emit = outer_started
 
+    def resolve_stage(
+        self,
+        tracker: ConversationSLATracking,
+        event_name: str,
+        *,
+        actor_user_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+    ) -> None:
+        """Resolve ONE open stage with `event_name` (and start the stage it chains to), never
+        any other open stage of the same form. `emit_event` resolves every config whose
+        resolve event matches, which is right for a form with one stage open at a time and
+        wrong for parallel sign-off, where each team decides only its own stage.
+
+        Unlike `emit_event` this RAISES: a caller that decides on a stage must know the
+        decision (or the next stage's start) did not happen."""
+        config = (
+            self.db.query(FormSLAConfig)
+            .filter(
+                FormSLAConfig.source_entity_type == tracker.source_entity_type,
+                FormSLAConfig.team_set_code == tracker.team_set_code,
+                FormSLAConfig.is_active.is_(True),
+            )
+            .first()
+        )
+        if config is None:
+            raise handle_validation_error("This approval stage is no longer configured.")
+        outer_started = self._started_in_emit
+        self._started_in_emit = set()
+        try:
+            self._resolve_for_active(
+                config,
+                str(tracker.source_entity_id),
+                actor_user_id=actor_user_id,
+                resolve_event=event_name,
+                company_id=company_id,
+            )
+        finally:
+            self._started_in_emit = outer_started
+
+    def next_stage_config(self, tracker: ConversationSLATracking, event_name: str):
+        """The active config the stage `tracker` is on chains to when it resolves with
+        `event_name`, or None when that resolve ends the chain."""
+        config = (
+            self.db.query(FormSLAConfig)
+            .filter(
+                FormSLAConfig.source_entity_type == tracker.source_entity_type,
+                FormSLAConfig.team_set_code == tracker.team_set_code,
+                FormSLAConfig.is_active.is_(True),
+            )
+            .first()
+        )
+        if config is None or not config.next_config_id:
+            return None
+        advance_on = (getattr(config, "advance_on_event", None) or "").strip()
+        if advance_on and advance_on != event_name:
+            return None
+        return (
+            self.db.query(FormSLAConfig)
+            .filter(FormSLAConfig.id == config.next_config_id, FormSLAConfig.is_active.is_(True))
+            .first()
+        )
+
     #: Tracker ids started during the emit in progress (see `emit_event`); None outside one.
     _started_in_emit: Optional[set] = None
 

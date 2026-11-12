@@ -522,6 +522,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   line_total?: string | null;
   submitted_qty?: string | null;
   submitted_unit_price?: string | null;
+  /** Photos added / removed on a spare part line since it was last submitted. */
+  photo_changes?: { added: number; removed: number } | null;
   /** The core sales order's order date. The date on the document, not the raise date. */
   so_date?: string | null;
   so_number?: string | null;

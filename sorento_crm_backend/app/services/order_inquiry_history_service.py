@@ -123,11 +123,11 @@ class _Rows:
         }
 
 
-def history(db: Session, inquiry_id: str) -> List[dict]:
+def history(db: Session, inquiry_id: str, *, mask_cost: bool = False) -> List[dict]:
     rows = _Rows(db, inquiry_id)
     events: List[dict] = []
     events += _raises(db, inquiry_id, rows)
-    events += _request_events(db, inquiry_id, rows)
+    events += _request_events(db, inquiry_id, rows, mask_cost=mask_cost)
     if rows.ids:
         events += _presses(db, rows)
         events += _links(db, rows)
@@ -168,12 +168,19 @@ _REQUEST_KINDS = {
     "SPR_RAISED": "raised",
     "SPR_REVISED": "revised",
 }
-_LINE_FIELD_LABEL = {"qty": "Qty", "unit_price": "Unit price"}
+#: `unit_cost`: a spare part line's price is the expected supplier cost, audited under the
+#: cost key so every History reader masks it (`cost_access.COST_AUDIT_KEYS`).
+_LINE_FIELD_LABEL = {"qty": "Qty", "unit_cost": "Unit price"}
 
 
-def _request_events(db: Session, inquiry_id: str, rows: _Rows) -> List[dict]:
+def _request_events(
+    db: Session, inquiry_id: str, rows: _Rows, *, mask_cost: bool = False
+) -> List[dict]:
     """A spare part request's submit / approve / reject / line change / revise / raise, and
-    the photos added to or removed from its lines. Nothing on a sales-order inquiry."""
+    the photos added to or removed from its lines. Nothing on a sales-order inquiry.
+    `mask_cost`: the reader may not see cost, so a price change reads "hidden"."""
+    from app.services.cost_access import mask_audit_values
+
     audits = (
         db.query(AuditLog)
         .filter(
@@ -189,6 +196,8 @@ def _request_events(db: Session, inquiry_id: str, rows: _Rows) -> List[dict]:
     for audit in audits:
         old = audit.old_values or {}
         new = audit.new_values or {}
+        if mask_cost:
+            old, new, _masked = mask_audit_values(old, new)
         kind = _REQUEST_KINDS.get(audit.event or "")
         row_id = str(new.get("row_id") or old.get("row_id") or "")
         lines = []

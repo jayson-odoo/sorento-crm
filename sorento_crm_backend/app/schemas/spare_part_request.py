@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -55,12 +55,16 @@ class SparePartLineOut(BaseModel):
     description: Optional[str] = None
     stock_location: Optional[str] = None
     qty: str = "0"
+    #: The prices are the expected supplier COST: null for a reader who may not see them
+    #: (`spare_part_request_service.prices_visible`).
     unit_price: Optional[str] = None
-    total: str = "0"
+    total: Optional[str] = None
     requested_qty: Optional[str] = None
     requested_unit_price: Optional[str] = None
     state: str
     ack_state: Optional[str] = None
+    #: Photos added / removed on this line since the request was last submitted.
+    photo_changes: Dict[str, int] = Field(default_factory=lambda: {"added": 0, "removed": 0})
 
 
 class SparePartRequestOut(BaseModel):
@@ -82,7 +86,7 @@ class SparePartRequestOut(BaseModel):
     can_decide: bool = False
     can_edit: bool = False
     can_revise: bool = False
-    total: str = "0"
+    total: Optional[str] = None
     lines: List[SparePartLineOut] = []
 
 

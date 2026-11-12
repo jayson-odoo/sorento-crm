@@ -509,7 +509,7 @@ def list_order_inquiry_worklist(
     the worker is serving.
     """
     try:
-        return OrderInquiryWorklistService(db).list_rows(
+        result = OrderInquiryWorklistService(db).list_rows(
             page=page,
             limit=limit,
             sort=sort,
@@ -544,6 +544,9 @@ def list_order_inquiry_worklist(
                 reserve_request=reserve_request,
             ),
         )
+        # SPARE-PART-ORDER-REQUEST (G8): a spare part line's price is supplier cost.
+        spare_part_request_service.mask_row_prices(db, result["data"], str(_user.get("id") or ""))
+        return result
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -2148,8 +2151,10 @@ def get_order_inquiry_history(
     company-scope listener before any trail is."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
-        _assert_inquiry_visible(db, inquiry_id, _user)
-        return {"events": order_inquiry_history_service.history(db, inquiry_id)}
+        inquiry = _assert_inquiry_visible(db, inquiry_id, _user)
+        # SPARE-PART-ORDER-REQUEST (G8): a price change is cost, masked like every cost.
+        mask = not spare_part_request_service.prices_visible(db, inquiry, str(_user.get("id") or ""))
+        return {"events": order_inquiry_history_service.history(db, inquiry_id, mask_cost=mask)}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

@@ -49,12 +49,15 @@ export interface SparePartLine {
   description: string | null;
   stock_location: string | null;
   qty: string;
+  /** The prices are supplier cost: null for a reader who may not see them. */
   unit_price: string | null;
-  total: string;
+  total: string | null;
   requested_qty: string | null;
   requested_unit_price: string | null;
   state: string;
   ack_state?: string | null;
+  /** Photos added / removed on this line since the request was last submitted. */
+  photo_changes?: { added: number; removed: number };
 }
 
 export interface SparePartRequest {
@@ -74,7 +77,7 @@ export interface SparePartRequest {
   can_decide: boolean;
   can_edit: boolean;
   can_revise: boolean;
-  total: string;
+  total: string | null;
   lines: SparePartLine[];
 }
 

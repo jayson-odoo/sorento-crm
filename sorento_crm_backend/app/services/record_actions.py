@@ -2353,6 +2353,30 @@ register(
 )
 
 
+def _delete_spare_part_request(db: Session, payload: dict):
+    from app.services import spare_part_request_service
+
+    # The requester's own Draft / Rejected request; re-checked here because the state can
+    # change inside the window (a submit during the countdown keeps the request).
+    spare_part_request_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="spare_part_request.delete",
+        entity_types=("spare_part_request",),
+        execute=_delete_spare_part_request,
+        # Destructive: a hard delete of the requester's request, its lines and their photos.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
 def _delete_order_inquiry_row_attachment(db: Session, payload: dict):
     from app.services import so_line_attachments, spare_part_request_service
 
