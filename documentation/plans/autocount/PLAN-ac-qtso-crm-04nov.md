@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Review (round 9: unknown edit outcome looked up first; round 8, AC-QTSO-CRM-2: SS write API v2 quotation remove line + plain codes; CANCEL BALANCE ruled no-write 11 Nov).
+Lane: AC-QTSO-CRM. Status: Review (round 10: CANCEL BALANCE lowering a line goes as a qty edit, owner 12 Nov; round 9: unknown edit outcome looked up first; round 8, AC-QTSO-CRM-2: SS write API v2 quotation remove line + plain codes; CANCEL BALANCE ruled no-write 11 Nov).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -113,7 +113,7 @@ Amendment verbs (the delta service's own, `project_so_delta_service.py:65-70`; f
 | --- | --- |
 | ORDER, RESERVE & ORDER (qty up on an existing line) | PATCH line qty to `to_value` |
 | ADVANCE, DELAY | PATCH line deliveryDate to `to_value` |
-| CANCEL BALANCE | waits ("Waiting for AutoCount"); owner 11 Nov: no AutoCount write for it, `_SEND_CANCEL_BALANCE_AS_QTY_EDIT` stays False. |
+| CANCEL BALANCE | lowering a line to a non-zero qty (120 -> 80): PATCH line qty to `to_value` (owner 12 Nov ~17:35, "for the lower qty we should do a yeah"; AutoCount refuses below delivered / PO-linked as QTY_BELOW_TRANSFERRED, shown, retryable). Cut to zero: waits ("Waiting for AutoCount", owner 11 Nov). The `_SEND_CANCEL_BALANCE_AS_QTY_EDIT` switch is gone. |
 | CHANGE SO NO | waits |
 
 A new product is never a row (the delta service reports it in `unmatched`), so there is no add-line from an amendment. A line with no core
@@ -265,8 +265,9 @@ extra guards; SS has no ROW_LAST_LINE).
   an update with no sendable line still goes (create still needs one). The done note names the removed rows.
 - Sales order CANCEL BALANCE (owner, 11 Nov ~13:50 MYT, "cancel balance don t do much about it"): no AutoCount write for any
   CANCEL BALANCE row, whether it lowers a staying line (revised PO 120 -> 80) or cuts it to zero, whatever the feed offers. The row
-  stays "Waiting for AutoCount" and the edits beside it still go. No balance-cancel is built; `_SEND_CANCEL_BALANCE_AS_QTY_EDIT`
-  stays False. The round-8 zero-qty removal (and its review fixes B1/B2/S1/S2/S4) was taken back out; the sales order update is
+  stays "Waiting for AutoCount" and the edits beside it still go. **Superseded in part by the owner, 12 Nov ~17:35** ("for the
+  lower qty we should do a yeah"): a CANCEL BALANCE that lowers a line to a non-zero qty goes as a qty edit in the same PATCH
+  (QTY_BELOW_TRANSFERRED shows as AutoCount's refusal; the next press goes under a fresh key). A cut to zero still waits. The round-8 zero-qty removal (and its review fixes B1/B2/S1/S2/S4) was taken back out; the sales order update is
   the pre-round-8 code again.
 - The delete body carries no `expectedLastModified` (accepted: the document was read this press and a removed row is gone
   whatever else changed). ROW_NOT_FOUND on a removal counts as already removed.

@@ -92,9 +92,6 @@ WAITING_SYNC = "Waiting for the next AutoCount sync"
 SPLIT_ITEM = "This item is on more than one line; change it in AutoCount by hand"
 ALREADY_CANCELLED = "Already cancelled in AutoCount."
 
-#: Owner decision pending (fix round 1): does CANCEL BALANCE go to AutoCount as a quantity edit
-#: down to `to_value`? Off, it waits like CHANGE SO NO. One switch, both paths are built.
-_SEND_CANCEL_BALANCE_AS_QTY_EDIT = False
 
 # SS write API v2 (SS plan 61): its codes in plain words. The code is read, never SS's own text.
 DOC_HAS_TRANSFERS_TEXT = (
@@ -1060,8 +1057,11 @@ class ProjectAutocountWriteService:
         waiting: List[dict] = []
         for row in accepted:
             verb = str(row.get("verb") or "")
+            # Owner, 12 Nov: a CANCEL BALANCE that lowers a line to a non-zero qty goes as a qty
+            # edit (AutoCount refuses below what moved on: QTY_BELOW_TRANSFERRED). A cut to zero
+            # is not written (owner, 11 Nov).
             as_qty = verb in _QTY_VERBS or (
-                verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT
+                verb == VERB_CANCEL_BALANCE and _dec(row.get("to_value")) > 0
             )
             if not (as_qty or verb in _DATE_VERBS):
                 waiting.append(self._waiting(row, WAITING))

@@ -32,7 +32,8 @@ Plan: `PLAN-ac-qtso-crm-04nov.md`. Mock: `ac-qtso-crm-04nov-mockup.html`. Ruling
 ## SS write API v2 (AC-QTSO-CRM-2, 10 Nov)
 - U21. Quotation update: the PATCH carries only changed rows (DtlKey >= 1); each new row is one `POST .../lines {line}` call, keyed `-update-lines-{n}`; a refused add says the other changes were made and names the row; a retry resends only what is left.
 - U22. With `delete_line` on, a row the accepted revision no longer quotes is removed (`POST .../lines/{dtlKey}/delete`) after the edit, the last line included; with it off it waits "Waiting for AutoCount". The done note names the removed rows.
-- U23. A CANCEL BALANCE amendment row (lowering a line or cutting it to zero) is never written to AutoCount, even with `delete_line` on (owner, 11 Nov): it waits "Waiting for AutoCount", the change list marks it not sendable, and the edits beside it still go.
+- U23. A CANCEL BALANCE amendment row that cuts a line to zero is never written to AutoCount, even with `delete_line` on (owner, 11 Nov): it waits "Waiting for AutoCount", the change list marks it not sendable, and the edits beside it still go.
+- U23a. A CANCEL BALANCE amendment row that lowers a line to a non-zero qty (e.g. 120 -> 80) goes to AutoCount as a qty edit in the same PATCH (owner, 12 Nov); the change list marks it sendable. AutoCount's QTY_BELOW_TRANSFERRED refusal (below delivered / PO-linked) shows as "AutoCount refused: ... Nothing was changed.", and the next press after the fix goes again under a fresh key. A qty change for an item on several lines still waits for a hand change.
 - U24. Plain words: DOC_HAS_TRANSFERS, DOC_CANCELLED, CANCEL_IGNORED, LINE_NOT_DELETED, ROW_HAS_TRANSFERS (naming the row). DOC_CANCELLED on a cancel records it as cancelled. ROW_NOT_FOUND on a removal counts as removed.
 
 ## Security
