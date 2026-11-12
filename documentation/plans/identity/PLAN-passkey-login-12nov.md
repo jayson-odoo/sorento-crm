@@ -1,6 +1,6 @@
 # PLAN: Passkey sign-in for CRM staff (PASSKEY-LOGIN)
 
-Status: Review (build green, kill-proof done). Card approved by owner 12 Nov 17:36 (Q1 b, Q2 a, Q3 a, Q4 a, Q5 env-only) plus a
+Status: PR+CI (review rounds closed; crew-tests and browser pass on the final head). Card approved by owner 12 Nov 17:36 (Q1 b, Q2 a, Q3 a, Q4 a, Q5 env-only) plus a
 per-user "Passkey sign-in" switch, default OFF. Track: L (migration + auth change; security-reviewer
 required).
 
@@ -114,6 +114,15 @@ ADD COLUMN with a constant default 12 ms (metadata only). Whole upgrade under 0.
 ### Mock
 `documentation/mockups/passkey-login/index.html` (v1): sign-in page, Passkeys card (filled +
 empty), admin Sign-in card + lightbox.
+
+## Assistant coverage (PRINCIPLES DoD 6-8)
+- 6: no new paged list route (`scripts/ci_ai_coverage.py`: ok, 0 new). The two passkey lists are
+  small per-user lists inside a card / dialog, not list screens.
+- 7: no `ActionDef` on purpose. Adding a passkey needs the person's own device and a password or
+  phone-code re-check; removing one and the per-user switch are sign-in credential changes. None
+  of these may be done by the assistant on someone's behalf.
+- 8: no eval prompts: the assistant is not asked to act here; "how do I sign in with a passkey"
+  is answered from `documentation/user-guides/user-management/sign-in-with-a-passkey.md`.
 
 ## Status log
 - 12 Nov 2026: lane opened; discovery done; behaviour card + mock v1 filed.
