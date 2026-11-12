@@ -47,7 +47,7 @@ Classes/functions reused: `outcome._stage`, `outcome._events`, `outcome._still_a
 ## Standing rules that apply
 
 AI/chatbot: "no keyword, regex or word-list rules" (the classifier change reads structure only);
-"Reuse functions" (ESCALATION_OFFER_KINDS, sweep rebuild). Everything else n/a (no UI).
+"Reuse functions" (turn/pending.ROSTER_KINDS, sweep rebuild). Everything else n/a (no UI).
 
 ## Open (not this lane)
 
