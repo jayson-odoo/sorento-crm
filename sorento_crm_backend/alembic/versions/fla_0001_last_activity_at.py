@@ -16,13 +16,13 @@ request failed the CHECK. Every value allowed before is still allowed.
 Plan: documentation/plans/forms/PLAN-forms-last-activity-12nov.md.
 
 Revision ID: fla_0001_last_activity_at
-Revises: qdp_0001_duplicate_party
+Revises: il_0002_integration_log_search
 Create Date: 2026-11-12
 """
 from alembic import op
 
 revision = "fla_0001_last_activity_at"
-down_revision = "qdp_0001_duplicate_party"
+down_revision = "il_0002_integration_log_search"
 branch_labels = None
 depends_on = None
 
