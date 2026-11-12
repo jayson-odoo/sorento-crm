@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -139,6 +139,16 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // The line the row menu was opened on.
   const [menuLineKey, setMenuLineKey] = useState<string | null>(null);
+  // Capture phase, ahead of the menu's own handler: a right-click on no line stops here, so
+  // the menu stays shut and the browser shows its own.
+  const pickMenuLine = (event: MouseEvent<HTMLDivElement>) => {
+    const row = (event.target as Element).closest('tr[data-line-key]');
+    if (!row) {
+      event.stopPropagation();
+      return;
+    }
+    setMenuLineKey(row.getAttribute('data-line-key'));
+  };
   const [problems, setProblems] = useState<Problems>({ byLine: {} });
   const loadedRef = useRef(false);
 
@@ -423,18 +433,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
           <ContextMenuTrigger asChild>
             <div
               className="relative overflow-x-auto"
-              // Capture phase, ahead of the menu's own handler: a right-click on no line stops
-              // here, so the menu stays shut and the browser shows its own.
-              onContextMenuCapture={(event) => {
-                const row = (event.target as Element).closest(
-                  'tr[data-line-key]',
-                );
-                if (!row) {
-                  event.stopPropagation();
-                  return;
-                }
-                setMenuLineKey(row.getAttribute('data-line-key'));
-              }}
+              onContextMenuCapture={pickMenuLine}
             >
               {/* 840px of columns: fits the card at 1280 (935px inside); below that the table
               scrolls inside its own box, so 375 stays usable. */}
