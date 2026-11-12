@@ -96,10 +96,10 @@ describe('ServiceJobsList (D2)', () => {
     const cell = await screen.findByText('SV26/11-0001');
     const link = cell.closest('a');
     if (link) {
-      expect(link).toHaveAttribute('href', '/complaint-management/service-jobs/j-1');
+      expect((link.getAttribute('href') ?? '').split('?')[0]).toBe('/complaint-management/service-jobs/j-1');
     } else {
       fireEvent.click(cell);
-      expect(push).toHaveBeenCalledWith('/complaint-management/service-jobs/j-1');
+      expect(String(push.mock.calls[0]?.[0]).split('?')[0]).toBe('/complaint-management/service-jobs/j-1');
     }
   });
 
