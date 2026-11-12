@@ -17,6 +17,7 @@ import {
   CalendarRange,
   Columns3,
   FileText,
+  History,
   Link2,
   ListOrdered,
   LoaderCircleIcon,
@@ -43,6 +44,7 @@ import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visib
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
+import SalesOrderHistory from '@/components/audit/SalesOrderHistory';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -1902,6 +1904,10 @@ export function SalesOrderDetail({
             <Link2 />
             <span>Related</span>
           </TabsTrigger>
+          <TabsTrigger value="history">
+            <History />
+            <span>History</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -2399,6 +2405,10 @@ export function SalesOrderDetail({
         {/* DOC-RELATIONS: the delivery orders and billing documents of this order, one table. */}
         <TabsContent value="related" className="mt-0 focus-visible:outline-none">
           <RelatedDocumentsPanel kind="sales_order" id={so.id} />
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-0 focus-visible:outline-none">
+          <SalesOrderHistory source="scm" id={so.id} />
         </TabsContent>
       </Tabs>
 

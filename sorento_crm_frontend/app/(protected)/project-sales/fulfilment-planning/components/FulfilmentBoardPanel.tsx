@@ -34,6 +34,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle } from 'lucide-react';
+import SalesOrderHistory from '@/components/audit/SalesOrderHistory';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
@@ -690,6 +692,10 @@ export function FulfilmentBoardPanel({
     null,
   );
   const closeViewSplits = React.useCallback(() => setViewSplits(null), []);
+  /** STANDARD-HISTORY wave 2: one planned order's History, for every board user. */
+  const [orderHistory, setOrderHistory] = React.useState<{ psoId: string; soNumber: string } | null>(
+    null,
+  );
   /** UAC B8: the board gear, where the View splits popup hands focus back on close. */
   const boardActionsRef = React.useRef<HTMLButtonElement | null>(null);
   const psoIdBySalesOrder = React.useMemo(
@@ -3325,6 +3331,20 @@ export function FulfilmentBoardPanel({
                           <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
                         </span>
                       </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setOrderHistory({
+                            psoId: order.project_sales_order_id,
+                            soNumber: order.so_number,
+                          })
+                        }
+                      >
+                        <History className="size-4" aria-hidden />
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{`History ${order.so_number}`}</span>
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
+                        </span>
+                      </DropdownMenuItem>
                     </React.Fragment>
                   ))}
                 </>
@@ -4208,6 +4228,18 @@ export function FulfilmentBoardPanel({
           onClose={closeViewSplits}
           returnFocusRef={boardActionsRef}
         />
+      ) : null}
+      {orderHistory ? (
+        <Dialog open onOpenChange={(open) => (open ? undefined : setOrderHistory(null))}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle className="truncate">{`History ${orderHistory.soNumber}`}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="max-h-[70vh] overflow-y-auto">
+              <SalesOrderHistory source="project" id={orderHistory.psoId} />
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
       ) : null}
       {guideOpen ? (
         <ConfirmGuideDialog

@@ -22,8 +22,8 @@ UAC: `documentation/plans/audit/standard-history-10nov-acceptance-criteria.md` A
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from sqlalchemy import Text, or_
 from sqlalchemy.dialects.postgresql import array
@@ -44,12 +44,12 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrderLine,
 )
+from app.services.history_common import RAISE_WINDOW, ROW_AUDIT_TYPES, iso
 from app.services.project_service import resolve_user_names
 
-#: Both spellings, as `planning_history_service._ROW_AUDIT_TYPES`.
-_ROW_AUDIT_TYPES = ("project_order_inquiry_rows", "order_inquiry_rows")
-#: Rows created this close to a raise were raised by it (`planning_history_service._WINDOW`).
-_RAISE_WINDOW = timedelta(seconds=5)
+_ROW_AUDIT_TYPES = ROW_AUDIT_TYPES
+_RAISE_WINDOW = RAISE_WINDOW
+_iso = iso
 AUTOMATIC = "Automatic"
 
 _ACK_LABEL = {
@@ -62,10 +62,6 @@ _CAUSE_LABEL = {
     "so_line_removed": "Line removed from the SO",
     "qty_reduced": "Quantity reduced",
 }
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
 
 
 def _qty(value: Any) -> Any:
@@ -94,11 +90,12 @@ def _second(value: Optional[datetime]) -> Optional[datetime]:
 class _Rows:
     """This OI's rows (cancelled ones included: they are history too)."""
 
-    def __init__(self, db: Session, inquiry_id: str):
+    def __init__(self, db: Session, inquiry_id: Union[str, Sequence[str]]):
+        inquiry_ids = [inquiry_id] if isinstance(inquiry_id, str) else list(inquiry_id)
         self.by_id: Dict[str, OrderInquiryRow] = {
             str(row.id): row
             for row in db.query(OrderInquiryRow)
-            .filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
+            .filter(OrderInquiryRow.order_inquiry_id.in_(inquiry_ids))
             .all()
         }
         line_ids = {row.so_line_id for row in self.by_id.values() if row.so_line_id}

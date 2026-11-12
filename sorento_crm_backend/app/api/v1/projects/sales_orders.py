@@ -59,7 +59,9 @@ from app.schemas.project_sales_order import (
     SODraftFindingRow,
     UnpublishResponse,
 )
+from app.schemas.order_inquiry_history import OrderInquiryHistoryResponse
 from app.services import project_po_service as po_svc
+from app.services import sales_order_history_service
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_so_delta_service import ProjectSODeltaService
@@ -748,6 +750,23 @@ def confirm_sales_order_costing(
         return body
     except Exception as exc:
         db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/sales-orders/{pso_id}/history", response_model=OrderInquiryHistoryResponse)
+def sales_order_history(
+    pso_id: str,
+    _user: dict = Depends(require_permission("projects.projects.view")),
+    db: Session = Depends(get_db),
+):
+    """The detail page's History tab (STANDARD-HISTORY wave 2). Read-only; a staff session only
+    (no `_with_api_key`, the audit-read ruling of the OI history). The order is read first, so
+    an unknown id or another company's order is the same 404."""
+    try:
+        validate_uuid_path(pso_id, resource="Sales order")
+        ProjectSODraftService(db).get_order(pso_id)
+        return {"events": sales_order_history_service.history_for_project_so(db, pso_id)}
+    except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
