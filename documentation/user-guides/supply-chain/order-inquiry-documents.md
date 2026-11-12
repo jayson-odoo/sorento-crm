@@ -251,9 +251,9 @@ History dialog; on a line that has been reserved against, its **Reserve** tab li
 request, reserve, unreserve and cancelled request on that line, newest first, each with the
 quantity, the location, who did it, when, and the reason if one was given.
 
-The **State** filter beside the search box on the **Lines** tab includes **Request to
-reserve**, **Reserved** and **Not reserved** alongside the usual states, so you can narrow to
-only what needs you.
+The **State** filter beside the search box on the **Lines** tab offers exactly the words the
+**State** column shows (for example **To order**, **Waiting for CS**, **Done**), including **Request
+to reserve**, **Reserved** and **Not reserved**, so you can narrow to only what needs you.
 
 Without the **Reserve Stock for Order Inquiries** permission, none of this shows - lines display
 their plain state pill, the **History** icon and the paperclip only, and no **Reserve** button
