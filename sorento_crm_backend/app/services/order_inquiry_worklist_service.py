@@ -255,11 +255,11 @@ EXPORT_HEADINGS = (
     # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
     "CHANGE QUANTITY",
     "CHANGE DATE",
+    # OI-WHOLE-SO-CANCEL v2 (AC-V2-6): what the screen's status and Was figures say, just
+    # before REMARK, which stays the last column.
+    *CHANGE_HEADINGS,
     # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
     "REMARK",
-    # OI-WHOLE-SO-CANCEL v2 (AC-V2-6): what the screen's status and Was figures say.
-    # APPENDED, so no existing column moves.
-    *CHANGE_HEADINGS,
 )
 
 #: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they

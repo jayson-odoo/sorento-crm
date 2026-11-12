@@ -1224,10 +1224,6 @@ EXPORT_HEADINGS = (
     "PROJECT/CUSTOMER",
     "LOCATION",
     "REMARK",
-    # OI-WHOLE-SO-CANCEL v2 (AC-V2-6): the same STATUS / WAS columns as the Lines export.
-    "STATUS",
-    "WAS QTY",
-    "WAS DATE",
 )
 
 # How an amendment's own verb reads as a change to this line. The delta service spells
@@ -15055,15 +15051,11 @@ class ProjectOrderInquiryService:
         """
         from app.services import order_inquiry_export
 
-        from app.services.order_inquiry_worklist_service import (
-            OrderInquiryWorklistService,
-            change_columns,
-        )
+        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 
         rows = self.all_rows(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
-        # AC-V2-6: the screen's own current qty, status and Was figures, off the worklist's
-        # projection (one query for the whole set). A row it does not list keeps this
-        # export's own figures.
+        # The screen's own current qty (a row waiting for CS), off the worklist's projection,
+        # one query for the whole set. The eight golden headings stay as they are (AC-I5).
         shown = {
             str(r["id"]): r
             for r in OrderInquiryWorklistService(self.db)._all_rows(
@@ -15084,7 +15076,6 @@ class ProjectOrderInquiryService:
                     # Empty rather than a guess when no allocation is confirmed.
                     "LOCATION": row.get("stock_location") or "",
                     "REMARK": row.get("remark") or "",
-                    **change_columns({**row, **facts}),
                 }
             )
         body = order_inquiry_export.xlsx(records, EXPORT_HEADINGS)
