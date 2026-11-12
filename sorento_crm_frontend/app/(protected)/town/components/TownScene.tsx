@@ -213,7 +213,11 @@ export function TownScene({
             style={{ left: tipLeft || tip.x, top: tip.y - 12 }}
           >
             <div className="truncate font-semibold">{tip.title}</div>
-            <div className="truncate text-muted-foreground">{tip.detail}</div>
+            {tip.detail.split('\n').map((line) => (
+              <div key={line} className="truncate text-muted-foreground">
+                {line}
+              </div>
+            ))}
           </div>
         ) : null}
         <div className="absolute bottom-2 end-2 z-[3] flex gap-1 rounded-lg border border-border bg-background/80 p-1 backdrop-blur">

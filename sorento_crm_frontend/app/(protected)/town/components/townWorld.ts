@@ -608,9 +608,9 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       if (split) {
         g.font = '600 40px Inter, sans-serif';
         const part = (label: string, v: { amount?: string; invoice_count: number }) => `${label} ${v.amount != null ? rm0(v.amount) : count(v.invoice_count)}`;
-        const line = [part('Dealers', split.dealer), part('Projects', split.project), part('Other', split.other)].join('  ·  ');
+        // three separate labelled values in their own columns, never one dot-joined line (owner rule, crew 12 Nov)
         g.fillStyle = '#f2c46d';
-        g.fillText(line, 512, 352);
+        [part('Dealers', split.dealer), part('Projects', split.project), part('Other', split.other)].forEach((t, i) => g.fillText(t, 512 + (i - 1) * 330, 352));
       }
     }
     boardTex.needsUpdate = true;
@@ -1761,7 +1761,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     port: 'bg-cyan-700',
     approve: 'bg-violet-600',
   };
-  function addLabel(parts: { text: string; dot?: keyof typeof DOT; muted?: string; tone?: keyof typeof TONE; title?: string }, anchor: THREE.Vector3, fixed: boolean, open: () => void, tip: () => TipSubject) {
+  function addLabel(parts: { text: string; dot?: keyof typeof DOT; muted?: string | string[]; tone?: keyof typeof TONE; title?: string }, anchor: THREE.Vector3, fixed: boolean, open: () => void, tip: () => TipSubject) {
     const el = document.createElement('button');
     el.type = 'button';
     el.className = `absolute left-0 top-0 will-change-transform ${PILL} ${TONE[parts.tone ?? 'plain']}`;
@@ -1775,10 +1775,21 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       el.appendChild(dot);
     }
     el.appendChild(document.createTextNode(parts.text));
-    if (parts.muted) {
+    if (typeof parts.muted === 'string') {
       const m = document.createElement('span');
       m.className = 'font-medium text-muted-foreground';
       m.textContent = parts.muted;
+      el.appendChild(m);
+    } else if (parts.muted?.length) {
+      // several values: one small pill each, never dot-joined (owner rule, crew 12 Nov)
+      const m = document.createElement('span');
+      m.className = 'inline-flex gap-1';
+      parts.muted.forEach((value) => {
+        const chip = document.createElement('span');
+        chip.className = 'rounded-full border border-border px-1.5 font-medium text-muted-foreground';
+        chip.textContent = value;
+        m.appendChild(chip);
+      });
       el.appendChild(m);
     }
     el.addEventListener('click', (e) => {
@@ -1798,7 +1809,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   }
   const total = deliveries ? deliveries.to_deliver : null;
   const projOrders = (deliveries as { project_orders?: number } | undefined)?.project_orders ?? 0;
-  addLabel({ text: `${total == null ? '-' : count(total)} to deliver${projOrders ? ` · ${count(projOrders)} projects` : ''}`, dot: 'deliver' }, new THREE.Vector3(dx, 4.2, dz), true, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' }));
+  addLabel({ text: `${total == null ? '-' : count(total)} to deliver`, dot: 'deliver', muted: projOrders ? [`${count(projOrders)} project order${projOrders === 1 ? '' : 's'}`] : undefined }, new THREE.Vector3(dx, 4.2, dz), true, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' }));
   if (incoming) {
     const any = incoming.incoming + incoming.late;
     addLabel({ text: any ? `Incoming: ${count(incoming.incoming)}` : 'Incoming: none', dot: 'port' }, PL(CRANE_X, 10.2, 1.9), true, () => select({ kind: 'port' }), () => ({ kind: 'port' }));
@@ -1818,17 +1829,18 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       const lit = dealers.filter((s) => s.s.today_docs > 0).length;
       const nSites = sitesBy[d.key]?.length ?? 0;
       const nTowers = towersBy[d.key]?.length ?? 0;
-      const bits = [dealers.length ? `${plural(dealers.length, 'dealer')}${lit ? `, ${lit} lit` : ''}` : '', nSites ? plural(nSites, 'site') : '', nTowers ? plural(nTowers, 'trading house', 'trading houses') : ''].filter(Boolean);
+      const bits = [dealers.length ? plural(dealers.length, 'dealer') : '', lit ? `${lit} lit` : '', nSites ? plural(nSites, 'site') : '', nTowers ? plural(nTowers, 'trading house', 'trading houses') : ''].filter(Boolean);
+      const facts: [string, number][] = [['Dealers', dealers.length], ['Lit today', lit], ['Sites', nSites], ['Trading houses', nTowers]];
       // close up, the pill floats just off the state's near (south) shore, on the water, so it never covers a
       // site or a shop (on a small islet the shore itself is lined with sites)
       const [sx, sz] = mapXZ(0, -1);
       const [cx, cz] = d.key === 'selangor' ? polar(26.5, 330) : edgeToward(d.key, centreOf(d.key)[0] + sx * 99, centreOf(d.key)[1] + sz * 99, -5);
       addLabel(
-        { text: d.name, dot: lit ? 'lit' : undefined, muted: bits.length ? ` ${bits.join(' · ')}` : undefined },
+        { text: d.name, dot: lit ? 'lit' : undefined, muted: bits },
         new THREE.Vector3(cx, d.key === 'selangor' ? 3 : 0, cz),
         false,
         () => (d.key === 'selangor' ? flyTo('selangor') : flyTo(d.key)),
-        () => ({ kind: 'state', name: d.name, detail: bits.join(' · ') }),
+        () => ({ kind: 'state', name: d.name, detail: facts.filter(([, n]) => n).map(([k, n]) => `${k}: ${count(n)}`).join('\n') }),
       );
       const L = labels[labels.length - 1];
       L.isState = true;
@@ -1840,7 +1852,8 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     const pj = mapSnap.projects;
     if (pj && (pj.more || pj.dormant)) {
       const [x, z] = polar(26.8, 69);
-      addLabel({ text: [pj.more ? `+${count(pj.more)} more projects` : '', pj.dormant ? `+${count(pj.dormant)} dormant` : ''].filter(Boolean).join(' · ') }, new THREE.Vector3(x, 0.6, z), true, () => select({ kind: 'projects' }), () => ({ kind: 'projects' }));
+      const [first, ...rest] = [pj.more ? `+${count(pj.more)} more projects` : '', pj.dormant ? `+${count(pj.dormant)} dormant` : ''].filter(Boolean);
+      addLabel({ text: first, muted: rest }, new THREE.Vector3(x, 0.6, z), true, () => select({ kind: 'projects' }), () => ({ kind: 'projects' }));
     }
   }
   if (others) {

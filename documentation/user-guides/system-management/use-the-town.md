@@ -12,8 +12,8 @@ the Roles screen). Amounts show only to users who may see the sales reports; eve
 1. In the sidebar, click **Town**. The page opens on **Town** with the map on the left and the cards on the right.
 2. The map starts over **Selangor**, where Sorento's HQ is: the scoreboard, the approvals office, the warehouses,
    the depot, and the port (Port Klang) on the left with its ships. North is up.
-3. Every other state is an island of its own, joined by bridges. Each state carries a pill with its name and its
-   counts, for example **Johor** *7 dealers, 3 lit · 2 sites · 1 trading house*.
+3. Every other state is an island of its own, joined by bridges. Each state carries a pill with its name and a small
+   pill per count, for example **Johor** *7 dealers* *3 lit* *2 sites* *1 trading house*.
 
 ### Move around
 
@@ -44,16 +44,17 @@ its sales profile.
 
 ### Open the details
 
-Hover anything for its name and one key number. Click it for its details:
+Hover anything for its name and its key numbers, one per line (for example *Stage: Quoted*). Click it for its details:
 
-1. **A project site**: its name as the title (a long name shows in full on hover or the eye), then **Code**, **Stage** (named as on the project page), **Final negotiation**, **State**, **Timeline** (for example
-   *Launch Mar 2025 · Delivery Mar 2028 · 56% of the way*) and **Estimated value** (*-* when none). **Open project** opens the
+1. **A project site**: its name as the title (a long name shows in full on hover or the eye), then **Code**, **Stage** (named as on the project page), **Final negotiation**, **State**, **Launch** and **Delivery** (for example
+   *Mar 2025* and *Mar 2028*, *Not set* when missing), **Progress** (for example *56% of the way*, when both dates
+   are set) and **Estimated value** (*-* when none). **Open project** opens the
    project.
 2. **A glass tower**: the customer, **State**, **Open projects** and **Project invoices today**.
-3. **The sign *+N more projects · +N dormant*** near the Selangor sites: how many projects are open, how many the
-   map shows, how many more there are, and how many are dormant, with the list of sites on the map.
-4. **The scoreboard** or the card **How much did we sell today?**: the day's total and the line
-   *Dealers RM a · Projects RM b · Other RM c*, which adds up to the total.
+3. **The sign *+N more projects* *+N dormant*** near the Selangor sites: how many projects are open, then
+   **On the map**, **More** and **Dormant**, and the list of sites on the map with each one's stage and state.
+4. **The scoreboard** or the card **How much did we sell today?**: the day's total and, side by side,
+   *Dealers RM a*, *Projects RM b* and *Other RM c*, which add up to the total.
 
 ### Show it on a screen
 

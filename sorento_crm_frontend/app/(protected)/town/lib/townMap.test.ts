@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STATES, mapXZ, shopStateKey, siteLook, stateKeyOf } from './townMap';
+import { STATES, mapXZ, shopStateKey, siteLook, siteTimeline, stateKeyOf } from './townMap';
 
 describe('town map (TOWN-PROJECT-CITY)', () => {
   it('has one place for every my_state value plus the State not set islet', () => {
@@ -46,5 +46,15 @@ describe('town map (TOWN-PROJECT-CITY)', () => {
     expect(shopStateKey(undefined)).toBe('selangor');
     expect(shopStateKey(null)).toBe('notset');
     expect(shopStateKey('Johor')).toBe('johor');
+  });
+
+  it('gives a timeline as separate labelled items, never one dot-joined line (owner rule, crew 12 Nov)', () => {
+    const day = '2026-11-03';
+    expect(siteTimeline({ launch_date: '2025-03-01', delivery_date: '2028-03-01' }, day)).toEqual([
+      ['Launch', 'Mar 2025'], ['Delivery', 'Mar 2028'], ['Progress', '56% of the way'],
+    ]);
+    expect(siteTimeline({ launch_date: '2027-03-01', delivery_date: '2028-03-01' }, day)[2]).toEqual(['Progress', 'Not launched yet']);
+    expect(siteTimeline({ launch_date: null, delivery_date: '2028-03-01' }, day)).toEqual([['Launch', 'Not set'], ['Delivery', 'Mar 2028']]);
+    expect(siteTimeline({ launch_date: null, delivery_date: null }, day)).toEqual([['Launch', 'Not set'], ['Delivery', 'Not set']]);
   });
 });

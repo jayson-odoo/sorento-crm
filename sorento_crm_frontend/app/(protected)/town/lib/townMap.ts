@@ -96,24 +96,23 @@ export const LOOK_WORDS: Record<SiteLook, string> = {
   plain: 'no dates yet', before: 'launching', ground: 'groundworks', frame: 'frame going up', clad: 'cladding', done: 'finished',
 };
 
-/** "Residensi Alpha · P-0101", or "Project site" when the viewer's variant carries no name. */
-export const siteTitle = (site: { name?: string; code?: string | null }) =>
-  site.name ? (site.code ? `${site.name} · ${site.code}` : site.name) : 'Project site';
+/** The site's name, or "Project site" when the viewer's variant carries no name (the code is a fact of its own,
+ * never dot-joined to the name: owner rule, crew 12 Nov). */
+export const siteTitle = (site: { name?: string }) => site.name || 'Project site';
 
 // date-format-ok: a month-name table; "Mar 2025" straight from the ISO date, no time zone involved
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 
-/** "Launch Mar 2025 · Delivery Mar 2028 · 56% of the way" (the project's own dates). */
-export function siteTimeline(site: { launch_date: string | null; delivery_date: string | null }, day: string): string {
+/** The project's own dates as labelled items: Launch, Delivery and, when both are set and in order, Progress. */
+export function siteTimeline(site: { launch_date: string | null; delivery_date: string | null }, day: string): [string, string][] {
   const { launch_date: l, delivery_date: d } = site;
-  if (!l && !d) return 'No launch date · no delivery date';
-  if (!l) return `No launch date · delivery ${MONTH(d as string)}`;
-  if (!d) return `Launch ${MONTH(l)} · no delivery date`;
-  const span = Date.parse(d) - Date.parse(l);
-  if (!(span > 0)) return `Launch ${MONTH(l)} · Delivery ${MONTH(d)}`;
+  const rows: [string, string][] = [['Launch', l ? MONTH(l) : 'Not set'], ['Delivery', d ? MONTH(d) : 'Not set']];
+  const span = l && d ? Date.parse(d) - Date.parse(l) : 0;
+  if (!l || !(span > 0)) return rows;
   const k = Math.round(((Date.parse(day) - Date.parse(l)) / span) * 100);
-  return `Launch ${MONTH(l)} · Delivery ${MONTH(d)} · ${k < 0 ? 'not launched yet' : `${Math.min(k, 100)}% of the way`}`;
+  rows.push(['Progress', k < 0 ? 'Not launched yet' : `${Math.min(k, 100)}% of the way`]);
+  return rows;
 }
 
 /** A shop's map key. `state` missing altogether (a snapshot built before TOWN-PROJECT-CITY, served until the

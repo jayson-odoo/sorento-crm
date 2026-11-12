@@ -177,14 +177,13 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       if (!shop) return { title: 'Dealer', meta: '', content: null };
       return {
         title: shopLabel(shop),
-        meta: `${shop.today_docs ? 'Bought today' : 'No invoice today'}${
-          shop.rank && shop.name ? ` · rank ${shop.rank} of 30 (90 days)` : ''
-        }`,
+        meta: shop.today_docs ? 'Bought today' : 'No invoice today',
         content: (
           <>
             <Rows
               rows={[
                 ['Invoices today', shop.today_docs],
+                ...(shop.rank && shop.name ? ([['Rank (90 days)', `${shop.rank} of 30`]] as [string, ReactNode][]) : []),
                 ...(shop.today_amount ? ([['Invoiced today', rm(shop.today_amount)]] as [string, ReactNode][]) : []),
                 ...(shop.ninety_day_amount
                   ? ([['Last 90 days', rm(shop.ninety_day_amount)]] as [string, ReactNode][])
@@ -203,7 +202,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
         // the name alone as the title (it clamps; a project name can run to hundreds of characters) and the
         // code on its own row, where no clamp can cut it (crew pass, 12 Nov)
         title: site.name ?? 'Project site',
-        meta: `${stageLabel(site)}${site.final_negotiation ? ' · final negotiation' : ''}`,
+        meta: stageLabel(site),
         content: (
           <>
             <Rows
@@ -212,7 +211,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
                 ['Stage', stageLabel(site)],
                 ['Final negotiation', site.final_negotiation ? 'Yes' : 'No'],
                 ['State', site.state ?? 'State not set'],
-                ['Timeline', siteTimeline(site, snapshot.day)],
+                ...siteTimeline(site, snapshot.day),
                 ...(full ? ([['Estimated value', site.estimated_value ? rm(site.estimated_value) : '-']] as [string, ReactNode][]) : []),
               ]}
             />
@@ -242,8 +241,22 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       const p = snapshot.projects;
       return {
         title: `${count(p?.open_count ?? 0)} open projects`,
-        meta: p ? `${count(p.sites.length)} on the map · +${count(p.more)} more · ${count(p.dormant)} dormant` : '',
-        content: p ? <Rows rows={p.sites.map((s): [string, ReactNode, string] => [siteTitle(s), `${stageLabel(s)} · ${s.state ?? 'State not set'}`, s.key])} /> : null,
+        meta: '',
+        content: p ? (
+          <>
+            <Rows rows={[['On the map', count(p.sites.length)], ['More', count(p.more)], ['Dormant', count(p.dormant)]]} />
+            <Rows
+              rows={p.sites.map((s): [string, ReactNode, string] => [
+                siteTitle(s),
+                <>
+                  <div>{stageLabel(s)}</div>
+                  <div className="text-muted-foreground">{s.state ?? 'State not set'}</div>
+                </>,
+                s.key,
+              ])}
+            />
+          </>
+        ) : null,
       };
     }
     case 'low':

@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TownCards } from './TownCards';
 import { TownLightbox } from './TownLightbox';
-import { townTip } from '../lib/townTips';
+import { townTip, type TipSubject } from '../lib/townTips';
+import { splitParts } from '../lib/townFormat';
 import { stageColor, stageLabel } from '../lib/townMap';
 
 /** TOWN-PROJECT-CITY (plan PLAN-town-project-city-11nov.md, "Phase 2 contract"): the split board, project sites,
@@ -35,12 +36,18 @@ const REDACTED = {
 describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
   it('splits the sales card into dealers, projects and other, in RM for a full viewer', () => {
     render(<TownCards snapshot={FULL as never} />);
-    expect(screen.getByText(/Dealers RM 300 · Projects RM 150 · Other RM 30/)).toBeTruthy();
+    // owner rule (no ' · ' joining two values, crew 12 Nov): each part is its own labelled item
+    expect(screen.getByText('Dealers RM 300')).toBeTruthy();
+    expect(screen.getByText('Projects RM 150')).toBeTruthy();
+    expect(screen.getByText('Other RM 30')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/·/);
+    expect(splitParts(FULL.today as never)).toEqual(['Dealers RM 300', 'Projects RM 150', 'Other RM 30']);
   });
 
   it('splits by invoice counts when the viewer may not see amounts', () => {
     render(<TownCards snapshot={REDACTED as never} />);
-    expect(screen.getByText(/Dealers 3 · Projects 2 · Other 1/)).toBeTruthy();
+    expect(screen.getByText('Dealers 3')).toBeTruthy();
+    expect(screen.getByText('Other 1')).toBeTruthy();
     expect(screen.queryByText(/RM/)).toBeNull();
   });
 
@@ -51,14 +58,18 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     expect(screen.getByText('P-0101')).toBeTruthy();
     expect(screen.getAllByText('Quoted').length).toBeGreaterThan(0);
     expect(screen.getByText('Johor')).toBeTruthy();
-    expect(screen.getByText(/Launch Mar 2025 · Delivery Mar 2028 · 56% of the way/)).toBeTruthy();
+    const row = (label: string) => screen.getByText(label).closest('tr')?.textContent;
+    expect(row('Launch')).toBe('LaunchMar 2025');
+    expect(row('Delivery')).toBe('DeliveryMar 2028');
+    expect(row('Progress')).toBe('Progress56% of the way');
+    expect(screen.getByRole('dialog').textContent).not.toMatch(/·/);
     expect(screen.getByText('RM 1,200,000.00')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open project' }).getAttribute('href')).toBe('/project-sales/p1');
   });
 
   it('opens a site without a name, value or link for a viewer without amounts', () => {
     render(<TownLightbox snapshot={REDACTED as never} target={{ kind: 'site', key: 'opaque-site-1' }} onClose={() => undefined} />);
-    expect(screen.getByText('Project site')).toBeTruthy();
+    expect(screen.getByRole('dialog').querySelector('h2')?.textContent).toBe('Project site');
     expect(screen.queryByText(/Residensi/)).toBeNull();
     expect(screen.queryByText(/RM/)).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open project' })).toBeNull();
@@ -73,14 +84,23 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
 
   it('opens the projects sign: open, shown, more and dormant', () => {
     render(<TownLightbox snapshot={FULL as never} target={{ kind: 'projects' }} onClose={() => undefined} />);
-    expect(screen.getByText('33 open projects')).toBeTruthy();
-    expect(screen.getByText(/1 on the map · \+32 more · 3 dormant/)).toBeTruthy();
+    expect(screen.getByRole('dialog').querySelector('h2')?.textContent).toBe('33 open projects');
+    const row = (label: string) => screen.getByText(label).closest('tr')?.textContent;
+    expect(row('On the map')).toBe('On the map1');
+    expect(row('More')).toBe('More32');
+    expect(row('Dormant')).toBe('Dormant3');
+    // a site's stage and state on lines of their own, never joined with a dot
+    const site = screen.getByText('Residensi Alpha').closest('tr') as HTMLElement;
+    expect(site.querySelectorAll('td:last-child > div')).toHaveLength(2);
+    expect(screen.getByRole('dialog').textContent).not.toMatch(/·/);
   });
 
   it('names sites and trading houses in the tooltip only when the snapshot carries the name', () => {
-    expect(townTip(FULL as never, { kind: 'site', site: SITE as never })).toEqual({ title: 'Residensi Alpha · P-0101', detail: 'Quoted, final negotiation · frame going up' });
+    expect(townTip(FULL as never, { kind: 'site', site: SITE as never })).toEqual({
+      title: 'Residensi Alpha', detail: 'Code: P-0101\nStage: Quoted\nFinal negotiation: Yes\nBuilding: frame going up',
+    });
     expect(townTip(REDACTED as never, { kind: 'site', site: REDACTED.projects.sites[0] as never }).title).toBe('Project site');
-    expect(townTip(FULL as never, { kind: 'trading_house', row: TH as never })).toEqual({ title: 'TH Alpha Trading', detail: '4 open projects · bought today' });
+    expect(townTip(FULL as never, { kind: 'trading_house', row: TH as never })).toEqual({ title: 'TH Alpha Trading', detail: 'Open projects: 4\nProject invoice today: Yes' });
     expect(townTip(REDACTED as never, { kind: 'trading_house', row: REDACTED.trading_houses.rows[0] as never }).title).toBe('Trading house');
   });
 
@@ -93,7 +113,7 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     expect(stageLabel(renamed)).toBe('Quotation');
     expect(stageLabel({ stage: 'final_negotiation' })).toBe('Final negotiation');
     expect(stageLabel({ stage: null })).toBe('Stage not set');
-    expect(townTip(snap as never, { kind: 'site', site: custom as never }).detail).toMatch(/^Sponsorship Form, final negotiation/);
+    expect(townTip(snap as never, { kind: 'site', site: custom as never }).detail).toMatch(/^Code: P-0101\nStage: Sponsorship Form\n/);
   });
 
   it("colours a stage's flag with the CRM's colour, else a known default, else grey", () => {
@@ -121,9 +141,9 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     expect(screen.getByText('P-0101')).toBeTruthy();
     unmount();
     render(<TownLightbox snapshot={snap as never} target={{ kind: 'projects' }} onClose={() => undefined} />);
-    const row = screen.getByRole('dialog').querySelector('td [title]') as HTMLElement;
+    const row = Array.from(screen.getByRole('dialog').querySelectorAll('td [title]')).find((el) => el.getAttribute('title') === long) as HTMLElement;
     expect(row.className).toMatch(/truncate/);
-    expect(row.getAttribute('title')).toBe(`${long} · P-0101`);
+    expect(row.getAttribute('title')).toBe(long);
   });
 
   it('lists the dealers bought today without duplicate React keys when names are hidden', () => {
@@ -140,5 +160,24 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     render(<TownLightbox snapshot={snap as never} target={{ kind: 'site', key: 'p1' }} onClose={() => undefined} />);
     const row = screen.getByText('Estimated value').closest('tr') as HTMLElement;
     expect(row.textContent).toMatch(/Estimated value-$/);
+  });
+
+  it('never joins two values with a dot in any tooltip: one fact per line (owner rule, crew 12 Nov)', () => {
+    const snap = {
+      ...FULL,
+      incoming: { incoming: 3, late: 2, next_eta: null, shipments: [] },
+    };
+    const subjects: TipSubject[] = [
+      { kind: 'sales' }, { kind: 'port' }, { kind: 'projects' }, { kind: 'coaster' },
+      { kind: 'site', site: SITE as never }, { kind: 'trading_house', row: TH as never },
+      { kind: 'shipment', row: { shipment_number: 'ZZT-1', eta: '2026-11-09', products: 2, supplier: 'Acme Trading', late: true } as never },
+      { kind: 'lorry', customer: { key: null, name: 'Acme Trading', orders: 2 } as never },
+    ];
+    for (const s of subjects) {
+      const tip = townTip(snap as never, s);
+      expect(`${tip.title}\n${tip.detail}`).not.toMatch(/·/);
+    }
+    expect(townTip(snap as never, { kind: 'sales' }).detail).toBe('Sold: RM 480\nInvoices: 6');
+    expect(townTip(snap as never, { kind: 'port' }).detail).toBe('Incoming: 3\nLate: 2');
   });
 });

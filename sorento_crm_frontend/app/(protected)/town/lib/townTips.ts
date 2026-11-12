@@ -3,6 +3,11 @@ import type { TownDueCustomer, TownShipment, TownShop, TownSite, TownSnapshot, T
 import { count, rm0, shopLabel, shortName } from './townFormat';
 import { LOOK_WORDS, siteLook, siteTitle, stageLabel } from './townMap';
 
+/** Several facts in one tooltip: one per line as "Label: value", never dot-joined (owner rule, crew 12 Nov). */
+const lines = (rows: [string, string | null | undefined][]) =>
+  rows.filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}: ${v}`).join('\n');
+const yes = (b: boolean) => (b ? 'Yes' : 'No');
+
 /** What the pointer is over. A mouse shows its tooltip; a tap on touch opens the lightbox instead. */
 export type TipSubject =
   | { kind: 'sales' }
@@ -24,7 +29,7 @@ export type TipSubject =
 
 const orders = (n: number) => `${count(n)} order${n === 1 ? '' : 's'} due today or overdue`;
 
-/** The hover tooltip: the thing's name and its one key number (TOWN-V2 rule 1). */
+/** The hover tooltip: the thing's name and its key numbers (TOWN-V2 rule 1), one fact per line. */
 export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: string; detail: string } {
   const { today, reorder, deliveries, approvals, incoming } = snapshot;
   switch (subject.kind) {
@@ -32,7 +37,7 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
       return {
         title: "Today's sales",
         detail: today.amount != null
-          ? `${rm0(today.amount)} · ${count(today.invoice_count)} invoices`
+          ? lines([['Sold', rm0(today.amount)], ['Invoices', count(today.invoice_count)]])
           : `${count(today.invoice_count)} invoices`,
       };
     case 'bought':
@@ -61,16 +66,16 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
       return {
         title: 'Port',
         detail: incoming && total
-          ? `${count(incoming.incoming)} incoming${incoming.late ? ` · ${count(incoming.late)} late` : ''}`
+          ? lines([['Incoming', count(incoming.incoming)], ['Late', incoming.late ? count(incoming.late) : null]])
           : 'Nothing on the way',
       };
     }
     case 'shipment': {
       const { row } = subject;
-      const eta = row.eta ? `ETA ${formatDateInMalaysia(row.eta)}` : 'No ETA';
+      const eta = row.eta ? formatDateInMalaysia(row.eta) : 'Not set';
       return {
-        title: `${row.shipment_number ?? 'Shipment'}${row.late ? ' · late' : ' on the water'}`,
-        detail: [eta, `${count(row.products)} products`, row.supplier].filter(Boolean).join(' · '),
+        title: row.shipment_number ?? 'Shipment',
+        detail: lines([['Status', row.late ? 'Late' : 'On the water'], ['ETA', eta], ['Products', count(row.products)], ['Supplier', row.supplier]]),
       };
     }
     case 'lorry': {
@@ -79,7 +84,7 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
         // a customer with no shop in the town: its name only exists on the personal view
         return {
           title: 'Customer outside the town',
-          detail: [customer.name ? shortName(customer.name) : null, orders(customer.orders)].filter(Boolean).join(' · '),
+          detail: [customer.name ? `Customer: ${shortName(customer.name)}` : null, orders(customer.orders)].filter(Boolean).join('\n'),
         };
       }
       const shop = snapshot.shops.find((s) => s.key === customer.key);
@@ -89,25 +94,30 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
       const { site } = subject;
       return {
         title: siteTitle(site),
-        detail: `${stageLabel(site)}${site.final_negotiation ? ', final negotiation' : ''} · ${LOOK_WORDS[siteLook(site, snapshot.day)]}`,
+        detail: lines([
+          ['Code', site.code],
+          ['Stage', stageLabel(site)],
+          ['Final negotiation', site.final_negotiation ? 'Yes' : null],
+          ['Building', LOOK_WORDS[siteLook(site, snapshot.day)]],
+        ]),
       };
     }
     case 'trading_house': {
       const { row } = subject;
       return {
         title: row.name ?? 'Trading house',
-        detail: `${count(row.open_projects)} open project${row.open_projects === 1 ? '' : 's'} · ${row.today_docs ? 'bought today' : 'no project invoice today'}`,
+        detail: lines([['Open projects', count(row.open_projects)], ['Project invoice today', yes(row.today_docs > 0)]]),
       };
     }
     case 'projects': {
       const p = snapshot.projects;
-      return { title: 'Open projects', detail: p ? `${count(p.open_count)} open · ${count(p.dormant)} dormant` : 'None' };
+      return { title: 'Open projects', detail: p ? lines([['Open', count(p.open_count)], ['Dormant', count(p.dormant)]]) : 'None' };
     }
     case 'state':
       return { title: subject.name, detail: subject.detail || 'Nothing here today' };
     case 'project_lorry':
       return { title: 'Lorry to a project', detail: `Project orders to ${subject.state}` };
     case 'coaster':
-      return { title: 'Coaster', detail: 'Port Klang · Sabah, Sarawak, Labuan' };
+      return { title: 'Coaster', detail: lines([['From', 'Port Klang'], ['To', 'Sabah, Sarawak, Labuan']]) };
   }
 }

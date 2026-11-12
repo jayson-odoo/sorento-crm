@@ -72,12 +72,12 @@ describe('town tooltips', () => {
   });
 
   it('gives every other building its name and key number', () => {
-    expect(townTip(SNAPSHOT, { kind: 'sales' })).toEqual({ title: "Today's sales", detail: 'RM 12,346 · 3 invoices' });
+    expect(townTip(SNAPSHOT, { kind: 'sales' })).toEqual({ title: "Today's sales", detail: 'Sold: RM 12,346\nInvoices: 3' });
     expect(townTip(SNAPSHOT, { kind: 'warehouse', index: 0 })).toEqual({ title: 'Warehouse WH01', detail: '1,234 on hand' });
     expect(townTip(SNAPSHOT, { kind: 'low' })).toEqual({ title: 'Low stock', detail: '1,527 products below reorder level' });
     expect(townTip(SNAPSHOT, { kind: 'deliver' })).toEqual({ title: 'Depot', detail: '14 sales orders to deliver' });
     expect(townTip(SNAPSHOT, { kind: 'approve' })).toEqual({ title: 'Approvals', detail: '1 waiting for a decision' });
-    expect(townTip(SNAPSHOT, { kind: 'port' })).toEqual({ title: 'Port', detail: '29 incoming · 70 late' });
+    expect(townTip(SNAPSHOT, { kind: 'port' })).toEqual({ title: 'Port', detail: 'Incoming: 29\nLate: 70' });
   });
 
   it('says so when there is nothing to show', () => {
@@ -89,14 +89,14 @@ describe('town tooltips', () => {
   it('names where a lorry is going: a shop in the town, or a customer outside it (named on the personal view only)', () => {
     const withShop = { ...(SNAPSHOT as object), shops: [{ key: 'k1', kind: 'shop', account_label: 'A/C I', today_docs: 0, name: 'ZZT Tiling SDN BHD [A/C I]' }] } as never;
     expect(townTip(withShop, { kind: 'lorry', customer: { key: 'k1', orders: 3 } })).toEqual({ title: 'Lorry to ZZT Tiling [A/C I]', detail: '3 orders due today or overdue' });
-    expect(townTip(withShop, { kind: 'lorry', customer: { key: null, name: 'ZZT Faraway SDN BHD', orders: 1 } })).toEqual({ title: 'Customer outside the town', detail: 'ZZT Faraway · 1 order due today or overdue' });
+    expect(townTip(withShop, { kind: 'lorry', customer: { key: null, name: 'ZZT Faraway SDN BHD', orders: 1 } })).toEqual({ title: 'Customer outside the town', detail: 'Customer: ZZT Faraway\n1 order due today or overdue' });
     expect(townTip(withShop, { kind: 'lorry', customer: { key: null, orders: 2 } })).toEqual({ title: 'Customer outside the town', detail: '2 orders due today or overdue' });
   });
 
   it('names a ship or a late container by its shipment, with the supplier only when the snapshot carries one', () => {
     const row = { shipment_number: 'SHP-1', container: 'C1', eta: null, products: 4, quantity: 10, late: false };
-    expect(townTip(SNAPSHOT, { kind: 'shipment', row })).toEqual({ title: 'SHP-1 on the water', detail: 'No ETA · 4 products' });
+    expect(townTip(SNAPSHOT, { kind: 'shipment', row })).toEqual({ title: 'SHP-1', detail: 'Status: On the water\nETA: Not set\nProducts: 4' });
     const late = { ...row, late: true, supplier: 'ZZT Supplier' };
-    expect(townTip(SNAPSHOT, { kind: 'shipment', row: late })).toEqual({ title: 'SHP-1 · late', detail: 'No ETA · 4 products · ZZT Supplier' });
+    expect(townTip(SNAPSHOT, { kind: 'shipment', row: late })).toEqual({ title: 'SHP-1', detail: 'Status: Late\nETA: Not set\nProducts: 4\nSupplier: ZZT Supplier' });
   });
 });
