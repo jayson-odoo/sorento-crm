@@ -41,7 +41,8 @@ the sales order is confirmed, for example a bathtub that Sorento cannot store.
 ## How it shows
 
 * On the proposal, a Non-cancellable line carries a **Non-cancellable** badge under its
-  description.
+  description. In **Edit proposal** it appears or goes the moment you pick or change the item or
+  the scope's series, before you save, like **Non-standard** and **Below minimum price**.
 * In the PDF, the customer's sign page and the Excel export, a **REMARK** column (just before
   GRAND TOTAL) reads **Non-cancellable** on those lines. A proposal with no such line prints
   without the column. Nothing is added to the terms.
