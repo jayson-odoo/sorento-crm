@@ -1,21 +1,23 @@
 -- Chatbot live weekly scoreboard (CHATBOT-STEP-A, A1). Read-only SELECTs. Run on the dev copy or on a read replica.
--- Re-run next week UNCHANGED: the only parameter is p.week_from (first Monday shown, Malaysia time) in the CTE below.
--- Two statements, each ends in ';': (1) overall by week and audience, (2) by week and topic (intent).
+-- Re-run next week UNCHANGED: statements 1 and 2 take one parameter, p.week_from (first Monday shown, Malaysia time);
+-- statement 3 takes p0.day_to and p0.days. Three statements, each ends in ';': (1) overall by week and audience,
+-- (2) by week and topic (intent), (3) the daily reading.
 -- Each took 2 to 5 seconds on the dev copy of prod 12 Nov (limit 30 s). If it nears the limit, raise week_from.
 -- Lives in the repo since CHATBOT-SCOREBOARD (documentation/plans/chatbot/PLAN-chatbot-scoreboard-12nov.md);
--- tests/chatbot/test_chatbot_scoreboard_sql.py runs both statements on fake rows.
+-- tests/chatbot/test_chatbot_scoreboard_sql.py runs all three statements on fake rows.
 --
 -- Definitions changed by CHATBOT-SCOREBOARD (every other column is as before):
 -- * Outcome columns read chat_ask_facts.outcome, stamped by analytics/outcome.py. The quantity question
---   ("How many units of X?") and pick-one menus are `clarified` there, read from the turn's `state` event,
---   so they are not couldn't-find (nf_outcome) or answered. "Couldn't find X. Did you mean Y?" stays a miss.
---   Facts written before that rule need `scripts/chat_facts_sweep.py --since <day> --rebuild` once; and
---   turns before the `state` event existed (before the week of 5 Oct 2026) keep the old outcome.
+--   ("How many units of X?", the turn's `state` event) and the stock "which one?" family pick are `clarified`
+--   there, so they are not couldn't-find (nf_outcome); a which-one pick after an answer (`replied.facts.asking`)
+--   is `clarified`, not answered. "Couldn't find X. Did you mean Y?" stays a miss. Facts written before that
+--   rule need `scripts/chat_facts_sweep.py --since <day> --rebuild` once; turns before the `state` event existed
+--   (before the week of 5 Oct 2026) keep the old outcome for the quantity question and the family pick.
 -- * stock_nf_pct: check_stock asks ending answered_empty or missed / check_stock asks.
 --   stock_dead_end_pct: the same asks whose reply offered no code (no product_pick question) / check_stock asks.
 -- * technical_pct = tech_engine_pct + tech_delivery_pct. Engine: the turn failed at any stage but
 --   send_unconfirmed. Delivery: send_unconfirmed AND no outgoing chat_histories row for the turn shows the
---   reply went (a row whose delivery_status is failed or not_sent does not count as went).
+--   reply went (only delivery_status sent, delivered or read counts; pending, failed, not_sent or none does not).
 -- * weekly_line (statement 1, 'all' row): the owner's one line, e.g.
 --   "wk 09/11/2026: stock not-found 5.0% (dead-end 2.1%), median 7.7 s, dealer asked-again 10.2%, technical 1.5%".
 -- Statement 1: overall.
@@ -24,12 +26,12 @@ WITH p AS (
          ARRAY['check_stock','check_incoming','check_order','check_product_attachment',
                'check_promotion','check_product','(none)','check_po_cost'] AS top8  -- fixed topic list (top 8 by volume, 8 Sep to 12 Nov 2026)
 ),
-went_out AS (   -- turns whose reply went out: an outgoing chat row for the turn that did not fail (chat_histories.chatbot_turn_id, delivery_status)
+went_out AS (   -- turns whose reply went out: an outgoing chat row for the turn with a confirmed status (chat_histories.chatbot_turn_id, delivery_status)
   SELECT DISTINCT h.chatbot_turn_id
     FROM public.chat_histories h
    WHERE h.chatbot_turn_id IS NOT NULL
      AND h.type = 'outgoing'
-     AND COALESCE(h.delivery_status, '') NOT IN ('failed', 'not_sent')
+     AND h.delivery_status IN ('sent', 'delivered', 'read')
 ),
 a AS (   -- real WhatsApp asks: the real-traffic filter
   SELECT f.id, f.turn_id, f.contact_respond_id, f.audience, f.outcome, f.reply_ms, f.asked_at,
@@ -157,12 +159,12 @@ WITH p AS (
          ARRAY['check_stock','check_incoming','check_order','check_product_attachment',
                'check_promotion','check_product','(none)','check_po_cost'] AS top8  -- fixed topic list (top 8 by volume, 8 Sep to 12 Nov 2026)
 ),
-went_out AS (   -- turns whose reply went out: an outgoing chat row for the turn that did not fail (chat_histories.chatbot_turn_id, delivery_status)
+went_out AS (   -- turns whose reply went out: an outgoing chat row for the turn with a confirmed status (chat_histories.chatbot_turn_id, delivery_status)
   SELECT DISTINCT h.chatbot_turn_id
     FROM public.chat_histories h
    WHERE h.chatbot_turn_id IS NOT NULL
      AND h.type = 'outgoing'
-     AND COALESCE(h.delivery_status, '') NOT IN ('failed', 'not_sent')
+     AND h.delivery_status IN ('sent', 'delivered', 'read')
 ),
 a AS (   -- real WhatsApp asks: the real-traffic filter
   SELECT f.id, f.turn_id, f.contact_respond_id, f.audience, f.outcome, f.reply_ms, f.asked_at,
@@ -294,12 +296,12 @@ p AS (
          30 AS target_promo_q
     FROM p0
 ),
-went_out AS (   -- turns whose reply went out: an outgoing chat row for the turn that did not fail (chat_histories.chatbot_turn_id, delivery_status)
+went_out AS (   -- turns whose reply went out: an outgoing chat row for the turn with a confirmed status (chat_histories.chatbot_turn_id, delivery_status)
   SELECT DISTINCT h.chatbot_turn_id
     FROM public.chat_histories h
    WHERE h.chatbot_turn_id IS NOT NULL
      AND h.type = 'outgoing'
-     AND COALESCE(h.delivery_status, '') NOT IN ('failed', 'not_sent')
+     AND h.delivery_status IN ('sent', 'delivered', 'read')
 ),
 a AS (   -- real WhatsApp asks: the real-traffic filter
   SELECT f.id, f.turn_id, f.contact_respond_id, f.audience, f.outcome, f.reply_ms, f.asked_at,
