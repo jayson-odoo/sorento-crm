@@ -20,8 +20,9 @@ SORTS = {
 }
 
 
-def serialize(row: Technician) -> Dict[str, Any]:
+def serialize(row: Technician, in_use: bool = False) -> Dict[str, Any]:
     return {
+        "in_use": in_use,
         "id": row.id,
         "name": row.name,
         "phone": row.phone,
@@ -63,8 +64,15 @@ def list_technicians(
     column = SORTS.get(sort or "", Technician.name)
     order = desc(column) if (direction or "asc").lower() == "desc" else asc(column)
     rows = q.order_by(order, Technician.id).offset((page - 1) * limit).limit(limit).all()
+    used = {
+        str(t)
+        for (t,) in db.query(ServiceJob.technician_id)
+        .filter(ServiceJob.technician_id.in_([r.id for r in rows]))
+        .distinct()
+        .all()
+    }
     return {
-        "data": [serialize(r) for r in rows],
+        "data": [serialize(r, r.id in used) for r in rows],
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
     }

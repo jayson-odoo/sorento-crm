@@ -56,6 +56,7 @@ from app.models.dealer_kit import (
     TileTemplate,
 )
 from app.models.inventory import Warehouse
+from app.models.service_jobs import Technician
 from app.models.marketing import MarketingCampaign, PromotionGroup, PromotionProduct, PromotionType
 from app.models.onboarding import OnboardingRequest
 from app.models.order import Order, SalesOrder
@@ -447,6 +448,7 @@ _PARK_SCOPED_MODELS: dict = {
     # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the product; the template ids ride in the payload.
     "product.unlink_tag_templates": Product,
     "team.delete": Team,
+    "technician.delete": Technician,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,
 }

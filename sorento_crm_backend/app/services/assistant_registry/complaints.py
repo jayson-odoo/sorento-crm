@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.models.complaint_master_data import ComplaintResolution, ComplaintRootCause
 from app.models.complaints import Complaint
+from app.models.service_jobs import ServiceJob
 from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
@@ -24,7 +25,41 @@ def _brand_scope(db) -> list:
     return list(complaint_in_scope_clauses(db))
 
 
+def _own_job(me):
+    from sqlalchemy import select
+
+    from app.services.own_scope import request_clause
+
+    return ServiceJob.complaint_id.in_(select(Complaint.id).where(request_clause(Complaint, me)))
+
+
 register(
+    EntityDef(
+        key="service_job",
+        label="Service jobs",
+        module="complaints",
+        model=ServiceJob,
+        view_permission="complaint_management.service_jobs.view",
+        own_permission="complaint_management.complaints.view_own",
+        own_clause=_own_job,
+        fields={
+            "job_number": FieldDef("Job number"),
+            "scheduled_from": FieldDef("Scheduled from", note="UTC; the screen shows Malaysian time"),
+            "scheduled_to": FieldDef("Scheduled to"),
+            "customer_agreed_by": FieldDef("Agreed by"),
+            "arrived_at": FieldDef("Arrived at"),
+            "completed_at": FieldDef("Completed at"),
+            "verified_at": FieldDef("Verified at"),
+            "created_at": FieldDef("Created at"),
+        },
+        relations={"complaint": ("complaint", "complaint_id")},
+        name_by=("job_number",),
+        screen_path="/complaint-management/service-jobs/{id}",
+        pages=("/complaint-management/service-jobs",),
+        routes=("GET /api/v1/complaints-management/service-jobs",),
+        hint="service jobs: a technician sent to a complaint's site",
+        date_field="scheduled_from",
+    ),
     EntityDef(
         key="complaint_root_cause",
         label="Complaint root causes",

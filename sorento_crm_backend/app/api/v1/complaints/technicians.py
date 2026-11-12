@@ -16,6 +16,7 @@ VIEW = "complaint_management.service_jobs.view"
 MANAGE = "complaint_management.technicians.manage"
 
 
+# ai: not-for-assistant a plain staff roster (names and phones) feeding the Assign picker; no question is asked about it
 @router.get("")
 def list_technicians(
     page: int = Query(1, ge=1),
