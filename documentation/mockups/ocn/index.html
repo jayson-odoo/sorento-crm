@@ -70,6 +70,15 @@ table.grid tr.on td{background:#f8fbff}
 .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px}.kv span{display:block;color:var(--muted);font-size:12px}
 .sign{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fafafa}
 .sign span{display:block;color:var(--muted);font-size:12px}
+.dcard{border:2px solid var(--border);border-radius:12px;background:#fff;max-width:1024px;margin:0 auto;padding:24px 40px 32px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.dcard h2.dt{margin:0 0 24px;border-bottom:1px solid var(--border);padding-bottom:16px;text-align:center;font-size:20px;font-weight:600}
+.dtop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:20px 40px}.dg .full{grid-column:1/-1}
+.dg .rv{padding:6px 0;font-size:14px}
+.lh{display:flex;justify-content:space-between;align-items:center;margin:32px 0 12px}.lh h3{margin:0;font-size:16px;font-weight:600}
+.dbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:32px}
+.w375 .dcard{padding:16px 14px 20px}.w375 .dg{grid-template-columns:1fr}.w375 .dbtns{flex-direction:column}.w375 .dbtns .btn{justify-content:center}
+.w375 .dcard h2.dt{font-size:18px}
 /* phone */
 .w375 .content{padding:14px 12px}.w375 .g3,.w375 .g2,.w375 .kv{grid-template-columns:1fr}
 .w375 .phdr{flex-wrap:wrap}.w375 .seg span{padding:7px 10px;flex:1 1 45%;text-align:center;border-bottom:1px solid var(--border)}
@@ -83,14 +92,15 @@ table.grid tr.on td{background:#f8fbff}
 <div class="doc">
 <h1>Order Change Notice (OCN), mock</h1>
 <p class="sub">Draws the RECOMMENDED answers of the behaviour card (<code>documentation/plans/procurement/CARD-ocn-order-change-notice-12nov.md</code>). Each spot that depends on a question carries a dashed purple tag <span class="dtag" style="margin:0">Q1</span> to <span class="dtag" style="margin:0">Q5</span>. Q1 four types as an editable lookup. Q2 risk shown, no routing. Q3 structured lines plus description. Flow (owner d1): salesperson, sales admin, management, Customer Service, exactly like the purchase request and sponsorship form; no Purchasing step. Q5 project optional. All names, numbers and codes are invented. FE = <code>sorento_crm_frontend/</code>.</p>
+<p class="sub b">v4: owner approval 13 Nov, menu under Project Sales Admin, form in the sample request design.</p>
 
 <!-- ================= FRAME 1 LIST -->
-<h2 class="ft">1. List, Procurement &rsaquo; Order Change Notices (1280)</h2>
+<h2 class="ft">1. List, Project Sales Admin &rsaquo; Order Change Notices (1280)</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell">
- <div class="side"><div class="brand">Sorento</div><div class="grp">Procurement</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div></div>
+ <div class="side"><div class="brand">Sorento</div><div class="grp">Project Sales Admin</div><div class="it">Sales Orders</div><div class="it">Consignment</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div><div class="it">Sponsorship Report</div></div>
  <div class="main"><div class="topbar"></div><div class="content">
-  <div class="phdr rel"><div><h1>Order Change Notices</h1><div class="crumb">Dashboards &rsaquo; Procurement &rsaquo; Order Change Notices</div></div><span class="co pin">1</span></div>
+  <div class="phdr rel"><div><h1>Order Change Notices</h1><div class="crumb">Dashboards &rsaquo; Project Sales Admin &rsaquo; Order Change Notices</div></div><span class="co pin">1</span></div>
   <div class="toolbar rel"><div class="inp ph search">Search</div><span class="btn out">Filters</span><span class="btn out">Columns</span><span style="flex:1"></span><span class="btn">Create</span><span class="co pin" style="top:-14px">2</span></div>
   <div class="toolbar rel xs"><span class="badge2">Status: Pending approval, Approved &times;</span><span class="badge2">Type: Exchange, Cancellation &times;</span><span class="badge2">Risk: any</span><span class="co pin" style="top:-8px;right:auto;left:640px">3</span></div>
   <div class="rel"><span class="co pin" style="right:auto;left:-8px;top:-8px;z-index:6">4</span>
@@ -106,71 +116,70 @@ table.grid tr.on td{background:#f8fbff}
   <div class="pager"><span>5 of 5</span><span>Rows per page 25</span></div>
  </div></div></div></div>
 <div class="notes"><ol>
- <li><span class="co">1</span><div><b>Page header</b>Title and breadcrumb. No subtitle, no button here (one CTA, in the toolbar).<span class="ref">components/common/PageHeader.tsx ; menu: config/menu.config.tsx (new entry next to Sponsorship Forms, two places)</span></div></li>
+ <li><span class="co">1</span><div><b>Page header</b>Title and breadcrumb. No subtitle, no button here (one CTA, in the toolbar).<span class="ref">components/common/PageHeader.tsx ; menu: config/menu.config.tsx (new entry in Project Sales Admin, between Sponsorship Forms and Sponsorship Report, two places)</span></div></li>
  <li><span class="co">2</span><div><b>One toolbar row</b>Search, Filters, Columns, Create. Create opens the dedicated raise page.<span class="ref">components/ui/data-grid-list-toolbar.tsx ; pattern: procurement-management/purchase-requests/components/PurchaseRequestsList.tsx (new OrderChangeNoticesList.tsx)</span></div></li>
  <li><span class="co">3</span><div><b>Multi-select filters</b>Status, Type, Risk as chips.<span class="ref">components/common/SearchableMultiSelect.tsx ; components/ui/data-grid-column-filter.tsx ; filter pattern PurchaseRequestsList.multiFilters.test.tsx</span></div></li>
  <li><span class="co">4</span><div><b>DataGrid, single-line rows, all columns sortable, no action column</b>Fixed layout, resizable columns, explicit sizes, truncate. Row click opens the detail (rowHref). Status via status pill, Risk via Badge. Dates dd/mm/yyyy.<span class="ref">components/ui/data-grid.tsx, data-grid-table.tsx, data-grid-column-header.tsx ; lib/status-pill.ts (statusPillClass) ; components/ui/badge.tsx ; lib/helpers.ts formatDate ; list contract: sorento_crm_backend/app/services/list_query_registry.py (new entry)</span></div></li>
 </ol></div></div></div>
 
 <!-- ================= FRAME 2 FORM -->
-<h2 class="ft">2. Raise form, Create page (1280 and 375)</h2>
+<h2 class="ft">2. Raise form, Create page, sample request design (1280 and 375)</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell">
- <div class="side"><div class="brand">Sorento</div><div class="grp">Procurement</div><div class="it">Purchase Requests</div><div class="it on">Order Change Notices</div></div>
+ <div class="side"><div class="brand">Sorento</div><div class="grp">Project Sales Admin</div><div class="it">Sales Orders</div><div class="it">Consignment</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div><div class="it">Sponsorship Report</div></div>
  <div class="main"><div class="topbar"></div><div class="content">
-  <div class="phdr rel"><div><h1>New Order Change Notice</h1><div class="crumb">Dashboards &rsaquo; Procurement &rsaquo; Order Change Notices &rsaquo; New</div></div>
-   <div style="display:flex;gap:8px"><span class="btn out">Save as draft</span><span class="btn">Submit</span></div><span class="co pin">1</span></div>
-  <div class="card rel"><div class="ch">Order details</div><div class="cb">
-   <div class="g g3">
-    <div class="rel"><label class="lbl">Date <span class="req">*</span></label><div class="inp">12/11/2026<span class="muted">cal</span></div><span class="co pin">2</span></div>
-    <div class="rel"><label class="lbl">Customer <span class="req">*</span></label><div class="inp">Customer A<span class="muted">x</span></div><span class="co pin">3</span></div>
-    <div><label class="lbl">Customer PO no. <span class="req">*</span></label><div class="inp">XT04/3871 (R1)</div></div>
-    <div class="rel"><label class="lbl">SO no.</label><div class="inp ph">Optional</div><span class="co pin">4</span></div>
-    <div class="rel"><label class="lbl">Project <span class="dtag">Q5</span></label><div class="inp">Project Alpha Tower<span class="muted">x</span></div><span class="co pin">5</span></div>
-    <div class="rel"><label class="lbl">C.S. in charge</label><div class="inp">CS Person A<span class="muted">x</span></div><span class="co pin">6</span></div>
-    <div><label class="lbl">Sales in charge <span class="req">*</span></label><div class="inp">Sales Person A<span class="muted">x</span></div></div>
-   </div></div></div>
-  <div class="card rel"><div class="ch">Type of change <span class="dtag">Q1</span><span class="dtag">Q2</span></div><div class="cb">
-   <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><div class="seg"><span>Advance</span><span class="on">Exchange</span><span>Cancellation</span><span>Delay</span></div>
-    <span class="risk"><span class="muted xs">Risk</span><span class="pill amber">High</span></span></div>
-   <div class="xs muted" style="margin-top:8px">Exchange: check delivered stock and whether the supplier order can be switched.</div></div><span class="co pin">7</span></div>
-  <div class="card rel"><div class="ch">Affected lines <span class="dtag">Q3</span><span class="btn out sm">Add row</span></div><div class="cb">
+  <div class="dcard rel"><span class="co pin">1</span>
+   <div class="dtop rel"><span class="badge2">Order Change Notice</span><span class="pill">Draft</span><span class="co pin">2</span></div>
+   <h2 class="dt">Order Change Notice</h2>
+   <div class="dg"><div class="rel"><label class="lbl">Sales Person</label><div class="rv">Sales Person A</div><span class="co pin">3</span></div><div class="rel"><label class="lbl">Date</label><div class="rv">12/11/2026</div></div><div class="rel full"><label class="lbl">Customer Name <span class="req">*</span></label><div class="inp">Customer A<span class="muted">search</span></div><span class="co pin">4</span></div><div class="rel"><label class="lbl">Customer PO No. <span class="req">*</span></label><div class="inp">XT04/3871 (R1)</div></div><div class="rel"><label class="lbl">SO No.</label><div class="inp ph">Optional</div></div><div class="rel"><label class="lbl">Registered project (optional) <span class="dtag">Q5</span></label><div class="inp">Project Alpha Tower<span class="muted">x</span></div><span class="co pin">5</span></div><div class="rel"><label class="lbl">C.S. Incharge</label><div class="inp">CS Person A<span class="muted">x</span></div></div><div class="rel"><label class="lbl">Sales Incharge</label><div class="inp">Sales Person A<span class="muted">x</span></div></div>
+    <div class="rel full"><label class="lbl">Type of change <span class="req">*</span> <span class="dtag">Q1</span><span class="dtag">Q2</span></label>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><div class="seg"><span>Advance</span><span class="on">Exchange</span><span>Cancellation</span><span>Delay</span></div><span class="risk" style="margin-left:4px"><span class="muted xs">Risk</span><span class="pill amber">High</span></span></div>
+    <div class="xs muted" style="margin-top:8px">Exchange: check delivered stock and whether the supplier order can be switched.</div><span class="co pin">6</span></div>
+   </div>
+   <div class="lh rel"><h3>Line items</h3><span class="btn out sm">+ Add row</span><span class="co pin">7</span></div>
    <table class="grid">
-    <colgroup><col style="width:190px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col></colgroup>
-    <tr><th>Product</th><th>Qty before</th><th>Qty after</th><th>Date before</th><th>Date after</th><th>Delivered</th><th>Remark</th></tr>
-    <tr><td>ABC123-RL</td><td>842 sets</td><td>0 sets</td><td>15/01/2027</td><td>15/01/2027</td><td>12 sets</td><td>Collect back 12 sets</td></tr>
-    <tr><td>ABC123-SH</td><td>0 sets</td><td>842 sets</td><td>15/01/2027</td><td>15/01/2027</td><td>0 sets</td><td>Replacement</td></tr>
-   </table></div><span class="co pin">8</span></div>
-  <div class="card rel"><div class="ch">Description</div><div class="cb"><div class="rte"><div class="tb">B  I  U  list  link</div><div class="bd">Customer replaces ABC123-RL with ABC123-SH, same delivery date.</div></div></div><span class="co pin">9</span></div>
-  <div class="card closed rel"><div class="ch">Attachments <span class="xs muted">opens when the sections above are filled</span></div><span class="co pin">10</span></div>
+    <colgroup><col style="width:44px"><col style="width:140px"><col style="width:96px"><col style="width:90px"><col style="width:104px"><col style="width:104px"><col style="width:84px"><col><col style="width:44px"></colgroup>
+    <tr><th>No.</th><th>Item Code</th><th>Qty before</th><th>Qty after</th><th>Date before</th><th>Date after</th><th>Delivered</th><th>Remark</th><th></th></tr>
+    <tr><td>1</td><td>ABC123-RL</td><td>842</td><td>0</td><td>15/01/2027</td><td>15/01/2027</td><td>12</td><td>Collect back 12 sets</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+    <tr><td>2</td><td>ABC123-SH</td><td>0</td><td>842</td><td>15/01/2027</td><td>15/01/2027</td><td>0</td><td>Replacement</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+   </table>
+   <div class="rel" style="margin-top:32px"><label class="lbl">Description</label><div class="inp" style="min-height:70px;align-items:flex-start">Customer replaces ABC123-RL with ABC123-SH, same delivery date.</div><span class="co pin">8</span></div>
+   <div class="rel" style="margin-top:24px"><label class="lbl">Attachments</label><div class="drop">Drop files or browse</div><span class="co pin">9</span></div>
+   <div class="dbtns rel"><span class="btn out">Cancel</span><span class="btn out">Save as draft</span><span class="btn">Submit</span><span class="co pin">10</span></div>
+  </div>
  </div></div></div></div>
 <div class="notes"><ol>
- <li><span class="co">1</span><div><b>Header buttons</b>Submit is the one filled main button, Save as draft is secondary. Dedicated page like the PR form.<span class="ref">PurchaseRequestForm.tsx ; components/common/PageHeader.tsx (new OrderChangeNoticeForm.tsx under procurement-management/order-change-notices/components/)</span></div></li>
- <li><span class="co">2</span><div><b>Date picker, dd/mm/yyyy</b><span class="ref">components/ui/date-picker.tsx ; components/ui/datefield.tsx</span></div></li>
- <li><span class="co">3</span><div><b>Customer, searchable, free text kept as fallback</b><span class="ref">purchase-requests/components/RequestCustomerField.tsx</span></div></li>
- <li><span class="co">4</span><div><b>SO no., plain text</b>Customer PO no. likewise.<span class="ref">components/ui/input.tsx</span></div></li>
- <li><span class="co">5</span><div><b>Project picker, clearable, optional (Q5)</b><span class="ref">searchProjectsForLink in complaint-management/complaints/services/complaintService.ts (re-exported by purchase-requests/services/purchaseRequestService.ts) ; components/common/SearchableSelect.tsx</span></div></li>
- <li><span class="co">6</span><div><b>C.S. and Sales in charge, user pickers</b><span class="ref">services/userSelectService.ts ; components/common/SearchableSelect.tsx</span></div></li>
- <li><span class="co">7</span><div><b>Type of change, 4 options, risk read-only, guide text muted</b>Segmented choice reads from the admin lookup (Q1). Risk shown only, no routing (Q2). Segmented control is new in look; built on the toggle group.<span class="ref">components/ui/toggle-group.tsx ; components/ui/badge.tsx (risk) ; new lookup table + admin screen</span></div></li>
- <li><span class="co">8</span><div><b>Affected lines in the shared line table</b>Product picker, qty and date before/after, delivered, remark.<span class="ref">app/(protected)/project-sales/_shared/components/InlineLineTable.tsx ; PR create-lines grid in PurchaseRequestForm.tsx (new line columns config)</span></div></li>
- <li><span class="co">9</span><div><b>Description, rich text</b><span class="ref">components/ui/rich-text-editor.tsx</span></div></li>
- <li><span class="co">10</span><div><b>Attachments, shared; sections expand in order</b>First section open, next opens when filled, like the price tag request form.<span class="ref">purchase-requests/components/PurchaseRequestAttachmentsSection.tsx ; components/common/FormSection.tsx ; ordering pattern app/(auth)/portal/components/PriceTagRequestForm (sectionOrder test)</span></div></li>
+ <li><span class="co">1</span><div><b>Shell: centred card, 2px border</b>Max width 5xl, padding 5/10, dedicated create page. Same shell as the sample request form. No page header buttons; the buttons sit at the bottom of the card.<span class="ref">app/(protected)/project-sales/sample-requests/components/SampleRequestForm.tsx (shell, lines 280-300; new OrderChangeNoticeForm.tsx under procurement-management/order-change-notices/components/)</span></div></li>
+ <li><span class="co">2</span><div><b>Secondary Badge plus status pill</b>Badge "Order Change Notice" top-left, status pill "Draft" beside it.<span class="ref">components/ui/badge.tsx ; lib/status-pill.ts (statusPillClass, STATUS_PILL_BASE)</span></div></li>
+ <li><span class="co">3</span><div><b>DocField and ReadValue</b>Muted label above the value, two-column grid, one column below sm. Sales Person and Date are read-only (ReadValue), Date shown dd/mm/yyyy.<span class="ref">SampleRequestForm.tsx (DocField, ReadValue) ; lib/helpers.ts formatDateInMalaysia</span></div></li>
+ <li><span class="co">4</span><div><b>Customer Name, searchable, full width</b>Free text kept as fallback. Customer PO No. and SO No. are plain inputs.<span class="ref">components/common/AsyncCombobox.tsx ; lookupCustomersForRequest (as in SampleRequestForm.tsx)</span></div></li>
+ <li><span class="co">5</span><div><b>Registered project, optional, searchable, clearable (Q5)</b>C.S. and Sales Incharge are user pickers.<span class="ref">components/common/SearchableSelect.tsx ; searchProjectsForLink ; services/userSelectService.ts</span></div></li>
+ <li><span class="co">6</span><div><b>Type of change, full width</b>Four-way choice from the admin lookup (Q1), risk read-only (Q2), guide text muted on one line. Segmented look is new; built on the toggle group.<span class="ref">components/ui/toggle-group.tsx ; components/ui/badge.tsx (risk)</span></div></li>
+ <li><span class="co">7</span><div><b>Line items heading row plus line table</b>Outline "Add row" button, table columns No., Item Code, Qty before, Qty after, Date before, Date after, Delivered, Remark, remove icon. OCN gets its own shared OrderChangeNoticeLines built the same way.<span class="ref">components/common/SampleRequestLines.tsx (line table pattern) ; new components/common/OrderChangeNoticeLines.tsx</span></div></li>
+ <li><span class="co">8</span><div><b>Description, full width</b><span class="ref">SampleRequestFooterFields pattern in SampleRequestForm.tsx ; components/ui/textarea.tsx</span></div></li>
+ <li><span class="co">9</span><div><b>Attachments</b><span class="ref">purchase-requests/components/PurchaseRequestAttachmentsSection.tsx</span></div></li>
+ <li><span class="co">10</span><div><b>Buttons bottom-right</b>Cancel (outline), Save as draft (outline), Submit (filled). Stack on mobile.<span class="ref">SampleRequestForm.tsx (button row, lines 490-510)</span></div></li>
 </ol></div>
 <div class="frame w375"><div class="mbar">Sorento</div><div class="content">
- <div class="phdr"><div><h1 style="font-size:18px">New Order Change Notice</h1></div></div>
- <div class="card"><div class="ch">Order details</div><div class="cb"><div class="g g1">
-  <div><label class="lbl">Date *</label><div class="inp">12/11/2026</div></div>
-  <div><label class="lbl">Customer *</label><div class="inp">Customer A</div></div>
-  <div><label class="lbl">Customer PO no. *</label><div class="inp">XT04/3871 (R1)</div></div>
-  <div><label class="lbl">SO no.</label><div class="inp ph">Optional</div></div>
-  <div><label class="lbl">Project <span class="dtag">Q5</span></label><div class="inp">Project Alpha Tower</div></div>
-  <div><label class="lbl">C.S. in charge</label><div class="inp">CS Person A</div></div>
-  <div><label class="lbl">Sales in charge *</label><div class="inp">Sales Person A</div></div></div></div></div>
- <div class="card"><div class="ch">Type of change <span class="dtag">Q1</span></div><div class="cb"><div class="seg"><span>Advance</span><span class="on">Exchange</span><span>Cancellation</span><span>Delay</span></div>
-  <div style="margin-top:8px"><span class="muted xs">Risk</span> <span class="pill amber">High</span> <span class="dtag">Q2</span></div><div class="xs muted" style="margin-top:6px">Exchange: check delivered stock and whether the supplier order can be switched.</div></div></div>
- <div class="card"><div class="ch">Affected lines <span class="dtag">Q3</span></div><div class="cb"><div class="scroll"><table class="grid" style="width:560px"><tr><th>Product</th><th>Before</th><th>After</th><th>Delivered</th></tr><tr><td>ABC123-RL</td><td>842</td><td>0</td><td>12</td></tr></table></div></div></div>
- <div class="card closed"><div class="ch">Description</div></div><div class="card closed"><div class="ch">Attachments</div></div>
- <div class="btnrow"><span class="btn">Submit</span><span class="btn out">Save as draft</span></div>
+ <div class="dcard">
+  <div class="dtop"><span class="badge2">Order Change Notice</span><span class="pill">Draft</span></div>
+  <h2 class="dt">Order Change Notice</h2>
+  <div class="dg"><div class="rel"><label class="lbl">Sales Person</label><div class="rv">Sales Person A</div><span class="co pin" hidden>3</span></div><div class="rel"><label class="lbl">Date</label><div class="rv">12/11/2026</div></div><div class="rel full"><label class="lbl">Customer Name <span class="req">*</span></label><div class="inp">Customer A<span class="muted">search</span></div><span class="co pin" hidden>4</span></div><div class="rel"><label class="lbl">Customer PO No. <span class="req">*</span></label><div class="inp">XT04/3871 (R1)</div></div><div class="rel"><label class="lbl">SO No.</label><div class="inp ph">Optional</div></div><div class="rel"><label class="lbl">Registered project (optional) <span class="dtag">Q5</span></label><div class="inp">Project Alpha Tower<span class="muted">x</span></div><span class="co pin" hidden>5</span></div><div class="rel"><label class="lbl">C.S. Incharge</label><div class="inp">CS Person A<span class="muted">x</span></div></div><div class="rel"><label class="lbl">Sales Incharge</label><div class="inp">Sales Person A<span class="muted">x</span></div></div>
+   <div class="rel full"><label class="lbl">Type of change <span class="req">*</span> <span class="dtag">Q1</span><span class="dtag">Q2</span></label>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><div class="seg"><span>Advance</span><span class="on">Exchange</span><span>Cancellation</span><span>Delay</span></div><span class="risk" style="margin-left:4px"><span class="muted xs">Risk</span><span class="pill amber">High</span></span></div>
+    <div class="xs muted" style="margin-top:8px">Exchange: check delivered stock and whether the supplier order can be switched.</div></div>
+  </div>
+  <div class="lh"><h3>Line items</h3><span class="btn out sm">+ Add row</span></div>
+  <div class="scroll"><table class="grid" style="width:780px">
+    <colgroup><col style="width:44px"><col style="width:140px"><col style="width:96px"><col style="width:90px"><col style="width:104px"><col style="width:104px"><col style="width:84px"><col><col style="width:44px"></colgroup>
+    <tr><th>No.</th><th>Item Code</th><th>Qty before</th><th>Qty after</th><th>Date before</th><th>Date after</th><th>Delivered</th><th>Remark</th><th></th></tr>
+    <tr><td>1</td><td>ABC123-RL</td><td>842</td><td>0</td><td>15/01/2027</td><td>15/01/2027</td><td>12</td><td>Collect back 12 sets</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+    <tr><td>2</td><td>ABC123-SH</td><td>0</td><td>842</td><td>15/01/2027</td><td>15/01/2027</td><td>0</td><td>Replacement</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+   </table></div>
+  <div class="rel" style="margin-top:32px"><label class="lbl">Description</label><div class="inp" style="min-height:70px;align-items:flex-start">Customer replaces ABC123-RL with ABC123-SH, same delivery date.</div></div>
+  <div class="rel" style="margin-top:24px"><label class="lbl">Attachments</label><div class="drop">Drop files or browse</div></div>
+  <div class="dbtns"><span class="btn out">Cancel</span><span class="btn out">Save as draft</span><span class="btn">Submit</span></div>
+ </div>
 </div></div>
 </div></div>
 
@@ -178,7 +187,7 @@ table.grid tr.on td{background:#f8fbff}
 <h2 class="ft">3. Detail page /procurement-management/order-change-notices/{id} (1280)</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell">
- <div class="side"><div class="brand">Sorento</div><div class="grp">Procurement</div><div class="it on">Order Change Notices</div></div>
+ <div class="side"><div class="brand">Sorento</div><div class="grp">Project Sales Admin</div><div class="it">Sales Orders</div><div class="it">Consignment</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div><div class="it">Sponsorship Report</div></div>
  <div class="main"><div class="topbar"></div><div class="content">
   <div class="phdr rel"><div><h1>OCN26-0303 <span class="pill amber">Pending approval</span></h1><div class="crumb">Customer B Sdn Bhd, PO 300/4800002913</div></div>
    <div style="display:flex;gap:8px;align-items:center"><span class="ib">&lt;</span><span class="xs muted">3 of 5</span><span class="ib">&gt;</span><span class="ib">gear</span><span class="ib">print</span><span class="btn">Approve</span></div><span class="co pin">1</span></div>
