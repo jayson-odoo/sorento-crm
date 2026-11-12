@@ -108,12 +108,13 @@ def test_unassigned_plus_two_people_or_combine(client, seeded):
 # ---- the Assigned To column rule: latest open SLA tracker first ------------------------------------
 
 def _tracker(db, policy_id, complaint_id, *, assigned_to_id=None, assigned_to=None, days=0,
-             resolved=False):
+             resolved=False, voided=False):
     db.add(ConversationSLATracking(
         id=str(uuid.uuid4()), policy_id=policy_id, current_tier=1,
         due_at=datetime.now() + timedelta(days=1), initiated_at=datetime(2026, 6, 1) + timedelta(days=days),
         source_entity_type="complaint", source_entity_id=complaint_id,
         assigned_to_id=assigned_to_id, assigned_to=assigned_to, is_resolved=resolved,
+        voided_at=datetime(2026, 6, 2) if voided else None,
     ))
     db.flush()
 
@@ -139,10 +140,20 @@ def tracked(db):
     # A resolved tracker does not count: falls back to complaints.assigned_to.
     c_resolved = _complaint(db, tag, "4", old)
     _tracker(db, policy.id, c_resolved, assigned_to_id=zed, resolved=True)
-    # Nobody anywhere.
+    # A voided tracker does not count either.
+    c_voided = _complaint(db, tag, "6", old)
+    _tracker(db, policy.id, c_voided, assigned_to_id=zed, voided=True)
+    # Legacy: only the tracker's free-text `assigned_to` holds the person (a Respond id).
+    resp = f"zzt-resp-{uuid.uuid4().hex[:8]}"
+    legacy = _user(db, "ZZT Legacy Tracker", resp)
+    c_legacy = _complaint(db, tag, "7", None)
+    _tracker(db, policy.id, c_legacy, assigned_to=resp)
+    # Nobody anywhere; a blank assigned_to is no assignee.
     c_none = _complaint(db, tag, "5", None)
-    return dict(tag=tag, amy=amy, zed=zed, old=old, c_amy=c_amy, c_zed=c_zed, c_latest=c_latest,
-                c_resolved=c_resolved, c_none=c_none)
+    c_blank = _complaint(db, tag, "8", "  ")
+    return dict(tag=tag, amy=amy, zed=zed, old=old, legacy=legacy, c_amy=c_amy, c_zed=c_zed,
+                c_latest=c_latest, c_resolved=c_resolved, c_voided=c_voided, c_legacy=c_legacy,
+                c_none=c_none, c_blank=c_blank)
 
 
 def test_filter_finds_a_complaint_whose_only_assignee_is_on_its_open_tracker(client, tracked):
@@ -153,12 +164,17 @@ def test_filter_finds_a_complaint_whose_only_assignee_is_on_its_open_tracker(cli
 
 def test_filter_skips_resolved_trackers_and_older_tracker_assignees(client, tracked):
     s = tracked
-    assert _cp(client, s, s["old"]) == {s["c_resolved"]}
+    assert _cp(client, s, s["old"]) == {s["c_resolved"], s["c_voided"]}
+
+
+def test_legacy_tracker_text_assignee_is_matched_by_the_persons_crm_id(client, tracked):
+    s = tracked
+    assert _cp(client, s, s["legacy"]) == {s["c_legacy"]}
 
 
 def test_unassigned_means_no_assignee_on_the_tracker_either(client, tracked):
     s = tracked
-    assert _cp(client, s, "__unassigned__") == {s["c_none"]}
+    assert _cp(client, s, "__unassigned__") == {s["c_none"], s["c_blank"]}
 
 
 def test_filter_matches_what_the_column_shows(client, tracked):

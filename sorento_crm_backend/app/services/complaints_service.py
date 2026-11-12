@@ -60,8 +60,8 @@ def effective_assignee_key_sql():
     on_tracker = (
         select(
             func.coalesce(
-                func.nullif(ConversationSLATracking.assigned_to_id, ""),
-                func.nullif(ConversationSLATracking.assigned_to, ""),
+                func.nullif(func.btrim(ConversationSLATracking.assigned_to_id), ""),
+                func.nullif(func.btrim(ConversationSLATracking.assigned_to), ""),
             )
         )
         .where(
@@ -74,7 +74,7 @@ def effective_assignee_key_sql():
         .correlate(Complaint)
         .scalar_subquery()
     )
-    return func.coalesce(on_tracker, func.nullif(Complaint.assigned_to, ""))
+    return func.coalesce(on_tracker, func.nullif(func.btrim(Complaint.assigned_to), ""))
 
 
 # Sentinel: distinguishes "caller passed a precomputed value (maybe None)" from
