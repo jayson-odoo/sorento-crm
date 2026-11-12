@@ -166,7 +166,11 @@ function StaffPriceTagRequestsList() {
       sorting,
       searchQuery,
     },
-    { status: statusFilter || undefined },
+    {
+      status: statusFilter || undefined,
+      last_activity_from: lastActivity.from,
+      last_activity_to: lastActivity.to,
+    },
   );
 
   const detailHref = (row: PriceTagRequestSummary) =>

@@ -127,6 +127,10 @@ function StaffStockInquiriesList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     resetSearch(state.searchQuery);
+    setLastActivity({
+      from: state.filters.last_activity_from,
+      to: state.filters.last_activity_to,
+    });
   });
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useStockInquiries({
