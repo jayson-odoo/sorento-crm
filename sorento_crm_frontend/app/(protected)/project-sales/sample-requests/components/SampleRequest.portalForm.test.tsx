@@ -1,7 +1,7 @@
 /**
  * SAMPLE-REQUEST-V2 slice 2 (owner Q1 a, 11 Nov), which replaced PORTAL-P4-REQUESTS R3a's portal form: a LIMITED
- * user (`view_own`, not `view`) now gets the SAME guided staff form as everyone else (four sections that start
- * collapsed, Save as draft, Submit as the main button with no Preview step: owner 12 Nov), but every server call of THEIR form goes through My Requests
+ * user (`view_own`, not `view`) now gets the SAME guided staff form as everyone else (four sections, the first
+ * open and the rest opening as they are reached, Save as draft, Submit as the main button with no Preview step: owner 12 Nov), but every server call of THEIR form goes through My Requests
  * (`/api/v1/my-requests/...`), never the staff sample request API. Their read-only VIEW is still the portal's
  * SampleRequestDetail. Entry points are the components the pages render: SampleRequestForm (new with ?project_id= /
  * edit), and SampleRequestDetailTabs + SampleRequestDetail (view). Staff keep today's screens.
@@ -167,11 +167,12 @@ const READY = {
 };
 
 describe('limited user, New Sample Request renders the guided form through My Requests', () => {
-  it('is the guided form (four collapsed sections, Save as draft, Submit, no Preview), not the portal one, and not the staff API', async () => {
+  it('is the guided form (first section open, the rest collapsed, Save as draft, Submit, no Preview), not the portal one, and not the staff API', async () => {
     mountForm(LIMITED);
     for (const t of SECTIONS) expect((await screen.findAllByText(t, { selector: 'span' })).length).toBeGreaterThan(0);
-    for (const t of SECTIONS) {
-      expect(screen.getByRole('button', { name: new RegExp(`^${t}`) }).getAttribute('aria-expanded')).toBe('false');
+    // Owner 12 Nov ~15:45: the price tag request's rule, the first section open.
+    for (const [i, t] of SECTIONS.entries()) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${t}`) }).getAttribute('aria-expanded')).toBe(i === 0 ? 'true' : 'false');
     }
     expect(screen.getByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
     expect(submitBtn()).toBeInTheDocument();
