@@ -93,3 +93,31 @@ Not built: AC-E2E-DB3's option (b), one PUT for old and new rows on the same PO 
   switch (OFF by default) and the human Decide flow, the same as Link / Unlink / Move, which have
   none. Trigger to revisit: the owner wants the assistant to write to AutoCount.
 - Line 8: n/a for the same reason; the drill's figures are not a new assistant answer.
+
+## Browser evidence (agent-browser, sandbox, 12 Nov 2026, head ee54ebf0)
+
+Stack: backend on a separate `sorento_browse` DB (bootstrapped, all catalog modules enabled for
+the default tenant, superadmin granted every permission), fake rows only (ZZBP-*: one SO line of
+120 due Dec 26 at ZZBPMW, PO lines A 120 / B 300 / C 50 at ZZBPHQ), a local fake AutoCount
+gateway answering done (splits like AutoCount), FE `npm run dev`. Navigation by sidebar clicks.
+
+At 1280 x 800:
+1. Procurement > Supply Chain > Stock Debt: ZZBP-A row, Dec 26 balance -120. Save snapshot, open
+   it from Snapshots, press the Dec 26 cell: "As frozen 12/11/2026, 4:55 pm", line ZZBP-SO1 16,
+   Ordered 120, Delivered 0, Outstanding 120, Assigned 0, Covered by "-", Short 120, Now "Open 120".
+2. Tick, Decide: Link enabled; Change PO greyed "Each ticked line needs exactly one PO linked".
+3. Link to PO, pick ZZBP-PO-A, Qty 120, Link 1 line: "Linked: ZZBP-SO1 line 16 now covered by PO
+   ZZBP-PO-A (120)." Done: the line reads Assigned 120, Covered by "ZZBP-PO-A line 1", Pinned,
+   Short 0, Now "Open 120 PO ZZBP-PO-A (120)"; 120 / 0 / 120 unchanged. Same after a reload.
+4. Decide: Link greyed "Already covered by PO ZZBP-PO-A"; Change PO enabled under it.
+5. Change PO popup: columns Sales order, Line, Location, Delivery date, Outstanding, PO, Open,
+   Change to, Free; "Change to" offers B and C, not A. Pick C, Change 1 line: "PO ZZBP-PO-C has
+   only 50 free", no call reached the gateway.
+6. Pick B, Change 1 line: gateway got unlink (12008/12009) then link (12100/12101, qty 120), in
+   that order. Cards "Unlinked: ... no longer covered by PO ZZBP-PO-A (120)." then "Linked: ...
+   now covered by PO ZZBP-PO-B (120)." Done: Covered by "ZZBP-PO-B line 2", Pinned, Short 0.
+   DB: PO A line open, 120, no SO link; PO B split into 180 (free) + 120 linked to the SO line.
+
+At 375 x 812: document scrollWidth 375 (no sideways page scroll); drill dialog 373 wide; Decide
+menu as at 1280; Change PO popup spans 0 to 375 with Change 1 line and Cancel on screen, its grid
+scrolling inside to reach "Change to" (the same as the existing Link popup).
