@@ -1,6 +1,6 @@
 # PLAN: DATE-PICKER-UNIFY (12 Nov 2026)
 
-Status: Plan - behaviour card filed as crew-ask, waiting on answers. Track: size M, cloud lane, sliced
+Status: Build slice A - behaviour card answered 12 Nov (Q1-Q5 all option a). Track: size M, cloud lane, sliced
 (each slice PR < ~300 non-test lines; one PR per slice, frozen after its hand test).
 
 Owner, 4 Nov: "all the dates need to use dd/mm/yyyy format like a standardized format across the
@@ -75,3 +75,14 @@ pass at 1280 + 375, hand test, user guide check.
 Dates line 1 (dd/mm/yyyy everywhere, ranges `dd/mm/yyyy - dd/mm/yyyy`, date-times
 `dd/mm/yyyy, h:mm am/pm`), Dates line 2 (shared picker, typing accepted, no native input),
 Forms "Nothing hangs", Wording "plain words". Everything else: n/a (no list, ERP, chatbot change).
+
+## Answers (crew, 12 Nov, from the owner rules)
+
+- Q1 (a) datetime-local From/To pairs become one `DateRangePicker` (whole days); single date-times
+  become `DatePicker` + a time box.
+- Q2 (a) every native From/To pair merges into one `DateRangePicker`, same two query params.
+- Q3 (a) range typing: refuse non-real days, empty text clears both ends, `dd/mm/yyyy -` sets From
+  only, `- dd/mm/yyyy` sets To only.
+- Q4 (a) generic builders (rule builder, list filter dialog, workflow dynamic fields) render
+  `DatePicker` for the date case in this lane.
+- Q5 (a) slice A as listed.

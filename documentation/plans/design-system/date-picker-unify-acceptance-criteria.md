@@ -1,6 +1,6 @@
 # UAC: DATE-PICKER-UNIFY
 
-Draft; finalised after the behaviour card's answers.
+Final (behaviour card answered 12 Nov).
 
 - AC1 Typing `05/11/2026` into any migrated date field and leaving it stores `2026-11-05`; typing
   `5/11/2026` does too; `31/02/2026` stores nothing and the field keeps its last value.
@@ -15,3 +15,8 @@ Draft; finalised after the behaviour card's answers.
 - AC8 No native `type="date"` / `datetime-local` remains outside the guard's allowlist; the last
   slice leaves the allowlist empty.
 - AC9 Payloads sent to the API are unchanged in shape (`YYYY-MM-DD` where it was).
+- AC10 Range field: emptying the text and leaving clears both ends; `05/11/2026 -` sets From only;
+  `- 30/11/2026` sets To only.
+- AC11 A From/To date-time filter pair is one range field of whole days; From sends the start of the
+  first day and To the end of the last day in the same two query params.
+- AC12 A single date-time field is a date field plus a time box; the stored value is unchanged in shape.
