@@ -173,7 +173,8 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
 
   const savedRowIds = useMemo(() => lines.map((l) => l.id).filter(Boolean) as string[], [lines]);
   const photos = useSoLineAttachmentLookup(savedRowIds, 'order_inquiry_row');
-  const canEditPhotos = Boolean(existing.data?.can_edit);
+  // A new form's draft is its requester's to edit once its first save has landed.
+  const canEditPhotos = Boolean(existing.data?.can_edit) || (!id && Boolean(savedId));
 
   const updateLine = (key: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));

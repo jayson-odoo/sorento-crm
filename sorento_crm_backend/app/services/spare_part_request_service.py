@@ -649,7 +649,7 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
         raise AppException(
             status_code=422,
             message=(
-                "No approval stage is set up for spare part requests. Ask an admin to add one "
+                "No approval level is set up for spare part requests. Ask an admin to add one "
                 "in Form SLA configuration."
             ),
             code="spr_no_approval_stage",
