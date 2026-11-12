@@ -1,6 +1,6 @@
 # PLAN: OI-WHOLE-SO-CANCEL - whole-SO cancel and SO delete from AutoCount raise a board item
 
-Status: Plan (behaviour card pending owner answers). Track: M (LEAD pattern).
+Status: Build (card v1 answered 12 Nov except Q1, which is with the owner). Track: M (LEAD pattern).
 
 ## Problem
 

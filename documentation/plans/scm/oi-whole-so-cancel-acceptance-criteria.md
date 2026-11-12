@@ -19,3 +19,13 @@ picks (a).
 - AC-WC-7 Guards (unchanged behaviour): a re-push of an already cancelled SO raises no second row; an SO
   with no live OI row and no held decision raises nothing; a push that keeps open lines behaves exactly as
   today (one line removed still raises its row, a qty change still raises its row).
+- AC-WC-8 (Q4) A header cancelled by one push and reopened by a later push before CS decides supersedes
+  the pending `cancelled` row: CS has nothing to do, and an apply cancels no OI row and sends no CANCEL.
+
+## Owner / crew answers (12 Nov)
+
+- Q1: with the owner (crew rec (b)). The sync-time auto-done sits behind one named branch so either answer
+  is a one-line change; AC-WC-6 is written for (b).
+- Q2 (a): plain cancel item, no auto-pairing, no new UI.
+- Q3 (a): read-only SQL list in `oi-whole-so-cancel-affected-rows.sql`; crew runs it on the dev prod-copy.
+- Q4 as recommended (AC-WC-8). Q5: a hard delete has no OI rows; delete and header cancel are treated the same.
