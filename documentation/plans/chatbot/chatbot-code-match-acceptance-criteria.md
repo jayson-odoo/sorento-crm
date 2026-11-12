@@ -1,7 +1,7 @@
 # UAC: CHATBOT-CODE-MATCH
 
 Card: `CARD-chatbot-code-match-12nov.md`. Plan: `PLAN-chatbot-code-match-12nov.md`.
-Status: draft, written on the card's recommended answers; revised when the owner answers Q1-Q5.
+Status: draft v2 (owner ~16:05: no default size). Written on the card's recommended answers; on hold until the owner's go.
 
 All tests on Postgres (`tests/_pg_fixture.py`), seeding their own products, sets, specs and companies (fake codes of
 the same SHAPE as the card; CI has no data). The parser is not called: each test hands the resolver / answer layer the
@@ -15,14 +15,16 @@ token the parser would have extracted.
 - AC-2 Dashes / spaces / case only. Token `twc 8354 sh uf` against `TWC8354-SH-UF` resolves exactly (direct answer).
 - AC-3 Registered set direct. Token `TWC604PRL` (dash-only difference from set `TWC604-P-RL`) resolves to the set,
   direct, with members and the complete-sets figure on the entity (`_product_set_entities`).
-- AC-4 Size in code, default. Family `TWC8152-SH-UF` (no size marker, trap_length 250 or empty) plus sized siblings
-  `TWC8152-SH-UF-300` (trap_length 300). Token `TWC8152-SH-UF-250` resolves direct to `TWC8152-SH-UF`.
+- AC-4 No default size. Family `TWC8152-SH-UF` (no size marker, trap_length empty) plus sized sibling
+  `TWC8152-SH-UF-300` (trap_length 300). Token `TWC8152-SH-UF-250` is NOT answered directly: the reply starts
+  `Couldn't find TWC8152-SH-UF-250` and offers the family's close codes with their real sizes (`size not recorded` for
+  the empty one, `300 mm` for the sibling). Kill check: no code path maps an unmarked code to 250.
 - AC-5 Size in code, non-default. Token `8152-300-SH` with `TWC8152-SH-300` (trap_length 300) in the family returns ONE
   candidate `TWC8152-SH-300`, offered, not direct (Q1 a).
 - AC-6 Mocha sizes. Codes `MOC100-S6/-S8/-S10/-S12` with trap_length 150/200/250/300: token `MOC100 300` offers
-  `MOC100-S12`; token `MOC100` (unmarked) answers `MOC100-S10` directly only under Q2's rule.
+  `MOC100-S12` (300 mm); token `MOC100` with no size keeps the which-one pick of all four, each with its size.
 - AC-7 Size not held. Token `TWC8152-SH-400`: no member with 400; reply starts `Couldn't find TWC8152-SH-400` and
-  offers up to 3 family members; it is never the bare "None with size 400 mm." line.
+  offers up to 3 family members with their real sizes; it is never the bare "None with size 400 mm." line.
 - AC-8 All-parts ranking. Token `TWC8354SHUF` typo `SWTWC8354-SH-UF`: candidates holding every typed part (8354, SH,
   UF) rank above higher-trigram candidates that miss a part.
 - AC-9 Short token. Token `8152` with 6 matching codes keeps the which-one picker (all 6 listed), all-parts first.
