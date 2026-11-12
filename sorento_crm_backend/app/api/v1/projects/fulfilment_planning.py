@@ -1860,8 +1860,9 @@ def _confirm_a_planning_change(
             # the book did" - it is not an amendment of the line's supply, and there is no
             # line left to compose one for. Posting it as an `amend` sent it down the
             # confirm branch instead, so the retire-and-shift never fired from the board at
-            # all. Apply dispatches on the kind (Slice C contract D), so nothing has to be
-            # recorded here; the row is still marked applied with the rest of them.
+            # all. F2: the saved cancel is the row's Confirm decision (no composition), which
+            # is what lets Apply retire it; an unsaved cancelled row is left pending.
+            planning_change_service.set_row_decision(db, batch_id, str(row.id), "confirm")
             continue
         planning_change_service.set_row_decision(
             db, batch_id, str(row.id), "amend", composition

@@ -4742,12 +4742,13 @@ def _apply_one_order(
     link_rows_to_mirror_lines(db, order_rows)
     _settle_answered_rows(db, order_rows, {str(line_id) for line_id in frozen})
 
-    # Confirm or Amend, and a line the book CANCELLED - nothing else is applied (AC-C7).
-    # A row still undecided is simply left pending: the batch waits for CS.
+    # Confirm or Amend - nothing else is applied (AC-C7). A book-cancelled line takes the same
+    # path (OI-WHOLE-SO-CANCEL F2): CS saves the cancel, then Confirm retires it. A row still
+    # undecided is simply left pending: the batch waits for CS.
     accepted = [
         r
         for r in order_rows
-        if (r.decision in ("confirm", "amend") or r.kind == "cancelled")
+        if r.decision in ("confirm", "amend")
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     ]
     empty_result = {
@@ -5406,7 +5407,7 @@ def apply(
             reason = "This sales order no longer exists."
             for r in order_rows:
                 if (
-                    (r.decision in ("confirm", "amend") or r.kind == "cancelled")
+                    r.decision in ("confirm", "amend")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
@@ -5432,7 +5433,7 @@ def apply(
             logger.exception("planning change apply failed for order %s", so_number)
             for r in order_rows:
                 if (
-                    (r.decision in ("confirm", "amend") or r.kind == "cancelled")
+                    r.decision in ("confirm", "amend")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
