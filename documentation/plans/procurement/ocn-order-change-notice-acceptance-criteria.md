@@ -68,8 +68,10 @@ follow-up PR titled `OCN-ORDER-CHANGE-NOTICE B: ...`.
   OCNs the user raised or is named on (sales in charge / C.S. in charge), and another's detail is 404.
 - **D3** Approve / reject needs `.approve`; send for approval / send back needs `.edit`; done needs
   `.process` (CS); the permission is checked BEFORE a move is held for the undo window; the handling lock
-  (`assert_can_act_on_form`) applies to every stage move. Ownership only narrows `.view_own`: without
-  `.view` or `.view_own` nothing is visible, and Conversation, SLA and History follow the same rule.
+  (`assert_can_act_on_form`) applies to every stage move. Ownership only narrows `.view_own`: being the raiser
+  or named grants nothing without a slug; `.view`, `.edit`, `.process` and `.approve` see every notice (the
+  people who act on others' notices, as on the PR); `.view_own` sees the ones raised by or naming the
+  user. Conversation, SLA and History follow the same rule.
 - **D4** Company scope: a user of company X never sees, opens or acts on company Y's OCN (404).
 
 ## E. Amendment link, one change one notice (slice 1, owner d2)
