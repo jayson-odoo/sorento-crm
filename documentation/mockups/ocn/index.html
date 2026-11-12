@@ -82,7 +82,7 @@ table.grid tr.on td{background:#f8fbff}
 <body>
 <div class="doc">
 <h1>Order Change Notice (OCN), mock</h1>
-<p class="sub">Draws the RECOMMENDED answers of the behaviour card (<code>documentation/plans/procurement/CARD-ocn-order-change-notice-12nov.md</code>). Each spot that depends on a question carries a dashed purple tag <span class="dtag" style="margin:0">Q1</span> to <span class="dtag" style="margin:0">Q5</span>. Q1 four types as an editable lookup. Q2 risk shown, no routing. Q3 structured lines plus description. Q4 (c) only Purchasing gets a comment step, Customer Service keeps one step after approval. Q5 project optional. All names, numbers and codes are invented. FE = <code>sorento_crm_frontend/</code>.</p>
+<p class="sub">Draws the RECOMMENDED answers of the behaviour card (<code>documentation/plans/procurement/CARD-ocn-order-change-notice-12nov.md</code>). Each spot that depends on a question carries a dashed purple tag <span class="dtag" style="margin:0">Q1</span> to <span class="dtag" style="margin:0">Q5</span>. Q1 four types as an editable lookup. Q2 risk shown, no routing. Q3 structured lines plus description. Flow (owner d1): salesperson, sales admin, management, Customer Service, exactly like the purchase request and sponsorship form; no Purchasing step. Q5 project optional. All names, numbers and codes are invented. FE = <code>sorento_crm_frontend/</code>.</p>
 
 <!-- ================= FRAME 1 LIST -->
 <h2 class="ft">1. List, Procurement &rsaquo; Order Change Notices (1280)</h2>
@@ -195,15 +195,14 @@ table.grid tr.on td{background:#f8fbff}
   <div class="card"><div class="ch">Description</div><div class="cb">Quantity cut of 20 sets on the customer PO.</div></div>
   <div class="card"><div class="ch">Attachments</div><div class="cb xs muted">Revised customer PO.pdf</div></div>
   <div class="g g2 rel">
-   <div class="card"><div class="ch">Customer Service comment <span class="dtag">Q4</span></div><div class="cb"><div class="empty"><b>No comment yet</b><span class="muted xs">Customer Service has not added a comment.</span></div></div></div>
-   <div class="card"><div class="ch">Purchasing comment</div><div class="cb">20 sets already arrived, the supplier order cannot be cancelled.<div class="xs muted" style="margin-top:6px">Purchaser A, 08/11/2026</div></div></div><span class="co pin" style="top:-2px">4</span></div>
+   <div class="card" style="grid-column:1/-1"><div class="ch">Customer Service comment</div><div class="cb"><div class="empty"><b>No comment yet</b><span class="muted xs">Customer Service adds it after approval.</span></div></div></div><span class="co pin" style="top:-2px">4</span></div>
   <div class="rel"><div class="sign"><div><span>Decision</span><b>Pending</b></div><div><span>Name</span>Manager A</div><div><span>Date</span>dd/mm/yyyy</div><div><span>Remarks</span>-</div></div><span class="co pin">5</span></div>
  </div></div></div></div>
 <div class="notes"><ol>
  <li><span class="co">1</span><div><b>Record header</b>Number and status pill on one line, one short subtitle, prev/next pager, gear, print, one main button (Approve for the approver; Submit, Send for approval or Revise for others).<span class="ref">components/common/PageHeader.tsx ; components/common/RecordNavigation.tsx ; components/common/DetailActions.tsx, DetailActionsMenu.tsx ; lib/status-pill.ts ; shell pattern PurchaseRequestDetail.tsx (new OrderChangeNoticeDetail.tsx)</span></div></li>
  <li><span class="co">2</span><div><b>Read-only metadata under the header</b><span class="ref">components/common/RecordHeaderCard.tsx</span></div></li>
  <li><span class="co">3</span><div><b>Line tabs</b>Details, Conversation, SLA, Revisions, History.<span class="ref">sla-management/_shared/FormDetailWithSLATabs.tsx ; purchase-requests/components/PurchaseRequestConversationPanel.tsx ; components/common/comments/FormComments.tsx ; components/common/RevisionTimeline.tsx ; components/audit/AuditTrail.tsx</span></div></li>
- <li><span class="co">4</span><div><b>Same layout as the form, read-only, then the two comment blocks</b>CS comment shows an empty state (heading and hint, no button). Purchasing comment filled. Under Q4 (c) the CS comment is an optional field.<span class="ref">PurchaseRequestDetail.tsx (read-only sections) ; components/common/FormSection.tsx ; line grid InlineLineTable.tsx</span></div></li>
+ <li><span class="co">4</span><div><b>Same layout as the form, read-only, then the Customer Service comment</b>Optional box CS fills while processing after approval; empty state (heading and hint, no button) until then. No Purchasing box (owner d1).<span class="ref">PurchaseRequestDetail.tsx (read-only sections) ; components/common/FormSection.tsx ; line grid InlineLineTable.tsx</span></div></li>
  <li><span class="co">5</span><div><b>Management sign-off block</b>Decision, name, date, remarks.<span class="ref">purchase-requests/components/PurchaseRequestSignoffFooter.tsx (variant detailCard; reused, made generic in the build)</span></div></li>
 </ol></div></div></div>
 
@@ -216,13 +215,11 @@ table.grid tr.on td{background:#f8fbff}
   <colgroup><col style="width:210px"><col style="width:170px"><col style="width:120px"><col></colgroup>
   <tr><th>Step</th><th>Assignee team</th><th>Due</th><th>State</th></tr>
   <tr><td>Admin check</td><td>Project Sales Admin</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
-  <tr><td>Customer service check <span class="dtag">d1</span></td><td>Customer Service</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
-  <tr><td>Purchasing check <span class="dtag">d1</span></td><td>Purchasing</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
   <tr><td>Management approval</td><td>Management</td><td>10/11/2026</td><td><span class="pill amber">Running</span></td></tr>
   <tr><td>Customer service action</td><td>Customer Service</td><td>-</td><td><span class="pill">Not started</span></td></tr>
  </table></div></div>
 <div class="notes"><ol>
- <li><span class="co">1</span><div><b>SLA tracking tab</b>One row per step with team, due and state. Steps: Admin check, Customer service check and Purchasing check start together on submit (d1: Send for approval waits for both comments), Management approval on send for approval, Customer service action on approval. The new Purchasing step uses the existing purchasing team set (new SLA key).<span class="ref">sla-management/_shared/FormSLATrackingTab.tsx ; sorento_crm_backend/app/services/form_sla_service.py (new key order_change_notice)</span></div></li>
+ <li><span class="co">1</span><div><b>SLA tracking tab</b>One row per step with team, due and state. Steps exactly as the purchase request today: Admin check (Project Sales Admin, 24 h) on submit, Management approval (Project Sales Manager 72 h, then Director 24 h) on send for approval, Customer service action on approval. Same teams, new SLA key.<span class="ref">sla-management/_shared/FormSLATrackingTab.tsx ; sorento_crm_backend/app/services/form_sla_service.py (new key order_change_notice)</span></div></li>
 </ol></div></div>
 
 <!-- ================= FRAME 4 PROJECT PANEL -->

@@ -1,7 +1,7 @@
 # Behaviour card: Order Change Notice (OCN-ORDER-CHANGE-NOTICE)
 
-Status: Gate 1, card v2 12 Nov 2026 (crew answers on v1 folded in, section 8). d2 decided (yes). Waits for
-the owner on d1 and approval of card + mock v2. Size L, full track (migration, new SLA
+Status: Gate 1, card v3 12 Nov 2026. d1 and d2 decided by the owner (section 8). Waits for the owner's
+approval of card v3 + mock v3. Size L, full track (migration, new SLA
 rows, portal kind). Mock: `documentation/mockups/ocn/index.html` (Gate 2, filed separately).
 Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Read from `main` aa824637.
 Every name, PO number and item code below is invented (public repo).
@@ -31,9 +31,8 @@ Every name, PO number and item code below is invented (public repo).
    3 Director 24 h (response = resolution). Numbering: `PR{yy}-` / `PSSF{yy}-`, 4 digits, start 300,
    yearly, per company.
 4. Several stage rows may start on the same event; each runs its own clock (`services/form_sla_service.py:434`).
-   A stage's team comes from its own `agent_code` + `team_set_code` (`:960`, `:1010`), so a Purchasing
-   stage can use the `purchasing` team set the Stock Inquiry and NPA already use (agent
-   `lead_time_enquiries`, `PLAN-npa-form-sla-08nov.md`): no new teams.
+   A stage's team comes from its own `agent_code` + `team_set_code` (`:960`, `:1010`). The OCN uses the
+   PR's agent and team sets as they are: no new teams.
 
 ## 1. Design decision: where the OCN lives
 
@@ -60,8 +59,8 @@ call the sponsorship project link made (`alembic/versions/315_sponsorship_projec
 - **What it holds:** date, customer (searchable picker; free text kept as the display fallback like the
   PR), customer PO no. (free text), SO no. (free text), project (optional picker), C.S. in charge,
   sales in charge (user pickers), type of change (one of four), the risk level of that type (shown,
-  read-only), affected lines (Q3), description, Customer Service comment, Purchasing comment,
-  attachments (revised customer PO etc.), management decision + remarks.
+  read-only), affected lines (Q3), description, Customer Service comment (written by CS while
+  processing, optional), attachments (revised customer PO etc.), management decision + remarks.
 - **Life:** Draft -> Submitted -> Pending approval -> Approved -> Done. Submitted can be sent back
   (rejected to the raiser, who amends and resubmits). Pending approval -> Rejected (amend and
   resubmit). Approved is locked; an explicit "Revise" unlocks it and starts a new revision (revision
@@ -69,10 +68,10 @@ call the sponsorship project link made (`alembic/versions/315_sponsorship_projec
 - **Who does what:**
   - Raiser: fills and submits; amends after a rejection; may void their own.
   - Project Sales Admin (main stage): checks it, sends it for approval or sends it back.
-  - Customer Service: writes the CS comment (before the decision) and, after approval, carries the
-    change out and marks it Done.
-  - Purchasing: writes the Purchasing comment (did stock arrive, can the supplier PO be cancelled or
-    pulled in) before the decision.
+  - Customer Service: after approval, carries the change out, may write the CS comment, marks it Done
+    (the PR's customer_service step).
+  - Purchasing: no task on the OCN (owner, 12 Nov, verbatim: "not purchsaing bro, you see PR and SF got involve purhcasing meh"). Purchasing
+    learns of a project SO change through the existing open-items flow, unchanged.
   - Management (approval stage, the PR's Project Sales Manager tier, default approver in settings like
     the PR): approves or rejects, with remarks; can also approve from the public approval link.
 - **What an OCN does NOT do:** it never edits the sales order, the PO or AutoCount. It is a record +
@@ -82,7 +81,7 @@ call the sponsorship project link made (`alembic/versions/315_sponsorship_projec
   `view_own` sees the ones they raised or are named on (sales / C.S. in charge); the SLA assignee of a
   stage sees it; portal contacts see their own (same own-scope as PR/SF, `api/v1/_request_own_scope.py`).
 
-## 3. SLA stages (copied from PR/SF + the two the paper form implies)
+## 3. SLA stages (exactly the PR / SF chain as configured today)
 
 Seeded by one idempotent migration that copies the live PR rows (same policy shape, agent, notify flags,
 team sets), like `npasla_0001`; a no-op where PR rows are missing. Hours come from a new
@@ -91,34 +90,22 @@ team sets), like `npasla_0001`; a no-op where PR rows are missing. Hours come fr
 | Stage (team set)             | Who                        | Starts on          | Response clock stops on | Resolves on                                 |
 |------------------------------|----------------------------|--------------------|-------------------------|---------------------------------------------|
 | main (`project_sales`)       | Project Sales Admin        | submit             | -                       | send_for_approval, reject_submitted, voided |
-| cs_review (`ocn_cs_review`, see below) NEW, d1 | Customer Service | submit | - | cs_comment, voided   |
-| purchasing (`purchasing`, agent `lead_time_enquiries`) NEW, d1 | Purchasing | submit | - | purchasing_comment, voided |
 | project_sales_manager        | Management (default approver first) | send_for_approval | -          | approved, approval_rejected, voided         |
 | customer_service             | Customer Service           | approved           | -                       | resolved (Done), voided                     |
 
-This table is crew's d1 recommendation (both comment steps in parallel on submit; Send for approval waits
-for both comments). Customer Service then appears twice on one record. Stage identity is (type, team set)
-(`form_sla_service.py:880`) and several config lookups take `.first()` by that pair (`:771`, `:269`), so two
-rows on the same `customer_service` team set would let a late CS comment resolve the after-approval stage.
-The CS check therefore gets its own team set code `ocn_cs_review`: the seed copies the existing
-`customer_service` tier -> team rows of the `purchase_request` agent under that code (same teams, same
-members, no new team). Purchasing stage hours (crew dump 2, 12 Nov prod clone): the SI and NPA purchasing rows both use agent
-`lead_time_enquiries`, team set `purchasing`, policy `NORMAL` = tier 1 Executive 72 h, tier 2 Manager 24 h,
-tier 3 Director 24 h (teams: Purchasing - Product, Stock Inquiry / Purchasing Manager / Retail Director).
-The OCN purchasing row copies the SI purchasing row as is (same agent, team set, policy), like
-`npasla_0001` did; the other OCN rows use the new `ORDER_CHANGE_NOTICE` policy (24 / 72 / 24 h).
+Same agent (`purchase_request`), same team sets, same events, same notify flags, advance on approved,
+as the live PR rows. No Purchasing step and no comment step before the decision (owner d1, section 8).
 
 ## 4. Worked examples (masked shapes)
 
 1. **Exchange, delivered stock to collect back.** Customer `Customer A`, PO `XT04/3871`, type Exchange
    (High). Line: `ABC123-RL` 842 sets -> `ABC123-SH` 842 sets; 12 already delivered, to collect back.
-   CS comment: collection booked. Purchasing: supplier PO for 830 sets can be switched. Management
-   approves. CS marks Done. SO / PO untouched by the OCN.
+   Management approves. CS books the collection, writes "collection booked" in the CS comment and
+   marks it Done. SO / PO untouched by the OCN.
 2. **Quantity cut filed as Cancellation.** `Customer B Sdn Bhd`, PO `300/4800002913`, type Cancellation
-   (Highest). Line: `XYZ456A-SS` 976 -> 956 sets. Purchasing: 20 sets already arrived, cannot cancel.
-   Management rejects with remark "agree penalty charge first"; the raiser amends and resubmits.
-3. **Advance.** `Customer C`, delivery date 15/01/2027 -> 20/12/2026, type Advance (Low). Purchasing:
-   material can be pulled in. Approved.
+   (Highest). Line: `XYZ456A-SS` 976 -> 956 sets. Management rejects with remark "agree penalty charge first"; the raiser amends and resubmits.
+3. **Advance.** `Customer C`, delivery date 15/01/2027 -> 20/12/2026, type Advance (Low). Approved;
+   CS carries it out and marks it Done.
 4. **Delay.** `Customer D`, new date 30/03/2027, type Delay (Low). CS comment: let the stock go to another
    project. Approved, Done.
 5. **Revised customer PO.** PO `XT04/3871 (R1)`, attachment = revised PO, type Exchange. If the project
@@ -142,8 +129,7 @@ The OCN purchasing row copies the SI purchasing row as is (same agent, team set,
 ## 6. Data fields, numbering, permissions, notices
 
 - Additive migration on `projects.order_change_notices`: status, change_type, description, customer
-  (id + text), customer PO no., SO no. text, C.S. / sales in charge (user ids), CS comment, purchasing
-  comment, decision remarks, submitted/sent/decided/done/voided at+by, void reason, revision, source
+  (id + text), customer PO no., SO no. text, C.S. / sales in charge (user ids), CS comment, decision remarks, submitted/sent/decided/done/voided at+by, void reason, revision, source
   (crm / portal / amendment), requested-by contact; `project_id` nullable + ON DELETE SET NULL; new
   `order_change_notice_lines` (product picker, qty before/after, date before/after, delivered qty,
   remark). Existing amendment rows get status Draft (count to be measured by crew before the migration).
@@ -167,17 +153,9 @@ The OCN purchasing row copies the SI purchasing row as is (same agent, team set,
    routing; (b) also route by it (e.g. Highest skips straight to Director, or a shorter SLA).
    Recommendation (a): nothing in PR/SF routes by a field today; route only if the owner says so.
 3. **Lines.** (a) one free-text description like the paper; (b) structured lines (product, qty
-   before/after, date before/after, delivered qty) plus the description. Recommendation (b): purchasing
-   answers "stock arrived / can the supplier PO be cancelled" per item, the amendment flow already has
+   before/after, date before/after, delivered qty) plus the description. Recommendation (b): the risk guide asks "stock arrived / can the supplier PO be cancelled" per item, the amendment flow already has
    the change table per line, and lines use the shared line table (standing rule).
-4. **Comment stages (now owner decision d1, see section 8).** The paper puts the CS and Purchasing comments ABOVE the management block.
-   (a) CS and Purchasing each get a comment stage that starts on submit, in parallel with the admin
-   check, and Send for approval stays allowed before they answer (management sees a blank comment);
-   (b) the same, but Send for approval waits for both comments; (c) no comment stages: only Purchasing
-   gets one, and CS keeps just the after-approval stage (CS comment stays an optional field).
-   Recommendation (c): it adds the one stage the risk guide demands (purchasing must check stock and
-   the supplier PO), keeps the PR's three stages exactly, avoids two CS stages on one record, and
-   invents no new refusal.
+4. **Comment stages.** Withdrawn: decided by the owner as d1 (section 8).
 5. **Link.** (a) project optional, with an admin switch "OCN requires a project" (off by default), the
    same switch the sample request has (`models/user.py:477` `sample_request_require_project`,
    `services/sample_request_service.py:346`); PO and SO as free text; (b) project always required;
@@ -212,9 +190,15 @@ linked by PO text. The notice's own lines stay as written; the linked amendment'
 them read-only. A hand-raised notice never creates an amendment.
 
 Open, with the owner now:
-- **d1** CS and Purchasing comments before approval. Crew recommends: both steps start in parallel on
-  submit, and Send for approval waits for both comments (refused with a plain reason naming the missing
-  comment). Drawn that way in mock v2 (tag d1).
+- **d1 DECIDED (owner, 12 Nov, Lavish note on card v2: "not purchsaing bro, you see PR and SF got involve
+  purhcasing meh")**: no Purchasing step, no comment step before the decision. The OCN runs the PR / SF
+  chain exactly as configured today: salesperson raises, project sales admin checks, project sales
+  manager approves (Director escalation), Customer Service processes. The Purchasing comment box is
+  gone; the CS comment stays as an optional box CS fills while processing. The `ocn_cs_review` team set
+  and the Purchasing stage of card v2 are dropped.
+  Confirmed by the owner's second note (verbatim): "the flow is salesperson -> sales admin -> management
+  -> CS just like PR and SF". Tiers as the live PR / SF policy: Project Sales Admin 24 h, Project Sales
+  Manager 72 h, Director 24 h.
 - **d2 DECIDED (owner, 12 Nov ~23:12: "yes that's the point")**: a change to a published project SO waits
   for its OCN's approval before it publishes and updates AutoCount; that is today's rule
   (`project_so_delta_service.py:791`), and the OCN's approval becomes what sets `approver_id` /
