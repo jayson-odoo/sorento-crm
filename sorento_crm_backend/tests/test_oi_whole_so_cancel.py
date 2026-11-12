@@ -285,3 +285,29 @@ def test_ac_wc_6_q1b_an_so_delete_leaves_the_oi_row_state_and_ack_alone(env):
     assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
 
 
+
+
+# ============================================================================ AC-WC-7 (failed record)
+def test_ac_wc_7_a_failed_record_raises_no_cancelled_row(env, monkeypatch):
+    """A header-cancel push whose record FAILS after the BEFORE capture ran (the last
+    statement of `_apply`, `_record_hook_state`, raises) is rolled back and reported failed:
+    it must raise no `cancelled` row, and the OI row stays unchanged."""
+    from app.services.document_ingest_service import DocumentIngestService
+
+    record, header, line_x, y = _push_so(env)
+    row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
+    before = _row_snapshot(env, row_id)
+
+    def _boom(self, *args, **kwargs):
+        raise RuntimeError("ZZT injected failure")
+
+    monkeypatch.setattr(DocumentIngestService, "_record_hook_state", _boom)
+
+    res = env.post(INGEST_SO, [dict(record, status="cancelled", lines=[y])])
+    env.db.rollback()
+    env.db.expire_all()
+
+    assert res.status_code == 200, res.text
+    assert res.json()["records"][0]["outcome"] == "failed", res.text
+    assert _cancelled_rows(env, line_x["id"]) == []
+    assert _row_snapshot(env, row_id) == before
