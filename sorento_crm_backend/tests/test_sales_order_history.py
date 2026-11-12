@@ -257,7 +257,7 @@ def test_every_kind_appears_with_its_exact_title_newest_first():
         assert len(update["lines"]) == 4
         assert {l["item_code"] for l in update["lines"]} == {"MCM7833-CR"}
         assert {l["change"] for l in update["lines"]} <= {
-            "Qty 10 -> 8", "Qty 11 -> 8", "Qty 12 -> 8", "Qty 13 -> 8"
+            "Qty 10 → 8", "Qty 11 → 8", "Qty 12 → 8", "Qty 13 → 8"
         }
         rev2 = [e for e in _by_kind(events, "revision_confirmed") if e["title"].endswith("2")][0]
         assert set(ITEMS) & {l["item_code"] for l in rev2["lines"]}
@@ -449,28 +449,28 @@ def test_without_the_view_permission_both_reads_are_refused():
 # ----------------------------------------------------------------- 6. API key refused
 
 
-def test_an_api_key_principal_is_refused_on_both_routes():
-    """AC-SH-W2-2: `require_permission`, not `_with_api_key`."""
+def test_an_api_key_principal_holding_both_view_permissions_is_still_refused_on_both_routes():
+    """AC-SH-W2-2: `require_permission`, not `_with_api_key`. The principal HOLDS
+    `projects.projects.view` and `scm.dashboard.view`, so only the staff-only rule can refuse
+    it: the staff-session dependency is left real (an X-API-Key request has no bearer session)
+    and only the key-or-session dependency resolves the integration."""
     with blank_session() as db:
         world = _world(db)
         db.commit()
-        from fastapi.testclient import TestClient
-
-        from app.database import get_db
-        from app.dependencies import get_current_user_or_api_key
+        from app.dependencies import get_current_user, get_current_user_or_api_key
         from app.main import app
 
-        app.dependency_overrides[get_db] = lambda: db
+        client, originals = _client(db, world["buyer"].id, PSO_PERMS + SCM_PERMS)
+        app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides[get_current_user_or_api_key] = lambda: {
             "id": world["buyer"].id, "integration_id": _uid(), "role": "user",
         }
         try:
-            client = TestClient(app)
             headers = {"X-API-Key": "zzt-not-a-real-key"}
             pso = client.get(PSO_URL.format(world["order"].id), headers=headers)
             scm = client.get(SCM_URL.format(world["order"].so_id), headers=headers)
         finally:
-            app.dependency_overrides.clear()
+            _restore(originals)
         assert pso.status_code in (401, 403), pso.text
         assert scm.status_code in (401, 403), scm.text
 
@@ -538,3 +538,90 @@ def test_the_three_services_share_one_helpers_module():
     assert order_inquiry_history_service._iso is history_common.iso
     assert callable(sales_order_history_service.history_for_project_so)
     assert callable(sales_order_history_service.history_for_so)
+
+
+# ----------------------------------------------------------------- review round
+
+
+def _reissue_world(db):
+    """Revision 1 ordered CKS1050; revision 2 cancelled it ("Superseded by revision 2") and
+    ordered the same line, item and qty again: nothing changed (planning_history_service)."""
+    company_id = _sorento(db)
+    cs = _user(db, "ZZT CS Person", f"cs.{_uid()[:8]}@zzt.test")
+    order = _adopted_order(db, company_id, f"ZZTSO{_uid()[:8]}")
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    line = _line(db, company_id, order, product)
+    inquiry = _inquiry(db, company_id, order, raised_by=cs.id, raised_at=T_REV1)
+    dec1 = SOSupplyDecision(
+        id=_uid(), company_id=company_id, project_sales_order_id=order.id, revision_no=1,
+        state=DECISION_SUPERSEDED, line_snapshots=[], confirmed_by=cs.id,
+        confirmed_at=T_REV1, created_at=T_REV1, superseded_at=T_REV2,
+    )
+    db.add(dec1)
+    db.flush()
+    dec2 = SOSupplyDecision(
+        id=_uid(), company_id=company_id, project_sales_order_id=order.id, revision_no=2,
+        state=DECISION_ACTIVE, line_snapshots=[], confirmed_by=cs.id,
+        confirmed_at=T_REV2, created_at=T_REV2, supersedes_id=dec1.id,
+    )
+    db.add(dec2)
+    db.flush()
+    old = _row(db, company_id, inquiry, line, "CKS1050", decision=dec1)
+    old.created_at = T_REV1
+    old.state = "cancelled"
+    old.note = "Superseded by revision 2"
+    new = _row(db, company_id, inquiry, line, "CKS1050", decision=dec2)
+    new.created_at = T_REV2
+    db.flush()
+    return {"company_id": company_id, "cs": cs, "buyer": cs, "order": order, "line": line,
+            "inquiry": inquiry, "old": old, "new": new, "dec2": dec2}
+
+
+def test_a_re_issued_unchanged_revision_is_titled_no_change():
+    """AC-SH-W2-3."""
+    with blank_session() as db:
+        world = _reissue_world(db)
+        db.commit()
+
+        events = _pso_events(db, world)
+
+        titles = sorted(e["title"] for e in _by_kind(events, "revision_confirmed"))
+        assert titles == ["Plan confirmed, revision 1", "Plan confirmed, revision 2, no change"]
+
+
+def test_no_change_string_uses_an_ascii_arrow():
+    """AC-SH-W2-3: every line `change` reads "→", never "->": a reduced revision line
+    ("Qty 10 → 6"), an AutoCount change_text ("Qty 10 -> 8" in the stored row) and a refused
+    Confirm's stored line text."""
+    with blank_session() as db:
+        world = _world(db)
+        reduced = world["rows"][0]
+        reduced.previous_qty = Decimal("10")
+        reduced.qty = Decimal("6")
+        db.commit()
+
+        events = _pso_events(db, world)
+
+        rev2 = [e for e in _by_kind(events, "revision_confirmed") if e["title"].endswith("2")][0]
+        mine = [l for l in rev2["lines"] if l["row_id"] == reduced.id or l["item_code"] == reduced.item_code]
+        assert [l["change"] for l in mine] == ["Qty 10 → 6"]
+        seen = [l["change"] for e in events for l in e["lines"]]
+        assert any(c.startswith("Qty ") for c in seen)
+        assert not [c for c in seen if "->" in c], seen
+        assert len(_by_kind(events, "autocount_update")[0]["lines"]) == 4
+        assert len(_by_kind(events, "confirm_refused")[0]["lines"]) == 1
+
+
+def test_a_user_holding_only_view_own_who_can_open_the_order_reads_its_history():
+    """AC-SH-W2-1: the detail route takes `projects.projects.view_own` too; the History tab on
+    that page must not 403 for the same person."""
+    with blank_session() as db:
+        world = _world(db)
+        db.commit()
+        own = ["projects.projects.view_own"]
+
+        # The detail route's own READ is (view, view_own); the adopted fixture order has no
+        # project, so only the guard (not row ownership) is under test here.
+        history = _get(db, world["buyer"].id, PSO_URL.format(world["order"].id), own)
+
+        assert history.status_code == 200, history.text
