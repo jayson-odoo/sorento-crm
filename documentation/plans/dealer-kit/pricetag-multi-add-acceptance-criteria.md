@@ -53,8 +53,9 @@ CRM create, CRM edit, portal create, portal edit behave identically (one compone
 Escalate to marketing and Preview are unchanged.
 
 ## AC-13 One-line results (owner 14:17)
-Each Item picker result is one line: the code, then the name when it says more than the code, cut with "..." and the
-full text on hover. No price and no second line. A set shows a grey "Set" hint on the same line; "Already added" and
+Each Item picker result is one line showing the CODE ONLY (owner 14:21: no product name such as "Demo basin
+cabinet"), cut with "..." and the full code on hover when long. No price and no second line. The search still
+matches names. A set shows a grey "Set" hint on the same line; "Already added" and
 "Discontinued" sit on that line too.
 
 ## AC-14 One pick path (owner 14:17)
@@ -86,8 +87,8 @@ Frontend, `hooks/usePriceTagLineEditor.ts` (one pick path, AC-14):
   drops options already on another line of `lines` and repeats within the batch; then `handleItemSelect(key, first)`,
   and for each further option `k = addLine(prevKey); handleItemSelect(k, option)`. This is the ONLY multi-add code; it
   sets no line field itself. `handleItemsAdd` and the separate patch path are removed.
-- `fetchItemOptions` maps through a one-line item option builder: `label` = code, plus two spaces and the name when
-  `distinctName`/`sameDisplayText` say the name adds something; NO price, NO `description`; `badgeText` = 'Set' for a
+- `fetchItemOptions` maps through a one-line item option builder: `label` = the code only (owner 14:21); NO name,
+  NO price, NO `description`; `badgeText` = 'Set' for a
   set, 'Discontinued' for a discontinued product. `code` and `name` stay set (handleItemSelect reads them). The part
   picker (`fetchPartOptions`) keeps today's `tagItemOption` format.
 - `TagItemOption.is_discontinued?: boolean` (`app/(auth)/portal/lib/price-tag-request-service.ts`).
