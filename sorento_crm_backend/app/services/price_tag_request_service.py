@@ -2988,7 +2988,7 @@ Marketing's own work is not part of the form's payload, so it is captured
     def lookup_tag_items(
         db: Session,
         query: str | None = None,
-        limit: int = 20,
+        limit: int = 50,
     ) -> list[dict]:
         """Sets and products in ONE list, for the lines table's single Item picker.
 
@@ -3019,6 +3019,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 # The override only: the computed figure needs every member
                 # and its product loaded, per set, for a dropdown row.
                 "list_price": row.list_price_override or None,
+                "is_discontinued": False,
             }
             for row in tag_data_service.search_product_sets(db, query, limit=limit)
         ]
@@ -3029,6 +3030,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "code": row.product_code,
                 "name": row.product_name or "",
                 "list_price": row.list_price or None,
+                "is_discontinued": bool(row.is_discontinued),
             }
             for row in tag_data_service.search_products(db, query, limit=limit)
         )

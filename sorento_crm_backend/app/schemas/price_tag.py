@@ -1306,6 +1306,7 @@ class TagItemLookupItem(BaseModel):
     # The option reads "CODE  RM <list price>" (owner, 4 Nov). None when the row
     # has no price or a zero one; a set answers its override only.
     list_price: Optional[float] = None
+    is_discontinued: bool = False
 
 
 def _uuid_or_none(value: Optional[str]) -> Optional[str]:
