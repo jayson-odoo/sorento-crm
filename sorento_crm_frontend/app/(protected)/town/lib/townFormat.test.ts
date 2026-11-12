@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
 import {
-  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, placeTags, sceneSelection, separateLabels, tagLabel, tagName,
+  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, fitColumns, placeTags, sceneSelection, separateLabels, tagLabel, tagName,
 } from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
@@ -190,5 +190,26 @@ describe('separateLabels', () => {
     const [spot] = separateLabels([{ x: 40, y: 30, w: 10, h: 2 }], board, view);
     expect(spot.x + 5).toBeLessThanOrEqual(30);
     expect(spot.y + 1).toBeLessThanOrEqual(20);
+  });
+});
+
+describe('TOWN-PROJECT-CITY crew pass (12 Nov)', () => {
+  it('draws the same stalls on the wallboard as on the named view when stalls tie on invoices', () => {
+    // seven stalls tie at 3 invoices; only the named view carries amounts, so an amount tie-break would pick
+    // different stalls (and shift the state pills) once the wallboard strips them
+    const named = Array.from({ length: 7 }, (_, i) => shop(i, 'stall', 3, String(100 * (7 - i) + (i % 2) * 900)));
+    const bare = named.map((s) => ({ ...s, today_amount: undefined }));
+    const pick = (shops: TownShop[]) => sceneSelection(snapshot(shops, 7)).drawn.map((s) => s.key);
+    expect(pick(named)).toEqual(pick(bare));
+    expect(pick(named)).toHaveLength(SCENE_STALL_CAP);
+  });
+
+  it('shrinks the board split until every value fits its own column', () => {
+    const measure = (text: string, px: number) => text.length * px * 0.55; // a stand-in for measureText
+    const parts = ['Dealers RM 123,456', 'Projects RM 141,200', 'Other RM 1,250'];
+    const px = fitColumns(measure, parts, 310, 40, 20);
+    expect(px).toBeLessThan(40);
+    expect(Math.max(...parts.map((t) => measure(t, px)))).toBeLessThanOrEqual(310);
+    expect(fitColumns(measure, ['Dealers 3', 'Projects 2', 'Other 1'], 310, 40, 20)).toBe(40);
   });
 });
