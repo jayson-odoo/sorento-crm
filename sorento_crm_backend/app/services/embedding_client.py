@@ -7,13 +7,12 @@ pgvector column. Callers keep their own caching, chunking policy, retry waits an
 from __future__ import annotations
 
 import math
-import os
-import threading
 from typing import Any, Optional
 
 import httpx
 
 from app.config import settings
+from app.services import http_keepalive
 
 EMBEDDING_DIMENSIONS = 1536
 #: Gemini's batchEmbedContents takes at most 100 texts per request.
@@ -35,36 +34,14 @@ class EmbeddingHTTPError(RuntimeError):
         self.status_code = status_code
 
 
-#: CHATBOT-SPEED: one keep-alive client per process, so a chatbot turn's embedding round trip reuses an open
-#: connection instead of paying a new DNS + TCP + TLS handshake (every call built its own client since #1967).
-#: Re-made after a fork (gunicorn workers, RQ work-horses): a child never uses its parent's sockets.
-#: The timeout is per request, so each caller keeps its own.
-#: httpx drops an idle connection after 5 s by default, which a quiet worker's next turn outlives; 30 s stays under
-#: the providers' own idle close. A connection the server closed while idle is discarded before reuse.
-KEEPALIVE_EXPIRY_SECONDS = 30.0
-_client: httpx.Client | None = None
-_client_pid: int | None = None
-_client_lock = threading.Lock()
-
-
-def _reset_after_fork() -> None:
-    # A fork while another thread held the lock would leave the child's copy locked forever.
-    global _client_lock
-    _client_lock = threading.Lock()
-
-
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_reset_after_fork)
+#: CHATBOT-SPEED: one keep-alive client per process (`http_keepalive`), so a chatbot turn's embedding round trip
+#: reuses an open connection instead of paying a new DNS + TCP + TLS handshake (every call built its own client since
+#: #1967). The timeout is per request, so each caller keeps its own.
+KEEPALIVE_EXPIRY_SECONDS = http_keepalive.KEEPALIVE_EXPIRY_SECONDS
 
 
 def _shared_client() -> httpx.Client:
-    global _client, _client_pid
-    pid = os.getpid()
-    with _client_lock:
-        if _client is None or _client_pid != pid:
-            _client = httpx.Client(limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS))
-            _client_pid = pid
-        return _client
+    return http_keepalive.shared_client("embeddings")
 
 
 def _post(

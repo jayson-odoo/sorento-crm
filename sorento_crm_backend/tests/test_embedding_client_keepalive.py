@@ -11,7 +11,7 @@ import json
 import httpx
 import pytest
 
-from app.services import embedding_client
+from app.services import embedding_client, http_keepalive
 
 
 def _vector() -> list[float]:
@@ -39,9 +39,9 @@ def transport(monkeypatch):
 
     monkeypatch.setattr(httpx.Client, "__init__", init)
     monkeypatch.setattr(httpx.Client, "send", send)
-    monkeypatch.setattr(embedding_client, "_client", None, raising=False)
-    monkeypatch.setattr(embedding_client, "_client_pid", None, raising=False)
-    return seen
+    http_keepalive.reset()
+    yield seen
+    http_keepalive.reset()
 
 
 @pytest.mark.parametrize("provider,model", [("openai", "text-embedding-3-small"), ("gemini", "gemini-embedding-001")])
@@ -72,8 +72,8 @@ def test_each_call_keeps_its_own_timeout(transport):
 def test_a_forked_process_builds_its_own_client(transport, monkeypatch):
     """A client made before a fork (gunicorn / RQ work-horse) is never used by the child: its sockets are shared."""
     embedding_client.embed_texts(["a"], "openai", "text-embedding-3-small", api_key="test-key", timeout=3.0)
-    real_pid = embedding_client.os.getpid()
-    monkeypatch.setattr(embedding_client.os, "getpid", lambda: real_pid + 1)
+    real_pid = http_keepalive.os.getpid()
+    monkeypatch.setattr(http_keepalive.os, "getpid", lambda: real_pid + 1)
     embedding_client.embed_texts(["b"], "openai", "text-embedding-3-small", api_key="test-key", timeout=3.0)
     assert len(transport["clients"]) == 2
     assert transport["requests"][0][0] is not transport["requests"][1][0]
