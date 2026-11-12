@@ -1,6 +1,7 @@
 # PLAN: one standard History view for every audited record (STANDARD-HISTORY)
 
-Status: v2 approved by the owner (Lavish, 10 Nov: "ok"); #2299 rebuilt on it: the existing
+Status: wave 2 (SO + Fulfilment Planning History tab, lane STANDARD-HISTORY-W2, track M) in
+progress: behaviour card filed, build waits on the answers. Wave 1: v2 approved by the owner (Lavish, 10 Nov: "ok"); #2299 rebuilt on it: the existing
 `AuditTrail` is the one history component (plain entries mode), `RecordHistory` is deleted.
 Wave 1 v1 was crew-passed but not accepted on hand test (10 Nov ~15:10 MYT: "OI history why so
 complicated geh, ... i want to reuse same component though"). Part A (an Unconfirm guard) was
