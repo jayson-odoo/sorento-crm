@@ -219,6 +219,9 @@ class SystemSettingUpdate(BaseModel):
     # appear HERE and in the GET dict, because both are manual.
     chatbot_direct_ingress_mode: Optional[Literal["off", "contacts", "all"]] = None
     chatbot_direct_ingress_contacts: Optional[str] = Field(None, max_length=20000)
+    # N8N-RETIRE-A: who sends bot replies. A Literal, so a bad mode answers 422.
+    chatbot_reply_sender_mode: Optional[Literal["n8n", "contacts", "all"]] = None
+    chatbot_reply_sender_contacts: Optional[str] = Field(None, max_length=20000)
     # CLOSED-LISTS-INDEX-MODE: a Literal, so a mode outside the two answers 422. Same rule as
     # every block above - it must appear HERE and in the GET dict, because both are manual.
     chatbot_closed_lists_mode: Optional[Literal["block", "index"]] = None
@@ -545,6 +548,8 @@ def get_settings(
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
                 "chatbot_direct_ingress_mode": getattr(settings, "chatbot_direct_ingress_mode", None) or "off" if settings else None,
                 "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
+                "chatbot_reply_sender_mode": getattr(settings, "chatbot_reply_sender_mode", None) or "n8n" if settings else None,
+                "chatbot_reply_sender_contacts": getattr(settings, "chatbot_reply_sender_contacts", None) if settings else None,
                 "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
                 "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
                 "chatbot_parser_max_output_tokens": getattr(settings, "chatbot_parser_max_output_tokens", None) or 8192 if settings else None,
@@ -1189,6 +1194,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
         "chatbot_direct_ingress_mode": "off",
+        "chatbot_reply_sender_mode": "n8n",
+        "chatbot_reply_sender_contacts": None,
         "chatbot_closed_lists_mode": "block",
         "chatbot_composer_enabled": False,
         # Repeats SystemSetting.chatbot_parser_max_output_tokens' own default (app/models/user.py).

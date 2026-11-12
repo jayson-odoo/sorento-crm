@@ -76,7 +76,7 @@ from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent.loop import AgentBusy, single_flight
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
-from app.services.chatbot import console_service
+from app.services.chatbot import console_service, crm_sender
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
@@ -340,7 +340,10 @@ def list_turns(
     )
     has_more = len(rows) > limit
     page = rows[:limit]
-    available = retry_available(db)
+    # A failed turn the CRM sender is sending can be retried with no n8n inject URL.
+    available = retry_available(db) or any(
+        row.status == "failed" and crm_sender.has_crm_rows(db, str(row.id)) for row in page
+    )
     # Review round note (c): ONE `Attachment` query for the whole page's worth of
     # media_intake attachment ids, signed per row - not one query per turn.
     attachments_by_id = _load_attachments(db, _media_attachment_ids(page))
@@ -533,6 +536,10 @@ def retry_turn(
     now = datetime.now(timezone.utc)
     actor_id = str(current_user.get("id") or "")
 
+    stored_actions = (row.response or {}).get("actions") if isinstance(row.response, dict) else None
+    if stored_actions and _sent_by_crm(db, row):
+        return _retry_via_crm(db, row, stored_actions, now)
+
     # Claim FIRST, then send. See the docstring - and the claim is the conditional UPDATE
     # itself, not the read above. The read can only ever tell an operator what WAS true;
     # two POSTs a few milliseconds apart both pass it, and the customer is answered twice.
@@ -621,6 +628,57 @@ def retry_turn(
 
     _log_retry(db, request, row, actor_id, outcome_status, error_message)
     return RetryTurnResponse(turn_id=str(row.id), attempt=row.attempt + 1)
+
+
+def _sent_by_crm(db: Session, row: ChatbotTurn) -> bool:
+    from app.models.user import SystemSetting
+
+    return crm_sender.has_crm_rows(db, str(row.id)) or crm_sender.covers(
+        db.query(SystemSetting).first(), row.contact_respond_id
+    )
+
+
+def _retry_via_crm(db: Session, row: ChatbotTurn, actions: list, now: datetime) -> RetryTurnResponse:
+    """Try again on a turn the CRM sender sends: re-send the stored actions; steps already
+    confirmed are skipped, so no part goes out twice. The row is not re-run."""
+    from app.database import SessionLocal  # call time: tests swap it
+    from app.services.chatbot import direct_ingress, engine
+
+    turn_id = str(row.id)
+    claimed = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.id == turn_id,
+            (ChatbotTurn.retry_requested_at.is_(None)) | (ChatbotTurn.retry_requested_at < _stale_before(now)),
+        )
+        .update({ChatbotTurn.retry_requested_at: now}, synchronize_session="fetch")
+    )
+    if not claimed:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RETRY_IN_FLIGHT_DETAIL)
+    db.commit()
+    try:
+        outcome = crm_sender.send(
+            lambda: SessionLocal(),
+            turn_id=turn_id,
+            contact_id=row.contact_respond_id,
+            actions=engine.split_send_actions(list(actions)),
+        )
+    finally:
+        db.expire_all()
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+        row.retry_requested_at = None
+    if outcome == direct_ingress.SEND_OK:
+        row.status, row.stage, row.error = "done", "sent", None
+        db.commit()
+        return RetryTurnResponse(turn_id=turn_id, attempt=row.attempt)
+    row.error = (
+        "Not confirmed: the reply may not have reached the customer."
+        if outcome == direct_ingress.SEND_TIMEOUT
+        else "The reply was not sent."
+    )
+    db.commit()
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"{row.error} Try again.")
 
 
 def _log_retry(
