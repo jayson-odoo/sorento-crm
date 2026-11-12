@@ -32,6 +32,8 @@ class _Collect:
 
 def test_app_has_no_undefined_names():
     collector = _Collect()
-    for path in sorted(APP_DIR.rglob("*.py")):
+    paths = sorted(APP_DIR.rglob("*.py"))
+    assert len(paths) > 100, f"guard found only {len(paths)} modules under {APP_DIR}"
+    for path in paths:
         pyflakes_api.check(path.read_text(encoding="utf-8"), str(path.relative_to(APP_DIR.parent)), collector)
     assert collector.hits == [], "undefined names:\n" + "\n".join(collector.hits)

@@ -72,7 +72,7 @@ def test_staff_user_creates_a_complaint_with_the_standard_body(world):
 
 
 def test_staff_create_does_not_notify_handlers_as_external(world, monkeypatch):
-    """Line :1175 path: a staff create without an API key is not an external create."""
+    """should_notify_handlers: a staff create without an API key is not an external create."""
     from app.services.complaints_service import ComplaintService
 
     calls: list[str] = []
@@ -89,7 +89,8 @@ def test_staff_create_does_not_notify_handlers_as_external(world, monkeypatch):
 
 
 def test_external_api_key_request_needs_confirmation_then_notifies(world, monkeypatch):
-    """Both call sites with the key present: :1102 asks for user confirmation, :1175 notifies."""
+    """Both call sites with the key present: requires_user_confirm asks for confirmation, then
+    should_notify_handlers notifies."""
     from app.config import settings
     from app.services.complaints_service import ComplaintService
 
@@ -116,7 +117,7 @@ def test_external_api_key_request_needs_confirmation_then_notifies(world, monkey
 
 
 def test_do_lookup_date_range_annotations_resolve():
-    """complaints.py:791/795 annotate with "datetime", which must be a name the module holds."""
+    """_resolve_do_lookup_date_range annotates with "datetime", a name the module must hold."""
     from app.api.v1.complaints import complaints
 
     hints = typing.get_type_hints(complaints._resolve_do_lookup_date_range)
