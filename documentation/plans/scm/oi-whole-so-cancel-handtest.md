@@ -13,7 +13,7 @@ JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
 JOIN public.sales_order_lines sol   ON sol.id = psl.core_sales_order_line_id
 JOIN public.sales_orders so         ON so.id = sol.sales_order_id
 JOIN public.integration_references ir
-     ON ir.entity_type = 'sales_orders' AND ir.entity_id = so.id
+     ON ir.entity_type = 'sales_orders' AND ir.entity_id = so.id::text
 WHERE so.status = 'open' AND so.demand_class = 'project'
   AND sol.line_status = 'open' AND oir.state <> 'cancelled'
 GROUP BY so.so_number, ir.source_ref, oi.inquiry_no
