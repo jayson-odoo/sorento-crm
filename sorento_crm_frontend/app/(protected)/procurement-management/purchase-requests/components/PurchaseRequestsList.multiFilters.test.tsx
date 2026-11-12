@@ -23,6 +23,16 @@ class ResizeObserverStub {
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 Element.prototype.scrollIntoView = vi.fn();
 
+const view = vi.hoisted(() => ({ filters: null as Record<string, unknown> | null }));
+// LIST-FILTER-MEMORY-4: the filters come back from the remembered view (per user), not the URL.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (key: string) => ({
+    listing_key: key,
+    config: view.filters ? { version: 1, filters: view.filters, filtersVersion: 1 } : null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (key: string, payload: unknown) => ({ listing_key: key, config: payload })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
 const url = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -112,6 +122,7 @@ beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   url.search = '';
+  view.filters = null;
   usePR.mockReturnValue({
     data: { data: [ROW], pagination: { total: 1, page: 1, limit: 50 } },
     isLoading: false, isPlaceholderData: false, isFetching: false, error: null, refetch: vi.fn(),
@@ -184,8 +195,8 @@ describe('Purchase requests - multi Type, Status and Assigned to filters', () =>
     });
   });
 
-  it('a link with several statuses and assignees restores both controls and the request', async () => {
-    url.search = 'approval_status=pending%2Capproved&assigned_to=__unassigned__%2Cu-1';
+  it('a remembered view with several statuses and assignees restores both controls and the request', async () => {
+    view.filters = { approval_status: 'pending,approved', assigned_to: '__unassigned__,u-1' };
     const user = userEvent.setup();
     await openFilters(user);
     await waitFor(() => {
@@ -196,8 +207,8 @@ describe('Purchase requests - multi Type, Status and Assigned to filters', () =>
     expect(selected(await box('u-1'))).toEqual(['__unassigned__', 'u-1']);
   });
 
-  it('an older link with one status and one assignee reads back as one-value filters', async () => {
-    url.search = 'approval_status=rejected&assigned_to=u-2';
+  it('a remembered one-value view reads back as one-value filters', async () => {
+    view.filters = { approval_status: 'rejected', assigned_to: 'u-2' };
     const user = userEvent.setup();
     await openFilters(user);
     await waitFor(() => {

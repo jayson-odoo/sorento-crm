@@ -13,6 +13,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ComplaintsList from './ComplaintsList';
 
+const view = vi.hoisted(() => ({ filters: null as Record<string, unknown> | null }));
+// LIST-FILTER-MEMORY-4: the filters come back from the remembered view (per user), not the URL.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (key: string) => ({
+    listing_key: key,
+    config: view.filters ? { version: 1, filters: view.filters, filtersVersion: 1 } : null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (key: string, payload: unknown) => ({ listing_key: key, config: payload })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
 const url = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -96,6 +106,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn();
   url.search = '';
+  view.filters = null;
   useComplaints.mockReset();
   useComplaints.mockReturnValue({
     data: { data: [], pagination: { total: 0, page: 1, limit: 50 } },
@@ -156,8 +167,8 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     });
   });
 
-  it('a comma-joined link reads back into both filters', async () => {
-    url.search = 'status=new%2Capproved&assigned_to=resp-ann%2Cresp-ben';
+  it('a remembered multi-value view reads back into both filters', async () => {
+    view.filters = { status: 'new,approved', assigned_to: 'resp-ann,resp-ben' };
     renderIt();
     await waitFor(() => {
       expect(asList(lastArgs().status)).toEqual(['new', 'approved']);
@@ -165,8 +176,8 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     });
   });
 
-  it('an older link with one status and one assignee reads back as one-value filters (guard)', async () => {
-    url.search = 'status=approved&assigned_to=resp-ann';
+  it('a remembered one-value view reads back as one-value filters (guard)', async () => {
+    view.filters = { status: 'approved', assigned_to: 'resp-ann' };
     renderIt();
     await waitFor(() => {
       expect(asList(lastArgs().status)).toEqual(['approved']);

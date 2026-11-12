@@ -71,11 +71,14 @@ export const purchaseRequestsPagerQuery = {
     getPurchaseRequests(purchaseRequestsListParamsFromUrl(params)),
 };
 
-export function usePurchaseRequests(params: PurchaseRequestsListQueryParams) {
+/** `enabled` holds the fetch until the remembered view is applied; it stays OUT of the key. */
+export function usePurchaseRequests(params: PurchaseRequestsListQueryParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: purchaseRequestsListQueryKey(params),
-    queryFn: () => getPurchaseRequests(params),
+    queryKey: purchaseRequestsListQueryKey(listParams),
+    queryFn: () => getPurchaseRequests(listParams),
+    enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     retry: 1,
