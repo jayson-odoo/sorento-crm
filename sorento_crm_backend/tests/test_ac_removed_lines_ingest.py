@@ -585,10 +585,10 @@ def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_left_for_the_board(env
     assert (snap["state"], snap["ack_state"]) == (INQUIRY_ACTIONED, ACK_AWAITING), snap
 
 
-def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged(env):
-    """Guard of the removed-line exclusion: a push that cancels the HEADER (the line left out
-    too) is a cancelled order, not a removed line, so its live rows are flagged done
-    (`flag_rows_for_cancelled_lines` -> acknowledged) as before."""
+def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_left_for_the_board(env):
+    """A push that cancels the HEADER (the line left out too) no longer flags its live rows
+    done at sync: owner rule 12 Nov, supersedes 30 Oct (OI-WHOLE-SO-CANCEL v2, AC-V2-1). The
+    row keeps (state, ack_state) until CS's board Confirm, exactly like a removed line."""
     record, header, line_x, y = _push_so(env)
     row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
 
@@ -597,7 +597,7 @@ def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_fl
     env.db.expire_all()
 
     snap = _row_snapshot(env, row_id)
-    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_ACKNOWLEDGED), snap
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
 
 
 # ============================================================== guards (AC-RL-30..34)
