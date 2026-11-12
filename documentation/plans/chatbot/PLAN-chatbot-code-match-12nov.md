@@ -64,6 +64,13 @@ X insert (crew ruling 12 Nov): do NOT remove it while it breaks owner-tested beh
 family link from catalogue data (set membership, a variant group or a family field) so those 16 tests pass with the
 letter rule gone. If the catalogue lacks that link for these codes, keep the X insert, list it in the generic audit
 as "kept until the catalogue carries the link", and name the data that would remove it.
+Discovery (12 Nov): the catalogue already has two family fields. `products.family_code` is derived as the text
+before the first dash, so SRTWC7604-SC gives SRTWC7604 but SRTWCX7604-P gives SRTWCX7604 (`app/services/product_family.py:21`).
+It can also be set by hand: `family_code_manual`, `product_service.set_family_code` at :1074. `products.variant_of_id`
+is the longest boundary-prefix parent. Neither field links an X sibling to its base on its own. The data that would
+remove the X insert: a hand-set `family_code` equal to the base family on each X-coded product, or a registered set
+holding both. Slice 5 plan: read the family by `family_code` (derived or hand-set) plus set membership; keep the X
+insert only for families where neither link exists, and report that count.
 
 Gate: the frozen set = the 23 sampled defect turns + the 34 recovered typos + every past owner-FAIL code-lookup /
 stock "not found" turn + multi-turn follow-ups (refine, answer the bot's question, topic switch). Pass = 0 wrong codes
