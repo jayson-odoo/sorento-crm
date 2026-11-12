@@ -15,6 +15,7 @@ or the lines under it, before the next numbered option).
 """
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from typing import Any
@@ -124,8 +125,12 @@ def test_ac5_a_number_in_the_code_equal_to_a_stored_value_is_offered_with_that_s
         _as_staff(c)
     typed = "8152-300-SH"
     text = c.say(f"{typed} x 1", stock(product(typed, 1)))
-    assert _option_codes(c) == [code], (_option_codes(c), text)
-    assert "Size: 300 mm" in text, text
+    if who == "dealer":
+        assert _option_codes(c) == [code], (_option_codes(c), text)
+    else:
+        # AC-1691 stays for staff: one candidate is a yes/no, so the pending question (any kind) carries the code.
+        assert code in json.dumps(c.stored_question, default=str), (c.stored_question, text)
+    assert code in text and "Size: 300 mm" in text, text
     assert TICK not in text and "Got stock" not in text and "Stock summary" not in text, f"answered on a guess: {text!r}"
 
 
@@ -212,9 +217,11 @@ def test_ac7b_a_size_the_parser_read_that_no_candidate_holds_is_never_the_bare_n
     if who == "staff":
         _as_staff(c)
     text = c.say(f"{FAM} 400mm stock", _head_plus_size(400, "mm"))
-    assert "None with size 400 mm." not in text, text
-    assert "Couldn't find" in text, text
+    # A "None with size ..." clause may appear only inside a reply that leads with "Couldn't find" and offers the close
+    # codes with their stored sizes; never bare, never followed by an answer for the code with no stored size.
+    assert text.startswith("Couldn't find"), text
     assert "Size: 300 mm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
+    assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
 
 
 @pytest.mark.parametrize("who", ["dealer", "staff"])
@@ -227,5 +234,8 @@ def test_ac26_the_none_with_size_line_takes_its_unit_from_the_registry_key(sessi
     if who == "staff":
         _as_staff(c)
     text = c.say(f"{FAM} 30cm stock", _head_plus_size(30, "cm"))
+    assert text.startswith("Couldn't find"), text
     assert "None with size 30 cm." in text, text
+    assert "Size: 40 cm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
+    assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
     assert " mm" not in text, text

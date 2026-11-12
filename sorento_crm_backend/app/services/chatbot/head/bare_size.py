@@ -123,6 +123,18 @@ def ground_bare(
     from app.services.chatbot.head.candidates import _unit_aliases
 
     aliases = {alias: factor for alias, (unit, factor) in _unit_aliases(db, hidden_keys).items() if unit == base}
+    if unit_said and unit_said != base:
+        # CHATBOT-CODE-MATCH AC-26 (lead ruling, 12 Nov 2026): a size said in the unit of the
+        # class's own size key ("30 cm", a key held in cm) is read against that key in its
+        # own unit, never converted into the dimension keys' unit. Only when such a key
+        # exists, so a millimetre key and every other unit read exactly as before.
+        classes = _classes(db, entities, held_ids)
+        own = [r for r in size_key_rows(rows, classes) if str(r.unit).casefold() == unit_said]
+        for row in own:
+            if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
+                return Grounded(row.spec_key, row.label, said, _plain(number), row.unit)
+        if own:
+            return Grounded(RESERVED_KEY, "Size", said, _plain(number), str(own[0].unit), any_keys=[r.spec_key for r in own])
     if dims and (not unit_said or unit_said == base or unit_said in aliases):
         if unit_said in aliases:
             number = round(number * aliases[unit_said], 3)
