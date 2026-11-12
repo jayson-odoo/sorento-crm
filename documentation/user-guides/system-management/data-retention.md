@@ -16,7 +16,7 @@ task, runs once a day around 2:00 am Malaysia time, and shows its last run, last
 | Task | Clears | Keeps |
 | --- | --- | --- |
 | Plan exceptions clean-up | undecided plan exceptions from batches a newer batch has replaced (after one day) | the newest batch of every planning run, and every exception someone decided, with its batch |
-| Integration log clean-up | message bodies and headers after 30 days; the whole log row after 180 days | calls still pending or processing |
+| Integration log clean-up | message bodies and headers after 30 days; the whole log row after 180 days | calls still pending or processing, and records of a change history entry that failed to save |
 | API call log prune | request and response bodies after 30 days; the row after 180 days | the same as before |
 | Chat turn trace clean-up | the step-by-step trace of chat turns older than 90 days | the turn itself and the chat messages |
 | Scheduled task history clean-up | run history older than 90 days | the latest run of every task |

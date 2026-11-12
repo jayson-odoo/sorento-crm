@@ -62,20 +62,20 @@ summary on **System management > Scheduled tasks** shows what it deleted or blan
 
 | task | what it removes |
 |---|---|
-| Plan exception prune | undecided rows of older planning batches (newest batch per run and every decided row stay) |
-| Integration log prune | message text after 30 days, the whole row after 180 |
+| Plan exceptions clean-up | undecided rows of older planning batches (newest batch per run and every decided row stay) |
+| Integration log clean-up | message text and headers after 30 days, the whole row after 180 (pending, processing and failed-audit records stay) |
 | API call log prune | same rule (already live before this change) |
-| Chat turn trace prune | the AI trace of chat turns after 90 days (the turn stays) |
-| Scheduler history prune | scheduler run history after 90 days (the newest run of each task stays) |
-| Reorder run prune | superseded planning runs after 90 days (runs someone overrode or decided stay) |
-| AI search chunk prune | superseded AI search chunks after 90 days |
-| Import row prune | per-row import detail after 90 days |
+| Chat turn trace clean-up | the AI trace of chat turns after 90 days (the turn stays) |
+| Scheduled task history clean-up | scheduler run history after 90 days (the newest run of each task stays) |
+| Old planning runs clean-up | superseded planning runs after 90 days (runs someone overrode or decided stay) |
+| Old AI search data clean-up | superseded AI search chunks after 90 days |
+| Import row detail clean-up | per-row import detail after 90 days |
 
 To see counts without deleting (a timing or check run), use the command-line runner from the
-backend container; it only counts unless `--apply` is given:
+worker container (prod has no plain `backend` service: backend_blue, backend_green, worker); it only counts unless `--apply` is given:
 
 ```bash
-docker compose exec -T backend python -m app.scripts.run_data_retention --rule plan_exception_prune
+docker compose exec -T worker python -m app.scripts.run_data_retention --rule plan_exception_prune
 ```
 
 To pause everything at once: `UPDATE system_settings SET data_retention_dry_run = true;` (the
