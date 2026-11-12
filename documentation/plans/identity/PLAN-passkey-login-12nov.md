@@ -1,6 +1,6 @@
 # PLAN: Passkey sign-in for CRM staff (PASSKEY-LOGIN)
 
-Status: Build. Card approved by owner 12 Nov 17:36 (Q1 b, Q2 a, Q3 a, Q4 a, Q5 env-only) plus a
+Status: Review (build green, kill-proof done). Card approved by owner 12 Nov 17:36 (Q1 b, Q2 a, Q3 a, Q4 a, Q5 env-only) plus a
 per-user "Passkey sign-in" switch, default OFF. Track: L (migration + auth change; security-reviewer
 required).
 
@@ -39,6 +39,10 @@ passwords and auto-login are out of scope.
 way (drop + add CHECK). This lane does the same plus one new table. `user_sessions` is read on
 every request: the CHECK is added `NOT VALID` then `VALIDATE`d so the table lock is momentary;
 timed on a dev copy before merge.
+
+Timed 12 Nov on the sandbox DB with 500,000 seeded `user_sessions` rows (in a rolled-back
+transaction): drop CHECK 46 ms, add NOT VALID 23 ms, VALIDATE 58 ms, `users.passkey_enabled`
+ADD COLUMN with a constant default 12 ms (metadata only). Whole upgrade under 0.2 s, no job needed.
 
 ## Behaviour card (filed as crew-ask)
 
