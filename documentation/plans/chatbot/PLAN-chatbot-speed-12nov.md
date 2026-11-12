@@ -1,6 +1,6 @@
 # PLAN: Chatbot speed (CHATBOT-SPEED, work-order lane 2)
 
-Status: Waiting (small fix track, size S, cloud lane). Step 1 diagnosis posted on the PR; waiting on crew go + stage timings.
+Status: Review (small fix track, size S, cloud lane). Keep-alive fix built and reviewed; span replay waits on a cap.
 
 ## Goal
 WhatsApp chatbot replies faster with no new wrong answers. Target median / slowest-5% reply
@@ -27,12 +27,19 @@ follow-up memory (#1747), keyword/regex guards, engine carry changes.
   then a serial span embedding round trip, then the parser.
 - Smaller regression: since #1967 (e86b4592, 30 Oct) every embedding request opens a new `httpx.Client`
   (`embedding_client.py:71,99`): a fresh TCP + TLS handshake per call on the turn path.
-- Ruled out: #1848 inbox queue (off by default; `started_at` re-stamped at claim). Caveat: on that path `finished_at`
-  is stamped after the sender POST, so the send step counts in `reply_ms` there.
+- Second cause (corrected after crew's stage timings): the #1848 inbox queue, switched on in prod on 26 Oct (656 of
+  667 turns; 100% from 27 Oct). On that path `finished_at` is stamped after the sender POST (`inbox_queue.py:642,649`),
+  so the send step now counts in `reply_ms`: "unaccounted" went 0.00 -> 0.80 s p50. inferred: mostly a measurement
+  change, since the customer always waited for the send.
+- Stage timings (crew, 12 Nov, p50): before the parser 0.06 s (25 Oct) -> 0.77 s (26 Oct) -> 2.11 s (11 Nov); parser
+  flat 3.1-3.6 s; span call 1.19 s; unaccounted 0.55 s (11 Nov). Prod parser: gemini-3.5-flash-lite v72 since 4 Nov.
 
-## Proposed fix (needs crew go)
-One shared keep-alive `httpx.Client` per process in `embedding_client` (re-made after a fork), per-request timeout.
-Red-first test: two `embed_texts` calls build one client (mock transport, no network).
+## Fix (crew go, 12 Nov): built
+One shared keep-alive `httpx.Client` per process in `embedding_client` (re-made after a fork, lock reset after a
+fork, idle connections kept 30 s), per-request timeout. Tests: `tests/test_embedding_client_keepalive.py`.
+Sandbox measurement: 453 -> 47 ms per embedding call; inferred prod saving 0.2-0.6 s of the 2.11 s pre-parser time.
+Also: the eval meter (`scripts/chatbot_eval/budget.py`) reads the owner-approved app prices, so a capped replay on
+gemini-3.5-flash-lite is metered (`tests/chatbot_eval/test_budget_prod_model_price.py`).
 
 ## Span-pass replay design (step 3, needs a cap)
 `scripts/chatbot_eval/replay.py live` with `--prompt-version-id`: arm A = prod parser text pinned by md5 (span on),
