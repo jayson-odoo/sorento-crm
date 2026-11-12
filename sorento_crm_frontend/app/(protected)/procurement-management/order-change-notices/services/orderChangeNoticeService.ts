@@ -126,6 +126,15 @@ export async function linkOrderChangeNoticeAttachment(id: string, attachmentId: 
   return read<OcnDetail>(res, 'Failed to link the attachment');
 }
 
+/** A file uploaded straight onto the notice (drop zone or browse): the staff upload path the
+ *  stock inquiry and complaint use, under the notice's own edit rule. */
+export async function uploadOrderChangeNoticeAttachment(id: string, file: File): Promise<unknown> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await apiFetch(recordPath(id, 'attachments/upload'), { method: 'POST', body: formData });
+  return read<unknown>(res, 'Failed to upload the file');
+}
+
 /** Whether the System Settings switch asks for a project; read from the open app-config
  *  projection, as the sample request form reads its own switch. */
 export async function getOrderChangeNoticeSwitches(): Promise<{ requireProject: boolean }> {

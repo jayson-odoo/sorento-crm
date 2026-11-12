@@ -52,7 +52,15 @@ export function AmendmentCreateDialog({
     () =>
       (notices.data?.data ?? []).map((row) => ({
         value: row.id,
-        label: [row.ocn_number, row.change_type_name, ocnStatusWord(row)].filter(Boolean).join(', '),
+        // An approved notice goes back for approval when picked: the option says so.
+        label: [
+          row.ocn_number,
+          row.change_type_name,
+          ocnStatusWord(row),
+          row.status === 'approved' ? 'goes back for approval' : null,
+        ]
+          .filter(Boolean)
+          .join(', '),
       })),
     [notices.data],
   );

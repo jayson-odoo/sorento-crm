@@ -175,4 +175,11 @@ export function carriesChangeRows(row: Pick<OcnDetail, 'source' | 'change_table_
   return Boolean(row && row.source === 'amendment' && (row.change_table_json?.rows?.length ?? 0) > 0);
 }
 
+/** The backend's edit rule (`_assert_may_edit`), one place for every button that needs it
+ *  (Edit, Void, the files): `.edit` acts on any notice, the raiser acts on their own while they
+ *  hold `.create`. */
+export function mayEditNotice({ mine, canCreate, canEdit }: { mine: boolean; canCreate: boolean; canEdit: boolean }): boolean {
+  return canEdit || (mine && canCreate);
+}
+
 export const OCN_SOURCE_WORDS: Record<string, string> = { crm: 'CRM', amendment: 'Amendment' };

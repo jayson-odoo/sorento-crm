@@ -7,12 +7,26 @@
  * server-deferred row action with a countdown and a Cancel. `editable` is whoever may edit the
  * record while it is editable; everyone else only reads the list. Generic over the record type:
  * the caller names its link route, its unlink action and the queries to refresh.
+ *
+ * Owner rules: no action column and no row button; Unlink is in the row's right-click (long-press
+ * on touch) menu, the PurchaseOrdersPanel pattern. "Link Attachment" is an outline button, so
+ * the page keeps one filled main button. With `uploadFile`, a drop zone (drop, browse or paste)
+ * uploads files straight onto the record; linking from the library stays as the second way.
  */
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Link2, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { ResponseAttachmentDropzone } from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
+import { toast } from '@/lib/toast';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
@@ -42,6 +56,8 @@ export interface EntityAttachmentsSectionProps<T extends EntityAttachmentRow> {
   invalidateKeys: unknown[][];
   /** What the link toast calls the record ("application", "notice"). */
   entityLabel: string;
+  /** Upload one file straight onto the record (the drop zone shows only when given). */
+  uploadFile?: (entityId: string, file: File) => Promise<unknown>;
 }
 
 const sizeLabel = (bytes: number | null | undefined) => {
@@ -60,8 +76,32 @@ export function EntityAttachmentsSection<T extends EntityAttachmentRow>({
   unlinkEntityType,
   invalidateKeys,
   entityLabel,
+  uploadFile,
 }: EntityAttachmentsSectionProps<T>) {
   const [linkOpen, setLinkOpen] = useState(false);
+  const [menuRow, setMenuRow] = useState<T | null>(null);
+  const [uploading, setUploading] = useState<File[]>([]);
+  const queryClient = useQueryClient();
+
+  /** Files go up as soon as they are dropped or chosen; each one says how it went. */
+  const upload = async (files: File[]) => {
+    if (!uploadFile) return;
+    const fresh = files.filter((f) => !uploading.includes(f));
+    setUploading(files);
+    for (const file of fresh) {
+      try {
+        await uploadFile(entityId, file);
+        toast.success(`${file.name} attached`);
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : `${file.name} could not be attached`,
+        );
+      }
+    }
+    setUploading([]);
+    for (const key of invalidateKeys)
+      void queryClient.invalidateQueries({ queryKey: key });
+  };
   const unlink = useDeferredRowAction({
     actionKey: unlinkActionKey,
     entityType: unlinkEntityType,
@@ -131,59 +171,83 @@ export function EntityAttachmentsSection<T extends EntityAttachmentRow>({
         meta: { headerTitle: 'Linked At' },
       },
     ];
-    if (editable) {
-      cols.push({
-        id: 'actions',
-        header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => {
-          const name = row.original.filename ?? 'Unnamed file';
-          return (
-            <Button
-              type="button"
+    return cols;
+  }, []);
+
+  return (
+    <>
+      {editable && uploadFile && (
+        <div className="mb-3">
+          <ResponseAttachmentDropzone
+            files={uploading}
+            onFilesChange={(next) => void upload(next)}
+            disabled={uploading.length > 0}
+          />
+        </div>
+      )}
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger asChild>
+          <div
+            // Capture phase: a right-click outside a file row (or on a read-only list) keeps the
+            // browser's own menu instead of an empty one.
+            onContextMenuCapture={(event) => {
+              const rowEl = (event.target as Element).closest('[data-link-id]');
+              const row = attachments.find(
+                (a) => a.link_id === rowEl?.getAttribute('data-link-id'),
+              );
+              if (!row || !editable) {
+                event.stopPropagation();
+                return;
+              }
+              setMenuRow(row);
+            }}
+          >
+            <PanelDataGrid<T>
+              title={
+                <span className="flex items-center gap-2">
+                  <Paperclip className="size-5" />
+                  Linked Attachments
+                </span>
+              }
+              toolbar={
+                editable ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setLinkOpen(true)}
+                  >
+                    <Link2 className="size-4" />
+                    Link Attachment
+                  </Button>
+                ) : undefined
+              }
+              columns={columns}
+              rows={attachments}
+              getRowId={(row) => row.link_id}
+              rowAttributes={(row) => ({ 'data-link-id': row.link_id })}
+              listingKey={null}
+              emptyTitle="No linked attachments."
+            />
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-48">
+          {menuRow && (
+            <ContextMenuItem
               variant="destructive"
-              size="sm"
-              aria-label={`Unlink ${name}`}
-              disabled={unlink.targetId === row.original.link_id}
-              onClick={() =>
-                unlink.run({ id: row.original.link_id, subject: name })
+              disabled={unlink.targetId === menuRow.link_id}
+              onSelect={() =>
+                unlink.run({
+                  id: menuRow.link_id,
+                  subject: menuRow.filename ?? 'Unnamed file',
+                })
               }
             >
               <Trash2 className="size-4" />
               Unlink
-            </Button>
-          );
-        },
-        size: 130,
-        enableResizing: false,
-        meta: { headerTitle: 'Actions' },
-      });
-    }
-    return cols;
-  }, [editable, unlink]);
-
-  return (
-    <>
-      <PanelDataGrid<T>
-        title={
-          <span className="flex items-center gap-2">
-            <Paperclip className="size-5" />
-            Linked Attachments
-          </span>
-        }
-        toolbar={
-          editable ? (
-            <Button type="button" onClick={() => setLinkOpen(true)}>
-              <Link2 className="size-4" />
-              Link Attachment
-            </Button>
-          ) : undefined
-        }
-        columns={columns}
-        rows={attachments}
-        getRowId={(row) => row.link_id}
-        listingKey={null}
-        emptyTitle="No linked attachments."
-      />
+            </ContextMenuItem>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
       {unlink.countdown}
       {linkOpen && (
         <LinkAttachmentBrowserDialog

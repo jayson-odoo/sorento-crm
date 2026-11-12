@@ -640,7 +640,10 @@ describe('attachments panel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /pick library file/i }));
     await waitFor(() => expect(state.linkAtt).toHaveBeenCalledWith('a-1', 'at-5'));
 
-    fireEvent.click(screen.getByRole('button', { name: /unlink sample-doc\.pdf/i }));
+    // Unlink lives in the file row's right-click menu (owner rule, round 5), not a row button.
+    expect(screen.queryByRole('button', { name: /unlink/i })).toBeNull();
+    fireEvent.contextMenu(screen.getByText('sample-doc.pdf'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unlink' }));
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(state.unlinkRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'k-1' }));

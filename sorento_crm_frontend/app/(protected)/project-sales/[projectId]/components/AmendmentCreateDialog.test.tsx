@@ -9,8 +9,9 @@
  *    `listProjectOrderChangeNotices(projectId)` in
  *    app/(protected)/procurement-management/order-change-notices/services/orderChangeNoticeService.ts
  *    (GET /api/v1/project-sales/projects/{id}/order-change-notices, the F1 envelope `{data: rows}`);
- *  - an option reads "<ocn_number>, <type>, <status word>" (e.g. "OCN26-0302, Exchange, Approved"),
- *    never an id;
+ *  - an option reads "<ocn_number>, <type>, <status word>", never an id; an approved notice adds
+ *    that it goes back for approval (round 5, N4), e.g. "OCN26-0302, Exchange, Approved, goes back
+ *    for approval";
  *  - `onConfirm(reason, ocnId)`: ocnId is the picked notice's id, and null / undefined when none is
  *    picked (the parent maps it to `ocn_id` in the create body);
  *  - after a pick the success text must not say a notice was "drafted" (none was).
@@ -149,15 +150,15 @@ describe('E2 pick an existing notice of this project', () => {
   it('lists each notice as number, type and status in words, never an id', async () => {
     mount();
     fireEvent.click(select());
-    expect(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'OCN26-0304, Advance, Approved' })).toBeTruthy();
+    expect(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved, goes back for approval' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'OCN26-0304, Advance, Approved, goes back for approval' })).toBeTruthy();
     expect(document.body.textContent).not.toMatch(UUID_RE);
   });
 
   it('confirming with a pick passes that notice’s id', async () => {
     const { onConfirm } = mount();
     fireEvent.click(select());
-    fireEvent.click(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved, goes back for approval' }));
     typeReason();
     confirm();
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
@@ -167,7 +168,7 @@ describe('E2 pick an existing notice of this project', () => {
   it('is clearable: clearing the pick goes back to drafting a new notice', async () => {
     const { onConfirm } = mount();
     fireEvent.click(select());
-    fireEvent.click(await screen.findByRole('option', { name: 'OCN26-0304, Advance, Approved' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'OCN26-0304, Advance, Approved, goes back for approval' }));
     fireEvent.pointerDown(within(select()).getByRole('button', { name: 'Clear selection' }));
     typeReason();
     confirm();
@@ -185,7 +186,7 @@ describe('E2 pick an existing notice of this project', () => {
     }));
     mount({ onConfirm } as never);
     fireEvent.click(select());
-    fireEvent.click(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved, goes back for approval' }));
     typeReason();
     confirm();
     expect(await screen.findByText(/OCN26-0302/)).toBeTruthy();
@@ -208,5 +209,23 @@ describe('E2 empty and error states of the select', () => {
     typeReason();
     confirm();
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('round 5: an approved pick says it goes back for approval (N4)', () => {
+  it('adds the clause to an approved notice only', async () => {
+    svc.project.mockResolvedValue({
+      data: [
+        ocnRow({ id: OCN_A, ocn_number: 'OCN26-0302', change_type_name: 'Exchange', status: 'approved', approval_status: 'approved' }),
+        ocnRow({ id: OCN_B, ocn_number: 'OCN26-0304', change_type_name: 'Advance', status: 'draft', approval_status: 'not_submitted' }),
+      ],
+      pagination: { total: 2, page: 1, limit: 200 },
+      empty: false,
+    });
+    mount();
+    fireEvent.click(select());
+    expect(await screen.findByRole('option', { name: 'OCN26-0302, Exchange, Approved, goes back for approval' })).toBeTruthy();
+    const draft = screen.getAllByRole('option').find((o) => o.textContent?.startsWith('OCN26-0304'));
+    expect(draft?.textContent).not.toMatch(/goes back for approval/);
   });
 });

@@ -58,11 +58,15 @@ import { codeWithName } from '@/lib/product-display';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   OCN_SOURCE_WORDS,
+  mayEditNotice,
   ocnStatusPillKey,
   ocnStatusWord,
   type OcnDetail,
 } from '@/types/orderChangeNotice';
-import { linkOrderChangeNoticeAttachment } from '../services/orderChangeNoticeService';
+import {
+  linkOrderChangeNoticeAttachment,
+  uploadOrderChangeNoticeAttachment,
+} from '../services/orderChangeNoticeService';
 import {
   orderChangeNoticesPagerQuery,
   useOrderChangeNoticeMutations,
@@ -380,8 +384,9 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
   const canDecide = !held && pendingApproval && canApprove;
   const canDone = !held && status === 'approved' && canProcess;
   const canRevise = !held && (status === 'approved' || status === 'rejected') && (canEdit || canApprove);
-  const canVoid = !held && open && (canEdit || mine);
-  const canEditForm = editable && (mine || canEdit) && (canCreate || canEdit);
+  const mayEdit = mayEditNotice({ mine, canCreate, canEdit });
+  const canVoid = !held && open && mayEdit;
+  const canEditForm = editable && mayEdit;
 
   const confirmAsk = async (value: string) => {
     if (!asking) return;
@@ -586,6 +591,7 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
             linkAttachment={linkOrderChangeNoticeAttachment}
             unlinkActionKey="order_change_notice_attachment.unlink"
             unlinkEntityType="order_change_notice_attachment"
+            uploadFile={uploadOrderChangeNoticeAttachment}
             invalidateKeys={[['order-change-notice', r.id], ['order-change-notices']]}
             entityLabel="notice"
           />

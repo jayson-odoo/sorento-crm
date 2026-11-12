@@ -52,6 +52,7 @@ import {
   OrderChangeNoticeError,
   linkOrderChangeNoticeAttachment,
   searchOrderChangeNoticeProducts,
+  uploadOrderChangeNoticeAttachment,
 } from '../services/orderChangeNoticeService';
 import { OCN_BASE_PATH } from '../constants';
 
@@ -526,6 +527,7 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
             linkAttachment={linkOrderChangeNoticeAttachment}
             unlinkActionKey="order_change_notice_attachment.unlink"
             unlinkEntityType="order_change_notice_attachment"
+            uploadFile={uploadOrderChangeNoticeAttachment}
             invalidateKeys={[['order-change-notice', ocnId], ['order-change-notices']]}
             entityLabel="notice"
           />
