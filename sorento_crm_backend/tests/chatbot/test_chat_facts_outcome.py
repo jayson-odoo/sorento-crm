@@ -746,3 +746,38 @@ def test_scoreboard_a_failed_turn_with_a_question_stays_technical():
         status="failed",
     )
     assert _outcome(turn) == ("technical", "technical")
+
+
+def test_scoreboard_a_turn_with_no_state_event_keeps_its_old_outcome():
+    """Turns from before the `state` event (week of 5 Oct 2026) cannot say whether a pick was
+    a did-you-mean, so the pick rule leaves them as the lookup put them."""
+    turn = turn_dict(looked_up(sections=0, domains=["inventory"]), _replied_asking("product_pick"))
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+def test_scoreboard_a_business_lane_did_you_mean_stays_answered_empty():
+    """The business lane's "Couldn't find X. Did you mean:" pick carries no `did_you_mean`
+    flag (its payload is the lane's `agent`, `brand_code`, `domain`): a pick after a lookup
+    that found nothing is a miss with a suggestion, whoever wrote it."""
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking("product_pick"),
+        _state(open_question=_pick("product_pick", agent="stock", brand_code="ZZT", domain="inventory")),
+    )
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+def test_scoreboard_a_pick_after_a_reported_miss_stays_missed():
+    turn = turn_dict(
+        looked_up(sections=1, missed=["inventory"]),
+        _replied_asking("product_pick", sections=1),
+        _state(open_question=_pick("product_pick", domain="inventory")),
+    )
+    assert _outcome(turn) == ("missed", "missed")
+
+
+def test_scoreboard_a_menu_after_an_answer_needs_no_state_event():
+    """The menu rule reads only `replied.facts.asking`, so turns from before the `state`
+    event are classified too."""
+    turn = turn_dict(looked_up(sections=2), _replied_asking("customer_pick", sections=2))
+    assert _outcome(turn) == ("clarified", None)

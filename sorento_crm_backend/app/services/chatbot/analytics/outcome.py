@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
+
 #: Outcomes that mean the bot let the customer down (the report's `failed` measure). A
 #: refusal by policy, a handover and a clarifying question are the bot working as designed.
 FAILED_OUTCOMES: tuple[str, ...] = ("technical", "cannot_do", "missed")
@@ -147,6 +149,56 @@ def _still_asking(turn: dict[str, Any]) -> bool:
     return any(e.get("done") is False for e in _events(turn, "required_ask"))
 
 
+def _state(turn: dict[str, Any]) -> dict[str, Any]:
+    """The `state` event: the focus and open question the turn handed to the next one,
+    written after the answer (the engine's `turn_trace.add("state", ...)`). Live turns carry
+    it from the week of 5 Oct 2026; an older turn has none, and the two stock rules below
+    then cannot tell what the reply asked, so they leave its outcome as it was."""
+    entries = _events(turn, "state")
+    return entries[-1] if entries else {}
+
+
+def _asking(turn: dict[str, Any]) -> str | None:
+    """The kind of question the reply ended in (`replied.facts.asking`, the answer's
+    `question.kind`), or None. An escalation offer (`turn/pending.ESCALATION_OFFER_KINDS`)
+    is not a question about the ask: it rides after an answer or a miss."""
+    asking = _dict((_stage(turn, "replied") or {}).get("facts")).get("asking")
+    if not isinstance(asking, str) or not asking or asking in ESCALATION_OFFER_KINDS:
+        return None
+    return asking
+
+
+def _asks_quantity(turn: dict[str, Any]) -> bool:
+    """The reply asked how many units: an open `stock_qty` task (`turn/task.py`) this turn
+    opened or asked again (`touched_at_turn` is this turn). The stock reply that asks it
+    carries no sections (`engine._stock_ask_reply`), which would otherwise read as an empty
+    answer, i.e. a couldn't-find."""
+    state = _state(turn)
+    turn_no = state.get("turn_no")
+    tasks = _dict(state.get("focus")).get("tasks")
+    if not isinstance(turn_no, int) or isinstance(turn_no, bool) or not isinstance(tasks, list):
+        return False
+    return any(
+        isinstance(task, dict)
+        and task.get("kind") == "stock_qty"
+        and task.get("status") == "open"
+        and task.get("touched_at_turn") == turn_no
+        for task in tasks
+    )
+
+
+def _asks_which_stock_item(turn: dict[str, Any]) -> bool:
+    """The stock reply asked which item of a family the customer means: the stock task's
+    pick (`stock_pick` on the open question, `turn/task.py::stock_pick`), returned with no
+    sections like the quantity question. A did-you-mean ("Couldn't find X. Did you mean
+    Y?", `did_you_mean` on the same payload, `dealer_stock.py`) is a miss with a
+    suggestion and is not counted here."""
+    if _asking(turn) is None:
+        return False
+    payload = _dict(_dict(_state(turn).get("open_question")).get("payload"))
+    return payload.get("stock_pick") is True and payload.get("did_you_mean") is not True
+
+
 def turn_outcome(turn: dict[str, Any]) -> tuple[str, str | None]:
     """`(outcome, failure_reason)` for one closed turn. First matching rule wins.
 
@@ -184,7 +236,13 @@ def turn_outcome(turn: dict[str, Any]) -> tuple[str, str | None]:
     if branch == "not_supported":
         return "cannot_do", "cannot_do"
 
-    if branch in _CLARIFY_BRANCHES or plan.get("ask") or _still_asking(turn):
+    if (
+        branch in _CLARIFY_BRANCHES
+        or plan.get("ask")
+        or _still_asking(turn)
+        or _asks_quantity(turn)
+        or _asks_which_stock_item(turn)
+    ):
         return "clarified", None
 
     looked_up = _looked_up_facts(turn)
@@ -196,6 +254,12 @@ def turn_outcome(turn: dict[str, Any]) -> tuple[str, str | None]:
     # `sections` absent means the stage did not report it, which is not an empty answer.
     if looked_up is not None and looked_up.get("sections") == 0:
         return "answered_empty", None
+
+    # A pick-one menu after a lookup that found something: the customer is asked to choose.
+    # Only here, after the miss and empty rules: a pick offered because nothing was found is
+    # a did-you-mean, and that stays a miss whichever lane wrote it.
+    if _asking(turn) is not None:
+        return "clarified", None
 
     return "answered", None
 
