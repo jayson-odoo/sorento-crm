@@ -34,9 +34,8 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { ocnStatusPillKey, ocnStatusWord, type OcnRow } from '@/types/orderChangeNotice';
 import { useChangeTypesQuery, useOrderChangeNoticesQuery } from '../hooks/useOrderChangeNotices';
+import { OCN_BASE_PATH, OCN_CREATE } from '../constants';
 
-export const OCN_BASE_PATH = '/procurement-management/order-change-notices';
-export const OCN_CREATE = 'procurement.order_change_notices.create';
 
 const STATUS_OPTIONS = [
   { value: 'draft', label: 'Draft' },

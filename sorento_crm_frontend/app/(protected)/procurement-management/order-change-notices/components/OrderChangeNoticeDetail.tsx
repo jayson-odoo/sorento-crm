@@ -56,10 +56,8 @@ import {
   useOrderChangeNoticeMutations,
   useOrderChangeNoticeQuery,
 } from '../hooks/useOrderChangeNotices';
-import { OCN_BASE_PATH, OCN_CREATE } from './OrderChangeNoticesList';
+import { OCN_APPROVE, OCN_BASE_PATH, OCN_CREATE, OCN_EDIT } from '../constants';
 
-const OCN_EDIT = 'procurement.order_change_notices.edit';
-const OCN_APPROVE = 'procurement.order_change_notices.approve';
 
 const DETAIL_TABS = ['details', 'conversation', 'sla', 'revisions', 'history'] as const;
 const TAB_LABELS: ReadonlyArray<readonly [(typeof DETAIL_TABS)[number], string]> = [

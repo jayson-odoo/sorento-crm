@@ -48,7 +48,7 @@ import {
   OrderChangeNoticeError,
   searchOrderChangeNoticeProducts,
 } from '../services/orderChangeNoticeService';
-import { OCN_BASE_PATH } from './OrderChangeNoticesList';
+import { OCN_BASE_PATH } from '../constants';
 
 interface FormState {
   change_type_id: string;
