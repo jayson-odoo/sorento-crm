@@ -128,8 +128,7 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
 
     # POST /v2/contact/list with filter: backend_id does not exist
     request_body = {**LIST_CONTACTS_BODY_MISSING_BACKEND_ID}
-    base_url = (settings.respond_base_url or "https://api.respond.io").rstrip("/")
-    request_url = f"{base_url}/v2/contact/list"
+    request_url = f"{client.base_url}/v2/contact/list"
     try:
         result = client.list_contacts(body=request_body)
     except httpx.HTTPStatusError as e:
