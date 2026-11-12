@@ -265,7 +265,7 @@ function cancelOnlyBoard() {
     [demand({ line_no: batchRow.line_no, project_line_id: batchRow.project_line_id })],
     { today: TODAY, freeStock: {}, granularity: 'week' },
   );
-  const mark = (entry: any) => ({
+  const mark = (entry: (typeof base.contributions)[number]) => ({
     ...entry,
     qty: '0',
     cancelled: true,
@@ -280,7 +280,7 @@ function cancelOnlyBoard() {
     cells: [],
     line_count: 0,
     contributions: base.contributions.map(mark),
-    orders: base.orders.map((o: any) => ({
+    orders: base.orders.map((o: (typeof base.orders)[number]) => ({
       ...o,
       pending_change_batch_id: MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id,
     })),
