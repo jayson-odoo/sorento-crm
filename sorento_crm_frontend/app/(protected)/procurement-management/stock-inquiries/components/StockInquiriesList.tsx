@@ -44,13 +44,17 @@ import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import {
+  LastActivityFilter,
+  lastActivityActive,
+  lastActivityLabel,
+  type LastActivityRange,
+} from '@/components/common/LastActivityFilter';
 
 /**
  * The listing's shipped default, used until the user has left one behind.
  *
- * A revision is new work for whoever reads the list, so it sorts as if created
- * then rather than staying buried at its original submission date.
- * `last_activity_at` resolves server-side to coalesce(last_revised_at, created_at).
+ * Newest person activity on a record first; `last_activity_at` is the stored stamp.
  */
 const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
 
@@ -88,12 +92,13 @@ function StaffStockInquiriesList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
+  const [lastActivity, setLastActivity] = useState<LastActivityRange>({});
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchQuery, lastActivity.from, lastActivity.to]);
 
   // The sort and the status filter are remembered per user. `pathname` is the same
   // listing key DataGrid derives for the column preferences, so both writers address
@@ -130,6 +135,8 @@ function StaffStockInquiriesList() {
     sorting,
     searchQuery,
     statuses: statusFilter,
+    lastActivityFrom: lastActivity.from,
+    lastActivityTo: lastActivity.to,
     // One fetch, with the remembered view already applied (AC-B3).
     enabled: !isViewPrefsLoading,
   });
@@ -146,6 +153,8 @@ function StaffStockInquiriesList() {
       },
       {
         status: statusFilter.length ? statusFilter.join(',') : undefined,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -322,13 +331,9 @@ function StaffStockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => {
-          const { created_at, revision_no, last_revised_at } = row.original;
-          const isRevised = (revision_no ?? 0) > 0 && last_revised_at != null;
-          const raw = isRevised ? last_revised_at : created_at;
+          const raw = row.original.last_activity_at;
           if (raw == null) return '-';
-          const formatted = formatDateTimeInMalaysia(raw);
-          if (!formatted) return '-';
-          return isRevised ? `Revised ${formatted}` : formatted;
+          return formatDateTimeInMalaysia(raw) || '-';
         },
         meta: {
           headerTitle: 'Last activity',
@@ -486,14 +491,23 @@ function StaffStockInquiriesList() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter.length > 0,
-              activeCount: statusFilter.length,
+              active: statusFilter.length > 0 || lastActivityActive(lastActivity) > 0,
+              activeCount: statusFilter.length + lastActivityActive(lastActivity),
               activeSummary: {
-                label: statusFilterLabel,
-                onClear: () => applyStatusFilter([]),
+                label: [statusFilterLabel, lastActivityLabel(lastActivity)].filter(Boolean).join(', '),
+                onClear: () => {
+                  applyStatusFilter([]);
+                  setLastActivity({});
+                },
               },
               content: (
                 <div className="space-y-1">
+                  <LastActivityFilter
+                    id="si-last-activity"
+                    value={lastActivity}
+                    onChange={setLastActivity}
+                  />
+                  <Separator />
                   <div className="px-1 py-1 text-xs font-medium text-muted-foreground">
                     Filter by status
                   </div>

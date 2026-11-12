@@ -1,6 +1,7 @@
 """Stock inquiries API routes."""
 import logging
 
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response, File, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -59,8 +60,10 @@ def get_stock_inquiries(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Comma-separated status values to filter by"),
-    sort: Optional[str] = Query("created_at"),
+    sort: Optional[str] = Query("last_activity_at"),
     dir: Optional[str] = Query("desc"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
     own: Optional[RequestScope] = Depends(stock_inquiry_own_scope),
@@ -77,7 +80,7 @@ def get_stock_inquiries(
         contact_id = narrowed[1]
     try:
         service = StockInquiryService(db)
-        sort_field = (sort and sort.strip()) or "created_at"
+        sort_field = (sort and sort.strip()) or "last_activity_at"
         sort_dir = (dir and dir.strip()) or "desc"
         statuses = [s.strip() for s in status.split(",") if s and s.strip()] if status else None
         result = service.list_inquiries(
@@ -90,6 +93,8 @@ def get_stock_inquiries(
             space_id=None,
             statuses=statuses,
             viewer_user_id=(current_user or {}).get("id"),
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
         return result
     except Exception as e:

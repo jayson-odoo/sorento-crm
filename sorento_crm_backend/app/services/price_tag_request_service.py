@@ -27,6 +27,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.base import company_scope
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.services.error_handler import AppException
+from app.utils.last_activity import last_activity_order, last_activity_range
 
 logger = logging.getLogger(__name__)
 
@@ -2849,9 +2850,14 @@ Marketing's own work is not part of the form's payload, so it is captured
         status: list[str] | str | None,
         search: str | None,
         include_drafts: bool,
+        last_activity_from=None,
+        last_activity_to=None,
     ):
         """The filtered query both the whole-list and the paged reads run."""
         q = db.query(PriceTagRequest)
+        in_range = last_activity_range(PriceTagRequest.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
         if contact_id:
             q = q.filter(PriceTagRequest.contact_id == contact_id)
         if not include_drafts:
@@ -2903,6 +2909,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         "status": PriceTagRequest.status,
         "needed_by_date": PriceTagRequest.needed_by_date,
         "created_at": PriceTagRequest.created_at,
+        "last_activity_at": PriceTagRequest.last_activity_at,
         "data_changed_tag_count": PriceTagRequest.data_changed_tag_count,
     }
 
@@ -2947,6 +2954,8 @@ Marketing's own work is not part of the form's payload, so it is captured
         limit: int = 50,
         sort: str | None = None,
         direction: str = "asc",
+        last_activity_from=None,
+        last_activity_to=None,
     ) -> tuple[list[PriceTagRequest], int]:
         """One page of requests, and how many there are in total.
 
@@ -2961,20 +2970,28 @@ Marketing's own work is not part of the form's payload, so it is captured
             status=status,
             search=search,
             include_drafts=include_drafts,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
         total = q.order_by(None).count()
 
         column = PriceTagRequestService._sort_expression(sort)
-        if column is None:
+        if sort == "last_activity_at":
+            ordering = last_activity_order(
+                PriceTagRequest.last_activity_at, PriceTagRequest.created_at, PriceTagRequest.id, direction
+            )
+            column = None
+        elif column is None:
             # Newest first is the queue's own order, and it is what an unknown
             # or a resolved-only column falls back to rather than a 400 the
             # reader can do nothing about.
             ordering = [PriceTagRequest.created_at.desc()]
         else:
             ordering = [column.desc() if direction == "desc" else column.asc()]
-        # Ends with the id, because created_at ties inside one transaction and a
-        # tie makes page 2 repeat a row page 1 already showed.
-        ordering.append(PriceTagRequest.id)
+        if sort != "last_activity_at":
+            # Ends with the id, because created_at ties inside one transaction and a
+            # tie makes page 2 repeat a row page 1 already showed.
+            ordering.append(PriceTagRequest.id)
 
         rows = (
             q.order_by(*ordering)

@@ -279,15 +279,21 @@ def log_audit(
     contract); source, trace id and correlation id from the current ``AuditContext``
     (#1281 S0). Old / new values are redacted here, whoever the caller is.
     """
-    entry = AuditLog(**_audit_row(
+    values = _audit_row(
         db, entity_type, entity_id, action,
         old_values=old_values, new_values=new_values, user_id=user_id, contact_id=contact_id,
         description=description, ip_address=ip_address, company_id=company_id, event=event,
         reason=reason, root_entity_type=root_entity_type, root_entity_id=root_entity_id,
-    ))
+    )
     if not capture_enabled():
         # The emergency off switch: the row is built for the caller and never stored.
-        return entry
+        return AuditLog(**values)
+    try:
+        if any(_stamp_targets([values])):
+            _stamp_last_activity(db.connection(), [values])
+    except Exception:  # noqa: BLE001 - capture never fails the write
+        logger.warning("audit: last_activity_at stamp failed", exc_info=True)
+    entry = AuditLog(**values)
     db.add(entry)
     if not skip_flush:
         db.flush()  # so entry.id is available if needed
@@ -394,6 +400,108 @@ def _core_actor_columns(session: Any, ctx: Any) -> dict:
         "ip_address": actor.ip_address if actor is not None else None,
         **_context_columns(actor, ctx),
     }
+
+
+# FORMS-LAST-ACTIVITY: the form tables carry ``last_activity_at``, the time of the newest PERSON
+# activity on the record. It is stamped here, where the History rows are written, so the column
+# and the History can never disagree. One map, audit / attachment-link entity_type -> (module,
+# model); the migration ``fla_0001_last_activity_at`` keeps its own copy on purpose.
+_FORM_MODELS = {
+    "complaint": ("app.models.complaints", "Complaint"),
+    "purchase_request": ("app.models.procurement", "PurchaseRequestHeader"),
+    "sponsorship_form": ("app.models.procurement", "PurchaseRequestHeader"),
+    "price_tag_requests": ("app.models.price_tag", "PriceTagRequest"),
+    "price_tag_request": ("app.models.price_tag", "PriceTagRequest"),
+    "project_sample_requests": ("app.models.sample_request", "SampleRequest"),
+    "sample_request": ("app.models.sample_request", "SampleRequest"),
+    "new_product_application": ("app.models.new_product_application", "NewProductApplication"),
+    "stock_inquiry": ("app.models.procurement", "StockInquiry"),
+    "workflow_submissions": ("app.models.workflow_forms", "WorkflowSubmission"),
+}
+_PERSON_ACTORS = frozenset({"user", "contact", "public_link"})
+_LINK_ENTITY = "entity_attachment_links"
+
+
+def _form_table(entity_type: Any) -> Any:
+    import importlib
+
+    target = _FORM_MODELS.get(entity_type) if isinstance(entity_type, str) else None
+    if target is None:
+        return None
+    return getattr(importlib.import_module(target[0]), target[1]).__table__
+
+
+def _stamp_targets(rows: list) -> tuple[dict, dict]:
+    """(moved, created): {form table: {ids}} the audit ``rows`` touch. ``moved``: a person's row on
+    the record (or a child rolled up to it) and a person linking or unlinking a file. ``created``:
+    the record's own CREATE row, whoever made it (a system-created form starts at its creation
+    time and later system updates move nothing)."""
+    moved: dict = {}
+    created: dict = {}
+
+    def add(into: dict, entity_type: Any, entity_id: Any) -> None:
+        table = _form_table(entity_type)
+        if table is not None and entity_id and _is_uuid(str(entity_id)):
+            into.setdefault(table, set()).add(str(entity_id))
+
+    for row in rows:
+        person = row.get("actor_type") in _PERSON_ACTORS
+        etype, eid = row.get("entity_type"), row.get("entity_id")
+        rtype, rid = row.get("root_entity_type"), row.get("root_entity_id")
+        if etype == _LINK_ENTITY:
+            if person and row.get("action") in ("CREATE", "DELETE"):
+                values = row.get("new_values") or row.get("old_values") or {}
+                add(moved, values.get("entity_type"), values.get("entity_id"))
+        elif row.get("action") == "CREATE" and etype in _FORM_MODELS and rtype in (None, etype) and rid in (None, eid):
+            add(created, etype, eid)
+        elif person:
+            if rtype in _FORM_MODELS:
+                add(moved, rtype, rid)
+            else:
+                add(moved, etype, eid)
+    for table, ids in created.items():
+        if table in moved:
+            moved[table] -= ids
+    return moved, created
+
+
+def _stamp_last_activity(conn: Any, rows: list) -> None:
+    """Set ``last_activity_at`` on the forms the audit ``rows`` move, to the very time written as
+    their ``changed_at`` (so the column equals the newest History row); a new record gets its own
+    ``created_at``. Call BEFORE the INSERT: it sets ``changed_at`` on every row of the batch. A
+    Core UPDATE on the connection, so it raises no ORM event and no audit row of its own.
+    Best-effort in its own savepoint: a failure is logged and the audit rows and the business
+    write go ahead."""
+    try:
+        moved, created = _stamp_targets(rows)
+        if not moved and not created:
+            return
+        from sqlalchemy import DateTime, cast, update
+
+        with conn.begin_nested():
+            stamped_at = conn.execute(select(cast(func.clock_timestamp(), DateTime))).scalar()
+            for table, ids in moved.items():
+                if ids:
+                    conn.execute(update(table).where(table.c.id.in_(ids)).values(last_activity_at=stamped_at))
+            for table, ids in created.items():
+                conn.execute(
+                    update(table).where(table.c.id.in_(ids))
+                    .values(last_activity_at=func.coalesce(table.c.created_at, stamped_at))
+                )
+        for row in rows:
+            row["changed_at"] = stamped_at
+    except Exception:  # noqa: BLE001 - capture never fails the write
+        logger.warning("audit: last_activity_at stamp failed", exc_info=True)
+
+
+def stamp_form_activity(db: Any, entity_type: str, entity_id: str) -> None:
+    """Move a form's ``last_activity_at`` to now for a person's write that leaves no audit row on
+    the form (a comment). Same best-effort contract as the audit stamp."""
+    _stamp_last_activity(
+        db.connection(),
+        [{"actor_type": "user", "entity_type": entity_type, "entity_id": entity_id,
+          "root_entity_type": entity_type, "root_entity_id": entity_id, "action": "UPDATE"}],
+    )
 
 
 def record(
@@ -984,6 +1092,7 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
         conn = session.connection()
         with conn.begin_nested():
             new_rows = _pending_new_rows(session, conn, pending_new)
+            _stamp_last_activity(conn, rows + new_rows)
             for batch in (rows, new_rows):
                 if batch:
                     conn.execute(AuditLog.__table__.insert(), batch)
@@ -1304,6 +1413,7 @@ def _write_bulk_rows(
             entry.setdefault("description", None)
         if touched is not None:
             touched.extend((e["entity_id"], e["company_id"]) for e in out if e["entity_id"] != "*")
+        _stamp_last_activity(conn, out)
         conn.execute(AuditLog.__table__.insert(), out)
 
 

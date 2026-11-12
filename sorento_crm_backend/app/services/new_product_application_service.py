@@ -40,6 +40,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
 from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.services.response_gate import is_response_status_allowed
 
 logger = logging.getLogger(__name__)
@@ -1431,6 +1432,8 @@ def list_for(
     limit: int = 25,
     sort: Optional[str] = None,
     direction: str = "desc",
+    last_activity_from: Optional[Any] = None,
+    last_activity_to: Optional[Any] = None,
 ) -> Dict[str, Any]:
     query = _visible(db.query(NewProductApplication), actor)
     if statuses:
@@ -1443,6 +1446,9 @@ def list_for(
         query = query.filter(
             NewProductApplication.applicant_id.in_([applicant_id] if isinstance(applicant_id, str) else applicant_id)
         )
+    in_range = last_activity_range(NewProductApplication.last_activity_at, last_activity_from, last_activity_to)
+    if in_range is not None:
+        query = query.filter(in_range)
     text = (q or "").strip()
     if text:
         like = f"%{text}%"
@@ -1475,10 +1481,18 @@ def list_for(
     elif sort == "print_count":
         column = StockInquiryService._print_count_sort(actor.user_id, ENTITY, NewProductApplication)
     else:
-        column = _SORTS.get(sort or "", NewProductApplication.created_at)
-    ordered = column.asc() if direction == "asc" else column.desc()
+        column = _SORTS.get(sort or "")
+    if column is None:
+        # Newest activity first (no sort, or an unknown one); ties by created_at, id.
+        ordering = last_activity_order(
+            NewProductApplication.last_activity_at, NewProductApplication.created_at, NewProductApplication.id,
+            direction if sort == "last_activity_at" else "desc",
+        )
+    else:
+        ordered = column.asc() if direction == "asc" else column.desc()
+        ordering = [ordered.nulls_last(), NewProductApplication.application_no.desc()]
     rows = (
-        query.order_by(ordered.nulls_last(), NewProductApplication.application_no.desc())
+        query.order_by(*ordering)
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -1585,6 +1599,7 @@ def serialize_summary(
         "needed_by": _iso(app.needed_by),
         "submitted_at": _iso(app.submitted_at),
         "created_at": _iso(app.created_at),
+        "last_activity_at": _iso(app.last_activity_at),
     }
 
 

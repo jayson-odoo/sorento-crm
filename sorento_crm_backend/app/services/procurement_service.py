@@ -19,6 +19,7 @@ from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timedelta, timezone
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.utils.multi_value import multi_values
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
@@ -5637,6 +5638,8 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """Build the filtered + sorted stock-inquiry query shared by ``list_inquiries``
         and ``neighbours`` so the two can never drift.
@@ -5657,6 +5660,10 @@ class StockInquiryService:
             q = q.filter(StockInquiry.space_id == str(space_id).strip())
         if statuses:
             q = q.filter(StockInquiry.status.in_(statuses))
+
+        in_range = last_activity_range(StockInquiry.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
 
         if query:
             q = q.filter(
@@ -5693,9 +5700,6 @@ class StockInquiryService:
             "salesperson": StockInquiry.salesperson,
             "status": StockInquiry.status,
             "last_responded_at": StockInquiry.last_responded_at,
-            "last_activity_at": func.coalesce(
-                StockInquiry.last_revised_at, StockInquiry.created_at
-            ),
             "revision_no": StockInquiry.revision_no,
         }
         if sort_field in ("assigned_to_name", "handled_by_name"):
@@ -5704,10 +5708,12 @@ class StockInquiryService:
             )
         elif sort_field == "print_count":
             sort_map[sort_field] = self._print_count_sort(viewer_user_id)
-        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
-
         if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
+
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(StockInquiry.last_activity_at, StockInquiry.created_at, StockInquiry.id, sort_dir))
+        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
 
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc().nulls_last(), StockInquiry.id.asc())
@@ -5726,6 +5732,8 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """List stock inquiries.
 
@@ -5741,6 +5749,8 @@ class StockInquiryService:
             space_id=space_id,
             statuses=statuses,
             viewer_user_id=viewer_user_id,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         total = q.count()
@@ -9353,6 +9363,8 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[list[str] | str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """Build the filtered + sorted PR/SF query shared by ``list_requests`` and
         ``neighbours`` so the two can never drift.
@@ -9463,6 +9475,10 @@ class PurchaseRequestService:
             # Several statuses are OR-ed (an unknown one adds nothing, as before).
             q = q.filter(or_(*status_clauses))
 
+        in_range = last_activity_range(PurchaseRequestHeader.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
+
         sort_map = {
             "submitted_at": PurchaseRequestHeader.submitted_at,
             "request_date": PurchaseRequestHeader.request_date,
@@ -9483,6 +9499,10 @@ class PurchaseRequestService:
             sort_map[sort_field] = self._request_sla_person_name_sort(
                 "assigned_to_id" if sort_field == "assigned_to_name" else "handled_by_id"
             )
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(
+                PurchaseRequestHeader.last_activity_at, PurchaseRequestHeader.created_at, PurchaseRequestHeader.id, sort_dir
+            ))
         sort_col = sort_map.get(sort_field, PurchaseRequestHeader.submitted_at)
         if sort_dir == "desc":
             q = q.order_by(sort_col.desc().nullslast(), PurchaseRequestHeader.id.asc())
@@ -9529,6 +9549,8 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[list[str] | str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         q = self._build_request_list_query(
@@ -9540,6 +9562,8 @@ class PurchaseRequestService:
             contact_id=contact_id,
             space_id=space_id,
             assigned_to=assigned_to,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         total = q.count()

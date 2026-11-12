@@ -1,6 +1,7 @@
 """Complaints API routes."""
 import logging
 
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, File, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -262,8 +263,10 @@ def get_complaints(
     resolution_ids: Optional[str] = Query(
         None, description="Comma-separated resolution ids; matches complaints with ANY of them"
     ),
-    sort: Optional[str] = Query("complaint_date"),
-    dir: Optional[str] = Query("asc"),
+    sort: Optional[str] = Query("last_activity_at"),
+    dir: Optional[str] = Query("desc"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     contact_id: Optional[str] = Query(
         None,
         description=(
@@ -298,8 +301,10 @@ def get_complaints(
             query=query,
             assigned_to=assigned_to,
             status=status,
-            sort_field=sort or "complaint_date",
-            sort_dir=dir or "asc",
+            sort_field=sort or "last_activity_at",
+            sort_dir=dir or "desc",
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
             contact_id=own_contact_id,
             space_id=None,
             viewer_user_id=(current_user or {}).get("id"),

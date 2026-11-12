@@ -50,6 +50,7 @@ export interface StockInquiry {
   revision_no?: number | null;
   /** When the latest revision landed (naive UTC). */
   last_revised_at?: string | null;
+  last_activity_at?: string | null;
   /** Purchasing asks the salesperson to create a New Product Application (NPA-FROM-SI). */
   npa_requested?: boolean | null;
   npa_requested_at?: string | null;
