@@ -44,8 +44,8 @@ function renderTab(lines: OrderInquiryWorklistRow[]) {
 }
 
 const LINES = [
-  line({ id: 'r-datew', item_code: 'ZZT-DATEWAIT', core_line_id: 'cl-1', line_no: 1, waiting_for_cs: true, waiting_change: { kind: 'date', was: '18/12/2026', now: '17/01/2027' } } as Partial<OrderInquiryWorklistRow>),
-  line({ id: 'r-cancw', item_code: 'ZZT-CANCWAIT', core_line_id: 'cl-2', line_no: 2, line_cancelled: true, waiting_for_cs: true, waiting_change: { kind: 'line_removed', was: null, now: null } } as Partial<OrderInquiryWorklistRow>),
+  line({ id: 'r-datew', item_code: 'ZZT-DATEWAIT', core_line_id: 'cl-1', line_no: 1, waiting_for_cs: true, waiting_change: [{ kind: 'date', was: '18/12/2026', now: '17/01/2027' }] } as Partial<OrderInquiryWorklistRow>),
+  line({ id: 'r-cancw', item_code: 'ZZT-CANCWAIT', core_line_id: 'cl-2', line_no: 2, line_cancelled: true, waiting_for_cs: true, waiting_change: [{ kind: 'line_removed', was: null, now: null }] } as Partial<OrderInquiryWorklistRow>),
   line({ id: 'r-plain', item_code: 'ZZT-PLAIN', core_line_id: 'cl-3', line_no: 3 }),
 ];
 const ALL = ['ZZT-DATEWAIT', 'ZZT-CANCWAIT', 'ZZT-PLAIN'];

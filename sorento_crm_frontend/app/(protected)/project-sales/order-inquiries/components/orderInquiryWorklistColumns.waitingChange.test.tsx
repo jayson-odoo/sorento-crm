@@ -70,7 +70,7 @@ const waitingCancelled = (kind: 'so_cancelled' | 'line_removed') =>
     id: 'w',
     line_cancelled: true,
     waiting_for_cs: true,
-    waiting_change: { kind, was: null, now: null },
+    waiting_change: [{ kind, was: null, now: null }],
     ...(kind === 'so_cancelled' ? { so_cancelled: true } : {}),
   });
 
@@ -80,7 +80,7 @@ describe('waiting change detail on the Status column', () => {
       worklistRow({
         id: 'w',
         waiting_for_cs: true,
-        waiting_change: { kind: 'date', was: '18/12/2026', now: '17/01/2027' },
+        waiting_change: [{ kind: 'date', was: '18/12/2026', now: '17/01/2027' }],
       }),
     );
     expect(screen.getByTestId('row-w')).toHaveTextContent(
@@ -88,12 +88,29 @@ describe('waiting change detail on the Status column', () => {
     );
   });
 
+  it('joins a combined date and qty change, truncated with the full text in the title', () => {
+    renderRow(
+      worklistRow({
+        id: 'w',
+        waiting_for_cs: true,
+        waiting_change: [
+          { kind: 'date', was: '18/12/2026', now: '17/01/2027' },
+          { kind: 'qty', was: '10', now: '7' },
+        ],
+      }),
+    );
+    const full = 'Waiting for CS · date 18/12/2026 -> 17/01/2027 · qty 10 -> 7';
+    const pill = within(screen.getByTestId('row-w')).getByText(full);
+    expect(pill.className).toContain('truncate');
+    expect(pill).toHaveAttribute('title', expect.stringContaining(full));
+  });
+
   it('reads the qty change', () => {
     renderRow(
       worklistRow({
         id: 'w',
         waiting_for_cs: true,
-        waiting_change: { kind: 'qty', was: '10', now: '7' },
+        waiting_change: [{ kind: 'qty', was: '10', now: '7' }],
       }),
     );
     expect(screen.getByTestId('row-w')).toHaveTextContent('Waiting for CS · qty 10 -> 7');
