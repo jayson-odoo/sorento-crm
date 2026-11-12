@@ -1,6 +1,6 @@
 # PLAN: OI-WHOLE-SO-CANCEL - whole-SO cancel and SO delete from AutoCount raise a board item
 
-Status: Build v2 (owner rule 12 Nov 12:45, crew decisions on card v2). Track: M. Track: M (LEAD pattern).
+Status: Hand test v2 (built, reviewed twice, browser pass PASS). Track: M. Track: M (LEAD pattern).
 
 ## Problem
 
