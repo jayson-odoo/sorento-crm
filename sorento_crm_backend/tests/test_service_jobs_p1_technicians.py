@@ -139,3 +139,41 @@ def test_a_good_phone_is_stored_e164_and_displayed_local(env):
         assert body["phone"] == "+60123456789" and body["phone_display"] == "012-345 6789"
         up = client.put(f"{TECHS}/{body['id']}", json={"phone": ""})
         assert up.status_code == 200 and up.json()["phone"] is None
+
+
+# ------------------------------------------------------------------ round 6 (R6-3)
+
+@pytest.mark.parametrize("key", ["proposed", "confirmed", "verified", "cancelled"])
+def test_in_use_counts_a_job_in_any_status(env, key):
+    tag = unique_code("IU", alpha=True)
+    used = make_tech(env, f"{tag} used")
+    free = make_tech(env, f"{tag} free")
+    make_job(env, None, key, technician=used)
+    with api(env) as client:
+        rows = {r["name"]: r for r in client.get(TECHS, params={"query": tag}).json()["data"]}
+    assert rows[f"{tag} used"]["in_use"] is True
+    assert rows[f"{tag} free"]["in_use"] is False
+
+
+def test_get_one_technician_also_says_whether_it_is_in_use(env):
+    used = make_tech(env)
+    make_job(env, None, "verified", technician=used)
+    with api(env) as client:
+        assert client.get(f"{TECHS}/{used.id}").json()["in_use"] is True
+        assert client.put(f"{TECHS}/{used.id}", json={"phone": ""}).json()["in_use"] is True
+
+
+def test_deleting_a_technician_on_a_job_is_refused_when_parked_not_after_the_countdown(env):
+    from app.models.user import User
+
+    used = make_tech(env)
+    free = make_tech(env)
+    make_job(env, None, "verified", technician=used)
+    with api(env) as client:
+        env.db.merge(User(id=env.actor_id, email=f"{env.actor_id}@zzt.test", name="ZZT Actor", status="ACTIVE"))
+        env.db.flush()
+        body = {"action_key": "technician.delete", "entity_type": "technician", "payload": {}}
+        refused = client.post("/api/v1/pending-actions", json={**body, "entity_id": used.id})
+        assert refused.status_code == 409, refused.text
+        assert "Archive instead" in refused.text
+        assert client.post("/api/v1/pending-actions", json={**body, "entity_id": free.id}).status_code == 202

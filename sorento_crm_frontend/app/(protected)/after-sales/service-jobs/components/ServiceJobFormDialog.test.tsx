@@ -1,6 +1,7 @@
 /** Create = Edit: one dialog, the same fields (owner ruling 12 Nov); the phone is the shared PhoneInput. */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 if (!window.matchMedia) {
@@ -10,7 +11,9 @@ if (!window.matchMedia) {
 }
 let canComplaints = true;
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => canComplaints }));
-vi.mock('../services/serviceJobService', () => ({ searchComplaintNumbers: vi.fn(async () => []) }));
+vi.mock('../services/serviceJobService', () => ({
+  searchComplaintNumbers: vi.fn(async () => [{ id: 'c-1', complaint_number: 'CMP-0001' }]),
+}));
 
 import ServiceJobFormDialog from './ServiceJobFormDialog';
 
@@ -21,9 +24,15 @@ const JOB = {
   scheduled_from: null, scheduled_to: null, customer_agreed_by: null,
 };
 
+const onOpenChange = vi.fn();
 function setup(job: typeof JOB | null = null) {
   const onSubmit = vi.fn();
-  render(<ServiceJobFormDialog open onOpenChange={() => {}} job={job as never} onSubmit={onSubmit} />);
+  onOpenChange.mockClear();
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ServiceJobFormDialog open onOpenChange={onOpenChange} job={job as never} onSubmit={onSubmit} />
+    </QueryClientProvider>,
+  );
   return onSubmit;
 }
 
@@ -79,5 +88,17 @@ describe('ServiceJobFormDialog', () => {
     setup();
     expect(screen.queryByText('Related complaint')).toBeNull();
     canComplaints = true;
+  });
+
+  it('picking a related complaint keeps the dialog open and is submitted (R6-4)', async () => {
+    const onSubmit = setup();
+    fireEvent.change(screen.getByLabelText('Customer name *'), { target: { value: 'Mr Tan' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Related complaint' }));
+    fireEvent.click(await screen.findByText('CMP-0001'));
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].complaint_id).toBe('c-1');
   });
 });

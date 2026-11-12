@@ -27,7 +27,7 @@ vi.mock('../hooks/useTechnicians', () => ({
   useTechnicians: () => ({
     data: {
       data: [
-        { id: 't-1', name: 'Ali', phone: '+6012', employment_type: 'employee', is_active: true, in_use: true },
+        { id: 't-1', name: 'Ali', phone: '+60123456789', phone_display: '012-345 6789', employment_type: 'employee', is_active: true, in_use: true },
       ],
       pagination: { total: 1, page: 1, limit: 50 },
     },
@@ -62,5 +62,18 @@ describe('TechniciansList (S-10)', () => {
     setup();
     await screen.findByText('Ali');
     expect(screen.getByRole('button', { name: /Filters/ })).toBeInTheDocument();
+  });
+
+  it('shows the phone in the one local format, never the raw E.164 (R6-1)', async () => {
+    setup();
+    expect(await screen.findByText('012-345 6789')).toBeInTheDocument();
+    expect(screen.queryByText('+60123456789')).toBeNull();
+  });
+
+  it('offers no Delete for a technician on a job, only Edit and Archive (R6-3)', async () => {
+    setup();
+    fireEvent.contextMenu(await screen.findByText('Ali'));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 });
