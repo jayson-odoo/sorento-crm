@@ -16,7 +16,7 @@ search still answers, at the old speed. ``pg_trgm`` is already installed (169_tr
 CREATE EXTENSION IF NOT EXISTS here only covers a database built without that revision.
 
 Revision ID: il_0002_integration_log_search
-Revises: pc_0001_product_costing
+Revises: qdp_0001_duplicate_party
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from alembic import op
 from app.utils import online_index
 
 revision = "il_0002_integration_log_search"
-down_revision = "pc_0001_product_costing"
+down_revision = "qdp_0001_duplicate_party"
 branch_labels = None
 depends_on = None
 
