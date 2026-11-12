@@ -104,9 +104,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: () => null,
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 vi.mock('@/components/dealer-kit/RequestCustomersSelect');
 

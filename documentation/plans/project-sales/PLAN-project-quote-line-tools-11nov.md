@@ -4,6 +4,11 @@ Status: Merge-ready pending owner hand test (reviewer READY, cloud browser pass 
 one read-only field added to an existing verdict response). Lane PROJECT-QUOTE-LINE-TOOLS.
 UAC: `project-quote-line-tools-acceptance-criteria.md`.
 
+> Superseded in part (12 Nov 2026): the "Below default price" pill and its Flags filter option
+> (AC-5, AC-6, the default-price parts of AC-8/9/10) were removed at the owner's request by lane
+> QUOTE-BELOW-DEFAULT-OFF (`PLAN-quote-below-default-off-12nov.md`). Duplicate line and the
+> Non-standard / Below minimum price filter stand.
+
 ## Owner request (11 Nov 2026)
 
 Duplicate a quote line (same per-area quantities, then change the product); show which lines are

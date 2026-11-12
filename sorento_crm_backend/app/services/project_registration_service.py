@@ -26,6 +26,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.base import company_scope
 from app.models.projects import (
     APPROVAL_APPROVED,
