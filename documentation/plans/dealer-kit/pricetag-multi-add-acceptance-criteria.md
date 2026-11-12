@@ -167,3 +167,27 @@ and in the eye preview. Same component for create, edit, CRM and portal.
 Save Draft reuses Submit's blank-row check (`emptyRowIndexes`): a completely blank line is left out; a no-item line
 with a quantity or remarks stops the save with "Pick a set or a product for this line."; the backend answers 422
 "Pick a set or a product for every line." (never 500); a server row error maps back to the screen row.
+
+## Round 5 (owner hand test, 12/11/2026 ~18:35)
+
+### F1-7 Set rows show list price and selling price (already missing on main: `showPricing = !isSet`)
+A set line shows the LP/SP toggle, its list price and its selling price like a product line, from the SAME function the
+printed set tag uses: `tag_data_service.product_set_tag_data` (`app/services/dealer_kit/tag_data_service.py:446`):
+- list price = `resolve_set_price(set).resolved` (ticked members x quantity, or the set's override), the same figure a
+  quotation snapshots for a set (`project_quotation_service.py:581`);
+- selling price = the set's offer (members at their promotional price) when every contributing member is priced and
+  one is on offer, else the list price; basis `promotion` / `list` accordingly;
+- a set has no promotion choice and no typed price on the screen: the Promotion cell reads "-", the Selling price is
+  read-only;
+- a price that cannot be worked out (no members, nothing contributes, no override) shows "-".
+Quotation "series set pricing" needs a project series (`project_pricing_service.py:906`); a price tag request has
+none, so it does not apply.
+Contract: `LinePricingLineIn.product_set_id` (UUID-checked like product_id); `line_pricing` answers a set line from
+`product_set_tag_data` (list_price, sell_price, sell_price_basis, promotion_options []); the form sends set lines to
+the line-pricing lookup with `product_set_id`; `PriceTagLinesTable` shows the price cells for a set line.
+
+### F2-1 The open list stays still while ticking
+Ticking must not reload or move the open list. Cause found: `ItemPicker.fetchOptions` depended on the whole `editor`
+object (`PriceTagLinesTable.tsx:539-547`), new on every render, so each tick re-ran `SearchableMultiSelect`'s fetch
+effect (`SearchableMultiSelect.tsx:234-238`) and the list flashed to loading and back. Fix: depend only on the stable
+`editor.fetchItemOptions`. Test: a tick triggers no new item search and the options never leave the list.
