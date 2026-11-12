@@ -38,12 +38,15 @@ def _folder(db, name: str) -> str:
     return row.id
 
 
-def _file(db, name: str, folder_id: str | None, original: str | None = None) -> Attachment:
+def _file(
+    db, name: str, folder_id: str | None, original: str | None = None, id: str | None = None
+) -> Attachment:
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     return _upload(
         db,
         _payload(
             db,
+            id=id or str(uuid.uuid4()),
             directory_id=folder_id,
             stored_filename=name,
             original_filename=original or name,
@@ -296,8 +299,11 @@ def test_move_clash_409_carries_what_the_dialog_needs(db):
 def test_replace_sends_the_file_in_the_folder_to_trash_and_moves_this_one(db):
     folder_a = _folder(db, "Folder A")
     folder_b = _folder(db, "Folder B")
-    existing = _file(db, "photo.jpg", folder_b)
-    moving = _file(db, "photo.jpg", folder_a)
+    # Ids pinned so the moving row sorts FIRST: one flush writes UPDATEs in primary-key order,
+    # so without the separate flush of the trashed row this always trips the index.
+    tail = uuid.uuid4().hex[:12]
+    existing = _file(db, "photo.jpg", folder_b, id=f"ffffffff-ffff-4fff-8fff-{tail}")
+    moving = _file(db, "photo.jpg", folder_a, id=f"00000000-0000-4000-8000-{tail}")
     key_before = moving.file_path
 
     AttachmentService(db).update_attachment(
@@ -483,3 +489,83 @@ def test_replace_guard_runs_on_the_row_it_trashes(db):
     assert ei.value.status_code == 403
     assert seen == [existing.id]
     assert _reload(db, existing.id).is_deleted is False
+
+
+# --- review B1: restore from Trash meets the same rule ------------------------ #
+
+
+def test_restoring_a_replaced_file_is_a_plain_409_not_a_500(db):
+    """Replace's documented undo: the replaced file comes back from Trash, but the moved file
+    now holds that name in the folder."""
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    existing = _file(db, "photo.jpg", folder_b)
+    moving = _file(db, "photo.jpg", folder_a)
+    service = AttachmentService(db)
+    service.update_attachment(moving.id, AttachmentUpdate(directory_id=folder_b, on_conflict="replace"))
+
+    with pytest.raises(AppException) as ei:
+        service.restore_attachment(existing.id)
+
+    assert ei.value.status_code == 409
+    assert ei.value.detail["message"] == (
+        "photo.jpg cannot be restored to Folder B: a file with the same name is there now. "
+        "Rename or move that file first."
+    )
+    assert _reload(db, existing.id).is_deleted is True
+
+
+def test_restoring_without_a_clash_still_works(db):
+    folder = _folder(db, "Folder A")
+    row = _file(db, "photo.jpg", folder)
+    service = AttachmentService(db)
+    service.archive_attachment(row.id, None)
+
+    service.restore_attachment(row.id)
+
+    assert _reload(db, row.id).is_deleted is False
+
+
+def test_folder_restore_brings_back_the_others_and_names_the_clash(db):
+    """One bad file never fails the batch: the folder and its other files come back."""
+    from app.services.resources_service import AttachmentDirectoryService
+
+    folder = _folder(db, "Folder A")
+    clashing = _file(db, "photo.jpg", folder)
+    other = _file(db, "other.jpg", folder)
+    for row in (clashing, other):
+        row.is_deleted = True
+    db.flush()
+    _file(db, "photo.jpg", folder)  # took the name while the first one sat in Trash
+    directory = db.query(AttachmentDirectory).filter(AttachmentDirectory.id == folder).one()
+    directory.is_deleted = True
+    db.flush()
+
+    result = AttachmentDirectoryService(db).restore_directory(folder)
+
+    assert result["attachments_restored"] == 1
+    assert result["attachments_not_restored"] == [
+        "photo.jpg cannot be restored to Folder A: a file with the same name is there now. "
+        "Rename or move that file first."
+    ]
+    assert _reload(db, other.id).is_deleted is False
+    assert _reload(db, clashing.id).is_deleted is True
+
+
+def test_bulk_move_race_past_the_check_skips_only_that_file(db, monkeypatch):
+    """Review S2: the per-row savepoint on its own (pre-check disabled)."""
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "photo.jpg", folder_b)
+    clashing = _file(db, "photo.jpg", folder_a)
+    ok = _file(db, "ok.jpg", folder_a)
+    service = AttachmentService(db)
+    monkeypatch.setattr(service, "_folder_clash", lambda *a, **k: None)
+
+    updated, not_moved = service.bulk_move_report([clashing.id, ok.id], folder_b)
+
+    assert updated == 1
+    assert [n["attachment_id"] for n in not_moved] == [clashing.id]
+    _assert_plain(not_moved[0]["message"], "photo.jpg", "Folder B")
+    assert _reload(db, ok.id).directory_id == folder_b
+    assert _reload(db, clashing.id).directory_id == folder_a
