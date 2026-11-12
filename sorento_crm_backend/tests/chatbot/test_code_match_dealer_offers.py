@@ -26,12 +26,13 @@ import pytest
 from sqlalchemy import text as sql_text
 
 from app.models.chatbot_turn import ChatbotTurn
+from app.services.ai_assistant_service import MCPRuntimeClient
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot import turn_runtime
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
 from tests.chatbot._avail_mode_console import AvailConsole, Stock, _seed
-from tests.chatbot._r9_engine_console import answer, product, reply, stock
+from tests.chatbot._r9_engine_console import _present_response, answer, product, reply, stock
 from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
 from tests.chatbot.test_engine_company_scope import _seed_company, _seed_product
 
@@ -63,9 +64,43 @@ class Console(AvailConsole):
         monkeypatch.setattr(engine_mod, "run_turn", spy)
 
     def as_staff(self) -> None:
-        """The same contact read as full-stock staff (not availability-only), a fresh conversation."""
+        """The same contact read as full-stock staff, a fresh conversation. The stock tool answers in the
+        compact shape a staff contact gets (`stock_visibility.mode == "compact"`, a `stock_summary` of
+        `total_on_hand` per product), the way `_r9_engine_console.EngineConsole.stock_on_hand` does, never
+        the dealer's availability block."""
         self._monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda *a, **k: False)
         self.state = None
+        self.stock_on_hand = 12
+        present = _present_response()
+
+        def staff_call_tool(client, name: str, args: dict[str, Any]) -> str:
+            self.tool_calls.append((name, args))
+            if name != "crm_inventory_stock_balance_list":
+                return json.dumps({"answers": []})
+            summary = [
+                {
+                    "product_id": pid,
+                    "product_code": self.codes[pid],
+                    "total_on_hand": self.stock_on_hand,
+                    "locations": [{"warehouse_code": "BRW", "quantity_on_hand": self.stock_on_hand}],
+                }
+                for pid in args.get("product_ids") or []
+                if pid in self.codes
+            ]
+            return present(
+                name,
+                json.dumps(
+                    {
+                        "data": [],
+                        "pagination": {"total": len(summary), "page": 1, "limit": 50},
+                        "stock_visibility": {"mode": "compact", "warehouse_codes": None, "source": "contact"},
+                        "stock_summary": summary,
+                        "last_updated_at": "2026-09-29T01:00:00",
+                    }
+                ),
+            )
+
+        self._monkeypatch.setattr(MCPRuntimeClient, "call_tool", staff_call_tool)
 
     def trace_entries(self, kind: str) -> list[dict[str, Any]]:
         db = self.session_factory()

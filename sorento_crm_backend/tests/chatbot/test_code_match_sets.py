@@ -198,24 +198,27 @@ def _requested(c: Console) -> list[Any]:
 
 
 def test_ac1c_a_quantity_from_an_earlier_unrelated_miss_is_not_carried_into_a_later_pick(session_factory, monkeypatch, stub_access):  # noqa: F811
-    c = _console(session_factory, monkeypatch, stub_access, CLOSE, **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    """Staff: the compact stock reply prints no quantity, so the carried quantity is read off the stock call."""
+    c = _console(session_factory, monkeypatch, stub_access, CLOSE)
     _as_staff(c)
     c.say("QQXZ9917-ZZ x 7", stock(product("QQXZ9917-ZZ", 7)))  # a miss with no close code
     offer = c.say(f"{TYPO} stock", stock(product(TYPO)))  # no quantity of its own
-    assert "Did you mean" in offer and _option_codes(c)[0] == "TWC8354-SH-UF", (offer, _option_codes(c))
+    assert 'Couldn\'t find "SWTWC8354-SH-UF" (product). Did you mean' in offer, offer
+    assert _option_codes(c)[0] == "TWC8354-SH-UF", _option_codes(c)
     text = c.say("1", _pick(1))
-    assert "How many units of TWC8354-SH-UF?" in text, text
+    assert "*Product Code:* TWC8354-SH-UF" in text, text
     assert "x 7" not in text, text
     assert 7 not in _requested(c), c.stock_calls
 
 
 def test_ac1c_the_quantity_typed_with_the_miss_is_carried_to_the_pick(session_factory, monkeypatch, stub_access):  # noqa: F811
-    c = _console(session_factory, monkeypatch, stub_access, CLOSE, **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    c = _console(session_factory, monkeypatch, stub_access, CLOSE)
     _as_staff(c)
     c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
     assert _option_codes(c)[0] == "TWC8354-SH-UF", _option_codes(c)
     text = c.say("1", _pick(1))
-    assert "TWC8354-SH-UF x 3" in text, text
+    assert "*Product Code:* TWC8354-SH-UF" in text, text
+    assert _requested(c) == [3], c.stock_calls
 
 
 @pytest.mark.parametrize("who", ["dealer", "staff"])
@@ -243,6 +246,7 @@ def test_ac1e_a_set_led_offer_to_staff_still_says_product_not_product_set(sessio
     c = _set_console(session_factory, monkeypatch, stub_access)
     _as_staff(c)
     text = c.say("TWC604RL x 2", stock(product("TWC604RL", 2)))
-    assert _option_codes(c)[:1] == [SET], _option_codes(c)
     assert 'Couldn\'t find "TWC604RL" (product). Did you mean' in text, text
     assert "(product set)" not in text, text
+    assert "escalate" in text.lower(), text
+    assert _option_codes(c)[:1] == [SET], _option_codes(c)

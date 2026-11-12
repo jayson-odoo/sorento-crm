@@ -107,9 +107,11 @@ def test_ac9_a_short_token_matching_more_than_three_codes_keeps_the_picker_of_al
     assert "Which one?" in text or "which one?" in text, text
     assert REFER_TO_SALESMAN not in text, text
 
+    # Staff have no which-one picker: the compact stock reply lists every match.
     _as_staff(c)
-    c.say("8152 stock", stock(product("8152")))
-    assert sorted(_option_codes(c)) == sorted(codes), c.stored_question
+    staff = c.say("8152 stock", stock(product("8152")))
+    for code in codes:
+        assert f"*Product Code:* {code}" in staff, (code, staff)
 
 
 # --------------------------------------------------------------------------- AC-2
@@ -152,6 +154,11 @@ def test_ac19_a_letters_only_token_reaches_its_catalogue_code(session_factory, m
     assert REFER_TO_SALESMAN not in text, text
     assert _option_codes(c) == [code], c.stored_question
 
+
+def test_ac19_a_letters_only_token_reaches_its_catalogue_code_for_staff(session_factory, monkeypatch, stub_access):  # noqa: F811
+    code = "ABCDE"
+    c = _console(session_factory, monkeypatch, stub_access, [code])
     _as_staff(c)
     staff = c.say("ABCDF x 2", stock(product("ABCDF", 2)))
-    assert code in staff, staff
+    assert code in staff and "Did you mean" in staff, staff
+    assert _option_codes(c) == [code], c.stored_question
