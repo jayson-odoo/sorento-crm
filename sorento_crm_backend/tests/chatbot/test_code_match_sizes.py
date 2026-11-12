@@ -42,6 +42,7 @@ def _seed_sizes(
     session_factory,
     keys: list[tuple[str, str, str]],
     stored: dict[str, dict[str, float]],
+    class_of: dict[str, str] | None = None,
 ) -> None:
     """Registry keys `(spec_key, label, unit)` scoped to the test class, then each code's stored values."""
     db = session_factory()
@@ -60,7 +61,7 @@ def _seed_sizes(
             db.add(
                 ProductSpecifications(
                     id=str(uuid.uuid4()), product_id=c.uuid_of[code],
-                    values={"class": {"value": CLASS}, **{k: {"value": v, "unit": unit_of[k]} for k, v in values.items()}},
+                    values={"class": {"value": (class_of or {}).get(code, CLASS)}, **{k: {"value": v, "unit": unit_of[k]} for k, v in values.items()}},
                 )
             )
         db.commit()
@@ -100,10 +101,37 @@ def _as_staff(c: Console) -> None:
     c.stock_on_hand = 12
 
 
-def _size_console(session_factory, monkeypatch, stub_access, codes, stored, keys=None):  # noqa: F811
+def _size_console(session_factory, monkeypatch, stub_access, codes, stored, keys=None, *, other_class=None):  # noqa: F811
+    """`other_class`: `{code: class label}` for products created in a second category of that class."""
     c = _console(session_factory, monkeypatch, stub_access, codes, **{k.replace("-", "_"): Stock(on_hand=100) for k in codes})
-    _seed_sizes(c, session_factory, keys or [("zz_size", "Size", "mm")], stored)
+    for code, label in (other_class or {}).items():
+        _add_product_in_class(c, session_factory, code, label)
+    _seed_sizes(c, session_factory, keys or [("zz_size", "Size", "mm")], stored, class_of=other_class)
     return c
+
+
+def _add_product_in_class(c: Console, session_factory, code: str, class_label: str) -> None:
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+
+    tag = uuid.uuid4().hex[:6]
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    try:
+        cat = ProductCategory(
+            id=str(uuid.uuid4()), category_code=f"ZZTC-{class_label}-{tag}", category_name=f"ZZT {class_label}",
+            class_label=class_label, search_synonyms=[],
+        )
+        uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"ZZTU-{class_label}-{tag}", uom_name="ZZT uom")
+        db.add_all([cat, uom])
+        db.flush()
+        pid = str(uuid.uuid4())
+        db.add(Product(id=pid, product_code=code, product_name=f"ZZT {code}", category_id=cat.id, base_uom_id=uom.id, list_price=1))
+        db.commit()
+    finally:
+        db.close()
+    c.codes[pid] = code
+    c.uuid_of[code] = pid
 
 
 # --------------------------------------------------------------------------- AC-4
@@ -210,8 +238,8 @@ def _closed_lists(monkeypatch) -> None:
     )
 
 
-def _head_plus_size(value: float, unit: str) -> dict[str, Any]:
-    head = {"raw": FAM, "hint": "product", "canonical_code": FAM, "current_message": True, "confident": True}
+def _head_plus_size(value: float, unit: str, head_code: str = FAM) -> dict[str, Any]:
+    head = {"raw": head_code, "hint": "product", "canonical_code": head_code, "current_message": True, "confident": True}
     size = {
         "raw": f"{value:g}{unit}", "hint": "specification", "canonical_code": None, "spec_key": "size",
         "spec_value": value, "spec_unit": unit, "current_message": True, "confident": True,
@@ -250,3 +278,72 @@ def test_ac26_the_none_with_size_line_takes_its_unit_from_the_registry_key(sessi
     assert "Size: 40 cm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
     assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
     assert " mm" not in text, text
+
+
+# --------------------------------------------------------------------------- slice 4 review round
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac5b_many_other_products_holding_the_number_do_not_crowd_out_the_candidate(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    code = "TWC8152-SH-300"
+    crowd = [f"AAA{n:04d}" for n in range(1, 26)]  # 25 products of the class storing 300, sorting before the candidate
+    c = _size_console(
+        session_factory, monkeypatch, stub_access, [code, *crowd], {code: {"zz_size": 300}, **{k: {"zz_size": 300} for k in crowd}}
+    )
+    if who == "staff":
+        _as_staff(c)
+    typed = "8152-300-SH"
+    text = c.say(f"{typed} x 1", stock(product(typed, 1)))
+    assert code in text and "Size: 300 mm" in text, text
+    assert "AAA0" not in text, text
+    assert TICK not in text and "Got stock" not in text and "Stock summary" not in text, text
+
+
+def _single_miss_header(text: str, who: str, code: str, size: str) -> None:
+    if who == "dealer":
+        assert text.startswith(f"Couldn't find {code} with size {size}"), text
+    else:
+        first = text.splitlines()[0]
+        assert f'Couldn\'t find "{code}"' in first and f"with size {size}" in first, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac4b_a_family_of_one_with_no_stored_size_is_offered_not_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _size_console(session_factory, monkeypatch, stub_access, [FAM], {})
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    text = c.say(f"{FAM} 400mm stock", _head_plus_size(400, "mm"))
+    _single_miss_header(text, who, FAM, "400 mm")
+    assert "Size: not recorded" in text, text
+    assert text.count(FAM) >= 2, f"the code is not offered beyond the header: {text!r}"
+    assert "How many units of" not in text and "Stock summary" not in text and TICK not in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac4c_codes_that_do_not_start_letters_then_digits_take_the_same_path(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    base, variant = "8152-SH-UF", "8152-SH-UF-300"
+    c = _size_console(session_factory, monkeypatch, stub_access, [base, variant], {variant: {"zz_size": 300}})
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    text = c.say(f"{base} 400mm stock", _head_plus_size(400, "mm", base))
+    _header(text, who, base, "400 mm")
+    assert "None with size" not in text, text
+    assert "Size: 300 mm" in _entry(text, variant) and "Size: not recorded" in _entry(text, base), text
+    assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac25b_a_size_key_scoped_to_one_class_is_not_read_for_a_product_of_another(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    a_code, b_code = "TWC8152-SH-A", "TWC8152-SH-B"
+    c = _size_console(
+        session_factory, monkeypatch, stub_access, [a_code], {a_code: {"zz_size": 300}, b_code: {"zz_size": 300}},
+        other_class={b_code: "bm"},  # key zz_size is scoped to class "am" only
+    )
+    if who == "staff":
+        _as_staff(c)
+    typed = "TWC8152-SH-300"
+    text = c.say(f"{typed} x 1", stock(product(typed, 1)))
+    assert a_code in text and "Size: 300 mm" in text, text  # control: the class the key scopes still matches
+    assert "Size: 300 mm" not in _entry(text, b_code), f"the other class's product was matched on the key: {text!r}"
