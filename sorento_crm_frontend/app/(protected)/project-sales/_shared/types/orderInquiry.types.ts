@@ -596,7 +596,7 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   waiting_for_cs?: boolean;
   so_cancelled?: boolean;
   /** What the waiting change is, off the line's pending planning change; null when nothing waits. */
-  waiting_change?: WaitingChange | null;
+  waiting_change?: WaitingChange[] | null;
   previous_so_line_qty?: string | null;
   /**
    * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's

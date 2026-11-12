@@ -671,7 +671,7 @@ _LINE_NOW_QTY = (
 _PENDING_FROM_QTY = (
     select(cast(PlanningChangeRow.from_json["qty"].astext, Numeric))
     .where(*pending_change_clause(OrderInquiryRow.so_line_id))
-    .order_by(PlanningChangeRow.created_at.desc())
+    .order_by(PlanningChangeRow.created_at.desc(), PlanningChangeRow.id.desc())
     .limit(1)
     .correlate(OrderInquiryRow)
     .scalar_subquery()
@@ -690,19 +690,21 @@ _PENDING_CHANGE = (
         )
     )
     .where(*pending_change_clause(OrderInquiryRow.so_line_id))
-    .order_by(PlanningChangeRow.created_at.desc())
+    .order_by(PlanningChangeRow.created_at.desc(), PlanningChangeRow.id.desc())
     .limit(1)
     .correlate(OrderInquiryRow)
     .scalar_subquery()
 )
 
 
-def waiting_change_of(raw: Any, so_cancelled: bool) -> Optional[Dict[str, Any]]:
-    """The pending change as the worklist row states it: {kind, was, now}, or None.
+def waiting_change_of(raw: Any, so_cancelled: bool) -> Optional[List[Dict[str, Any]]]:
+    """The pending change as the worklist row states it: a list of {kind, was, now}, or None.
 
-    `so_cancelled` (the header is cancelled / the SO was deleted) and `line_removed` (a cancelled
-    change on an open SO) come from a `cancelled` row; `date`, `qty`, `product` and `location`
-    from the others. Dates read dd/mm/yyyy and quantities as a plain number."""
+    A `cancelled` row is one entry: `so_cancelled` (the header is cancelled / the SO was deleted)
+    or `line_removed` (a cancelled change on an open SO). Any other kind lists EVERY field that
+    differs between its before and after, in the order date, qty, product, location. An `added`
+    line has no before to compare with and yields nothing. Dates read dd/mm/yyyy, quantities a
+    plain number."""
     if not raw:
         return None
     kind = raw.get("kind")
@@ -715,26 +717,29 @@ def waiting_change_of(raw: Any, so_cancelled: bool) -> Optional[Dict[str, Any]]:
         return fmt_date(value) if value else None
 
     if kind == "cancelled":
-        return {
-            "kind": "so_cancelled" if so_cancelled else "line_removed",
-            "was": qty(before.get("qty")),
-            "now": None,
-        }
-    if kind in ("advanced", "delayed") or (
-        before.get("required_date") != after.get("required_date")
-    ):
-        return {
-            "kind": "date",
-            "was": day(before.get("required_date")),
-            "now": day(after.get("required_date")),
-        }
-    if kind in ("qty_up", "qty_down"):
-        return {"kind": "qty", "was": qty(before.get("qty")), "now": qty(after.get("qty"))}
-    if kind == "product_changed":
-        return {"kind": "product", "was": before.get("item_code"), "now": after.get("item_code")}
-    if kind == "location_changed":
-        return {"kind": "location", "was": before.get("location"), "now": after.get("location")}
-    return None
+        return [
+            {
+                "kind": "so_cancelled" if so_cancelled else "line_removed",
+                "was": qty(before.get("qty")),
+                "now": None,
+            }
+        ]
+    if kind == "added":
+        return None
+    changes: List[Dict[str, Any]] = []
+    was_day, now_day = before.get("required_date"), after.get("required_date")
+    if was_day and now_day and was_day != now_day:
+        changes.append({"kind": "date", "was": day(was_day), "now": day(now_day)})
+    was_qty, now_qty = qty(before.get("qty")), qty(after.get("qty"))
+    if was_qty is not None and now_qty is not None and was_qty != now_qty:
+        changes.append({"kind": "qty", "was": was_qty, "now": now_qty})
+    was_item, now_item = before.get("item_code"), after.get("item_code")
+    if was_item and now_item and was_item != now_item:
+        changes.append({"kind": "product", "was": was_item, "now": now_item})
+    was_loc, now_loc = before.get("location"), after.get("location")
+    if (was_loc or now_loc) and was_loc != now_loc:
+        changes.append({"kind": "location", "was": was_loc, "now": now_loc})
+    return changes or None
 
 
 #: AC-V2-4: a waiting row alone on its line reads the line's current quantity, the stored one

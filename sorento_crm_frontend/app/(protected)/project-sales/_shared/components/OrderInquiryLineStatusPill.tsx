@@ -29,42 +29,58 @@ export function rowStatusPill(
   return { text: ackStatusText(row), palette: ackPalette(row) };
 }
 
+type WaitingChangeList = { kind?: string; was?: string | null; now?: string | null }[] | null;
+
 /** A waiting change that cancels the line (the SO was cancelled / deleted, or the line removed). */
-function waitsOnCancel(row: { waiting_for_cs?: boolean; waiting_change?: { kind?: string } | null }): boolean {
-  const kind = row.waiting_change?.kind;
-  return Boolean(row.waiting_for_cs) && (kind === 'so_cancelled' || kind === 'line_removed');
+function waitsOnCancel(row: { waiting_for_cs?: boolean; waiting_change?: WaitingChangeList }): boolean {
+  return (
+    Boolean(row.waiting_for_cs) &&
+    (row.waiting_change ?? []).some(
+      (entry) => entry.kind === 'so_cancelled' || entry.kind === 'line_removed',
+    )
+  );
 }
 
-/** "Waiting for CS · date 18/12/2026 -> 17/01/2027" for a waiting date / qty / product / location
- * change; null for a cancel (which keeps its own pill) or a row that is not waiting. */
+/** "Waiting for CS · date 18/12/2026 -> 17/01/2027 · qty 10 -> 7": every changed field, joined.
+ * Null for a cancel (which keeps its own pill) or a row that is not waiting. */
 export function waitingChangeText(row: {
   waiting_for_cs?: boolean;
-  waiting_change?: { kind?: string; was?: string | null; now?: string | null } | null;
+  waiting_change?: WaitingChangeList;
 }): string | null {
-  const change = row.waiting_change;
-  if (!row.waiting_for_cs || !change || waitsOnCancel(row)) return null;
+  if (!row.waiting_for_cs || waitsOnCancel(row)) return null;
   const noun: Record<string, string> = {
     date: 'date',
     qty: 'qty',
     product: 'item',
     location: 'location',
   };
-  const label = noun[change.kind ?? ''];
-  if (!label) return null;
-  return `Waiting for CS \u00b7 ${label} ${change.was ?? '-'} -> ${change.now ?? '-'}`;
+  const parts = (row.waiting_change ?? [])
+    .filter((entry) => noun[entry.kind ?? ''])
+    .map((entry) => `${noun[entry.kind as string]} ${entry.was ?? '-'} -> ${entry.now ?? '-'}`);
+  return parts.length > 0 ? ['Waiting for CS', ...parts].join(' \u00b7 ') : null;
+}
+
+/** The change text's pill: shrinks inside a narrow column and keeps the full text in its title. */
+function WaitingChangePill({ text }: { text: string }) {
+  return (
+    <span
+      className={`inline-block min-w-0 max-w-full truncate rounded-full px-2 py-0.5 text-xs font-semibold ${statusPillClass('pending')}`}
+      title={text}
+    >
+      {text}
+    </span>
+  );
 }
 
 /**
  * The purchasing worklist's Status cell for one row: the same pills the line pill uses, from the
  * row's own flags. A waiting cancel is the plain Line cancelled pill plus a Waiting for CS marker;
- * a waiting date / qty change names the change.
+ * a waiting change names every field that changed.
  */
 export function RowStatusCell({
   row,
 }: {
-  row: Parameters<typeof rowStatusPill>[0] & {
-    waiting_change?: { kind?: string; was?: string | null; now?: string | null } | null;
-  };
+  row: Parameters<typeof rowStatusPill>[0] & { waiting_change?: WaitingChangeList };
 }) {
   if (waitsOnCancel(row)) {
     return (
@@ -79,9 +95,8 @@ export function RowStatusCell({
     );
   }
   const changeText = waitingChangeText(row);
-  const { text, palette } = changeText
-    ? { text: changeText, palette: 'pending' }
-    : rowStatusPill(row);
+  if (changeText) return <WaitingChangePill text={changeText} />;
+  const { text, palette } = rowStatusPill(row);
   return (
     <span className={`${ACK_PILL_BASE} ${statusPillClass(palette)}`} title={text}>
       {text}
@@ -219,11 +234,7 @@ export function OrderInquiryLineStatusPill({
   }
   const changeText = waitingChangeText(primary);
   if (changeText) {
-    return (
-      <span className={`${ACK_PILL_BASE} ${statusPillClass('pending')}`} title={changeText}>
-        {changeText}
-      </span>
-    );
+    return <WaitingChangePill text={changeText} />;
   }
   if (primary.waiting_for_cs) return <OrderInquiryLineStatePill state="waiting_for_cs" />;
   if (line.state === 'line_cancelled' && primary.so_cancelled) {
