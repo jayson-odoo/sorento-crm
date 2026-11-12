@@ -1532,13 +1532,13 @@ class ResolveReferenceRequest(BaseModel):
             "for SRTWC8088's seat cover, never SRTWC8088-SC)."
         ),
     )
-    alternatives_active_only: bool = Field(
+    alternatives_offerable_only: bool = Field(
         default=False,
         description=(
-            "CHATBOT-CODE-MATCH AC-20: the resolver's own `alternatives_active_only` - a "
-            "token's did-you-mean `alternatives` (trigram and same-family) hold no "
-            "inactive product. Sent by the chatbot; off keeps every other caller's "
-            "alternatives unchanged."
+            "CHATBOT-CODE-MATCH AC-20 / owner Q3: the resolver's `alternatives_offerable_only` - "
+            "a token's did-you-mean `alternatives` (trigram and same-family) hold only products "
+            "the chat may offer (active and not discontinued). Set by the chatbot's resolve only; "
+            "off keeps every other caller's alternatives unchanged."
         ),
     )
     understand_phrase: bool = Field(
@@ -2541,7 +2541,7 @@ def _resolve_input(
     code_reader: Any = None,
     hint_locked_tokens: list[str] | None = None,
     brand_tokens: dict[str, str] | None = None,
-    alternatives_active_only: bool = False,
+    alternatives_offerable_only: bool = False,
 ):
     # RESOLVE-SEMANTIC-FALLBACK: the one code reader for this REQUEST, wrapped here so the
     # per-token memo and the per-request cap hold whatever reader a caller hands in (a
@@ -2739,7 +2739,7 @@ def _resolve_input(
                 # a sentence for an alpha-only type (`_synthesize_alpha_tokens`) are not
                 # that, so they are never put to it (security review, final head item 5).
                 code_reader=None if synthesized_from_query else code_reader,
-                alternatives_active_only=alternatives_active_only,
+                alternatives_offerable_only=alternatives_offerable_only,
             ).as_dict()
         # CLASS-HINT-KIND-PICK: a locked token's name-matched kinds go before anything
         # downstream can read them as an answer - the AND exit, the OR degrade and the
@@ -2852,7 +2852,7 @@ def _resolve_input(
         cross_type_expand=True,
         regions=regions,
         family_raw_by_token=family_raw_by_token,
-        alternatives_active_only=alternatives_active_only,
+        alternatives_offerable_only=alternatives_offerable_only,
     ).as_dict()
     fb = _apply_promotion_access_levels_filter(db, fb_raw, access_levels)
     fb = _strip_name_kinds_for_locked(fb, hint_locked_tokens, domain_hint)
@@ -3581,7 +3581,7 @@ def resolve_reference_post(
             code_reader=code_reader,
             hint_locked_tokens=payload.hint_locked_tokens,
             brand_tokens=payload.brand_tokens,
-            alternatives_active_only=payload.alternatives_active_only,
+            alternatives_offerable_only=payload.alternatives_offerable_only,
         )
     except EntityPinMismatch as exc:
         raise AppException(

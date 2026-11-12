@@ -488,7 +488,7 @@ def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
         "limit": _LOOKUP_LIMIT, "exact_match": True,
         "semantic_fallback": False, "spec_fallback": False, "understand_phrase": False,
         # CHATBOT-CODE-MATCH AC-20d: the chat never offers an inactive code (resolve_gate's flag).
-        "alternatives_active_only": True,
+        "alternatives_offerable_only": True,
     }
     result = business_services.production_services(db).resolve_entity(body)
     resolutions = result.get("resolutions") if isinstance(result, dict) else None

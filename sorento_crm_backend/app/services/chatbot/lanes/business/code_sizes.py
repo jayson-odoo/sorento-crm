@@ -258,7 +258,12 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             family = [_row(p.canonical_code, str(p.uuid), "family") for p in probed if p.uuid and p.canonical_code]
             if family:
                 break
-        family = family or [_row(str(exact[0]["canonical_code"]), str(exact[0]["uuid"]), "family")]
+        if not family:
+            # The code alone, when the chat may offer it (owner Q3); else no size miss is made.
+            alone = _offerable_rows(db, [exact[0]])
+            family = [_row(str(r["canonical_code"]), str(r["uuid"]), "family") for r in alone]
+        if not family:
+            continue
         miss = {
             "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
             # The code exists; what is missing is the size, so the reply names the code itself.
@@ -309,7 +314,19 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
     return [_row(code, str(pid), "all_parts") for pid, code in found]
 
 
-def _single_substring_is_an_offer(resolved: dict[str, Any]) -> None:
+def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query."""
+    from app.models.product import Product, offerable_products
+
+    ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
+    if not ids:
+        return []
+    with db.begin_nested():
+        kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), offerable_products()).all()}
+    return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
+
+
+def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
     """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
     lone hit the typed code is not the prefix of: "C21120UW-2-MY" inside BRC21120UW-2-MY) is
     offered as "Did you mean X?", never answered. A lone prefix hit stays answered; several
@@ -336,7 +353,8 @@ def _single_substring_is_an_offer(resolved: dict[str, Any]) -> None:
         hit = inside_only(token, rows)
         if hit is None:
             continue
-        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": [hit]}
+        # A code the chat may not offer (owner Q3) leaves today's no-candidate miss.
+        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": _offerable_rows(db, [hit])}
         if res is not None:
             res.update(miss)
         else:
@@ -361,7 +379,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     # Several codes and a size: main's behaviour for the size rules (lead re-scope, 12 Nov 2026).
     sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
-        _single_substring_is_an_offer(resolved)
+        _single_substring_is_an_offer(db, resolved)
         if sized:
             _unheld_size_is_a_miss(db, parser, resolved)
         misses = [

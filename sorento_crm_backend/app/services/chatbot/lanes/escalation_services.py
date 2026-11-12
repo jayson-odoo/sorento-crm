@@ -377,7 +377,7 @@ def product_suggestions(db: Any, code: str) -> list[str]:
     `ENTITY_MISS_SUGGEST_FLOOR`. It runs on the lane's session, so it is scoped to the
     contact's companies exactly as the product lane's is: a customer is never shown a
     code their companies do not hold, nor an inactive one (CHATBOT-CODE-MATCH AC-20e, the
-    resolver's own `alternatives_active_only` filter). Best effort inside a savepoint; a
+    resolver's own `alternatives_offerable_only` rule). Best effort inside a savepoint; a
     failed probe offers nothing and the escalation goes out as before.
     """
     from app.services.entity_resolver import (

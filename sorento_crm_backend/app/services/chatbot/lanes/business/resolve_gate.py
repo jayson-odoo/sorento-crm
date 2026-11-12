@@ -537,7 +537,7 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
         token, pick = _token_of(entity), token_key(str(row.get("canonical_code") or ""))
         # CHATBOT-CODE-MATCH AC-20d / owner Q3: an inactive or discontinued pick is set aside but
         # never offered. Its row is the pick's own exact match (`grounding._pick_as_trgm_neighbour`,
-        # which stamps `display.offerable`), which `alternatives_active_only` does not filter.
+        # which stamps `display.offerable`), which `alternatives_offerable_only` does not filter.
         shown = row.get("display") or {}
         if shown.get("is_active") is False or shown.get("offerable") is False:
             continue
@@ -826,7 +826,7 @@ def resolve_entity_body(
         "contact_id": _contact_id_from_ctx(ctx),
         "space_id": space_id,
         # CHATBOT-CODE-MATCH AC-20: the chat never offers an inactive code as a did-you-mean.
-        "alternatives_active_only": True,
+        "alternatives_offerable_only": True,
     }
     if dry_run:
         body["dry_run"] = True
