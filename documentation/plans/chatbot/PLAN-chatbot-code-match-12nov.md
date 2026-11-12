@@ -22,6 +22,12 @@ Owner answers (13 Nov ~00:13): Q1 = (b) letters-only word that looks like a mist
 answered; the digit rule stays for ordinary words. Q2 = (b) ONE live pass, hard cap US$1, frozen set + owner-FAIL set,
 run by crew locally after the Q1 head; x3 only with a new owner OK. Q3 (inactive codes offered) still open: AC-20 kept.
 
+Replay on 3dc5b84de3 (13 Nov): B-118 (M2155-NL-BLUE), B-52 (SRTKS8047), B-61 (SRTBF31514) lose their right close code
+from the did-you-mean. Crew data: all three are active but DISCONTINUED, so owner Q3 removes them as ruled; crew does
+not count them as code bugs. B-52 now offers the non-discontinued SRTKS8047-NEW; B-61's -NEW is discontinued too, so it
+offers nothing. Pending owner follow-up: a MISTYPED discontinued code, strict Q3 (as now) vs offering its active
+alternative. Red tests AC-20j (replacement) are written and HELD red until that answer; the live pass is held too.
+
 Owner rule (12 Nov): no rule so customised it cannot be replicated for another company in a different industry.
 
 ## Slices (one a day; each one PR commit series on this branch, each with red-first + kill proof)
