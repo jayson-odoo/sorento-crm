@@ -63,7 +63,9 @@ import { OverCapacityDialog } from './OverCapacityDialog';
 import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight } from '@/hooks/useDebouncedSearch';
+import { useListChipSearch, useSearchInAddressBar } from '@/hooks/useListChipSearch';
+import { cn } from '@/lib/utils';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
@@ -156,13 +158,20 @@ export function ProformaInvoicesView() {
   const suppliers = useFulfilmentSuppliers();
   const canUpload = useHasPermission(UPLOAD_PERMISSION);
   const canConvert = useHasPermission(CONVERT_PERMISSION);
+  // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; an invoice
+  // matching any of them is listed.
   const {
-    value: searchInput,
-    setValue: setSearchInput,
-    debouncedValue: searchQuery,
+    searchInput,
+    setSearchInput,
+    chips: searchChips,
+    setChips: setSearchChips,
+    searchTerms,
+    searchTermsKey,
     isSettling: searchSettling,
-    reset: resetSearchQuery,
-  } = useDebouncedSearch();
+    restore: restoreSearch,
+    writtenSearch,
+    isOwnWrite,
+  } = useListChipSearch();
   // Several suppliers / placements are comma-joined and OR-ed.
   const [supplierId, setSupplierId] = useState<string | null>(null);
   // No default filter (AC-D1, S4): a fresh visit shows every invoice, newest first. The
@@ -176,8 +185,10 @@ export function ProformaInvoicesView() {
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
   useListStateFromUrl((state) => {
+    if (isOwnWrite()) return;
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    resetSearchQuery(state.searchQuery);
+    // Every `query` comes back as a chip, so the restored list is the one that was left.
+    restoreSearch(state.searchQueries);
     setSupplierId(state.filters.supplier_id ?? null);
     setPlacement(state.filters.placement ?? null);
   });
@@ -199,17 +210,18 @@ export function ProformaInvoicesView() {
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [searchQuery, supplierId, placement]);
+  useResetPageOnFilterChange(setPagination, [searchTermsKey, supplierId, placement]);
   // A tick on a row the new filter excludes is not a selection any more.
   useEffect(() => {
     setRowSelection({});
-  }, [searchQuery, supplierId, placement]);
+  }, [searchTermsKey, supplierId, placement]);
 
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useProformaInvoices(supplierId, {
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     placement,
-    query: searchQuery,
+    // One value stays a string, as every other caller of the hook passes it.
+    query: searchTerms.length > 1 ? searchTerms : (searchTerms[0] ?? ''),
   });
   const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
   const bulkDeleteInvoices = useBulkDeleteProformaInvoices();
@@ -221,11 +233,18 @@ export function ProformaInvoicesView() {
   const detailSearch = useMemo(
     () =>
       buildDetailSearch(
-        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, searchQuery },
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          searchQuery: searchTerms,
+        },
         { supplier_id: supplierId || undefined, placement: placement || undefined },
       ),
-    [pagination.pageIndex, pagination.pageSize, searchQuery, supplierId, placement],
+    [pagination.pageIndex, pagination.pageSize, searchTerms, supplierId, placement],
   );
+  // Once the search has changed, the list keeps its whole state in the address bar (Q5b), so
+  // a refresh keeps the chips.
+  useSearchInAddressBar({ detailSearch, searchTermsKey, enabled: true, writtenSearch });
 
   const detailHref = (row: ProformaInvoiceListRow) =>
     `/scm/proforma-invoices/${row.id}${detailSearch ? `?${detailSearch}` : ''}`;
@@ -578,7 +597,7 @@ export function ProformaInvoicesView() {
   const emptyMessage = (
     <div className="flex flex-col items-start gap-2">
       <span>
-        {searchQuery
+        {searchTerms.length
           ? 'No proforma invoice matches this search and filter.'
           : placement === 'not_converted'
             ? 'No proforma invoice is waiting for a container.'
@@ -616,10 +635,12 @@ export function ProformaInvoicesView() {
                 <ListSearchInput
                   value={searchInput}
                   onChange={setSearchInput}
-                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  chips={searchChips}
+                  onChipsChange={setSearchChips}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
                   aria-label="Search proforma invoices"
                   placeholder="Search PI number, supplier ref, supplier, container or BL..."
-                  className="w-72"
+                  className={cn('w-full', searchChips.length ? 'md:w-[420px]' : 'md:w-72')}
                 />
               }
               filters={{
