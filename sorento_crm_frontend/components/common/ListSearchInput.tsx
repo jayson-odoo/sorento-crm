@@ -164,6 +164,8 @@ function ChipsSearchInput({
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const chipRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  // Folded widths by chip, so a chip taken off the line can still be measured back in.
+  const chipWidths = useRef(new Map<string, number>());
   const moreRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
   const [capped, setCapped] = useState(false);
@@ -193,10 +195,14 @@ function ChipsSearchInput({
       (parseFloat(style.paddingRight) || 0) -
       MIN_TEXT_WIDTH;
     const more = (moreRef.current?.offsetWidth || MORE_CHIP_WIDTH) + CHIP_GAP;
+    chips.forEach((chip, i) => {
+      const measured = chipRefs.current[i]?.offsetWidth;
+      if (measured) chipWidths.current.set(chip, measured);
+    });
     let used = 0;
     let count = 0;
     for (let i = 0; i < chips.length; i += 1) {
-      const width = (chipRefs.current[i]?.offsetWidth ?? 0) + CHIP_GAP;
+      const width = (chipWidths.current.get(chips[i]) ?? MORE_CHIP_WIDTH * 3) + CHIP_GAP;
       const tail = i < chips.length - 1 ? more : 0;
       if (used + width + tail > room) break;
       used += width;
@@ -205,7 +211,9 @@ function ChipsSearchInput({
     setFit(count);
   }, [chips, open, boxWidth]);
 
-  const hidden = open ? 0 : chips.length - fit;
+  // Chips past the fold are left out of the line, so the typed text after them stays in view.
+  const hidden = open ? 0 : Math.max(0, chips.length - fit);
+  const shown = hidden ? chips.slice(0, chips.length - hidden) : chips;
 
   const setChips = (next: string[], nextCapped = false) => {
     setCapped(nextCapped);
@@ -318,18 +326,16 @@ function ChipsSearchInput({
         ) : (
           <Search className="size-4 text-muted-foreground absolute start-3 top-[8px]" aria-hidden />
         )}
-        {chips.map((chip, index) => (
+        {shown.map((chip, index) => (
           <span
             key={chip}
             ref={(el) => {
               chipRefs.current[index] = el;
             }}
             title={chip}
-            style={{ order: index < chips.length - hidden ? 0 : 2 }}
             className={cn(
               'inline-flex max-w-full shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs',
               !open && 'max-w-36',
-              index >= chips.length - hidden && 'invisible',
               active === index && 'outline-2 outline-ring',
             )}
           >
@@ -349,7 +355,6 @@ function ChipsSearchInput({
         {hidden > 0 && (
           <span
             ref={moreRef}
-            style={{ order: 1 }}
             title={chips.slice(chips.length - hidden).join(', ')}
             className="inline-flex shrink-0 items-center rounded bg-accent px-1.5 py-0.5 text-xs font-medium"
           >
@@ -368,7 +373,6 @@ function ChipsSearchInput({
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          style={{ order: 3 }}
           className={cn(
             'h-6 min-w-14 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/80 pointer-coarse:text-base',
             inputClassName,
@@ -390,7 +394,6 @@ function ChipsSearchInput({
         )}
         {open && chips.length > 0 && (
           <div
-            style={{ order: 4 }}
             className="flex basis-full items-center justify-between border-t border-border pt-1 text-xs text-muted-foreground"
           >
             <span>

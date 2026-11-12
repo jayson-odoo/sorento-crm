@@ -1087,7 +1087,9 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
               searchSlot={
                 <ListSearchInput
                   value={searchInput}
-                  onChange={setSearchInput}
+                  // Emptied text (a chip committed, Clear) settles at once: a debounced
+                  // stale word would send one more request with it.
+                  onChange={(next) => (next === '' ? resetSearchQuery('') : setSearchInput(next))}
                   chips={searchChips}
                   onChipsChange={setSearchChips}
                   isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
