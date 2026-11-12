@@ -1,7 +1,7 @@
 """Link a stock inquiry and a new product application to a registered project.
 
 Revision ID: prr_0001_si_npa_project
-Revises: acqs_0001_project_ac_write
+Revises: so_search_trgm_0001
 
 PROJECT-RELATED-RECORDS AC-C1. The same nullable-FK shape `complaints` got in
 318_complaint_project, for the same reasons:
@@ -16,7 +16,7 @@ PROJECT-RELATED-RECORDS AC-C1. The same nullable-FK shape `complaints` got in
 from alembic import op
 
 revision = "prr_0001_si_npa_project"
-down_revision = "acqs_0001_project_ac_write"
+down_revision = "so_search_trgm_0001"
 branch_labels = None
 depends_on = None
 
