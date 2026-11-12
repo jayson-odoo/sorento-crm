@@ -1074,6 +1074,8 @@ class QuotationLineVerdictResponse(BaseModel):
 
     is_non_standard: bool
     is_below_floor: bool
+    # Below the default price (series price, else list price): the save's `is_discounted`.
+    is_discounted: bool = False
     floor_value: Optional[Decimal] = None
     floor_level: Optional[str] = None
 
@@ -2252,6 +2254,8 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     below_floor_line_count: int = 0
     # PS-QUOTE-RULES: any discount and any off-series line need approval, routed to one person.
     discounted_line_count: int = 0
+    # Discounted and not below the floor, per line: the "Below default price" pill's count.
+    below_default_line_count: int = 0
     off_series_line_count: int = 0
     approval_reasons: Optional[str] = None
     approver_user_id: Optional[str] = None

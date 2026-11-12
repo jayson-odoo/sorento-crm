@@ -46,7 +46,7 @@ import {
 import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
-import { TurnDetailDrawer } from '@/app/(protected)/system-management/chat-history/components/TurnDetailDrawer';
+import { useTraceDrawer } from '@/app/(protected)/system-management/chat-history/components/TraceDrawer';
 import { localStore } from '@/lib/storage';
 
 const SIZE_STORAGE_KEY = 'sorento.ai.bubbleSize';
@@ -155,8 +155,8 @@ export default function AIAssistantBubble() {
   // Admins only (owner, AGENT-PANEL-FIXES F): the route pill, steps, reply meta and View trace. The backend strips the
   // same data from a non-admin's thread (`panel_service.sees_trace`); this keeps the old path's link and the chrome off.
   const canViewTrace = useEffectiveIsSuperadmin() === true;
-  // The turn whose trace drawer is open over the page, in this tab (AGENT-PANEL-FIXES E).
-  const [traceTurnId, setTraceTurnId] = useState<string | null>(null);
+  // Trace drawer over the page, in this tab (AGENT-PANEL-FIXES E, TRACE-SIDEBAR).
+  const { openTrace, openMessageTrace, traceDrawer } = useTraceDrawer();
   const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
@@ -890,7 +890,7 @@ export default function AIAssistantBubble() {
                             {m.metadata_json?.route ? (
                               <button
                                 type="button"
-                                onClick={() => setTraceTurnId(m.metadata_json?.chatbot_turn_id ?? null)}
+                                onClick={() => openTrace(m.metadata_json?.chatbot_turn_id ?? null)}
                                 className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
                                 data-testid="bubble-view-trace"
                               >
@@ -898,16 +898,15 @@ export default function AIAssistantBubble() {
                                 View trace
                               </button>
                             ) : (
-                              <Link
-                                href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`}
-                                target="_blank"
-                                rel="noreferrer noopener"
+                              <button
+                                type="button"
+                                onClick={() => openMessageTrace(m.id)}
                                 className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
                                 data-testid="bubble-view-trace"
                               >
                                 <GitBranch className="size-3" />
                                 View trace
-                              </Link>
+                              </button>
                             )}
                           </div>
                         ) : null}
@@ -1028,14 +1027,7 @@ export default function AIAssistantBubble() {
         </motion.div>
         )}
       </AnimatePresence>
-      {canViewTrace ? (
-        <TurnDetailDrawer
-          turnId={traceTurnId}
-          onOpenChange={(next) => {
-            if (!next) setTraceTurnId(null);
-          }}
-        />
-      ) : null}
+      {canViewTrace ? traceDrawer : null}
     </div>
   );
 }
