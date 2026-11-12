@@ -37,12 +37,12 @@ function cancelledContribution() {
 
 describe('F2: the Confirm button is always Confirm (N)', () => {
   it('never reads Apply AutoCount change(s), however many orders hold only changes', () => {
-    expect(confirmButtonLabel(0, 1)).toBe('Confirm (0)');
-    expect(confirmButtonLabel(0, 3)).toBe('Confirm (0)');
+    expect(confirmButtonLabel(0)).toBe('Confirm (0)');
+    expect(confirmButtonLabel(0)).toBe('Confirm (0)');
   });
 
   it('keeps counting decisions', () => {
-    expect(confirmButtonLabel(12, 1)).toBe('Confirm (12)');
+    expect(confirmButtonLabel(12)).toBe('Confirm (12)');
   });
 });
 

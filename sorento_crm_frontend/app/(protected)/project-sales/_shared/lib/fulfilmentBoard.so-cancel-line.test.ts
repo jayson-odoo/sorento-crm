@@ -209,9 +209,8 @@ describe('committed Cancel SO line (AC-F16)', () => {
   });
 
   it('control: a book-cancelled line is retired by the press only once saved', () => {
-    // F2 12/13 Nov: a cancel is saved like any change before Confirm; no AutoCount change note.
+    // F2 12/13 Nov: a cancel is saved like any change before Confirm.
     expect(plannedLineCount([bookCancelled], 'so-1', {})).toBe(0);
-    expect(board.autocountChangeNotes([bookCancelled], {})).toHaveLength(0);
     const saved = { [bookCancelled.key]: { verdict: 'approved' } as never };
     expect(plannedLineCount([bookCancelled], 'so-1', saved)).toBe(1);
     expect(confirmLinesFor([bookCancelled], 'so-1', saved).map((l) => l.project_line_id)).toEqual([

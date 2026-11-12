@@ -11,7 +11,6 @@ import type {
   BoardContribution,
 } from '../types/fulfilmentPlanning.types';
 import {
-  autocountChangeNotes,
   aheadFactorLabel,
   amendNeedsReason,
   boardAxis,
@@ -1969,7 +1968,6 @@ describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display 
 
     expect(summary.toConfirm).toBe(0);
     expect(summary.orderCount).toBe(0);
-    expect(autocountChangeNotes([cancelled], {})).toHaveLength(0);
   });
 
   it('counts a saved cancelled line in toConfirm and admits its order', () => {
@@ -3086,7 +3084,6 @@ describe('confirm scope: one population for dialog, count and body', () => {
     expect(dialog.rows.length).toBe(entry.counted);
     // F2 12/13 Nov: no AutoCount note any more; an UNSAVED book-cancelled line is the dialog's
     // `cancelled` bucket (pending, not posted), a saved one is an ordinary row.
-    expect(autocountChangeNotes([contribution], draft)).toEqual([]);
     expect(dialog.cancelled.length).toBe(
       contribution.cancelled && !entry.decision ? 1 : 0,
     );

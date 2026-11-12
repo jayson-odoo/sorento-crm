@@ -12,7 +12,6 @@ import type {
   BoardDraft,
 } from '../types/fulfilmentPlanning.types';
 import {
-  autocountChangeNotes,
   confirmButtonLabel,
   confirmSummaryFor,
   pressPostsContribution,
@@ -93,25 +92,18 @@ describe('Confirm and Saved count decisions only (D1)', () => {
   });
 });
 
-describe('there is no AutoCount change note any more (F2 12/13 Nov)', () => {
-  it('retired lines and undecided cancels raise no note', () => {
-    expect(autocountChangeNotes(contributions, draft)).toEqual([]);
-    expect(autocountChangeNotes(contributions, {})).toEqual([]);
-  });
-});
-
 describe('the Confirm button never offers an enabled Confirm (0) (crew ruling b)', () => {
   it('counts decisions when there are any', () => {
-    expect(confirmButtonLabel(12, 1)).toBe('Confirm (12)');
-    expect(confirmButtonLabel(12, 3)).toBe('Confirm (12)');
+    expect(confirmButtonLabel(12)).toBe('Confirm (12)');
+    expect(confirmButtonLabel(12)).toBe('Confirm (12)');
   });
 
   it('always reads Confirm (N), never Apply AutoCount change(s), when only changes are pending', () => {
-    expect(confirmButtonLabel(0, 1)).toBe('Confirm (0)');
-    expect(confirmButtonLabel(0, 3)).toBe('Confirm (0)');
+    expect(confirmButtonLabel(0)).toBe('Confirm (0)');
+    expect(confirmButtonLabel(0)).toBe('Confirm (0)');
   });
 
   it('control: nothing to do reads Confirm (0)', () => {
-    expect(confirmButtonLabel(0, 0)).toBe('Confirm (0)');
+    expect(confirmButtonLabel(0)).toBe('Confirm (0)');
   });
 });
