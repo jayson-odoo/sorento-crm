@@ -8,11 +8,13 @@ and hands the same one back. It is built again:
   own fake, never a real client cached by an earlier caller).
 An idle connection is kept `KEEPALIVE_EXPIRY_SECONDS` (httpx's default of 5 s is shorter than the gap between two
 turns on a quiet worker); one the server closed while idle is discarded before reuse. Callers never close it.
+It keeps no cookies, as the per-call clients kept none past their one call.
 """
 from __future__ import annotations
 
 import os
 import threading
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any
 
 import httpx
@@ -45,6 +47,9 @@ def shared_client(name: str, **kwargs: Any) -> httpx.Client:
         if held is not None and held[0] == pid and held[1] is ctor:
             return held[2]
         kwargs.setdefault("limits", httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS))
+        # A per-call client threw its cookies away; a shared one keeps none, so a Set-Cookie on one call (another
+        # workspace's, a WAF's) never rides along on the next.
+        kwargs.setdefault("cookies", CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])))
         client = ctor(**kwargs)
         _clients[name] = (pid, ctor, client)
         return client
