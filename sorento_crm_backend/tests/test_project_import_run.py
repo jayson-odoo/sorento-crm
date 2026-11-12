@@ -332,6 +332,102 @@ def test_ac_pi_23_one_new_project_with_differing_developers_needs_review(world):
     assert _projects(w) == []
 
 
+# --------------------------------------------------------------------------- AC-PI-23a
+
+
+@pytest.mark.parametrize("party_type", ["developer", "architect"])
+def test_ac_pi_23a_a_create_line_matching_an_active_party_name_needs_review(world, party_type):
+    """create_party returns an active same-name party of ANY type (case-insensitive, spaces
+    collapsed). A "create" developer line must never be linked to it silently."""
+    from app.models.project_import import ProjectImportValueMap
+    from app.models.projects import ProjectParty
+
+    w = world
+    existing = seed_party(w.db, w.company_id, "ZZT Dev  Existing", party_type=party_type)
+    customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
+    w.db.commit()
+    run = new_run(w, make_book({"JAN'26": [
+        row("PS26-0001", project_name="TOWER E", developer=" zzt dev   EXISTING "),
+        row("PS26-0002", project_name="TOWER E2", developer="ZZT DEV EXISTING"),
+    ]}))
+    _map(w, run, customers={C1: customer.id},
+         projects={(C1, "TOWER E"): ("create", "ZZT TOWER E"),
+                   (C1, "TOWER E2"): ("create", "ZZT TOWER E2")},
+         developers={"ZZT DEV EXISTING": ("create",)})
+    parties_before = w.db.query(ProjectParty).count()
+
+    report = _svc().apply(w.db, run, user_id=w.admin_id)
+
+    for ps in ("PS26-0001", "PS26-0002"):
+        r = _by_ps(report)[ps]
+        assert r["outcome"] == "needs_review", r
+        assert "developer_exists" in r["codes"], r
+        assert "ZZT Dev  Existing" in r["message"] or "ZZT Dev Existing" in r["message"], r
+    assert report["codes"].get("developer_exists") == 2
+    # Nothing is created or linked.
+    assert w.db.query(ProjectParty).count() == parties_before
+    assert _projects(w) == []
+    assert _pos(w) == []
+    line = (w.db.query(ProjectImportValueMap)
+            .filter(ProjectImportValueMap.kind == "developer",
+                    ProjectImportValueMap.value_key == "ZZT DEV EXISTING").one())
+    assert line.action == "create"
+    assert line.target_id is None
+    assert line.target_id != existing.id
+
+
+def test_ac_pi_23a_preview_reports_developer_exists_too(world):
+    w = world
+    seed_party(w.db, w.company_id, "ZZT DEV EXISTING")
+    customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
+    w.db.commit()
+    run = new_run(w, make_book({"JAN'26": [row("PS26-0001", developer="ZZT DEV EXISTING")]}))
+    _map(w, run, customers={C1: customer.id}, projects={(C1, P1): ("create", "ZZT TOWER P")},
+         developers={"ZZT DEV EXISTING": ("create",)})
+
+    report = _svc().preview(w.db, run, user_id=w.admin_id)
+
+    r = _by_ps(report)["PS26-0001"]
+    assert r["outcome"] == "needs_review"
+    assert "developer_exists" in r["codes"]
+
+
+def test_ac_pi_23a_a_genuinely_new_name_still_creates_exactly_one_party(world):
+    from app.models.projects import ProjectParty
+
+    w = world
+    seed_party(w.db, w.company_id, "ZZT DEV EXISTING")
+    customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
+    w.db.commit()
+    run = new_run(w, make_book({"JAN'26": [
+        row("PS26-0001", project_name="TOWER E", developer="ZZT DEV EXISTING"),
+        row("PS26-0002", project_name="TOWER F", developer="ZZT DEV BRAND NEW"),
+        row("PS26-0003", project_name="TOWER G", developer="zzt dev  brand new"),
+    ]}))
+    _map(w, run, customers={C1: customer.id},
+         projects={(C1, "TOWER E"): ("create", "ZZT TOWER E"),
+                   (C1, "TOWER F"): ("create", "ZZT TOWER F"),
+                   (C1, "TOWER G"): ("create", "ZZT TOWER G")},
+         developers={"ZZT DEV EXISTING": ("create",), "ZZT DEV BRAND NEW": ("create",)})
+    parties_before = w.db.query(ProjectParty).count()
+
+    report = _svc().apply(w.db, run, user_id=w.admin_id)
+
+    by = _by_ps(report)
+    assert by["PS26-0001"]["outcome"] == "needs_review"
+    assert "developer_exists" in by["PS26-0001"]["codes"]
+    assert by["PS26-0002"]["outcome"] == "created"
+    assert by["PS26-0003"]["outcome"] == "created"
+    assert "developer_exists" not in by["PS26-0002"]["codes"]
+    made = (w.db.query(ProjectParty)
+            .filter(ProjectParty.name.ilike("ZZT DEV BRAND NEW")).all())
+    assert len(made) == 1
+    assert w.db.query(ProjectParty).count() == parties_before + 1
+    by_title = {p.title: p for p in _projects(w)}
+    assert set(by_title) == {"ZZT TOWER F", "ZZT TOWER G"}
+    assert {p.developer_party_id for p in by_title.values()} == {made[0].id}
+
+
 # --------------------------------------------------------------------------- AC-PI-24
 
 
@@ -890,6 +986,7 @@ def test_the_new_outcome_codes_have_plain_labels():
         "ps_duplicate_in_file", "ps_duplicate_in_crm", "changed_in_file", "so_linked",
         "so_not_synced", "po_number_numeric", "date_other_year", "date_other_month",
         "owner_defaulted", "clash_check_skipped", "missing_header", "revert_kept_edited",
+        "developer_exists",
     ]
     for code in new:
         assert code in codes.LABELS, code

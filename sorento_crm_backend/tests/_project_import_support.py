@@ -251,7 +251,11 @@ def world(memory_storage):
     """Company SRT with the project funnel + numbering seeded, one importing user."""
     from app.models.base import company_scope
     from app.services import project_seed_service
+    from app.services.audit_service import register_audit_listeners
 
+    # Production registers the audit listeners at startup (app.main, worker.py). A test file
+    # run alone may never import app.main, so register them here; the call is idempotent.
+    register_audit_listeners()
     with blank_session() as db:
         company_id = str(
             db.execute(sa.text("select id from companies where code = 'SRT'")).scalar()
