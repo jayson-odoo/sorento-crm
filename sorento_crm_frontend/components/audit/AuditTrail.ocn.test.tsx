@@ -110,3 +110,57 @@ describe('AuditTrail field names on an order change notice (round 9)', () => {
     ]);
   });
 });
+
+describe('AuditTrail values (round 11, review R3)', () => {
+  it('reads the amendment change table as "Change rows changed", never JSON or line ids', () => {
+    mockEntries([
+      entry({
+        old_values: { change_table_json: null },
+        new_values: {
+          change_table_json: {
+            rows: [{ so_line_id: '4a1b2c3d-0000-4000-8000-0000000000aa', row_key: '0', verb: 'DELAY' }],
+            verb_summary: { DELAY: 1 },
+          },
+        },
+      }),
+    ]);
+    render(<AuditTrail entityType="order_change_notice" entityId={OCN_ID} />);
+    expect(screen.getAllByTestId('audit-change-line').map((li) => li.textContent)).toEqual(['Change rows changed']);
+    expect(document.body.textContent).not.toMatch(/so_line_id|\{|4a1b2c3d/);
+  });
+
+  it('does the same for structured values on any record', () => {
+    mockEntries([
+      entry({
+        entity_type: 'complaint',
+        old_values: { products: [{ id: '4a1b2c3d-0000-4000-8000-0000000000bb', qty: 1 }] },
+        new_values: { products: [{ id: '4a1b2c3d-0000-4000-8000-0000000000bb', qty: 2 }] },
+      }),
+    ]);
+    render(<AuditTrail entityType="complaint" entityId={OCN_ID} />);
+    expect(screen.getAllByTestId('audit-change-line').map((li) => li.textContent)).toEqual(['Products changed']);
+  });
+
+  it('keeps a plain list of words as words', () => {
+    mockEntries([entry({ entity_type: 'complaint', old_values: { tags: ['a'] }, new_values: { tags: ['a', 'b'] } })]);
+    render(<AuditTrail entityType="complaint" entityId={OCN_ID} />);
+    expect(screen.getAllByTestId('audit-change-line').map((li) => li.textContent)).toEqual(['Tags: a → a, b']);
+  });
+
+  it("words the notice's coded values as its pages do", () => {
+    mockEntries([
+      entry({
+        old_values: { approval_status: null, source: null, status: 'approved' },
+        new_values: { approval_status: 'pending', source: 'crm', status: 'processed_by_cs' },
+      }),
+    ]);
+    render(<AuditTrail entityType="order_change_notice" entityId={OCN_ID} />);
+    const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
+    expect(lines).toEqual([
+      'Approval status: (empty) → Pending',
+      'Source: (empty) → CRM',
+      'Status: Approved → Done',
+    ]);
+    expect(document.body.textContent).not.toMatch(/pending|crm|processed_by_cs/);
+  });
+});

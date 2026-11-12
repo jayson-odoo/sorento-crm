@@ -293,8 +293,16 @@ def module_row_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) ->
         model, clause = NewProductApplication, npa_clause(m)
     elif kind == "price_tag_request":
         model, clause = PriceTagRequest, price_tag_clause(m)
-    else:
+    elif kind == "sales_opportunity":
         model, clause = SalesOpportunity, opportunity_clause(m)
+    elif kind == "order_change_notice":
+        from app.models.project_so import OrderChangeNotice
+        from app.services.order_change_notice_service import own_clause
+
+        model, clause = OrderChangeNotice, own_clause(m.user_id)
+    else:
+        # An unknown kind is never theirs: no fall-through to another module's rule.
+        return False
     return db.query(model.id).filter(model.id == str(row_id), clause).first() is not None
 
 

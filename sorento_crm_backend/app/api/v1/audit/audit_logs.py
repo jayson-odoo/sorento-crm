@@ -295,7 +295,10 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
     if words and "status" in new and new.get("status") != old.get("status"):
         frm, to = old.get("status"), new.get("status")
         said = words[0]
-        return f"Status: {said.get(frm, frm) if frm else '∅'} → {said.get(to, to)}"
+        moved = f"Status: {said.get(frm, frm) if frm else '∅'} → {said.get(to, to)}"
+        # The move's reason, where the move carried one (an amendment reopening the notice).
+        why = (getattr(it, "reason", None) or "").strip()
+        return f"{moved}. {why}" if why else moved
     if words:
         # No summary for any other move: the field lines already say it in words
         # ("Approval status: (empty) -> pending"), never "approval_status: ∅ -> pending".

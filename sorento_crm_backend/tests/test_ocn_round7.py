@@ -14,6 +14,7 @@ from app.api.v1.audit.audit_logs import _derive_description
 from ._forms_chain_support import world  # noqa: F401
 from ._ocn_support import (  # noqa: F401  (fixtures)
     approved,
+    create,
     move,
     ocn,
     ok,
@@ -30,6 +31,28 @@ def _row(entity_type, old=None, new=None, description=None, action="UPDATE"):
 def test_r7_a_notice_status_move_reads_in_words():
     got = _derive_description(_row("order_change_notice", {"status": "approved"}, {"status": "processed_by_cs"}))
     assert got == "Status: Approved → Done"
+
+
+def test_r11_a_move_with_a_reason_names_it_in_the_one_history_row():
+    row = _row("order_change_notice", {"status": "approved"}, {"status": "draft"})
+    row.reason = "Picked for a sales order amendment: the change needs approval."
+    assert _derive_description(row) == (
+        "Status: Approved → Draft. Picked for a sales order amendment: the change needs approval."
+    )
+
+
+def test_r11_module_row_in_scope_reads_the_notice_by_its_own_rule_and_refuses_unknown_kinds(ocn):
+    """No fall-through to the sales opportunity rule (review R3): the notice's own rule (raised
+    or named), and an unknown kind is never theirs."""
+    from app.services import own_scope
+    from app.services.own_scope import Me
+
+    mine = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    theirs = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    me = Me(user_id=ocn.own, contact_id=None, agent_ids=())
+    assert own_scope.module_row_in_scope(ocn.db, "order_change_notice", mine["id"], me) is True
+    assert own_scope.module_row_in_scope(ocn.db, "order_change_notice", theirs["id"], me) is False
+    assert own_scope.module_row_in_scope(ocn.db, "zzt_unknown_kind", mine["id"], me) is False
 
 
 def test_r7_an_approval_only_move_gets_no_code_summary():

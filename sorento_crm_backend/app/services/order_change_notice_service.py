@@ -1295,29 +1295,24 @@ REOPENED_REASON = "Picked for a sales order amendment: the change needs approval
 
 
 def _reopen_for_amendment(db: Session, row: OrderChangeNotice, actor: Actor) -> Callable[[], None]:
-    """An approved notice picked by an amendment goes back to draft (Revise's own writes, so
-    the row listener audits the move), with a History line naming why, all inside the
-    amendment's transaction, so it rolls back with it. Answers the in-app notice to the raiser
-    and the approver (review N4), for the caller to send after its commit (security M4)."""
-    from app.services.audit_service import log_audit
+    """An approved notice picked by an amendment goes back to draft: Revise's own writes, so the
+    row listener writes the ONE History row for the move, its reason naming the amendment
+    (`REOPENED_REASON`, read by the History tab). Inside the amendment's transaction, so it
+    rolls back with it. Answers the in-app notice to the raiser and the approver (review N4),
+    for the caller to send after its commit (security M4)."""
+    from app.audit_context import audit_context_scope, current_audit_context
 
     previous_approver = row.approver_id
-    before = {"status": row.status, "approval_status": row.approval_status, "revision_no": row.revision_no}
-    _back_to_draft(db, row, REOPENED_REASON)
-    try:
-        log_audit(
-            db,
-            entity_type=ENTITY,
-            entity_id=str(row.id),
-            action="UPDATE",
-            user_id=actor.user_id,
-            old_values=before,
-            new_values={"status": row.status, "approval_status": row.approval_status,
-                        "revision_no": row.revision_no},
-            description=REOPENED_REASON,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("order change notice reopen audit not written: %s (%s)", row.id, exc)
+    ctx = current_audit_context()
+    if ctx is not None:
+        saved, ctx.reason = ctx.reason, REOPENED_REASON
+        try:
+            _back_to_draft(db, row, REOPENED_REASON)
+        finally:
+            ctx.reason = saved
+    else:
+        with audit_context_scope(reason=REOPENED_REASON):
+            _back_to_draft(db, row, REOPENED_REASON)
     ocn_id, users, actor_id = str(row.id), [row.created_by, previous_approver], actor.user_id
 
     def tell() -> None:

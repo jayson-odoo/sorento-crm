@@ -1,5 +1,6 @@
 import { formatDateInMalaysia, formatDateTimeInMalaysia, parseDateTimeAsUTC } from './helpers';
 import { isAwaitingReview } from './submission-status';
+import { OCN_APPROVAL_WORDS, OCN_SOURCE_WORDS, OCN_STATUS_WORDS } from '@/types/orderChangeNotice';
 
 /**
  * How an audit row's before/after values read on a record's Audit Trail.
@@ -69,6 +70,31 @@ export const AUDIT_FIELD_LABELS: Record<string, Record<string, string>> = {
     change_table_json: 'Change rows',
   },
 };
+
+/**
+ * A record's own words for a coded value, by `entity_type` and field: the same maps its pages
+ * read (the notice's status, approval decision and source), so History says "Done", never
+ * "processed_by_cs". A value missing from its map shows as stored.
+ */
+export const AUDIT_VALUE_WORDS: Record<string, Record<string, Record<string, string>>> = {
+  order_change_notice: {
+    status: OCN_STATUS_WORDS,
+    approval_status: OCN_APPROVAL_WORDS,
+    source: OCN_SOURCE_WORDS,
+  },
+};
+
+function wordedValue(v: unknown, key: string, entityType?: string | null): unknown {
+  const words = entityType ? AUDIT_VALUE_WORDS[entityType]?.[key] : undefined;
+  return words && typeof v === 'string' && v in words ? words[v] : v;
+}
+
+/** An object, or a list holding objects: structured data (an amendment's change table) that
+ *  has no one-line reading and would put ids on screen as JSON. */
+function isStructured(v: unknown): boolean {
+  if (v === null || typeof v !== 'object') return false;
+  return !Array.isArray(v) || v.some((x) => x !== null && typeof x === 'object');
+}
 
 /** `defect_description` -> "Defect description", `root_cause_id` -> "Root cause". A record's own
  *  name for the field (`AUDIT_FIELD_LABELS`) wins when `entityType` is given. */
@@ -145,13 +171,14 @@ export function auditFieldChanges(
     const nv = newV[key];
     if (sameValue(ov, nv)) continue;
     const label = auditFieldLabel(key, entityType);
-    // No ids on screen: a link that moved reads as "changed".
-    if (isUuidValue(ov) || isUuidValue(nv)) {
+    // No ids on screen: a link that moved, or structured data (JSON with line ids in it), reads
+    // as "changed", on every record.
+    if (isUuidValue(ov) || isUuidValue(nv) || isStructured(ov) || isStructured(nv)) {
       out.push({ kind: 'line', key, text: `${label} changed` });
       continue;
     }
-    const before = formatAuditValue(ov);
-    const after = formatAuditValue(nv);
+    const before = formatAuditValue(wordedValue(ov, key, entityType));
+    const after = formatAuditValue(wordedValue(nv, key, entityType));
     const long = (s: string) => s.length > AUDIT_LONG_TEXT || s.includes('\n');
     if (long(before) || long(after)) {
       out.push({ kind: 'long', key, label, before, after });

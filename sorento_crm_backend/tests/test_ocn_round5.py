@@ -167,7 +167,11 @@ def test_r5_reopening_writes_history_and_tells_the_raiser_and_the_approver(build
     b.db.expire_all()
     assert b.db.get(type(mine), mine.id).status == "draft"
     lines = b.db.query(AuditLog).filter(AuditLog.entity_type == KIND, AuditLog.entity_id == str(mine.id)).all()
-    assert any(r.description == ocn_svc.REOPENED_REASON for r in lines)
+    # Round 11 (review R3): ONE History row for the reopen, the move itself, carrying the reason.
+    moves = [r for r in lines if r.action == "UPDATE" and (r.new_values or {}).get("status") == "draft"]
+    assert len(moves) == 1
+    assert moves[0].reason == ocn_svc.REOPENED_REASON
+    assert not any(r.description == ocn_svc.REOPENED_REASON for r in lines)
     for who in (raiser, approver):
         got = notifications(b.db, who, event_type="order_change_notice_reopened")
         assert len(got) == 1, who

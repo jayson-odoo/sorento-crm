@@ -152,6 +152,14 @@ export const OCN_STATUS_WORDS: Record<string, string> = {
   voided: 'Voided',
 };
 
+/** The approval decision in words, as the sign-off reads it ("Pending" until a decision). */
+export const OCN_APPROVAL_WORDS: Record<string, string> = {
+  pending: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  voided: 'Voided',
+};
+
 /** The status in plain words: a submitted notice waiting on its approver reads "Pending approval". */
 export function ocnStatusWord(row: Pick<OcnRow, 'status' | 'approval_status'>): string {
   const status = String(row.status ?? '');
