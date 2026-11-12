@@ -133,12 +133,14 @@ function reportRow(ps: string, outcome: string, codes: string[], n: number) {
   };
 }
 
+// Round 5 (review minor 8): the API names the blocking kind on each row (`blocking_kind`), so
+// the frontend keeps no code -> kind table. Lead sign-off; the click assertions are unchanged.
 const rows = [
-  reportRow('PS26-0001', 'needs_review', ['customer_unmapped', 'so_not_synced'], 2),
-  reportRow('PS26-0002', 'needs_review', ['project_unmapped'], 3),
-  reportRow('PS26-0003', 'needs_review', ['developer_conflict'], 4),
-  reportRow('PS26-0004', 'needs_review', ['customer_unmapped', 'project_unmapped'], 5),
-  reportRow('PS26-0005', 'created', ['project_and_po_created'], 6),
+  { ...reportRow('PS26-0001', 'needs_review', ['customer_unmapped', 'so_not_synced'], 2), blocking_kind: 'customer' },
+  { ...reportRow('PS26-0002', 'needs_review', ['project_unmapped'], 3), blocking_kind: 'project' },
+  { ...reportRow('PS26-0003', 'needs_review', ['developer_conflict'], 4), blocking_kind: 'developer' },
+  { ...reportRow('PS26-0004', 'needs_review', ['customer_unmapped', 'project_unmapped'], 5), blocking_kind: 'customer' },
+  { ...reportRow('PS26-0005', 'created', ['project_and_po_created'], 6), blocking_kind: null },
 ];
 
 const onOpenLine = vi.fn();
