@@ -84,7 +84,7 @@ Each answer comes with the reason. An admin keeps the policy up to date under Wa
     - A "Test a product" button opens a centred dialog: type or pick a product, then see the kind it lands
       in and the deciding rule.
 - **Complaint detail, product lines:**
-  - Each line shows two values: Purchase date (dd/mm/yyyy or "-") and Kind (name or "-").
+  - Each line shows three values: Purchase date (dd/mm/yyyy or "-"), Kind (name or "-") and Defect (from the defect list, or "-").
   - Both are edited in the complaint's edit form, in the same place, so View = Edit. The kind is a
     searchable select, prefilled with the rule's suggestion, and the hint "suggested from the product code"
     stays off the screen.
