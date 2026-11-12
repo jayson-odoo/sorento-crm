@@ -16,6 +16,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -24,7 +26,6 @@ import { formatDateSafe } from '@/lib/helpers';
 import { useProjectImportRows } from '../../../_shared/hooks/useProjectImport';
 import type {
   ProjectImportCounts,
-  ProjectImportKind,
   ProjectImportOutcome,
   ProjectImportReportRow,
   ProjectImportRun,
@@ -32,10 +33,9 @@ import type {
 import {
   OUTCOME_LABELS,
   OUTCOME_ROW_LABELS,
-  kindForCode,
 } from '../../components/importLabels';
 
-const TILES: ProjectImportOutcome[] = ['created', 'unchanged', 'skipped', 'needs_review', 'error'];
+const TILES: ProjectImportOutcome[] = ['created', 'updated', 'unchanged', 'skipped', 'needs_review', 'error'];
 
 const OUTCOME_OPTIONS = (Object.keys(OUTCOME_ROW_LABELS) as ProjectImportOutcome[]).map((value) => ({
   value,
@@ -44,7 +44,7 @@ const OUTCOME_OPTIONS = (Object.keys(OUTCOME_ROW_LABELS) as ProjectImportOutcome
 
 export function OutcomeTiles({ counts }: { counts: ProjectImportCounts | null | undefined }) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       {TILES.map((outcome) => (
         <div key={outcome} className="rounded-lg border bg-card p-3">
           <div className="text-xs text-muted-foreground">{OUTCOME_LABELS[outcome]}</div>
@@ -53,15 +53,6 @@ export function OutcomeTiles({ counts }: { counts: ProjectImportCounts | null | 
       ))}
     </div>
   );
-}
-
-/** The kind of a row's FIRST blocking code, the Values tab that unblocks it. */
-export function blockingKind(row: ProjectImportReportRow): ProjectImportKind | null {
-  for (const code of row.codes) {
-    const kind = kindForCode(code);
-    if (kind) return kind;
-  }
-  return null;
 }
 
 /**
@@ -94,6 +85,7 @@ export function ReportRowsGrid({
     { outcome, code, sheet },
   );
   const data = rows.data?.data ?? [];
+  const activeFilters = [outcome, code, sheet].filter((v) => v.length > 0).length;
   const total = rows.data?.total ?? 0;
 
   const codes = run.result_codes ?? run.preview_codes ?? {};
@@ -179,8 +171,8 @@ export function ReportRowsGrid({
       },
       {
         id: 'reason',
-        header: () => <span>Reason</span>,
-        enableSorting: false,
+        accessorFn: (row) => row.message || (row.labels ?? []).join('; '),
+        header: ({ column }) => <DataGridColumnHeader title="Reason" column={column} />,
         size: 300,
         meta: { headerTitle: 'Reason' },
         cell: ({ row }) => {
@@ -230,33 +222,7 @@ export function ReportRowsGrid({
       }
     >
       <Card>
-        <CardHeader className="block space-y-3">
-          <div className="grid gap-2 sm:grid-cols-3">
-            <SearchableMultiSelect
-              value={outcome}
-              onChange={setOutcome}
-              options={OUTCOME_OPTIONS}
-              clearable
-              placeholder="Outcome"
-              aria-label="Outcome"
-            />
-            <SearchableMultiSelect
-              value={code}
-              onChange={setCode}
-              options={codeOptions}
-              clearable
-              placeholder="Reason"
-              aria-label="Reason"
-            />
-            <SearchableMultiSelect
-              value={sheet}
-              onChange={setSheet}
-              options={sheetOptions}
-              clearable
-              placeholder="Sheet"
-              aria-label="Sheet"
-            />
-          </div>
+        <CardHeader className="block">
           <DataGridListToolbar
             table={table}
             searchSlot={
@@ -269,6 +235,48 @@ export function ReportRowsGrid({
                 className="w-full sm:w-64 md:w-80"
               />
             }
+            filters={{
+              kind: 'custom',
+              active: activeFilters > 0,
+              activeCount: activeFilters,
+              content: (
+                <div className="space-y-3">
+                  {(
+                    [
+                      ['Outcome', outcome, setOutcome, OUTCOME_OPTIONS],
+                      ['Reason', code, setCode, codeOptions],
+                      ['Sheet', sheet, setSheet, sheetOptions],
+                    ] as const
+                  ).map(([label, value, onChange, options]) => (
+                    <div key={label} className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">{label}</Label>
+                      <SearchableMultiSelect
+                        value={[...value]}
+                        onChange={onChange}
+                        options={[...options]}
+                        clearable
+                        placeholder={label}
+                        aria-label={label}
+                      />
+                    </div>
+                  ))}
+                  {activeFilters > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setOutcome([]);
+                        setCode([]);
+                        setSheet([]);
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              ),
+            }}
             exportConfig={false}
             onRefresh={() => void rows.refetch()}
             isRefreshing={rows.isFetching && !rows.isLoading}

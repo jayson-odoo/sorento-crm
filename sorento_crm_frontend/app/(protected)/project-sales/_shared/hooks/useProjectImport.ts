@@ -8,6 +8,8 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DataGridParamsInput } from '@/lib/api-client';
+import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
+import { splitMulti } from '@/lib/list-filters/multiValue';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { toast } from '@/lib/toast';
 import { getUsersSelect } from '@/services/userSelectService';
@@ -39,18 +41,62 @@ export const PROJECT_IMPORT_RUN_KEY = 'project-import-run';
 export const PROJECT_IMPORT_LINES_KEY = 'project-import-lines';
 export const PROJECT_IMPORT_SUMMARY_KEY = 'project-import-lines-summary';
 export const PROJECT_IMPORT_ROWS_KEY = 'project-import-rows';
+export const RUN_PERMISSION = 'projects.import.run';
 
 function failed(error: unknown, fallback: string) {
   toast.error(error instanceof Error && error.message ? error.message : fallback);
 }
 
-export function useProjectImportRuns(
-  grid: DataGridParamsInput,
-  filters: { status?: string[]; uploaded_by?: string[] } = {},
-) {
+export type ProjectImportRunsFilters = { status?: string[]; uploaded_by?: string[] };
+
+/** The runs list's query key: the list and the run page's pager build it from one function. */
+export function projectImportRunsQueryKey(grid: DataGridParamsInput, filters: ProjectImportRunsFilters) {
+  return [
+    PROJECT_IMPORT_RUNS_KEY,
+    grid.pageIndex,
+    grid.pageSize,
+    grid.sorting ?? [],
+    grid.searchQuery ?? '',
+    filters.status ?? [],
+    filters.uploaded_by ?? [],
+  ] as const;
+}
+
+/** The list a run URL describes (`?page&limit&sort&dir&query&status&uploaded_by`). */
+export function projectImportRunsParamsFromUrl(params: ListPagerParams): {
+  grid: DataGridParamsInput;
+  filters: ProjectImportRunsFilters;
+} {
+  return {
+    grid: {
+      pageIndex: params.pageIndex,
+      pageSize: params.pageSize,
+      sorting: params.sorting,
+      searchQuery: params.searchQuery,
+    },
+    filters: {
+      status: splitMulti(params.filters.status),
+      uploaded_by: splitMulti(params.filters.uploaded_by),
+    },
+  };
+}
+
+/** `useListPager`'s two hooks into the runs list (prev/next on the run page). */
+export const PROJECT_IMPORT_RUNS_PAGER = {
+  listQueryKey: (params: ListPagerParams) => {
+    const { grid, filters } = projectImportRunsParamsFromUrl(params);
+    return projectImportRunsQueryKey(grid, filters);
+  },
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> => {
+    const { grid, filters } = projectImportRunsParamsFromUrl(params);
+    return listRuns(grid, filters);
+  },
+};
+
+export function useProjectImportRuns(grid: DataGridParamsInput, filters: ProjectImportRunsFilters = {}) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: [PROJECT_IMPORT_RUNS_KEY, grid, filters],
+    queryKey: projectImportRunsQueryKey(grid, filters),
     queryFn: () => listRuns(grid, filters),
   });
 }
@@ -69,7 +115,7 @@ export function useProjectImportLines(
   runId: string,
   kind: ProjectImportKind,
   grid: DataGridParamsInput,
-  filters: { status?: 'todo' | 'set' } = {},
+  filters: { status?: 'todo' | 'set' | string[] } = {},
 ) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,

@@ -69,6 +69,10 @@ export interface ProjectImportRun extends ProjectImportRunRow {
   result?: Record<string, unknown> | null;
   /** Plain words per reason code in preview_codes / result_codes, from the server. */
   code_labels?: Record<string, string>;
+  /** Plain words per field key, from the server. */
+  field_labels?: Record<string, string>;
+  /** A failed import's plain message. */
+  error?: string | null;
 }
 
 export interface ProjectImportLine {
@@ -119,6 +123,8 @@ export interface ProjectImportReportRow {
   codes: string[];
   /** One plain label per code, same order as `codes`. */
   labels?: string[];
+  /** The Values tab that unblocks a needs-review row, from the server. */
+  blocking_kind?: ProjectImportKind | null;
   message: string | null;
 }
 

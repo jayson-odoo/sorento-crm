@@ -56,13 +56,3 @@ export const KIND_TABS: { kind: ProjectImportKind; label: string }[] = [
   { kind: 'developer', label: 'Developers' },
   { kind: 'person', label: 'People' },
 ];
-
-/** The Values tab a blocking code sends the reader to (AC-PI-47). */
-export function kindForCode(code: string): ProjectImportKind | null {
-  if (code.startsWith('customer_')) return 'customer';
-  if (code.startsWith('project_') || code === 'registration_lock' || code === 'po_number_taken') {
-    return 'project';
-  }
-  if (code.startsWith('developer_')) return 'developer';
-  return null;
-}

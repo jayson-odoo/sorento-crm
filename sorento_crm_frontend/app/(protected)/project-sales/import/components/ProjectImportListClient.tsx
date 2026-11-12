@@ -22,9 +22,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { formatDateSafe } from '@/lib/helpers';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { getUsersSelect } from '@/services/userSelectService';
-import { useProjectImportRuns } from '../../_shared/hooks/useProjectImport';
+import { RUN_PERMISSION, useProjectImportRuns } from '../../_shared/hooks/useProjectImport';
 import type { ProjectImportRunRow } from '../../_shared/types/projectImport.types';
 import { CreateImportDialog } from './CreateImportDialog';
 import { RunStatusBadge, STATUS_LABELS } from './importLabels';
@@ -39,19 +43,50 @@ function Num({ value }: { value: number }) {
 export function ProjectImportListClient() {
   const router = useRouter();
   const [creating, setCreating] = React.useState(false);
-  const { value: search, setValue: setSearch, debouncedValue, isSettling } = useDebouncedSearch();
+  const canRun = useHasPermission(RUN_PERMISSION);
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue,
+    isSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = React.useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [status, setStatus] = React.useState<string[]>([]);
   const [uploadedBy, setUploadedBy] = React.useState<string[]>([]);
 
+  // A run opened from here carries this list's state in its URL (page, sort, search, filters),
+  // so Back and prev/next walk the same list; landing here with that URL restores it.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting.length ? state.sorting : [{ id: 'uploaded_at', desc: true }]);
+    resetSearch(state.searchQuery);
+    setStatus(splitMulti(state.filters.status));
+    setUploadedBy(splitMulti(state.filters.uploaded_by));
+  });
+
   const grid = { ...pagination, sorting, searchQuery: debouncedValue };
+  const rowHref = (row: ProjectImportRunRow) => {
+    const query = buildDetailSearch(grid, {
+      status: status.length ? joinMulti(status) : undefined,
+      uploaded_by: uploadedBy.length ? joinMulti(uploadedBy) : undefined,
+      from: row.id,
+    });
+    return `/project-sales/import/${row.id}${query ? `?${query}` : ''}`;
+  };
   const runs = useProjectImportRuns(grid, { status, uploaded_by: uploadedBy });
   const rows = runs.data?.data ?? [];
   const total = runs.data?.total ?? 0;
   const filtered = Boolean(debouncedValue || status.length || uploadedBy.length);
 
+  const firstFilterRun = React.useRef(true);
   React.useEffect(() => {
+    // Not on mount: a page restored from the URL must stay where it was.
+    if (firstFilterRun.current) {
+      firstFilterRun.current = false;
+      return;
+    }
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
   }, [debouncedValue, status, uploadedBy]);
 
@@ -159,7 +194,7 @@ export function ProjectImportListClient() {
         error={runs.error}
         onRetry={() => void runs.refetch()}
         isPlaceholderData={runs.isPlaceholderData}
-        onRowClick={(row: ProjectImportRunRow) => router.push(`/project-sales/import/${row.id}`)}
+        onRowClick={(row: ProjectImportRunRow) => router.push(rowHref(row))}
         listingKey="projects.import.view"
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage={
@@ -240,10 +275,12 @@ export function ProjectImportListClient() {
               onRefresh={() => void runs.refetch()}
               isRefreshing={runs.isFetching && !runs.isLoading}
               primaryAction={
-                <Button onClick={() => setCreating(true)}>
-                  <Plus className="size-4" aria-hidden />
-                  Create
-                </Button>
+                canRun ? (
+                  <Button onClick={() => setCreating(true)}>
+                    <Plus className="size-4" aria-hidden />
+                    Create
+                  </Button>
+                ) : undefined
               }
             />
           </CardHeader>
@@ -255,7 +292,7 @@ export function ProjectImportListClient() {
           </CardFooter>
         </Card>
       </DataGrid>
-      <CreateImportDialog open={creating} onOpenChange={setCreating} />
+      {canRun && <CreateImportDialog open={creating} onOpenChange={setCreating} />}
     </>
   );
 }

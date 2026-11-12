@@ -2,14 +2,18 @@
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useProjectImportMutations } from '../../../_shared/hooks/useProjectImport';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { RUN_PERMISSION, useProjectImportMutations } from '../../../_shared/hooks/useProjectImport';
 import type {
   ProjectImportKind,
   ProjectImportRun,
 } from '../../../_shared/types/projectImport.types';
-import { OutcomeTiles, ReportRowsGrid, blockingKind } from './ReportRows';
+import { OutcomeTiles, ReportRowsGrid } from './ReportRows';
 
-/** The Preview step (AC-PI-47): the import, run and rolled back, with Import as the one action. */
+/**
+ * The Preview step (AC-PI-47): the import, run and rolled back. Import itself is the page
+ * header's one primary button (mock E), so this body has none.
+ */
 export function PreviewStep({
   run,
   onOpenLine,
@@ -19,7 +23,8 @@ export function PreviewStep({
   onOpenLine: (kind: ProjectImportKind) => void;
   className?: string;
 }) {
-  const { importRun, preview } = useProjectImportMutations(run.id);
+  const canRun = useHasPermission(RUN_PERMISSION);
+  const { preview } = useProjectImportMutations(run.id);
   const review = run.preview_counts?.needs_review ?? 0;
 
   return (
@@ -31,20 +36,18 @@ export function PreviewStep({
             {`${review} ${review === 1 ? 'row needs' : 'rows need'} review and will be left out.`}
           </span>
         )}
-        <Button variant="outline" onClick={() => preview.mutate()} disabled={preview.isPending}>
-          Preview again
-        </Button>
-        <Button onClick={() => importRun.mutate()} disabled={importRun.isPending}>
-          Import
-        </Button>
+        {canRun && (
+          <Button variant="outline" onClick={() => preview.mutate()} disabled={preview.isPending}>
+            Preview again
+          </Button>
+        )}
       </div>
       <ReportRowsGrid
         run={run}
         listingKey="projects.import.view::preview-rows"
         onRowClick={(row) => {
-          if (row.outcome !== 'needs_review') return;
-          const kind = blockingKind(row);
-          if (kind) onOpenLine(kind);
+          // The server names the Values tab that unblocks the row (`blocking_kind`).
+          if (row.outcome === 'needs_review' && row.blocking_kind) onOpenLine(row.blocking_kind);
         }}
       />
     </div>

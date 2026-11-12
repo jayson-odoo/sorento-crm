@@ -28,13 +28,15 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { formatDateSafe } from '@/lib/helpers';
 import {
   useProjectImportLines,
   useProjectImportLinesSummary,
   useProjectImportMutations,
+  RUN_PERMISSION,
 } from '../../../_shared/hooks/useProjectImport';
 import type {
   ProjectImportAction,
@@ -77,7 +79,7 @@ export function ValuesStep({
   run,
   kind: kindProp,
   onKindChange,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
 }: {
   run: ProjectImportRun;
   kind?: ProjectImportKind;
@@ -92,7 +94,10 @@ export function ValuesStep({
   };
   const summary = useProjectImportLinesSummary(run.id);
   const { value: search, setValue: setSearch, debouncedValue, isSettling } = useDebouncedSearch();
-  const [status, setStatus] = React.useState('');
+  // A user without projects.import.run reads the values and sets none (review M4).
+  const canRun = useHasPermission(RUN_PERMISSION);
+  const readOnly = readOnlyProp || !canRun;
+  const [status, setStatus] = React.useState<string[]>([]);
   const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = React.useState<SortingState>([{ id: 'rows', desc: true }]);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -107,7 +112,7 @@ export function ValuesStep({
     run.id,
     kind,
     { ...pagination, sorting, searchQuery: debouncedValue },
-    status ? { status: status as 'todo' | 'set' } : {},
+    status.length ? { status } : {},
   );
   const { line: setOne, bulk } = useProjectImportMutations(run.id);
   const items = React.useMemo(() => lines.data?.items ?? [], [lines.data]);
@@ -134,8 +139,10 @@ export function ValuesStep({
     setRowSelection({});
   };
 
+  // A bulk "Create new" on project lines asks for no title: each line becomes its own project,
+  // titled by its own text (AC-PI-31a). One line's Create new asks for its title.
   const choose = (targets: ProjectImportLine[], action: ProjectImportAction, viaBulk = false) => {
-    if (action === 'link' || (action === 'create' && kind === 'project')) {
+    if (action === 'link' || (action === 'create' && kind === 'project' && !viaBulk)) {
       setPending({ action, lines: targets, viaBulk });
       return;
     }
@@ -311,7 +318,7 @@ export function ValuesStep({
         emptyMessage={
           <div className="px-6 py-10 text-center">
             <p className="text-sm font-semibold">
-              {status || debouncedValue ? 'No values match' : 'No values of this kind in the file'}
+              {status.length || debouncedValue ? 'No values match' : 'No values of this kind in the file'}
             </p>
           </div>
         }
@@ -332,12 +339,12 @@ export function ValuesStep({
               }
               filters={{
                 kind: 'custom',
-                active: Boolean(status),
-                activeCount: status ? 1 : 0,
+                active: status.length > 0,
+                activeCount: status.length ? 1 : 0,
                 content: (
                   <div className="space-y-1.5">
                     <Label className="text-xs text-muted-foreground">Show</Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       value={status}
                       onChange={setStatus}
                       options={STATUS_FILTER}
@@ -349,7 +356,6 @@ export function ValuesStep({
                 ),
               }}
               exportConfig={false}
-              showColumns={false}
               keepSearchWhileSelected
               bulkActionsSlot={readOnly ? undefined : bulkMenu}
             />

@@ -13,30 +13,16 @@ import {
 import { useProjectImportMutations } from '../../../_shared/hooks/useProjectImport';
 import type { ProjectImportRun } from '../../../_shared/types/projectImport.types';
 
-/** The register's fields (PLAN "Field keys"), with their screen labels. */
-export const FIELD_LABELS: ImportMappingField[] = [
-  { field: 'ps_number', label: 'PS number' },
-  { field: 'salesperson', label: 'Salesperson' },
-  { field: 'customer_service', label: 'Customer service' },
-  { field: 'customer', label: 'Customer' },
-  { field: 'project_name', label: 'Project name' },
-  { field: 'developer', label: 'Developer' },
-  { field: 'po_number', label: 'PO number' },
-  { field: 'po_value', label: 'PO value' },
-  { field: 'po_date', label: 'PO date' },
-  { field: 'amended_date', label: 'Amended date' },
-  { field: 'schedule', label: 'Schedule' },
-  { field: 'delivery', label: 'Delivery' },
-  { field: 'outstanding', label: 'Outstanding' },
-  { field: 'so_number', label: 'SO number' },
-  { field: 'remarks', label: 'Remarks' },
-];
-
 const REQUIRED = ['ps_number', 'customer', 'po_number'];
 
 /** The Columns step (AC-PI-09..11): the headings of the first ticked sheet, one field each. */
 export function ColumnsStep({ run }: { run: ProjectImportRun }) {
   const { columns } = useProjectImportMutations(run.id);
+  // The field list and its words come from the server (`field_labels`); no copy here.
+  const fields = React.useMemo<ImportMappingField[]>(
+    () => Object.entries(run.field_labels ?? {}).map(([field, label]) => ({ field, label })),
+    [run.field_labels],
+  );
   const [picks, setPicks] = React.useState<ImportMappingSelection[]>([]);
 
   const sheet = React.useMemo(
@@ -60,7 +46,7 @@ export function ColumnsStep({ run }: { run: ProjectImportRun }) {
   );
 
   const missing = unresolvedRequiredFields(probe, picks);
-  const labelOf = (field: string) => FIELD_LABELS.find((f) => f.field === field)?.label ?? field;
+  const labelOf = (field: string) => run.field_labels?.[field] ?? field;
 
   // A field the server holds a heading for keeps it unless sent (round 4), so a field the
   // person took away (its column set to Ignore) is sent as "ignore"; every pick is sent as is.
@@ -83,7 +69,7 @@ export function ColumnsStep({ run }: { run: ProjectImportRun }) {
     <div className="space-y-4">
       <ImportColumnMapper
         probe={probe}
-        fields={FIELD_LABELS}
+        fields={fields}
         onChange={setPicks}
         onHeaderRowChange={() => undefined}
         busy={columns.isPending}

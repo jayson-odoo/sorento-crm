@@ -1,21 +1,23 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import AuditTrail from '@/components/audit/AuditTrail';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
 import DetailActions from '@/components/common/DetailActions';
 import { PageHeader } from '@/components/common/PageHeader';
-import RecordNavigation from '@/components/common/RecordNavigation';
 import { WizardSteps } from '@/components/common/WizardSteps';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useHasPermission } from '@/hooks/usePermissions';
 import {
   PROJECT_IMPORT_RUN_KEY,
   PROJECT_IMPORT_RUNS_KEY,
+  PROJECT_IMPORT_RUNS_PAGER,
+  RUN_PERMISSION,
   useProjectImportMutations,
   useProjectImportRun,
-  useProjectImportRuns,
 } from '../../../_shared/hooks/useProjectImport';
 import type { ProjectImportKind, ProjectImportRun } from '../../../_shared/types/projectImport.types';
 import { RunStatusBadge } from '../../components/importLabels';
@@ -32,6 +34,7 @@ const STEPS = [
 ] as const;
 
 type StepId = (typeof STEPS)[number]['id'];
+type TabId = Exclude<StepId, 'import'> | 'history';
 
 /** AC-PI-45: the step a run opens on, read off its status. */
 export function stepForRun(run: ProjectImportRun): StepId {
@@ -42,21 +45,18 @@ export function stepForRun(run: ProjectImportRun): StepId {
 
 /** One run (AC-PI-45..48): header, steps, and the step the run stands on. */
 export function ProjectImportRunClient({ runId }: { runId: string }) {
-  const router = useRouter();
   const runQuery = useProjectImportRun(runId);
   const run = runQuery.data;
-  const [step, setStep] = React.useState<StepId | null>(null);
+  const canRun = useHasPermission(RUN_PERMISSION);
+  const [tab, setTab] = React.useState<TabId | null>(null);
   const [kind, setKind] = React.useState<ProjectImportKind>('customer');
-  const { preview } = useProjectImportMutations(runId);
+  const { preview, importRun } = useProjectImportMutations(runId);
 
-  const runs = useProjectImportRuns({ pageIndex: 0, pageSize: 200, sorting: [{ id: 'uploaded_at', desc: true }] });
-  const ids = (runs.data?.data ?? []).map((r) => r.id);
-  const at = ids.indexOf(runId);
-
+  const revertable = canRun && run?.status === 'imported';
   const reverting = useDeferredAction({
     actionKey: 'project_import_run.revert',
     entityType: 'project_import_run',
-    entityId: run?.status === 'imported' ? runId : null,
+    entityId: revertable ? runId : null,
     verb: 'Reverting',
     subject: run?.run_no ?? '',
     surface: 'inline',
@@ -69,7 +69,7 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   const status = run?.status;
   const missing = run?.missing_columns.length ?? 0;
   React.useEffect(() => {
-    setStep(null);
+    setTab(null);
   }, [status, missing]);
 
   if (runQuery.isLoading) {
@@ -91,8 +91,19 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
     );
   }
 
-  const current: StepId = step ?? stepForRun(run);
+  const step = stepForRun(run);
   const editable = run.status === 'draft' || run.status === 'previewed';
+  const current: TabId = tab ?? (step === 'import' ? 'values' : step);
+
+  const primary = !canRun ? undefined : step === 'values' && editable ? (
+    <Button onClick={() => preview.mutate()} disabled={preview.isPending}>
+      Preview
+    </Button>
+  ) : step === 'preview' ? (
+    <Button onClick={() => importRun.mutate()} disabled={importRun.isPending}>
+      Import
+    </Button>
+  ) : undefined;
 
   const header = (
     <PageHeader
@@ -109,50 +120,47 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
         { title: run.run_no },
       ]}
       actions={
-        <DetailActions
-          pagerNode={
-            <RecordNavigation
-              index={at >= 0 ? at + 1 : null}
-              total={ids.length}
-              hasPrevious={at > 0}
-              hasNext={at >= 0 && at < ids.length - 1}
-              onPrevious={() => router.push(`/project-sales/import/${ids[at - 1]}`)}
-              onNext={() => router.push(`/project-sales/import/${ids[at + 1]}`)}
-              isLoading={runs.isLoading}
-              ariaLabel="import"
-            />
-          }
-          actions={
-            run.status === 'imported'
-              ? [
-                  {
-                    key: 'project_import_run.revert',
-                    label: 'Revert',
-                    kind: 'destructive',
-                    disabled: reverting.isBlocked,
-                    run: () => reverting.start(),
-                  },
-                ]
-              : undefined
-          }
-          pendingAction={
-            run.status === 'imported' ? (
-              <DeferredActionButton
-                pending={reverting.pending}
-                verb="Reverting"
-                subject={run.run_no}
-                onCancel={reverting.cancel}
-              />
-            ) : undefined
-          }
-          primary={
-            current === 'values' && editable ? (
-              <Button onClick={() => preview.mutate()} disabled={preview.isPending}>
-                Preview
-              </Button>
-            ) : undefined
-          }
-        />
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          {/* The file this run read (owner ruling #1336: no subtitle slot on PageHeader). */}
+          <span
+            className="max-w-[16rem] truncate text-sm text-muted-foreground"
+            title={run.filename ?? ''}
+          >
+            {run.filename}
+          </span>
+          <DetailActions
+            pager={{
+              ...PROJECT_IMPORT_RUNS_PAGER,
+              detailPath: '/project-sales/import',
+              currentId: runId,
+              ariaLabel: 'import',
+            }}
+            actions={
+              revertable
+                ? [
+                    {
+                      key: 'project_import_run.revert',
+                      label: 'Revert',
+                      kind: 'destructive',
+                      disabled: reverting.isBlocked,
+                      run: () => reverting.start(),
+                    },
+                  ]
+                : undefined
+            }
+            pendingAction={
+              revertable ? (
+                <DeferredActionButton
+                  pending={reverting.pending}
+                  verb="Reverting"
+                  subject={run.run_no}
+                  onCancel={reverting.cancel}
+                />
+              ) : undefined
+            }
+            primary={primary}
+          />
+        </div>
       }
     />
   );
@@ -160,37 +168,46 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   return (
     <div className="space-y-5">
       {header}
-      <p className="-mt-3 truncate text-sm text-muted-foreground" title={run.filename ?? ''}>
-        {run.filename}
-      </p>
-      <WizardSteps steps={STEPS} currentId={current} allDone={run.status === 'imported'} />
-      {editable && current !== 'import' && (
-        <div className="flex flex-wrap gap-2">
-          {STEPS.filter((s) => s.id !== 'import').map((s) => (
-            <Button
-              key={s.id}
-              variant={s.id === current ? 'secondary' : 'ghost'}
-              size="sm"
-              disabled={s.id === 'preview' && run.status !== 'previewed'}
-              onClick={() => setStep(s.id)}
-            >
-              {s.label}
-            </Button>
-          ))}
+      <WizardSteps steps={STEPS} currentId={step} allDone={run.status === 'imported'} />
+      {run.error && (
+        <div role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm">
+          {run.error}
         </div>
       )}
-      {current === 'columns' && <ColumnsStep run={run} />}
-      {current === 'values' && <ValuesStep run={run} kind={kind} onKindChange={setKind} />}
-      {current === 'preview' && (
-        <PreviewStep
-          run={run}
-          onOpenLine={(next) => {
-            setKind(next);
-            setStep('values');
-          }}
-        />
+      {step === 'import' ? (
+        <ResultsView run={run} />
+      ) : (
+        <Tabs value={current} onValueChange={(next) => setTab(next as TabId)} className="space-y-4">
+          <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+            <TabsTrigger value="columns">Columns</TabsTrigger>
+            <TabsTrigger value="values" disabled={run.missing_columns.length > 0}>
+              Values
+            </TabsTrigger>
+            <TabsTrigger value="preview" disabled={run.status !== 'previewed'}>
+              Preview
+            </TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+          </TabsList>
+          <TabsContent value="columns">
+            <ColumnsStep run={run} />
+          </TabsContent>
+          <TabsContent value="values">
+            <ValuesStep run={run} kind={kind} onKindChange={setKind} readOnly={!editable} />
+          </TabsContent>
+          <TabsContent value="preview">
+            <PreviewStep
+              run={run}
+              onOpenLine={(next) => {
+                setKind(next);
+                setTab('values');
+              }}
+            />
+          </TabsContent>
+          <TabsContent value="history">
+            <AuditTrail entityType="project_import_run" entityId={run.id} />
+          </TabsContent>
+        </Tabs>
       )}
-      {current === 'import' && <ResultsView run={run} />}
     </div>
   );
 }

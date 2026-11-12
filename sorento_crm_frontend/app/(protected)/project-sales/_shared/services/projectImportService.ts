@@ -86,9 +86,10 @@ export async function listLines(
   runId: string,
   kind: ProjectImportKind,
   grid: DataGridParamsInput,
-  filters: { status?: 'todo' | 'set' } = {},
+  filters: { status?: 'todo' | 'set' | string[] } = {},
 ): Promise<PagedItems<ProjectImportLine>> {
-  const search = buildDataGridParams(grid, { kind, status: filters.status });
+  const status = Array.isArray(filters.status) && !filters.status.length ? undefined : filters.status;
+  const search = buildDataGridParams(grid, { kind, status });
   return read(
     await apiFetch(`${runUrl(runId, '/lines')}?${search.toString()}`),
     'Failed to load the values',
