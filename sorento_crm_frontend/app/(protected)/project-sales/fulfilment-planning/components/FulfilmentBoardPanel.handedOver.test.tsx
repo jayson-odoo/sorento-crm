@@ -283,3 +283,52 @@ describe('B1: the confirm sentence prints inquiry_rows_handed_over', () => {
     expect(results).not.toHaveTextContent('0 purchase rows');
   });
 });
+
+/** The press that reaches Confirm in the existing test above, answered with `result`. */
+async function confirmWith(result: Record<string, unknown>) {
+  confirmMany.mockResolvedValue({ results: [{ pso_id: 'pso-so-381895', ok: true, ...result }] });
+  renderPanel();
+  await screen.findByTestId('board-change-icon-pcr-381895-1');
+  fireEvent.click(
+    await screen.findByRole('button', { name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/ }),
+  );
+  const linesTab = await screen.findByRole('tab', { name: /^Contributing lines/ });
+  fireEvent.mouseDown(linesTab);
+  fireEvent.click(linesTab);
+  fireEvent.click(await screen.findByRole('button', { name: 'Save SO381895 line 1 as suggested' }));
+  await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
+  await pressPreviewThenConfirm();
+  await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+  return screen.findByTestId('board-confirm-results');
+}
+
+describe('B1 regression: a deleted SO prints the apply-only sentence', () => {
+  it('prints "applied the AutoCount change", not "confirmed as revision", when the press only applied the change', async () => {
+    const results = await confirmWith({
+      decision_revision: 3,
+      planning_change_applied: true,
+      lines_confirmed: [],
+      inquiry_rows_created: 0,
+      inquiry_rows_handed_over: 3,
+      lines_retired: [
+        { line_no: 1, item_code: 'ZZT-A' },
+        { line_no: 2, item_code: 'ZZT-B' },
+        { line_no: 3, item_code: 'ZZT-C' },
+      ],
+    });
+
+    expect(results).toHaveTextContent('applied the AutoCount change');
+    expect(results).not.toHaveTextContent('confirmed as revision');
+  });
+
+  it('guard: a date-moved Buy (1 confirmed, 1 handed over, none created) still reads confirmed as revision N', async () => {
+    const results = await confirmWith({
+      decision_revision: 4,
+      lines_confirmed: [{ project_line_id: 'pl-so-381895-1', line_no: 1, item_code: null }],
+      inquiry_rows_created: 0,
+      inquiry_rows_handed_over: 1,
+    });
+
+    expect(results).toHaveTextContent('confirmed as revision 4 (1 purchase row handed over)');
+  });
+});
