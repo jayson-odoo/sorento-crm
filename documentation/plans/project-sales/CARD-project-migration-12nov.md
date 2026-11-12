@@ -1,6 +1,6 @@
 # CARD: project import from the TOTAL SALES ORDER SUMMARY workbook (lane PROJECT-MIGRATION-TOOL)
 
-Status: behaviour card v2 (Gate 1). Crew answered Q1-Q4 from prior owner rulings (section "Crew answers" below supersedes any rule above it); owner decisions d1-d5 pending; PO issuer data request answered (interim rule stands). No code yet. Track: L (lead pattern).
+Status: behaviour card v3 (owner decisions d1-d5 of 12 Nov ~23:12 applied; d5 turns the tool into an IN-APP importer with a mapper). Mock v1 at `documentation/mockups/PROJECT-IMPORT/index.html`. Card v3 and mock v1 wait on the owner. No code yet. Track: L (lead pattern; new screen, migration, new permissions, so security-reviewer joins).
 No screen is planned, so there is no mock (Gate 2 is only needed if the answers below add an upload screen).
 
 All examples are the MASKED shape crew sent (fake names, fake amounts). Nothing real is in this file.
@@ -207,3 +207,74 @@ Pass 2 (`--mapping mapping.xlsx`, dry run, then `--apply`):
 12. The real file, `mapping.xlsx` and the full report never leave the owner's Mac. Crew runs the real-data dry run locally; only the masked shared report is posted. Nothing runs on prod; the live-run method is owner decision d5.
 
 Owner decisions pending: d1 blank-name rows, d2 schedule codes O/C CBD YS, d3 who fills the mapping, d4 years + one-time vs monthly, d5 live run (CLI command vs upload page; an upload page adds the mock gate).
+
+## Owner decisions (12 Nov ~23:12, verbatim)
+
+"d1  it is fine, d2 wait where od you see O/C CBD YS I also not so sure, d3 ok, d4 2026, d5 hmm I am thining we need to build importer just to have the mapper, like how respond io import contacts, so this process can be repeated"
+
+- d1: a row with no project name is skipped and listed by PS number (`skipped: no_project_name`).
+- d2: nobody knows the SCHEDULE codes. The value is kept in the PO notes exactly as written, with no logic and no flag (this replaces the `schedule_unknown` flag).
+- d3: crew pre-fills the mapping; one team member confirms it.
+- d4: 2026 only. A PS number whose year part is not `26` is `skipped: other_year`.
+- d5: an in-app importer with a mapper, like the respond.io contact import, repeatable on later files, with saved mappings reused on a re-run. This replaces the crew-run CLI and `mapping.xlsx` in sections (b), (e) and (h). Every other rule above stands (explicit links only, create-only, a blank never clears, one bad row never fails the batch, nothing on prod without the owner's OK).
+
+## v3: the in-app importer (supersedes the CLI parts of (b), (e), (h))
+
+### Where
+
+Project Sales > Configuration > **Project import** (`/project-sales/import`), next to Setup / Series / Price Floors in `sorento_crm_frontend/config/menu.config.tsx:268` (both menu trees).
+
+New permissions:
+- `projects.import.view`: see runs and their results.
+- `projects.import.run`: upload, map, preview, import and revert.
+
+Both are seeded to admin. Every route checks one of them and the company scope.
+
+### Flow (one run = one uploaded file)
+
+1. **List of runs.** The standard DataGrid with Search, Filters, Columns and **Create** on one row. Columns: Run no., File, Uploaded by, Uploaded on, Status (Draft / Previewed / Imported / Reverted), Rows, Created, Skipped, To review. Every column sorts on the server. Clicking a row opens the run.
+2. **Create.** A dialog with the shared `FileDropzone` (`components/common/FileDropzone.tsx:59`), xlsx only, at most 10 MB.
+   - The server reads the workbook and lists the sheets with their row counts. A sheet with a PS-number column is ticked; `SUMMARY JAN-JUN` is unticked.
+   - The file is stored on the run (`import_jobs.source_file_key`, the same storage path every import uses). The dialog closes onto the run page.
+3. **Run page, step "Columns".** Reuse `ImportColumnMapper` (`components/common/ImportColumnMapper.tsx:127`) over a header probe: sample | heading as written | CRM field.
+   - Headings resolve through the existing alias table `import_field_alias` (`models/import_alias.py`) under a new doc type `project_po_register`. A confirmed choice is saved, so the next file with the same headings skips this step.
+   - PS number, Customer and PO number are required. Without them, Next stays disabled and a message sits next to the missing field.
+4. **Step "Values".** Line tabs: Customers | Projects | Developers | People. Each tab is a DataGrid listing one line per distinct value in the file (trimmed, spaces collapsed, upper-cased, so only case and spacing variants fold together). Columns: Value in file | Rows | Linked to | Set by.
+   - **Linked to** is a picker per line:
+     - Customers: an existing customer by name or debtor code (`CustomerDebtorCombobox`), or Skip.
+     - Projects: one line per (customer, project name) pair. Options: an existing project by code or title, **Create new** (title prefilled with the file's text, editable; lines given the same new title become ONE project), or Skip.
+     - Developers: an existing developer party, Create new, or None.
+     - People: an existing user, or None.
+   - A line with no choice reads "To do". The tab label counts them ("Projects 12 to do"), and that count equals the rows under the "To do" filter.
+   - Customer lines whose rows all carry a synced SO resolve from the SO's debtor and read "From SO". The person can still change them.
+   - Bulk: tick lines, then ONE action button (Link to..., Create new, Skip / None). It applies to every ticked line and is cancelled as a whole.
+   - **Saved mappings:** every choice a person makes is saved per company (`projects.import_value_maps`, new table, below) with who and when. On the next file, a line whose exact value (after the trim/case fold above) was saved before is prefilled and shows "Saved, <person>, dd/mm/yyyy". That is reuse of a link a person set, not a name guess. A value never seen before is always "To do". No suggestion is ever saved without a person picking it.
+5. **Step "Preview"** (the dry run: the same function as Import, rolled back).
+   - Counts by outcome: Will create / Already imported / Skipped / Needs review / Errors. Then a DataGrid of the rows: Sheet, Row, PS no., Customer, Project, PO no., PO date, Outcome, Reason.
+   - Outcome and Reason are multi-select filters. Clicking a Needs-review row jumps to the Values line that blocks it.
+   - The one main button is **Import**. Rows that need review are left out and named in the notice; the batch still goes through.
+6. **Import.** Queued on the `imports` RQ queue. The upload-activity drawer (`useImportJobDrawer.ts:19`) shows progress, and the page ends in the results.
+7. **Results** (status Imported). The run page reuses `OutcomeBreakdownCard` and `ImportJobRowsCard` (`system-management/import-jobs/components/`). Tabs: Results | Values (read-only, as used) | History.
+   - **Revert** sits in the gear menu as a deferred action (countdown + Cancel, no confirm dialog). It removes what this run created, keeps any record edited since (named in the result), and the run then reads Reverted.
+
+A later file is a new run. Its values arrive prefilled from the saved mappings, so only new names need a person.
+
+### Data (one additive migration)
+
+- New table `projects.import_value_maps`:
+  - columns: `id` uuid, `company_id`, `kind` (customer / project / developer / person), `value_key` (the folded text), `value_text` (as first seen), `customer_value_key` (for a project pair, else null), `action` (link / create / skip / none), `target_id` (nullable), `new_title` (create), `set_by_user_id`, `set_at`, `updated_at`;
+  - unique (company_id, kind, customer_value_key, value_key);
+  - `CompanyScopedMixin`.
+  - After a run creates a project or party for a "create" line, the line is rewritten to "link" to the record it created. A later file therefore attaches to that project and never makes a second one.
+- Runs and the run tag stay `import_jobs` (`job_type = project_po_register`) and `import_job_rows` (entity_type + entity_id per created record). No column is added to projects or POs.
+- No change to any existing table. The header aliases use the existing table with a new doc type value.
+
+### Rules unchanged from v2
+
+Explicit links only. Create-only (existing projects and POs are never edited; `changed_in_file` is reported). Cancelled rows are skipped and listed. On hold is imported with its text in the notes. Messy cells are imported as written and flagged. Notes dates read dd/mm/yyyy. No notification, email, WhatsApp or template task. `po_source = contractor_direct`; an issuer only from an existing party keyed to the customer; no party is created from a customer. The registration lock is never bypassed. The real file and the full results never leave the company's CRM; only crew's masked report is posted.
+
+### Open questions (v3)
+
+1. **Who may run it.** (a) A new `projects.import.run` permission, granted to admin only at first (recommended: a run creates hundreds of projects); (b) anyone with project create rights.
+2. **Revert window.** (a) Revert is offered on any Imported run whose records are unedited, with no time limit (recommended: the edited ones are always kept anyway); (b) only within 24 hours.
+3. **Where the first real run happens.** (a) On the owner's word, crew first runs the real file on a dev copy and posts the masked preview counts; then a person runs it on the live CRM through this screen (recommended); (b) straight on the live CRM, preview first.
