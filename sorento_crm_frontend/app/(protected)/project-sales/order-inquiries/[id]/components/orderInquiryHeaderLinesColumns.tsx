@@ -522,12 +522,23 @@ export interface SparePartLineEdit {
   unit_price?: string;
 }
 
-/** "was 10" beside a value the approver moved off what the requester submitted. */
-function WasMark({ current, submitted }: { current?: string | null; submitted?: string | null }) {
+/** "was 10" (a qty) or "was RM 35.00" (money, in the request's currency) beside a value the
+ *  approver moved off what the requester submitted. */
+function WasMark({
+  current,
+  submitted,
+  money,
+  currency,
+}: {
+  current?: string | null;
+  submitted?: string | null;
+  money?: boolean;
+  currency?: string | null;
+}) {
   if (!changedFrom(current, submitted)) return null;
   return (
     <span className="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">
-      was {formatInquiryQty(submitted)}
+      was {money ? formatMoneyExact(submitted, currency) : formatInquiryQty(submitted)}
     </span>
   );
 }
@@ -645,7 +656,12 @@ function sparePartLineColumns({
                 {formatMoneyExact(primary.unit_price, currency)}
               </span>
             )}
-            <WasMark current={primary.unit_price} submitted={primary.submitted_unit_price} />
+            <WasMark
+              current={primary.unit_price}
+              submitted={primary.submitted_unit_price}
+              money
+              currency={currency}
+            />
           </span>
         );
       },

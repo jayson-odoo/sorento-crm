@@ -38,7 +38,10 @@ function photoCount(count: number, verb: string): string {
 
 /** "SP-SEAL-40 qty 10 to 6", "SP-HINGE 1 photo added": every change the approver made
  *  against what was submitted, per line. */
-export function approverChanges(rows: OrderInquiryWorklistRow[]): string[] {
+export function approverChanges(
+  rows: OrderInquiryWorklistRow[],
+  currency?: string | null,
+): string[] {
   const out: string[] = [];
   rows.forEach((row, index) => {
     const name = row.item_code ? `${row.item_code}` : `line ${index + 1}`;
@@ -47,7 +50,10 @@ export function approverChanges(rows: OrderInquiryWorklistRow[]): string[] {
     }
     if (changedFrom(row.unit_price, row.submitted_unit_price)) {
       out.push(
-        `${name} unit price ${formatInquiryQty(row.submitted_unit_price)} to ${formatInquiryQty(row.unit_price)}`,
+        `${name} unit price ${formatMoneyExact(row.submitted_unit_price, currency)} to ${formatMoneyExact(
+          row.unit_price,
+          currency,
+        )}`,
       );
     }
     const added = row.photo_changes?.added ?? 0;
@@ -99,7 +105,7 @@ export function SparePartRequestActions({
   const live = rows.filter((row) => row.state !== 'cancelled');
   const going = live.filter((row) => Number(row.qty ?? 0) > 0);
   const total = going.reduce((sum, row) => sum + Number(row.line_total ?? 0), 0).toFixed(4);
-  const changes = approverChanges(live);
+  const changes = approverChanges(live, header.currency);
 
   if (header.can_decide) {
     return (

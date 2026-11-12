@@ -363,16 +363,18 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
         bodyClassName="p-0"
       >
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] table-fixed text-sm">
+          {/* 840px of columns: fits the card at 1280 (935px inside); below that the table
+              scrolls inside its own box, so 375 stays usable. */}
+          <table className="w-full min-w-[840px] table-fixed text-sm">
             <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="w-14 px-3 py-2 font-medium">No.</th>
-                <th className="w-64 px-3 py-2 font-medium">Product</th>
-                <th className="w-48 px-3 py-2 font-medium">Location</th>
-                <th className="w-28 px-3 py-2 text-right font-medium">Qty</th>
-                <th className="w-32 px-3 py-2 text-right font-medium">Unit price</th>
-                <th className="w-36 px-3 py-2 text-right font-medium">Total</th>
-                <th className="w-20 px-3 py-2">
+                <th className="w-12 px-3 py-2 font-medium">No.</th>
+                <th className="w-56 px-3 py-2 font-medium">Product</th>
+                <th className="w-40 px-3 py-2 font-medium">Location</th>
+                <th className="w-24 px-3 py-2 text-right font-medium">Qty</th>
+                <th className="w-28 px-3 py-2 text-right font-medium">Unit price</th>
+                <th className="w-32 px-3 py-2 text-right font-medium">Total</th>
+                <th className="w-[72px] px-3 py-2">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>

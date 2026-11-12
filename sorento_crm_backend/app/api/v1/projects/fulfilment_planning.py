@@ -32,7 +32,11 @@ from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
 from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import (
+    require_any_permission_with_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.models.product import Product
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_board import (
@@ -1047,7 +1051,11 @@ def get_stock_detail(
             "behalf, which is what the pile looks like to somebody not in it."
         ),
     ),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    # SPARE-PART-ORDER-REQUEST (B3): a spare part requester reads a line's stock too (the
+    # line's stock table, UAC R3). Quantities and document numbers only; no cost is on it.
+    _user: dict = Depends(
+        require_any_permission_with_api_key([VIEW, "procurement.spare_part_requests.create"])
+    ),
     db: Session = Depends(get_db),
 ):
     """One product at one location: On Hand, SO Qty, SPO Qty, Available, and the documents.

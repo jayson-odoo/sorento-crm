@@ -205,6 +205,10 @@ _OWN_PERMISSION_PREFIXES = (
     "/plans",
     "/planning-changes",
     "/divergences",
+    # SPARE-PART-ORDER-REQUEST (B2): a spare part request is no project's record. Every
+    # route is gated by its own slug and scoped to the requester's own requests (or the
+    # stage team that decides), in `spare_part_request_service`.
+    "/spare-part-requests",
 )
 #: Reference reads that carry an id but no project (PS-REGISTRATION-V3): a party's contacts,
 #: picked at registration like the party list itself. GET only; writes keep their own slug.
