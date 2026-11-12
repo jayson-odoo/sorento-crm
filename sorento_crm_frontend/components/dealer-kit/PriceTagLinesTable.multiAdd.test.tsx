@@ -90,7 +90,7 @@ describe('AC-3 addPickedItems', () => {
 
     const multi = hookSetup([row('A')]);
     const x = opts.find((o) => o.value === 'product:p-x')!;
-    act(() => multi.addPickedItems(result.current.editor, result.current.lines, 'A', [x, y]));
+    act(() => addPickedItems(multi.result.current.editor, multi.result.current.lines, 'A', [x, y]));
 
     const strip = ({ key: _k, ...rest }: DraftLine) => rest;
     expect(strip(multi.result.current.lines[1])).toEqual(strip(single.result.current.lines[0]));
@@ -139,12 +139,12 @@ describe('AC-4 no duplicates', () => {
 });
 
 describe('AC-9 Discontinued', () => {
-  it('tagItemOption gives badgeText Discontinued for a discontinued product only', async () => {
+  it('item options: Discontinued on a discontinued product, Set on a set, nothing on a normal product', async () => {
     const { result } = hookSetup([row('A')]);
     const opts = await options(result);
     expect(opts.find((o) => o.value === 'product:p-old')!.badgeText).toBe('Discontinued');
     expect(opts.find((o) => o.value === 'product:p-x')!.badgeText).toBeUndefined();
-    expect(opts.find((o) => o.value === 'product_set:s-z')!.badgeText).toBeUndefined();
+    expect(opts.find((o) => o.value === 'product_set:s-z')!.badgeText).toBe('Set');
   });
 });
 
