@@ -7,6 +7,8 @@ pgvector column. Callers keep their own caching, chunking policy, retry waits an
 from __future__ import annotations
 
 import math
+import os
+import threading
 from typing import Any, Optional
 
 import httpx
@@ -33,9 +35,30 @@ class EmbeddingHTTPError(RuntimeError):
         self.status_code = status_code
 
 
-def _post(client: httpx.Client, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
+#: CHATBOT-SPEED: one keep-alive client per process, so a chatbot turn's embedding round trip reuses an open
+#: connection instead of paying a new DNS + TCP + TLS handshake (every call built its own client since #1967).
+#: Re-made after a fork (gunicorn workers, RQ work-horses): a child never uses its parent's sockets.
+#: The timeout is per request, so each caller keeps its own.
+_client: httpx.Client | None = None
+_client_pid: int | None = None
+_client_lock = threading.Lock()
+
+
+def _shared_client() -> httpx.Client:
+    global _client, _client_pid
+    pid = os.getpid()
+    with _client_lock:
+        if _client is None or _client_pid != pid:
+            _client = httpx.Client()
+            _client_pid = pid
+        return _client
+
+
+def _post(
+    client: httpx.Client, url: str, headers: dict[str, str], body: dict[str, Any], timeout: float
+) -> dict[str, Any]:
     try:
-        response = client.post(url, headers=headers, json=body)
+        response = client.post(url, headers=headers, json=body, timeout=timeout)
     except httpx.HTTPError as exc:  # network-level failure
         raise RuntimeError(f"Embedding request failed: {exc}") from exc
     if response.status_code >= 400:
@@ -68,45 +91,46 @@ def _gemini(texts: list[str], model: str, api_key: str, timeout: float) -> list[
 
     out: list[list[float]] = []
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
-    with httpx.Client(timeout=timeout) as client:
-        for i in range(0, len(texts), GEMINI_BATCH):
-            batch = texts[i : i + GEMINI_BATCH]
-            body = _post(
-                client,
-                f"{GEMINI_API_BASE}/models/{model}:batchEmbedContents",
-                headers,
-                {
-                    "requests": [
-                        {
-                            "model": f"models/{model}",
-                            "content": {"parts": [{"text": t}]},
-                            "outputDimensionality": EMBEDDING_DIMENSIONS,
-                        }
-                        for t in batch
-                    ]
-                },
-            )
-            vectors = [e.get("values") or [] for e in body.get("embeddings") or []]
-            if len(vectors) != len(batch) or not all(vectors):
-                raise RuntimeError("Gemini returned the wrong number of vectors.")
-            out.extend(_unit([float(v) for v in vec]) for vec in vectors)
+    client = _shared_client()
+    for i in range(0, len(texts), GEMINI_BATCH):
+        batch = texts[i : i + GEMINI_BATCH]
+        body = _post(
+            client,
+            f"{GEMINI_API_BASE}/models/{model}:batchEmbedContents",
+            headers,
+            {
+                "requests": [
+                    {
+                        "model": f"models/{model}",
+                        "content": {"parts": [{"text": t}]},
+                        "outputDimensionality": EMBEDDING_DIMENSIONS,
+                    }
+                    for t in batch
+                ]
+            },
+            timeout,
+        )
+        vectors = [e.get("values") or [] for e in body.get("embeddings") or []]
+        if len(vectors) != len(batch) or not all(vectors):
+            raise RuntimeError("Gemini returned the wrong number of vectors.")
+        out.extend(_unit([float(v) for v in vec]) for vec in vectors)
     return out
 
 
 def _openai(texts: list[str], model: str, api_key: str, timeout: float) -> list[list[float]]:
     out: list[list[float]] = []
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    with httpx.Client(timeout=timeout) as client:
-        for i in range(0, len(texts), OPENAI_BATCH):
-            batch = texts[i : i + OPENAI_BATCH]
-            payload: dict[str, Any] = {"model": model, "input": batch}
-            if model.startswith("text-embedding-3") and model != "text-embedding-3-small":
-                payload["dimensions"] = EMBEDDING_DIMENSIONS  # native size is larger
-            data = _post(client, settings.openai_embeddings_url, headers, payload)
-            items = sorted(data.get("data") or [], key=lambda item: item.get("index", 0))
-            if len(items) != len(batch):
-                raise ValueError("Embedding provider returned mismatched vector count")
-            out.extend(_unit([float(v) for v in item["embedding"]]) for item in items)
+    client = _shared_client()
+    for i in range(0, len(texts), OPENAI_BATCH):
+        batch = texts[i : i + OPENAI_BATCH]
+        payload: dict[str, Any] = {"model": model, "input": batch}
+        if model.startswith("text-embedding-3") and model != "text-embedding-3-small":
+            payload["dimensions"] = EMBEDDING_DIMENSIONS  # native size is larger
+        data = _post(client, settings.openai_embeddings_url, headers, payload, timeout)
+        items = sorted(data.get("data") or [], key=lambda item: item.get("index", 0))
+        if len(items) != len(batch):
+            raise ValueError("Embedding provider returned mismatched vector count")
+        out.extend(_unit([float(v) for v in item["embedding"]]) for item in items)
     return out
 
 
