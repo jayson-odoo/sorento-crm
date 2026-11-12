@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-CODE-MATCH (stock code matching, close-code offers)
 
-Status: Build, slice 1 (unparked 12 Nov; card v3 filed). Track: size M, lead pattern, cloud lane. Phase 1 of the
+Status: Build, slice 1 (card v3 approved by crew 12 Nov with 8 changes, folded in below). Track: size M, lead pattern, cloud lane. Phase 1 of the
 chatbot plan v2 (D3, owner 12 Nov 16:08 "ok"): lookup only, no parser prompt change, no migration.
 
 Card: `CARD-chatbot-code-match-12nov.md` (v3, generic rules R0-R7). UAC: `chatbot-code-match-acceptance-criteria.md`.
@@ -27,25 +27,48 @@ Console questions (dealer contact):
 
 ### Slice 2: all-typed-parts ranking (R2)
 Change: one ranking step over the candidate list `did_you_mean_by_token` reads; same for staff and dealers.
-Console: "8354-SH-UF" ranks SRTWC8354-SH-UF first; a short "8152" keeps the which-one pick, all-parts first; a
-two-code ask ranks each code the same way.
+Console questions (staff and dealer):
+1. "8354-SH-UF stock" - before: trigram order; after: SRTWC8354-SH-UF first (every typed part held).
+2. "8152 stock" - before/after: which-one pick; after: all-parts codes first.
+3. "BT015SSCR stock" (dash only) - answered directly before and after (guard).
+4. "SRTWC8354-SH-UF x 2, Swtwc8152 x 1" - each code ranked the same way as alone.
 
 ### Slice 3: sets through the membership table (R3)
 Change: a token close to a registered set offers the set then its members (`product_set_members`); an exact set on a
 stock ask answers the set.
-Console: "CWC604RL x 2" offers CWC604-P-RL and its members; "CWC604PRL stock" answers the set.
+Also: the "X" insert in the family rule (`product_code_family.py:88`) is removed (plan v2 section 3b, D3); the
+set rule replaces it; the frozen set (slice 5) must show no regression.
+Console questions:
+1. "CWC604RL x 2" - before: refer line / unrelated list; after: offer CWC604-P-RL (set) then its members.
+2. "CWC604PRL stock" - after: the set answered (members' stock, complete sets).
+3. "Srtwc7604 p trap price" (was found by the X insert) - same answer as before, now through the set/member rule.
+4. A dealer asking a set whose members they may not see - not offered.
 
 ### Slice 4: size from stored values (R4)
 Change: a number in the typed code is read against the category's size key (Q2, registry), stored values only; offers
 show "Size: N mm" / "Size: not recorded". Data list (read-only SQL) of active products in sized categories with no
 stored size (the review's 419 of 979 water closets).
-Console: "8152-300-SH"; "SRTWC8152-SH-UF-250"; a size no member holds.
+Also: "None with size 300 mm." (`lanes/business/answer.py:2872`) takes its unit from the registry key.
+Console questions:
+1. "8152-300-SH stock" - before: "Couldn't find"; after: "Did you mean SRTWC8152-SH-300?" with "Size: 300 mm".
+2. "SRTWC8152-SH-UF-250 stock" - after: close codes with stored sizes or "Size: not recorded"; never answered as 250.
+3. "SRTWC8152-SH-UF-400" (no member holds 400) - after: "Couldn't find" plus close codes with stored sizes.
+4. A category with two length keys holding the typed number - every matching key offered, none guessed.
 
 ### Slice 5: frozen set + before/after
-Frozen set (owner-FAIL code lookups, the 23 defect turns, 34 recovered typos, multi-turn follow-ups): $0 replay first,
-LIVE x3 after crew's cap ask; before/after "couldn't find" and dead-end rates; hand-test script.
+Gate: the frozen set = the 23 sampled defect turns + the 34 recovered typos + every past owner-FAIL code-lookup /
+stock "not found" turn + multi-turn follow-ups (refine, answer the bot's question, topic switch). Pass = 0 wrong codes
+answered directly, and no regression on turns that pass on main. Order: US$0 replay of recorded turns first; then LIVE
+x3 under a crew-approved cap (`crew-ask: live run: <turns> x <runs>, cap US$X`), x1 before any set, stop at a degrading
+checkpoint; every paid run ledgered in a PR comment. After 3 failed rounds stop and re-scope with the owner.
+Before/after "couldn't find" and dead-end rates; hand-test script.
+Console questions: 3-5 turns picked from the frozen set, before -> after.
+
+## crew-done criteria
+Red-first + kill proof per slice; `crew-tests:` on the exact head; browser pass note; frozen set LIVE x3 pass;
+"generic: N checked, 0 open" (no company-specific letter, marker, size or code shape in new code); "standing rules: N
+checked, 0 open"; reused functions listed with file:line; guide line.
 
 ## Not in this lane
 Parser prompt or publish (lane 4); engine stale-typo / focus-carry path; scoreboard queries (CHATBOT-SCOREBOARD #2369);
-stage timing, `chatbot_lookup_edits.py`, `head/lookup_lists.py` (CHATBOT-SPEED #2368); the existing "X" family insert
-(Q4).
+stage timing, `chatbot_lookup_edits.py`, `head/lookup_lists.py` (CHATBOT-SPEED #2368).

@@ -22,7 +22,7 @@ the letters-then-digits code shape are gone.
 | Set entity with members, stock, complete-sets figure | `entity_resolver.py:931` `_product_set_entities`; members in `product_set_members` (`app/models/product_set.py:88`) | reuse (slice 3) |
 | Size keys by data: every numeric key in the registry's length unit, `matches_bare_size`, a key a class scopes (`applies_when.class`) | `chatbot/head/bare_size.py:1-11`, `:125-134`; `app/models/product_spec.py:32-80` | reuse as the category's size setting (slice 4, Q2) |
 | Units and unit aliases | `product_spec_registry.unit`, `unit_aliases` (`product_spec.py:52`, `:80`) | reuse (slice 4) |
-| Family by code word | `app/services/product_code_family.py:47` `_CODE_WORD` (letters then digits), `:71` `_family_rows` (inserts an "X") | NOT extended: Sorento-shaped; new matching goes through the generic probe (slice 5 retires the X insert only if the owner asks, Q4) |
+| Family by code word | `app/services/product_code_family.py:47` `_CODE_WORD` (letters then digits), `:71` `_family_rows` (inserts an "X") | the X insert is removed in slice 3 (crew 12 Nov, plan v2 3b); new matching goes through the generic probe |
 | Turn trace | `turn_trace.add(...)` (e.g. `engine.py:7759`) | one `code_candidates` entry (slice 1) |
 
 ## Rules
@@ -96,3 +96,7 @@ Recommendation: (a): the review's 20 "right code never offered" turns are both a
 
 - Owner 12 Nov ~16:05: no default size ("we shouldn't default 250mm").
 - Owner 12 Nov 16:08 / plan v2: no customer-specific rule; sizes, units and set parts come from settings and tables.
+- Crew check 12 Nov: approved with 8 changes (X insert removed in slice 3; Console questions per slice; dash-only AC;
+  generic + standing-rules counts in crew-done; registry unit in "None with size"; slice 5 gate written out; red tests
+  for a hidden set, an inactive/placeholder code and "no"; several length keys offered, never guessed). Q1-Q5 settled
+  as recommended except Q4, now (b).
