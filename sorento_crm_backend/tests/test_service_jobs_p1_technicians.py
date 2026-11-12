@@ -29,11 +29,11 @@ def _names(resp):
 def test_f2_create_get_update(env):
     n = unique_code("Tech")
     with api(env) as client:
-        r = client.post(TECHS, json={"name": n, "phone": "+60111222333", "employment_type": "contractor"})
+        r = client.post(TECHS, json={"name": n, "phone": "+60111111111", "employment_type": "contractor"})
         assert r.status_code in (200, 201), r.text
         body = r.json()
         assert body["name"] == n and body["employment_type"] == "contractor" and body["is_active"] is True
-        up = client.put(f"{TECHS}/{body['id']}", json={"name": n + "x", "employment_type": "employee", "phone": "+60198765432"})
+        up = client.put(f"{TECHS}/{body['id']}", json={"name": n + "x", "employment_type": "employee", "phone": "+60170000501"})
         assert up.status_code == 200, up.text
         assert up.json()["name"] == n + "x" and up.json()["employment_type"] == "employee"
         assert n + "x" in _names(client.get(TECHS, params={"query": n}))
