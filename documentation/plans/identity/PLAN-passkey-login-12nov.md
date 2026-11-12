@@ -59,8 +59,12 @@ timed on a dev copy before merge.
 ### Rules
 - Opt-in: nobody gets a passkey unless they add one. Password and phone stay.
 - A passkey works only on the address it was made on (a test copy passkey does not work on the
-  live CRM). Addresses that may use passkeys are configuration (`WEBAUTHN_ORIGINS`); where it is
-  unset, passkeys are off and the button does not show.
+  live CRM). The hostnames that may use passkeys are configuration, `WEBAUTHN_RP_IDS`
+  (comma-separated hostnames, no scheme or port; the RP ID is the hostname). A browser origin is
+  accepted when its hostname is listed and it is `https://` on any port, or `http://localhost`
+  (any port, dev only when `localhost` is listed). Where it is unset, passkeys are off and the
+  button does not show. Never hard-coded, and no real hostname is committed: the live and
+  test-copy values go only in each server's env (owner answer Q5, 12 Nov).
 - Server checks every sign-in: one-time challenge (5 min, used once), the address, the device's
   signature, user verification (Face ID / fingerprint / PIN, not just "touch"), sign counter.
 - A blocked, inactive or trashed user cannot sign in with a passkey (same rule as password).
@@ -98,9 +102,9 @@ timed on a dev copy before merge.
 4. Admin visibility: (a) the "Passkeys" row in the user's Sign-in card only, (b) also a sortable
    "Passkeys" count column on the Users list. **Recommend (a)** now; (b) when someone needs to
    filter by it.
-5. Live address: which hostname(s) do staff open the CRM on in production (one, or also a second
-   address)? Needed only as the `WEBAUTHN_ORIGINS` value on the server's env, never in the repo.
-   **Recommend** one hostname; passkeys are then on there and on https test copies.
+5. Live address. **Answered by owner (12 Nov ~17:35)**: one production hostname; test copies are
+   one tailnet hostname on several ports once Tailscale HTTPS is on. Both go in env as
+   `WEBAUTHN_RP_IDS`, never in the repo.
 
 ### Mock
 `documentation/mockups/passkey-login/index.html` (v1): sign-in page, Passkeys card (filled +
@@ -108,3 +112,4 @@ empty), admin Sign-in card + lightbox.
 
 ## Status log
 - 12 Nov 2026: lane opened; discovery done; behaviour card + mock v1 filed.
+- 12 Nov 2026: Q5 answered; config is a hostname list `WEBAUTHN_RP_IDS` (ports vary per test copy).
