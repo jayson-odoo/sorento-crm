@@ -63,11 +63,11 @@ COMMIT;
 2. Open OI-A, Lines tab. Open the State filter and read its options; then pick each of "Waiting for CS",
    "To order", "Done" in turn. Then open OI-B, Lines tab, and pick "Line cancelled", then "Waiting for CS".
 3. Open OI-C, Lines tab, State filter: pick "Request to reserve".
-4. Back on Order Inquiries, switch to the Lines view. Open the Confirmed filter and read its options; pick
+4. Back on Order Inquiries, switch to the Lines view. Open the Done filter (the purchasing confirm filter, labelled "Done") and read its options; pick
    "Waiting for CS", then "To order", then "Done".
 5. Look at the filter panel of that Lines view for a "State" filter.
 6. At phone width (375 px), repeat steps 1 and 2.
-7. Click Fulfilment Planning in the sidebar, search SO-A, open it. Keep Buy for the moved line ("Change
+7. Click Fulfilment Planning in the sidebar, tick SO-A's row and click "Plan <SO-A number>" (or open SO-A's order page and click its "Plan" link). Keep Buy for the moved line ("Change
    decision" > "Buy the whole 2" > Save decision; do NOT click "Save all suggested"), then the board's Confirm.
 8. Open SO-B from Sales Orders (sidebar) and click its "Plan" button on the order page. On the board, read
    SO-B's lines, click "Save all suggested", then "Confirm (3)" and confirm in the popup.
@@ -84,7 +84,7 @@ COMMIT;
    marker next to it. Each option shows only the lines whose State reads that word (a waiting cancelled line
    matches both "Line cancelled" and "Waiting for CS"); the choice survives a reload.
 3. Step 3: only the line with the reserve request shows.
-4. Step 4: the Confirmed filter's options are the Status column's words (To order, Done, Rejected, Waiting
+4. Step 4: the Done filter's options are the Status column's words (To order, Done, Rejected, Waiting
    for CS, SO cancelled, Line cancelled, All); each shows only rows whose Status reads that word; each
    option's count equals the rows shown.
 5. Step 5: there is no "State" filter on the Lines view (it has no State column).
@@ -94,8 +94,8 @@ COMMIT;
 8. Step 8: the SO-B order page shows a "Plan" button (owner F1) and it opens the board. Each SO-B line reads
    "Change proposed" with Now "Cancel line"; before saving, the button reads "Confirm (0)"; after "Save all
    suggested" it reads "Confirm (3)". Nowhere on the board, the popup or the result is "Apply AutoCount
-   change" (owner F2: one Decide -> Confirm path). The result reads "SO-B: confirmed as revision N (3
-   purchase rows handed over)"; SO-B leaves the planning list.
+   change" (owner F2: one Decide -> Confirm path). The result reads "SO-B: confirmed as revision 1 (3
+   purchase rows handed over)", with no "Posted ..., server confirmed ..." warning under it; SO-B leaves the planning list.
 9. Step 9: the Lines tab reads "Every line on this order inquiry is cancelled." (not "Nothing was raised on
    this order inquiry."); History shows "Cancelled <item>" once per row.
 10. Step 10: SO-A's handover lists the moved line with remark DELAY; SO-B's lists every line CANCEL ALL;
