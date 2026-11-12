@@ -380,7 +380,11 @@ def product_suggestions(db: Any, code: str) -> list[str]:
     resolver's own `alternatives_active_only` filter). Best effort inside a savepoint; a
     failed probe offers nothing and the escalation goes out as before.
     """
-    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR, _drop_inactive_products, _trgm_lookup
+    from app.services.entity_resolver import (
+        ENTITY_MISS_SUGGEST_FLOOR,
+        _drop_inactive_products,
+        _trgm_lookup,
+    )
 
     with db.begin_nested():
         hits = _drop_inactive_products(db, _trgm_lookup(db, code, frozenset({"product"})))
