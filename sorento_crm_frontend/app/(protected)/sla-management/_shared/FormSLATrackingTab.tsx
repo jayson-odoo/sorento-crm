@@ -125,6 +125,14 @@ function formatSecondsToDurationWithSeconds(
   return formatDurationWithSeconds(seconds * 1000);
 }
 
+/**
+ * The list while the read is on its way: ONE array, not a new `[]` per render. The table resets
+ * its page whenever its data changes identity, and that reset renders the tab again, so a fresh
+ * empty list per render looped for as long as the read was pending (inside a tab click it froze
+ * the page: the order change notice's SLA tab, browser pass round 7).
+ */
+const NO_TRACKERS: ConversationSLATrackingDetail[] = [];
+
 export default function FormSLATrackingTab({
   sourceEntityType,
   sourceEntityId,
@@ -447,7 +455,7 @@ export default function FormSLATrackingTab({
     [],
   );
 
-  const trackers = data || [];
+  const trackers = data ?? NO_TRACKERS;
   const table = useReactTable({
     columns,
     data: trackers,

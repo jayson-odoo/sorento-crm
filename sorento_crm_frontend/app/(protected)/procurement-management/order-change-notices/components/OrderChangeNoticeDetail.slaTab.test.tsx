@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 if (!window.matchMedia) {
@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
   get: vi.fn(),
   submit: vi.fn(),
   trackers: vi.fn(),
+  // How often the SLA grid's pager drew: one per render of the tab's grid.
+  pagerRenders: 0,
 }));
 
 // Next's router syncs history.replaceState into useSearchParams (useUrlTab relies on it), so a tab
@@ -131,6 +133,13 @@ vi.mock('@/components/ui/dropdown-menu', async (importOriginal) => {
   };
 });
 
+// The grid's pager is the render counter (the tab draws it on every render of its grid).
+vi.mock('@/components/ui/data-grid-pagination', () => ({
+  DataGridPagination: () => {
+    state.pagerRenders += 1;
+    return null;
+  },
+}));
 vi.mock('../services/orderChangeNoticeService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/orderChangeNoticeService')>();
   return {
@@ -149,10 +158,14 @@ function mount(record: Record<string, unknown>, perms: string[]) {
   state.perms = new Set([VIEW, ...perms]);
   state.get.mockResolvedValue(record);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // StrictMode, as the app runs in dev (next.config `reactStrictMode`): the double render is
+  // what the browser pass hit.
   return render(
-    <QueryClientProvider client={client}>
-      <OrderChangeNoticeDetail ocnId={OCN_ID} />
-    </QueryClientProvider>,
+    <React.StrictMode>
+      <QueryClientProvider client={client}>
+        <OrderChangeNoticeDetail ocnId={OCN_ID} />
+      </QueryClientProvider>
+    </React.StrictMode>,
   );
 }
 const ready = () => screen.findByRole('heading', { name: /OCN26-0302/ });
@@ -187,6 +200,28 @@ async function openSla() {
 }
 
 describe('round 7: the SLA tab renders on the notice detail (browser pass blocker)', () => {
+  it('settles while the tracker read is still on its way (the freeze)', async () => {
+    // A read that has not answered yet: the grid draws its loading rows. Before the fix every
+    // render handed the table a new empty list, the table reset its page for each one, and that
+    // reset rendered the tab again, for ever. In the browser it ran inside the tab click and
+    // froze the page; here it shows as a grid that never stops drawing.
+    state.trackers.mockReturnValue(new Promise(() => {}));
+    mount(ocnDetail({ status: 'submitted' }), []);
+    await openSla();
+    expect(await screen.findByText(/0 trackers for this/)).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    // Next's router applies the tab URL a beat after the click, so the page renders again with
+    // the tab already up: that render is what set the loop going.
+    act(() => {
+      window.history.replaceState(null, '', `${window.location.pathname}?tab=sla&from=list`);
+    });
+    state.pagerRenders = 0;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(state.pagerRenders).toBeLessThan(5);
+    fireEvent.click(screen.getByRole('tab', { name: /^History/ }));
+    expect(await screen.findByTestId('audit-trail')).toBeTruthy();
+  }, 15000);
+
   it('with no tracker it shows the empty state', async () => {
     state.trackers.mockResolvedValue([]);
     mount(ocnDetail({ status: 'submitted' }), []);

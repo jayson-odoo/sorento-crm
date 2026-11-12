@@ -133,7 +133,8 @@ export default function OrderChangeNoticesList() {
         id: 'ocn_date',
         accessorKey: 'ocn_date',
         header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
-        size: 110,
+        // The NPA list's date-only Date column: a 110 cut the date short at 1280.
+        size: 120,
         cell: ({ row }) => (
           <span className="tabular-nums">
             {row.original.ocn_date ? formatDateInMalaysia(row.original.ocn_date) : '-'}

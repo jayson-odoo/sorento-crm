@@ -1278,6 +1278,15 @@ def assert_linkable(
     return row, []
 
 
+#: What each held move is called on the History tab: the form action keys `form_actions`
+#: declares for the notice's approval chain (prefix `ocn`), read by the audit log reader.
+ACTION_WORDS = {
+    "ocn.send_for_approval": "Send for approval",
+    "ocn.reject_submitted": "Send back",
+    "ocn.approval_decision": "Approval decision",
+    "ocn.finalize": "Mark done",
+}
+
 REOPENED_REASON = "Picked for a sales order amendment: the change needs approval."
 
 

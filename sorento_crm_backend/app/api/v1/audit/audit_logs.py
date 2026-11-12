@@ -206,9 +206,30 @@ def _status_labels(db: Session, items) -> dict[str, str]:
     return {str(r.id): r.label for r in rows}
 
 
+def _record_words(entity_type: Optional[str]):
+    """(status words, action words) for a record whose status is a plain code rather than the
+    status engine's `status_id`, so its History reads "Status: Approved -> Done" and "Mark done
+    applied", never the stored code or the form action key. None for every other type."""
+    if entity_type == "order_change_notice":
+        from app.services import order_change_notice_service as ocn
+
+        return ocn.STATUS_LABELS, ocn.ACTION_WORDS
+    return None
+
+
+def _plain_action(description: str, action_words: dict[str, str]) -> str:
+    """"Action applied (ocn.finalize)" -> "Mark done applied" (form_action_service writes the key)."""
+    for key, word in action_words.items():
+        token = f" ({key})"
+        if description.startswith("Action ") and token in description:
+            return word + description[len("Action"):].replace(token, "", 1)
+    return description
+
+
 def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> Optional[str]:
+    words = _record_words(getattr(it, "entity_type", None))
     if it.description:
-        return it.description
+        return _plain_action(it.description, words[1]) if words else it.description
     old = it.old_values or {}
     new = it.new_values or {}
     if status_labels and new.get("status_id") and new.get("status_id") != old.get("status_id"):
@@ -232,6 +253,10 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
         if new.get("description") != old.get("description"):
             return f"Edited file details{f' - {fname}' if fname else ''}"
         return f"Updated {fname}" if fname else "Updated a file"
+    if words and "status" in new and new.get("status") != old.get("status"):
+        frm, to = old.get("status"), new.get("status")
+        said = words[0]
+        return f"Status: {said.get(frm, frm) if frm else '∅'} → {said.get(to, to)}"
     for key in ("status", "approval_status", "order_status"):
         if key in new and new.get(key) != old.get(key):
             frm = old.get(key)
