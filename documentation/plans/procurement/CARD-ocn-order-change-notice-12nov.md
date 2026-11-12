@@ -1,6 +1,7 @@
 # Behaviour card: Order Change Notice (OCN-ORDER-CHANGE-NOTICE)
 
-Status: Gate 1, card v1 filed 12 Nov 2026. Waits for the owner. Size L, full track (migration, new SLA
+Status: Gate 1, card v2 12 Nov 2026 (crew answers on v1 folded in, section 8). Waits for the owner on d1, d2
+and approval of card + mock v2. Size L, full track (migration, new SLA
 rows, portal kind). Mock: `documentation/mockups/ocn/index.html` (Gate 2, filed separately).
 Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Read from `main` aa824637.
 Every name, PO number and item code below is invented (public repo).
@@ -90,13 +91,18 @@ team sets), like `npasla_0001`; a no-op where PR rows are missing. Hours come fr
 | Stage (team set)             | Who                        | Starts on          | Response clock stops on | Resolves on                                 |
 |------------------------------|----------------------------|--------------------|-------------------------|---------------------------------------------|
 | main (`project_sales`)       | Project Sales Admin        | submit             | -                       | send_for_approval, reject_submitted, voided |
-| purchasing (`purchasing`, agent `lead_time_enquiries`) NEW | Purchasing | submit | - | purchasing_comment, voided          |
+| cs_review (`ocn_cs_review`, see below) NEW, d1 | Customer Service | submit | - | cs_comment, voided   |
+| purchasing (`purchasing`, agent `lead_time_enquiries`) NEW, d1 | Purchasing | submit | - | purchasing_comment, voided |
 | project_sales_manager        | Management (default approver first) | send_for_approval | -          | approved, approval_rejected, voided         |
 | customer_service             | Customer Service           | approved           | -                       | resolved (Done), voided                     |
 
-This table is Q4's recommendation (c). Under Q4 (a)/(b) a CS comment stage would also start on submit;
-stage identity is (type, team set) (`form_sla_service.py:880`), so a second CS stage on one record needs
-its own team set code.
+This table is crew's d1 recommendation (both comment steps in parallel on submit; Send for approval waits
+for both comments). Customer Service then appears twice on one record. Stage identity is (type, team set)
+(`form_sla_service.py:880`) and several config lookups take `.first()` by that pair (`:771`, `:269`), so two
+rows on the same `customer_service` team set would let a late CS comment resolve the after-approval stage.
+The CS check therefore gets its own team set code `ocn_cs_review`: the seed copies the existing
+`customer_service` tier -> team rows of the `purchase_request` agent under that code (same teams, same
+members, no new team). Purchasing stage hours: pending the SI/NPA dump (crew asked to confirm them).
 
 ## 4. Worked examples (masked shapes)
 
@@ -160,7 +166,7 @@ its own team set code.
    before/after, date before/after, delivered qty) plus the description. Recommendation (b): purchasing
    answers "stock arrived / can the supplier PO be cancelled" per item, the amendment flow already has
    the change table per line, and lines use the shared line table (standing rule).
-4. **Comment stages.** The paper puts the CS and Purchasing comments ABOVE the management block.
+4. **Comment stages (now owner decision d1, see section 8).** The paper puts the CS and Purchasing comments ABOVE the management block.
    (a) CS and Purchasing each get a comment stage that starts on submit, in parallel with the admin
    check, and Send for approval stays allowed before they answer (management sees a blank comment);
    (b) the same, but Send for approval waits for both comments; (c) no comment stages: only Purchasing
@@ -175,3 +181,37 @@ its own team set code.
    amendment keeps the SO / PO link it was born with (read-only). Neither example has an SO no. and the
    PO is the customer's own text. (Checked: the sponsorship form has NO "required for flagged contacts"
    rule; its project is plain optional, `alembic/versions/315_sponsorship_project_link.py:30`.)
+
+## 8. Crew answers on v1 (12 Nov, from owner rulings) and what is still open
+
+Settled: (1) option (b), own form on `projects.order_change_notices`; the PR's approval, SLA, revise and
+public approval link pieces are made SHARED once, never copied; PR / SF screens untouched. (2) layout and
+buttons = PR (header on top, searchable customer, shared attachments, status chip, rejected = amend and
+resubmit, approved = locked, explicit Revise). (3) Q1 (a) the four paper types, admin-editable; a quantity
+cut is a Cancellation. (4) Q2 (a) risk + guide text shown, no routing. (5) Q3 (b) shared line table,
+product from the product list, qty and date before/after, delivered qty, plus description. (6) Q5 (a)
+project optional + setting "OCN requires a project" (off); PO / SO no. typed; an amendment-born OCN keeps
+its links read-only; never link by matching PO text. (7) Management = the PR approval stage (Project Sales
+Manager, Director escalation), default approver in settings. (8) own `ORDER_CHANGE_NOTICE` policy copied
+from PR tiers 24 / 72 / 24 h, editable. (9) raised in CRM and portal, identical form; staff = view + action
+buttons. (10) the OCN never edits SO, PO or AutoCount; a project SO changes only through its amendment,
+which alone writes AutoCount on publish. (11) open items unchanged (SO changes wait for CS). (12) every
+action in History on the shared component. (13) notices only to whoever must act, PR channels.
+(14) `OCN{yy}-` 4 digits yearly per company; menu next to Sponsorship Forms; project FK ON DELETE SET NULL;
+dates dd/mm/yyyy.
+
+**One change, one notice (mock frame 5).** The amendment dialog (`AmendmentCreateDialog.tsx`) gains one
+clearable searchable field "Order change notice": default "Draft a new notice from this change" (today's
+behaviour, `project_so_delta_service.py:728`), or a person picks one of this project's notices not yet
+linked to another amendment. Picked = no second notice; `so_amendments.ocn_id` points at it. Nothing is
+linked by PO text. The notice's own lines stay as written; the linked amendment's change rows show beside
+them read-only. A hand-raised notice never creates an amendment.
+
+Open, with the owner now:
+- **d1** CS and Purchasing comments before approval. Crew recommends: both steps start in parallel on
+  submit, and Send for approval waits for both comments (refused with a plain reason naming the missing
+  comment). Drawn that way in mock v2 (tag d1).
+- **d2** amendment publish waits for its OCN's approval. Crew recommends yes; that is today's rule
+  (`project_so_delta_service.py:791`), and the OCN's approval becomes what sets `approver_id` /
+  `approved_at`. Drawn in mock v2 frame 5 (tag d2).
+- Data: count of existing amendment-drafted OCN rows (asked); SI/NPA purchasing stage hours (asked).

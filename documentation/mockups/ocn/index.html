@@ -76,6 +76,7 @@ table.grid tr.on td{background:#f8fbff}
 .w375 table.grid{font-size:12px}
 .w375 .btnrow{display:flex;flex-direction:column;gap:8px}.w375 .btnrow .btn{justify-content:center}
 .mbar{height:44px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-weight:700}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
 </style>
 </head>
 <body>
@@ -215,12 +216,13 @@ table.grid tr.on td{background:#f8fbff}
   <colgroup><col style="width:210px"><col style="width:170px"><col style="width:120px"><col></colgroup>
   <tr><th>Step</th><th>Assignee team</th><th>Due</th><th>State</th></tr>
   <tr><td>Admin check</td><td>Project Sales Admin</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
-  <tr><td>Purchasing check <span class="dtag">Q4</span></td><td>Purchasing</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
+  <tr><td>Customer service check <span class="dtag">d1</span></td><td>Customer Service</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
+  <tr><td>Purchasing check <span class="dtag">d1</span></td><td>Purchasing</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
   <tr><td>Management approval</td><td>Management</td><td>10/11/2026</td><td><span class="pill amber">Running</span></td></tr>
   <tr><td>Customer service action</td><td>Customer Service</td><td>-</td><td><span class="pill">Not started</span></td></tr>
  </table></div></div>
 <div class="notes"><ol>
- <li><span class="co">1</span><div><b>SLA tracking tab</b>One row per step with team, due and state. Steps: Admin check and Purchasing check start on submit, Management approval on send for approval, Customer service action on approval. The new Purchasing step uses the existing purchasing team set (new SLA key).<span class="ref">sla-management/_shared/FormSLATrackingTab.tsx ; sorento_crm_backend/app/services/form_sla_service.py (new key order_change_notice)</span></div></li>
+ <li><span class="co">1</span><div><b>SLA tracking tab</b>One row per step with team, due and state. Steps: Admin check, Customer service check and Purchasing check start together on submit (d1: Send for approval waits for both comments), Management approval on send for approval, Customer service action on approval. The new Purchasing step uses the existing purchasing team set (new SLA key).<span class="ref">sla-management/_shared/FormSLATrackingTab.tsx ; sorento_crm_backend/app/services/form_sla_service.py (new key order_change_notice)</span></div></li>
 </ol></div></div>
 
 <!-- ================= FRAME 4 PROJECT PANEL -->
@@ -240,6 +242,29 @@ table.grid tr.on td{background:#f8fbff}
 <div class="notes"><ol>
  <li><span class="co">1</span><div><b>Panel with a small DataGrid</b>Rows open the notice. Sourced from a project endpoint in the sponsorships shape. Plugged in by the PROJECT-RELATED-RECORDS lane.<span class="ref">app/(protected)/project-sales/[projectId]/components/SampleRequestsPanel.tsx (new OrderChangeNoticesPanel.tsx) ; mounted in ProjectDetailClient.tsx ; components/ui/data-grid.tsx</span></div></li>
  <li><span class="co">2</span><div><b>Empty state</b>Heading and hint, no button (one CTA per page). A notice with no project never shows here (Q5).<span class="ref">components/ui/data-grid-table.tsx (empty state) ; pattern SampleRequestsPanel.tsx</span></div></li>
+</ol></div></div>
+
+<!-- ================= FRAME 5 AMENDMENT REUSES AN OCN -->
+<h2 class="ft">5. One change, one notice: an amendment on the same project SO picks the existing OCN (dialog, 1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w900"><div class="content">
+ <div class="card rel" style="max-width:460px;margin:0 auto"><div class="ch">Create the amendment<span class="co pin">1</span></div><div class="cb">
+  <div class="muted xs" style="margin-bottom:10px">2 rows from version 1 to version 2.</div>
+  <div class="rel" style="margin-bottom:10px"><div class="xs b" style="margin-bottom:4px">Order change notice <span class="dtag">d2</span></div><div class="inp">OCN26-0302, Exchange, Approved<span class="muted">x</span></div><span class="co pin">2</span>
+   <div class="dd"><div>Draft a new notice from this change</div><div class="hl">OCN26-0302, Exchange, Approved</div><div>OCN26-0304, Advance, Approved</div></div></div>
+  <div class="xs b" style="margin-bottom:4px">Reason <span class="req">*</span></div><div class="inp ta">Customer revised PO (R1), model change</div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><span class="btn out">Cancel</span><span class="btn">Create amendment</span></div>
+ </div></div>
+ <div class="card rel" style="margin-top:18px"><div class="ch">OCN26-0302, Details: linked amendment<span class="co pin">3</span></div><div class="cb">
+  <table class="grid"><colgroup><col style="width:160px"><col style="width:160px"><col style="width:140px"><col></colgroup>
+  <tr><th>Sales order</th><th>Amendment</th><th>Status</th><th>Change</th></tr>
+  <tr><td>PSO-ALPHA-01</td><td>Version 1 to 2</td><td><span class="pill">Proposed</span></td><td>Model change 842 sets, Collect back 12 sets</td></tr></table>
+ </div></div>
+</div></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>Existing amendment dialog, one field added</b>Today it always drafts a new notice. It keeps doing that by default.<span class="ref">app/(protected)/project-sales/[projectId]/components/AmendmentCreateDialog.tsx ; BE services/project_so_delta_service.py:728 _persist_amendment</span></div></li>
+ <li><span class="co">2</span><div><b>Pick, never match</b>A searchable, clearable select of this project's notices not yet linked to another amendment. The person picks; nothing is linked by PO text. Picked = no second notice is drafted; the amendment publishes only once that notice is approved (d2).<span class="ref">components/common/SearchableSelect.tsx ; rule: no automatic name matching</span></div></li>
+ <li><span class="co">3</span><div><b>The notice shows its amendment read-only</b>The notice's own lines stay as the salesperson wrote them; the linked amendment's change rows show beside them, read-only. A hand-raised notice never creates an amendment.<span class="ref">PurchaseRequestDetail.tsx section pattern ; components/ui/data-grid-table.tsx</span></div></li>
 </ol></div></div>
 </div>
 </div>
