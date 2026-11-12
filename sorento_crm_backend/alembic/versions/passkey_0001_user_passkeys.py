@@ -10,14 +10,14 @@ lock benefit here and is kept only as the standard spelling. The cost is the VAL
 `user_sessions`, measured at 58 ms on 500k rows (PLAN-passkey-login-12nov.md).
 
 Revision ID: passkey_0001_user_passkeys
-Revises: il_0002_integration_log_search
+Revises: town_0003_orders_cust_date
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "passkey_0001_user_passkeys"
-down_revision = "il_0002_integration_log_search"
+down_revision = "town_0003_orders_cust_date"
 branch_labels = None
 depends_on = None
 
