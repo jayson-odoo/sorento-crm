@@ -92,7 +92,10 @@ def test_r9_ac_pi_44_saving_fewer_sheets_ticks_only_those(world, api_client):
     assert ticked == keep
     preview = client.post(f"{BASE}/runs/{run_id}/preview")
     assert preview.status_code == 200, preview.text
-    assert not [r for r in preview.json()["rows"] if r["sheet"].strip() == "FEB'26"]
+    feb = client.get(f"{BASE}/runs/{run_id}/rows", params={"sheet": "FEB'26", "limit": 50}).json()
+    assert feb["total"] == 0, feb["total"]
+    jan = client.get(f"{BASE}/runs/{run_id}/rows", params={"sheet": "JAN'26", "limit": 50}).json()
+    assert jan["total"] == 170
 
 
 # --------------------------------------------------------------------------- counts

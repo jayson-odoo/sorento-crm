@@ -555,7 +555,13 @@ def compute_expected(specs=None) -> dict:
         "skip_codes": pick(SKIP_CODES),
         "review_codes": pick(REVIEW_CODES),
         "flags": pick(FLAG_CODES),
+        # Every PS-numbered row of a sheet, blank placeholders included (round 9: a sheet's
+        # `row_count` and the run's `rows` count PS numbers, not filled rows).
         "rows_per_sheet": {
+            sheet.name: sum(1 for s in specs if s.sheet == sheet.name)
+            for sheet in MONTHLY_SHEETS
+        },
+        "data_rows_per_sheet": {
             sheet.name: sum(1 for s in specs if s.sheet == sheet.name and fold(s.customer))
             for sheet in MONTHLY_SHEETS
         },

@@ -30,16 +30,16 @@ if (!window.matchMedia) {
   });
 }
 
-vi.mock('@/hooks/usePermissions', () => {
-  const set = new Set(['projects.import.view', 'projects.import.run']);
-  return {
-    usePermissions: () => ({ permissions: [...set], permissionSet: set, isLoading: false,
-      isError: false, isFetching: false, error: null, refetch: () => {} }),
-    useHasPermission: (slug: string) => set.has(slug),
-    useHasAnyPermission: (slugs: string[]) => slugs.some((s) => set.has(s)),
-    PERMISSIONS_QUERY_KEY: ['my-permissions'],
-  };
-});
+const perms = vi.hoisted(() => ({
+  set: new Set<string>(['projects.import.view', 'projects.import.run']),
+}));
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({ permissions: [...perms.set], permissionSet: perms.set, isLoading: false,
+    isError: false, isFetching: false, error: null, refetch: () => {} }),
+  useHasPermission: (slug: string) => perms.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => perms.set.has(s)),
+  PERMISSIONS_QUERY_KEY: ['my-permissions'],
+}));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/import/run-1',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
@@ -168,6 +168,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   seen.values = [];
   seen.deferred = [];
+  perms.set = new Set(['projects.import.view', 'projects.import.run']);
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
   service.saveColumns.mockResolvedValue({});
   service.getLinesSummary.mockResolvedValue({});
   service.listLines.mockResolvedValue({ items: [], total: 0 });
@@ -226,5 +228,60 @@ describe('ProjectImportRunClient, round 6', () => {
     expect(
       keys.some((k) => k[0] === 'audit-logs' && (k.length === 1 || k[1] === 'project_import_run'))
     ).toBe(true);
+  });
+});
+
+describe('ProjectImportRunClient, round 9', () => {
+  it.each([1280, 375])(
+    'r9: a previewed run shows exactly one main button on every tab at %ipx',
+    async (width) => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      window.dispatchEvent(new Event('resize'));
+      const user = userEvent.setup();
+      service.getRun.mockResolvedValue(run('previewed'));
+      const { container } = renderRun();
+      await screen.findAllByText('PIM-0006');
+      for (const tab of ['Columns', 'Values', 'Preview', 'History']) {
+        await user.click(await screen.findByRole('tab', { name: new RegExp(`^${tab}$`) }));
+        await waitFor(() => expect(primaries(container), tab).toHaveLength(1));
+      }
+      // On Values the one main button is Preview.
+      await user.click(screen.getByRole('tab', { name: /^Values$/ }));
+      await waitFor(() => expect(primaries(container)[0]?.textContent?.trim()).toBe('Preview'));
+    }
+  );
+
+  it.each(['draft', 'previewed', 'reverted'])(
+    'r9: a %s run offers Delete as a deferred action',
+    async (status) => {
+      service.getRun.mockResolvedValue(run(status));
+      renderRun();
+      await screen.findAllByText('PIM-0006');
+      await waitFor(() =>
+        expect(seen.deferred.some((o) => o.actionKey === 'project_import_run.delete' && o.entityId))
+          .toBe(true)
+      );
+      const del = seen.deferred.filter((o) => o.actionKey === 'project_import_run.delete').at(-1)!;
+      expect(del.entityType).toBe('project_import_run');
+    }
+  );
+
+  it('r9: an imported run offers no Delete (revert it first)', async () => {
+    service.getRun.mockResolvedValue(run('imported', { result_counts: { created: 1 } }));
+    renderRun();
+    await screen.findAllByText('PIM-0006');
+    await waitFor(() => expect(seen.deferred.length).toBeGreaterThan(0));
+    expect(seen.deferred.some((o) => o.actionKey === 'project_import_run.delete' && o.entityId))
+      .toBe(false);
+  });
+
+  it('r9: without projects.import.run there is no Delete', async () => {
+    perms.set = new Set(['projects.import.view']);
+    service.getRun.mockResolvedValue(run('draft'));
+    renderRun();
+    await screen.findAllByText('PIM-0006');
+    expect(seen.deferred.some((o) => o.actionKey === 'project_import_run.delete' && o.entityId))
+      .toBe(false);
+    expect(screen.queryByText(/^Delete$/)).toBeNull();
   });
 });

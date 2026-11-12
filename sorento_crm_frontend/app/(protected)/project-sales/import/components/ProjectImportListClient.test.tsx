@@ -263,3 +263,33 @@ describe('ProjectImportListClient, round 7', () => {
     expect(hasFullTitle(container, 'TOTAL SALES ORDER SUMMARY 2026.xlsx')).toBe(true);
   });
 });
+
+describe('ProjectImportListClient, round 9', () => {
+  it('r9: the upload date is the Malaysia day (naive UTC from the API)', async () => {
+    process.env.TZ = 'UTC';
+    service.listRuns.mockResolvedValue({
+      data: [{ ...runs[0], uploaded_at: '2026-11-12T20:30:00' }],
+      total: 1,
+    });
+    renderList();
+    await screen.findByText('PIM-0001');
+    expect(screen.getByText(/13\/11\/2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/12\/11\/2026/)).toBeNull();
+  });
+
+  it('r9: a right click on a row offers Delete', async () => {
+    renderList();
+    const cell = await screen.findByText('PIM-0001');
+    fireEvent.contextMenu(cell.closest('tr') ?? cell);
+    expect((await screen.findAllByText(/^Delete$/)).length).toBeGreaterThan(0);
+  });
+
+  it('r9: without projects.import.run the row menu has no Delete', async () => {
+    perms.set = new Set(['projects.import.view']);
+    renderList();
+    const cell = await screen.findByText('PIM-0001');
+    fireEvent.contextMenu(cell.closest('tr') ?? cell);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryAllByText(/^Delete$/)).toHaveLength(0);
+  });
+});

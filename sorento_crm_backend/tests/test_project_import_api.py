@@ -195,7 +195,8 @@ def test_ac_pi_08_and_09_upload_gives_201_with_the_sheet_probe(world, api_client
     ]
     assert sheets[SUMMARY_SHEET]["has_ps_heading"] is False
     assert sheets[SUMMARY_SHEET]["row_count"] == 0
-    assert sheets["AUG'26"]["row_count"] == 78
+    # Round 9: every PS-numbered row counts, the 116 blank AUG placeholders included.
+    assert sheets["AUG'26"]["row_count"] == 194
     jan = sheets["JAN'26"]
     assert [c["header"] for c in jan["columns"]] == [HEADER_BY_FIELD[f] for f in FIELDS]
     # AC-PI-09: each heading resolves through import_field_alias (project_po_register).

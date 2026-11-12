@@ -305,3 +305,16 @@ describe('ValuesStep, round 7', () => {
     expect(before).toBeLessThanOrEqual(300);
   });
 });
+
+describe('ValuesStep, round 9', () => {
+  it('r9: Set by shows the Malaysia day of set_at (naive UTC from the API)', async () => {
+    process.env.TZ = 'UTC';
+    service.listLines.mockResolvedValue({
+      items: [{ ...lines[0], set_at: '2026-11-12T20:30:00' }, ...lines.slice(1)],
+      total: lines.length,
+    });
+    renderStep();
+    const row = (await screen.findByText('CUSTOMER 001 SDN BHD')).closest('tr')!;
+    expect(within(row).getByText(/13\/11\/2026/)).toBeInTheDocument();
+  });
+});
