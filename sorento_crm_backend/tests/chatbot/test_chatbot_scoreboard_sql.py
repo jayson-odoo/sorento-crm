@@ -39,7 +39,7 @@ CONTACT = f"ZZT-sb-{uuid.uuid4().hex[:8]}"
 
 
 def _statements() -> tuple[str, str]:
-    sql = SQL_PATH.read_text()
+    sql = SQL_PATH.read_text().split("-- Statement 3", 1)[0]
     first, second = sql.split("-- Statement 2", 1)
     out = []
     for stmt in (first, "-- Statement 2" + second):

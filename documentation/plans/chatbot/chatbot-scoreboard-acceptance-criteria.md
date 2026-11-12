@@ -14,6 +14,12 @@ Plan: `PLAN-chatbot-scoreboard-12nov.md`. No user-visible change; the reader is 
   turn with an outgoing `chat_histories` row for that turn counts as delivered (not a failure).
 - AC-6 Scoreboard shows stock couldn't-find and, next to it, dead-end couldn't-find (no code
   offered).
-- AC-7 Statement 3 returns one line per week:
-  `wk dd/mm/yyyy: stock not-found X% (dead-end Y%), median Z s, asked-again A%, technical T%`.
+- AC-7 Statement 1 carries one line per week on its `all` row (`weekly_line`):
+  `wk dd/mm/yyyy: stock not-found X% (dead-end Y%), median Z s, dealer asked-again A%, technical T%`.
 - AC-8 The classifier reads no reply text and no customer words.
+- AC-9 (owner 12 Nov 15:10, daily reading) Statement 3 returns one line per day for any `day_to` and
+  number of `days`: stock not-found (dead-end), median and p90 reply seconds, dealer asked-again, promo
+  answered with a question, each next to its trailing 7-day figure and its target; wrong answers print
+  "- (sample check)" because no per-turn signal exists.
+- AC-10 A measure whose denominator is under 50 asks prints "too few (n=N)" instead of a %.
+- AC-11 The per-ask CTE block is byte-identical in all three statements (one definition for day and week).

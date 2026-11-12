@@ -1,6 +1,6 @@
 # PLAN: chatbot honest scoreboard (CHATBOT-SCOREBOARD, work-order lane 3)
 
-Status: in progress (small fix track: no migration, no auth change, no user-visible change).
+Status: in review (small fix track: no migration, no auth change, no user-visible change).
 
 UAC: `chatbot-scoreboard-acceptance-criteria.md` (alongside).
 
@@ -25,9 +25,9 @@ The weekly chatbot scoreboard (crew-side SQL, two statements) over-counts misses
 
 | Layer | Change | Mechanism |
 |---|---|---|
-| Analytics classifier (pure) `app/services/chatbot/analytics/outcome.py` | Two more structured "asked back" signals in `turn_outcome`'s clarify rule | (Q) the turn's `state` event (engine.py:10269, written after the answer) holds a `stock_qty` task with `status = open` and `touched_at_turn = turn_no`: the reply asked a quantity. (P) `replied.facts.asking` is a question kind that is not an escalation offer (`turn/pending.ESCALATION_OFFER_KINDS`, reused) and not a did-you-mean (`state.open_question.payload.did_you_mean`, dealer_stock.py:117-127): "Couldn't find X. Did you mean Y?" stays a miss (brief). No reply text is read. |
+| Analytics classifier (pure) `app/services/chatbot/analytics/outcome.py` | Two more structured "asked back" signals in `turn_outcome`'s clarify rule | (Q) the turn's `state` event (engine.py:10269, written after the answer) holds a `stock_qty` task with `status = open` and `touched_at_turn = turn_no`: the reply asked a quantity. (P) `replied.facts.asking` is a question kind that is not an escalation offer (`turn/pending.ESCALATION_OFFER_KINDS`, reused), counted only after a lookup that found something (a pick after an empty or missed lookup is a did-you-mean in either lane and stays a miss). (F) the stock task's family pick (`stock_pick` on the open question, not `did_you_mean`). No reply text is read. |
 | Facts history | none in code | Existing `scripts/chat_facts_sweep.py --since ... --rebuild` (`facts.sweep(rebuild=True)`, facts.py:338) re-stamps past facts under the new rules. Prod run = crew/owner action after release. |
-| Scoreboard SQL `app/services/chatbot/analytics/scoreboard.sql` (crew's file moved into the repo, same definitions) | Statement 1 and 2: technical split into engine vs delivery, delivery = `send_unconfirmed` with no outgoing `chat_histories` row for the turn; new stock couldn't-find + dead-end columns. Statement 3 (new): one line per week. | Read-only SELECTs, one parameter `p.week_from`. Dead-end = stock couldn't-find (outcome `answered_empty`/`missed`, intent `check_stock`) whose reply offered no product pick (`replied.facts.asking` is not `product_pick`). |
+| Scoreboard SQL `app/services/chatbot/analytics/scoreboard.sql` (crew's file moved into the repo, same definitions) | Statement 1 and 2: technical split into engine vs delivery, delivery = `send_unconfirmed` with no outgoing `chat_histories` row for the turn; new stock couldn't-find + dead-end columns; `weekly_line` on statement 1's `all` row. Statement 3 (owner 12 Nov 15:10): one line per day with the trailing 7-day figure, the target, and "too few (n=N)" under 50 asks; the per-ask CTE block is byte-identical in all three statements (test-pinned). | Read-only SELECTs, one parameter `p.week_from`. Dead-end = stock couldn't-find (outcome `answered_empty`/`missed`, intent `check_stock`) whose reply offered no product pick (`replied.facts.asking` is not `product_pick`). |
 
 Classes/functions reused: `outcome._stage`, `outcome._events`, `outcome._still_asking` pattern,
 `turn/pending.ESCALATION_OFFER_KINDS` (pending.py:216), `facts.sweep(rebuild=True)` +
