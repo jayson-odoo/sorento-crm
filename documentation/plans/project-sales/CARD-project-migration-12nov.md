@@ -1,6 +1,6 @@
 # CARD: project import from the TOTAL SALES ORDER SUMMARY workbook (lane PROJECT-MIGRATION-TOOL)
 
-Status: behaviour card v1 (Gate 1), filed as a crew ask; waiting on the owner. No code yet. Track: L (lead pattern).
+Status: behaviour card v2 (Gate 1). Crew answered Q1-Q4 from prior owner rulings (section "Crew answers" below supersedes any rule above it); owner decisions d1-d5 pending; PO issuer data request open. No code yet. Track: L (lead pattern).
 No screen is planned, so there is no mock (Gate 2 is only needed if the answers below add an upload screen).
 
 All examples are the MASKED shape crew sent (fake names, fake amounts). Nothing real is in this file.
@@ -189,3 +189,20 @@ Pass 2 (`--mapping mapping.xlsx`, dry run, then `--apply`):
 - Dry run on a dev copy with the real file. Crew sends back only the shared report.
 - Then a timed apply on a prod-size copy: rows per second, peak memory, longest transaction, and the locks held (per-sheet commit).
 - Expected size: about 1,282 data rows, which should take seconds, not minutes, so no background job is planned. A run over 60 s would become an RQ job.
+
+## Crew answers (12 Nov 2026, from prior owner rulings; supersede the rules above)
+
+1. Grouping: rows join a project ONLY through the Projects mapping a person fills. Blank-name rows: owner decision d1 (default until then: SKIP, listed by PS number).
+2. Customer = the dealer in column D, linked by debtor code: the SO's debtor first, else the Customers mapping.
+3. `customer_conflict` only for a different shop. When the SO debtor and the mapped debtor are accounts of the SAME shop, the SO debtor is used with no review. "Same shop" means both `customers` rows share a `customer_group_id` or the same `ledger_family_key(customer_name)` (`app/services/ledger_family.py:134`), compared between two keyed records, never against the sheet text. The dry run counts these as `customer_same_shop_so_used`.
+4. Q2 = (a): create only. Never edit an existing project or PO. `changed_in_file` is reported only, and a blank never clears.
+5. Q3 = (a): the People mapping to user email sets the project owner; CS stays text in the PO notes, no new field. Who fills the mapping: owner decision d3.
+6. Cancelled rows: skip and list by PS number. On hold: import, text in the notes. Schedule code meanings: owner decision d2; until then keep as written and flag unknown codes.
+7. Messy cells (2025 dates, lost leading zeros, free-text delivery): import as written and flag, never fix.
+8. Dates in the notes read dd/mm/yyyy; text dates stay as typed.
+9. No emails, WhatsApp, notifications or template tasks from the import. On the dev copy, prove that `create_po` and the Won move send nothing and change no sales total (a test asserts no notification / outbound rows are written and the shared sales total is unchanged).
+10. Developer `NEW` only where the person writes `NEW`.
+11. PO issuer: mirror how hand-keyed dealer POs record `po_source` and the issuing party on the dev DB (data request filed). The PO form defaults to `contractor_direct` with no issuer (`PurchaseOrderDialog.tsx:76,79`). No trading-house party is created from a customer unless the dry run lists every new party first. Until the data answers: no party is created, and `issuing_party_id` is set only when an existing party already carries `customer_id` = the row's customer.
+12. The real file, `mapping.xlsx` and the full report never leave the owner's Mac. Crew runs the real-data dry run locally; only the masked shared report is posted. Nothing runs on prod; the live-run method is owner decision d5.
+
+Owner decisions pending: d1 blank-name rows, d2 schedule codes O/C CBD YS, d3 who fills the mapping, d4 years + one-time vs monthly, d5 live run (CLI command vs upload page; an upload page adds the mock gate).
