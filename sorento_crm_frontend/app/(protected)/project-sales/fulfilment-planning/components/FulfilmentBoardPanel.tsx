@@ -2176,7 +2176,7 @@ export function FulfilmentBoardPanel({
       // IS one: on a first confirmation it is always zero, and a zero in the sentence would
       // be a number the reader has to decide to ignore.
       const kept = ok.reduce((total, entry) => total + (entry.transfers_kept ?? 0), 0);
-      const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
+      const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_handed_over ?? entry.inquiry_rows_created ?? 0), 0);
       // Covered lines Confirm just took OUT of their confirmation (owner ruling 23 Sep 2026,
       // `PLAN-board-reject-on-confirmed-line.md`) - said only when there IS one, the same
       // "zero is not worth a reader's attention" rule `kept` already follows.
@@ -3944,7 +3944,7 @@ export function FulfilmentBoardPanel({
               justConfirmed={batchResults !== null && !simulated}
               inquiryRows={(batchResults ?? [])
                 .filter((result) => result.ok)
-                .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
+                .reduce((total, result) => total + (result.inquiry_rows_handed_over ?? result.inquiry_rows_created ?? 0), 0)}
             />
 
             {view === 'list' ? (
