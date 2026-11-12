@@ -10,13 +10,19 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable
+import time
+from typing import Any, Callable, NamedTuple
 
 import httpx
 
 from app.services.chatbot import direct_ingress
 
 logger = logging.getLogger(__name__)
+
+# How long before a step's first attempt a message may have been created and still be that step's.
+LOOKUP_SLACK_SECONDS = 5
+SENT_MSG_KEY = "chatbot:sent-msg:{}"
+SENT_MSG_TTL_SECONDS = 24 * 3600
 
 TEXT_PART_MAX_CHARS = 3900
 QUICK_REPLY_PART_MAX_CHARS = 1024
@@ -66,9 +72,44 @@ def _attachment_type(att: dict[str, Any]) -> str:
     return major if major in ("image", "video", "audio") else "file"
 
 
-def _steps(actions: list[dict[str, Any]], ident: str) -> list[tuple[str, str, dict, Callable]]:
-    """(step key, kind, loggable detail, call(client)) in action order."""
-    steps: list[tuple[str, str, dict, Callable]] = []
+class Step(NamedTuple):
+    key: str
+    kind: str
+    detail: dict
+    call: Callable[[Any], Any]
+    # An unknown outcome on a message step is looked up in the conversation with this test.
+    matches: Callable[[dict], bool] | None = None
+    # Assign and contact fields can simply be sent again.
+    idempotent: bool = False
+
+
+def covers(row: Any, contact_id: str) -> bool:
+    """Does the "Bot replies sent by" switch put this contact on the CRM sender?"""
+    mode = str(getattr(row, "chatbot_reply_sender_mode", None) or "n8n")
+    listed = direct_ingress.listed_contacts(getattr(row, "chatbot_reply_sender_contacts", None))
+    return mode == "all" or (mode == "contacts" and contact_id in listed)
+
+
+def _message_body(item: dict) -> dict:
+    inner = item.get("message")
+    return inner if isinstance(inner, dict) else {}
+
+
+def _text_is(part: str) -> Callable[[dict], bool]:
+    return lambda item: str(_message_body(item).get("text") or "").strip() == part
+
+
+def _url_is(url: Any) -> Callable[[dict], bool]:
+    def match(item: dict) -> bool:
+        att = _message_body(item).get("attachment")
+        return isinstance(att, dict) and att.get("url") == url
+
+    return match
+
+
+def _steps(actions: list[dict[str, Any]], ident: str) -> list[Step]:
+    """The steps, in action order."""
+    steps: list[Step] = []
     for a, action in enumerate(actions):
         kind = action.get("kind")
         if action.get("dry_run"):
@@ -78,35 +119,37 @@ def _steps(actions: list[dict[str, Any]], ident: str) -> list[tuple[str, str, di
             parts = split_text(str(action.get("text") or ""), with_quick_replies=bool(replies))
             for p, part in enumerate(parts):
                 if replies and p == len(parts) - 1:
-                    steps.append((f"{a}.{p}", kind, {"text": part, "replies": replies},
-                                  lambda c, t=part, r=replies: c.send_quick_reply(ident, t, r)))
+                    steps.append(Step(f"{a}.{p}", kind, {"text": part, "replies": replies},
+                                      lambda c, t=part, r=replies: c.send_quick_reply(ident, t, r),
+                                      _text_is(part)))
                 else:
-                    steps.append((f"{a}.{p}", kind, {"text": part},
-                                  lambda c, t=part: c.send_message(ident, t)))
+                    steps.append(Step(f"{a}.{p}", kind, {"text": part},
+                                      lambda c, t=part: c.send_message(ident, t), _text_is(part)))
         elif kind == "send_attachments":
             for p, att in enumerate(action.get("attachments_src") or []):
                 kind_, url, cap = _attachment_type(att), att.get("url"), att.get("caption")
-                steps.append((f"{a}.{p}", kind, {"attachment_type": kind_, "url": url},
-                              lambda c, k=kind_, u=url, cp=cap: c.send_attachment(ident, k, u, cp)))
+                steps.append(Step(f"{a}.{p}", kind, {"attachment_type": kind_, "url": url},
+                                  lambda c, k=kind_, u=url, cp=cap: c.send_attachment(ident, k, u, cp),
+                                  _url_is(url)))
         elif kind == "assign_conversation":
             uid = action.get("respond_user_id")
-            steps.append((f"{a}.0", kind, {"respond_user_id": uid},
-                          lambda c, u=uid: c.set_conversation_assignee(ident, u)))
+            steps.append(Step(f"{a}.0", kind, {"respond_user_id": uid},
+                              lambda c, u=uid: c.set_conversation_assignee(ident, u), idempotent=True))
         elif kind == "add_comment":
             mentions = " ".join(f"{{{{@user.{m}}}}}" for m in action.get("mention_user_ids") or [])
             body = f"{mentions}\n{action.get('text') or ''}" if mentions else str(action.get("text") or "")
-            steps.append((f"{a}.0", kind, {"text": body},
-                          lambda c, b=body: c.create_comment(ident, b)))
+            steps.append(Step(f"{a}.0", kind, {"text": body},
+                              lambda c, b=body: c.create_comment(ident, b)))
         elif kind == "update_contact_fields":
             fields = action.get("fields") or {}
             payload = {"custom_fields": [{"name": k, "value": v} for k, v in fields.items()]}
-            steps.append((f"{a}.0", kind, {"fields": fields},
-                          lambda c, pl=payload: c.update_contact(ident, pl)))
+            steps.append(Step(f"{a}.0", kind, {"fields": fields},
+                              lambda c, pl=payload: c.update_contact(ident, pl), idempotent=True))
         # Unknown kinds are skipped, as the n8n sender does.
     return steps
 
 
-def _confirmed_keys(db: Any, turn_id: str) -> set[str]:
+def confirmed_keys(db: Any, turn_id: str) -> set[str]:
     from app.models.integration import IntegrationLog
 
     rows = (
@@ -129,6 +172,27 @@ def _confirmed_keys(db: Any, turn_id: str) -> set[str]:
     return keys
 
 
+def has_crm_rows(db: Any, turn_id: str) -> bool:
+    """Did the CRM sender already start this turn? Then it finishes on this path."""
+    from app.models.integration import IntegrationLog
+
+    return (
+        db.query(IntegrationLog.id)
+        .filter(
+            IntegrationLog.business_id == turn_id,
+            IntegrationLog.integration_channel == direct_ingress.INTEGRATION_CHANNEL,
+            IntegrationLog.request_payload.contains('"sender": "crm"'),
+        )
+        .first()
+        is not None
+    )
+
+
+def all_confirmed(db: Any, turn_id: str, actions: list[dict[str, Any]]) -> bool:
+    """Is every step of these actions confirmed sent? Recovery counts a CRM row done only then."""
+    return {st.key for st in _steps(actions, "")} <= confirmed_keys(db, turn_id)
+
+
 def _log_step(
     db: Any,
     turn_id: str,
@@ -140,11 +204,14 @@ def _log_step(
     status_code: int | None,
     error: str | None,
     response: Any = None,
+    confirmed_by: str | None = None,
 ) -> None:
     from app.schemas.integration import IntegrationLogCreate
     from app.services.integration_service import IntegrationLogService
 
     body = {"sender": "crm", "step": key, "kind": kind, **detail}
+    if confirmed_by:
+        body["confirmed_by"] = confirmed_by
     try:
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
@@ -184,6 +251,55 @@ def _classify(exc: Exception) -> tuple[str, int | None, str]:
     return direct_ingress.SEND_TIMEOUT, None, "Respond.io did not confirm the request."
 
 
+def _link_message_id(db: Any, turn_id: str, contact_id: str, response: Any) -> None:
+    """Tie the id Respond returned to the turn, so the `message.sent` webhook (the one writer of
+    the chat row) can stamp it. Best effort: the log row already holds the id."""
+    message_id = response.get("messageId") if isinstance(response, dict) else None
+    if message_id in (None, ""):
+        return
+    try:
+        from sqlalchemy import text
+
+        from app.services import queue_service
+
+        queue_service.redis_conn.set(SENT_MSG_KEY.format(message_id), turn_id, ex=SENT_MSG_TTL_SECONDS)
+        # The webhook row may have landed before this send returned.
+        db.execute(
+            text(
+                "UPDATE chat_histories SET chatbot_turn_id = :t WHERE contact_id = :c "
+                "AND message_id = :m AND chatbot_turn_id IS NULL"
+            ),
+            {"t": turn_id, "c": contact_id, "m": str(message_id)},
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.warning("crm sender: could not link message %s to turn %s", message_id, turn_id, exc_info=True)
+
+
+def _in_conversation(client: Any, ident: str, step: Step, attempted_at: float) -> bool:
+    """Is there an OUTGOING message of this step's, created since just before it was tried?"""
+    payload = client.list_messages(ident, limit=20) or {}
+    items = payload.get("items") if isinstance(payload.get("items"), list) else payload.get("data") or []
+    window = time.time() - attempted_at + LOOKUP_SLACK_SECONDS
+    for item in items:
+        if not isinstance(item, dict) or str(item.get("traffic") or "").lower() != "outgoing":
+            continue
+        age = direct_ingress.message_age_seconds(item)
+        if age is not None and age <= window and step.matches(item):
+            return True
+    return False
+
+
+def _attempt(client: Any, step: Step) -> tuple[Any, tuple[str, int | None, str] | None]:
+    """(response, None) when sent, else (None, (outcome, status, reason))."""
+    try:
+        return step.call(client), None
+    except Exception as exc:  # noqa: BLE001 - classified, never propagated
+        logger.warning("crm sender: step %s failed: %s", step.key, exc)
+        return None, _classify(exc)
+
+
 def send(
     session_factory: Callable[[], Any],
     *,
@@ -201,19 +317,43 @@ def send(
             from app.services.integration_service import RespondClient
 
             client = RespondClient.for_identifier(db, ident)
-        done = _confirmed_keys(db, turn_id)
-        for key, kind, detail, call in _steps(actions, ident):
-            if key in done:
+        done = confirmed_keys(db, turn_id)
+        for step in _steps(actions, ident):
+            if step.key in done:
                 continue
-            try:
-                response = call(client)
-            except Exception as exc:  # noqa: BLE001 - classified below, never propagated
-                outcome, code, reason = _classify(exc)
-                logger.warning("crm sender: turn %s step %s failed: %s", turn_id, key, exc)
-                _log_step(db, turn_id, contact_id, key, kind, detail, status_code=code, error=reason)
+            log = lambda **kw: _log_step(db, turn_id, contact_id, step.key, step.kind, step.detail, **kw)  # noqa: E731
+            attempted_at = time.time()
+            response, failure = _attempt(client, step)
+            if failure is None:
+                log(status_code=200, error=None, response=response)
+                _link_message_id(db, turn_id, contact_id, response)
+                continue
+            outcome, code, reason = failure
+            if outcome == direct_ingress.SEND_REFUSED:
+                log(status_code=code, error=reason)
                 return outcome
-            _log_step(db, turn_id, contact_id, key, kind, detail,
-                      status_code=200, error=None, response=response)
+            # Unknown: the request may have left.
+            if step.idempotent:
+                log(status_code=code, error=reason)
+                response, failure = _attempt(client, step)
+                if failure is None:
+                    log(status_code=200, error=None, response=response)
+                    continue
+                log(status_code=failure[1], error=failure[2])
+                return direct_ingress.SEND_REFUSED
+            if step.matches is None:
+                log(status_code=code, error=reason)
+                return direct_ingress.SEND_TIMEOUT
+            try:
+                found = _in_conversation(client, ident, step, attempted_at)
+            except Exception:  # noqa: BLE001
+                logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
+                log(status_code=code, error="Not confirmed: Respond.io could not be asked whether it arrived.")
+                return direct_ingress.SEND_TIMEOUT
+            if not found:
+                log(status_code=code, error=reason)
+                return direct_ingress.SEND_REFUSED
+            log(status_code=None, error=None, confirmed_by="lookup")
         return direct_ingress.SEND_OK
     except Exception:  # noqa: BLE001
         logger.exception("crm sender: unexpected failure for turn %s", turn_id)

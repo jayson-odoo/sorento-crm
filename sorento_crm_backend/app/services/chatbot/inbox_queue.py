@@ -234,7 +234,7 @@ def accepts(db: Any, envelope: Any) -> bool:
         return False
     if not queue_mode_for(db, contact):
         return False
-    if not direct_ingress.sender_configured(db):
+    if not direct_ingress.sender_configured(db, contact):
         return False
     return direct_ingress._on_default_workspace(db, contact)
 
@@ -1049,10 +1049,12 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
     """Under the contact's mutex, every open row this module owns is dead (its drain let go
     of the mutex, or its process died). Nothing posted: back to `queued`. Stamped
     `sending`: a logged `ok` is done (IQ-34), otherwise `should_resend` decides (rule 6)."""
+    from app.services.chatbot import crm_sender, engine
+
     db = factory()
     try:
         dead = (
-            db.query(ChatbotTurn.id, ChatbotTurn.stage, ChatbotTurn.finished_at, ChatbotTurn.error, ChatbotTurn.started_at)
+            db.query(ChatbotTurn.id, ChatbotTurn.stage, ChatbotTurn.finished_at, ChatbotTurn.error, ChatbotTurn.started_at, ChatbotTurn.response)
             .filter(
                 ChatbotTurn.contact_respond_id == contact,
                 ChatbotTurn.status.in_(OPEN_STATUSES),
@@ -1062,11 +1064,20 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
             .all()
         )
         outcomes = {
-            str(rid): _last_send_outcome(db, str(rid), at) for rid, stage, at, _e, _s in dead if stage == SENDING_STAGE
+            str(rid): _last_send_outcome(db, str(rid), at) for rid, stage, at, _e, _s, _r in dead if stage == SENDING_STAGE
+        }
+        # N8N-RETIRE-A: a row the CRM sender started is judged by its steps, never re-run (a new
+        # answer could differ); done only when every step is confirmed.
+        crm_done = {
+            str(rid): crm_sender.all_confirmed(
+                db, str(rid), engine.split_send_actions(list((resp or {}).get("actions") or []))
+            )
+            for rid, stage, _a, _e, _s, resp in dead
+            if stage == SENDING_STAGE and crm_sender.has_crm_rows(db, str(rid))
         }
     finally:
         db.close()
-    for rid, stage, finished_at, error, started_at in dead:
+    for rid, stage, finished_at, error, started_at, _resp in dead:
         turn_id = str(rid)
         outcome = outcomes.get(turn_id)
         if stage != SENDING_STAGE:
@@ -1074,6 +1085,12 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
             # A compare-and-set on what was read (IQ-41): an old drain that stamped
             # `sending` meanwhile keeps its row.
             _requeue(factory, turn_id, read=(stage, started_at, finished_at))
+        elif turn_id in crm_done:
+            if crm_done[turn_id]:
+                _finish(factory, turn_id, "failed" if error else "done", "sent")
+            else:
+                logger.warning("chatbot inbox: turn %s of %s is half sent by the CRM; flagged", turn_id, contact)
+                _flag_for_staff(factory, turn_id, None)
         elif outcome == direct_ingress.SEND_OK:
             logger.warning("chatbot inbox: turn %s of %s was sent before its process died", turn_id, contact)
             _finish(factory, turn_id, "failed" if error else "done", "sent")
