@@ -57,8 +57,9 @@ const SECONDARY: Record<ServiceJobStatus, SecondaryMove[]> = {
 };
 
 /** The graph moves a status still allows besides its main step (gear and right-click menus). */
-export function secondaryMoves(status: ServiceJobStatus): SecondaryMove[] {
-  return SECONDARY[status] ?? [];
+export function secondaryMoves(status: ServiceJobStatus, hasTechnician = true): SecondaryMove[] {
+  // Arriving needs a technician, so it is never offered without one.
+  return (SECONDARY[status] ?? []).filter((m) => hasTechnician || m.to !== 'arrived' || status === 'completed');
 }
 
 /** The status the main step moves the job to (assign and confirm do not move through transition). */

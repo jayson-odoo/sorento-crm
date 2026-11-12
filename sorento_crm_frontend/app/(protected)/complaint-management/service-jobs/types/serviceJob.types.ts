@@ -56,6 +56,6 @@ export interface BoardColumn {
 
 export interface DispatchBoard {
   day: string;
-  stalled: ServiceJob[];
+  waiting: ServiceJob[];
   columns: BoardColumn[];
 }

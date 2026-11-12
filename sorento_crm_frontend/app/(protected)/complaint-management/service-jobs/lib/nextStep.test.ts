@@ -49,3 +49,11 @@ describe('secondaryMoves (gear menu / right-click)', () => {
     expect(byTo('proposed', 'cancelled')).toMatchObject({ label: 'Cancel', needsReason: true });
   });
 });
+
+describe('secondaryMoves without a technician (fix round 1, S-9)', () => {
+  it('never offers Arrived while no technician is assigned', () => {
+    expect(secondaryMoves('confirmed', false).map((m) => m.to).sort()).toEqual(['cancelled', 'proposed']);
+    expect(secondaryMoves('confirmed', true).map((m) => m.to)).toContain('arrived');
+    expect(secondaryMoves('completed', false).map((m) => m.to)).toEqual(['arrived']);
+  });
+});

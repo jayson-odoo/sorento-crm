@@ -1,34 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { useComplaintServiceJobs, useRaiseServiceJob } from '../../service-jobs/hooks/useServiceJobs';
+import { useComplaintServiceJobs } from '../../service-jobs/hooks/useServiceJobs';
 import ServiceJobStatusPill from '../../service-jobs/components/ServiceJobStatusPill';
 
-const DEAD = new Set(['verified', 'cancelled']);
-
-interface Props {
-  complaintId: string;
-  canDispatch?: boolean;
-}
-
-export default function ComplaintServiceJobsSection({ complaintId, canDispatch }: Props) {
+export default function ComplaintServiceJobsSection({ complaintId }: { complaintId: string }) {
   const { data: jobs = [], isLoading } = useComplaintServiceJobs(complaintId);
-  const raise = useRaiseServiceJob();
-  const hasLive = jobs.some((j) => !DEAD.has(j.status));
-  const showRaise = !isLoading && !!canDispatch && jobs.length > 0 && !hasLive;
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2">
+      <CardHeader>
         <CardTitle>Service Jobs</CardTitle>
-        {showRaise && (
-          <Button size="sm" disabled={raise.isPending} onClick={() => raise.mutate(complaintId)}>
-            Raise service job
-          </Button>
-        )}
       </CardHeader>
       <CardContent>
         {isLoading ? null : jobs.length === 0 ? (

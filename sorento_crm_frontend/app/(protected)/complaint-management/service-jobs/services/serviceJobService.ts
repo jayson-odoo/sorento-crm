@@ -48,10 +48,13 @@ export async function getComplaintServiceJobs(complaintId: string): Promise<Serv
   return body.data ?? [];
 }
 
-export async function raiseServiceJob(complaintId: string): Promise<ServiceJob> {
+/** `created` is false when the complaint already had a live job (the server answers 200, not 201). */
+export async function raiseServiceJob(
+  complaintId: string,
+): Promise<{ job: ServiceJob; created: boolean }> {
   const response = await apiFetch(`${BASE}/complaints/${complaintId}/service-jobs`, { method: 'POST' });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to raise the service job'));
-  return response.json();
+  return { job: await response.json(), created: response.status === 201 };
 }
 
 async function postJson(url: string, body: unknown, fallback: string): Promise<ServiceJob> {

@@ -18,13 +18,18 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import type { RecordAction } from '@/components/common/recordActions';
 import { useTechnicianMutations, useTechnicians } from '../hooks/useTechnicians';
 import type { Technician } from '../types/technician.types';
 import TechnicianFormDialog from './TechnicianFormDialog';
@@ -66,35 +71,7 @@ export default function TechniciansList() {
     invalidateKeys: [['technicians'], ['technicians-select']],
   });
 
-  const actionsFor = (row: TechnicianRow): RecordAction[] => {
-    if (!canManage) return [];
-    const actions: RecordAction[] = [
-      { key: 'edit', label: 'Edit', run: () => setForm({ open: true, technician: row }) },
-    ];
-    if (row.is_active) {
-      actions.push({
-        key: 'archive',
-        label: 'Archive',
-        run: () => update.mutate({ id: row.id, values: { is_active: false } }),
-      });
-    } else {
-      actions.push({
-        key: 'restore',
-        label: 'Restore',
-        run: () => update.mutate({ id: row.id, values: { is_active: true } }),
-      });
-    }
-    // A technician on a job is archived, never deleted.
-    if (!row.in_use) {
-      actions.push({
-        key: 'delete',
-        label: 'Delete',
-        kind: 'destructive',
-        run: () => remove.run({ id: row.id, subject: row.name }),
-      });
-    }
-    return actions;
-  };
+  const [menuRow, setMenuRow] = useState<TechnicianRow | null>(null);
 
   const columns = useMemo<ColumnDef<TechnicianRow>[]>(
     () => [
@@ -143,19 +120,8 @@ export default function TechniciansList() {
         ),
         meta: { headerTitle: 'Active', skeleton: <Skeleton className="h-4 w-16" /> },
       },
-      {
-        id: 'actions',
-        header: '',
-        size: 56,
-        enableSorting: false,
-        enableHiding: false,
-        enableResizing: false,
-        cell: ({ row }) =>
-          canManage ? <RowActionsMenu actions={actionsFor(row.original)} ariaLabel="technician" /> : null,
-      },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canManage],
+    [],
   );
 
   const table = useReactTable({
@@ -175,6 +141,21 @@ export default function TechniciansList() {
 
   return (
     <>
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger asChild>
+          <div
+            onContextMenuCapture={(event) => {
+              const rowEl = (event.target as Element).closest('[data-technician-id]');
+              const row = ((data?.data as TechnicianRow[]) ?? []).find(
+                (t) => t.id === rowEl?.getAttribute('data-technician-id'),
+              );
+              if (!row || !canManage) {
+                event.stopPropagation();
+                return;
+              }
+              setMenuRow(row);
+            }}
+          >
       <DataGrid
         table={table}
         recordCount={data?.pagination.total || 0}
@@ -184,6 +165,7 @@ export default function TechniciansList() {
         onRetry={() => void refetch()}
         onRowClick={canManage ? (row) => setForm({ open: true, technician: row }) : undefined}
         rowPending={(row) => remove.targetId === row.id}
+        rowAttributes={(row) => ({ 'data-technician-id': row.id })}
         emptyMessage="No technicians"
         standardToolbar={false}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
@@ -221,6 +203,33 @@ export default function TechniciansList() {
           </CardFooter>
         </Card>
       </DataGrid>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-48">
+          {menuRow && (
+            <>
+              <ContextMenuItem onSelect={() => setForm({ open: true, technician: menuRow })}>Edit</ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => update.mutate({ id: menuRow.id, values: { is_active: !menuRow.is_active } })}
+              >
+                {menuRow.is_active ? 'Archive' : 'Restore'}
+              </ContextMenuItem>
+              {/* A technician on a job is archived, never deleted. */}
+              {!menuRow.in_use && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className="text-destructive"
+                    onSelect={() => remove.run({ id: menuRow.id, subject: menuRow.name })}
+                  >
+                    Delete
+                  </ContextMenuItem>
+                </>
+              )}
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
       <TechnicianFormDialog
         open={form.open}
         onOpenChange={(open) => setForm((f) => ({ ...f, open }))}

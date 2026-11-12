@@ -8,6 +8,7 @@ import {
   getCoreRowModel,
   type ColumnDef,
   type RowSelectionState,
+  type SortingState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -38,11 +39,12 @@ export default function ComplaintResolutionsList() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [rowToDelete, setRowToDelete] = useState<ComplaintResolution | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
 
   const { data, isLoading, isPlaceholderData, error, refetch } = useComplaintResolutions({
     pageIndex: 0,
     pageSize: 100,
-    sorting: [{ id: 'name', desc: false }],
+    sorting,
     searchQuery: '',
   });
   const rows = useMemo<ComplaintResolution[]>(() => data?.data ?? [], [data]);
@@ -119,7 +121,7 @@ export default function ComplaintResolutionsList() {
         accessorFn: (row) => row.requires_service_job,
         header: ({ column }) => <DataGridColumnHeader title="Requires service job" column={column} />,
         size: 180,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Requires service job' },
         cell: ({ row }) => (
           <span className="truncate block">{row.original.requires_service_job ? 'Yes' : 'No'}</span>
@@ -183,7 +185,9 @@ export default function ComplaintResolutionsList() {
     columns,
     data: filtered,
     getRowId: (row) => row.id,
-    state: { rowSelection },
+    state: { rowSelection, sorting },
+    manualSorting: true,
+    onSortingChange: setSorting,
     columnResizeMode: 'onChange',
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),

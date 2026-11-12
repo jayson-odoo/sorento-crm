@@ -1,7 +1,8 @@
 /**
  * AFTER-SALES-P1 red tests (UAC D6): the Service Jobs section on the complaint detail page.
  *
- * Contract: `./ComplaintServiceJobsSection` default export, props { complaintId: string; canDispatch?: boolean }.
+ * Contract: `./ComplaintServiceJobsSection` default export, props { complaintId: string }. Fix round 1 (S-11): raising lives only in the complaint gear, so the
+ * section never shows a Raise button.
  * Hooks from `../../service-jobs/hooks/useServiceJobs`:
  *   useComplaintServiceJobs(complaintId) -> { data: ServiceJob[], isLoading }
  *   useRaiseServiceJob() -> { mutate, mutateAsync, isPending }
@@ -9,7 +10,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: any) => (
@@ -24,10 +25,8 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
 const useComplaintServiceJobs = vi.fn();
-const raise = vi.fn();
 vi.mock('../../service-jobs/hooks/useServiceJobs', () => ({
   useComplaintServiceJobs: (...a: unknown[]) => useComplaintServiceJobs(...a),
-  useRaiseServiceJob: () => ({ mutate: raise, mutateAsync: raise, isPending: false }),
 }));
 
 import ComplaintServiceJobsSection from './ComplaintServiceJobsSection';
@@ -41,12 +40,12 @@ function renderSection(props: Record<string, unknown> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={client}>
-      <ComplaintServiceJobsSection complaintId="c-1" canDispatch {...props} />
+      <ComplaintServiceJobsSection complaintId="c-1" {...props} />
     </QueryClientProvider>,
   );
 }
 
-beforeEach(() => { useComplaintServiceJobs.mockReset(); raise.mockReset(); });
+beforeEach(() => { useComplaintServiceJobs.mockReset(); });
 
 describe('ComplaintServiceJobsSection (D6)', () => {
   it('lists each job on one line: number link, status pill, scheduled, technician', () => {
@@ -60,17 +59,10 @@ describe('ComplaintServiceJobsSection (D6)', () => {
     expect(screen.getByText('Ali')).toBeInTheDocument();
   });
 
-  it('hides "Raise service job" when a live job exists', () => {
-    useComplaintServiceJobs.mockReturnValue({ data: [job()], isLoading: false });
-    renderSection();
-    expect(screen.queryByRole('button', { name: 'Raise service job' })).toBeNull();
-  });
-
-  it.each(['verified', 'cancelled'])('shows "Raise service job" when the only job is %s', (status) => {
+  it.each(['confirmed', 'verified', 'cancelled'])('never shows a Raise button (job is %s)', (status) => {
     useComplaintServiceJobs.mockReturnValue({ data: [job({ status, status_label: status })], isLoading: false });
     renderSection();
-    fireEvent.click(screen.getByRole('button', { name: 'Raise service job' }));
-    expect(raise).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Raise service job' })).toBeNull();
   });
 
   it('with no jobs shows a heading and hint and no button (empty state, no CTA)', () => {
@@ -78,12 +70,6 @@ describe('ComplaintServiceJobsSection (D6)', () => {
     renderSection();
     expect(screen.getByText('Service Jobs')).toBeInTheDocument();
     expect(screen.queryByRole('button')).toBeNull();
-  });
-
-  it('hides Raise from a user without dispatch', () => {
-    useComplaintServiceJobs.mockReturnValue({ data: [job({ status: 'cancelled' })], isLoading: false });
-    renderSection({ canDispatch: false });
-    expect(screen.queryByRole('button', { name: 'Raise service job' })).toBeNull();
   });
 
   it('renders a loading state', () => {

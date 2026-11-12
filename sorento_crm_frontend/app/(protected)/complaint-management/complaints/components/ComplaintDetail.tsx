@@ -60,7 +60,7 @@ import {
 import { useHasPermission } from '@/hooks/usePermissions';
 import ComplaintSiteCard from './ComplaintSiteCard';
 import ComplaintServiceJobsSection from './ComplaintServiceJobsSection';
-import { useRaiseServiceJob } from '../../service-jobs/hooks/useServiceJobs';
+import { useComplaintServiceJobs, useRaiseServiceJob } from '../../service-jobs/hooks/useServiceJobs';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
@@ -138,6 +138,8 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const notifyResolutionMutation = useNotifyComplaintResolution();
   const canDispatch = useHasPermission('complaint_management.service_jobs.dispatch');
   const raiseServiceJob = useRaiseServiceJob();
+  const { data: serviceJobs = [] } = useComplaintServiceJobs(complaintId);
+  const hasLiveServiceJob = serviceJobs.some((j) => !['verified', 'cancelled'].includes(j.status));
   const canApprove = useHasPermission('complaint_management.complaints.approve');
   const canReject = useHasPermission('complaint_management.complaints.reject');
   const canProcess = useHasPermission('complaint_management.complaints.resolve');
@@ -574,7 +576,7 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   Void
                 </DropdownMenuItem>
               )}
-              {canDispatch && (
+              {canDispatch && !hasLiveServiceJob && (
                 <DropdownMenuItem
                   onSelect={(e) => {
                     e.preventDefault();
@@ -1414,7 +1416,7 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
 
       <ComplaintSiteCard complaint={complaint} />
 
-      <ComplaintServiceJobsSection complaintId={complaintId} canDispatch={canDispatch} />
+      <ComplaintServiceJobsSection complaintId={complaintId} />
 
       <ComplaintManualAttachmentsSection
         complaintId={complaintId}

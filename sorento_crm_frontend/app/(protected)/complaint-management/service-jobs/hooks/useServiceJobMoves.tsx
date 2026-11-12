@@ -22,6 +22,7 @@ type Dialog =
 export function useServiceJobMoves(): {
   runStep: (job: ServiceJob, step: NextStep) => void;
   runMove: (job: ServiceJob, move: SecondaryMove) => void;
+  changeTechnician: (job: ServiceJob) => void;
   dialogs: ReactNode;
   isPending: boolean;
 } {
@@ -40,6 +41,8 @@ export function useServiceJobMoves(): {
     if (move.needsReason) return setDialog({ kind: 'reason', job, move });
     transition.mutate({ id: job.id, values: { to: move.to } });
   };
+
+  const changeTechnician = (job: ServiceJob) => setDialog({ kind: 'assign', job });
 
   const dialogs = (
     <>
@@ -80,7 +83,7 @@ export function useServiceJobMoves(): {
     </>
   );
 
-  return { runStep, runMove, dialogs, isPending: confirm.isPending || assign.isPending || transition.isPending };
+  return { runStep, runMove, changeTechnician, dialogs, isPending: confirm.isPending || assign.isPending || transition.isPending };
 }
 
 export { nextStepFor };

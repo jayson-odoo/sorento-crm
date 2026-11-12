@@ -53,7 +53,9 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
   }
 
   const step = nextStepFor(job);
-  const secondary = secondaryMoves(job.status);
+  const secondary = secondaryMoves(job.status, !!job.technician_id);
+  const canChangeTechnician =
+    !!job.technician_id && (job.status === 'proposed' || job.status === 'confirmed');
 
   return (
     <div className="space-y-6">
@@ -76,6 +78,16 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
           }}
           gear={
             <DetailActionsMenu ariaLabel="Service job actions">
+              {canChangeTechnician && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    moves.changeTechnician(job);
+                  }}
+                >
+                  Change technician
+                </DropdownMenuItem>
+              )}
               {secondary.map((m) => (
                 <DropdownMenuItem
                   key={`${m.to}-${m.label}`}

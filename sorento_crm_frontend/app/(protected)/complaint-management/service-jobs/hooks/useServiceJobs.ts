@@ -1,3 +1,4 @@
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
@@ -72,11 +73,14 @@ function useInvalidateJobs() {
 
 export function useRaiseServiceJob() {
   const invalidate = useInvalidateJobs();
+  const router = useRouter();
   return useMutation({
     mutationFn: (complaintId: string) => raiseServiceJob(complaintId),
-    onSuccess: () => {
+    onSuccess: ({ job, created }) => {
       invalidate();
-      toast.success('Service job raised');
+      if (created) toast.success('Service job raised');
+      else toast.warning('This complaint already has a live service job.');
+      router.push(`/complaint-management/service-jobs/${job.id}`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to raise the service job'),
   });

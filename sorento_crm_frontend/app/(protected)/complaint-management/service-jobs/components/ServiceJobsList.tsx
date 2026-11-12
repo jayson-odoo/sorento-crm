@@ -333,13 +333,16 @@ export default function ServiceJobsList() {
               >
                 Open complaint
               </ContextMenuItem>
-              {(menuStep || secondaryMoves(menuJob.status).length > 0) && <ContextMenuSeparator />}
+              {(menuStep || secondaryMoves(menuJob.status, !!menuJob.technician_id).length > 0) && <ContextMenuSeparator />}
               {menuStep && (
                 <ContextMenuItem onSelect={() => moves.runStep(menuJob, menuStep)}>
                   {menuStep.label}
                 </ContextMenuItem>
               )}
-              {secondaryMoves(menuJob.status).map((m) => (
+              {menuJob.technician_id && (menuJob.status === 'proposed' || menuJob.status === 'confirmed') && (
+                <ContextMenuItem onSelect={() => moves.changeTechnician(menuJob)}>Change technician</ContextMenuItem>
+              )}
+              {secondaryMoves(menuJob.status, !!menuJob.technician_id).map((m) => (
                 <ContextMenuItem key={`${m.to}-${m.label}`} onSelect={() => moves.runMove(menuJob, m)}>
                   {m.label}
                 </ContextMenuItem>

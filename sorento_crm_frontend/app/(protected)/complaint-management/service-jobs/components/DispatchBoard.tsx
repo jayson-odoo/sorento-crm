@@ -23,7 +23,7 @@ function timeOf(job: ServiceJob): string {
   return text.includes(',') ? text.split(',').slice(1).join(',').trim() : text;
 }
 
-function JobCard({ job, withDate }: { job: ServiceJob; withDate?: boolean }) {
+function JobCard({ job }: { job: ServiceJob }) {
   return (
     <Link
       href={`/complaint-management/service-jobs/${job.id}`}
@@ -35,7 +35,7 @@ function JobCard({ job, withDate }: { job: ServiceJob; withDate?: boolean }) {
       </div>
       <div className="mt-1 flex items-center justify-between gap-2 text-muted-foreground">
         <span className="truncate">
-          {withDate && job.scheduled_from ? formatDateTimeInMalaysia(job.scheduled_from) : timeOf(job)}
+          {timeOf(job)}
         </span>
         <span className="truncate">{job.city || '-'}</span>
       </div>
@@ -45,7 +45,7 @@ function JobCard({ job, withDate }: { job: ServiceJob; withDate?: boolean }) {
 
 export default function DispatchBoard() {
   const [day, setDay] = useState(() => todayMalaysiaYyyyMmDd());
-  const { data, isLoading } = useDispatchBoard(day);
+  const { data, isLoading, isError, error, refetch } = useDispatchBoard(day);
 
   const shift = (days: number) => {
     const d = parseYmd(day);
@@ -74,18 +74,27 @@ export default function DispatchBoard() {
         </Button>
       </div>
 
-      {isLoading || !data ? (
+      {isError ? (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border p-4 text-sm">
+          <span className="text-destructive">
+            {error instanceof Error ? error.message : 'The dispatch board could not be loaded.'}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Try again
+          </Button>
+        </div>
+      ) : isLoading || !data ? (
         <Skeleton className="h-64 w-full" />
       ) : (
         <>
-          {data.stalled.length > 0 && (
+          {data.waiting.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle>Stalled jobs</CardTitle>
+                <CardTitle>Waiting for a date</CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {data.stalled.map((job) => (
-                  <JobCard key={job.id} job={job} withDate />
+                {data.waiting.map((job) => (
+                  <JobCard key={job.id} job={job} />
                 ))}
               </CardContent>
             </Card>
