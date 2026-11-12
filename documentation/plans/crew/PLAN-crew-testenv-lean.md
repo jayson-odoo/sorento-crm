@@ -81,6 +81,15 @@ gone -> rebuild); worker edits uncommitted files on a local lane (not in the bui
 - `park_due(lane, asks, now) -> str|None`, `note_copy_activity(lane, tail, now)`, `park_copy(lane_id)`;
   `[admission] park_idle_minutes = 120` (0 = off); lane field `parked = {ts, slot, sha, url}`, cleared by `up`/`down`.
 
+## Review round 1 (12 Nov) and decisions
+
+Accepted: park re-checks under the lane's testenv lock before tearing down (R1); no park in a tick that refreshes the
+copy (R2); builds serialized crew-wide with `/usr/bin/lockf` (R3; evidence: CLAUDE.md "Frontend dev loop", parallel
+builds took the Mac to load 90-190 twice); board shows parked only with an open HAND TEST ask, kill clears it (R4);
+failed build fails fast via a sentinel + `herdr pane wait-output --regex` (R5); park reuses `stop_copy` (R6); missing
+tests (R8). Pushed back: dirty-worktree digest in the build key (copies serve the PR head by sha; crew restarts on
+sha moves only, so uncommitted edits are not what the owner tests).
+
 ## UAC
 
 1. Copy frontend is `next start` serving a build of the copy's head; a second `testenv up` on the same head and env
