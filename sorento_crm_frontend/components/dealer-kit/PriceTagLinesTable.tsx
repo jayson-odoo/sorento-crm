@@ -48,6 +48,9 @@ import {
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 
+/** The most sets, and the most products, one Item search returns (the backend's `limit` max). */
+export const TAG_ITEM_SEARCH_LIMIT = 50;
+
 interface PriceTagLinesTableProps {
   lines: DraftLine[];
   priceMode: PriceMode;
@@ -151,6 +154,8 @@ export function PriceTagLinesTable({
               fetchItemOptions={editor.fetchItemOptions}
               fetchPartOptions={editor.fetchPartOptions}
               onItemSelect={editor.handleItemSelect}
+              onItemsAdd={editor.handleItemsAdd}
+              lines={lines}
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
@@ -262,6 +267,9 @@ interface LineRowProps {
   fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
   fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
+  onItemsAdd: (key: string, options: SearchableSelectOption[]) => void;
+  /** Every line of the request, so the Item picker can mark what is already added. */
+  lines: DraftLine[];
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
@@ -475,6 +483,8 @@ function LineRow({
   fetchItemOptions,
   fetchPartOptions,
   onItemSelect,
+  onItemsAdd,
+  lines,
   onUpdate,
   onRemove,
   onChoosePackage,
@@ -690,6 +700,20 @@ function LineRow({
             wrapOptions
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
+            multiAdd={{
+              onAddMany: (opts) => onItemsAdd(line.key, opts),
+              isAdded: (opt) => {
+                const [kind, id] = opt.value.split(':');
+                return lines.some(
+                  (l) =>
+                    l.key !== line.key &&
+                    (kind === 'product_set' ? l.product_set_id === id : l.product_id === id),
+                );
+              },
+              capped: (opts) =>
+                opts.filter((o) => o.value.startsWith('product_set:')).length >= TAG_ITEM_SEARCH_LIMIT ||
+                opts.filter((o) => o.value.startsWith('product:')).length >= TAG_ITEM_SEARCH_LIMIT,
+            }}
           />
           {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
               the same fields stack here instead of living in their own

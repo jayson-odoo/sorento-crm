@@ -11,6 +11,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
+import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import {
   selectTriggerVariants,
@@ -48,6 +49,8 @@ export type SearchableSelectOption = {
   group?: string;
   /** Per-option disabled (Radix `SelectItem disabled` parity). */
   disabled?: boolean;
+  /** Small grey badge after the label (e.g. "Discontinued"). */
+  badgeText?: string;
 };
 
 export type SearchableSelectProps = {
@@ -168,6 +171,19 @@ export type SearchableSelectProps = {
     label: (query: string) => React.ReactNode | null;
     onCreate: (query: string) => void;
   };
+  /**
+   * Opt-in tick-and-add mode (PRICETAG-MULTI-ADD). Each option gets a tick box that keeps the
+   * list open; clicking the option's text is still the single pick. "Add N" hands every ticked
+   * option to `onAddMany` once and closes. Ticks are kept across searches and dropped when the
+   * list closes. Absent, the picker behaves exactly as before.
+   */
+  multiAdd?: {
+    onAddMany: (options: SearchableSelectOption[]) => void;
+    /** True for an option that is already taken: shown ticked and disabled, "Already added". */
+    isAdded?: (option: SearchableSelectOption) => boolean;
+    /** True when the shown results hit the search cap, so more match than are listed. */
+    capped?: (options: SearchableSelectOption[]) => boolean;
+  };
 };
 
 export function SearchableSelect({
@@ -200,6 +216,7 @@ export function SearchableSelect({
   renderOption,
   renderTrigger,
   createOption,
+  multiAdd,
 }: SearchableSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -242,6 +259,11 @@ export function SearchableSelect({
   // `PopoverScrollLock` additionally requires `open`: RemoveScroll locks the body for as
   // long as it is MOUNTED, not for as long as anything is visibly open, so this component's
   // own popover-open state has to gate it directly rather than only through this flag.
+
+  // multiAdd ticks, in tick order, kept as whole options so they survive a new search.
+  const [ticked, setTicked] = React.useState<SearchableSelectOption[]>([]);
+  // Space ticks only after an arrow key moved the highlight since the last typed character.
+  const arrowedRef = React.useRef(false);
 
   // Async state
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableSelectOption[]>([]);
@@ -311,6 +333,8 @@ export function SearchableSelect({
   // reopening asks the same question it asked the first time.
   React.useEffect(() => {
     if (open) return;
+    setTicked([]);
+    arrowedRef.current = false;
     setQuery(initialQuery);
     lastQueryRef.current = '\u0000';
   }, [open, initialQuery]);
@@ -379,8 +403,62 @@ export function SearchableSelect({
   const createLabel = createOption && createQuery ? createOption.label(createQuery) : null;
 
   const handleQueryChange = (q: string) => {
+    arrowedRef.current = false;
     setQuery(q);
     onSearchChange?.(q);
+  };
+
+  const addedOf = (opt: SearchableSelectOption) => !!multiAdd?.isAdded?.(opt);
+  const tickedValues = new Set(ticked.map((o) => o.value));
+  const tickable = multiAdd
+    ? visibleOptions.filter((o) => !o.disabled && !addedOf(o))
+    : [];
+  const allTicked = tickable.length > 0 && tickable.every((o) => tickedValues.has(o.value));
+  const isCapped = !!multiAdd?.capped?.(visibleOptions);
+
+  const toggleTick = (opt: SearchableSelectOption) => {
+    if (opt.disabled || addedOf(opt)) return;
+    setTicked((prev) =>
+      prev.some((o) => o.value === opt.value)
+        ? prev.filter((o) => o.value !== opt.value)
+        : [...prev, opt],
+    );
+  };
+  const toggleAllTicks = () => {
+    if (allTicked) {
+      const drop = new Set(tickable.map((o) => o.value));
+      setTicked((prev) => prev.filter((o) => !drop.has(o.value)));
+    } else {
+      setTicked((prev) => {
+        const have = new Set(prev.map((o) => o.value));
+        return [...prev, ...tickable.filter((o) => !have.has(o.value))];
+      });
+    }
+  };
+  const addTicked = () => {
+    if (!multiAdd || ticked.length === 0) return;
+    multiAdd.onAddMany(ticked);
+    setOpen(false);
+  };
+  const handleListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!multiAdd) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      arrowedRef.current = true;
+      return;
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      addTicked();
+      return;
+    }
+    if (event.key === ' ' && arrowedRef.current) {
+      event.preventDefault();
+      const highlighted = event.currentTarget
+        .querySelector('[cmdk-item][data-selected="true"]')
+        ?.getAttribute('data-value');
+      const opt = visibleOptions.find((o) => o.value === highlighted);
+      if (opt) toggleTick(opt);
+    }
   };
 
   /**
@@ -514,13 +592,34 @@ export function SearchableSelect({
           )}
         align="start"
       >
-        <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
+        <Command
+          shouldFilter={false}
+          className="max-h-full min-h-0 flex flex-col"
+          onKeyDown={multiAdd ? handleListKeyDown : undefined}
+        >
           <CommandInput
             ref={inputRef}
             placeholder="Search..."
             value={query}
             onValueChange={handleQueryChange}
           />
+          {multiAdd && !loading && tickable.length > 0 ? (
+            <div className="border-b p-1">
+              <button
+                type="button"
+                data-slot="searchable-select-all"
+                onClick={toggleAllTicks}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+              >
+                <div className="flex size-4 items-center justify-center rounded-sm border border-input">
+                  {allTicked ? <Check className="size-3" /> : null}
+                </div>
+                <span className="flex-1 text-left font-medium">
+                  {isCapped ? `Select all ${tickable.length} shown` : `Select all ${tickable.length}`}
+                </span>
+              </button>
+            </div>
+          ) : null}
           <CommandList className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
@@ -533,7 +632,24 @@ export function SearchableSelect({
             ) : null}
             {grouped.map(([groupKey, opts]) => (
               <CommandGroup key={groupKey || '__ungrouped__'} heading={groupKey || undefined}>
-                {opts.map((opt) => (
+                {opts.map((opt) => {
+                  const added = addedOf(opt);
+                  const isTicked = added || tickedValues.has(opt.value);
+                  const badges = (
+                    <>
+                      {opt.badgeText ? (
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {opt.badgeText}
+                        </span>
+                      ) : null}
+                      {added ? (
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          Already added
+                        </span>
+                      ) : null}
+                    </>
+                  );
+                  return (
                   <CommandItem
                     key={opt.value}
                     // The item's `value` is cmdk's IDENTITY, not its filter text: two options
@@ -546,21 +662,47 @@ export function SearchableSelect({
                     // carries the searchable text instead, for parity with cmdk's contract.
                     value={opt.value}
                     keywords={[opt.label, opt.description ?? '']}
-                    disabled={opt.disabled}
+                    disabled={opt.disabled || added}
                     onSelect={() => select(opt)}
                     className="flex items-start gap-2"
                   >
-                    <Check
-                      className={cn(
-                        'mt-0.5 size-4 shrink-0',
-                        opt.value === value ? 'opacity-100' : 'opacity-0',
-                      )}
-                    />
+                    {multiAdd ? (
+                      <div
+                        role="checkbox"
+                        aria-label={`Tick ${opt.label}`}
+                        aria-checked={isTicked}
+                        aria-disabled={added || opt.disabled ? true : undefined}
+                        onClick={(e) => {
+                          // A tick is not a pick: keep cmdk's onSelect (and the close) out of it.
+                          e.stopPropagation();
+                          toggleTick(opt);
+                        }}
+                        className={cn(
+                          'mt-0.5 flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-input',
+                          (added || opt.disabled) && 'cursor-not-allowed opacity-60',
+                        )}
+                      >
+                        {isTicked ? <Check className="size-3" /> : null}
+                      </div>
+                    ) : (
+                      <Check
+                        className={cn(
+                          'mt-0.5 size-4 shrink-0',
+                          opt.value === value ? 'opacity-100' : 'opacity-0',
+                        )}
+                      />
+                    )}
                     {renderOption ? (
-                      renderOption(opt)
+                      <>
+                        {renderOption(opt)}
+                        {badges}
+                      </>
                     ) : (
                       <div className="flex flex-1 flex-col min-w-0">
-                        <span className="break-words">{opt.label}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="break-words">{opt.label}</span>
+                          {badges}
+                        </div>
                         {opt.description && !sameDisplayText(opt.label, opt.description) ? (
                           <span
                             className="text-xs text-muted-foreground break-words"
@@ -572,7 +714,8 @@ export function SearchableSelect({
                       </div>
                     )}
                   </CommandItem>
-                ))}
+                  );
+                })}
               </CommandGroup>
             ))}
             {createLabel ? (
@@ -608,6 +751,19 @@ export function SearchableSelect({
               </div>
             ) : null}
           </CommandList>
+          {multiAdd && isCapped && !loading ? (
+            <div className="border-t px-3 py-1.5 text-xs text-muted-foreground">
+              More match. Type more of the code to see them.
+            </div>
+          ) : null}
+          {multiAdd && ticked.length > 0 ? (
+            <div className="flex items-center justify-between gap-2 border-t p-2">
+              <span className="text-sm text-muted-foreground">{ticked.length} ticked</span>
+              <Button type="button" variant="primary" size="sm" onClick={addTicked}>
+                Add {ticked.length}
+              </Button>
+            </div>
+          ) : null}
         </Command>
       </PopoverContent>
       </PopoverScrollLock>
