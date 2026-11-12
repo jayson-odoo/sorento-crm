@@ -6,15 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AuditTrail from '@/components/audit/AuditTrail';
-import DeferredActionButton from '@/components/common/DeferredActionButton';
 import DetailActions from '@/components/common/DetailActions';
 import { PageHeader } from '@/components/common/PageHeader';
 import { WizardSteps } from '@/components/common/WizardSteps';
-import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
-  PROJECT_IMPORT_RUN_KEY,
-  PROJECT_IMPORT_RUNS_KEY,
   PROJECT_IMPORT_RUNS_PAGER,
   RUN_PERMISSION,
   useProjectImportMutations,
@@ -25,6 +21,7 @@ import type {
   ProjectImportLineKey,
   ProjectImportRun,
 } from '../../../_shared/types/projectImport.types';
+import { useProjectImportRunActions } from '../../actions';
 import { RunStatusBadge } from '../../components/importLabels';
 import { ColumnsStep } from './ColumnsStep';
 import { PreviewStep } from './PreviewStep';
@@ -59,39 +56,10 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   const { preview, importRun } = useProjectImportMutations(runId);
 
   const router = useRouter();
-  const revertable = canRun && run?.status === 'imported';
-  const deletable =
-    canRun && (run?.status === 'draft' || run?.status === 'previewed' || run?.status === 'reverted');
-  const reverting = useDeferredAction({
-    actionKey: 'project_import_run.revert',
-    entityType: 'project_import_run',
-    entityId: revertable ? runId : null,
-    verb: 'Reverting',
-    subject: run?.run_no ?? '',
+  // The one action set the list's row menu renders too (D15).
+  const runActions = useProjectImportRunActions(run, {
     surface: 'inline',
-    watchFromMount: true,
-    successMessage: 'Import reverted',
-    // The History reads the run's audit trail: refreshed when the revert lands (D7).
-    invalidateKeys: [
-      [PROJECT_IMPORT_RUN_KEY, runId],
-      [PROJECT_IMPORT_RUNS_KEY],
-      ['audit-logs', 'project_import_run', runId],
-    ],
-  });
-
-  // Delete (round 9): the same parked-action wiring as revert, for a run that left nothing in
-  // the CRM; the page goes back to the list once it lands.
-  const deleting = useDeferredAction({
-    actionKey: 'project_import_run.delete',
-    entityType: 'project_import_run',
-    entityId: deletable ? runId : null,
-    verb: 'Deleting',
-    subject: run?.run_no ?? '',
-    surface: 'inline',
-    watchFromMount: true,
-    successMessage: 'Import deleted',
-    invalidateKeys: [[PROJECT_IMPORT_RUNS_KEY]],
-    onCommitted: () => router.push('/project-sales/import'),
+    onDeleted: () => router.push('/project-sales/import'),
   });
 
   // A status change (preview, import, revert) moves the page to the step it now stands on.
@@ -178,46 +146,8 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
               currentId: runId,
               ariaLabel: 'import',
             }}
-            actions={
-              revertable
-                ? [
-                    {
-                      key: 'project_import_run.revert',
-                      label: 'Revert',
-                      kind: 'destructive',
-                      disabled: reverting.isBlocked,
-                      run: () => reverting.start(),
-                    },
-                  ]
-                : deletable
-                  ? [
-                      {
-                        key: 'project_import_run.delete',
-                        label: 'Delete',
-                        kind: 'destructive',
-                        disabled: deleting.isBlocked,
-                        run: () => deleting.start(),
-                      },
-                    ]
-                  : undefined
-            }
-            pendingAction={
-              revertable ? (
-                <DeferredActionButton
-                  pending={reverting.pending}
-                  verb="Reverting"
-                  subject={run.run_no}
-                  onCancel={reverting.cancel}
-                />
-              ) : deletable && deleting.pending ? (
-                <DeferredActionButton
-                  pending={deleting.pending}
-                  verb="Deleting"
-                  subject={run.run_no}
-                  onCancel={deleting.cancel}
-                />
-              ) : undefined
-            }
+            actions={runActions.actions.length ? runActions.actions : undefined}
+            pendingAction={runActions.pending ?? undefined}
             primary={primary}
           />
         </div>

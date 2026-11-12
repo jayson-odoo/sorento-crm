@@ -11,13 +11,7 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu';
-import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -36,11 +30,8 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { getUsersSelect } from '@/services/userSelectService';
-import {
-  PROJECT_IMPORT_RUNS_KEY,
-  RUN_PERMISSION,
-  useProjectImportRuns,
-} from '../../_shared/hooks/useProjectImport';
+import { RUN_PERMISSION, useProjectImportRuns } from '../../_shared/hooks/useProjectImport';
+import { RunContextMenuItems, useProjectImportRunActions } from '../actions';
 import type { ProjectImportRunRow } from '../../_shared/types/projectImport.types';
 import { CreateImportDialog } from './CreateImportDialog';
 import { RunStatusBadge, STATUS_LABELS } from './importLabels';
@@ -102,19 +93,14 @@ export function ProjectImportListClient() {
     );
   }, [listSearch]);
 
-  // Delete from a row's right-click menu: the same parked action the run page's gear starts,
-  // its countdown in the toast (a row has nowhere to put one). A run that is imported is
-  // reverted first, so it is not offered here.
-  const deleting = useDeferredRowAction({
-    actionKey: 'project_import_run.delete',
-    entityType: 'project_import_run',
-    verb: 'Deleting',
-    successMessage: 'Import deleted',
-    invalidateKeys: [[PROJECT_IMPORT_RUNS_KEY]],
-  });
+  // The row's right-click menu renders the run's one action set (the run page's gear shows the
+  // same, D15); a countdown goes to a toast. The run stays targeted after the menu closes, so
+  // its countdown keeps its record.
   const [menuRun, setMenuRun] = React.useState<ProjectImportRunRow | null>(null);
-  const deletable = (run: ProjectImportRunRow) =>
-    canRun && ['draft', 'previewed', 'reverted'].includes(run.status);
+  const menuActions = useProjectImportRunActions(menuRun, {
+    surface: 'toast',
+    onOpen: () => menuRun && router.push(rowHref(menuRun)),
+  });
 
   const rowHref = (row: ProjectImportRunRow) => {
     const query = buildDetailSearch(grid, {
@@ -231,7 +217,7 @@ export function ProjectImportListClient() {
   const activeFilters = (status.length ? 1 : 0) + (uploadedBy.length ? 1 : 0);
 
   return (
-    <ContextMenu onOpenChange={(open) => !open && setMenuRun(null)}>
+    <ContextMenu>
       <ContextMenuTrigger
         asChild
         onContextMenu={(event) => {
@@ -350,20 +336,12 @@ export function ProjectImportListClient() {
       </DataGrid>
         </div>
       </ContextMenuTrigger>
-      {menuRun && (
+      {menuRun && menuActions.actions.length > 0 && (
         <ContextMenuContent>
-          <ContextMenuItem onSelect={() => router.push(rowHref(menuRun))}>Open</ContextMenuItem>
-          {deletable(menuRun) && (
-            <ContextMenuItem
-              variant="destructive"
-              disabled={deleting.isPending}
-              onSelect={() => deleting.run({ id: menuRun.id, subject: menuRun.run_no })}
-            >
-              Delete
-            </ContextMenuItem>
-          )}
+          <RunContextMenuItems actions={menuActions.actions} />
         </ContextMenuContent>
-      )}      {canRun && <CreateImportDialog open={creating} onOpenChange={setCreating} />}
+      )}
+      {canRun && <CreateImportDialog open={creating} onOpenChange={setCreating} />}
     </ContextMenu>
   );
 }
