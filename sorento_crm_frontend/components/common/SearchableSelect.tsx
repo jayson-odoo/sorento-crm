@@ -262,6 +262,8 @@ export function SearchableSelect({
 
   // multiAdd ticks, in tick order, kept as whole options so they survive a new search.
   const [ticked, setTicked] = React.useState<SearchableSelectOption[]>([]);
+  // The search text each tick was made under, so Add N can order ticks of one search by the list.
+  const tickQueryRef = React.useRef<Map<string, string>>(new Map());
   // Space ticks only after an arrow key moved the highlight since the last typed character.
   const arrowedRef = React.useRef(false);
 
@@ -334,6 +336,7 @@ export function SearchableSelect({
   React.useEffect(() => {
     if (open) return;
     setTicked([]);
+    tickQueryRef.current.clear();
     arrowedRef.current = false;
     setQuery(initialQuery);
     lastQueryRef.current = '\u0000';
@@ -418,6 +421,7 @@ export function SearchableSelect({
 
   const toggleTick = (opt: SearchableSelectOption) => {
     if (opt.disabled || addedOf(opt)) return;
+    tickQueryRef.current.set(opt.value, query);
     setTicked((prev) =>
       prev.some((o) => o.value === opt.value)
         ? prev.filter((o) => o.value !== opt.value)
@@ -429,6 +433,9 @@ export function SearchableSelect({
       const drop = new Set(tickable.map((o) => o.value));
       setTicked((prev) => prev.filter((o) => !drop.has(o.value)));
     } else {
+      for (const o of tickable) {
+        if (!tickedValues.has(o.value)) tickQueryRef.current.set(o.value, query);
+      }
       setTicked((prev) => {
         const have = new Set(prev.map((o) => o.value));
         return [...prev, ...tickable.filter((o) => !have.has(o.value))];
@@ -437,7 +444,18 @@ export function SearchableSelect({
   };
   const addTicked = () => {
     if (!multiAdd || ticked.length === 0) return;
-    multiAdd.onAddMany(ticked);
+    // Ticks made under the current search come in the order the list shows them; ticks from
+    // other searches keep their tick order. The current search's ticks reuse their own slots.
+    const here = ticked.filter((o) => tickQueryRef.current.get(o.value) === query);
+    const listIndex = new Map(visibleOptions.map((o, i) => [o.value, i]));
+    const sorted = [...here].sort(
+      (a, b) => (listIndex.get(a.value) ?? 0) - (listIndex.get(b.value) ?? 0),
+    );
+    let next = 0;
+    const ordered = ticked.map((o) =>
+      tickQueryRef.current.get(o.value) === query ? sorted[next++] : o,
+    );
+    multiAdd.onAddMany(ordered);
     setOpen(false);
   };
   const handleListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -700,12 +718,15 @@ export function SearchableSelect({
                     ) : (
                       <div className="flex flex-1 flex-col min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="break-words">{opt.label}</span>
+                          <span className="min-w-0 break-words">{opt.label}</span>
                           {badges}
                         </div>
                         {opt.description && !sameDisplayText(opt.label, opt.description) ? (
                           <span
-                            className="text-xs text-muted-foreground break-words"
+                            className={cn(
+                              'text-xs text-muted-foreground break-words',
+                              multiAdd && 'line-clamp-2',
+                            )}
                             title={opt.description}
                           >
                             {opt.description}

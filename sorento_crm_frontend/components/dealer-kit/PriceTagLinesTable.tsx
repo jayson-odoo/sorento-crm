@@ -74,6 +74,14 @@ export function PriceTagLinesTable({
 }: PriceTagLinesTableProps) {
   // PRICETAG-LPSP: LP or SP is per line, so the Promotion / Selling price columns appear as
   // soon as any line is SP, not only under a Selling header.
+  const takenItems = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const l of lines) {
+      if (l.product_set_id) map.set(`product_set:${l.product_set_id}`, l.key);
+      if (l.product_id) map.set(`product:${l.product_id}`, l.key);
+    }
+    return map;
+  }, [lines]);
   const anySelling = lines.some((l) => linePriceType(l, priceMode) === 'selling');
   return (
     <div className="overflow-x-auto">
@@ -155,7 +163,7 @@ export function PriceTagLinesTable({
               fetchPartOptions={editor.fetchPartOptions}
               onItemSelect={editor.handleItemSelect}
               onItemsAdd={editor.handleItemsAdd}
-              lines={lines}
+              takenItems={takenItems}
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
@@ -268,8 +276,8 @@ interface LineRowProps {
   fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
   onItemsAdd: (key: string, options: SearchableSelectOption[]) => void;
-  /** Every line of the request, so the Item picker can mark what is already added. */
-  lines: DraftLine[];
+  /** `product:<id>` / `product_set:<id>` of every line, to the owning line's key. */
+  takenItems: Map<string, string>;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
@@ -484,7 +492,7 @@ function LineRow({
   fetchPartOptions,
   onItemSelect,
   onItemsAdd,
-  lines,
+  takenItems,
   onUpdate,
   onRemove,
   onChoosePackage,
@@ -703,12 +711,8 @@ function LineRow({
             multiAdd={{
               onAddMany: (opts) => onItemsAdd(line.key, opts),
               isAdded: (opt) => {
-                const [kind, id] = opt.value.split(':');
-                return lines.some(
-                  (l) =>
-                    l.key !== line.key &&
-                    (kind === 'product_set' ? l.product_set_id === id : l.product_id === id),
-                );
+                const owner = takenItems.get(opt.value);
+                return owner !== undefined && owner !== line.key;
               },
               capped: (opts) =>
                 opts.filter((o) => o.value.startsWith('product_set:')).length >= TAG_ITEM_SEARCH_LIMIT ||
