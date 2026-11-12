@@ -23,6 +23,11 @@ marker or default size.
   the miss gets its own did-you-mean from the same function as AC-10.
 - AC-16 Exact code unchanged: reply byte-identical to main (staff and dealer).
 - AC-20 An inactive or chat-hidden placeholder close code is never offered (dealer and staff).
+- AC-20f (owner 13 Nov, Q3: "discontineud still show for what"): a discontinued code (is_discontinued, even when
+  active) is never offered in a did-you-mean / close-code list, like an inactive one (AC-20). Owner-FAIL #9 (CLB109A)
+  therefore offers only CL8109A (C9109A inactive; CB3109A and CB4109A discontinued); this replaces the 22-23 Oct three.
+- AC-20g guard: a discontinued code typed EXACTLY keeps today's reply (PRODUCT DISCONTINUED + the Alternative line,
+  owner-FAIL #6 / #7).
 - AC-21 Dealer says "no" to an offer: today's reply stays (the refer line alone, owner hand test ht26); nothing answered,
   the code is not offered again.
 - AC-22 Dealer says "yes" / "1": the offered code is answered with the carried quantity.
