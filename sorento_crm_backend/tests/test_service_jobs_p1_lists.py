@@ -199,19 +199,22 @@ def test_e2_day_is_the_myt_day(env):
     assert j.id in on21 and j.id not in on20
 
 
-def test_e3_stalled_is_proposed_past_its_date_oldest_first_whatever_the_day(env):
+def test_e3_waiting_is_every_proposed_job_oldest_raised_first_whatever_the_day(env):
+    """Fix round 1 (S-1): "Stalled" had no reachable meaning (a Proposed job has no date), so the
+    top section is "Waiting for a date": every Proposed job, any day, oldest raised first."""
     tag = unique_code("ST", alpha=True)
     c = lambda n: make_complaint(env, "st", complaint_number=f"{tag}-{n}")  # noqa: E731
     now = datetime.utcnow()
-    newer = make_job(env, c(1), "proposed", scheduled_from=now - timedelta(days=1))
-    older = make_job(env, c(2), "proposed", scheduled_from=now - timedelta(days=9))
-    future = make_job(env, c(3), "proposed", scheduled_from=now + timedelta(days=3))
-    undated = make_job(env, c(4), "proposed")
-    past_confirmed = make_job(env, c(5), "confirmed", scheduled_from=now - timedelta(days=2), agreed_by="x")
+    newer = make_job(env, c(1), "proposed")
+    older = make_job(env, c(2), "proposed")
+    undated_confirmed = make_job(env, c(5), "confirmed", scheduled_from=now, agreed_by="x")
+    newer.created_at = now - timedelta(days=1)
+    older.created_at = now - timedelta(days=9)
+    env.db.flush()
     with api(env) as client:
         for day in ("2026-11-20", "2031-01-01"):
-            stalled = [j["id"] for j in _board(client, day)["stalled"]]
-            mine = [i for i in stalled if i in {newer.id, older.id, future.id, undated.id, past_confirmed.id}]
+            waiting = [j["id"] for j in _board(client, day)["waiting"]]
+            mine = [i for i in waiting if i in {newer.id, older.id, undated_confirmed.id}]
             assert mine == [older.id, newer.id], (day, mine)
 
 

@@ -24,7 +24,7 @@ def _limit(db: Session, current_user: dict):
 
 def _write_limit(db: Session, current_user: dict):
     svc.stamp_actor(db, current_user)
-    return _limit(db, current_user)
+    return svc.limit_for(db, str(current_user.get("id") or ""), strict=False)
 
 
 @router.get("/service-jobs")

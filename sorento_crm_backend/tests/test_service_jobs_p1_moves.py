@@ -48,6 +48,8 @@ def _key(env, job):
 
 def _confirmed(env, tech=None):
     c = make_complaint(env, "mv")
+    # Fix round 1 (S-9): arriving needs a technician, so a confirmed job starts with one.
+    tech = tech or make_tech(env)
     return make_job(
         env, c, "confirmed", technician=tech,
         scheduled_from=datetime(2026, 11, 20, 2, 0), agreed_by="Ms Lim",
@@ -158,7 +160,7 @@ def test_c3_only_the_graphs_moves_are_allowed(env, frm, to):
     if to == "confirmed":
         pytest.skip("confirm has its own route (C1); see the next test")
     job = make_job(
-        env, make_complaint(env, "c3"), frm,
+        env, make_complaint(env, "c3"), frm, technician=make_tech(env),
         scheduled_from=datetime(2026, 11, 20, 2, 0), agreed_by="Ms Lim",
     )
     body = {"to": to}
@@ -196,7 +198,7 @@ def test_c3_unknown_target_is_422(env):
     [("confirmed", "arrived", "arrived_at"), ("arrived", "completed", "completed_at"), ("completed", "verified", "verified_at")],
 )
 def test_c4_stamps(env, frm, to, column):
-    job = make_job(env, make_complaint(env, "c4"), frm, scheduled_from=datetime(2026, 11, 20, 2, 0), agreed_by="Ms Lim")
+    job = make_job(env, make_complaint(env, "c4"), frm, technician=make_tech(env), scheduled_from=datetime(2026, 11, 20, 2, 0), agreed_by="Ms Lim")
     assert getattr(job, column) is None
     with api(env) as client:
         assert client.post(f"{JOBS}/{job.id}/transition", json={"to": to}).status_code == 200

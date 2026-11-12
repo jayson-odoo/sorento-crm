@@ -147,7 +147,7 @@ def test_s3_assistant_view_plus_complaints_own_sees_only_own(env):
     b = make_job(env, make_complaint(env, "s3t", contact_id=theirs.id, space_id="z"), "proposed")
     ids = {r.get("id") for r in _assistant(env, [VIEW, COWN], mine.id)()["rows"]}
     assert a.id in ids and b.id not in ids
-    ids_all = {r.get("id") for r in _assistant(env, [VIEW, CVIEW], mine.id)()["rows"]}
+    ids_all = {r.get("id") for r in _assistant(env, [VIEW, CVIEW])()["rows"]}
     assert {a.id, b.id} <= ids_all
 
 

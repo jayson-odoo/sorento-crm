@@ -68,16 +68,38 @@ class Limit:
         return Complaint.contact_id == self.contact_id
 
 
-def limit_for(db: Session, user_id: str) -> Optional[Limit]:
+def limit_for(db: Session, user_id: str, *, strict: bool = True) -> Optional[Limit]:
+    """None = no limit (admin, or complaints ``view``). A reader with no complaints access at all
+    matches nothing (``strict``); a dispatcher's writes keep working without it (``strict=False``)."""
     from app.services.user_service import UserPermissionService
 
     service = UserPermissionService(db)
     if service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
         return None
     perms = service.get_user_permission_slugs(user_id)
-    if own_scope.request_access(perms, "complaint") != "own":
+    access = own_scope.request_access(perms, "complaint")
+    if access == "all":
         return None
-    return Limit(own_scope.me(db, user_id).contact_id)
+    if access == "own":
+        return Limit(own_scope.me(db, user_id).contact_id)
+    return Limit(None) if strict else None
+
+
+def brand_clauses(db: Session) -> list:
+    """The complaints list's brand scope (a contact limited to some brands), on the job's complaint."""
+    from app.services.contact_brand_scope import complaint_in_scope_clauses
+
+    return list(complaint_in_scope_clauses(db))
+
+
+def job_brand_clauses(db: Session) -> list:
+    """The same scope stated on ``ServiceJob`` itself, for the assistant's query."""
+    from sqlalchemy import select
+
+    clauses = brand_clauses(db)
+    if not clauses:
+        return []
+    return [ServiceJob.complaint_id.in_(select(Complaint.id).where(*clauses))]
 
 
 def stamp_actor(db: Session, user: dict) -> None:
@@ -126,6 +148,7 @@ def _base_query(db: Session, limit: Optional[Limit]):
     )
     if limit is not None:
         q = q.filter(limit.clause())
+    q = q.filter(*brand_clauses(db))
     return q
 
 
@@ -182,6 +205,7 @@ def _get_complaint(db: Session, complaint_id: str, limit: Optional[Limit], *, lo
     q = db.query(Complaint).filter(Complaint.id == str(complaint_id))
     if limit is not None:
         q = q.filter(limit.clause())
+    q = q.filter(*brand_clauses(db))
     if lock:
         q = q.with_for_update()
     row = q.first()
@@ -262,12 +286,11 @@ def list_jobs(
 
 def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any]:
     start, end = myt_day_bounds(day)
-    now = _now()
-
-    stalled_rows = (
+    # Every Proposed job is waiting for a date, whatever day is picked: oldest raised first.
+    waiting_rows = (
         _base_query(db, limit_scope)
-        .filter(Status.key == "proposed", ServiceJob.scheduled_from.isnot(None), ServiceJob.scheduled_from < now)
-        .order_by(ServiceJob.scheduled_from.asc(), ServiceJob.id)
+        .filter(Status.key == "proposed")
+        .order_by(ServiceJob.created_at.asc(), ServiceJob.id)
         .limit(500)
         .all()
     )
@@ -276,18 +299,10 @@ def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any
         _base_query(db, limit_scope)
         .filter(
             Status.key != "cancelled",
-            or_(
-                and_(ServiceJob.scheduled_from >= start, ServiceJob.scheduled_from < end),
-                # Raised today with no date yet: shown once, under Unassigned, never as stalled.
-                and_(
-                    Status.key == "proposed",
-                    ServiceJob.scheduled_from.is_(None),
-                    ServiceJob.created_at >= start,
-                    ServiceJob.created_at < end,
-                ),
-            ),
+            ServiceJob.scheduled_from >= start,
+            ServiceJob.scheduled_from < end,
         )
-        .order_by(ServiceJob.scheduled_from.asc().nulls_last(), ServiceJob.id)
+        .order_by(ServiceJob.scheduled_from.asc(), ServiceJob.id)
         .all()
     )
 
@@ -296,7 +311,7 @@ def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any
     for row in day_rows:
         job, _status, tech, _complaint = row
         data = serialize(row)
-        if tech is None or not tech.is_active or job.scheduled_from is None:
+        if tech is None or not tech.is_active:
             unassigned.append(data)
             continue
         col = by_tech.setdefault(
@@ -306,20 +321,30 @@ def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any
 
     columns = [{"technician_id": None, "technician_name": "Unassigned", "jobs": unassigned}]
     columns += sorted(by_tech.values(), key=lambda c: (c["technician_name"] or "").lower())
-    return {"day": day.isoformat(), "stalled": [serialize(r) for r in stalled_rows], "columns": columns}
+    return {"day": day.isoformat(), "waiting": [serialize(r) for r in waiting_rows], "columns": columns}
 
 
 # ------------------------------------------------------------------ raise
 
 
 def _number(db: Session) -> str:
+    from app.services import numbering_defaults
     from app.services.company_scope import resolve_write_company_id
     from app.services.numbering_service import NumberingService
 
     company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
-    number = NumberingService(db).get_next_number(
-        JOB_NUMBER_DOC_TYPE, company_id=company_id, commit_rule=False
+    service = NumberingService(db)
+    today = (_now() + MYT).date()  # the Malaysian day, not the server's
+    number = service.get_next_number(
+        JOB_NUMBER_DOC_TYPE, reference_date=today, company_id=company_id, commit_rule=False
     )
+    if not number and company_id:
+        # A company that never had the rule (added after the migration) gets it on first use.
+        numbering_defaults.seed_service_job_rule(db, company_id=company_id)
+        db.flush()
+        number = service.get_next_number(
+            JOB_NUMBER_DOC_TYPE, reference_date=today, company_id=company_id, commit_rule=False
+        )
     if not number:
         raise AppException(
             status_code=409,
@@ -338,6 +363,20 @@ def live_job_row(db: Session, complaint_id: str):
     )
 
 
+def _live_job_elsewhere(db: Session, complaint_id: str) -> bool:
+    """A live job in ANY company (raw SQL: the company filter must not hide it)."""
+    from sqlalchemy import text
+
+    row = db.execute(
+        text(
+            "select 1 from service_jobs j join statuses s on s.id = j.status_id "
+            "where j.complaint_id = :c and s.key not in ('cancelled', 'verified') limit 1"
+        ),
+        {"c": str(complaint_id)},
+    ).first()
+    return row is not None
+
+
 def raise_job(
     db: Session,
     complaint_id: str,
@@ -354,6 +393,13 @@ def raise_job(
     existing = live_job_row(db, complaint.id)
     if existing is not None:
         return serialize(existing), False
+    if _live_job_elsewhere(db, complaint.id):
+        # Complaints are company-global, so one live job per complaint holds across companies.
+        raise AppException(
+            status_code=409,
+            message="This complaint already has a live service job in another company.",
+            code="service_job_live_elsewhere",
+        )
 
     proposed = status_by_key(db, "proposed")
     if proposed is None:
@@ -460,7 +506,9 @@ def assign(db: Session, job_id: str, technician_id: str, limit: Optional[Limit] 
             code="service_job_assign_not_allowed",
         )
     tech = (
-        db.query(Technician).filter(Technician.id == str(technician_id)).first()
+        db.query(Technician)
+        .filter(Technician.id == str(technician_id), Technician.company_id == job.company_id)
+        .first()
         if _valid_uuid(technician_id)
         else None
     )
@@ -489,6 +537,12 @@ def transition(
         )
     job = _lock_job(db, job_id, limit)
     target = _check_edge(db, job, to)
+    if to in ("on_the_way", "arrived") and not job.technician_id:
+        raise AppException(
+            status_code=422,
+            message="Assign a technician first.",
+            code="service_job_technician_required",
+        )
     reason = (reason or "").strip()
     if to in REASON_REQUIRED and not reason:
         raise AppException(status_code=422, message="reason is required for this move.", code="service_job_reason_required")

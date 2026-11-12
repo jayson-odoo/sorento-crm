@@ -121,7 +121,8 @@ class ComplaintResolutionService:
         self.db = db
 
     def list_resolutions(self, page: int = 1, limit: int = 50, query: Optional[str] = None,
-                         is_active: Optional[bool] = None):
+                         is_active: Optional[bool] = None, sort: Optional[str] = None,
+                         direction: str = "asc"):
         q = self.db.query(ComplaintResolution)
         if query:
             term = f"%{query.strip()}%"
@@ -132,7 +133,14 @@ class ComplaintResolutionService:
 
         total = q.count()
         offset = (page - 1) * limit
-        rows = q.order_by(ComplaintResolution.name.asc()).offset(offset).limit(limit).all()
+        sort_columns = {
+            "name": ComplaintResolution.name,
+            "requires_service_job": ComplaintResolution.requires_service_job,
+            "is_active": ComplaintResolution.is_active,
+        }
+        column = sort_columns.get(sort or "", ComplaintResolution.name)
+        order = column.desc() if direction == "desc" else column.asc()
+        rows = q.order_by(order, ComplaintResolution.name.asc()).offset(offset).limit(limit).all()
         if not rows:
             return {"data": [], "pagination": {"total": 0, "page": page, "limit": limit}, "empty": True}
 

@@ -159,6 +159,8 @@ def downgrade() -> None:
         bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": slug})
     op.execute("DELETE FROM document_numbering_rules WHERE doc_type = 'service_job'")
     op.execute("DROP TABLE IF EXISTS service_jobs")
+    op.execute("DELETE FROM status_transitions WHERE entity_type = 'service_job'")
+    op.execute("DELETE FROM statuses WHERE entity_type = 'service_job'")
     op.execute("DROP TABLE IF EXISTS technicians")
     op.execute("ALTER TABLE complaint_resolutions DROP COLUMN IF EXISTS requires_service_job")
     for column, _ddl in _SITE_COLUMNS:

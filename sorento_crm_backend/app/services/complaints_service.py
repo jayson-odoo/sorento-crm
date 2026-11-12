@@ -1873,6 +1873,7 @@ class ComplaintService:
         complaint = self.get_complaint(complaint_id)
 
         update_data = complaint_data.model_dump(exclude_unset=True)
+        previous_resolution_id = str(complaint.resolution_id) if complaint.resolution_id else None
         if "project_id" in update_data:
             self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         explicit_lines = update_data.pop("product_lines", None)
@@ -1928,7 +1929,9 @@ class ComplaintService:
             self._populate_lines_from_legacy_csv(complaint)
 
         self.db.commit()
-        if update_data.get("resolution_id"):
+        # Only a CHANGE to a flagged resolution raises: a later save of the same complaint must not
+        # bring back a job somebody cancelled.
+        if update_data.get("resolution_id") and str(update_data["resolution_id"]) != previous_resolution_id:
             self._raise_service_job_for_resolution(complaint)
         self.db.refresh(complaint)
         return complaint

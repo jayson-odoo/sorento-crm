@@ -69,6 +69,9 @@ class EntityDef:
     routes: tuple[str, ...] = ()
     #: (db) -> extra always-on clauses the screen's own list applies (not deleted, brand scope).
     scope: Callable[[Any], list] | None = None
+    #: (db, user_id) -> clauses that depend on WHO asks (an entity whose rows follow another screen's
+    #: "only theirs" rule): applied with `scope`, to every reader.
+    user_scope: Callable[[Any, str], list] | None = None
     #: A computed entity (figures no table holds: a target's achievement and commission). (db, user_id, own_only,
     #: date_from, date_to) -> rows as dicts keyed by field, built by the module's own service; filters, groups
     #: and aggregates then run over them in code (`assistant_registry.computed`). The row's "id" and every
