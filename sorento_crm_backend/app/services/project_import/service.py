@@ -146,6 +146,25 @@ def _save_meta(db: Session, run: ImportJob, meta: dict) -> None:
     db.flush()
 
 
+#: The run's own History entity type (AuditTrail, `GET /audit/logs`), the same word the
+#: record action `project_import_run.revert` uses.
+HISTORY_ENTITY_TYPE = "project_import_run"
+
+
+def _history(db: Session, run: ImportJob, user_id: Optional[str], event: str, description: str) -> None:
+    """One plain History entry for an action on the run: who, when, what. The text carries no
+    id and no value from the file (AC-PI-41)."""
+    from app.services.audit_service import log_audit
+
+    log_audit(
+        db, HISTORY_ENTITY_TYPE, str(run.id), "EVENT",
+        user_id=str(user_id) if user_id else None,
+        description=description,
+        company_id=str(run.company_id) if run.company_id else None,
+        event=f"project_import.{event}",
+    )
+
+
 def _phase(run: ImportJob) -> str:
     return _meta(run).get("phase") or PHASE_DRAFT
 
@@ -219,6 +238,7 @@ def create_run(db: Session, *, company_id: str, user_id: str, filename: str, con
         "columns": columns,
         "probe": [_probe_dict(p) for p in probes],
     })
+    _history(db, job, user_id, "uploaded", "Uploaded")
     return job
 
 
@@ -278,6 +298,7 @@ def save_columns(db: Session, run: ImportJob, *, sheets: list[str], columns: dic
             col["field"] = chosen.get(normalize_header(col["header"]), col.get("field"))
     meta.update({"sheets": picked, "columns": clean, "probe": probe, "phase": PHASE_DRAFT})
     _save_meta(db, run, meta)
+    _history(db, run, user_id, "columns_saved", "Columns saved")
 
 
 def _missing_required(run: ImportJob) -> list[str]:
@@ -502,8 +523,10 @@ def set_line(
     target_id: Optional[str] = None,
     new_title: Optional[str] = None,
     user_id: str,
+    record_history: bool = True,
 ) -> dict:
-    """Store (or replace) the one saved choice for a line (AC-PI-16)."""
+    """Store (or replace) the one saved choice for a line (AC-PI-16). `record_history=False` is
+    the bulk set's own call: it writes one entry for the whole set instead."""
     _assert_phase(run, (PHASE_DRAFT, PHASE_PREVIEWED), "change its values")
     if kind not in KINDS:
         raise AppException(422, "Unknown line kind.", code="project_import_kind_unknown")
@@ -547,6 +570,8 @@ def set_line(
     m.set_by_user_id = str(user_id) if user_id else None
     m.set_at = datetime.utcnow()
     db.flush()
+    if record_history:
+        _history(db, run, user_id, "value_set", _value_words(kind, action, 1))
     line = _line_dict(kind, ck, vk, info, m, None)
     line.pop("_set_by", None)
     line.pop("_set_by_id", None)
@@ -575,12 +600,29 @@ def bulk_set(
             out.append(set_line(
                 db, run, kind=kind, value_key=value_key, customer_value_key=customer_value_key or "",
                 action=action, target_id=target_id, new_title=new_title, user_id=user_id,
+                record_history=False,
             ))
+        _history(db, run, user_id, "values_set", _value_words(kind, action, len(out)))
     except Exception:
         savepoint.rollback()
         raise
     savepoint.commit()
     return out
+
+
+_ACTION_WORDS = {ACTION_LINK: "linked", ACTION_CREATE: "set to create new",
+                 ACTION_SKIP: "set to skip", ACTION_NONE: "set to none"}
+_KIND_WORDS = {KIND_CUSTOMER: "customer", KIND_PROJECT: "project",
+               KIND_DEVELOPER: "developer", KIND_PERSON: "person"}
+
+
+def _value_words(kind: str, action: str, n: int) -> str:
+    """'Value linked (customer)' for one line; '3 values set to skip (customer)' for a bulk set."""
+    words = _ACTION_WORDS.get(action, action)
+    if n == 1 and words == "linked":
+        return f"Value linked ({_KIND_WORDS.get(kind, kind)})"
+    head = "Value" if n == 1 else f"{n} values"
+    return f"{head} {words} ({_KIND_WORDS.get(kind, kind)})"
 
 
 # --------------------------------------------------------------------------- preview / import
@@ -739,6 +781,12 @@ def _run(db: Session, run: ImportJob, *, user_id: str, persist: bool) -> dict:
         meta.update({"phase": PHASE_PREVIEWED, "preview_counts": report["counts"],
                      "preview_codes": report["codes"]})
     _save_meta(db, run, meta)
+    counts_text = ", ".join(f"{report['counts'][o]} {o.replace('_', ' ')}" for o in OUTCOMES
+                            if report["counts"].get(o))
+    if persist:
+        _history(db, run, user_id, "imported", f"Imported: {counts_text}" if counts_text else "Imported")
+    else:
+        _history(db, run, user_id, "previewed", f"Previewed: {counts_text}" if counts_text else "Previewed")
     return report
 
 
@@ -1196,6 +1244,7 @@ def _report_row(p: _Plan) -> dict:
         "po_date": r.po_date.isoformat() if r.po_date else None,
         "outcome": p.outcome,
         "codes": list(p.codes),
+        "labels": [oc.label_for(c) for c in p.codes],
         "message": message,
     }
 
@@ -1344,6 +1393,9 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
     meta.update({"phase": PHASE_REVERTED, "reverted_at": datetime.utcnow().isoformat(),
                  "revert_result": result, "reverted_by": str(user_id)})
     _save_meta(db, run, meta)
+    removed_n = sum(result["removed"].values())
+    _history(db, run, user_id, "reverted",
+             f"Reverted: {removed_n} records removed, {len(kept)} kept")
     return result
 
 
@@ -1395,6 +1447,10 @@ def serialize_run(db: Session, run: ImportJob, *, users: Optional[dict] = None, 
             "result_counts": meta.get("result_counts"),
             "result_codes": meta.get("result_codes"),
             "result": run.result if meta.get("result_counts") else None,
+            "code_labels": {
+                code: oc.label_for(code)
+                for code in {**(meta.get("preview_codes") or {}), **(meta.get("result_codes") or {})}
+            },
             "sheet_errors": meta.get("sheet_errors") or [],
             "revert_result": meta.get("revert_result"),
             "reverted_at": meta.get("reverted_at"),
@@ -1511,6 +1567,7 @@ def list_rows(
             "po_date": ident.get("po_date"),
             "outcome": oc.OUTCOME_ERROR if row.outcome == oc.OUTCOME_FAILED else row.outcome,
             "codes": [c for c in (ident.get("codes") or "").split(",") if c],
+            "labels": [oc.label_for(c) for c in (ident.get("codes") or "").split(",") if c],
             "message": row.message,
         })
     if outcome:

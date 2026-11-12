@@ -39,6 +39,9 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     # the permission that opens the PO detail page (`app/api/v1/scm/purchase_orders.py:36`,
     # the `GET /purchase-orders/{po_id}` route's `_READ`); plus `_authorize_po_history`.
     "purchase_orders": "scm.dashboard.view",
+    # Project import run page, History tab (PLAN-project-import-12nov.md). Its own entity type,
+    # written only by `project_import.service`, so this opens no other import job's history.
+    "project_import_run": "projects.import.view",
 }
 
 

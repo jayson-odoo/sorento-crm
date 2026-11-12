@@ -67,6 +67,8 @@ export interface ProjectImportRun extends ProjectImportRunRow {
   reverted_at?: string | null;
   /** The import's outcome envelope (counts, codes and the shared breakdown), once imported. */
   result?: Record<string, unknown> | null;
+  /** Plain words per reason code in preview_codes / result_codes, from the server. */
+  code_labels?: Record<string, string>;
 }
 
 export interface ProjectImportLine {
@@ -115,6 +117,8 @@ export interface ProjectImportReportRow {
   po_date: string | null;
   outcome: ProjectImportOutcome;
   codes: string[];
+  /** One plain label per code, same order as `codes`. */
+  labels?: string[];
   message: string | null;
 }
 

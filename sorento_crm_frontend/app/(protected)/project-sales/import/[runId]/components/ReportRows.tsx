@@ -32,7 +32,6 @@ import type {
 import {
   OUTCOME_LABELS,
   OUTCOME_ROW_LABELS,
-  codeLabel,
   kindForCode,
 } from '../../components/importLabels';
 
@@ -98,9 +97,12 @@ export function ReportRowsGrid({
   const total = rows.data?.total ?? 0;
 
   const codes = run.result_codes ?? run.preview_codes ?? {};
+  // Labels come from the API (`code_labels`, each row's `labels`); no copy of the table here.
+  const codeLabels = run.code_labels ?? {};
   const codeOptions = Object.keys(codes)
-    .sort()
-    .map((value) => ({ value, label: codeLabel(value) }));
+    .map((value) => ({ value, label: codeLabels[value] ?? '' }))
+    .filter((option) => option.label)
+    .sort((a, b) => a.label.localeCompare(b.label));
   const sheetOptions = (run.sheets ?? [])
     .filter((s) => s.has_ps_heading)
     .map((s) => ({ value: s.name, label: s.name_trimmed }));
@@ -182,7 +184,7 @@ export function ReportRowsGrid({
         size: 300,
         meta: { headerTitle: 'Reason' },
         cell: ({ row }) => {
-          const text = row.original.message || row.original.codes.map(codeLabel).join('; ');
+          const text = row.original.message || (row.original.labels ?? []).join('; ');
           return (
             <span className="block truncate" title={text}>
               {text}

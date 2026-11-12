@@ -49,7 +49,7 @@ export function ResultsView({ run }: { run: ProjectImportRun }) {
         <ValuesStep run={run} readOnly />
       </TabsContent>
       <TabsContent value="history">
-        <AuditTrail entityType="import_jobs" entityId={run.id} />
+        <AuditTrail entityType="project_import_run" entityId={run.id} />
       </TabsContent>
     </Tabs>
   );

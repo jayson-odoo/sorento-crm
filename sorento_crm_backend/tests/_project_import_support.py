@@ -338,10 +338,11 @@ def snapshot(db) -> dict:
         "integration_outbound": db.query(IntegrationLog)
         .filter(IntegrationLog.direction == "outbound")
         .count(),
-        # The run's own bookkeeping (import_jobs / import_job_rows) is allowed to change.
+        # The run's own bookkeeping (import_jobs / import_job_rows, and the run's own History
+        # entries, entity type project_import_run, round 3) is allowed to change.
         "audit_rows": db.query(AuditLog)
         .filter(~AuditLog.entity_type.in_(["import_jobs", "import_job_rows", "import_job",
-                                           "import_job_row"]))
+                                           "import_job_row", "project_import_run"]))
         .count(),
     }
     return out
