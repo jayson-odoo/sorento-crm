@@ -370,6 +370,27 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   return response.json();
 }
 
+/** A file a move left where it was (FILES-MOVE-DUPLICATE): plain reason + what the
+ *  Replace / Rename / Skip dialog needs. */
+export interface AttachmentNotMoved {
+  attachment_id: string;
+  file_name: string;
+  folder_name: string;
+  message: string;
+  existing_file_name?: string | null;
+  suggested_name?: string | null;
+}
+
+/** 409 from a single move: the target folder already holds this file's name. */
+export class AttachmentMoveClashError extends Error {
+  detail: Omit<AttachmentNotMoved, 'attachment_id' | 'message'>;
+  constructor(message: string, detail: Omit<AttachmentNotMoved, 'attachment_id' | 'message'>) {
+    super(message);
+    this.name = 'AttachmentMoveClashError';
+    this.detail = detail;
+  }
+}
+
 export async function updateAttachment(
   attachmentId: string,
   data: {
@@ -379,6 +400,9 @@ export async function updateAttachment(
     /** User-facing display name (rename). The object key is uuid-segregated + immutable;
      *  only the UI label + Content-Disposition + n8n webhook filename change. */
     stored_filename?: string;
+    /** How a move answers a name clash: 'replace' sends the file already there to Trash,
+     *  'rename' moves under `stored_filename` (also its original name). */
+    on_conflict?: 'replace' | 'rename';
   }
 ): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}`, {
@@ -388,6 +412,9 @@ export async function updateAttachment(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to update attachment' }));
+    if (response.status === 409 && error?.code === 'ATTACHMENT_MOVE_NAME_CLASH' && error.details) {
+      throw new AttachmentMoveClashError(error.message, error.details);
+    }
     const message = typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to update attachment';
     throw new Error(message);
   }
@@ -397,7 +424,7 @@ export async function updateAttachment(
 export async function bulkMoveAttachments(
   attachmentIds: string[],
   directoryId: string | null,
-): Promise<{ updated: number }> {
+): Promise<{ updated: number; not_moved: AttachmentNotMoved[] }> {
   const response = await apiFetch('/api/v1/resource-management/attachments/bulk-move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

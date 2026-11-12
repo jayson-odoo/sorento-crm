@@ -72,6 +72,9 @@ import {
   useUpdateDirectory,
   useDeleteDirectory,
 } from '../../attachments/hooks/useAttachments';
+import { updateDirectory } from '../../attachments/services/directoryService';
+import { useMoveFiles } from './useMoveFiles';
+import { summarizeMove } from './driveMoveSummary';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -854,8 +857,12 @@ export default function AttachmentsInFolderPanel({
     setSetCompanyDialogOpen(true);
   }, []);
 
+  // FILES-MOVE-DUPLICATE: every item that can move does; a file whose name is already in the
+  // target folder gets the Rename / Replace / Skip dialog; one notice names what did not move.
+  const { moveFiles, MoveClashDialog } = useMoveFiles();
+  const [isMoving, setIsMoving] = useState(false);
   const performMove = useCallback(
-    (destinationId: string | null) => {
+    async (destinationId: string | null) => {
       const fileIds = moveContextItem
         ? isFileItem(moveContextItem)
           ? [moveContextItem.id]
@@ -866,34 +873,40 @@ export default function AttachmentsInFolderPanel({
           ? [moveContextItem.id]
           : []
         : selectedFolderIds;
+      const folderName = (id: string) =>
+        items.find((item) => isFolderItem(item) && item.id === id)?.name ?? 'A folder';
 
-      Promise.allSettled([
-        ...fileIds.map((id) =>
-          updateMutation.mutateAsync({ attachmentId: id, data: { directory_id: destinationId } })
-        ),
-        ...folderIds.map((id) =>
-          updateDirectoryMutation.mutateAsync({ id, data: { parent_id: destinationId } })
-        ),
-      ]).then((results) => {
-        const ok = results.filter((r) => r.status === 'fulfilled').length;
-        if (ok > 0) toast.success(`Moved ${ok} item(s).`);
-        const failed = results.length - ok;
-        if (failed > 0) toast.error(`${failed} move(s) failed.`);
+      setIsMoving(true);
+      setMoveDialogOpen(false);
+      try {
+        const folderResults = await Promise.allSettled(
+          folderIds.map((id) => updateDirectory(id, { parent_id: destinationId }))
+        );
+        const fileOutcome = await moveFiles(fileIds, destinationId);
+        let moved = fileOutcome.moved;
+        const notMoved = [...fileOutcome.notMoved];
+        folderResults.forEach((r, i) => {
+          if (r.status === 'fulfilled') moved += 1;
+          else
+            notMoved.push({
+              name: folderName(folderIds[i]),
+              reason: r.reason instanceof Error ? r.reason.message : '',
+            });
+        });
+        const summary = summarizeMove({ moved, notMoved });
+        if (summary.ok) toast.success(summary.text);
+        else toast.error(summary.text);
+        if (folderIds.length > 0) {
+          queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
+        }
         queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
-        setMoveDialogOpen(false);
+      } finally {
+        setIsMoving(false);
         setMoveContextItem(null);
         if (!moveContextItem) clearSelection();
-      });
+      }
     },
-    [
-      moveContextItem,
-      selectedFileIds,
-      selectedFolderIds,
-      updateMutation,
-      updateDirectoryMutation,
-      queryClient,
-      clearSelection,
-    ]
+    [moveContextItem, selectedFileIds, selectedFolderIds, items, moveFiles, queryClient, clearSelection]
   );
 
   // ---- Folder context-menu handlers ---------------------------------------
@@ -1526,8 +1539,9 @@ export default function AttachmentsInFolderPanel({
         }}
         selection={moveSelection}
         onMove={performMove}
-        isMoving={updateMutation.isPending || updateDirectoryMutation.isPending}
+        isMoving={isMoving}
       />
+      {MoveClashDialog}
 
       <AttachmentDetailModal
         open={viewModalOpen}

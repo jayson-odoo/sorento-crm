@@ -1,6 +1,6 @@
-# PLAN: Files move / rename / upload name clash (FILES-MOVE-DUPLICATE)
+# PLAN: Files move / upload name clash (FILES-MOVE-DUPLICATE)
 
-Status: Build (track: standard, migration replaces one index; red-first + kill test, reviewer, browser pass)
+Status: Build (track: standard; no migration; RBAC touched by Replace, so security-reviewer runs)
 
 ## Problem (production, 12 Nov)
 
@@ -8,59 +8,39 @@ Resources > Files "Move to..." or drag: `PUT /api/v1/resource-management/attachm
 `{"directory_id": ...}` returned 500. Cause: `UniqueViolation` on
 `ux_attachments_dir_lower_filename_active` (migration `198_attachments_dirname_unique.py:21`), a
 partial unique index on `(directory_id, lower(original_filename)) WHERE directory_id IS NOT NULL
-AND is_deleted = false`.
+AND is_deleted = false`. The model did not declare it, so no test schema had it.
 
-Second half (owner, 12 Nov): "it is judged by original filename right, I tried to rename also
-cannot". The index is on `original_filename`, which is immutable and hidden
-(`app/schemas/resources.py:218-223`); Rename edits `stored_filename`, the visible name. So a
-rename cannot clear the clash and the user is stuck. The upload guard already judges the visible
-name (`app/api/v1/resources/attachments.py:147-195`, `lower(stored_filename)`), so upload and the
-index disagree too.
+## Owner rulings (12 Nov, via crew)
+
+- The index stays on `original_filename` (a visible-name index was proposed and stopped).
+- A clash offers **Rename / Replace / Skip** for that file; the rest of the batch moves.
+- Rename in the clash dialog sets the new name as the visible AND original name, DB only. The
+  stored object is keyed `{type}/{attachment id}/{original name}` and read back from `file_path`
+  (`attachments.py:658-675`, `storage_router.py:220`), so no object is copied and no URL changes.
+- Replace sends the file already in the folder to Trash; its links stay on it (restore to undo).
+- Suggested name `name (1).jpg`, bumped until free in the target folder.
+- The general Rename (outside a clash) still edits only the visible name.
 
 ## Rules
 
-1. Per folder, active files (`is_deleted = false`, `directory_id` set) have unique visible names,
-   case-insensitive: `(directory_id, lower(stored_filename))`. `original_filename` no longer
-   takes part.
-2. Move (single PUT), bulk move, rename and upload into a folder all check the visible name before
-   writing and still catch the `IntegrityError` (two parallel moves). A clash is a 409 with a plain
-   message: `<name> already exists in <folder>.` No DB text, no 500.
-3. Bulk move: one bad file never fails the batch. The others move; the response names each file
-   not moved. The UI shows one summary: `N moved. 1 not moved: <name> already exists in <folder>.`
-   Drag shows the same message.
-4. No auto-rename, no overwrite on move or rename (owner may ask for "Keep both" later).
+1. Single move (PUT): check the target folder for the same original name before writing; still
+   catch the `IntegrityError` of a race. Clash = 409 `ATTACHMENT_MOVE_NAME_CLASH`, plain message
+   (`photo.jpg already exists in Folder B.`, or, when the other file was renamed,
+   `holiday.jpg cannot be moved into Folder B: photo.jpg there has the same original file name.`)
+   and `details` (file and folder name, the other file's visible name, a suggested name). No
+   other file's id is returned.
+2. `on_conflict=replace` needs `resource.attachments.delete` and write access to the file being
+   replaced. `on_conflict=rename` needs `stored_filename`.
+3. Bulk move: each row under its own savepoint; clashing files stay put and come back in
+   `not_moved` with the same message and details.
+4. Upload into a folder: the same original-name check before the bytes go to storage; a backstop
+   catch in `create_attachment`; "Create copy" picks a name free on both names.
+5. Frontend: "Move to..." and drag both go through `useMoveFiles` (one bulk-move call, then the
+   dialog per clash), and one notice: `N moved. 1 not moved: <reason>`.
 
-## Migration
+## Tests
 
-New revision drops `ux_attachments_dir_lower_filename_active` and creates
-`ux_attachments_dir_lower_stored_name_active` on `(directory_id, lower(stored_filename))`, same
-partial predicate. Existing duplicates on the visible name: pending a crew data request (count on
-the dev prod copy); handling to be decided with the owner before the migration lands.
-
-## Files
-
-- `sorento_crm_backend/app/services/resources_service.py` (`update_attachment`, `bulk_move`)
-- `sorento_crm_backend/app/api/v1/resources/attachments.py` (upload insert catch, bulk move response)
-- `sorento_crm_backend/app/schemas/resources.py` (`AttachmentsBulkMoveResponse.not_moved`)
-- `sorento_crm_backend/app/models/resources.py` (declare the index)
-- `sorento_crm_backend/alembic/versions/<new>.py`
-- FE: `AttachmentsInFolderPanel.tsx` `performMove`, `AttachmentDirectoriesView.tsx` drag,
-  `attachmentService.ts` bulk move type, a pure summary helper with a vitest.
-
-## Tests (red first)
-
-- PUT move into a folder holding the same visible name (any case) -> 409, plain message names file
-  and folder, row unchanged.
-- Rename to a name that exists in the same folder -> 409.
-- Rename then move succeeds (the owner's stuck case: same original name, different visible name).
-- Bulk move of 3 where 1 clashes -> 200, 2 moved, `not_moved` names the third.
-- Bulk move where two movers share a name -> first moves, second named.
-- Upload into a folder where the visible name clashes on another entity (index-only clash) -> 409,
-  not 500.
-- Vitest: move summary text.
-
-## Standing rules that apply
-
-- One bad line never fails a whole batch: the batch goes through and the skipped line is named.
-- Plain business words only; no internal ids.
-- Nothing hangs: every save ends in content or an error.
+- `sorento_crm_backend/tests/test_attachment_folder_name_clash.py` (22)
+- `sorento_crm_frontend/.../attachment-directories/components/driveMoveSummary.test.ts`,
+  `useMoveFiles.test.tsx`
+- Three older fixtures seeded same-original twins in one folder (impossible in prod); fixed.
