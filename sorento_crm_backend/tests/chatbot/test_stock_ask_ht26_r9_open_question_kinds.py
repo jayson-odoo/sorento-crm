@@ -683,10 +683,11 @@ def test_g_1011_round_7_session(session_factory, monkeypatch, stub_access):
     # CODE-VARIANTS (#1573, owner card Q1/Q2): the typed code's own family (SRTWC286)
     # leads the suggestions, so another model's SRTWC287-S-150 no longer makes the three.
     # CHATBOT-CODE-MATCH AC-10: the typed code is quoted as typed, dashes kept.
+    # CHATBOT-CODE-MATCH R2: codes holding all typed parts first (family still leads, #1573).
     assert c.say("SRTWC286-150", stock(product("SRTWC286-150"))) == numbered(
-        "Couldn't find SRTWC286-150. Did you mean:", ["SRTWC286-SH-150", "SRTWC286-SH", "SRTWC286-SH-NEW-150"]
+        "Couldn't find SRTWC286-150. Did you mean:", ["SRTWC286-SH-150", "SRTWC286-SH-NEW-150", "SRTWC286-SH"]
     )
-    assert c.say("2", reply(reference_positions=[2], open_question_answer=answer("pick", picked=[2]))) == (
+    assert c.say("3", reply(reference_positions=[3], open_question_answer=answer("pick", picked=[3]))) == (
         "How many units of SRTWC286-SH?"
     )
     assert c.say("50", reply(demand_qty=50, open_question_answer=answer("fill", items=[(1, None, 50)]))) == _answered(

@@ -10183,7 +10183,7 @@ def _unplaced_suggestions(
     from app.services.chatbot.lanes.business.answer import did_you_mean_by_token
 
     try:
-        return did_you_mean_by_token(resolver_payload.get("resolved"), resolver_payload.get("gate"))
+        return did_you_mean_by_token(resolver_payload.get("resolved"), resolver_payload.get("gate"), unplaced)
     except Exception:  # noqa: BLE001 - a did-you-mean is never worth a failed turn
         logger.warning("chatbot: the per-code did-you-mean did not read", exc_info=True)
         return {}

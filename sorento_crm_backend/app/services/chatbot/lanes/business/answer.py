@@ -4905,7 +4905,7 @@ def _numbered_quick_reply(count: int) -> str:
     return _quick_reply(numbers)
 
 
-def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
+def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = None) -> list:
     """D1's own candidate set: PER TOKEN, GENUINE-MISS ONLY.
 
     Never aggregate across tokens - a dead code once borrowed a sibling token's candidate
@@ -4917,6 +4917,9 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
     Q1 (owner ruling (a), 23 Oct 2026): a typed code the parser corrected leads with the
     parser's pick (`NEAR_PICK_KEY`, set by `resolve_gate.pick_near_code_first`), ahead of
     any non-exact match; the pick's own row further down is then deduped.
+
+    `typed` (CHATBOT-CODE-MATCH R2): the code as the customer typed it, whose parts rank the
+    code rows (`holds_every_typed_part`); the resolver's token when the caller has none.
     """
     acc: list = []
     near_pick = jsc.get(res, NEAR_PICK_KEY)
@@ -4963,7 +4966,7 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
     # CHATBOT-CODE-MATCH R2: among the code rows (products, sets), one holding every typed
     # part ranks before one missing a part, in the slots those rows already hold; ties keep
     # the resolver's order, other kinds keep their places. The parser's own pick (Q1) leads.
-    token = jsc.get(res, "token")
+    token = typed if jsc.truthy(typed) else jsc.get(res, "token")
     first = 1 if isinstance(near_pick, dict) and keep and keep[0] is near_pick else 0
     slots = [
         i
@@ -5008,7 +5011,9 @@ def did_you_mean_head(typed: str) -> str:
     return f'Couldn\'t find "{typed}" (product). Did you mean:'
 
 
-def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, Any]]]:
+def did_you_mean_by_token(
+    resolved: Any, gate: Any, typed_by_key: dict[str, str] | None = None
+) -> dict[str, list[dict[str, Any]]]:
     """MULTI-CODE-DYM: each missed product token's did-you-mean, keyed by the token as the
     resolver echoed it (`turn.state.token_key` folds it for a join).
 
@@ -5018,6 +5023,8 @@ def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, 
     resolver's trigram `alternatives` (`miss_token_candidates`), the first three
     (`_cap3`), a row with no human label dropped. Product rows only: a partial answer
     offers a code to fetch in place of the one that missed, and only a product is that.
+    `typed_by_key` (the turn's unplaced words, `token_key` fold to the word as typed) ranks
+    each token's candidates by the code as typed (`miss_token_candidates`).
     """
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
@@ -5028,7 +5035,8 @@ def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, 
         if not token or token in out:
             continue
         rows: list[dict[str, Any]] = []
-        for match in _cap3(miss_token_candidates(res, allowed_types)):
+        typed = (typed_by_key or {}).get(token_key(token))
+        for match in _cap3(miss_token_candidates(res, allowed_types, typed=typed)):
             if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product":
                 continue
             label = _ms_human_label(match)
@@ -5257,6 +5265,27 @@ def build_suggest_offer(
 
     zero_set = jsc.get(jsc.get(g, "predicate"), "qualifying_total") == 0
 
+    # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
+    # so a canonical-coded customer miss printed the debtor code and a dashed product token
+    # printed mangled. Each entity is keyed under BOTH its `raw` and its `canonical_code`
+    # (mirroring what the resolver is SENT), raw before canonical, FIRST-wins on a collision.
+    ent_by_tok: dict[str, Any] = {}
+    for entity in (q["entities"] if isinstance(jsc.get(q, "entities"), list) else []):
+        key = _type_norm(jsc.get(entity, "raw"))
+        if key and key not in ent_by_tok:
+            ent_by_tok[key] = entity
+        code_key = _type_norm(jsc.get(entity, "canonical_code"))
+        if code_key and code_key not in ent_by_tok:
+            ent_by_tok[code_key] = entity
+
+    def ent_of_tok(token: Any) -> Any:
+        return ent_by_tok.get(_type_norm(token))
+
+    def raw_of_tok(token: Any) -> Any:
+        entity = ent_of_tok(token)
+        raw = jsc.get(entity, "raw") if entity is not None else None
+        return raw if jsc.truthy(raw) else token
+
     d1s: list[dict[str, Any]] = []
     if not is_clar and not require_spec:
         # dym-multitoken: accumulate EVERY genuine-miss token that carries candidates. Cap the
@@ -5265,7 +5294,7 @@ def build_suggest_offer(
         for res in misses:
             if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
                 continue
-            cands = miss_token_candidates(res, allowed_types)
+            cands = miss_token_candidates(res, allowed_types, typed=raw_of_tok(jsc.get(res, "token")))
             if cands:
                 token = jsc.get(res, "token")
                 if not jsc.truthy(token):
@@ -5464,27 +5493,6 @@ def build_suggest_offer(
                 continue
             lines.append(line + _stamp(key))
         out["escalate_message"] = "\n".join(lines)
-
-    # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
-    # so a canonical-coded customer miss printed the debtor code and a dashed product token
-    # printed mangled. Each entity is keyed under BOTH its `raw` and its `canonical_code`
-    # (mirroring what the resolver is SENT), raw before canonical, FIRST-wins on a collision.
-    ent_by_tok: dict[str, Any] = {}
-    for entity in (q["entities"] if isinstance(jsc.get(q, "entities"), list) else []):
-        key = _type_norm(jsc.get(entity, "raw"))
-        if key and key not in ent_by_tok:
-            ent_by_tok[key] = entity
-        code_key = _type_norm(jsc.get(entity, "canonical_code"))
-        if code_key and code_key not in ent_by_tok:
-            ent_by_tok[code_key] = entity
-
-    def ent_of_tok(token: Any) -> Any:
-        return ent_by_tok.get(_type_norm(token))
-
-    def raw_of_tok(token: Any) -> Any:
-        entity = ent_of_tok(token)
-        raw = jsc.get(entity, "raw") if entity is not None else None
-        return raw if jsc.truthy(raw) else token
 
     # Renderable survivors: a token whose candidates ALL drop via `humanLabel` (a bare uuid
     # with no display name) is skipped entirely - not shown, and its idx range never consumed.
