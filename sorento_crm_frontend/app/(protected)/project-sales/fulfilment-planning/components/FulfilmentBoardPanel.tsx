@@ -327,15 +327,18 @@ function resultSentence(
   if (!result.ok) return result.error ?? 'refused';
   const cancelled = result.lines_cancelled?.length ?? 0;
   const confirmed = result.lines_confirmed?.length ?? 0;
-  // The rows handed to purchasing, not the rows created: a date move hands one over, creates none.
-  const handedOver = result.inquiry_rows_handed_over ?? result.inquiry_rows_created ?? 0;
+  // Two different counts: the rows CREATED (the branches below ask whether the press raised
+  // anything new) and the rows HANDED OVER (cancels and date moves included), which is only the
+  // number the closing sentence prints.
+  const created = result.inquiry_rows_created ?? 0;
+  const handedOver = result.inquiry_rows_handed_over ?? created;
   const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`;
-  if (cancelled > 0 && confirmed === 0 && handedOver === 0) {
+  if (cancelled > 0 && confirmed === 0 && created === 0) {
     return simulated
       ? `would transfer ${lines(cancelled)} to Cancel SO`
       : `${lines(cancelled)} transferred to Cancel SO`;
   }
-  if (result.planning_change_applied && confirmed === 0 && handedOver === 0) {
+  if (result.planning_change_applied && confirmed === 0 && created === 0) {
     const note = autocountChangeSentence(
       retiredNote(result, createdAt),
       simulated ? 'simulated' : 'confirmed',
@@ -356,7 +359,7 @@ function retiredNoteApart(result: BoardBatchResult): boolean {
   return (
     (result.lines_cancelled?.length ?? 0) > 0 ||
     (result.lines_confirmed?.length ?? 0) > 0 ||
-    (result.inquiry_rows_handed_over ?? result.inquiry_rows_created ?? 0) > 0
+    (result.inquiry_rows_created ?? 0) > 0
   );
 }
 
@@ -2176,7 +2179,7 @@ export function FulfilmentBoardPanel({
       // IS one: on a first confirmation it is always zero, and a zero in the sentence would
       // be a number the reader has to decide to ignore.
       const kept = ok.reduce((total, entry) => total + (entry.transfers_kept ?? 0), 0);
-      const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_handed_over ?? entry.inquiry_rows_created ?? 0), 0);
+      const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
       // Covered lines Confirm just took OUT of their confirmation (owner ruling 23 Sep 2026,
       // `PLAN-board-reject-on-confirmed-line.md`) - said only when there IS one, the same
       // "zero is not worth a reader's attention" rule `kept` already follows.
@@ -3944,7 +3947,7 @@ export function FulfilmentBoardPanel({
               justConfirmed={batchResults !== null && !simulated}
               inquiryRows={(batchResults ?? [])
                 .filter((result) => result.ok)
-                .reduce((total, result) => total + (result.inquiry_rows_handed_over ?? result.inquiry_rows_created ?? 0), 0)}
+                .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
             />
 
             {view === 'list' ? (

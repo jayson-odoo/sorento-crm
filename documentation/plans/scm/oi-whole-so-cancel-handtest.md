@@ -10,13 +10,52 @@ crew test copy
    board-confirmed as Buy:
    - SO-A (OI-A): three lines on items with NO free stock at their location; purchasing acknowledged.
    - SO-B (OI-B): three lines; purchasing acknowledged.
-   - SO-C (OI-C): three lines, not confirmed by purchasing; one line with a reserve request.
+   - SO-C (OI-C): three lines, not confirmed by purchasing.
 2. SO-A: re-push line 1 through the test copy's ingest with its delivery date 30 days later (D-old -> D-new).
 3. SO-B: send the AutoCount SO delete to the test copy's backend only:
 ```bash
 curl -s -X POST "http://localhost:<be port>/api/v1/external/ingest/sales_orders/deletions" \
   -H "X-API-Key: <test copy key>" -H "Content-Type: application/json" \
   -d '{"source_refs": ["<source_ref of SO-B>"]}'
+```
+
+4. OI-C's reserve request, seeded with no send: this SQL writes the two crew-owned rows directly (no
+   reserve service call, so no email, WhatsApp or notification is queued). Run it on the test copy's DB with
+   `psql -v oi=<OI-C number> -f seed.sql`:
+```sql
+-- Seed ONE open reserve request on one live row of a crew fixture OI (no service call: nothing is queued).
+-- Set :oi to the fixture OI number (e.g. OI-C) before running.
+BEGIN;
+WITH target AS (
+    SELECT oir.id AS row_id, oir.order_inquiry_id, oir.company_id, oir.qty
+    FROM projects.order_inquiry_rows oir
+    JOIN projects.order_inquiries oi ON oi.id = oir.order_inquiry_id
+    WHERE oi.inquiry_no = :'oi' AND oir.state <> 'cancelled'
+    ORDER BY oir.item_code, oir.id
+    LIMIT 1
+), req AS (
+    INSERT INTO projects.order_inquiry_reserve_requests
+        (id, order_inquiry_id, company_id, ordinal, state, note, requested_at)
+    SELECT gen_random_uuid(), t.order_inquiry_id, t.company_id,
+           COALESCE((SELECT max(ordinal) FROM projects.order_inquiry_reserve_requests r
+                     WHERE r.order_inquiry_id = t.order_inquiry_id), 0) + 1,
+           'requested', 'crew hand-test seed OI-WHOLE-SO-CANCEL', now()
+    FROM target t
+    RETURNING id, order_inquiry_id, company_id
+)
+INSERT INTO projects.order_inquiry_reserve_request_rows (id, request_id, row_id, company_id, qty_requested)
+SELECT gen_random_uuid(), req.id, t.row_id, req.company_id, LEAST(t.qty, 1)
+FROM req JOIN target t ON t.order_inquiry_id = req.order_inquiry_id;
+COMMIT;
+```
+   Revert after the pass (removes only the rows the seed wrote, matched by its note):
+```sql
+BEGIN;
+DELETE FROM projects.order_inquiry_reserve_request_rows
+WHERE request_id IN (SELECT id FROM projects.order_inquiry_reserve_requests
+                     WHERE note = 'crew hand-test seed OI-WHOLE-SO-CANCEL');
+DELETE FROM projects.order_inquiry_reserve_requests WHERE note = 'crew hand-test seed OI-WHOLE-SO-CANCEL';
+COMMIT;
 ```
 
 ## Steps
