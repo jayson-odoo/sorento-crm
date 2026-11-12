@@ -24,6 +24,7 @@
  */
 
 import { isRich, richPlainText } from './rich-text';
+import { comboPartField, comboPartsHtml } from './combo-parts';
 import { comboPositions } from './combo-slots';
 import { formatTagPrice } from './price-badge';
 import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
@@ -51,6 +52,7 @@ export type MergeFieldGroup =
   | 'Line'
   | 'Combo'
   | 'Combo positions'
+  | 'Parts'
   | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
@@ -66,6 +68,8 @@ export interface MergeField {
   /** What a person calls the field. Never the raw path. */
   label: string;
   group: MergeFieldGroup;
+  /** The picker shows the label alone (a combo part's token carries an id nobody should read). */
+  hideToken?: boolean;
 }
 
 /** One key of the spec registry, as `GET /dealer-kit/spec-keys` answers it. */
@@ -154,6 +158,9 @@ export function slotTokenPath(slot: SubjectSlot, field: string): string {
       return `slot.pick.${slot.group + 1}.${slot.index + 1}.${field}`;
     case 'upgrade':
       return `slot.upgrade.${slot.index + 1}.${field}`;
+    case 'variants':
+      // "All variants" reads the main product for any field (only its icons differ).
+      return `slot.main.${field}`;
   }
 }
 
@@ -183,6 +190,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.dimensions', label: 'Dimensions', group: 'Product' },
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
   { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
+  { path: 'product.description', label: 'Description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
   { path: 'product.currency', label: 'Currency', group: 'Product' },
@@ -198,6 +206,8 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'combo.name', label: 'Combo name', group: 'Combo' },
   { path: 'combo.description', label: 'Combo description', group: 'Combo' },
   { path: 'combo.free_items', label: 'Combo accessories included', group: 'Combo' },
+  // COMBO-SETTINGS-UX: every part, printed through the combo's own "Each part prints as" line.
+  { path: 'combo.parts', label: 'All parts as a list', group: 'Combo' },
   // PS-SPEC-SHEET: filled on a project spec sheet page only; blank on a price tag.
   { path: 'product.brand', label: 'Brand', group: 'Spec sheet' },
   { path: 'line.area', label: 'Area', group: 'Spec sheet' },
@@ -297,6 +307,20 @@ function resolvePath(
     return spec ? specText(spec) : null;
   }
 
+  // COMBO-SETTINGS-UX: a per-part field of the combo description, tied to the part's product.
+  const partValue = comboPartField(data, path);
+  if (partValue !== null) return partValue;
+
+  if (path === 'combo.all_parts') {
+    // "All parts (one line each)" before it is inserted: the default line for every part.
+    return richPlainText(comboPartsHtml(data, true));
+  }
+
+  if (path === 'combo.parts') {
+    // A plain layer reads the list as plain lines; a rich one splices it (`product-block`).
+    return richPlainText(comboPartsHtml(data));
+  }
+
   if (path === 'combo.name' || path === 'combo.description' || path === 'combo.free_items') {
     // Empty, never the raw token, on a line with no combo or an older payload (AC-4.2).
     const combo = comboOf(data);
@@ -315,6 +339,15 @@ function resolvePath(
     if (data.kind !== 'line' || !data.line.doc) return null;
     const field = path.slice('line.'.length) as 'area' | 'comment' | 'marker';
     return data.line[field] ?? '';
+  }
+
+  // The product's plain catalogue description (`products.description`), for the subject this
+  // layer reads (a part or position its own, else the line's / product's). A set has none.
+  if (path === 'product.description') {
+    const subject = subjectOf(data, layer);
+    if (subject?.kind === 'product') return subject.product.description ?? '';
+    if (subject?.kind === 'line') return subject.line.description ?? '';
+    return subject ? '' : null;
   }
 
   if (path === 'product.brand') {

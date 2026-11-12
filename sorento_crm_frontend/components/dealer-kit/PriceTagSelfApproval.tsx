@@ -27,6 +27,8 @@ import {
 } from '@/components/ui/dialog';
 import { formatLocalDateToYyyyMmDd } from '@/lib/helpers';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
+import { toast } from '@/lib/toast';
 import { buildRequestSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import {
   designPayloadFromResponse,
@@ -51,6 +53,8 @@ interface Props {
   onApprove: (doc: TagSheetDoc) => Promise<void>;
   onEdit: () => void;
   onEscalate: (note: string) => Promise<void>;
+  /** PRICETAG-REQUEST-LAYOUT: open from the request page's Preview button, in the shared lightbox. */
+  popup?: { open: boolean; onOpenChange: (open: boolean) => void };
 }
 
 /** Every tag the request prints, with the line it belongs to. */
@@ -210,6 +214,7 @@ export function PriceTagSelfApproval({
   onApprove,
   onEdit,
   onEscalate,
+  popup,
 }: Props) {
   const [built, setBuilt] = useState<ReturnType<typeof buildSelfProof>>(null);
   // A line with no template is left off the sheet, and the server refuses the
@@ -280,6 +285,59 @@ export function PriceTagSelfApproval({
   // sit under the sheet, below the fold at 1280).
   const approveBlockedReason = missingText ?? (failed ? 'The tag could not be drawn.' : null);
 
+  const approveButton = (
+    // A disabled button fires no hover, so the reason sits on its wrapper.
+    <span title={approveBlockedReason ?? undefined} className="inline-flex">
+      <Button
+        size="sm"
+        onClick={() => void approve()}
+        disabled={!built || missing.length > 0 || approving}
+      >
+        {approving ? <Loader2 className="size-4 mr-1 animate-spin" /> : <Check className="size-4 mr-1" />}
+        Approve
+      </Button>
+    </span>
+  );
+
+  // PRICETAG-REQUEST-LAYOUT (owner hand test 11 Nov): on the request page the tag opens from its
+  // Preview button in the shared lightbox; Approve is the popup's main button and Edit stays the
+  // page's own button.
+  if (popup) {
+    if (!popup.open || loading) return null;
+    if (failed || !built) {
+      return <ProofUnavailable message={failed ? 'The tag could not be drawn.' : (missingText ?? 'No tag template yet.')} onDone={() => popup.onOpenChange(false)} />;
+    }
+    return (
+      <DesignLightbox
+        open
+        onOpenChange={popup.onOpenChange}
+        title={request.doc_number ?? 'Design'}
+        payload={built.payload}
+        footer={
+          <div className="space-y-2">
+            {missingText && (
+              <p role="status" className="text-sm text-muted-foreground">
+                {missingText}
+              </p>
+            )}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" size="sm" onClick={() => setNoteOpen(true)}>
+                <Send className="size-4 mr-1" />
+                Escalate to marketing
+              </Button>
+              {approveButton}
+            </div>
+            <EscalateDialog
+              open={noteOpen}
+              onOpenChange={setNoteOpen}
+              onEscalate={(note) => onEscalate(note)}
+            />
+          </div>
+        }
+      />
+    );
+  }
+
   return (
     <div className="space-y-2">
       {missingText && built && (
@@ -318,4 +376,15 @@ export function PriceTagSelfApproval({
       />
     </div>
   );
+}
+
+/** A popup asked for a tag that cannot be drawn: say why once and close, no empty dialog. */
+function ProofUnavailable({ message, onDone }: { message: string; onDone: () => void }) {
+  useEffect(() => {
+    toast.info(message);
+    onDone();
+    // Once per opening.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
 }

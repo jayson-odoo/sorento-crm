@@ -411,6 +411,20 @@ _PORTAL_PROJECT_REGISTRATION: list[ExtractFieldSpec] = [
         ),
     ),
     ExtractFieldSpec(
+        name="name",
+        label="Project name",
+        kind="text",
+        # PROJECT-NAME (owner 10 Nov): the short name the header and pickers show.
+        note=(
+            "A SHORT name people use for the development, at most 60 characters, in the "
+            "document's own language. Use the scheme, taman, residensi or building name when the "
+            "title names one (e.g. 'Residensi Contoh Phase 2'); otherwise '<units> <building "
+            "type>, <road or place>' (e.g. '54 Teres 2 Tingkat, Permatang Badak Perdana'). Keep a "
+            "phase or plot designator (Phase 3B, Plot 1). NEVER lot numbers, mukim, daerah, state "
+            "or the word CADANGAN. Leave empty when the text names no development."
+        ),
+    ),
+    ExtractFieldSpec(
         name="distributor_name",
         label="Distributor name",
         kind="text",

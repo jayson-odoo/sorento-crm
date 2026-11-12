@@ -169,6 +169,88 @@ export async function assignTemplate(
   );
 }
 
+/** PRICETAG-TEMPLATE-PRODUCTS: the products that use the template (the designer's ticks). */
+export async function listTemplateProductIds(templateId: string): Promise<string[]> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/product-ids`),
+    'Failed to load the products that use this template',
+  );
+}
+
+/**
+ * PRICETAG-TEMPLATE-PRODUCTS: link the template to these products and combos (at most 500 of
+ * each). `skipped` counts picked combos the template cannot print; absent when none.
+ */
+export async function assignTemplateToProducts(
+  templateId: string,
+  productIds: string[],
+  comboIds: string[] = [],
+): Promise<{ changed: number; skipped?: number }> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(productIds.length ? { product_ids: productIds } : {}),
+        ...(comboIds.length ? { combo_ids: comboIds } : {}),
+        action: 'add',
+      }),
+    }),
+    'Failed to link the products',
+  );
+}
+
+/** Owner hand test 11 Nov: the combos that use the template (the designer's combo ticks). */
+export async function listTemplateComboIds(templateId: string): Promise<string[]> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/combo-ids`),
+    'Failed to load the combos that use this template',
+  );
+}
+
+export interface TemplateComboRow {
+  id: string;
+  name: string;
+  host_product_id: string;
+  host_code: string;
+  host_name: string;
+  category_name: string | null;
+  brand_name: string | null;
+  /** Why this template cannot print the combo, or null when it can. */
+  fit_reason: string | null;
+}
+
+export interface TemplateComboList {
+  data: TemplateComboRow[];
+  pagination: { total: number; page: number; limit: number };
+}
+
+/** Combos for the designer's Products view: search, the host's category / brand, linked only. */
+export async function listTemplateCombos(
+  templateId: string,
+  params: {
+    pageIndex: number;
+    pageSize: number;
+    searchQuery?: string;
+    category_id?: string;
+    brand_id?: string;
+    linkedOnly?: boolean;
+  },
+): Promise<TemplateComboList> {
+  const query = new URLSearchParams({
+    page: String(params.pageIndex + 1),
+    limit: String(params.pageSize),
+    ...(params.searchQuery ? { query: params.searchQuery } : {}),
+    ...(params.category_id ? { category_id: params.category_id } : {}),
+    ...(params.brand_id ? { brand_id: params.brand_id } : {}),
+    ...(params.linkedOnly ? { linked: 'true' } : {}),
+  });
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/combos?${query.toString()}`),
+    'Failed to load the combos',
+  );
+}
+
 /** Model families (`products.family_code`) for the bulk filter. */
 export async function listFamilyCodes(query: string): Promise<string[]> {
   const qs = new URLSearchParams();

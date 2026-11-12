@@ -332,7 +332,7 @@ class SalesTarget(CompanyScopedMixin, Base):
     """A target header (plan 3.1): who, what counts, on which products, over which dates.
 
     The subject is an agent, a team or a dealer (lane SALES-TARGET-DEALER: a dealer counts the
-    accounts in `target_accounts`, whatever agent sold, and pays to `payout_customer_id`). A team target's
+    accounts in `target_accounts`, whatever agent sold, and pays each account its own share). A team target's
     figure is the sum of its agent children (`parent_target_id`, owner ruling 26 Sep 06:09, T3),
     stored on the team's periods by `target_service` on every write. The range is a plain date
     range, split into periods only when `split_every`/`split_unit` are set (N6, N7). No stored
@@ -372,20 +372,6 @@ class SalesTarget(CompanyScopedMixin, Base):
     commission_method = Column(
         String(16), nullable=False, default="none", server_default=text("'none'")
     )
-    #: Dealer targets: the account the commission is credited to; may be an account the target
-    #: does not count (owner ruling 16 Oct 00:10).
-    payout_customer_id = Column(
-        UUID(as_uuid=False),
-        ForeignKey("customers.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    #: Dealer targets (crew ruling 16 Oct, owner ruling 4: one tier scale): an account's own
-    #: target pays nothing in a period its dealer's target (named here) reaches a tier.
-    replaced_by_target_id = Column(
-        UUID(as_uuid=False),
-        ForeignKey(f"{SCHEMA}.targets.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     #: What a tier's threshold is in: `pct` of the period's figure (the original tiers),
     #: `amount` (RM, units on a quantity target) or `points` (x the dated point ratio).
     threshold_unit = Column(String(8), nullable=False, default="pct", server_default=text("'pct'"))
@@ -424,14 +410,6 @@ class SalesTarget(CompanyScopedMixin, Base):
             "threshold_unit IN ('pct', 'amount', 'points')", name="ck_sales_targets_threshold_unit"
         ),
         CheckConstraint("rounding IN ('sen', 'ringgit')", name="ck_sales_targets_rounding"),
-        CheckConstraint(
-            "payout_customer_id IS NULL OR subject_kind = 'dealer'",
-            name="ck_sales_targets_payout_dealer",
-        ),
-        CheckConstraint(
-            "replaced_by_target_id IS NULL OR subject_kind = 'dealer'",
-            name="ck_sales_targets_replaced_by_dealer",
-        ),
         CheckConstraint("metric IN ('amount', 'quantity')", name="ck_sales_targets_metric"),
         CheckConstraint(
             "basis IN ('ordered', 'delivered', 'invoiced')", name="ck_sales_targets_basis"
@@ -598,10 +576,16 @@ class SalesTargetTierRate(CompanyScopedMixin, Base):
         UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False
     )
     rate = Column(Numeric(9, 4), nullable=False)
+    #: This account's own fixed RM Additional when its tier is the one reached (owner 8 Nov,
+    #: lane TARGET-PER-ACCOUNT-PAYOUT Q3: set per account, like the rate).
+    bonus_amount = Column(Numeric(15, 2), nullable=True)
 
     __table_args__ = (
         Index("uq_sales_target_tier_rates_tier_customer", "tier_id", "customer_id", unique=True),
         CheckConstraint("rate >= 0", name="ck_sales_target_tier_rates_rate"),
+        CheckConstraint(
+            "bonus_amount IS NULL OR bonus_amount >= 0", name="ck_sales_target_tier_rates_bonus_amount"
+        ),
         {"schema": SCHEMA},
     )
 

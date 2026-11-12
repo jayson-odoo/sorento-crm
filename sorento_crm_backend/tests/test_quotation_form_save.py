@@ -574,6 +574,10 @@ class _FakeTemplate:
         self.body_html = body_html
         self.payment_terms = None
         self.validity = None
+        # QUOTE-TERMS-SELECT (#2305): the picks behind the two texts, read by the create form.
+        self.payment_term_id = None
+        self.validity_value = None
+        self.validity_unit = None
         self.design = None
 
 

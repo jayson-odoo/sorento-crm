@@ -287,17 +287,14 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
  * concurrent multipart POSTs of tender drawings is how you get a timeout on the slowest one
  * with no way to tell the user WHICH failed. Each result is reported by name.
  */
-export function UploadDialog({
+function UploadDialog({
   projectId,
   onDone,
   onUploaded,
-  requirement = false,
 }: {
   projectId: string;
   onDone: () => void;
   onUploaded: () => void;
-  /** The header's "Upload requirement" use: same upload, its own title and plain Upload label. */
-  requirement?: boolean;
 }) {
   const [files, setFiles] = React.useState<File[]>([]);
   const [busy, setBusy] = React.useState(false);
@@ -415,7 +412,7 @@ export function UploadDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>{requirement ? 'Upload requirement' : 'Upload documents'}</DialogTitle>
+          <DialogTitle>Upload documents</DialogTitle>
         </DialogHeader>
         <DialogBody className="max-h-[60vh] overflow-y-auto">
           <FileDropzone
@@ -439,7 +436,7 @@ export function UploadDialog({
             Cancel
           </Button>
           <Button type="button" onClick={submit} disabled={files.length === 0 || busy}>
-            {busy ? 'Uploading…' : requirement ? 'Upload' : `Upload ${files.length || ''}`.trim()}
+            {busy ? 'Uploading…' : `Upload ${files.length || ''}`.trim()}
           </Button>
         </DialogFooter>
       </DialogContent>

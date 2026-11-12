@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-table';
 import { Trash2, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -115,7 +116,7 @@ export function LeadsGrid({
             className="block truncate hover:underline"
             title={row.original.title}
           >
-            {row.original.title}
+            {projectDisplayName(row.original)}
           </Link>
         ),
       },

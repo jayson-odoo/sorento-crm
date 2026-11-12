@@ -88,3 +88,12 @@ describe('new_product_application_update (NPA-FROM-SI, owner 8 Nov)', () => {
     }
   });
 });
+
+describe('List price change link (LIST-PRICE-LINK, owner 10 Nov)', () => {
+  it('offers "List price change link" for a URL button, like "Discontinued link"', () => {
+    expect(BUTTON_LINK_VARIABLES).toContain('discontinued_link');
+    expect(BUTTON_LINK_VARIABLES).toContain('list_price_link');
+    const labels = Object.fromEntries(PARAM_VARIABLES.map((v) => [v.key, v.label]));
+    expect(labels['list_price_link']).toBe('List price change link');
+  });
+});

@@ -22,8 +22,8 @@ export type TruncatedTextCellProps = {
   dialogTitle?: string;
   /** Override className on the truncated label span. */
   className?: string;
-  /** Visible lines before the text clamps: 1 (default) or 2. */
-  lines?: 1 | 2;
+  /** Visible lines before the text clamps: 1 (default), 2 or 3. */
+  lines?: 1 | 2 | 3;
 };
 
 export function TruncatedTextCell({
@@ -59,7 +59,11 @@ export function TruncatedTextCell({
       ref={labelRef}
       className={cn(
         'block max-w-full align-middle',
-        lines === 2 ? 'line-clamp-2 break-words' : 'truncate',
+        lines === 3
+          ? 'line-clamp-3 break-words'
+          : lines === 2
+            ? 'line-clamp-2 break-words'
+            : 'truncate',
         className,
       )}
       title={value}

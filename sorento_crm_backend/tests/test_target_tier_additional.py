@@ -196,7 +196,7 @@ def test_api_saves_reads_and_pays_the_tier_additional(api):
     assert q1["tier_reached"] == 2
     assert q1["commission_earned"] == 5375.58
     assert q1["tier_rates"] == [{"label": None, "rate": 6.0}]
-    assert q1["tier_additional"] == {"kind": "pct", "value": 1.0}
+    assert q1["tier_additional"] == {"kind": "pct", "value": 1.0, "accounts": None}
     q2 = _period(body, "2026-04-01")
     assert q2["commission_earned"] == 3090.25
     assert q2["tier_additional"] is None
@@ -213,7 +213,7 @@ def test_api_rm_additional_shows_on_the_period(api):
     ]
     body = client.post(BASE, json=_dealer_body([a1], tiers=tiers)).json()
     q1 = _period(body, "2026-01-01")
-    assert q1["tier_additional"] == {"kind": "amount", "value": 500.0}
+    assert q1["tier_additional"] == {"kind": "amount", "value": 500.0, "accounts": None}
     assert q1["bonus_earned"] == 500
 
 

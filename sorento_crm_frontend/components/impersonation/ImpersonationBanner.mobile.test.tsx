@@ -50,7 +50,7 @@ describe('ImpersonationBanner on a phone (S3)', () => {
     render(<ImpersonationBanner />);
     const name = screen.getByText('Test Salesperson A');
     expect(name.closest('.hidden')).toBeNull();
-    const sentence = screen.getByText(/Records you create or modify are still attributed to you\./);
+    const sentence = screen.getByText(/Records you create are saved as Test Salesperson A; the audit log shows you did it\./);
     const cls = classesOf(sentence);
     expect(cls).toContain('hidden');
     expect(cls).toContain('sm:inline');
@@ -59,7 +59,7 @@ describe('ImpersonationBanner on a phone (S3)', () => {
   it('desktop text is unchanged', () => {
     render(<ImpersonationBanner />);
     expect(screen.getByText(/You are currently impersonating/)).toBeInTheDocument();
-    expect(screen.getByText(/Records you create or modify are still attributed to you\./)).toBeInTheDocument();
+    expect(screen.getByText(/Records you create are saved as Test Salesperson A; the audit log shows you did it\./)).toBeInTheDocument();
   });
 
   it('Exit is a button named "Exit impersonation"', () => {

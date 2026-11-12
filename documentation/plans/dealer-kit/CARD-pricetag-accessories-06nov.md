@@ -32,8 +32,8 @@ A13. A list entry (product list or combo list) is EITHER a library accessory OR 
      product. A product entry's code, description (else name), lead photo and list price are read
      live; its card prints code, description and "LP: RM 68". Same box, same direction, header
      per box.
-A14. One list of free products: a product that is already a part of the combo, or the host itself,
-     cannot also be its free item (422).
+A14. The host itself cannot be its combo's free item (422). A part can (owner, 9 Nov, COMBO-FREE-PART:
+     the flyer prints the basin tap as a part and in the FREE box); it stays a part, prices unchanged.
 A15. The free-text move and the combo importer turn a piece whose first word is a product code of
      the same company ("SRTW5000 Popup waste") into a PRODUCT entry; anything else is a library
      accessory.

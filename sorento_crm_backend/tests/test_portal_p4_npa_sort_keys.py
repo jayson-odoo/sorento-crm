@@ -1,10 +1,10 @@
 """PORTAL-P4-REQUESTS S5 red tests: every New Product Application list column sorts on the server (UAC P4-23).
 
 Column ids are `NewProductApplicationsList.tsx`'s: application_no, status, stock_inquiry_number, customer_name,
-first_line, lines_total, lines_done, needed_by, created_at. Server keys today: application_no, status, created_at,
-submitted_at, needed_by, customer_name. An unknown key silently falls back to created_at, so each case seeds rows whose
-requested order is NOT the fallback order and asserts the exact order. `lines_done` is 0 for every row of a fresh
-list (a line is done only once purchasing opens it), so it is asserted as accepted only.
+needed_by, created_at. An unknown key silently falls back to created_at, so each case seeds rows whose requested order
+is NOT the fallback order and asserts the exact order. The line columns (first line, lines, done) left the list with the
+product rows (owner hand test 9 Nov, NPA-FORM-SLA); the stock inquiry list's columns that replaced them are covered in
+tests/test_npa_form_sla.py.
 """
 from __future__ import annotations
 
@@ -18,8 +18,6 @@ from tests._portal_p4_npa_support import NPA, SUB, create, scene, world  # noqa:
 STRICT = {
     "customer_name": lambda w, i, ids: dict(customer_name=f"ZZT {'dcb'[i]} customer"),
     "needed_by": lambda w, i, ids: dict(needed_by=f"2026-12-{20 - i:02d}"),
-    "first_line": lambda w, i, ids: dict(lines=[w.line(description=f"ZZT {'dcb'[i]} sink")]),
-    "lines_total": lambda w, i, ids: dict(lines=[w.line() for _ in range(3 - i)]),
     "stock_inquiry_number": None,  # built from real inquiries below
 }
 
@@ -54,12 +52,3 @@ def test_p4_npa_list_sorts_on_every_column(world, column):
     assert asc == list(reversed(desc))
     # value order, not creation order: the created_at fallback would give ids (asc) / reversed (desc)
     assert asc == list(reversed(ids)), f"sort={column} asc mis-ordered"
-
-
-def test_p4_npa_list_accepts_lines_done_both_directions(world):
-    w = world
-    ids = _rows(w, "lines_total")
-    for direction in ("asc", "desc"):
-        r = w.staff(w.rep.actor, "GET", NPA, params={"sort": "lines_done", "dir": direction})
-        assert r.status_code == 200, r.text
-        assert {x["id"] for x in r.json()["items"]} == set(ids)

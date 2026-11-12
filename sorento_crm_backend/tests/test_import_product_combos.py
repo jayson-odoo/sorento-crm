@@ -495,11 +495,17 @@ def test_ac_8_11_the_repo_holds_the_script_and_a_synthetic_fixture_only():
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
     ).stdout.splitlines()
+    # COMBO-SEED-FLYER (crew brief, 9 Nov): this one seed may live in the repo so it ships in the prod
+    # image. It holds product codes, prices, flyer text and accessory names only;
+    # test_import_product_combos_strict.py::test_ac_19_ac_20_the_seed_file checks it holds no
+    # email or phone number. Any other flyer/combos seed outside fixtures is still rejected.
+    allowed = {"sorento_crm_backend/scripts/data/combo_seed_flyer_2026.json"}
     real = [
         path
         for path in tracked
-        if "combos-seed" in path.lower() or "flyer" in path.lower() and path.lower().endswith(".json")
-        and "fixtures" not in path.lower()
+        if path not in allowed
+        and ("combos-seed" in path.lower() or "flyer" in path.lower() and path.lower().endswith(".json")
+             and "fixtures" not in path.lower())
     ]
     assert real == [], f"real flyer data must not be committed: {real}"
     data = json.loads(SEED.read_text())

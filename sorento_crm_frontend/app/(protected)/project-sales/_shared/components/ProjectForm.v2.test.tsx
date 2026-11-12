@@ -95,6 +95,17 @@ const PARTIES = [
   { id: 'a1', party_type: 'architect', name: 'Arkitek CONTOH', is_active: true },
   { id: 'c1', party_type: 'main_contractor', name: 'Bina CONTOH', is_active: true },
 ];
+// PROJECT-PARTY-ROLES: the party roles are a lookup list (seed order).
+const ROLES = [
+  { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+  { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+  { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+  { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+  { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+  { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+  { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+  { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+];
 const CUSTOMERS = [
   { id: 'cust-1', customer_code: 'C-0001', customer_name: 'Aman Hartanah CONTOH' },
   { id: 'cust-2', customer_code: 'C-0002', customer_name: 'Bestari Dealer CONTOH' },
@@ -157,7 +168,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
         );
         return json({ data, pagination: { total: data.length, page: 1, limit: 20 } });
       }
+      if (path.endsWith('/lookup/project_party_role/options')) return json(ROLES);
       if (path.endsWith('/project-sales/parties/') && method === 'GET') {
+        // Any party can fill any role: the pickers send no party_type, only the query.
         const type = url.searchParams.get('party_type');
         const q = (url.searchParams.get('query') ?? '').toLowerCase();
         const data = PARTIES.filter(
@@ -498,21 +511,21 @@ describe('A4 Register needs title and a Customer (AC-L1)', () => {
 // ---------------------------------------------------------------- B
 describe('B1 Developer, Architect, Main contractor search the parties endpoint', () => {
   it.each([
-    ['Developer', 'developer', 'Setia'],
-    ['Architect', 'architect', 'Arkitek'],
-    ['Main contractor', 'main_contractor', 'Bina'],
-  ])('%s searches by party_type and query, not a fixed limit-200 list', async (label, type, typed) => {
+    ['Developer', 'Setia'],
+    ['Architect', 'Arkitek'],
+    ['Main contractor', 'Bina'],
+  ])('%s searches by query with no party_type, not a fixed limit-200 list', async (label, typed) => {
     renderForm();
     // Developer sits on the Check step; Architect and Main contractor on Details.
     if (label !== 'Developer') {
       await toDetails();
       openDetails();
     }
-    fireEvent.change(screen.getByLabelText(label), { target: { value: typed } });
+    fireEvent.change(await screen.findByLabelText(label), { target: { value: typed } });
     await waitFor(() => {
       const hit = callsTo('GET', '/project-sales/parties/').find((c) => {
         const sp = new URL(c.url, 'http://x').searchParams;
-        return sp.get('party_type') === type && sp.get('query') === typed;
+        return sp.get('query') === typed && sp.get('limit') === '20' && !sp.has('party_type');
       });
       expect(hit).toBeTruthy();
     });
@@ -523,8 +536,8 @@ describe('B1 Developer, Architect, Main contractor search the parties endpoint',
 describe('B2 / B3 create a party on the spot', () => {
   it.each([
     ['Developer', 'developer', 'Create developer'],
-    ['Architect', 'architect', 'Create architect'],
-    ['Main contractor', 'main_contractor', 'Create main contractor'],
+    ['Architect', 'architect', 'Add'],
+    ['Main contractor', 'main_contractor', 'Add'],
   ])('with projects.parties.edit, %s offers a create row that POSTs and selects', async (label, type, rowText) => {
     granted.add('projects.parties.edit');
     renderForm();
@@ -532,8 +545,16 @@ describe('B2 / B3 create a party on the spot', () => {
       await toDetails('Menara Pilih CONTOH');
       openDetails();
     }
-    fireEvent.change(screen.getByLabelText(label), { target: { value: 'Kelana Baru' } });
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp(`${rowText} .*Kelana Baru`, 'i') }));
+    fireEvent.change(await screen.findByLabelText(label), { target: { value: 'Kelana Baru' } });
+    // Developer keeps "Create developer ..."; a role field says: Add "<typed>" as a new party.
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name:
+          label === 'Developer'
+            ? /Create developer .*Kelana Baru/i
+            : /Add .*Kelana Baru.* as a new party/i,
+      }),
+    );
     await waitFor(() => expect(callsTo('POST', '/project-sales/parties/')).toHaveLength(1));
     expect(callsTo('POST', '/project-sales/parties/')[0].body).toEqual({
       name: 'Kelana Baru',
@@ -543,12 +564,24 @@ describe('B2 / B3 create a party on the spot', () => {
     if (label === 'Developer') {
       typeTitle('Menara Pilih CONTOH');
       await toDetails();
+    } else {
+      // A party made on the spot opens its contacts popup straight away; close it.
+      const popup = await screen.findByRole('dialog');
+      expect(within(popup).getByText('Contacts at Kelana Baru')).toBeInTheDocument();
+      fireEvent.click(within(popup).getByRole('button', { name: 'Done' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     }
     await pickCustomer();
-    const key = { developer: 'developer_party_id', architect: 'architect_party_id', main_contractor: 'main_contractor_party_id' }[type]!;
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerBody()).toBeTruthy());
-    expect(registerBody()![key]).toBe(`new-${type}`);
+    if (type === 'developer') {
+      expect(registerBody()!.developer_party_id).toBe(`new-${type}`);
+    } else {
+      // Architect and main contractor are ordinary party links now.
+      expect(registerBody()!.party_links).toEqual([{ role: type, party_id: `new-${type}` }]);
+      expect(registerBody()).not.toHaveProperty('architect_party_id');
+      expect(registerBody()).not.toHaveProperty('main_contractor_party_id');
+    }
   });
 
   it.each(['Developer', 'Architect', 'Main contractor'])(
@@ -559,9 +592,10 @@ describe('B2 / B3 create a party on the spot', () => {
         await toDetails();
         openDetails();
       }
-      fireEvent.change(screen.getByLabelText(label), { target: { value: 'Kelana Baru' } });
+      fireEvent.change(await screen.findByLabelText(label), { target: { value: 'Kelana Baru' } });
       await waitFor(() => expect(callsTo('GET', '/project-sales/parties/').length).toBeGreaterThan(0));
-      expect(screen.queryByRole('button', { name: /^Create (developer|architect|main contractor)/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Create developer/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /as a new party$/i })).toBeNull();
     },
   );
 });
@@ -826,8 +860,10 @@ describe('AI extract from the form', () => {
     expect(registerBody()).toMatchObject({
       title: TITLE,
       developer_party_id: 'd1',
-      architect_party_id: 'new-architect',
-      main_contractor_party_id: 'new-main_contractor',
+      party_links: [
+        { role: 'architect', party_id: 'new-architect' },
+        { role: 'main_contractor', party_id: 'new-main_contractor' },
+      ],
       customer_id: 'cust-1',
       state: 'Selangor',
       mukim: 'Petaling',
@@ -848,8 +884,7 @@ describe('AI extract from the form', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerBody()).toBeTruthy());
     expect(registerBody()!.developer_party_id).toBe('d1');
-    expect(registerBody()!.architect_party_id ?? null).toBeNull();
-    expect(registerBody()!.main_contractor_party_id ?? null).toBeNull();
+    expect(registerBody()!.party_links).toEqual([]);
   });
 
   it('C7 removing a row with the x keeps it out of Confirm', async () => {

@@ -26,7 +26,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Annotated, Optional, Sequence, TextIO
+from typing import Annotated, Literal, Optional, Sequence, TextIO
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -85,6 +85,8 @@ def _as_read(value: str) -> str:
 
 
 class Free(_Row):
+    # `--strict` seed loads: "product" = a catalogue product by code, "accessory" = a library item by name.
+    kind: Optional[Literal["product", "accessory"]] = None
     code: Code = ""
     label: Text = ""
     note: Text = ""
@@ -123,7 +125,8 @@ class Topup(_Row):
 class Combo(_Row):
     host_code: Optional[Code] = None
     combo_name: Annotated[StrictStr, Field(min_length=1, max_length=100)]
-    combo_description: Annotated[StrictStr, Field(max_length=1000)] = ""
+    combo_description: Annotated[StrictStr, Field(max_length=5000)] = ""
+    aka: list[Text] = Field(default_factory=list, max_length=10)
     free_items: list[Free] = Field(default_factory=list, max_length=20)
     components: list[Component] = Field(default_factory=list, max_length=40)
     choice_groups: list[Group] = Field(default_factory=list, max_length=10)

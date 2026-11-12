@@ -158,7 +158,7 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
       return {
         id: r.id,
         kind: 'new_product_application' as const,
-        title: r.first_line || r.customer_name || r.application_no,
+        title: r.customer_name || r.application_no,
         document_number: r.application_no,
         reference: null,
         status: r.status,

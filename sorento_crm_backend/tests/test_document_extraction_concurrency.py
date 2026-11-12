@@ -223,3 +223,125 @@ def test_the_prompt_template_is_resolved_once_for_the_whole_document(monkeypatch
         _run(db, monkeypatch, provider, page_count=6, concurrency=6)
 
     assert calls["n"] == 1
+
+
+# ------------------------------------------------------- the shape of a page answer
+#
+# PO-EXTRACT-LIST-FIX (11 Nov 2026): JSON mode guarantees JSON, not an object. On a real
+# 22-page customer PO the reader answered page 5 as a top-level ARRAY holding one page
+# object, and the PO service's `data.get("header")` crashed the whole document with
+# "'list' object has no attribute 'get'" on screen. `PageResult.data` is documented as
+# an object, so the shape is settled here, at the one place every reader goes through.
+
+_PAGE_OBJECT = '{"header": {"po_number": null}, "lines": [{"no": 1}], "annotations": []}'
+
+
+class _AnswerProvider:
+    """Answers each page with the text given for its page number (an object otherwise)
+    and records the keyword arguments of every call."""
+
+    name = "stub"
+
+    def __init__(self, answers: dict[int, str]):
+        self.answers = answers
+        self.kwargs: list[dict] = []
+        self._lock = threading.Lock()
+
+    def chat(self, messages, *, images=None, **kwargs):
+        page_no = int(_PAGE_NO_RE.search(messages[0]["content"]).group(1))
+        with self._lock:
+            self.kwargs.append(kwargs)
+        return ChatResult(
+            content=self.answers.get(page_no, _PAGE_OBJECT),
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+
+_INTERNAL_WORDS = ("list", "dict", "attribute", "object has no", "Traceback", "Error")
+
+
+def _plain(reason: str | None) -> bool:
+    return bool(reason) and not any(word in reason for word in _INTERNAL_WORDS)
+
+
+def test_a_page_answered_as_an_array_of_one_page_object_is_that_object(monkeypatch):
+    provider = _AnswerProvider({2: f"[{_PAGE_OBJECT}]"})
+    with blank_session() as db:
+        result = _run(db, monkeypatch, provider, page_count=3, concurrency=1)
+
+    assert result.failed_pages == []
+    page_two = next(p for p in result.pages if p.page_no == 2)
+    assert page_two.error is None
+    assert isinstance(page_two.data, dict)
+    assert page_two.data["lines"] == [{"no": 1}]
+
+
+def test_a_page_answered_as_several_page_objects_fails_only_that_page_plainly(monkeypatch):
+    provider = _AnswerProvider({2: f"[{_PAGE_OBJECT}, {_PAGE_OBJECT}]"})
+    with blank_session() as db:
+        result = _run(db, monkeypatch, provider, page_count=3, concurrency=1)
+
+    assert result.failed_pages == [2]
+    page_two = next(p for p in result.pages if p.page_no == 2)
+    assert page_two.data is None
+    assert _plain(page_two.error), page_two.error
+    # Nothing is guessed: which of the two readings is "the" page is not ours to pick.
+    assert "2" in page_two.error
+    assert [p.page_no for p in result.ok_pages] == [1, 3]
+
+
+@pytest.mark.parametrize("answer", ['[{"no": 1}, {"no": 2}]', "[1, 2]", '"page"', "42", "null"])
+def test_a_page_answered_as_anything_but_one_object_fails_only_that_page_plainly(
+    monkeypatch, answer
+):
+    provider = _AnswerProvider({2: answer})
+    with blank_session() as db:
+        result = _run(db, monkeypatch, provider, page_count=3, concurrency=1)
+
+    assert result.failed_pages == [2]
+    page_two = next(p for p in result.pages if p.page_no == 2)
+    assert page_two.data is None
+    assert _plain(page_two.error), page_two.error
+    assert [p.page_no for p in result.ok_pages] == [1, 3]
+
+
+def test_a_callers_json_schema_reaches_the_provider_on_every_page(monkeypatch):
+    schema = {"type": "object", "properties": {"lines": {"type": "array"}}}
+    provider = _AnswerProvider({})
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich", lambda *a, **k: _rendered_pages(3)
+    )
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: provider)
+    with blank_session() as db:
+        extract_document(
+            db, b"ZZT", "application/pdf", prompt_key="po_extractor", json_schema=schema
+        )
+
+    assert len(provider.kwargs) == 3
+    assert all(call.get("json_schema") is schema for call in provider.kwargs)
+
+
+def test_without_a_schema_the_page_read_stays_in_json_mode(monkeypatch):
+    provider = _AnswerProvider({})
+    with blank_session() as db:
+        _run(db, monkeypatch, provider, page_count=2, concurrency=1)
+
+    assert all(
+        call.get("response_format") == {"type": "json_object"} and call.get("json_schema") is None
+        for call in provider.kwargs
+    )
+
+
+def test_a_page_answered_as_an_empty_array_is_an_empty_page(monkeypatch):
+    """Nothing on the page, said as ``[]``. It reads exactly as ``{}`` always did: a
+    page that answered with nothing, not a page whose answer was unusable (review of
+    #2347: the schedule reader counts it as an answered empty page)."""
+    provider = _AnswerProvider({2: "[]"})
+    with blank_session() as db:
+        result = _run(db, monkeypatch, provider, page_count=3, concurrency=1)
+
+    page_two = next(p for p in result.pages if p.page_no == 2)
+    assert page_two.data == {}
+    assert page_two.error is None

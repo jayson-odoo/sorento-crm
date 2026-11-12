@@ -69,11 +69,12 @@ def test_b4_the_same_name_in_other_case_and_spacing_returns_the_existing_party(v
     assert _count(v2, "developer", "CONTOH Dev Sdn Bhd") == 1
 
 
-def test_b4_the_same_name_for_another_type_is_a_new_party(v2):
+def test_b4_the_same_name_for_another_type_is_the_same_party(v2):
+    """PROJECT-PARTY-ROLES Q4 (b), owner 10 Nov: one firm is one party whatever role it plays."""
     first = as_user(v2, v2.owner).post(PARTIES, json={"name": "CONTOH Shared Name", "party_type": "developer"})
     other = as_user(v2, v2.owner).post(PARTIES, json={"name": "CONTOH Shared Name", "party_type": "architect"})
-    assert other.status_code == 201, other.text
-    assert other.json()["id"] != first.json()["id"]
+    assert other.status_code == 200, other.text
+    assert other.json()["id"] == first.json()["id"]
 
 
 def test_b4_an_inactive_party_of_the_same_name_is_not_reused(v2):

@@ -160,6 +160,12 @@ def get_form_tracking(
     """Active (unresolved, not voided) form-SLA stage rows for an entity, newest first."""
     if source_entity_type not in FORM_SLA_TYPES:
         raise HTTPException(status_code=422, detail="Not a form SLA entity type.")
+    if source_entity_type == "new_product_application":
+        # The NPA's trackers follow the NPA's own read (its readers, its company): security
+        # review S2 of NPA-FORM-SLA. The older types keep today's staff-session read.
+        from app.api.v1.sla.sla_tracking import _require_tracker_reader
+
+        _require_tracker_reader(db, current_user, source_entity_type, source_entity_id)
     rows = (
         db.query(ConversationSLATracking)
         .filter(

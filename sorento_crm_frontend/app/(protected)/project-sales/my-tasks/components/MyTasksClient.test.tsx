@@ -171,4 +171,20 @@ describe('MyTasksClient', () => {
 
     expect(await screen.findByText('Backend is down')).toBeInTheDocument();
   });
+
+  it('names the project by its short name, else its title (PROJECT-NAME)', async () => {
+    listMyTasks.mockResolvedValue({
+      data: [
+        task({ id: 'a', project_name: 'Tower A', project_title: 'Long legal title A' }),
+        task({ id: 'b', project_code: 'PRJ-000002', project_name: null, project_title: 'Menara Tanpa Nama' }),
+      ],
+      total: 2,
+    });
+
+    renderClient();
+
+    expect(await screen.findByText(/Tower A/)).toBeInTheDocument();
+    expect(screen.queryByText(/Long legal title A/)).toBeNull();
+    expect(screen.getByText(/Menara Tanpa Nama/)).toBeInTheDocument();
+  });
 });

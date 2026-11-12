@@ -38,7 +38,8 @@ TEMPLATES.append(
             _h(),
             {"type": "heading", "text": "{{ heading }}"},
             {"type": "intro", "text": "{{ intro }}"},
-            {"type": "button", "label": "Open stock inquiry", "url": "{{ view_url }}"},
+            # The New Product Application sends this notice too and names its own button.
+            {"type": "button", "label": "{{ button_label or 'Open stock inquiry' }}", "url": "{{ view_url }}"},
             _f("This is a system-generated email. Please do not reply."),
         ],
         variables=[
@@ -49,11 +50,13 @@ TEMPLATES.append(
                 "sample": "Dear Purchasing Team,\n\nA stock inquiry has been approved and is now pending purchasing review.",
             },
             {"key": "view_url", "label": "Stock Inquiry Link", "sample": f"{_SAMPLE_BASE}/procurement-management/stock-inquiries/sample"},
+            {"key": "button_label", "label": "Button Label", "sample": "Open stock inquiry"},
         ],
         sample={
             "heading": "Stock Inquiry pending purchasing review",
             "intro": "Dear Purchasing Team,\n\nA stock inquiry has been approved and is now pending purchasing review.",
             "view_url": f"{_SAMPLE_BASE}/procurement-management/stock-inquiries/sample",
+            "button_label": "Open stock inquiry",
         },
     )
 )

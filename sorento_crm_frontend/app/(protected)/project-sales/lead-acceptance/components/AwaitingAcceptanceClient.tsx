@@ -307,7 +307,7 @@ export function AwaitingAcceptanceClient() {
                     value={searchInput}
                     onChange={setSearchInput}
                     isSettling={isSearchInFlight(searchSettling, query.isFetching, search)}
-                    placeholder="Search title or lead code…"
+                    placeholder="Search name, title or lead code…"
                     aria-label="Search leads awaiting acceptance"
                     className="w-full max-w-xs"
                   />

@@ -31,14 +31,20 @@ The other half of `/handoff`. Turns a cold session back into a working one.
    git status --short && git log --oneline -3
    lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN; ps aux | grep -c '[w]orker.py'
    ```
-   Boot whatever is missing per CLAUDE.md "Dev sessions". If the tree diverged from
+   Boot whatever is missing per CLAUDE.md "Dev sessions", except on a crew lane: a
+   crew-lane worker does not boot dev servers on resume, because crew owns the test
+   copies. If the tree diverged from
    the handoff's description (new commits, unexpected modified files - the user codes
    concurrently in the main checkout), say so before doing anything else.
 4. **Re-check the "Assumed, not verified" list.** Each item is a false-premise
    candidate. Verify it or explicitly carry it forward as still-unverified. This step
    is the whole reason the section exists - skipping it silently promotes guesses to
    facts.
-5. **Restate the plan.** Four to eight lines: the goal, where the work stands, the
+5. **Re-run unfinished helper checks.** Every helper agent the handoff lists without a
+   posted result (reviewer pass, test chunk, browser walk) ran in the cleared session
+   and its result is gone: run that check again before relying on it. On a crew lane,
+   compare the PR head and test copy head the handoff names with the live ones.
+6. **Restate the plan.** Four to eight lines: the goal, where the work stands, the
    first action, and anything that moved since the handoff was written. Then start
    at the marked resume point.
 

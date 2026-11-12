@@ -9,6 +9,7 @@ export type NewProductApplicationStatus =
   | 'submitted'
   | 'resubmitted'
   | 'approved'
+  | 'responded'
   | 'rejected'
   | 'completed'
   | 'cancelled';
@@ -95,9 +96,12 @@ export interface NewProductApplicationSummary {
   stock_inquiry_number: string | null;
   customer_name: string | null;
   project_name: string | null;
-  first_line: string | null;
-  lines_total: number;
-  lines_done: number;
+  /** The stock inquiry list's columns (owner hand test 9 Nov). */
+  salesperson?: string | null;
+  revision_no?: number;
+  assigned_to_name?: string | null;
+  handled_by_name?: string | null;
+  print_count?: number;
   opened_codes: string[];
   created_codes?: NewProductApplicationCreatedCode[];
   needed_by: string | null;
@@ -180,6 +184,8 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   purchasing_response?: string | null;
   /** Update & Reply is offered (the inquiry's conversation exists and is writable). */
   can_reply?: boolean;
+  /** Where Update & Reply goes (owner 9 Nov): the SI's WhatsApp chat, or the applicant's portal. */
+  reply_channel?: 'whatsapp' | 'portal' | null;
   /** The code purchasing typed when it is not in the catalogue yet. */
   new_code_text?: string | null;
   /** COST (MYR) of an application with no product rows. */

@@ -42,6 +42,10 @@ vi.mock('../lib/portal-client', () => ({
 }));
 
 // Native `<select>` stand-in - same shape as the sibling suites.
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -96,7 +100,7 @@ import {
   lookupTagItems,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems } from '@/test-utils';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -113,14 +117,17 @@ beforeEach(() => {
 });
 
 /** The four section headers, in document order. */
+// PRICETAG-REQUEST-LAYOUT (owner, 10 Nov): three sections - Customers, Price tags (the old
+// Price and Sales Order & Lines merged), Additional information (folded).
 function sectionHeaders() {
   return screen
     .getAllByRole('button')
     .filter((b) =>
-      ['Customer', 'Sales Order', 'Price', 'Additional Information'].some((t) =>
+      ['Customers', 'Price tags', 'Additional information'].some((t) =>
         (b.textContent ?? '').startsWith(t),
       ),
-    );
+    )
+    .filter((b) => b.hasAttribute('aria-expanded'));
 }
 
 function sectionButton(title: string) {
@@ -128,22 +135,15 @@ function sectionButton(title: string) {
 }
 
 describe('PriceTagRequestForm - sections (AC-P1)', () => {
-  it('renders the four sections in order, only Customer open', async () => {
+  it('renders the three sections in order, only Customers open', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
     const headers = sectionHeaders();
-    expect(headers.map((h) => h.getAttribute('aria-expanded'))).toEqual([
-      'true',
-      'false',
-      'false',
-      'false',
-    ]);
-    expect(headers[0]).toHaveTextContent('Customer');
-    // O3: Price sits between Customer and Sales Order & Lines.
-    expect(headers[1]).toHaveTextContent('Price');
-    expect(headers[2]).toHaveTextContent('Sales Order & Lines');
-    expect(headers[3]).toHaveTextContent('Additional Information');
+    expect(headers.map((h) => h.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false']);
+    expect(headers[0]).toHaveTextContent('Customers');
+    expect(headers[1]).toHaveTextContent('Price tags');
+    expect(headers[2]).toHaveTextContent('Additional information');
   });
 });
 
@@ -152,151 +152,94 @@ describe('PriceTagRequestForm - section toggling (AC-P2)', () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    const salesOrder = sectionButton('Sales Order');
-    expect(salesOrder).toHaveAttribute('aria-expanded', 'false');
+    const priceTags = sectionButton('Price tags');
+    expect(priceTags).toHaveAttribute('aria-expanded', 'false');
 
-    fireEvent.click(salesOrder);
-    expect(salesOrder).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(priceTags);
+    expect(priceTags).toHaveAttribute('aria-expanded', 'true');
 
-    fireEvent.click(salesOrder);
-    expect(salesOrder).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(priceTags);
+    expect(priceTags).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('is a real <button>, so Enter/Space toggle it via native HTML semantics (no custom key handler to bypass)', async () => {
-    // jsdom does not synthesize a browser's default action for a keydown -
-    // firing `keyDown(..., { key: 'Enter' })` at a plain `<button>` does
-    // nothing here even though a real browser DOES turn that into a click,
-    // natively, for any `<button>`. So the header's OWN commitment is
-    // asserted directly: a native `type="button"` element with no
-    // `role="button"` override, which is what makes Enter/Space work at
-    // all without this component wiring up its own key handler.
+  it('is a real <button>, so Enter/Space toggle it via native HTML semantics', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    const salesOrder = sectionButton('Sales Order');
-    expect(salesOrder.tagName).toBe('BUTTON');
-    expect(salesOrder).toHaveAttribute('type', 'button');
-
-    fireEvent.click(salesOrder);
-    expect(salesOrder).toHaveAttribute('aria-expanded', 'true');
+    const priceTags = sectionButton('Price tags');
+    expect(priceTags.tagName).toBe('BUTTON');
+    expect(priceTags).toHaveAttribute('type', 'button');
   });
 });
 
-describe('PriceTagRequestForm - auto-open rules (AC-P3, AC-P7)', () => {
-  it('picking a customer opens Price automatically; Customer stays open', async () => {
+describe('PriceTagRequestForm - auto-open rules (AC-P3)', () => {
+  it('picking a customer opens Price tags automatically; Customers stays open', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
 
-    expect(sectionButton('Customer')).toHaveAttribute('aria-expanded', 'true');
-    expect(sectionButton('Price')).toHaveAttribute('aria-expanded', 'true');
-    expect(sectionButton('Sales Order')).toHaveAttribute('aria-expanded', 'false');
+    expect(sectionButton('Customers')).toHaveAttribute('aria-expanded', 'true');
+    expect(sectionButton('Price tags')).toHaveAttribute('aria-expanded', 'true');
+    expect(sectionButton('Additional information')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('a section the user closed by hand is not reopened by the rule', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    // Open it first (so there is something to close), then close it by hand.
-    fireEvent.click(sectionButton('Price'));
-    fireEvent.click(sectionButton('Price'));
-    expect(sectionButton('Price')).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(sectionButton('Price tags'));
+    fireEvent.click(sectionButton('Price tags'));
+    expect(sectionButton('Price tags')).toHaveAttribute('aria-expanded', 'false');
 
-    // The rule that would have opened it (picking a customer) must not
-    // override the user's own close.
     await selectOption('Customer', 'ZZTD01');
-    expect(sectionButton('Price')).toHaveAttribute('aria-expanded', 'false');
+    expect(sectionButton('Price tags')).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('the first line landing opens Additional Information automatically', async () => {
+  it('the first line does NOT open Additional information (owner, mock v1: it is secondary)', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
-    // Choosing the default opens Sales Order & Lines, where Add line lives.
-    fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
-    await waitFor(() =>
-      expect(sectionButton('Sales Order')).toHaveAttribute('aria-expanded', 'true'),
-    );
-    expect(sectionButton('Additional Information')).toHaveAttribute('aria-expanded', 'false');
-
+    chooseTypedItems();
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
-    await waitFor(() =>
-      expect(sectionButton('Additional Information')).toHaveAttribute('aria-expanded', 'true'),
-    );
+    expect(sectionButton('Additional information')).toHaveAttribute('aria-expanded', 'false');
   });
 });
 
 describe('PriceTagRequestForm - collapsed-header summaries (AC-P9)', () => {
-  it('Customer summary shows the picked name once collapsed', async () => {
+  it('Customers summary shows the picked name once collapsed', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
 
-    fireEvent.click(sectionButton('Customer'));
+    fireEvent.click(sectionButton('Customers'));
 
-    expect(sectionButton('Customer')).toHaveTextContent('ZZT Dealer Sdn Bhd');
+    expect(sectionButton('Customers')).toHaveTextContent('ZZT Dealer Sdn Bhd');
   });
 
-  it('Sales Order & Lines summary reads "<n> lines, <m> files" once it holds a line', async () => {
+  it('Price tags summary counts the lines and names the chosen default', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
     fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
-    await waitFor(() =>
-      expect(sectionButton('Sales Order')).toHaveAttribute('aria-expanded', 'true'),
-    );
+    chooseTypedItems();
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
-    await waitFor(() =>
-      expect(sectionButton('Additional Information')).toHaveAttribute('aria-expanded', 'true'),
-    );
 
-    fireEvent.click(sectionButton('Sales Order'));
+    fireEvent.click(sectionButton('Price tags'));
 
-    expect(sectionButton('Sales Order')).toHaveTextContent('1 line, 0 files');
+    expect(sectionButton('Price tags')).toHaveTextContent('1 line, List price');
   });
 
   it('an empty section shows no summary', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    // Additional Information holds nothing yet - opened and closed by hand,
-    // since nothing has triggered its auto-open rule.
-    fireEvent.click(sectionButton('Additional Information'));
-    fireEvent.click(sectionButton('Additional Information'));
+    fireEvent.click(sectionButton('Additional information'));
+    fireEvent.click(sectionButton('Additional information'));
 
-    // Only the section title, no summary line appended after it.
-    expect(sectionButton('Additional Information').textContent).toBe(
-      'Additional Information',
-    );
+    expect(sectionButton('Additional information').textContent).toBe('Additional information');
   });
 
-  it("a fresh form's Price header shows no summary until a mode is chosen (review round 2)", async () => {
-    // priceMode defaults to 'list' as component STATE, but nobody has
-    // CHOSEN it yet on a blank form - the collapsed-header summary must
-    // stay empty until a click sets `priceModeChosenRef`, the same rule
-    // Additional Information's own summary already follows.
+  it("a fresh form's Price tags header shows no summary until something is in it", async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    expect(sectionButton('Price').textContent).toBe('Price');
-  });
-});
-
-describe('PriceTagRequestForm - price mode auto-open (AC-P8, review round 2)', () => {
-  it('choosing List price on a fresh form opens Sales Order & Lines, even though List was already the resting default', async () => {
-    // The List price button's onClick calls `setPriceMode('list')`
-    // unconditionally - on a fresh form priceMode is ALREADY 'list', so
-    // React bails out of re-rendering on an unchanged primitive and the
-    // auto-open effect (keyed on the `priceMode` dependency) never reruns,
-    // even though `priceModeChosenRef.current` was just set to true.
-    render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Customer');
-    fireEvent.click(screen.getByRole('button', { name: /^Price/ }));
-
-    fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
-
-    await waitFor(() =>
-      expect(sectionButton('Sales Order')).toHaveAttribute(
-        'aria-expanded',
-        'true',
-      ),
-    );
+    expect(sectionButton('Price tags').textContent).toBe('Price tags');
   });
 });

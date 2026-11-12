@@ -806,3 +806,39 @@ def test_send_template_message_payload_includes_button_component():
     assert btn["text"] == "View complaint"
     assert btn["url"] == "https://fe-sorento.foundryx.my/{{1}}"
     assert btn["parameters"][0]["text"] == "portal/c/A/complaint/x"
+
+
+@pytest.mark.parametrize(
+    "use_case,link_var,param",
+    [
+        ("product_discontinued", "discontinued_link", "discontinued_batch_id"),
+        ("product_list_price_changed", "list_price_link", "list_price_batch_id"),
+    ],
+)
+def test_product_change_button_resolves_its_own_batch_link(db, workspace, use_case, link_var, param):
+    """LIST-PRICE-LINK (owner 10 Nov): the list price notification's "List price change
+    link" fills the URL button exactly like the discontinued one's "Discontinued link":
+    the staff product list filtered to that batch (same page, same login, no token)."""
+    from app.services import respond_messaging_service as svc
+    from app.services import respond_template_service as tsvc
+
+    _, tpl = _seed_button_template(db)
+    out = tsvc.set_default(
+        db, use_case, template_id=str(tpl.id),
+        param_mapping={"1": "contact_name", "2": "message", "button_url": link_var},
+    )
+    assert out["param_mapping"]["button_url"] == link_var
+
+    batch = str(uuid.uuid4())
+    link = f"https://fe-sorento.foundryx.my/master-data-management/products?{param}={batch}&brand_id=b1"
+    client = MagicMock()
+    client.send_template_message.return_value = {"messageId": 12}
+    with patch("app.services.integration_service.RespondClient", return_value=client), patch.object(
+        svc, "get_window_state", return_value={"open": False, "last_incoming_at": None, "checked_at": "", "source": "x"}
+    ):
+        svc.send_text_or_template(
+            db, identifier="id:1", text=f"3 products. View the list: {link}", use_case=use_case,
+            context_vars={"contact_name": "Staff A", link_var: link, "portal_url": link},
+        )
+    kwargs = client.send_template_message.call_args.kwargs
+    assert kwargs["button"]["suffix"] == f"master-data-management/products?{param}={batch}&brand_id=b1"

@@ -12,7 +12,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { AttachmentImage } from '@/components/common/AttachmentImage';
 import { richPlainText } from '@/lib/dealer-kit/rich-text';
 import type { AccessoryEntry, AccessoryEntryOverrides } from '../../../accessories/types/accessory.types';
 
@@ -45,6 +46,20 @@ export function AccessoryEntryDialog({
   }, [entry]);
 
   const pictures = entry?.kind === 'accessory' ? (entry.images ?? []) : [];
+  // Each choice shows its picture beside its label, in the list and once picked.
+  const withThumb = (option: SearchableSelectOption, size: string) => {
+    const picture = pictures.find((p) => p.id === option.value);
+    return (
+      <span className="flex min-w-0 items-center gap-2">
+        <AttachmentImage
+          thumbUrl={picture?.thumb_url}
+          url={picture?.url}
+          className={`${size} shrink-0 rounded border object-cover`}
+        />
+        <span className="truncate">{option.label}</span>
+      </span>
+    );
+  };
 
   return (
     <Dialog open={entry !== null} onOpenChange={onOpenChange}>
@@ -60,12 +75,15 @@ export function AccessoryEntryDialog({
                 aria-label="Picture choice"
                 value={imageId}
                 clearable
-                placeholder="First picture"
+                // No pick = the accessory's own first picture: show that one too.
+                placeholder={withThumb({ value: pictures[0].id, label: 'First picture' }, 'size-6')}
                 options={pictures.map((picture, index) => ({
                   value: picture.id,
                   label: picture.colour_name ?? `Picture ${index + 1}`,
                 }))}
                 onChange={(value: string) => setImageId(value)}
+                renderOption={(option) => withThumb(option, 'size-10')}
+                renderTriggerLabel={(option) => withThumb(option, 'size-6')}
               />
             </div>
           ) : null}

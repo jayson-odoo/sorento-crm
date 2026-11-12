@@ -61,7 +61,8 @@ vi.mock('@/lib/toast', () => ({
 /** The signed-in user's permission slugs. Every SCM read on this page (the proforma invoices
  *  behind the container, the SPO planner, the consolidated build, line photos, container
  *  sizes) sits behind `scm.dashboard.view`; a procurement-only user has none of them. */
-const perms = { set: new Set<string>(['scm.dashboard.view']), isLoading: false };
+// SUPPLIER-COST-ACCESS: the default reader is purchasing, who holds products.cost.view.
+const perms = { set: new Set<string>(['scm.dashboard.view', 'products.cost.view']), isLoading: false };
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({
     permissions: [...perms.set],
@@ -355,7 +356,7 @@ beforeEach(async () => {
   state.consolidated = undefined;
   updatePackingList.mockReset();
   updatePackingList.mockResolvedValue({});
-  perms.set = new Set(['scm.dashboard.view']);
+  perms.set = new Set(['scm.dashboard.view', 'products.cost.view']);
   perms.isLoading = false;
   calls.sourceInvoices = [];
   calls.consolidated = [];
@@ -547,6 +548,14 @@ describe('the Proforma invoices tab', () => {
 describe('the Shipment lines tab', () => {
   beforeEach(() => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+  });
+
+  it('SUPPLIER-COST-ACCESS: no Price or Amount column without products.cost.view', async () => {
+    perms.set = new Set(['scm.dashboard.view']);
+    await renderTab(<LinesPage />);
+    expect(screen.getByRole('columnheader', { name: 'Qty' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Price' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Amount' })).not.toBeInTheDocument();
   });
 
   it('states what the workbook measures each line by, in its own column order (AC-G1)', async () => {

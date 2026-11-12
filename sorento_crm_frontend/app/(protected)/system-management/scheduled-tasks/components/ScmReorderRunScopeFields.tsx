@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { useWarehouseOptions } from '@/app/(protected)/scm/hooks/useScmOptions';
+import { useActiveWarehouseOptions } from '@/app/(protected)/scm/hooks/useScmOptions';
 import { searchProductOptions } from '@/app/(protected)/scm/services/scmOptionsService';
 import { DEMAND_OPTIONS } from '@/app/(protected)/scm/reorder/components/RunPlanningModal';
 import type { FormValues } from './ScheduledTaskForm';
@@ -35,7 +35,7 @@ export function ScmReorderRunScopeFields({
     data: warehouseOptions,
     isLoading: warehousesLoading,
     isError: warehousesError,
-  } = useWarehouseOptions();
+  } = useActiveWarehouseOptions();
 
   const [productLabels, setProductLabels] = useState<Record<string, string>>({});
   const fetchProductOptions = useCallback(async (query: string) => {

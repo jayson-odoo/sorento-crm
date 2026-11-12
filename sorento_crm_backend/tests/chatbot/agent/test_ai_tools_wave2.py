@@ -90,7 +90,7 @@ def targets(api, grant):
         _so_line(db, company_id, agent_id=agent.id, order_date=date(2026, 10, 5), line_total=Decimal("9000"), product_id=pid)
     dealer = _customer(db, company_id, "ZZT DEALER W2", level=1)
     _sale(db, company_id, dealer, "70000", date(2026, 8, 2), product_id=pid)
-    res = client.post(BASE, json=_dealer_body([dealer], payout_customer_id=dealer.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([dealer], tiers=[
         {"period_start": "2026-07-01", "threshold": 60000, "rate": 5},
         {"period_start": "2026-10-01", "threshold": 60000, "rate": 5},
     ]))
@@ -450,7 +450,6 @@ def _same_as_page(db, out, target_ids):
             assert row["tier_reached"] == mine["tier_reached"]
             assert row["commission"] == mine["commission_earned"]
             assert row["bonus"] == mine["bonus_earned"]
-            assert row["replaced"] == mine["replaced"]
             assert row["ratio_missing"] == mine["ratio_missing"]
             if not mine["ratio_missing"]:
                 assert row["target_value"] == mine["target_value"]
@@ -462,8 +461,8 @@ def _same_as_page(db, out, target_ids):
     return checked
 
 
-def test_T8_points_replaced_and_team_targets_equal_the_target_page(api, grant):
-    from tests.test_dealer_targets_api import RATIOS, _replacing_pair
+def test_T8_points_stacking_and_team_targets_equal_the_target_page(api, grant):
+    from tests.test_dealer_targets_api import RATIOS, _stacking_pair
     from tests.test_sales_targets_s1 import TEAMS_BASE
 
     client, db, company_id = api
@@ -478,8 +477,8 @@ def test_T8_points_replaced_and_team_targets_equal_the_target_page(api, grant):
         {"period_start": "2026-07-01", "threshold": 100000, "rate": 4},
         {"period_start": "2026-10-01", "threshold": 100000, "rate": 4},
     ])).json()
-    # Replaced: the dealer's tier is reached, so the account's own target pays nothing.
-    dealer, replaced = _replacing_pair(client, db, company_id, 1300000)
+    # Stacking (owner 8 Nov): the dealer's tier is reached and the account's own target still pays.
+    dealer, own = _stacking_pair(client, db, company_id, 1300000)
     # Team with children.
     a, b = _agent(db, "TA", "Team A"), _agent(db, "TB", "Team B")
     team = client.post(TEAMS_BASE, json={"name": f"ZZT W2 {unique_code('T')}", "sales_agent_ids": [a.id, b.id]}).json()
@@ -496,12 +495,12 @@ def test_T8_points_replaced_and_team_targets_equal_the_target_page(api, grant):
     first = run(db, {"entity": "sales_target", "filters": [year], "limit": 50,
                      "fields": ["period_start", "target_value", "achieved_value", "achieved_pct", "below_target", "tier_reached"]})
     second = {r["id"]: r for r in run(db, {"entity": "sales_target", "filters": [year], "limit": 50,
-                                         "fields": ["commission", "bonus", "replaced", "ratio_missing"]})["rows"]}
+                                         "fields": ["commission", "bonus", "ratio_missing"]})["rows"]}
     out = {"rows": [{**r, **second[r["id"]]} for r in first["rows"]]}
-    ids = [points["id"], dealer["id"], replaced["id"], team_target.json()["id"]]
+    ids = [points["id"], dealer["id"], own["id"], team_target.json()["id"]]
     assert _same_as_page(db, out, ids) == 4 + 1 + 1 + 1
     rows = {r["link"].rsplit("/", 1)[1] + r["period_start"]: r for r in out["rows"]}
-    assert rows[replaced["id"] + "01/01/2026"]["replaced"] is True and rows[replaced["id"] + "01/01/2026"]["commission"] == 0
+    assert rows[own["id"] + "01/01/2026"]["commission"] == 8000
     assert rows[points["id"] + "01/01/2026"]["ratio_missing"] is True
     assert rows[points["id"] + "01/07/2026"]["commission"] == 5200
     assert rows[team_target.json()["id"] + "01/10/2026"]["achieved_value"] == 700

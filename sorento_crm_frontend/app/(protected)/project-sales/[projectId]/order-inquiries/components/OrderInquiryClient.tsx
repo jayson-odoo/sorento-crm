@@ -36,6 +36,7 @@ import {
   useOrderInquirySummary,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useProject } from '../../../_shared/hooks/useProjects';
+import { projectDisplayName } from '../../../_shared/lib/projectName';
 import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryRow } from '../../../_shared/types/orderInquiry.types';
@@ -447,7 +448,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
               className="mt-0.5 line-clamp-2 text-sm text-muted-foreground break-words"
               title={project.data.title}
             >
-              {project.data.title}
+              {projectDisplayName(project.data)}
             </p>
           )}
         </div>

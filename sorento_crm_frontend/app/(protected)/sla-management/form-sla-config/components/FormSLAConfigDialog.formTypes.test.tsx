@@ -50,6 +50,9 @@ describe('FormSLAConfigDialog form types', () => {
     expect(labels).not.toContain('Product Drawing');
     expect(labels).not.toContain('Product Photo');
     expect(values).toContain('purchase_request');
+    // NPA-FORM-SLA: the NPA's own stage rows are editable here, under its own label.
+    expect(values).toContain('new_product_application');
+    expect(labels).toContain('New Product Application');
     expect(screen.queryByText('Product Drawing')).not.toBeInTheDocument();
   });
 });

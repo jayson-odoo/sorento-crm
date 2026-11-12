@@ -71,6 +71,9 @@ class LineSplitLineOut(BaseModel):
     #: PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line from (the email's ITEM
     #: CODE; `item_code` is then its NEW ITEM CODE). Null when the product did not change.
     was_item_code: Optional[str] = None
+    #: SPLIT-SHEET-LOCATION: the location AutoCount moved the line from (LOCATION; `location`
+    #: is then NEW LOCATION). Null when the line did not move.
+    was_location: Optional[str] = None
     location: str = ""
     base_qty: float
     base_date: Optional[date] = None

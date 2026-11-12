@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cover page fields (sample v1)</title>
+<style>
+/* App tokens from sorento_crm_frontend/css/config.reui.css (light), as in documentation/mockups/QUOTE-COVER-DESIGN.
+   The A4 preview follows the PDF stylesheet (project_quotation_pdf_service.py) with the sales team's cover sheet bands. */
+:root{--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--q:#6d28d9;--q-soft:#f5f3ff;--page:#f7f7f8;--dis:#a1a1aa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0 0 4px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 10px;max-width:980px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:960px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--primary);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px;font-weight:600;vertical-align:middle}
+.newtag{display:inline-block;font-size:10px;font-weight:600;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.qtag{display:inline-block;font:600 10px/1.5 Inter,system-ui,sans-serif;color:var(--q);background:var(--q-soft);border:1px solid #c4b5fd;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px}
+.desk{width:1280px;max-width:100%;background:var(--page);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.phone{width:375px;flex:none;background:var(--page);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.phone .screen{height:900px;overflow:auto}
+.shell{padding:22px;display:flex;flex-direction:column;gap:14px}
+.phone .shell{padding:14px;gap:12px}
+.dlg{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
+.dlg .dh{padding:16px 20px;font-size:16px;font-weight:600;border-bottom:1px solid var(--border)}
+.dlg .db{padding:16px 20px}
+.dlg .df{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:500;white-space:nowrap}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn.sm{height:26px;padding:0 8px;font-size:12px}
+.lbl{font-size:12.5px;font-weight:500;margin-bottom:4px}
+.inp{border:1px solid var(--border);border-radius:6px;min-height:32px;padding:6px 10px;font-size:13px;background:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sel{position:relative;padding-right:22px}
+.sel::after{content:"\25BE";position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--muted-fg);font-size:10px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 470px;gap:18px;align-items:start}
+.phone .split{grid-template-columns:1fr}
+.muted{color:var(--muted-fg);font-size:12px}
+.note{color:var(--q);font-size:11.5px;font-style:italic}
+.sw{display:inline-flex;align-items:center;gap:8px;font-size:12.5px}
+.sw i{width:30px;height:17px;border-radius:9px;background:var(--primary);position:relative;display:inline-block}
+.sw i::after{content:"";position:absolute;right:2px;top:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+/* section groups of rows */
+.grp{border:1px solid var(--border);border-radius:8px;overflow:visible;margin-bottom:10px}
+.grp .gh{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;background:#fafafa;font-size:12px;font-weight:600;border-bottom:1px solid var(--border)}
+.it{display:grid;grid-template-columns:16px 16px minmax(0,1fr) minmax(0,1fr) 20px;gap:8px;align-items:center;padding:5px 10px;border-top:1px solid var(--border);font-size:12.5px;background:#fff}
+.grp .it:first-of-type{border-top:0}
+.it.off{background:#fafafa;color:var(--dis)}
+.it .inp{min-height:26px;padding:3px 8px;font-size:12px}
+.phone .it{grid-template-columns:14px 16px minmax(0,1fr) 18px;grid-template-areas:"g c s x" ". . l .";row-gap:4px}
+.phone .it .g{grid-area:g}.phone .it .c{grid-area:c}.phone .it .s{grid-area:s}.phone .it .l{grid-area:l}.phone .it .x{grid-area:x}
+.grip{color:var(--dis);font-size:12px;text-align:center;cursor:grab}
+.chk{width:15px;height:15px;border:1px solid var(--dis);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px}
+.chk.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.x{color:var(--dis);text-align:center;font-size:13px}
+.add{padding:6px 10px;border-top:1px solid var(--border);font-size:12px;color:var(--primary);background:#fff}
+/* source picker popover (SearchableSelect) */
+.pop{position:absolute;z-index:30;left:0;top:30px;width:290px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px;padding:4px}
+.pop .search{border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--muted-fg);margin:2px 2px 6px}
+.pop .gl{font-size:10.5px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.04em;padding:6px 8px 2px}
+.pop .op{padding:4px 8px;border-radius:4px;display:flex;justify-content:space-between;gap:8px}
+.pop .op.on{background:var(--muted)}
+.pop .op.dis{color:var(--dis)}
+.pop .op small{font-size:10.5px;color:var(--dis);white-space:nowrap}
+/* A4 preview: the sales cover sheet */
+.a4wrap{background:#e4e4e7;border-radius:10px;padding:14px;display:flex;justify-content:center}
+.a4{width:440px;min-height:622px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);padding:22px 22px 14px;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;font-size:7.8px;position:relative;display:flex;flex-direction:column}
+.phone .a4{width:320px;min-height:452px;padding:14px 12px 10px;font-size:5.8px}
+.a4 .lh{display:flex;gap:7px;align-items:center}
+.a4 .lg{width:34px;height:24px;border:1px dashed var(--dis);font-size:6px;color:#71717a;display:flex;align-items:center;justify-content:center}
+.a4 .sn{font-weight:700;font-size:9.5px}
+.a4 .ti{margin:10px 0 6px;font-weight:700;font-size:11px;letter-spacing:.06em;text-align:center}
+.a4 .band{background:#1f2937;color:#fff;font-weight:700;padding:2px 5px;margin:6px 0 3px;letter-spacing:.02em}
+.a4 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.a4 table{width:100%;border-collapse:collapse;table-layout:fixed}
+.a4 th{width:34%;text-align:left;font-weight:700;vertical-align:top;padding:1.5px 4px 1.5px 0;white-space:nowrap}
+.a4 td{vertical-align:top;padding:1.5px 0}
+.a4 .ptitle{text-align:center;font-weight:700;font-size:10.5px;line-height:1.3;padding:6px 10px}
+.a4 ol{margin:2px 0 0;padding-left:12px}.a4 ol li{margin-bottom:2px}
+.a4 .sig{margin-top:12px;width:48%}
+.a4 .sig .line{border-bottom:1px solid #111;height:22px;margin:4px 0 3px}
+.a4 .foot{margin-top:auto;border-top:1px solid #999;padding-top:4px;display:grid;grid-template-columns:1fr;gap:6px;font-size:.92em;color:#333}
+.a4 .foot b{color:#111}
+.a4 .pg{position:absolute;bottom:4px;right:8px;font-size:6.5px;color:#999}
+.hl{outline:2px solid #f59e0b;outline-offset:1px}
+.pop{white-space:normal}
+table.map{border-collapse:collapse;width:100%;max-width:1220px;background:#fff;border:1px solid var(--border);font-size:12.5px}
+table.map th,table.map td{border-bottom:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+table.map th{font-size:11.5px;color:var(--muted-fg);font-weight:500;background:#fafafa}
+table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-radius:4px;word-break:break-all}
+.ns{color:var(--new);font-weight:600}
+.qs{max-width:1050px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px 14px 34px;font-size:13px}
+.qs li{margin-bottom:10px}
+@media (max-width:1000px){.split{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>Cover page fields &middot; sample v1 (QUOTE-COVER-FIELDS)</h1>
+  <p class="intro">Static sample, nothing is built. Every person name, phone and email is made up (masked); the layout follows the
+    sales team's own cover sheet. Amber <span class="newtag">NEW</span> = does not exist today; violet <span class="qtag">Q1</span>
+    to <span class="qtag">Q5</span> = the questions in the behaviour card on PR #2307 (repeated in section 6).</p>
+  <p class="intro"><b>Owner ruling 10 Nov ~15:00 applied:</b> Reference No. prints the document number only; the project title has its
+    own band. Every row has a <b>source field</b> picked from a list, plus its printed label, tick and drag. Adding a row = pick a
+    source + type a label.</p>
+  <nav class="nav">
+    <a href="#designer">1. Designer with source picker</a>
+    <a href="#picker">2. The source list</a>
+    <a href="#default">3. Existing designs + today's default</a>
+    <a href="#phone">4. 375px</a>
+    <a href="#map">5. What each piece reuses</a>
+    <a href="#qs">6. Questions</a>
+  </nav>
+
+  <!-- ============================================================ 1 -->
+  <section id="designer">
+    <h2><span class="nb">1</span>Add a cover page design: rows grouped by section, each with a source <span class="qtag">Q1</span></h2>
+    <p class="why">Same dialog as today (Name, Title, letterhead switch, intro and closing text, live preview on the right). The single
+      row list becomes one group per section of the sales cover sheet. Each row: drag, tick, <b>Source</b> (searchable list), printed
+      <b>Label</b>, remove. "Add a row" under each group. Rows can be dragged between groups. Preview = a sample proposal filled in.</p>
+    <div class="desk"><div class="shell">
+      <div class="dlg">
+        <div class="dh">Add a cover page design</div>
+        <div class="db">
+          <div class="split">
+            <div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px">
+                <div><div class="lbl">Name</div><div class="inp">Sales cover sheet</div></div>
+                <div><div class="lbl">Title</div><div class="inp">QUOTATION</div></div>
+              </div>
+              <div style="margin-bottom:12px"><span class="sw"><i></i>Show company letterhead</span></div>
+
+              <div class="grp">
+                <div class="gh"><span>Propose to: left column <span class="newtag">NEW</span></span><span class="inp" style="min-height:22px;padding:1px 8px;font-weight:400">Band label: Propose to:</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">To: company name</span><span class="inp l">Company</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">To: address</span><span class="inp l">Address</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">To: tel</span><span class="inp l">Tel</span><span class="x">&times;</span></div>
+                <div class="it" style="position:relative"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s hl">To: fax</span><span class="inp l">Fax</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Attn</span><span class="inp l">Attention</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">To: email</span><span class="inp l">Email</span><span class="x">&times;</span></div>
+                <div class="add">+ Add a row</div>
+              </div>
+
+              <div class="grp">
+                <div class="gh"><span>Propose to: right column <span class="newtag">NEW</span></span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Document number</span><span class="inp l">Reference No</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Total pages</span><span class="inp l">Total Pages</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Date</span><span class="inp l">Date</span><span class="x">&times;</span></div>
+                <div class="it off"><span class="grip g">&#8942;&#8942;</span><span class="chk c"></span><span class="inp sel s">Sale admin (no source yet)</span><span class="inp l">Sale Admin</span><span class="x">&times;</span></div>
+                <div class="it" style="position:relative"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s" style="position:relative;overflow:visible;border-color:var(--primary)">Salesperson: name
+                    <div class="pop" style="white-space:normal">
+                      <div class="search">Search fields&hellip;</div>
+                      <div class="gl">Salesperson</div>
+                      <div class="op on">Salesperson: name <small>&#10003;</small></div>
+                      <div class="op">Salesperson: email</div>
+                      <div class="op">Salesperson: mobile</div>
+                      <div class="gl">Document</div>
+                      <div class="op">Document number</div>
+                      <div class="op">Date</div>
+                      <div class="op dis">Project short name <small>no source yet</small></div>
+                      <div class="gl">&hellip; 4 more groups</div>
+                    </div></span><span class="inp l">Sales</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Salesperson: email</span><span class="inp l">Email</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Salesperson: mobile</span><span class="inp l">Mobile</span><span class="x">&times;</span></div>
+                <div class="add">+ Add a row</div>
+              </div>
+
+              <div class="grp">
+                <div class="gh"><span>Project title band <span class="newtag">NEW</span></span><span class="inp" style="min-height:22px;padding:1px 8px;font-weight:400">Band label: Project Title:</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Project title</span><span class="inp l" style="color:var(--dis)">(printed centred, no label)</span><span class="x">&times;</span></div>
+                <div class="add">+ Add a row</div>
+              </div>
+
+              <div class="grp">
+                <div class="gh"><span>Term &amp; Condition band <span class="newtag">NEW</span></span><span class="inp" style="min-height:22px;padding:1px 8px;font-weight:400">Band label: Term &amp; Condition:</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Price basis (terms text)</span><span class="inp l">PRICE BASIS</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Payment terms</span><span class="inp l">TERMS OF PAYMENT</span><span class="x">&times;</span></div>
+                <div class="it off"><span class="grip g">&#8942;&#8942;</span><span class="chk c"></span><span class="inp sel s">Quotation purpose</span><span class="inp l">Quotation Purpose</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Validity</span><span class="inp l">REMARKS</span><span class="x">&times;</span></div>
+                <div class="add">+ Add a row</div>
+                <div class="note" style="padding:4px 10px 6px">(mock note, not on screen) rows here print numbered 1., 2., 3. with the label in bold, as on the scan. "Time of delivery" has no field of its own today: it lives inside the terms text (QUOTE-TERMS-SELECT #2305).</div>
+              </div>
+
+              <div class="grp">
+                <div class="gh"><span>Prepared by <span class="newtag">NEW</span></span><span class="inp" style="min-height:22px;padding:1px 8px;font-weight:400">Band label: Prepared by,</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Prepared by: name</span><span class="inp l">Name</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Prepared by: phone</span><span class="inp l">Phone No</span><span class="x">&times;</span></div>
+                <div class="add">+ Add a row</div>
+              </div>
+
+              <div class="grp">
+                <div class="gh"><span>Footer <span class="newtag">NEW</span></span><span class="qtag">Q5</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Company: name</span><span class="inp l" style="color:var(--dis)">(no label)</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Company: address</span><span class="inp l" style="color:var(--dis)">(no label)</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Company: tel</span><span class="inp l">Tel</span><span class="x">&times;</span></div>
+                <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s hl">Company: fax</span><span class="inp l">Fax</span><span class="x">&times;</span></div>
+                <div class="add">+ Add a row</div>
+              </div>
+
+              <div class="note">(mock note, not on screen) Highlighted sources = no source yet today (Q2). Intro and Closing text editors stay below the groups, unchanged.</div>
+            </div>
+
+            <div>
+              <div class="a4wrap"><div class="a4">
+                <div class="lh"><div class="lg">logo</div><div class="sn">Company name</div></div>
+                <div class="ti">QUOTATION</div>
+                <div class="band">Propose to:</div>
+                <div class="two">
+                  <table>
+                    <tr><th>Company</th><td>: TERAS JAYA BUILDERS SDN BHD</td></tr>
+                    <tr><th>Address</th><td>: No. 21, Jalan Cempaka 7,<br>&nbsp; 43000 Kajang, Selangor</td></tr>
+                    <tr><th>Tel</th><td>: 03-0000 0000</td></tr>
+                    <tr><th>Fax</th><td>: 03-0000 0001</td></tr>
+                    <tr><th>Attention</th><td>: Ms A. Example / Mr B. Example</td></tr>
+                    <tr><th>Email</th><td>: buyer@example.com</td></tr>
+                  </table>
+                  <table>
+                    <tr><th>Reference No</th><td>: PRJQ-2026-0042-R1</td></tr>
+                    <tr><th>Total Pages</th><td>: 1+3</td></tr>
+                    <tr><th>Date</th><td>: 10/11/2026</td></tr>
+                    <tr><th>Sales</th><td>: Sales Person C</td></tr>
+                    <tr><th>Email</th><td>: sales.c@example.com</td></tr>
+                    <tr><th>Mobile</th><td>: 012-000 0000</td></tr>
+                  </table>
+                </div>
+                <div class="band">Project Title:</div>
+                <div class="ptitle">PROPOSED SUPPLY OF SANITARY WARES FOR 2 BLOCKS OF SERVICED APARTMENTS AT SERI MUTIARA RESIDENCES, KAJANG</div>
+                <div class="band">Term &amp; Condition:</div>
+                <ol>
+                  <li><b>PRICE BASIS</b>: Prices are in Ringgit Malaysia, delivered to site, excluding installation.</li>
+                  <li><b>TERMS OF PAYMENT</b>: 30 days from invoice date</li>
+                  <li><b>REMARKS</b>:<br>a) This quotation is valid for 30 days from the quotation date.</li>
+                </ol>
+                <div class="sig">Prepared by,<div class="line"></div>Name : Prepared Person D<br>Phone No : 012-000 0001</div>
+                <div class="foot">
+                  <div><b>Company name</b> &middot; Company address line 1, line 2 &middot; Tel: 03-0000 0002 &middot; Fax: 03-0000 0003</div>
+                </div>
+                <div class="pg">Sample proposal</div>
+              </div></div>
+              <div class="cap">Live preview (sample values). Empty rows are left out, as today.</div>
+            </div>
+          </div>
+        </div>
+        <div class="df"><span class="btn">Cancel</span><span class="btn pri">Add design</span></div>
+      </div>
+      <div class="cap">1280px dialog</div>
+    </div></div>
+  </section>
+
+  <!-- ============================================================ 2 -->
+  <section id="picker">
+    <h2><span class="nb">2</span>The source list (what the Source dropdown offers) <span class="qtag">Q2</span> <span class="qtag">Q3</span> <span class="qtag">Q4</span></h2>
+    <p class="why">One small list on the server; the dropdown, the preview, the PDF and the sign link all read it. "No source yet" entries
+      are shown greyed and cannot be picked until their data exists. A source may be used in more than one row.</p>
+    <table class="map">
+      <tr><th>Group</th><th>Source</th><th>Value comes from (origin/main a4af6565)</th><th>Today</th></tr>
+      <tr><td>Document</td><td>Document number</td><td><code>quotation_no()</code> project_quotation_document_service.py:134 (no project title any more, owner 10 Nov)</td><td>exists</td></tr>
+      <tr><td>Document</td><td>Date</td><td><code>doc_date</code> or <code>issued_at</code>, quotation_cover_service.py:259</td><td>exists</td></tr>
+      <tr><td>Document</td><td>Project title</td><td><code>subject_title</code> models/projects.py:1211, defaults to the project title at create (project_quotation_document_service.py:265)</td><td>exists</td></tr>
+      <tr><td>Document</td><td>Project short name</td><td>lane PROJECT-NAME #2301</td><td class="ns">no source yet</td></tr>
+      <tr><td>Document</td><td>Total pages</td><td>counted when the PDF is drawn ("1+N"); blank on the sign page and preview</td><td class="ns">no source yet (Q3)</td></tr>
+      <tr><td>Document</td><td>Quotation purpose</td><td><code>quotation_purpose</code> models/projects.py:1208</td><td>exists</td></tr>
+      <tr><td>To party</td><td>Company name / address / tel / email</td><td><code>recipient_*_snapshot</code> models/projects.py:1202-1205</td><td>exists</td></tr>
+      <tr><td>To party</td><td>Fax</td><td>parties carry no fax (models/projects.py:123-126)</td><td class="ns">no source yet (Q2)</td></tr>
+      <tr><td>To party</td><td>Attn</td><td><code>attn_name</code> models/projects.py:1206 (one text; 2+ people = PROJECT-PARTY-ROLES #2300)</td><td>exists</td></tr>
+      <tr><td>Salesperson</td><td>Name / email / mobile</td><td><code>salesperson_of()</code> project_quotation_template_service.py:232; <code>User.name</code> / <code>email</code> / <code>contact_number</code> models/user.py:36 / 32 / 38</td><td>name exists; email + mobile new rows on existing data</td></tr>
+      <tr><td>Salesperson</td><td>Sale admin</td><td><code>Project.admin_ref</code> (models/projects.py:350) is a filing reference, not a person</td><td class="ns">no source yet (Q4)</td></tr>
+      <tr><td>Prepared by</td><td>Name / phone</td><td><code>signatory_name</code> / <code>signatory_phone</code> models/projects.py:1226-1227; today's "Prepared By" row prints the salesperson</td><td>exists</td></tr>
+      <tr><td>Terms</td><td>Terms text / payment terms / validity</td><td>issue <code>terms_rendered</code>, <code>payment_terms</code>, <code>validity</code> (quotation_cover_service.py:266-268); chosen in QUOTE-TERMS-SELECT #2305</td><td>exists</td></tr>
+      <tr><td>Company</td><td>Name / address / tel</td><td><code>_sender()</code> project_quotation_pdf_service.py:309-331: name off <code>companies</code>, address + Tel off <code>system_settings</code> (one per install)</td><td>exists</td></tr>
+      <tr><td>Company</td><td>Fax</td><td>no column anywhere</td><td class="ns">no source yet (Q2)</td></tr>
+    </table>
+  </section>
+
+  <!-- ============================================================ 3 -->
+  <section id="default">
+    <h2><span class="nb">3</span>Existing designs and today's default</h2>
+    <p class="why">Nothing already saved or sent changes look. A saved design's 12 rows are read as 12 rows with source = their old key, all
+      in one group, so they print as the one vertical list they print today (minus the project title after Reference No., owner
+      ruling). Revisions already sent keep the design copied onto them at send. "Add a cover page design" starts from today's 12
+      rows; the sales cover sheet above is a design the admin builds (or a second starting point, Q1).</p>
+  </section>
+
+  <!-- ============================================================ 4 -->
+  <section id="phone">
+    <h2><span class="nb">4</span>375px: rows wrap to two lines (source, then label)</h2>
+    <div class="row"><div class="phone"><div class="screen"><div class="shell">
+      <div class="dlg">
+        <div class="dh">Add a cover page design</div>
+        <div class="db">
+          <div class="grp">
+            <div class="gh"><span>Propose to: right column</span></div>
+            <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Document number</span><span class="inp l">Reference No</span><span class="x">&times;</span></div>
+            <div class="it"><span class="grip g">&#8942;&#8942;</span><span class="chk on c">&#10003;</span><span class="inp sel s">Salesperson: name</span><span class="inp l">Sales</span><span class="x">&times;</span></div>
+            <div class="add">+ Add a row</div>
+          </div>
+          <div class="a4wrap"><div class="a4">
+            <div class="lh"><div class="lg">logo</div><div class="sn">Company name</div></div>
+            <div class="ti">QUOTATION</div>
+            <div class="band">Propose to:</div>
+            <div class="two">
+              <table><tr><th>Company</th><td>: TERAS JAYA BUILDERS</td></tr><tr><th>Tel</th><td>: 03-0000 0000</td></tr><tr><th>Attention</th><td>: Ms A. Example</td></tr></table>
+              <table><tr><th>Reference No</th><td>: PRJQ-2026-0042-R1</td></tr><tr><th>Date</th><td>: 10/11/2026</td></tr><tr><th>Sales</th><td>: Sales Person C</td></tr></table>
+            </div>
+            <div class="band">Project Title:</div>
+            <div class="ptitle">PROPOSED SUPPLY OF SANITARY WARES, SERI MUTIARA RESIDENCES</div>
+            <div class="band">Term &amp; Condition:</div>
+            <ol><li><b>TERMS OF PAYMENT</b>: 30 days</li></ol>
+            <div class="foot"><div><b>Company name</b> &middot; Tel: 03-0000 0002</div></div>
+          </div></div>
+        </div>
+      </div>
+    </div></div></div></div>
+  </section>
+
+  <!-- ============================================================ 5 -->
+  <section id="map">
+    <h2><span class="nb">5</span>What each piece reuses</h2>
+    <table class="map">
+      <tr><th>Element</th><th>Reuses (repo path)</th><th>New</th></tr>
+      <tr><td>Designer dialog, name, title, letterhead switch, intro/closing</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/quotation-templates/components/QuotationCoverDesigner.tsx</code></td><td>row groups per section</td></tr>
+      <tr><td>Drag, tick, label</td><td><code>components/ui/sortable.tsx</code>, <code>components/ui/checkbox.tsx</code>, <code>components/ui/input.tsx</code> (as today)</td><td>drag across groups</td></tr>
+      <tr><td>Source dropdown</td><td><code>components/common/SearchableSelect.tsx</code></td><td>-</td></tr>
+      <tr><td>Remove row</td><td>icon button with aria-label (<code>components/ui/button.tsx</code>), removes at once (not a server delete)</td><td>-</td></tr>
+      <tr><td>Source list + values</td><td><code>sorento_crm_backend/app/services/quotation_cover_service.py</code> <code>issue_values</code> :242-270</td><td>one source dict replacing <code>ROW_KEYS</code> :24-37</td></tr>
+      <tr><td>Preview, sign page, Cover letter tab</td><td><code>components/quotation/CoverPagePreview.tsx</code>, <code>components/quotation/CoverPageCard.tsx</code></td><td>bands + two columns + numbered terms + signature + footer</td></tr>
+      <tr><td>PDF page 1</td><td><code>project_quotation_pdf_service.py</code> <code>_designed_cover_html</code> :794, letterhead <code>_sender</code> :309</td><td>same sections in HTML/CSS</td></tr>
+      <tr><td>Design storage</td><td><code>quotation_templates.design</code> JSONB (models/projects.py:1329-1330), copied onto the issue at send</td><td>no migration for the design itself</td></tr>
+    </table>
+  </section>
+
+  <!-- ============================================================ 6 -->
+  <section id="qs">
+    <h2><span class="nb">6</span>Questions (same as the behaviour card on PR #2307)</h2>
+    <ol class="qs">
+      <li><b>Q1 Layout.</b> (a) each row belongs to a section (left column, right column, Project Title band, Term &amp; Condition band,
+        Prepared by, Footer) as in section 1 (recommended); (b) keep one vertical list and only add sources.</li>
+      <li><b>Q2 Fax.</b> (a) add a fax column on parties and on system settings in this lane (small migration); (b) leave Fax rows as
+        "no source yet" (recommended unless the team still faxes: the scan prints it but it can wait).</li>
+      <li><b>Q3 Total pages.</b> (a) counted when the PDF is drawn, "1+N" (recommended); (b) drop it.</li>
+      <li><b>Q4 Sale admin.</b> (a) a "Sale admin" user picker on the quotation; (b) no source until a project role exists
+        (recommended).</li>
+      <li><b>Q5 Footer.</b> (a) the issuing company only (recommended); (b) every active company, as the scan shows two.</li>
+    </ol>
+  </section>
+</div>
+</body>
+</html>

@@ -21,6 +21,7 @@ import {
   type LinkDefaults,
 } from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 import { useCreateProductCombo } from '../../hooks/useProductCombos';
+import { COMBO_NAME_MAX } from '../../types/productCombo.types';
 
 interface AddComboModalProps {
   open: boolean;
@@ -104,6 +105,7 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
                   if (error) setError(null);
                 }}
                 placeholder="3 in 1"
+                maxLength={COMBO_NAME_MAX}
                 autoFocus
                 disabled={create.isPending}
                 aria-invalid={error ? true : undefined}

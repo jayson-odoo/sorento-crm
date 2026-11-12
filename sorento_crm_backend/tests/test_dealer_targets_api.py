@@ -2,7 +2,7 @@
 UAC D2). Plan: documentation/plans/sales/PLAN-dealer-sales-targets-15oct.md.
 
 A dealer is a third subject on `sales.targets`: it counts a list of accounts (`customer_ids`,
-any agent) and pays to `payout_customer_id`. Every subject can use thresholds in % / RM /
+any agent) and pays each account its own share (lane TARGET-PER-ACCOUNT-PAYOUT). Every subject can use thresholds in % / RM /
 points, tiers per period, stacking "+ Additional" lines and rounding to sen or ringgit.
 
 Seeds and fixtures are the S1 file's (`test_sales_targets_s1.py`); today is 20 Oct 2026.
@@ -98,7 +98,7 @@ def test_create_dealer_target(api):
     group = _group(db, company_id)
     a1 = _customer(db, company_id, "ZZT DEALER A", level=1, group_id=group.id)
     a3 = _customer(db, company_id, "ZZT DEALER A III", level=3, group_id=group.id)
-    res = client.post(BASE, json=_dealer_body([a1, a3], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
         {"period_start": "2026-04-01", "threshold": 200000, "account_rates": [{"customer_id": a1.id, "rate": 2}]},
         {"period_start": "2026-04-01", "threshold": 250000, "account_rates": [{"customer_id": a1.id, "rate": 3}]},
     ]))
@@ -109,26 +109,25 @@ def test_create_dealer_target(api):
     assert body["subject_label"] == "ZZT Dealer A Sdn Bhd"
     assert [a["label"] for a in body["accounts"]] == ["A/C I", "A/C III"]
     assert [a["code"] for a in body["accounts"]] == [a1.customer_code, a3.customer_code]
-    assert body["payout_account"]["code"] == a1.customer_code
+    assert "payout_account" not in body
     assert body["threshold_unit"] == "amount"
     assert body["rounding"] == "sen"
     assert body["tiers_per_period"] is True
     assert len(body["periods"]) == 4
     q2 = [t for t in body["tiers"] if t["period_start"] == "2026-04-01"]
     assert [t["threshold"] for t in q2] == [200000, 250000]
-    assert q2[1]["account_rates"] == [{"customer_id": a1.id, "rate": 3}]
+    assert q2[1]["account_rates"] == [{"customer_id": a1.id, "rate": 3, "bonus_amount": None}]
     # A period's figure, when no target figure is typed: its lowest main threshold.
     assert _period(body, "2026-04-01")["target_value"] == 200000
 
 
-def test_dealer_payout_defaults_to_first_account_and_label_falls_back_to_name(api):
+def test_dealer_label_falls_back_to_name(api):
     client, db, company_id = api
     c = _customer(db, company_id, "ZZT CERAMIC")
     d = _customer(db, company_id, "ZZT IBORN")
     res = client.post(BASE, json=_dealer_body([c, d]))
     assert res.status_code == 201, res.text
     body = res.json()
-    assert body["payout_account"]["code"] == c.customer_code
     assert body["subject_label"] == "ZZT CERAMIC"
     assert [a["label"] for a in body["accounts"]] == ["ZZT CERAMIC", "ZZT IBORN"]
 
@@ -151,7 +150,7 @@ def test_dealer_achievement_counts_listed_accounts_only_any_agent(api):
     _sale(db, company_id, other, 999999, date(2026, 5, 3), product_id=pid)               # not counted
     _sale(db, company_id, a3, 55555, date(2026, 5, 3), product_id=pid, status="cancelled")  # cancelled
     _sale(db, company_id, a1, 44444, date(2026, 7, 1), product_id=pid)                   # Q3
-    res = client.post(BASE, json=_dealer_body([a1, a3], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
         {"period_start": "2026-04-01", "threshold": 200000, "account_rates": [{"customer_id": a1.id, "rate": 2}]},
         {"period_start": "2026-04-01", "threshold": 250000, "account_rates": [{"customer_id": a1.id, "rate": 3}]},
     ]))
@@ -167,23 +166,23 @@ def test_dealer_achievement_counts_listed_accounts_only_any_agent(api):
     assert _period(body, "2026-07-01")["achieved_value"] == 44444
 
 
-def test_pay_to_account_sales_do_not_count_unless_counted(api):
+def test_an_uncounted_account_s_sales_do_not_count(api):
     client, db, company_id = api
     pid = _product_id(db, company_id)
     a1 = _customer(db, company_id, "ZZT A1", level=1)
     a3 = _customer(db, company_id, "ZZT A3", level=3)
     _sale(db, company_id, a3, 90000, date(2026, 5, 1), product_id=pid)
     _sale(db, company_id, a1, 50000, date(2026, 5, 1), product_id=pid)
-    res = client.post(BASE, json=_dealer_body([a3], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([a3], tiers=[
         {"period_start": "2026-04-01", "threshold": 80000, "rate": 2},
     ]))
     assert res.status_code == 201, res.text
     body = res.json()
     q2 = _period(body, "2026-04-01")
-    # E6: 2% x 90,000 on A/C III, paid to A/C I; A/C I's own 50,000 is not counted.
+    # E6: 2% x 90,000 on A/C III, its own share; A/C I's 50,000 is not counted.
     assert q2["achieved_value"] == 90000
     assert q2["commission_earned"] == 1800
-    assert body["payout_account"]["code"] == a1.customer_code
+    assert [(a["code"], a["commission_earned"]) for a in q2["accounts"]] == [(a3.customer_code, 1800)]
 
 
 def test_additional_lines_stack_via_api_and_round_per_target(api):
@@ -361,8 +360,10 @@ def test_tier_validation_refuses_in_plain_words(api):
     refused(tiers=[{"threshold": 1, "rate": 2}])  # per period without a period
     refused(threshold_unit="points", metric="quantity", tiers=[
         {"period_start": "2026-01-01", "threshold": 1, "rate": 2}])
-    refused(commission_method="marginal", tiers=[{"period_start": "2026-01-01", "threshold": 1,
-                                                  "account_rates": [{"customer_id": a1.id, "rate": 2}]}])
+    # Marginal takes a rate per account since lane TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov, Q3).
+    res = client.post(BASE, json=_dealer_body([a1], commission_method="marginal", tiers=[
+        {"period_start": "2026-01-01", "threshold": 1, "account_rates": [{"customer_id": a1.id, "rate": 2}]}]))
+    assert res.status_code == 201, res.text
     refused(tiers=[{"period_start": "2026-01-01", "rate": 2}])  # no threshold
     res = client.post(BASE, json=_dealer_body([]))
     assert res.status_code == 422
@@ -381,7 +382,6 @@ def test_dealer_accounts_company_scoped(api):
     with company_scope(db, frozenset({other_company})):
         theirs = _customer(db, other_company, "ZZT THEIRS")
     assert client.post(BASE, json=_dealer_body([mine, theirs])).status_code == 422
-    assert client.post(BASE, json=_dealer_body([mine], payout_customer_id=theirs.id)).status_code == 422
 
 
 # --------------------------------------------------------------------------------------- #
@@ -427,14 +427,14 @@ def test_list_dealer_targets(api):
     a3 = _customer(db, company_id, "ZZT A3", level=3)
     _sale(db, company_id, a1, 180000, date(2026, 10, 3), product_id=pid)
     _sale(db, company_id, a3, 70000, date(2026, 10, 3), product_id=pid)
-    created = client.post(BASE, json=_dealer_body([a1, a3], payout_customer_id=a1.id, tiers=[
+    created = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
         {"period_start": "2026-10-01", "threshold": 250000, "account_rates": [{"customer_id": a1.id, "rate": 3}]},
     ])).json()
     rows = client.get(BASE, params={"subject": "dealer", "all": "true"}).json()["rows"]
     row = next(r for r in rows if r["target_id"] == created["id"])
     assert row["subject_kind"] == "dealer"
     assert row["account_labels"] == ["A/C I", "A/C III"]
-    assert row["payout_label"] == "A/C I"
+    assert "payout_label" not in row
     # Today is 20 Oct 2026: the current period is Q4.
     assert row["commission_earned"] == 5400
     # Agent and team tabs do not list dealer targets.
@@ -450,14 +450,13 @@ def test_edit_dealer_accounts_and_tiers(api):
     a3 = _customer(db, company_id, "ZZT A3", level=3)
     created = client.post(BASE, json=_dealer_body([a1])).json()
     res = client.patch(f"{BASE}/{created['id']}", json={
-        "customer_ids": [a1.id, a3.id], "payout_customer_id": a3.id, "rounding": "ringgit",
+        "customer_ids": [a1.id, a3.id], "rounding": "ringgit",
         "commission_method": "retroactive",
         "tiers": [{"period_start": "2026-01-01", "threshold": 10, "rate": 1}],
     })
     assert res.status_code == 200, res.text
     body = res.json()
     assert [a["code"] for a in body["accounts"]] == [a1.customer_code, a3.customer_code]
-    assert body["payout_account"]["code"] == a3.customer_code
     assert body["rounding"] == "ringgit"
     assert [t["threshold"] for t in body["tiers"]] == [10]
 
@@ -514,16 +513,15 @@ def test_removing_an_account_drops_its_tier_rates(api):
     ])).json()
     res = client.patch(f"{BASE}/{created['id']}", json={"customer_ids": [a1.id]})
     assert res.status_code == 200, res.text
-    assert res.json()["tiers"][0]["account_rates"] == [{"customer_id": a1.id, "rate": 2}]
+    assert res.json()["tiers"][0]["account_rates"] == [{"customer_id": a1.id, "rate": 2, "bonus_amount": None}]
     from app.models.sales import SalesTargetTierRate
 
     assert db.query(SalesTargetTierRate).filter(SalesTargetTierRate.customer_id == a3.id).count() == 0
 
 
 # --------------------------------------------------------------------------------------- #
-# Crew ruling 16 Oct (from owner ruling 4, "highest tier reached pays"): Tier 1-5 are one scale;
-# an account's own Tier 1-3 target is REPLACED by its dealer's Tier 4-5 target once the
-# dealer's combined sales reach it in the same year.
+# Yearly dealer targets. Since lane TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov) separate targets
+# stack: tests/test_target_per_account_payout_api.py holds that no target zeroes another.
 # --------------------------------------------------------------------------------------- #
 
 
@@ -534,10 +532,12 @@ def _yearly(accounts, tiers, **extra):
     )
 
 
-def _replacing_pair(client, db, company_id, a3_sales):
+def _stacking_pair(client, db, company_id, a3_sales):
+    """A combined dealer target (A/C I + A/C III, 2M at 2% / 2.5%) and A/C I's own ladder
+    (300k at 0.5%, 700k at 1%); A/C I sells 800k. They stack (owner 8 Nov)."""
     pid = _product_id(db, company_id)
-    a1 = _customer(db, company_id, "ZZT REPL A/C I", level=1)
-    a3 = _customer(db, company_id, "ZZT REPL A/C III", level=3)
+    a1 = _customer(db, company_id, "ZZT STACK A/C I", level=1)
+    a3 = _customer(db, company_id, "ZZT STACK A/C III", level=3)
     _sale(db, company_id, a1, 800000, date(2026, 3, 1), product_id=pid)
     _sale(db, company_id, a3, a3_sales, date(2026, 3, 1), product_id=pid)
     dealer = client.post(BASE, json=_yearly([a1, a3], [
@@ -546,95 +546,20 @@ def _replacing_pair(client, db, company_id, a3_sales):
         ]},
     ]))
     assert dealer.status_code == 201, dealer.text
-    own = client.post(BASE, json=_yearly([a1], [
-        {"threshold": 300000, "rate": 0.5}, {"threshold": 700000, "rate": 1},
-    ], replaced_by_target_id=dealer.json()["id"]))
+    own = client.post(BASE, json=_yearly([a1], [{"threshold": 300000, "rate": 0.5}, {"threshold": 700000, "rate": 1}]))
     assert own.status_code == 201, own.text
     return dealer.json(), own.json()
 
 
-def test_a_reached_dealer_tier_replaces_the_account_s_own_tier(api):
-    """A/C I sells 800k (its own Tier 2 at 1% = 8,000); the dealer sells 2.1M combined, past
-    its 2M tier: A/C I gets the dealer's 2% = 16,000, never 24,000."""
+def test_a_reached_dealer_tier_and_the_account_s_own_tier_both_pay(api):
+    """Owner 8 Nov: A/C I sells 800k (its own Tier 2 at 1% = 8,000); the dealer sells 2.1M
+    combined, past its 2M tier (A/C I 2% = 16,000, A/C III 2.5% = 32,500). Both pay."""
     client, db, company_id = api
-    dealer, own = _replacing_pair(client, db, company_id, 1300000)
+    dealer, own = _stacking_pair(client, db, company_id, 1300000)
     assert dealer["periods"][0]["commission_earned"] == 16000 + 32500
-    assert own["periods"][0]["commission_earned"] == 0
-    assert own["periods"][0]["replaced"] is True
-    assert own["replaced_by"]["target_no"] == dealer["target_no"]
-
-
-def test_below_the_dealer_tier_the_account_pays_its_own_tier(api):
-    client, db, company_id = api
-    dealer, own = _replacing_pair(client, db, company_id, 1000000)   # 1.8M combined
-    assert dealer["periods"][0]["commission_earned"] == 0
+    assert [a["commission_earned"] for a in dealer["periods"][0]["accounts"]] == [16000, 32500]
     assert own["periods"][0]["commission_earned"] == 8000
-    assert own["periods"][0]["replaced"] is False
 
-
-def test_replaced_by_must_name_another_dealer_target(api):
-    client, db, company_id = api
-    a1 = _customer(db, company_id, "ZZT REPL X", level=1)
-    team_or_none = client.post(BASE, json=_yearly([a1], [{"threshold": 1, "rate": 1}],
-                                                   replaced_by_target_id=_uid()))
-    assert team_or_none.status_code in (404, 422), team_or_none.text
-    agent = _agent(db, company_id)
-    res = client.post(BASE, json={
-        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT", "metric": "amount",
-        "start_date": "2026-01-01", "end_date": "2026-12-31", "target_value": 1,
-        "replaced_by_target_id": _uid(),
-    })
-    assert res.status_code == 422, res.text
-
-
-def test_replaced_by_refuses_an_agent_target_itself_and_a_chain(api):
-    client, db, company_id = api
-    agent = _agent(db, company_id)
-    agent_target = client.post(BASE, json={
-        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT A", "metric": "amount",
-        "start_date": "2026-01-01", "end_date": "2026-12-31", "target_value": 1,
-    })
-    assert agent_target.status_code == 201, agent_target.text
-    a1 = _customer(db, company_id, "ZZT CHAIN 1", level=1)
-    tiers = [{"threshold": 1, "rate": 1}]
-    res = client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=agent_target.json()["id"]))
-    assert res.status_code == 422, res.text
-    top = client.post(BASE, json=_yearly([a1], tiers)).json()
-    mid = client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=top["id"])).json()
-    assert client.patch(f"{BASE}/{top['id']}", json={"replaced_by_target_id": top["id"]}).status_code == 422
-    chained = client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=mid["id"]))
-    assert chained.status_code == 422, chained.text
-
-
-def test_a_target_others_point_at_cannot_itself_be_replaced(api):
-    """Security review (gate 2) S2: no chain from either end."""
-    client, db, company_id = api
-    a1 = _customer(db, company_id, "ZZT CHAIN 2", level=1)
-    tiers = [{"threshold": 1, "rate": 1}]
-    b = client.post(BASE, json=_yearly([a1], tiers)).json()
-    c = client.post(BASE, json=_yearly([a1], tiers)).json()
-    assert client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=b["id"])).status_code == 201
-    res = client.patch(f"{BASE}/{b['id']}", json={"replaced_by_target_id": c["id"]})
-    assert res.status_code == 422, res.text
-
-
-def test_the_dealer_list_reads_each_replacing_target_once(api, monkeypatch):
-    """Security review (gate 2) S1: accounts sharing one dealer target do not recompute it."""
-    from app.services.sales import target_service
-
-    client, db, company_id = api
-    dealer, _own = _replacing_pair(client, db, company_id, 1300000)
-    a = _customer(db, company_id, "ZZT REPL MORE", level=4)
-    for _ in range(3):
-        res = client.post(BASE, json=_yearly([a], [{"threshold": 1, "rate": 1}], replaced_by_target_id=dealer["id"]))
-        assert res.status_code == 201, res.text
-    calls = []
-    real = target_service._achieved_by_account
-    monkeypatch.setattr(target_service, "_achieved_by_account", lambda *a, **k: calls.append(1) or real(*a, **k))
-    rows = client.get(BASE, params={"subject": "dealer", "all": "true", "on": "2026-06-01"}).json()["rows"]
-    replaced = [r for r in rows if r["name"] == "ZZT yearly" and r["commission_earned"] == 0]
-    assert len(replaced) >= 4
-    assert len(calls) <= 2
 
 
 def test_the_dealer_list_search_computes_achievement_for_matches_only(api, monkeypatch):

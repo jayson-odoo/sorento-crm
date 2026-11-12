@@ -80,10 +80,12 @@ from app.models.project_so import (
     OrderInquiryReserveRequestRow,
 )
 from app.schemas.decision_trail import DecisionTrailResponse
+from app.schemas.order_inquiry_history import OrderInquiryHistoryResponse
 from app.services import project_service as projects
 from app.services.decision_trail_service import DecisionTrailService
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
+from app.services import order_inquiry_history_service
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
@@ -1712,6 +1714,13 @@ def order_inquiry_po_candidates(
         validate_uuid_path(row_id, resource="Order inquiry row")
         service = ProjectOrderInquiryService(db)
         candidates = service.po_candidates_for_row(row_id)
+        from app.services.cost_access import holds_cost_view
+
+        if not holds_cost_view(db, _user):
+            # SUPPLIER-COST-ACCESS: the PO line's unit cost is for `products.cost.view` holders
+            # (CS holds this route's slug). The PO number and supplier still identify the line.
+            for candidate in candidates:
+                candidate["unit_cost"] = None
         still_to_link = service.still_to_link_for_row(row_id)
         linkable_qty = service.linkable_qty_for_row(row_id)
         return {
@@ -2059,6 +2068,33 @@ def get_order_inquiry_header(
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
         return OrderInquiryHeaderService(db).get(inquiry_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiry-headers/{inquiry_id}/history",
+    response_model=OrderInquiryHistoryResponse,
+)
+def get_order_inquiry_history(
+    inquiry_id: str,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The detail page's History tab (STANDARD-HISTORY wave 1, AC-SH-B1 to B6): every
+    raise, Confirm / Unconfirm press, link, release, rejection, cancellation and reserve
+    event of this OI's rows, newest first. Read-only. The same read gate as the page itself
+    (owner, 10 Nov: anyone who can open the record sees its history) for a STAFF session:
+    unlike the header route, an X-API-Key principal is refused on purpose (no
+    `_with_api_key`), the PO-history ruling for audit reads (`audit_logs.py`
+    `_authorize_po_history`) - do not "align" it with the header. The same 404 for
+    an unknown id or another company's header: the OI is read through the session's own
+    company-scope listener before any trail is."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        if db.query(OrderInquiry.id).filter(OrderInquiry.id == inquiry_id).first() is None:
+            raise AppException(404, "This order inquiry no longer exists.", code="oi_header_not_found")
+        return {"events": order_inquiry_history_service.history(db, inquiry_id)}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

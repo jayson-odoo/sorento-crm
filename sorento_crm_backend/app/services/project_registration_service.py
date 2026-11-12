@@ -46,10 +46,11 @@ logger = logging.getLogger(__name__)
 KIND = "project_registration"
 APPROVE_PERMISSION = "projects.registrations.approve"
 
-#: The eleven contact-written fields (D3), in form order. `title` lives on the project, the
-#: rest on its sales profile.
+#: The contact-written fields (D3), in form order. `title` and `name` (PROJECT-NAME Q5) live on
+#: the project, the rest on its sales profile.
 FIELD_KEYS = (
     "title",
+    "name",
     "distributor_name",
     "customer_id",
     "customer_name",
@@ -61,7 +62,8 @@ FIELD_KEYS = (
     "main_contractor_name",
     "architect_name",
 )
-PROFILE_FIELD_KEYS = tuple(k for k in FIELD_KEYS if k != "title")
+PROJECT_FIELD_KEYS = ("title", "name")
+PROFILE_FIELD_KEYS = tuple(k for k in FIELD_KEYS if k not in PROJECT_FIELD_KEYS)
 
 #: Cosine at or above which the meaning signal names a project (D8, calibrated in Phase 2).
 REGISTRATION_SEMANTIC_THRESHOLD = 0.80
@@ -70,14 +72,13 @@ DUPLICATE_LIMIT = 5
 #: The detail fields a CRM salesperson's draft or submission may carry; they land on the
 #: project or its sales profile through `project_service.apply_sales_details`.
 _CRM_DETAIL_KEYS = (
+    "name",
     "customer_id",
     "registered_company_name",
     "location",
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "lead_source",
     "estimated_sales_value",
     "launch_date",
@@ -100,6 +101,7 @@ EMBED_CACHE_SIZE = 512
 
 _MAX_LEN = {
     "title": TITLE_MAX_LEN,
+    "name": 80,
     "distributor_name": 255,
     "customer_name": 255,
     "type_of_building": 255,
@@ -421,6 +423,8 @@ def _check_customer(db: Session, company_id: str, contact_id: str, raw: Any) -> 
 
 
 def _field_label(key: str) -> str:
+    if key == "name":
+        return "Project name"
     return key.replace("_", " ").capitalize()
 
 
@@ -488,7 +492,8 @@ def _cleaned(db: Session, company_id: str, contact_id: str, payload: Dict[str, A
             out[key] = _check_customer(db, company_id, contact_id, payload[key])
             continue
         value = payload[key]
-        value = (str(value).strip() or None) if value is not None else None
+        # NUL is refused by Postgres (a 500 instead of a save), and strip() keeps it.
+        value = (str(value).replace("\x00", "").strip() or None) if value is not None else None
         if key != "title":
             value = " ".join(value.split()) if value else None
         out[key] = value
@@ -502,6 +507,8 @@ def _apply(db: Session, project: Project, profile: ProjectSalesProfile, values: 
         # The project row needs a title; a draft may not have one yet.
         project.title = values["title"] or ""
         project.normalised_title = normalise_project_title(project.title)
+    if "name" in values:
+        project.name = values["name"]
     for key in PROFILE_FIELD_KEYS:
         if key in values:
             setattr(profile, key, values[key])
@@ -515,7 +522,7 @@ def _apply(db: Session, project: Project, profile: ProjectSalesProfile, values: 
 
 
 def _values(project: Project, profile: Optional[ProjectSalesProfile]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {"title": project.title or None}
+    out: Dict[str, Any] = {"title": project.title or None, "name": project.name}
     for key in PROFILE_FIELD_KEYS:
         out[key] = getattr(profile, key, None) if profile is not None else None
     if out.get("customer_id"):
@@ -880,7 +887,10 @@ def notify(db: Session, project: Project, event: str) -> int:
     """Tell who must act (submitted) or who asked (approved, rejected). Call AFTER the move
     commits; a failure is logged per recipient and never undoes the move. Every notice links
     to the project itself: there is no registrations page any more (R11)."""
-    title_text = _clean(project.title) or "A project"  # one line: a title can carry newlines and tabs
+    from app.services.project_service import project_display_name
+
+    # One line: a title can carry newlines and tabs. The short name first (PROJECT-NAME).
+    title_text = _clean(project_display_name(project)) or "A project"
     try:
         applicant = _applicant_user_id(db, project)
         if event == "submitted":
@@ -967,13 +977,12 @@ def _not_pending() -> AppException:
 
 
 _APPROVE_DETAIL_KEYS = (
+    "name",
     "registered_company_name",
     "location",
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "estimated_sales_value",
     "launch_date",
     "expected_delivery_from",

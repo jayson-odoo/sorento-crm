@@ -51,7 +51,7 @@ def _tgt8(client, db, company_id):
         {"period_start": "2026-07-01", "threshold": 60000, "rate": 5},
         {"period_start": "2026-10-01", "threshold": 60000, "rate": 5},
     ]
-    res = client.post(BASE, json=_dealer_body([a], payout_customer_id=a.id, tiers=tiers))
+    res = client.post(BASE, json=_dealer_body([a], tiers=tiers))
     assert res.status_code == 201, res.text
     return res.json(), a, (so1, so2, so3)
 
@@ -76,7 +76,8 @@ def test_detail_carries_rate_of_tier_reached_and_earned_to_date(api):
     # Earned to date: ended periods only (Q1 + Q2 + Q3 0), the current one apart.
     assert body["commission_to_date"] == 6918.12
     assert body["commission_current"] == 0
-    assert body["payout_account"]["code"] == a.customer_code
+    # Each account is its own payee (lane TARGET-PER-ACCOUNT-PAYOUT): its share is the period's.
+    assert [x["commission_earned"] for x in q1["accounts"]] == [3681.10]
 
 
 def test_tier_selection_highest_tier_sets_the_rate(api):
@@ -299,6 +300,9 @@ def test_statement_xlsx_one_target(api, monkeypatch):
     assert so1.so_number in flat
     assert 61351.64 in flat and 3681.10 in flat
     assert any(isinstance(v, str) and a.customer_code in v for v in flat)
+    # No single payee: each account's own commission per period (lane TARGET-PER-ACCOUNT-PAYOUT).
+    assert "Pays to" not in flat and "Each account's commission" in flat
+    assert any(r[0] and a.customer_code in str(r[0]) and r[2] == 3681.10 for r in rows)
     # Dates are real dates shown dd/mm/yyyy; money cells show 2 decimals.
     date_cells = [c for r in ws.iter_rows() for c in r if c.value is not None and hasattr(c.value, "year")]
     assert date_cells and all(c.number_format == "dd/mm/yyyy" for c in date_cells)

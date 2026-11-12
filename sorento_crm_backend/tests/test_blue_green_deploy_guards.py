@@ -119,7 +119,10 @@ if args[0] == "compose":
             if os.path.exists(os.path.join(d, "psql_fail")):
                 sys.stderr.write('psql: error: database "x" does not exist\n')
                 sys.exit(2)
-            if "version_num" in joined:
+            if "pg_is_in_recovery" in joined:
+                # HA-CF-FAILOVER node role: a primary unless a test says otherwise.
+                sys.stdout.write(rd("in_recovery", "f\n"))
+            elif "version_num" in joined:
                 if os.path.exists(os.path.join(d, "versions_fail")):
                     sys.exit(2)
                 sys.stdout.write(rd("db_versions"))
@@ -1068,3 +1071,280 @@ def test_a_failed_heads_read_logs_why(box):
     r = _run(box)
     assert "no such image" in r.stderr, r.stderr
     assert _index(_calls(box), "pg_dump") != -1
+
+
+# --- HA-CF-FAILOVER: the same release on the standby node ------------------------------
+# Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 2 row 1. The standby
+# runs the release with SKIP_MIGRATIONS=1, no snapshot, no worker steps, and only after the
+# primary's migrations have replicated to it.
+
+
+def _role_box(box, in_recovery: str):
+    _ha_box(box)
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'args = sys.argv[1:]\n',
+        'args = sys.argv[1:]\n'
+        'open(os.path.join(d, "skip.log"), "a").write(" ".join(args[:6]) + " SKIP_MIGRATIONS=" + os.environ.get("SKIP_MIGRATIONS", "<unset>") + "\\n")\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    (box["stub"] / "in_recovery").write_text(in_recovery)
+
+
+def _at_head(box, image="rev2", db="rev2"):
+    (box["stub"] / "image_heads").write_text(f"{image} (head)\n")
+    (box["stub"] / "db_versions").write_text(f"{db}\n")
+
+
+@pytest.mark.parametrize("in_recovery, want", [("t\n", "standby"), ("f\n", "primary"), ("", "unknown")])
+def test_ha_role_flag_prints_the_role_and_changes_nothing(box, in_recovery, want):
+    _role_box(box, in_recovery)
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == want
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+# --- HA-CF-FAILOVER 7 Nov: the two-node release on today's PLAIN compose -----------------
+# Plan: documentation/plans/infra/PLAN-ha-b-replica-sync-07nov.md G3, owner Q2 (a). Node B is a
+# streaming replica on the plain compose (no compose.ha.yml), so the role comes from the plain
+# db service: in recovery = standby, otherwise primary. A db that does not answer stays
+# "single", which is exactly today's single-host release.
+
+
+def _plain_role_box(box, in_recovery: str):
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'args = sys.argv[1:]\n',
+        'args = sys.argv[1:]\n'
+        'open(os.path.join(d, "skip.log"), "a").write(" ".join(args[:6]) + " SKIP_MIGRATIONS=" + os.environ.get("SKIP_MIGRATIONS", "<unset>") + "\\n")\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    (box["stub"] / "in_recovery").write_text(in_recovery)
+
+
+@pytest.mark.parametrize("in_recovery, want", [("t\n", "standby"), ("f\n", "primary"), ("", "single"), ("garbage\n", "single")])
+def test_plain_role_flag_reads_the_plain_db(box, in_recovery, want):
+    _plain_role_box(box, in_recovery)
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == want
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_plain_role_flag_with_a_failing_db_is_single(box):
+    (box["stub"] / "psql_fail").write_text("1")
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0 and r.stdout.strip() == "single", r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_plain_role_query_runs_as_the_db_user_on_the_postgres_database(box):
+    _plain_role_box(box, "t\n")
+    _run(box, args=("--role",), IMAGE_TAG="")
+    q = [l for l in _calls(box) if "pg_is_in_recovery" in l]
+    assert q, _calls(box)
+    assert all("-u postgres" not in l and "POSTGRES_USER" in l and "-d postgres" in l for l in q), q
+
+
+def test_plain_standby_release_skips_migrations_snapshot_and_workers(box):
+    _plain_role_box(box, "t\n")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Node role: standby" in r.stdout
+    calls = _calls(box)
+    assert not any("pg_dump" in l for l in calls), calls
+    assert not any("--force-recreate" in l and "worker" in l for l in calls), calls
+    assert _started_new_colour(calls) and _swapped(calls)
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and all(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+    # Not an HA compose node: no role watcher reads the tag file.
+    assert not (box["root"] / ".ha-image-tag").exists()
+
+
+def test_plain_standby_waits_for_the_primary_migration_and_never_starts_behind(box):
+    _plain_role_box(box, "t\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA, STANDBY_SCHEMA_WAIT_SECONDS="30")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "deploy the primary first" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert not _started_new_colour(calls) and not _swapped(calls), calls
+    assert not any("pg_dump" in l for l in calls), calls
+
+
+@pytest.mark.parametrize("in_recovery", ["f\n", ""])
+def test_plain_primary_or_single_release_is_todays_release(box, in_recovery):
+    _plain_role_box(box, in_recovery)
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert any("pg_dump" in l for l in calls), calls
+    assert any("--force-recreate" in l and "worker" in l for l in calls), calls
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and not any(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+
+
+def test_ha_standby_release_skips_migrations_snapshot_and_workers(box):
+    _role_box(box, "t\n")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert not any("pg_dump" in l for l in calls), calls
+    assert not any("--force-recreate" in l and "worker" in l for l in calls), calls
+    assert _started_new_colour(calls) and _swapped(calls)
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and all(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+    assert (box["root"] / ".ha-image-tag").read_text().strip() == SHA
+
+
+def test_ha_standby_waits_for_the_primary_migration_and_never_starts_behind(box):
+    _role_box(box, "t\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA, STANDBY_SCHEMA_WAIT_SECONDS="30")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "deploy the primary first" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert not _started_new_colour(calls) and not _swapped(calls), calls
+    assert not any("pg_dump" in l for l in calls), calls
+
+
+def test_ha_unreadable_role_refuses_before_any_change(box):
+    _role_box(box, "")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "primary or standby" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_ha_primary_release_is_the_normal_release(box):
+    _role_box(box, "f\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert any("pg_dump" in l for l in calls), calls
+    assert any("--force-recreate" in l and "worker" in l for l in calls), calls
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and not any(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+
+
+# --- HA-CF-FAILOVER 7 Nov: node B's replica is a standalone container, not a compose service ---
+# Plan: documentation/plans/infra/PLAN-ha-b-replica-sync-07nov.md section 10. DB_CONTAINER in
+# .deploy.env names it; every Postgres call then goes to `docker exec <name>` and the compose db
+# service is never touched.
+
+
+def _container_box(box, in_recovery: str, name: str = "sorento_crm_replica"):
+    _plain_role_box(box, in_recovery)
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'if args[0] == "compose":\n',
+        'if args[0] == "exec":\n'
+        '    _a = [x for x in args[1:] if x != "-i"]\n'
+        '    args = ["compose", "exec", "-T"] + _a\n'
+        'elif args[0] == "ps" and any(x.startswith("name=") for x in args):\n'
+        '    print(rd("db_cid", "cid-db").strip()); sys.exit(0)\n'
+        'if args[0] == "compose":\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    (box["root"] / ".deploy.env").write_text(f"DB_CONTAINER={name}\nDEPLOY_DB_NAME=sorento_app\n")
+    (box["root"] / ".deploy.env").chmod(0o600)
+
+
+def _db_calls(calls):
+    return [l for l in calls if "psql" in l or "pg_dump" in l or "pg_restore" in l or l.startswith("ps ")
+            or (l.startswith("compose") and (" ps " in l and l.rstrip().endswith(" db")))]
+
+
+def test_db_container_role_uses_docker_exec_on_that_container(box):
+    _container_box(box, "t\n")
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0 and r.stdout.strip() == "standby", r.stdout + r.stderr
+    q = [l for l in _calls(box) if "pg_is_in_recovery" in l]
+    assert q and all(l.startswith("exec ") and " sorento_crm_replica " in l for l in q), q
+
+
+def test_db_container_standby_release_never_touches_the_compose_db(box):
+    _container_box(box, "t\n")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert "Node role: standby" in r.stdout
+    assert not any(l.startswith("compose") and (" exec " in l or l.rstrip().endswith(" db")) for l in calls), calls
+    assert any(l.startswith("exec ") and "version_num" in l and " sorento_crm_replica " in l for l in calls), calls
+    assert any(l.startswith("ps ") and "name=^sorento_crm_replica$" in l for l in calls), calls
+    assert not any("pg_dump" in l for l in calls), calls
+    assert not any("--force-recreate" in l and "worker" in l for l in calls), calls
+    assert _started_new_colour(calls) and _swapped(calls)
+
+
+def test_db_container_missing_fails_before_anything_changes(box):
+    _container_box(box, "t\n")
+    _at_head(box)
+    (box["stub"] / "db_cid").write_text("")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "sorento_crm_replica" in r.stdout and "not found" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+@pytest.mark.parametrize("name", ["bad name", "x;rm -rf /", "../db", "-x"])
+def test_db_container_name_is_validated(box, name):
+    _container_box(box, "t\n", name=name.replace(" ", "\\ "))
+    (box["root"] / ".deploy.env").write_text(f"DB_CONTAINER='{name}'\n")
+    (box["root"] / ".deploy.env").chmod(0o600)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "DB_CONTAINER" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_db_container_is_refused_in_ha_compose_mode(box):
+    _role_box(box, "t\n")
+    (box["root"] / ".deploy.env").write_text("COMPOSE_FILE=docker-compose.yml:compose.ha.yml\nDB_CONTAINER=sorento_crm_replica\n")
+    (box["root"] / ".deploy.env").chmod(0o600)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "DB_CONTAINER" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_without_db_container_the_compose_db_is_used_as_before(box):
+    _plain_role_box(box, "f\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert not any(l.startswith("exec ") or l.startswith("ps ") for l in calls), calls
+    assert any(l.startswith("compose") and " exec " in l and "pg_dump" in l for l in calls), calls
+
+
+# --- HA-TONIGHT 8 Nov crew review MUST-FIX 2: with DB_CONTAINER set, a role that is not a clear
+# t/f must never fall back to "single" (the primary release path would start worker + worker_fast
+# with ENABLE_SCHEDULER=true on node B). It is "unknown", and a deploy stops before any change.
+
+
+@pytest.mark.parametrize("answer", ["", "garbage\n", "error\n"])
+def test_db_container_unclear_role_is_unknown_not_single(box, answer):
+    _container_box(box, answer)
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.stdout.strip() == "unknown", r.stdout + r.stderr
+
+
+def test_db_container_unclear_role_stops_the_release_before_any_change(box):
+    _container_box(box, "")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0, r.stdout
+    assert "Node role: unknown" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert not _changed_anything(calls), calls
+    assert not any("worker" in l and " up " in f" {l} " for l in calls), calls

@@ -129,3 +129,156 @@ def test_build_batch_maps_the_three_diff_kinds_the_same_for_every_trigger(api):
     assert product_changed_row.from_json["item_code"] == old_product.product_code
     assert product_changed_row.to_json["item_code"] == new_product.product_code
     assert product_changed_row.item_code == new_product.product_code
+
+
+def test_a_location_move_on_a_held_line_raises_one_location_changed_row(api):
+    """SPLIT-SHEET-LOCATION: AutoCount moves a held line BRW-IB -> BRW-BB, nothing else. The
+    real diff (line_id pairing, as the ESB and manual-edit triggers build it) raises one
+    `location_changed` row carrying both locations, and the board feed serves it."""
+    from app.services.scm.outstanding_diff import diff_lines
+
+    from tests.test_planning_changes import BASE, _warehouse
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                      required_date=OLD)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+    ]})
+    sibling = _warehouse(db, f"{world.own_wh.warehouse_code}X", segment="project",
+                         pool_warehouse_id=world.pool_wh.id)
+    db.commit()
+
+    def side(code):
+        return Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                    location=code, qty=10.0, required_date=OLD, row_ref=str(core.id),
+                    line_id=str(core.id))
+
+    diff = diff_lines([side(world.own_wh.warehouse_code)], [side(sibling.warehouse_code)])
+    batch = planning_change_service.build_batch(
+        db, diff,
+        applied_line_ids={id(c): str(core.id) for c in diff.changes},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name=None,
+    )
+    db.commit()
+
+    assert batch is not None
+    (row,) = (
+        db.query(planning_change_service.PlanningChangeRow).filter_by(batch_id=batch.id).all()
+    )
+    assert row.kind == "location_changed"
+    assert row.from_json["location"] == world.own_wh.warehouse_code
+    assert row.to_json["location"] == sibling.warehouse_code
+
+    detail = client.get(f"{BASE}/planning-changes/{batch.id}")
+    assert detail.status_code == 200, detail.text
+    (served,) = [
+        r for o in detail.json()["orders"] for r in o["rows"] if r["id"] == str(row.id)
+    ]
+    assert served["kind"] == "location_changed"
+    assert (served["from"]["location"], served["to"]["location"]) == (
+        world.own_wh.warehouse_code, sibling.warehouse_code,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# SPLIT-SHEET-LOCATION review B1 / S1 / S2: a later push replaces the pending row in
+# place, and the location the line was PLANNED at stays its "from".
+# --------------------------------------------------------------------------- #
+
+
+def _held_line(api):
+    from tests.test_planning_changes import _warehouse
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                      required_date=OLD)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+    ]})
+    codes = {"IB": world.own_wh.warehouse_code}
+    for suffix in ("BB", "IC"):
+        codes[suffix] = _warehouse(db, f"{world.own_wh.warehouse_code}{suffix}",
+                                   segment="project",
+                                   pool_warehouse_id=world.pool_wh.id).warehouse_code
+    db.commit()
+    return world, core_so, core, codes
+
+
+def _push(world, core_so, core, before, after):
+    """One AutoCount push: `before` / `after` are `(location, qty)`."""
+    from app.services.scm.outstanding_diff import diff_lines
+
+    def side(location, qty):
+        return Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                    location=location, qty=float(qty), required_date=OLD,
+                    row_ref=str(core.id), line_id=str(core.id))
+
+    diff = diff_lines([side(*before)], [side(*after)])
+    planning_change_service.build_batch(
+        world.db, diff,
+        applied_line_ids={id(c): str(core.id) for c in diff.changes},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name=None,
+    )
+    world.db.commit()
+
+
+def _pending(world, core):
+    return (
+        world.db.query(planning_change_service.PlanningChangeRow)
+        .filter_by(core_line_id=str(core.id), applied_state="pending")
+        .all()
+    )
+
+
+def test_a_move_after_a_pending_qty_row_keeps_the_planned_location_as_from(api):
+    """B1: qty 10 -> 8 is pending (no location on it), then AutoCount moves IB -> BB."""
+    world, core_so, core, codes = _held_line(api)
+    _push(world, core_so, core, (codes["IB"], 10), (codes["IB"], 8))
+    _push(world, core_so, core, (codes["IB"], 8), (codes["BB"], 8))
+
+    (row,) = _pending(world, core)
+    assert row.kind == "location_changed"
+    assert (row.from_json["location"], row.to_json["location"]) == (codes["IB"], codes["BB"])
+    # "Was" still reads what the decision was taken against.
+    assert (row.from_json["qty"], row.to_json["qty"]) == ("10", "8")
+
+
+def test_a_chained_move_keeps_the_first_location_as_from(api):
+    """S1: IB -> BB pending, then BB -> IC: from stays IB."""
+    world, core_so, core, codes = _held_line(api)
+    _push(world, core_so, core, (codes["IB"], 10), (codes["BB"], 10))
+    _push(world, core_so, core, (codes["BB"], 10), (codes["IC"], 10))
+
+    (row,) = _pending(world, core)
+    assert (row.from_json["location"], row.to_json["location"]) == (codes["IB"], codes["IC"])
+
+
+def test_a_move_back_to_the_planned_location_leaves_no_row(api):
+    """S2: IB -> BB pending, then BB -> IB with nothing else changed: nothing to decide."""
+    world, core_so, core, codes = _held_line(api)
+    _push(world, core_so, core, (codes["IB"], 10), (codes["BB"], 10))
+    _push(world, core_so, core, (codes["BB"], 10), (codes["IB"], 10))
+
+    assert _pending(world, core) == []
+
+
+def test_a_move_back_with_a_qty_change_keeps_the_qty_row_without_a_location(api):
+    world, core_so, core, codes = _held_line(api)
+    _push(world, core_so, core, (codes["IB"], 10), (codes["BB"], 10))
+    _push(world, core_so, core, (codes["BB"], 10), (codes["IB"], 8))
+
+    (row,) = _pending(world, core)
+    assert row.kind == "qty_down"
+    assert row.from_json.get("location") is None
+    assert row.to_json.get("location") is None

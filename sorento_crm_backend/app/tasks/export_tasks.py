@@ -1695,3 +1695,42 @@ def generate_commission_statement_xlsx(
     finally:
         set_company_scope(db, caller_scope)
         db.close()
+
+
+def generate_new_product_application_xlsx(download_id: str, application_id: str, user_id: str) -> dict:
+    """The New Product Application's workbook (AC-NPA-77) through My Downloads, the stock inquiry
+    PDF's way (NPA-FORM-SLA, owner 9 Nov: the list's Print Count counts these rows). Any failure
+    marks the download failed with a fixed sentence rather than raising into RQ."""
+    db = SessionLocal()
+    # The route checked the requester may view it; the worker reads it system-wide, as the SI.
+    set_company_scope(db, None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        from app.models.new_product_application import NewProductApplication
+        from app.services import npa_xlsx
+
+        app = db.get(NewProductApplication, application_id)
+        if app is None:
+            raise LookupError("new product application not found")
+        xlsx_bytes, filename = npa_xlsx.to_xlsx(db, app)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/new-product-application-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=xlsx_bytes,
+            file_path=key,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        svc.mark_ready(download_id, storage_provider=provider, storage_key=stored_key, filename=filename)
+        return {"download_id": download_id, "status": "ready", "bytes": len(xlsx_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_new_product_application_xlsx failed for download %s", download_id)
+        _record_failure(
+            db, svc, download_id, e, "generate_new_product_application_xlsx",
+            message=EXPORT_FAILURE_MESSAGE,
+        )
+        return {"download_id": download_id, "status": "failed", "error": EXPORT_FAILURE_MESSAGE}
+    finally:
+        db.close()

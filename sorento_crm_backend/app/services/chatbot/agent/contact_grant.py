@@ -4,14 +4,17 @@ PLAN-agent-bulk-actions-7nov.md. The row names its contact and customers by EXPL
 after `normalise_phone`), customer codes, or exact customer names with one match in the user's companies; nothing
 is guessed (owner rule "no auto name-matching"). The access a row grants is the 26 Oct template of the Respond sheet
 upload (`contact_access_sheet_service.TEMPLATE`) through the same engine (`contact_setup_engine._plan_contact` /
-`_apply_contact`), so the agent and the upload give the same result; facets the user could not set on screen
-(`contact_access_copy_service.facets_to_skip`) are planned as "not applied", as the upload does. A phone not in the
-CRM is created as a contact in the same transaction. `read_before` refuses (4xx) a row that cannot apply; the batch
-tool shows that message as the row's skip reason.
+`_apply_contact`), so the agent and the upload give the same result. The whole template is written whatever the
+confirming user could set by hand (DEALER-ACCESS-PORTAL Q2 a), and Business owner is the company's owner tag
+(`TEMPLATE["owner_tags"]`), not the owner types written directly. A user holding only `edit_own` reaches only their
+own accounts (active customers of their own sales agents). A phone not in the CRM is created as a contact in the
+same transaction. `read_before` refuses (4xx) a row that cannot apply; the batch tool shows that message as the
+row's skip reason.
 """
 from __future__ import annotations
 
 import logging
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,6 +27,14 @@ GRANT = "crm_contact_grant"
 EDIT = writes.CONTACT_EDIT
 EVENT = writes.CONTACT_EVENT
 LINK_SOURCE = "agent"
+NO_OWN_ACCOUNT = "Name one of your accounts for this person (code or name)."
+OTHER_ACCOUNT = "This person also has access through another account; ask the office to change their level."
+#: Own scope, a contact another account also reaches (UAC A13): the settings someone else chose stay as they are;
+#: only the additive facets (link, company, end_user, missing enquiry agents, retail segment) apply.
+NON_ADDITIVE = frozenset({
+    "chatbot_allowed", "chatbot_stock_allowed", "chatbot_eta_offset_applied", "escalation_allowed",
+    "packing_list_allowed", "stock_check_mode", "stock_locations", "brands", "media",
+})
 COMPANY_WORDS = {"SRT": "Sorento", "MCH": "Mocha"}
 #: The template facets the preview names in words, in this order (the role and the links have their own words).
 _FACET_WORDS = (
@@ -72,13 +83,27 @@ def _new_contact(phone: str, name: str) -> SimpleNamespace:
 MAX_CHOICES = 10
 
 
-def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]) -> tuple[list, list[str], list[dict]]:
+def _significant_words(text: str) -> list[str]:
+    """The words of a business name that can identify it: 3+ characters, company suffix words left out."""
+    from app.services.contact_setup_engine import _NAME_SUFFIXES
+
+    return list(dict.fromkeys(
+        w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3 and w not in _NAME_SUFFIXES
+    ))
+
+
+def _customers(
+    db, args: dict, companies: list[str], company_ids: dict[str, str], own_agents: list[str] | None = None,
+) -> tuple[list, list[str], list[dict]]:
     """(customers, problems, choices) for what the row names, read under the user's companies (the caller set that
     scope). A code is exact (case and spaces aside). A name is exact (case and spaces aside) with exactly one match in
-    the row's companies; otherwise the active accounts of those companies whose name CONTAINS the written text are
-    offered as a pick (never linked on their own, even one). A customer of a company the row does not name is
-    refused: an account links only to a contact of its own company (sheet rule)."""
-    from sqlalchemy import func
+    the row's companies; otherwise the active accounts of those companies whose name CONTAINS the written text, or
+    failing that (own scope only) carries its first significant word, are offered as a pick (never linked on their
+    own, even one). A
+    customer of a company the row does not name is refused: an account links only to a contact of its own company
+    (sheet rule). `own_agents` (own scope, DEALER-ACCESS-PORTAL A2-A4): only active customers of those sales agents
+    exist at all, so another salesperson's account reads exactly like one that does not exist."""
+    from sqlalchemy import case, func, literal
 
     from app.models.company import Company
     from app.models.order import Customer
@@ -89,16 +114,23 @@ def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]
     out: dict[str, Any] = {}
     problems: list[str] = []
     choices: list[dict] = []
+    where = "your accounts" if own_agents is not None else "your companies"
+
+    def query(*columns):
+        q = db.query(*columns)
+        if own_agents is not None:
+            q = q.filter(Customer.is_active.is_(True), Customer.sales_agent_id.in_(own_agents))
+        return q
 
     def keep(rows: list, said: str, kind: str) -> bool:
         """True when `rows` linked one account; else records the reason and returns False."""
         if not rows:
-            problems.append(f"No customer with the {kind} \"{said}\" in your companies.")
+            problems.append(f"No customer with the {kind} \"{said}\" in {where}.")
             return False
         mine = [r for r in rows if code_of.get(str(r.company_id)) in wanted]
         if not mine:
-            where = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in rows}))
-            problems.append(f"\"{said}\" is a {where} customer, but the row's company is {_company_words(companies)}.")
+            other = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in rows}))
+            problems.append(f"\"{said}\" is a {other} customer, but the row's company is {_company_words(companies)}.")
             return False
         if len(mine) > 1:
             problems.append(f"More than one customer has the {kind} \"{said}\"; give its customer code.")
@@ -107,36 +139,140 @@ def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]
         return True
 
     columns = (Customer.id, Customer.customer_code, Customer.customer_name, Customer.company_id)
-    for code in dict.fromkeys(_clean(c) for c in args.get("customer_codes") or []):
-        if code:
-            keep(db.query(*columns).filter(func.lower(func.trim(Customer.customer_code)) == code.lower()).all(),
-                 code, "code")
+    codes = [c for c in dict.fromkeys(_clean(c) for c in args.get("customer_codes") or []) if c]
+    resolved = [
+        keep(query(*columns).filter(func.lower(func.trim(Customer.customer_code)) == code.lower()).all(), code, "code")
+        for code in codes
+    ]
+    if codes and all(resolved):
+        # UAC A19: codes that all resolve decide the row; a name beside them is only the row's typed label (a pick
+        # answer re-sends both), so it is not searched again.
+        return list(out.values()), problems, choices
     norm = func.lower(func.regexp_replace(func.trim(Customer.customer_name), r"\s+", " ", "g"))
+
+    def offer(name: str, found: list) -> None:
+        choices.append({
+            "written": name, "company": ", ".join(companies),
+            "candidates": [{"code": r.customer_code, "name": r.customer_name} for r in found[:MAX_CHOICES]],
+            "more": len(found) > MAX_CHOICES,
+        })
+
     for name in dict.fromkeys(_clean(n) for n in args.get("customer_names") or []):
         if not name:
             continue
-        exact = [r for r in db.query(*columns).filter(norm == name.lower()).all() if str(r.company_id) in mine_ids]
+        exact = [r for r in query(*columns).filter(norm == name.lower()).all() if str(r.company_id) in mine_ids]
         if len(exact) == 1:
             out[str(exact[0].id)] = exact[0]
             continue
-        contains = (
-            db.query(*columns).filter(Customer.is_active.is_(True), func.strpos(norm, name.lower()) > 0)
-        )
+        contains = query(*columns).filter(Customer.is_active.is_(True), func.strpos(norm, name.lower()) > 0)
         found = contains.filter(Customer.company_id.in_(mine_ids)).order_by(Customer.customer_code).limit(MAX_CHOICES + 1).all()
         if found:
-            choices.append({
-                "written": name, "company": ", ".join(companies),
-                "candidates": [{"code": r.customer_code, "name": r.customer_name} for r in found[:MAX_CHOICES]],
-                "more": len(found) > MAX_CHOICES,
-            })
+            offer(name, found)
             continue
+        words = _significant_words(name) if own_agents is not None else []
+        if words:
+            # Own scope only (UAC A4): the account carries the written name's first significant word, most shared
+            # words first. Whole-word matches (\m \M); the words are [a-z0-9] only.
+            def has(w: str):
+                return norm.op("~")(literal(rf"\m{w}\M"))
+
+            shared = sum((case((has(w), 1), else_=0) for w in words), literal(0))
+            found = (
+                query(*columns).filter(Customer.is_active.is_(True), Customer.company_id.in_(mine_ids), has(words[0]))
+                .order_by(shared.desc(), Customer.customer_code).limit(MAX_CHOICES + 1).all()
+            )
+            if found:
+                offer(name, found)
+                continue
         elsewhere = contains.with_entities(Customer.company_id).distinct().all()
         if elsewhere:
-            where = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in elsewhere}))
-            problems.append(f"\"{name}\" is a {where} customer, but the row's company is {_company_words(companies)}.")
+            other = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in elsewhere}))
+            problems.append(f"\"{name}\" is a {other} customer, but the row's company is {_company_words(companies)}.")
         else:
-            problems.append(f"No customer named \"{name}\" in your companies.")
+            problems.append(f"No customer named \"{name}\" in {where}.")
     return list(out.values()), problems, choices
+
+
+def _norm(text: Any) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
+WHICH_COMPANY = "Say which company this person is for: Sorento or Mocha."
+
+
+_QUOTES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'", "\u201c": '"', "\u201d": '"'})
+_TOKEN = re.compile(r"[0-9A-Za-z]+(?:'[0-9A-Za-z]+)*")
+
+
+def _tokens(text: str) -> list[tuple[str, int, int]]:
+    """(word, start, end) of each word: curly quotes folded to straight (one character for one, so the positions
+    are the text's own), apostrophes and other punctuation dropped, lower case."""
+    return [(m.group(0).replace("'", "").lower(), m.start(), m.end()) for m in _TOKEN.finditer(text.translate(_QUOTES))]
+
+
+def _typed_span(name: str, user_text: str) -> str | None:
+    """The user's own words for this name in their message, or None. Words are compared after `_tokens`, company
+    suffix words (sdn, bhd, berhad...) ignored on both sides, as a run of whole words."""
+    from app.services.contact_setup_engine import _NAME_SUFFIXES
+
+    text = str(user_text or "")
+    said = [t[0] for t in _tokens(name)]
+    core = [w for w in said if w not in _NAME_SUFFIXES] or said
+    words = [t for t in _tokens(text) if t[0] not in _NAME_SUFFIXES]
+    if not core:
+        return None
+    for i in range(len(words) - len(core) + 1):
+        if [t[0] for t in words[i:i + len(core)]] == core:
+            start, end = words[i][1], words[i + len(core) - 1][2]
+            for t in _tokens(text[end:]):  # the user's own suffix words right after it stay in their span
+                if t[0] not in _NAME_SUFFIXES or text[end:end + t[1]].strip():
+                    break
+                end += t[2]
+            return " ".join(text[start:end].split())
+    return None
+
+
+def _typed_word(word: str, user_text: str) -> bool:
+    return re.search(rf"(?<![0-9a-z]){re.escape(word)}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE) is not None
+
+
+def typed_names(
+    args: dict, user_text: str, written_before: list[str] = (), companies_before: list[str] = (),
+) -> tuple[dict, str | None]:
+    """UAC A17: every `customer_names` value is what the user typed this turn (case and spacing aside, a whole
+    phrase), or a name the row's earlier table already verified (its "You wrote", re-sent by an "all" / pick
+    follow-up). UAC A18: every company is named in this turn's text by the first word of its template name
+    ("Sorento", "Mocha"), or was verified for the row before. Returns (args with each name as the user typed it,
+    None), or (args, the refusal) for a name or company the model made up or re-searched."""
+    if not isinstance(args, dict):
+        return args, None
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    names = args.get("customer_names")
+    if isinstance(names, list) and names:
+        before = {_norm(w): " ".join(str(w).split()) for w in written_before if w}
+        out = []
+        for name in names:
+            said = " ".join(str(name or "").split())
+            if not said:
+                continue
+            words = r"\s+".join(re.escape(w) for w in said.split())
+            found = re.search(rf"(?<![0-9a-z]){words}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE)
+            span = " ".join(found.group(0).split()) if found else _typed_span(said, user_text)
+            if span:
+                out.append(span)
+            elif _norm(said) in before:
+                out.append(before[_norm(said)])
+            else:
+                return args, f'"{said}" is not in your message; write the dealer name as you typed it.'
+        args = {**args, "customer_names": out}
+    word_of = {code: name.split()[0] for name, code in TEMPLATE["companies"].items()}
+    earlier = {str(c).upper() for c in companies_before}
+    for code in args.get("companies") or []:
+        code = " ".join(str(code or "").split()).upper()
+        if code in word_of and code not in earlier and not _typed_word(word_of[code], user_text):
+            return args, WHICH_COMPANY
+    return args, None
 
 
 def _fits(choice: dict) -> str:
@@ -176,6 +312,26 @@ def _find_contact(db, phone: str):
     return rows[0] if rows else None
 
 
+def _is_staff(db, phone: str, contact_id: str | None) -> bool:
+    """Is this phone staff (UAC A9, A16)? A CRM user's contact number (by digits, with or without the leading 6), or,
+    for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access."""
+    from sqlalchemy import func
+
+    from app.models.base import company_scope
+    from app.models.sales_agent import SalesAgent
+    from app.models.user import User
+
+    full = phone.lstrip("+")
+    digits = func.regexp_replace(User.contact_number, r"\D", "", "g")
+    with company_scope(db, None):
+        if db.query(User.id).filter(digits.in_({full, full[1:]})).first() is not None:
+            return True
+        return contact_id is not None and (
+            db.query(User.id).filter(User.respond_contact_id == contact_id).first() is not None
+            or db.query(SalesAgent.id).filter(SalesAgent.contact_id == contact_id).first() is not None
+        )
+
+
 def plan(db, user: dict, args: dict) -> dict:
     """What the row would change, after every check. Raises the refusal the preview shows otherwise.
     Runs under every company the user is granted (the contact screens do the same)."""
@@ -184,10 +340,13 @@ def plan(db, user: dict, args: dict) -> dict:
     from app.models.media import ContactMediaLimit
     from app.services import contact_access_sheet_service as sheet
     from app.services import contact_setup_engine as engine
-    from app.services.contact_access_copy_service import AccessSnapshot, Names, facets_to_skip, names_for, snapshots
+    from app.services.contact_access_copy_service import AccessSnapshot, Names, names_for, snapshots
     from app.services.contact_customer_service import list_links
+    from app.services.contact_tag_service import owner_tag, tags_by_contact
 
     uid = str(user["id"])
+    # Own scope (edit_own without edit): only the user's own accounts exist for this row (UAC A2-A4, A10).
+    own_agents = None if writes._permitted(db, uid, EDIT) else writes._own_agent_ids(db, uid)
     problems: list[str] = []
     phone = engine.normalise_phone(args.get("phone"))
     if phone is None:
@@ -213,17 +372,44 @@ def plan(db, user: dict, args: dict) -> dict:
         if outside:
             problems.append(f"{_company_words(outside)} is not one of your companies.")
         else:
-            customers, found, choices = _customers(db, args, companies, company_ids)
+            customers, found, choices = _customers(db, args, companies, company_ids, own_agents)
             problems += found
     if problems:
         problems += [_fits(c) for c in choices]
         raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
     if choices:
         raise NeedsChoice(choices)
+    if own_agents is not None and not customers:
+        raise _refuse(NO_OWN_ACCOUNT)  # UAC A12: no grant without one of the user's own accounts
+    # Business owner is the company's owner tag (UAC A6); a missing or switched-off tag refuses the row (A7). Checked
+    # once the row is otherwise ready: the row's own problems and its account pick come first.
+    tags: list = []
+    if role == "owner":
+        missing = []
+        for code in companies:
+            tag = owner_tag(db, code)
+            if tag is None:
+                missing.append(f"The \"{sheet.TEMPLATE['owner_tags'][code]}\" tag is missing; ask the office")
+            else:
+                tags.append(tag)
+        if missing:
+            raise _refuse("; ".join(missing) + ".")
     contact = _find_contact(db, phone)
-    # Only what everyone acting may set on screen: the linked user and the console operator (security review B1).
-    acting = dict.fromkeys(i for i in (uid, user.get("operator_user_id")) if i)
-    skip = frozenset().union(*(facets_to_skip(db, i) for i in acting))
+    if _is_staff(db, phone, str(contact.id) if contact is not None else None):
+        raise _refuse("This number belongs to a staff member.")
+    # Own scope: links to accounts that are not the user's own, counted, never named (A10, A13, A14, B3).
+    others = writes._not_own_links(db, uid, str(contact.id)) if own_agents is not None and contact is not None else set()
+    if others and role == "owner":
+        raise _refuse(OTHER_ACCOUNT)  # UAC A14: promotion is as restricted as demotion
+    # The whole template is written whatever the confirming user could set by hand (UAC A5, owner Q2 a), except on a
+    # contact another account reaches too (A13): for anyone acting, so an own-scope console operator acting for a
+    # `.edit` user still writes only the additive facets (security review L2).
+    operator = str(user.get("operator_user_id") or "")
+    shared = bool(others) or (
+        contact is not None and bool(operator) and operator != uid and not writes._permitted(db, operator, EDIT)
+        and bool(writes._not_own_links(db, operator, str(contact.id)))
+    )
+    skip = NON_ADDITIVE if shared else frozenset()
     world = sheet._world(db, set(companies))
     if contact is not None:
         cid = str(contact.id)
@@ -237,40 +423,45 @@ def plan(db, user: dict, args: dict) -> dict:
     else:
         cid, snap, names, media, held = "", AccessSnapshot(contact_id="", label=phone), Names(), None, []
         subject = _new_contact(phone, name)
-    desired = engine.Desired(
-        phone=phone, name=name, rows=[], companies=set(companies),
-        owner_companies=set(companies) if role == "owner" else set(),
-    )
+    # The template base only; the owner types come from the owner tags added on confirm.
+    desired = engine.Desired(phone=phone, name=name, rows=[], companies=set(companies), owner_companies=set())
     changes, todo = engine._plan_contact(db, subject, snap, desired, names, world, sheet.TEMPLATE, media, skip)
     changed = [c for c in changes if c["changed"]]
     add_links = [c for c in customers if str(c.id) not in held]
-    not_applied = sorted({c["facet"] for c in changes if c["status"] == "not_applied"})
-    if contact is not None and not changed and not add_links:
+    held_tags = tags_by_contact(db, [cid]).get(cid, []) if cid else []
+    add_tags = [t for t in tags if str(t.id) not in {h["id"] for h in held_tags}]
+    if contact is not None and not changed and not add_links and not add_tags:
         raise _refuse("Already has this access; nothing to change.")
 
     facets = {c["facet"] for c in changed}
     lines = [] if contact is not None else ["create contact"]
-    if "access_types" in facets or contact is None:
+    if "access_types" in facets or contact is None or add_tags:
         lines.append(f"{'Business owner' if role == 'owner' else 'Employee'} ({_company_words(companies)})")
     if "companies" in facets:
         added = [code for code, i in company_ids.items() if i in set(todo["companies"])]
         lines.append(f"add company {_company_words(added)}")
     lines += [f"link {c.customer_code} {_clean(c.customer_name)}".strip() for c in add_links]
+    if others:
+        # Add-only beside it; the other account is never named (UAC A10, owner Q5 a).
+        lines.append("also has access through another account")
     extra = [word for facet, word in _FACET_WORDS if facet in facets]
     if extra:
         lines.append("template: " + ", ".join(extra))
-    if not_applied:
-        words = dict(_FACET_WORDS) | {"companies": "companies"}
-        lines.append("not applied (needs more access): " + ", ".join(dict.fromkeys(words.get(f, f) for f in not_applied)))
+    if shared:
+        lines.append("kept as they are: AI replies, stock, brands and media (another account also has this person)")
+    # `targets`: the customers the row resolved to, so a rename between preview and confirm fails the row. Own scope:
+    # another account's link is only counted (B3).
+    before = {
+        "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies),
+        "links": [h for h in held if h not in others], "targets": sorted(str(c.id) for c in customers),
+    }
+    if own_agents is not None:
+        before["other_links"] = len(others)
     return {
         "phone": phone, "name": name or (contact.name if contact is not None else "") or "", "contact": contact,
         "contact_id": cid, "desired": desired, "todo": todo, "changed": changed, "add_links": add_links,
-        "lines": lines, "snap": snap, "held": held,
-        # `targets`: the customers the row resolved to, so a rename between preview and confirm fails the row.
-        "before": {
-            "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies), "links": held,
-            "targets": sorted(str(c.id) for c in customers),
-        },
+        "lines": lines, "snap": snap, "held": held, "add_tags": add_tags, "held_tags": [h["name"] for h in held_tags],
+        "before": before,
     }
 
 
@@ -345,11 +536,20 @@ def _execute(db, user: dict, args: dict) -> dict:
         for customer in p["add_links"]:
             contact_customer_service.link_customer(db, cid, str(customer.id), source=LINK_SOURCE, linked_by=uid)
         db.flush()
+        if p["add_tags"]:
+            from app.services.contact_tag_service import change_tags
+
+            change_tags(db, p["contact"], add=p["add_tags"], actor_id=uid)
         shown = [
             {"field": _FACET_LABELS.get(c["facet"], c["facet"].replace("_", " ").capitalize()),
              "before": _words(c["before"]), "after": _words(c["after"])}
             for c in p["changed"]
         ]
+        if p["add_tags"]:
+            shown.append({
+                "field": "Tags", "before": _words(p["held_tags"]),
+                "after": _words([*p["held_tags"], *(t.name for t in p["add_tags"])]),
+            })
         if p["add_links"]:
             shown.append({
                 "field": "Customer links", "before": _words([]) if not p["held"] else f"{len(p['held'])} linked",
@@ -375,6 +575,16 @@ def _execute(db, user: dict, args: dict) -> dict:
         except Exception:  # noqa: BLE001 - the grant is committed; the defaults are best effort, as on the screen
             logger.warning("agent: default agents for a new contact failed", exc_info=True)
             db.rollback()
+    if not db.query(RespondContact.respond_io_id).filter(RespondContact.id == cid).scalar():
+        # Instant (UAC B1, V8): the worker finds or creates the person in Respond.io, so the bot answers their
+        # first message instead of waiting for the 15 minute sync. The grant is committed either way.
+        try:
+            from app.services import queue_service
+            from app.tasks.respond_io_tasks import ensure_respond_contact
+
+            queue_service.enqueue_job(ensure_respond_contact, cid, queue_name="respond_io", job_timeout=120)
+        except Exception:  # noqa: BLE001 - the sync picks the contact up later
+            logger.warning("agent: enqueueing ensure_respond_contact failed", exc_info=True)
     return {"id": cid, "after": {"created": created, "changes": shown}}
 
 
@@ -389,7 +599,8 @@ _TEXT_LIST = {"type": "array", "items": {"type": "string"}, "maxItems": MAX_CUST
 
 writes.WRITES[GRANT] = writes.WriteDef(
     name=GRANT,
-    user_permission=EDIT,
+    # edit_own: the user's own accounts only (DEALER-ACCESS-PORTAL A1).
+    user_permission=writes.CONTACT_SLUGS,
     schema={
         "type": "function",
         "function": {
@@ -397,9 +608,12 @@ writes.WRITES[GRANT] = writes.WriteDef(
             "description": (
                 "Grant one dealer contact access from a row of a pasted table: the Respond sheet template for the "
                 "role and companies, plus links to the named customers. A phone not in the CRM is created as a "
-                "contact. For a table, use crm_batch_propose with this write and one row per person. Use the "
-                "table's values as written: never invent a phone, code or name. Nothing changes until the user "
-                "confirms."
+                "contact. For a table, use crm_batch_propose with this write and one row per person. A message "
+                "that names people, their phones, Owner or Employee and the dealer is such a table too: one row "
+                "per person, and the dealer's name goes in customer_names unless customer codes are given. Use the "
+                "table's values as written: never invent a phone, code or name. Every row goes through this tool, "
+                "even for a phone you think is staff or not allowed: the tool decides and words every refusal. "
+                "Nothing changes until the user confirms."
             ),
             "parameters": {
                 "type": "object",
@@ -424,7 +638,11 @@ writes.WRITES[GRANT] = writes.WriteDef(
                     "customer_codes": {**_TEXT_LIST, "description": "Customer codes as written in the table."},
                     "customer_names": {
                         **_TEXT_LIST,
-                        "description": "Customer names as written, when the table gives no code (exact names only).",
+                        "description": (
+                            "The dealer or customer name exactly as the user typed it (copy their words), when the "
+                            "table gives no code; never a name you searched, found or corrected: the user's own "
+                            "words are what the pick table shows back."
+                        ),
                     },
                 },
                 "required": ["phone", "role", "companies"],

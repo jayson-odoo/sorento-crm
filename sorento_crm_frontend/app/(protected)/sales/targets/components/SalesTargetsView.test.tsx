@@ -263,14 +263,14 @@ describe('SalesTargetsView', () => {
     expect(screen.getByText('No team targets yet')).toBeTruthy();
   });
 
-  it('Dealers lists dealer targets with Counts, Pays to and the current commission (lane SALES-TARGET-DEALER)', () => {
+  it('Dealers lists dealer targets with Counts and the current commission, no Pays to (lane TARGET-PER-ACCOUNT-PAYOUT)', () => {
     perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
     withRows([
       row({
         target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
         sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
         product_scope: 'all', scope_labels: [], account_labels: ['A/C I', 'A/C III'],
-        account_codes: ['300-A0123', '300-A0124'], payout_label: 'A/C I', commission_earned: 5400,
+        account_codes: ['300-A0123', '300-A0124'], commission_earned: 5400,
       }),
     ]);
     render(<SalesTargetsView />);
@@ -278,7 +278,7 @@ describe('SalesTargetsView', () => {
     expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'dealer' });
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
     expect(headers).toEqual([
-      'Number', 'Name', 'Dealer', 'Counts', 'Pays to', 'Measures', 'Dates', 'Target',
+      'Number', 'Name', 'Dealer', 'Counts', 'Measures', 'Dates', 'Target',
       'Achieved (sales orders, incl. tax)', '%', 'Commission',
     ]);
     expect(screen.getByText('Dealer A Sdn Bhd')).toBeTruthy();
@@ -294,7 +294,7 @@ describe('SalesTargetsView', () => {
         target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
         sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
         basis: 'invoiced', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
-        account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+        account_codes: ['300-A0123'], commission_earned: 0,
       }),
     ]);
     render(<SalesTargetsView />);
@@ -310,7 +310,7 @@ describe('SalesTargetsView', () => {
     const dealer = {
       sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
       subject_kind: 'dealer', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
-      account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+      account_codes: ['300-A0123'], commission_earned: 0,
     };
     withRows([
       row({ ...dealer, target_id: 'ti', target_no: 'TGT-000301', name: 'Invoiced one', basis: 'invoiced', achieved_value: 1234 }),

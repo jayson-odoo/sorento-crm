@@ -93,4 +93,21 @@ describe('searchProjectsForLink', () => {
     const params = new URLSearchParams(String(apiFetch.mock.calls[0][0]).split('?')[1]);
     expect(params.get('approved_only')).toBe('true');
   });
+
+  it('labels with the short name when the project has one (PROJECT-NAME)', async () => {
+    apiFetch.mockResolvedValue(
+      ok([
+        {
+          id: '33333333-3333-3333-3333-333333333333',
+          project_code: 'PRJ-000300',
+          title: 'Cadangan Pembangunan Residensi Damai',
+          name: 'Damai 1',
+        },
+      ]),
+    );
+
+    const options = await searchProjectsForLink('damai');
+
+    expect(options[0].label).toBe('PRJ-000300 - Damai 1');
+  });
 });

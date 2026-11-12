@@ -27,6 +27,9 @@ _PARTY_FIELDS = (
 
 NOT_FOUND = {"status": "not_found"}
 
+#: Same cap as `projects.name`.
+_NAME_MAX_LEN = 80
+
 
 def _text(value: Any) -> str:
     return " ".join(str(value or "").split())
@@ -47,10 +50,10 @@ def _party(db: Session, company_id: str, party_type: str, name: str) -> Dict[str
         db.query(ProjectParty)
         .filter(
             ProjectParty.company_id == company_id,
-            ProjectParty.party_type == party_type,
             _name_expr(ProjectParty.name) == _key(name),
         )
-        .order_by(ProjectParty.created_at, ProjectParty.id)
+        # Any party may fill any role (PROJECT-PARTY-ROLES Q4 b); one usually in this role wins.
+        .order_by((ProjectParty.party_type != party_type), ProjectParty.created_at, ProjectParty.id)
         .first()
     )
     if row:
@@ -134,4 +137,6 @@ def propose(db: Session, *, company_id: str, values: Dict[str, Any]) -> Dict[str
     out["mukim"] = _text(values.get("mukim")) or None
     out["customer"] = _customer(db, company_id, _text(values.get("customer_name")))
     out["title"] = str(values.get("title") or "").strip() or None
+    # The short name (PROJECT-NAME): plain text, never longer than the column.
+    out["name"] = (_text(values.get("name"))[:_NAME_MAX_LEN].strip() or None)
     return out

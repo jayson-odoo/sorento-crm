@@ -116,7 +116,9 @@ function MyTaskRow({ task }: { task: ProjectTask }) {
             title={task.project_title ?? undefined}
           >
             {task.project_code ?? 'Open project'}
-            {task.project_title ? ` · ${task.project_title}` : ''}
+            {task.project_name || task.project_title
+              ? ` · ${task.project_name || task.project_title}`
+              : ''}
           </Link>
           {task.category && <span className="truncate">{task.category}</span>}
           {task.due_date && (

@@ -70,6 +70,19 @@ vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
   useRefreshAccessoryTemplates: () => vi.fn(),
 }));
 
+// PRICETAG-TEMPLATE-PRODUCTS: the Products button's permission and count are react-query hooks this
+// test has no QueryClientProvider for; the dialog has its own test (TemplateProductsDialog.test.tsx).
+const mockCanManage = vi.hoisted(() => ({ value: true }));
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => mockCanManage.value }));
+vi.mock('../../hooks/useProductTagTemplates', () => ({
+  useTemplateProductIds: () => ({ data: ['p1', 'p2'] }),
+  // Products (N) counts linked products and combos together.
+  useTemplateComboIds: () => ({ data: ['c1'] }),
+}));
+vi.mock('../components/TemplateProductsDialog', () => ({
+  TemplateProductsDialog: () => <div data-testid="template-products-dialog" />,
+}));
+
 vi.mock('../components/TagCanvasEditor', () => ({
   TagCanvasEditor: ({
     doc,
@@ -756,6 +769,36 @@ describe('template editor chrome (S7, AC-S7-2)', () => {
     expect(trailing.getByRole('button', { name: /Versions/ })).toBeInTheDocument();
     expect(trailing.getByRole('button', { name: /Save/ })).toBeInTheDocument();
     expect(trailing.getByRole('button', { name: /Full screen/ })).toBeInTheDocument();
+  });
+
+  it('PRICETAG-TEMPLATE-PRODUCTS: Products (N) opens the products dialog for a manager only', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    const { unmount } = render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    const trailing = within(screen.getByTestId('toolbar-trailing'));
+    fireEvent.click(trailing.getByRole('button', { name: /Products \(3\)/ }));
+    expect(screen.getByTestId('template-products-dialog')).toBeInTheDocument();
+    unmount();
+
+    mockCanManage.value = false;
+    try {
+      render(<TagTemplateEditorPage />);
+      await screen.findByTestId('canvas-editor');
+      expect(
+        within(screen.getByTestId('toolbar-trailing')).queryByRole('button', { name: /Products/ }),
+      ).toBeNull();
+    } finally {
+      mockCanManage.value = true;
+    }
+  });
+
+  it('PRICETAG-TEMPLATE-PRODUCTS: a spec sheet page has no Products button, even for a manager', async () => {
+    mockGet.mockResolvedValue(templateFixture({ family: 'spec_page' }));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    expect(
+      within(screen.getByTestId('toolbar-trailing')).queryByRole('button', { name: /Products/ }),
+    ).toBeNull();
   });
 
   it('the page header carries Publish as the only action button (no Versions/Save/Full screen there)', async () => {

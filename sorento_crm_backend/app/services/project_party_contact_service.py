@@ -12,8 +12,6 @@ from sqlalchemy.orm import Session
 from app.models.projects import (
     LEAD_SOURCE_SET_KEY,
     LEAD_SOURCES,
-    PARTY_LINK_ROLES,
-    PARTY_LINK_SINGLE_ROLES,
     Project,
     ProjectParty,
     ProjectPartyContact,
@@ -21,6 +19,7 @@ from app.models.projects import (
     ProjectSalesProfile,
     ProjectStakeholder,
 )
+from app.services import project_party_roles as party_roles
 from app.services.error_handler import AppException
 
 # ------------------------------------------------------------------ lead source (rule 8, Q4)
@@ -79,6 +78,55 @@ def _clean(value: Any) -> Optional[str]:
     return text or None
 
 
+def clean_phone(value: Any) -> Optional[str]:
+    """A contact's number, checked and stored as E.164 (owner hand test 10 Nov: "we need some
+    verification for phone number"). Blank stays blank; letters or too few digits are a 422.
+
+    Normalised by the app's one MY-default normaliser (``phone_utils.normalize_msisdn``, the one
+    phone sign-in and the user <-> contact matcher use). A Malaysian number has 8 to 10 digits
+    after the 60; any other country code 8 to 15 digits in all, the E.164 ceiling."""
+    import re
+
+    from app.services.phone_utils import normalize_msisdn
+
+    text = _clean(value)
+    if not text:
+        return None
+    digits = normalize_msisdn(text) if not re.search(r"[A-Za-z]", text) else None
+    ok = bool(digits) and (
+        10 <= len(digits) <= 12 if digits.startswith("60") else 8 <= len(digits) <= 15
+    )
+    if not ok:
+        raise AppException(
+            status_code=422,
+            message="Enter a valid phone number, e.g. 012-345 6789.",
+            code="project_party_contact_phone_invalid",
+        )
+    return f"+{digits}"
+
+
+def display_phone(value: Any) -> Optional[str]:
+    """A number as the letter prints it: one local format ("012-000 0501") whether it was stored
+    as E.164 or typed by hand (owner hand test, 10 Nov). Not a Malaysian number it can read: as
+    stored."""
+    import re
+
+    from app.services.phone_utils import normalize_msisdn
+
+    text = _clean(value)
+    if not text or re.search(r"[A-Za-z]", text):
+        return text
+    digits = normalize_msisdn(text) or ""
+    if not digits.startswith("60") or not 10 <= len(digits) <= 12:
+        return text
+    national = "0" + digits[2:]
+    # Mobiles (01x) and East Malaysia (08x) have a three-digit prefix, the rest two.
+    head = 3 if national[:2] in ("01", "08") else 2
+    rest = national[head:]
+    split = 3 if len(rest) == 6 else len(rest) - 4
+    return f"{national[:head]}-{rest[:split]} {rest[split:]}"
+
+
 def list_contacts(db: Session, party: ProjectParty, *, include_inactive: bool = False) -> List[ProjectPartyContact]:
     query = db.query(ProjectPartyContact).filter(ProjectPartyContact.party_id == party.id)
     if not include_inactive:
@@ -109,7 +157,7 @@ def create_contact(db: Session, party: ProjectParty, payload: Dict[str, Any]) ->
         party_id=party.id,
         name=name,
         job_title=_clean(payload.get("job_title")),
-        phone=_clean(payload.get("phone")),
+        phone=clean_phone(payload.get("phone")),
         email=_clean(payload.get("email")),
         is_active=payload.get("is_active", True) is not False,
     )
@@ -139,7 +187,7 @@ def update_contact(db: Session, row: ProjectPartyContact, payload: Dict[str, Any
         row.name = name
     for field in ("job_title", "phone", "email"):
         if field in payload:
-            setattr(row, field, _clean(payload.get(field)))
+            setattr(row, field, clean_phone(payload.get(field)) if field == "phone" else _clean(payload.get(field)))
     if "is_active" in payload and payload["is_active"] is not None:
         row.is_active = bool(payload["is_active"])
     db.flush()
@@ -170,18 +218,13 @@ def _company_party(db: Session, company_id: str, party_id: Any) -> Optional[Proj
 
 
 def set_party_links(db: Session, project: Project, links: Iterable[Dict[str, Any]]) -> None:
-    """Replace the project's links with ``links``. Each party must be this company's and of the
-    role's type; a repeat is one link."""
+    """Replace the project's links with ``links``. Each party must be this company's; any party may
+    fill any role (PROJECT-PARTY-ROLES Q4 b). The roles and their one-or-many rule are the lookup
+    set ``project_party_role``; a repeat is one link."""
     wanted: Dict[tuple, None] = {}
     for link in links or []:
         role = (link or {}).get("role")
         party_id = (link or {}).get("party_id")
-        if role not in PARTY_LINK_ROLES:
-            raise AppException(
-                status_code=422,
-                message="That party role is not one a project links.",
-                code="project_party_role_invalid",
-            )
         party = _company_party(db, str(project.company_id), party_id)
         if party is None:
             raise AppException(
@@ -189,25 +232,32 @@ def set_party_links(db: Session, project: Project, links: Iterable[Dict[str, Any
                 message="Pick the parties, type and template from this company.",
                 code="project_ref_invalid",
             )
-        if party.party_type != role:
-            raise AppException(
-                status_code=422,
-                message=f'"{party.name}" is not a {role.replace("_", " ")}.',
-                code="project_party_role_mismatch",
-            )
         wanted[(role, party.id)] = None
-    for role in PARTY_LINK_SINGLE_ROLES:
-        if sum(1 for r, _p in wanted if r == role) > 1:
-            raise AppException(
-                status_code=422,
-                message=f"A project has one {role.replace('_', ' ')}.",
-                code="project_party_role_single",
-            )
+    existing = [
+        (row.role, row.party_id)
+        for row in db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == project.id).all()
+    ]
+    party_roles.check_links(db, list(wanted), existing)
     db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == project.id).delete(
         synchronize_session=False
     )
     for role, party_id in wanted:
         db.add(ProjectPartyLink(project_id=project.id, role=role, party_id=party_id))
+    db.flush()
+
+
+def add_party_link(db: Session, project: Project, role: Optional[str], party_id: str) -> None:
+    """Link one more party in ``role``, keeping every link already there (PROJECT-PARTY-ROLES PR 2:
+    a proposal addressed to a party not on the project yet backfills it). Same role rules as the
+    registration form: an active role of the list, a one-party role not already filled."""
+    existing = [
+        (row.role, row.party_id)
+        for row in db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == project.id).all()
+    ]
+    if (role, party_id) in existing:
+        return
+    party_roles.check_links(db, existing + [(role, party_id)], existing)
+    db.add(ProjectPartyLink(project_id=project.id, role=role, party_id=party_id))
     db.flush()
 
 
@@ -231,21 +281,9 @@ def party_links_for(db: Session, project_ids: List[str]) -> Dict[str, List[Dict[
 # ------------------------------------------------------------------ the project's parties
 
 
-def _single_role_parties(db: Session, project: Project) -> List[tuple]:
-    """``(role, party_id)`` for the developer, architect and main contractor columns."""
-    profile = db.get(ProjectSalesProfile, project.id)
-    pairs = [("developer", project.developer_party_id)]
-    if profile is not None:
-        pairs += [
-            ("architect", profile.architect_party_id),
-            ("main_contractor", profile.main_contractor_party_id),
-        ]
-    return [(role, pid) for role, pid in pairs if pid]
-
-
 def project_party_roles(db: Session, project: Project) -> List[tuple]:
-    """Every ``(role, party_id)`` on the project, single columns first, in a stable order."""
-    pairs = _single_role_parties(db, project)
+    """Every ``(role, party_id)`` on the project: the developer column first, then the links."""
+    pairs = [(party_roles.DEVELOPER, project.developer_party_id)] if project.developer_party_id else []
     pairs += [
         (row.role, row.party_id)
         for row in db.query(ProjectPartyLink)
@@ -364,6 +402,9 @@ def list_project_parties(db: Session, project: Project) -> List[Dict[str, Any]]:
                 "role": role,
                 "name": party.name,
                 "phone": party.phone,
+                "address": party.address,
+                "email": party.email,
+                "fax": party.fax,
                 "contacts": people.get(party.id, []),
             }
         )
@@ -383,11 +424,9 @@ def fill_party_phone(
 ) -> Dict[str, Any]:
     """Save a number typed at send time: to the stakeholder and its party contact when a person
     was picked, else to the party's own line. Fills an EMPTY number only."""
-    number = _clean(phone)
-    if not number:
+    if not _clean(phone):
         raise AppException(status_code=422, message="Type the number first.", code="project_party_phone_required")
-    if len(number) > 50:
-        raise AppException(status_code=422, message="That number is too long.", code="project_party_phone_invalid")
+    number = clean_phone(phone)
     if str(party_id) not in {str(p) for p in _party_ids_on(db, project)}:
         raise AppException(
             status_code=404, message="That party is not on this project.", code="project_party_not_on_project"

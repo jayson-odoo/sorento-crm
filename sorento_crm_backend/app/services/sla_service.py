@@ -2357,7 +2357,7 @@ class ConversationSLATrackingService:
 
         complaint -> complaint_number, stock_inquiry -> inquiry_number,
         purchase_request/sponsorship_form -> request_number, ticket -> ticket_number,
-        and conversation SLAs with no source entity -> contact phone/name.
+        new_product_application -> application_no, and conversation SLAs with no source entity -> contact phone/name.
         Batched per type to avoid per-row queries.
         """
         from app.models.complaints import Complaint
@@ -2420,6 +2420,14 @@ class ConversationSLATrackingService:
             (ids_by_type.get("product_drawing") or set()) | (ids_by_type.get("product_photo") or set()),
         )
 
+        from app.models.new_product_application import NewProductApplication
+
+        npa_map = _num_map(
+            NewProductApplication.id,
+            NewProductApplication.application_no,
+            ids_by_type.get("new_product_application") or set(),
+        )
+
         contact_map: dict[str, Optional[str]] = {}
         if contact_ids:
             try:
@@ -2447,6 +2455,8 @@ class ConversationSLATrackingService:
                 ref = ticket_map.get(sid)
             elif et in ("product_drawing", "product_photo") and sid:
                 ref = product_map.get(sid)
+            elif et == "new_product_application" and sid:
+                ref = npa_map.get(sid)
             elif r.respond_contact_id:
                 ref = contact_map.get(str(r.respond_contact_id))
             result[str(r.id)] = ref

@@ -675,8 +675,12 @@ def combo_prices(
     combo has none.
     """
     list_price = _as_decimal(combo.list_price)
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
     parts = list(combo.parts or [])
-    options = [p for p in parts if not p.is_upgrade and p.choice_group]
+    # A one-part group is a fixed part, so its "Sell price if picked" never decides the price.
+    choices = pick_one_groups(parts)
+    options = [p for p in parts if not p.is_upgrade and p.choice_group in choices]
     picked_upgrade = next(
         (p for p in parts if p.is_upgrade and p.part_product_id in picked_ids), None
     )

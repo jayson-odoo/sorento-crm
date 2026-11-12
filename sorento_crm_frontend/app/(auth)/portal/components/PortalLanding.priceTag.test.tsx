@@ -195,7 +195,7 @@ describe('PortalLanding - price tag card shows the revision badge/chip too (AC-R
   // legacy kinds - the card reads `row.revision_no`/`row.has_revision_draft`
   // with no kind-specific branch, so a price_tag_request row must behave
   // identically once the settings row for it is enabled.
-  it('shows the "Rev N" badge for a revised price tag request', async () => {
+  it('shows an "Edited" badge for an edited price tag request, never "Rev N" (owner, 11 Nov)', async () => {
     searchParams = new URLSearchParams('type=price_tag_request');
     mockContact(['price_tag_request']);
     (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -205,10 +205,11 @@ describe('PortalLanding - price tag card shows the revision badge/chip too (AC-R
     render(<PortalLanding slug="contact-x" />);
 
     await screen.findByText('PT-202608-0001');
-    expect(screen.getByText('Rev 1')).toBeInTheDocument();
+    expect(screen.getByText('Edited')).toBeInTheDocument();
+    expect(screen.queryByText('Rev 1')).toBeNull();
   });
 
-  it('shows the Revising chip when has_revision_draft is true', async () => {
+  it('shows the Editing chip when has_revision_draft is true (owner, 11 Nov: never Revising)', async () => {
     searchParams = new URLSearchParams('type=price_tag_request');
     mockContact(['price_tag_request']);
     (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -224,7 +225,7 @@ describe('PortalLanding - price tag card shows the revision badge/chip too (AC-R
 
     await screen.findByText('PT-202608-0001');
     const chip = screen.getByTestId('revising-chip');
-    expect(chip).toHaveTextContent('Revising');
+    expect(chip).toHaveTextContent('Editing');
   });
 });
 

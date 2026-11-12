@@ -31,12 +31,13 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import {
-  formatDateTime,
+  formatDateTimeInMalaysia,
   formatDuration,
   formatDurationWithSeconds,
   parseDateTimeAsUTC,
 } from '@/lib/helpers';
 import {
+  FORM_SLA_TYPE_LABELS,
   getFormSLATrackers,
   type FormSLASourceType,
 } from './formSLAService';
@@ -129,6 +130,10 @@ export default function FormSLATrackingTab({
   sourceEntityId,
 }: FormSLATrackingTabProps) {
   const queryClient = useQueryClient();
+  // Every underscore, not the first: "new product application", never "new product_application".
+  const typeWords = (
+    FORM_SLA_TYPE_LABELS[sourceEntityType] ?? sourceEntityType.replaceAll('_', ' ')
+  ).toLowerCase();
   const [selectedTrackerId, setSelectedTrackerId] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -213,7 +218,7 @@ export default function FormSLATrackingTab({
           <DataGridColumnHeader title="Initiated At" column={column} />
         ),
         cell: ({ row }) =>
-          formatDateTime(parseDateTimeAsUTC(row.original.initiated_at)),
+          formatDateTimeInMalaysia(parseDateTimeAsUTC(row.original.initiated_at)),
         size: 170,
       },
       {
@@ -227,7 +232,7 @@ export default function FormSLATrackingTab({
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(o.due_at))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(o.due_at))}
               </div>
               {overdue && (
                 <div className="flex items-center gap-1 text-xs text-destructive">
@@ -253,7 +258,7 @@ export default function FormSLATrackingTab({
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(dueRes))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(dueRes))}
               </div>
               {overdue && (
                 <div className="flex items-center gap-1 text-xs text-destructive">
@@ -472,7 +477,7 @@ export default function FormSLATrackingTab({
         <CardHeader className="py-6">
           <div className="text-sm text-muted-foreground">
             No SLA trackers attached to this{' '}
-            {sourceEntityType.replace('_', ' ')}. Configure form SLA stages in{' '}
+            {typeWords}. Configure form SLA stages in{' '}
             <strong>SLA Management → Form SLA Configuration</strong> and trigger
             the form&apos;s start event (e.g. submit) to spawn the first tracker.
           </div>
@@ -497,7 +502,7 @@ export default function FormSLATrackingTab({
         <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-4">
           <div className="text-sm text-muted-foreground">
             {trackers.length} tracker{trackers.length === 1 ? '' : 's'} for this{' '}
-            {sourceEntityType.replace('_', ' ')}
+            {typeWords}
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Button

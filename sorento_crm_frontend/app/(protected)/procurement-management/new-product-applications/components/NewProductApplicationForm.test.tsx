@@ -197,22 +197,6 @@ describe('pre-fill with a matched current code', () => {
   });
 });
 
-describe('number fields', () => {
-  it('sends null, never 0, once the quantity is cleared, and has no cost box', async () => {
-    renderForm();
-
-    const qty = (await screen.findByLabelText('Qty')) as HTMLInputElement;
-    fireEvent.change(qty, { target: { value: '55' } });
-    expect(qty.value).toBe('55');
-    fireEvent.change(qty, { target: { value: '' } });
-    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
-
-    saveDraft();
-    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
-    expect(lastBody().lines[0].expected_qty).toBeNull();
-  });
-});
-
 describe('paper layout', () => {
   it('draws Stock Inquiry\'s table rows under the title, then one line table with Add row and remove', async () => {
     renderForm();
@@ -236,14 +220,13 @@ describe('paper layout', () => {
       at = i;
     }
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: /add row/i }));
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(2);
-    fireEvent.click(screen.getByRole('button', { name: /^remove row 1$/i }));
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
+    // Owner hand test 9 Nov: the product table is gone from the form (header fields only).
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add row/i })).toBeNull();
+    expect(screen.queryByText('PRODUCT TYPE')).toBeNull();
     saveDraft();
     await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
-    expect(lastBody().lines).toHaveLength(1);
+    expect(lastBody().lines).toEqual([]);
   });
 
   it('shows LEADTIME read-only to the applicant with the waiting line, and no cost box', async () => {
@@ -256,15 +239,9 @@ describe('paper layout', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('sends only the v4 header keys and the paper line keys', async () => {
+  it('sends only the v4 header keys, with no product rows', async () => {
     renderForm();
-    await screen.findByLabelText('Product code');
-    fireEvent.change(screen.getByLabelText('Dimension'), {
-      target: { value: '600x400' },
-    });
-    fireEvent.change(screen.getByLabelText('Packing'), {
-      target: { value: 'Carton' },
-    });
+    await screen.findByText('NEW PRODUCT APPLICATION');
     saveDraft();
     await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
     const body = lastBody();
@@ -278,20 +255,23 @@ describe('paper layout', () => {
       'remark',
       'stock_inquiry_id',
     ]);
-    for (const k of ['images', 'staged_images', 'removed_link_ids'])
-      expect(body.lines[0]).not.toHaveProperty(k);
-    expect(body.lines[0].dimension).toBe('600x400');
-    expect(body.lines[0].packing).toBe('Carton');
+    expect(body.lines).toEqual([]);
+  });
+
+  it('shows no "No debtor code" chip next to a typed customer (owner hand test 9 Nov)', async () => {
+    renderForm();
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByText('No debtor code')).toBeNull();
   });
 });
 
 describe('Submit', () => {
   it('stays on the form when the server refuses, and reuses the saved draft on the next press', async () => {
     mock.submitAsync.mockRejectedValueOnce(
-      new Error('Product 1: enter the product type.'),
+      new Error('Say in REMARK what new product is wanted before you submit.'),
     );
     renderForm();
-    await screen.findByLabelText('Product code');
+    await screen.findByLabelText('Remark');
 
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() => expect(mock.submitAsync).toHaveBeenCalledTimes(1));
@@ -313,15 +293,13 @@ describe('pre-fill failure', () => {
     mock.prefillError = new Error('That stock inquiry could not be loaded.');
     renderForm({ stockInquiryId: 'si-gone' });
 
-    const code = (await screen.findByLabelText(
-      'Product code',
-    )) as HTMLInputElement;
-    expect(code.value).toBe('');
+    const remark = (await screen.findByLabelText('Remark')) as HTMLTextAreaElement;
+    expect(remark.value).toBe('');
     expect(toast.error).toHaveBeenCalledWith(
       'That stock inquiry could not be loaded.',
     );
-    fireEvent.change(code, { target: { value: 'XY-1' } });
-    expect(code.value).toBe('XY-1');
+    fireEvent.change(remark, { target: { value: 'Kitchen sink' } });
+    expect(remark.value).toBe('Kitchen sink');
   });
 });
 
@@ -395,39 +373,6 @@ describe('attachments (Stock Inquiry flow)', () => {
       ),
     ).toBe(true);
     confirmSpy.mockRestore();
-  });
-});
-
-describe('products by id after a save', () => {
-  it('a removed saved row and a new row: ids sent in body order, no duplicates on the next save', async () => {
-    mock.existing = savedDraft();
-    const after = {
-      id: 'npa-1',
-      lines: [
-        { id: 'l-2', line_no: 1 },
-        { id: 'l-new', line_no: 2 },
-      ],
-    };
-    mock.updateAsync.mockResolvedValue(after);
-    renderForm({ applicationId: 'npa-1' });
-    fireEvent.click(
-      await screen.findByRole('button', { name: /^remove row 1$/i }),
-    );
-    fireEvent.click(screen.getByRole('button', { name: /add row/i }));
-    saveDraft();
-    await waitFor(() => expect(mock.updateAsync).toHaveBeenCalledTimes(1));
-    expect(
-      (mock.updateAsync.mock.calls[0][0].data.lines as { id?: string }[]).map(
-        (l) => l.id ?? null,
-      ),
-    ).toEqual(['l-2', null]);
-    saveDraft();
-    await waitFor(() => expect(mock.updateAsync).toHaveBeenCalledTimes(2));
-    expect(
-      (mock.updateAsync.mock.calls[1][0].data.lines as { id?: string }[]).map(
-        (l) => l.id,
-      ),
-    ).toEqual(['l-2', 'l-new']);
   });
 });
 

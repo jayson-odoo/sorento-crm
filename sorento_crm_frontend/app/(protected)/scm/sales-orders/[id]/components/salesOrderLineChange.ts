@@ -54,6 +54,9 @@ export function lineChangeAnnotation(
     // line's own `sku` is already the new one), so the Was/Now table's first row is it.
     productChangedFrom:
       change.kind === 'product_changed' ? (change.from?.item_code ?? null) : null,
+    // SPLIT-SHEET-LOCATION: the location AutoCount moved the line from / to.
+    locationChangedFrom: change.from?.location ?? null,
+    locationChangedTo: change.to?.location ?? null,
     movedTransfer: null,
     whereItWent: whereItWentFrom(change.result),
     projectLineId: null,

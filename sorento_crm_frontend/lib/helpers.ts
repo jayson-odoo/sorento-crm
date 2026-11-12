@@ -392,6 +392,24 @@ export function malaysiaCivilYyyyMmDdFromApi(
   return `${y}-${m}-${d}`;
 }
 
+/** True when `day` is a real YYYY-MM-DD calendar day (31 Feb is not). */
+function isRealIsoDay(day: string | null | undefined): day is string {
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const [y, m, d] = day.split('-').map(Number);
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
+}
+
+/** UTC ISO of 00:00:00.000 on a Malaysia day (UTC+8, no DST); undefined for a non-day. */
+export function malaysiaDayStartIso(day: string | null | undefined): string | undefined {
+  return isRealIsoDay(day) ? new Date(`${day}T00:00:00.000+08:00`).toISOString() : undefined;
+}
+
+/** UTC ISO of 23:59:59.999 on a Malaysia day (UTC+8, no DST); undefined for a non-day. */
+export function malaysiaDayEndIso(day: string | null | undefined): string | undefined {
+  return isRealIsoDay(day) ? new Date(`${day}T23:59:59.999+08:00`).toISOString() : undefined;
+}
+
 /** Today's date in Malaysia as YYYY-MM-DD (for form defaults). */
 export function todayMalaysiaYyyyMmDd(): string {
   return malaysiaCivilYyyyMmDdFromApi(Date.now()) ?? '';
@@ -443,7 +461,10 @@ export function promotionFormDateToApiYyyyMmDd(value: Date | string | undefined)
  * Format a UTC datetime (from API/DB) as date and time in Malaysia timezone.
  * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
  */
-export function formatDateTimeInMalaysia(input: Date | string | number): string {
+export function formatDateTimeInMalaysia(
+  input: Date | string | number,
+  { seconds = false }: { seconds?: boolean } = {},
+): string {
   const date = toUTCDate(input);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('en-GB', {
@@ -452,6 +473,8 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    // STANDARD-HISTORY v2: a history shows seconds only where two entries share a minute.
+    ...(seconds ? { second: '2-digit' as const } : {}),
     hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);
@@ -459,7 +482,8 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
 
 /**
  * `01/01/2026 - 31/03/2026`: the one range shape, the same text the range picker shows
- * (`components/ui/date-range-picker.tsx`). One end alone shows that end; neither shows `fallback`.
+ * (`components/ui/date-range-picker.tsx`) for a full range. One end alone shows that end alone here;
+ * the picker's input adds a trailing or leading dash so the text can be re-typed. Neither end shows `fallback`.
  */
 export function formatDateRange(
   start: Date | string | number | null | undefined,

@@ -336,6 +336,14 @@ describe('Combos card hygiene (AC-6.3, AC-6.4)', () => {
     expect(comboFields.className).toContain('sm:grid-cols-2');
   });
 
+  it('the accessory list cell can shrink, so a long row never widens the page at 375px', () => {
+    renderCard();
+    // A grid item defaults to min-width:auto; without min-w-0 the list's truncating rows push
+    // the whole page past 375px (crew pass on #2273: 399px).
+    const cell = screen.getAllByTestId('accessory-list')[0].parentElement as HTMLElement;
+    expect(cell.className).toContain('min-w-0');
+  });
+
   it('shows a message and does not save a negative figure', () => {
     const block = renderCard();
     const input = within(block).getByLabelText(/^List price \(RM\)/i);

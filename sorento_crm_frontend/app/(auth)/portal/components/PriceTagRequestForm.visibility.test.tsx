@@ -40,6 +40,10 @@ vi.mock('../lib/portal-client', () => ({
 }));
 
 // Native `<select>` stand-in - same shape as the sibling suites.
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;

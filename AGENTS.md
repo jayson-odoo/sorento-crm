@@ -2,11 +2,13 @@
 
 Guidance for Codex agents working in this repository. This document is based on the current codebase, root docs, package configs, and README files. Items labeled **Assumption** are inferred from nearby code or docs rather than enforced by tooling.
 
+**Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
+
 ## Repo Layout
 
 This is a Sorento CRM monorepo with these main projects:
 
-- `sorento_crm_frontend/` - Next.js 15 / React 19 frontend using App Router, Tailwind 4, NextAuth, Prisma for auth/user/session data, TanStack Query/Table, Vitest, and Playwright.
+- `sorento_crm_frontend/` - Next.js 15 / React 19 frontend using App Router, Tailwind 4, NextAuth (no database of its own: users and sessions live in FastAPI), TanStack Query/Table, Vitest, and Playwright.
 - `sorento_crm_backend/` - FastAPI backend using SQLAlchemy, Alembic, Pydantic v2, APScheduler, Redis/RQ, S3/R2 storage helpers, pgvector, and pytest.
 - `sorento_crm_mcp/` - Python MCP server that exposes CRM read tools over Streamable HTTP. It proxies FastAPI `/api/v1` GET endpoints and also registers custom tools such as user-guide tools.
 - `sorento_crm_loadtest/` - k6 load/stress suite for backend, frontend, AI, and n8n/webhook scenarios.
@@ -53,9 +55,6 @@ npm run test:e2e
 npm run format
 npm run format:check
 
-npx prisma db push
-npx prisma generate
-node prisma/seed.js
 ```
 
 Vitest uses jsdom, globals, `vitest.setup.ts`, and `@/` mapped to the frontend root. Playwright specs live in `e2e/`, run Chromium only, use `PORTAL_E2E_BASE_URL ?? http://localhost:3000`, viewport `1400x1600`, one worker, no retries, and trace retention on failure.
@@ -142,7 +141,7 @@ Key frontend structure:
 - `app/api/v1/*` - proxy routes and selected BFF routes for backend-facing API calls.
 - `components/` and `app/components/` - shared UI and app-level components.
 - `components/ui/` - ReUI/shadcn-style primitives including DataGrid pieces.
-- `components/common/` - shared product components such as `ConfirmDeleteDialog`.
+- `components/common/` - shared product components such as `DeferredActionButton`.
 - `hooks/`, `providers/`, `lib/`, `services/`, `config/`, `modules/`, `types/` - shared client infrastructure.
 - Feature folders often contain local `components/`, `hooks/`, `services/`, and `types/`.
 
@@ -209,20 +208,20 @@ Do not duplicate shared primitives:
 - Use `extractApiError` instead of hand-rolled response JSON parsing.
 - Use `buildDataGridParams` instead of manually assembling DataGrid `page`, `limit`, `sort`, `dir`, and `query`.
 - Use `services/userSelectService` for user select options.
-- Use `ConfirmDeleteDialog` or `AlertDialog` for destructive confirmations.
+- Destructive and detach actions use the server-deferred countdown (`components/common/DeferredActionButton.tsx`); `ConfirmDeleteDialog` is retired and a destructive `AlertDialog` is a defect.
 
 ### CRUD UX
 
 Per `documentation/reference/ADR-PRODUCT-STANDARDS.md`:
 
-- List pages use a DataGrid/table with search, filters, pagination, and an Add/Create toolbar action.
+- List pages use a DataGrid/table with search, filters, pagination, and a toolbar button labelled just "Create".
 - Create and edit use modals by default.
 - Dedicated create/edit pages are for complex, nested, multi-tab, or file-centric flows.
 - View uses a dedicated detail page.
 - Detail pages render all relevant sections even when empty; use explicit empty states instead of hiding sections.
-- Delete is hard delete and always requires confirmation. If retention is needed, add a separate Archive action.
+- Delete is hard delete with no confirmation dialog: the button becomes a server-deferred countdown with a Cancel (`CLAUDE.md` "CRUD UX standard"). If retention is needed, add a separate Archive action.
 
-`.cursor/rules/delete-confirmation.mdc` also bans native `confirm()` for delete and requires count-aware bulk delete copy.
+Native `confirm()` is banned for delete.
 
 ### UI Text and IDs
 
@@ -251,8 +250,8 @@ If Playwright/browser verification is unavailable, state that explicitly and rep
 
 - API error handling and DataGrid query params: `sorento_crm_frontend/lib/api-client.ts`.
 - Feature service using `apiFetch`, `buildDataGridParams`, and `extractApiError`: `sorento_crm_frontend/app/(protected)/master-data-management/lookup-sets/services/lookupSetService.ts`.
-- Shared delete confirmation: `sorento_crm_frontend/components/common/ConfirmDeleteDialog.tsx`.
-- DataGrid list with explicit column sizes, truncation, modal create/edit, and delete dialog: `sorento_crm_frontend/app/(protected)/system-management/email-templates/components/EmailTemplatesList.tsx`.
+- Deferred delete countdown (replaces the retired confirm dialog): `sorento_crm_frontend/components/common/DeferredActionButton.tsx`.
+- DataGrid list with explicit column sizes, truncation, modal create/edit and deferred delete: `sorento_crm_frontend/app/(protected)/system-management/email-templates/components/EmailTemplatesList.tsx` (its per-row icon buttons predate `documentation/owner-standing-rules.md`; copy the rules, not those).
 - Backend application entry and global handlers: `sorento_crm_backend/app/main.py`.
 - Backend route mounting and module guards: `sorento_crm_backend/app/api/v1/__init__.py`.
 - Backend error contract: `sorento_crm_backend/app/services/error_handler.py`.
@@ -263,7 +262,7 @@ If Playwright/browser verification is unavailable, state that explicitly and rep
 ## Risky Areas
 
 - Auth and impersonation: `sorento_crm_frontend/lib/api.ts`, `sorento_crm_frontend/lib/impersonation-store.ts`, `sorento_crm_backend/app/dependencies.py`, NextAuth routes, and RBAC services/tests.
-- Migrations and data model changes: `sorento_crm_backend/alembic/`, `sorento_crm_backend/app/models/`, `sorento_crm_frontend/prisma/schema.prisma`.
+- Migrations and data model changes: `sorento_crm_backend/alembic/`, `sorento_crm_backend/app/models/`.
 - Storage and attachments: `sorento_crm_backend/app/services/s3_service.py`, `r2_service.py`, `storage_router.py`, attachment models/routes, and frontend upload components.
 - AI/MCP/tooling: `sorento_crm_backend/app/services/ai_assistant_service.py`, MCP catalog/server files, `mcp_tools` sync code, and user-guide sync scripts.
 - Public/external portals and n8n flows: backend `external`/`public` routes, frontend `app/(auth)/portal`, and load-test `scenarios/n8n`.
@@ -308,9 +307,9 @@ the repo. See `documentation/agents/triage-labels.md`.
 
 ### Domain docs
 
-Multi-context. `CONTEXT-MAP.md` at the root indexes two glossaries: root `CONTEXT.md` (Dealer
-Sales Kit, Authoring, Products and selling, Space and design, After-sales, Supply and purchasing)
-and `documentation/CONTEXT.md` (Project Sales, Company vs Tenant, Core vs Module). ADRs live in
+`CONTEXT-MAP.md` at the root indexes the glossary: `documentation/CONTEXT.md` (Project Sales,
+Company vs Tenant, Core vs Module). A root `CONTEXT.md` was never committed; there is no glossary
+yet for the other domains. ADRs live in
 `documentation/adr/`. Use the glossary's vocabulary in output; flag ADR conflicts rather than
 silently overriding them. See `documentation/agents/domain.md`.
 
@@ -320,7 +319,8 @@ Note this repo uses `documentation/`, not `docs/`. Anything referring to `docs/a
 ## Running several worktrees at once
 
 Every lane runs its own frontend and backend on its own ports, all on `localhost`, and
-that is where the sharp edges are.
+that is where the sharp edges are. One dev server per lane (never two for the same lane); this is
+the rule the crew worker contract uses and `CLAUDE.md` "Frontend dev loop" now says the same.
 
 - **NextAuth cookies are scoped by HOST, not by port**, so one lane's session cookie
   collides with another's. `NEXTAUTH_COOKIE_SUFFIX` in `.env.local` is what keeps them
@@ -352,5 +352,5 @@ When updating this file, preserve this bar for all agents and keep entries conci
 ## Assumptions
 
 - React 19 peer dependency conflicts are expected locally because the checked-in instructions and package state use `npm install --force`.
-- The frontend Prisma schema is for NextAuth/user/session-adjacent data, while business CRM data should be served through FastAPI. This is supported by README language and API architecture, but some legacy Next.js API routes still exist.
+- All business data, users and sessions included, is served through FastAPI (the frontend Prisma schema is gone), but some legacy Next.js API routes still exist.
 - Browser verification may require working local env, seeded users, and permissions that are not guaranteed by this repository alone.

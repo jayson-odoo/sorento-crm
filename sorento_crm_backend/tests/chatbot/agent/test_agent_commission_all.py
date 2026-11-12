@@ -17,7 +17,7 @@ from datetime import date
 import pytest
 
 from tests.chatbot.agent.test_ai_tools_wave2 import grant, run, targets  # noqa: F401  (fixtures)
-from tests.test_dealer_targets_api import _replacing_pair
+from tests.test_dealer_targets_api import _stacking_pair
 from tests.test_sales_targets_s1 import BASE, TEAMS_BASE, api, world  # noqa: F401  (fixtures)
 
 ENTITY = "agent_target_summary"
@@ -156,24 +156,25 @@ def test_C7_team_members_payout_is_their_own_agent_targets_by_team(team):
     assert out["totals"]["payout"] == 180.0 + 180.0
 
 
-# ------------------------------------------------------------------ replaced dealer period (Q5)
+# ------------------------------------------------------------------ stacking dealer targets (lane TARGET-PER-ACCOUNT-PAYOUT)
 
 
-def test_C8_a_replaced_dealer_period_pays_0_and_names_the_target_that_replaced_it(api, grant):
-    """One row per dealer target, as the Dealers tab lists them (crew live round 2): the account's own target pays 0
-    and names the dealer target that replaced it."""
+def test_C8_stacking_dealer_targets_both_pay_each_account_its_own_share(api, grant):
+    """One row per dealer target, as the Dealers tab lists them (crew live round 2). Owner 8 Nov: the combined target
+    and the account's own target both pay, and each row lists each account's own share."""
     client, db, company_id = api
     grant("sales.targets.view")
-    dealer, own = _replacing_pair(client, db, company_id, 1300000)
-    out = run(db, {"entity": ENTITY, "agent": "ZZT REPL A/C I", "period": YEAR,
-                   "fields": ["owner_kind", "targets", "payout", "replaced_by"]})
+    dealer, own = _stacking_pair(client, db, company_id, 1300000)
+    out = run(db, {"entity": ENTITY, "agent": "ZZT STACK A/C I", "period": YEAR,
+                   "fields": ["owner_kind", "targets", "payout", "account_payouts"]})
     assert len(out["rows"]) == 2 and {r["owner_kind"] for r in out["rows"]} == {"dealer"}
     year = date(2026, 1, 1), date(2026, 12, 31)
-    top, replaced = out["rows"]
-    assert top["payout"] == _page_payout(db, dealer["id"], *year) == 16000 + 32500 and top["replaced_by"] is None
-    assert replaced["payout"] == _page_payout(db, own["id"], *year) == 0
-    assert replaced["replaced_by"] == dealer["target_no"]
-    assert f"{own['target_no']} (ZZT REPL A/C I) is replaced by {dealer['target_no']}" in out["scope_note"]
+    top, second = out["rows"]
+    assert top["payout"] == _page_payout(db, dealer["id"], *year) == 16000 + 32500
+    assert top["account_payouts"] == "A/C I 16,000.00; A/C III 32,500.00"
+    assert second["payout"] == _page_payout(db, own["id"], *year) == 8000
+    assert second["account_payouts"] == "A/C I 8,000.00"
+    assert "replaced" not in (out.get("scope_note") or "")
 
 
 # ------------------------------------------------------------------ permissions (Q4) and the index
@@ -299,7 +300,7 @@ def test_R2_the_agent_field_note_warns_it_also_returns_the_agents_dealers():
 def test_R3_a_note_naming_more_rows_than_it_lists_says_how_many_more():
     from app.services.assistant_registry.sales import _summary_note
 
-    rows = [{"owner": f"A{i}", "_zero": [], "_has_commission": False, "_replaced": []} for i in range(7)]
+    rows = [{"owner": f"A{i}", "_zero": [], "_has_commission": False} for i in range(7)]
     assert "A0, A1, A2, A3, A4 and 2 more" in _summary_note(rows)
 
 
@@ -317,7 +318,7 @@ def dealers(targets):
     for name, sold in (("ZZT AAA LOW", 61000), ("ZZT MMM MID", 80000), ("ZZT ZZZ TOP", 100000)):
         c = _customer(db, company_id, name, level=1)
         _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
-        res = client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+        res = client.post(BASE, json=_dealer_body([c], tiers=[
             {"period_start": "2026-07-01", "threshold": 60000, "rate": 5},
         ]))
         assert res.status_code == 201, res.text
@@ -487,7 +488,7 @@ def test_P1_dealers_are_named_and_counted_as_the_dealers_tab_lists_them(targets)
     for ledger, sold in (("ZZT LEDGER CO (A/C I)", 61000), ("ZZT LEDGER CO (A/C III)", 80000)):
         c = _customer(db, company_id, ledger, level=1)
         _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
-        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+        assert client.post(BASE, json=_dealer_body([c], tiers=[
             {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
     out = run(db, {"entity": ENTITY, "period": "2026", "fields": ["payout"],
                    "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]})
@@ -517,9 +518,10 @@ def test_P2_view_own_never_sees_a_dealer_even_one_whose_accounts_it_owns(targets
 # ------------------------------------------------------------------ owner 8 Nov ~11:15 MYT
 
 
-def test_D1_same_name_dealer_rows_carry_the_payout_account_and_target_no_as_the_dealers_tab(targets):
-    """Owner (a): SK ONE STOP HOME CENTRE shown 3 times; each row says its payout account ('A/C I') and TGT number,
-    row for row with the Dealers tab, in the default columns."""
+def test_D1_same_name_dealer_rows_carry_the_account_payouts_and_target_no_as_the_dealers_tab(targets):
+    """Owner (a): SK ONE STOP HOME CENTRE shown 3 times; each row says its accounts ('A/C I') with each one's own
+    payout (lane TARGET-PER-ACCOUNT-PAYOUT) and its TGT number, row for row with the Dealers tab, in the default
+    columns."""
     from app.services.sales import target_service
     from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
 
@@ -529,16 +531,16 @@ def test_D1_same_name_dealer_rows_carry_the_payout_account_and_target_no_as_the_
     group = [_customer(db, company_id, "ZZT SAME NAME", level=level) for level in (1, 3)]
     for c, sold in zip(group, (61000, 80000)):
         _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
-        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+        assert client.post(BASE, json=_dealer_body([c], tiers=[
             {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
     out = run(db, {"entity": ENTITY, "period": "2026", "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]})
-    assert {"target_no", "payout_account"} <= {c["key"] for c in out["columns"]}
+    assert {"target_no", "account_payouts"} <= {c["key"] for c in out["columns"]}
     tab = target_service.list_all_targets(db, subject="dealer")["rows"]
-    assert sorted((r["label"], r["payout_account"], r["target_no"]) for r in out["rows"]) == sorted(
-        (r["subject_label"], r["payout_label"], r["target_no"]) for r in tab
+    assert sorted((r["label"], r["target_no"]) for r in out["rows"]) == sorted(
+        (r["subject_label"], r["target_no"]) for r in tab
     )
-    same = sorted((r["payout_account"], r["payout"]) for r in out["rows"] if r["label"] == "ZZT SAME NAME")
-    assert same == [("A/C I", 3050.0), ("A/C III", 4000.0)]
+    same = sorted((r["account_payouts"], r["payout"]) for r in out["rows"] if r["label"] == "ZZT SAME NAME")
+    assert same == [("A/C I 3,050.00", 3050.0), ("A/C III 4,000.00", 4000.0)]
 
 
 def test_D2_an_unasked_whole_table_after_a_named_empty_query_is_not_shown():
@@ -565,11 +567,11 @@ def test_G1_a_regroup_by_dealer_still_returns_the_per_row_table_with_tgt_and_acc
     """O2 run 3: the model grouped by dealer name, 52 rows without TGT / account columns and no 'Top N of M'."""
     db, _c, _t = dealers
     for spec in ({"group_by": ["owner"], "aggregates": [{"fn": "sum", "field": "payout"}]},
-                 {"group_by": [{"field": "owner"}, "payout_account"]},
+                 {"group_by": [{"field": "owner"}, "account_payouts"]},
                  {"aggregates": [{"fn": "sum", "field": "payout"}]}):
         out = run(db, {"entity": ENTITY, **DEALERS_YEAR, **spec, "limit": 2})
         assert "groups" not in out, spec
-        assert {"target_no", "payout_account", "payout"} <= {c["key"] for c in out["columns"]}
+        assert {"target_no", "account_payouts", "payout"} <= {c["key"] for c in out["columns"]}
         assert [r["payout"] for r in out["rows"]] == [5000.0, 4000.0]
         assert out["totals"]["payout"] == 15550.0 and out["ranked_by"] == "Commission payout"
     # A real grouping (per kind) is still a grouping.
@@ -582,10 +584,10 @@ def test_G1b_a_two_row_payout_table_is_code_rendered_and_survives_the_models_own
     from app.services.chatbot.agent.query_tools import as_card, shape_reply
 
     data = {"entity": ENTITY, "columns": [{"key": "label", "label": "x"}, {"key": "target_no", "label": "Target"},
-                                          {"key": "payout_account", "label": "Payout account"},
+                                          {"key": "account_payouts", "label": "Payout account"},
                                           {"key": "payout", "label": "Commission payout"}],
-            "rows": [{"id": "1", "label": "ZZT SK", "target_no": "TGT-000065", "payout_account": "A/C I", "payout": 170643.26},
-                     {"id": "2", "label": "ZZT SK", "target_no": "TGT-000064", "payout_account": "A/C I", "payout": 11769.92}],
+            "rows": [{"id": "1", "label": "ZZT SK", "target_no": "TGT-000065", "account_payouts": "A/C I", "payout": 170643.26},
+                     {"id": "2", "label": "ZZT SK", "target_no": "TGT-000064", "account_payouts": "A/C I", "payout": 11769.92}],
             "total": 2, "truncated": False, "totals": {"payout": 182413.18}}
     card = as_card(data, panel=True)
     assert card is not None and "TGT-000065" in card.display and "TGT-000064" in card.display
@@ -637,7 +639,7 @@ def test_G3_q6_reply_tidy_range_not_year_one_period_note_no_unasked_notes():
 # ------------------------------------------------------------------ crew live round 5 on 828c88de (8 Nov)
 
 
-def test_H1_tgt_and_payout_account_are_shown_whatever_columns_the_model_asks_for(targets):
+def test_H1_tgt_and_account_payouts_are_shown_whatever_columns_the_model_asks_for(targets):
     """Q2 run 3: the model passed its own column list without TGT / account and SK ONE STOP's rows looked identical."""
     from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
 
@@ -647,16 +649,16 @@ def test_H1_tgt_and_payout_account_are_shown_whatever_columns_the_model_asks_for
     for level, sold in ((1, 61000), (1, 80000)):
         c = _customer(db, company_id, "ZZT TWIN", level=level)
         _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
-        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+        assert client.post(BASE, json=_dealer_body([c], tiers=[
             {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
     for fields in (["payout"], ["owner_kind", "achieved_pct", "payout"],
                    ["targets", "target_value", "achieved_value", "achieved_pct", "commission", "bonus", "payout", "kinds"]):
         out = run(db, {"entity": ENTITY, "agent": "ZZT TWIN", "period": "2026", "fields": fields})
         keys = [c["key"] for c in out["columns"]]
-        assert keys[:3] == ["label", "target_no", "payout_account"], fields
+        assert keys[:3] == ["label", "target_no", "account_payouts"], fields
         assert "payout" in keys and "columns_dropped" not in out
-        twins = [(r["target_no"], r["payout_account"]) for r in out["rows"]]
-        assert len(twins) == 2 and len(set(twins)) == 2 and {a for _n, a in twins} == {"A/C I"}
+        twins = [(r["target_no"], r["account_payouts"]) for r in out["rows"]]
+        assert len(twins) == 2 and len(set(twins)) == 2 and all(a.startswith("A/C I ") for _n, a in twins)
 
 
 # ------------------------------------------------------------------ crew live round 6 on 3f9edf78 (8 Nov)
@@ -697,9 +699,9 @@ def test_K2_fifty_long_rows_are_all_in_the_table_plus_totals_never_49():
     from app.services.chatbot.agent.query_tools import query_result
 
     columns = [{"key": "label", "label": "Dealer"}, {"key": "target_no", "label": "Target"},
-               {"key": "payout_account", "label": "Payout account"}, {"key": "payout", "label": "Commission payout"}]
+               {"key": "account_payouts", "label": "Payout account"}, {"key": "payout", "label": "Commission payout"}]
     rows = [{"id": str(i), "label": f"ZZT A VERY LONG DEALER NAME SDN BHD NUMBER {i:03d} " + "X" * 120,
-             "target_no": f"TGT-{i:06d}", "payout_account": "A/C I", "payout": float(1000 - i)} for i in range(50)]
+             "target_no": f"TGT-{i:06d}", "account_payouts": "A/C I", "payout": float(1000 - i)} for i in range(50)]
     data = {"entity": ENTITY, "columns": columns, "rows": rows, "total": 88, "truncated": True,
             "ranked_by": "Commission payout", "totals": {"payout": 99999.0}}
     out = query_result(data, panel=True)

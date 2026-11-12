@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
 import {
   numberedPins,
@@ -26,6 +27,7 @@ import {
 } from '@/lib/dealer-kit/review-comments';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import { cn } from '@/lib/utils';
+import { toast } from '@/lib/toast';
 
 /** What the review reads off the request: never more than the portal's own detail body carries. */
 export interface PriceTagReviewRequest {
@@ -51,6 +53,11 @@ interface PriceTagDesignReviewProps {
   loadDesign: (id: string) => Promise<TagSheetDesignPayload | null>;
   /** Every change request sent on this design, all rounds. */
   loadReviewComments: (id: string) => Promise<ReviewComment[]>;
+  /**
+   * PRICETAG-REQUEST-LAYOUT (owner hand test 11 Nov): the request page keeps no inline design;
+   * its Preview button opens this in the shared lightbox, pins, Approve and download included.
+   */
+  popup?: { open: boolean; onOpenChange: (open: boolean) => void };
 }
 
 /**
@@ -71,6 +78,7 @@ export function PriceTagDesignReview({
   download,
   loadDesign,
   loadReviewComments,
+  popup,
 }: PriceTagDesignReviewProps) {
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -285,6 +293,42 @@ export function PriceTagDesignReview({
     </div>
   ) : null;
 
+  if (popup) {
+    if (!popup.open || loading) return null;
+    if (!payload) {
+      return (
+        <DesignUnavailable
+          onDone={() => popup.onOpenChange(false)}
+        />
+      );
+    }
+    return (
+      <DesignLightbox
+        open
+        onOpenChange={popup.onOpenChange}
+        title={request.doc_number ?? 'Design'}
+        payload={payload}
+        download={download}
+        review={review}
+        footer={
+          reviewable ? (
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <Button size="sm" onClick={onApprove}>
+                  <Check className="size-4 mr-1" />
+                  Approve
+                </Button>
+              </div>
+              {footer}
+            </div>
+          ) : (
+            footer
+          )
+        }
+      />
+    );
+  }
+
   return (
     <DesignViewer
       docNumber={request.doc_number ?? 'Design'}
@@ -305,4 +349,15 @@ export function PriceTagDesignReview({
       }
     />
   );
+}
+
+/** A popup asked for a design that is not there yet: say so once and close, no empty dialog. */
+function DesignUnavailable({ onDone }: { onDone: () => void }) {
+  useEffect(() => {
+    toast.info('Design not available yet.');
+    onDone();
+    // Once per opening.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
 }

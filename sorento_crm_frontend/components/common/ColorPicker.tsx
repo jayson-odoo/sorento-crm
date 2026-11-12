@@ -341,13 +341,16 @@ export function ColorPicker({ value, onChange, label, usedColours = [], ariaLabe
   const handleSvCommit = (next: SvChange) => {
     onChange(hsvToHex({ ...hsv, ...next }));
   };
+  /** A hue on black, white or grey shows no colour at all; picking one means the full colour. */
+  const withHue = (h: number): Hsv =>
+    hsv.s === 0 || hsv.v === 0 ? { h, s: 100, v: 100 } : { ...hsv, h };
   const handleHueLive = (h: number) => {
-    const nextHsv = { ...hsv, h };
+    const nextHsv = withHue(h);
     setHsv(nextHsv);
     setInputValue(hsvToHex(nextHsv));
   };
   const handleHueCommit = (h: number) => {
-    onChange(hsvToHex({ ...hsv, h }));
+    onChange(hsvToHex(withHue(h)));
   };
 
   const handleEyedropper = async () => {

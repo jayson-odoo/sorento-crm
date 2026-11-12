@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
 import { listActivities } from '@/components/common/ActivitiesNotesPanel/activitiesPanelService';
+import { formatSystemEvent } from '@/components/common/ActivitiesNotesPanel/formatSystemEvent';
 import type { ActivityEvent } from '@/components/common/ActivitiesNotesPanel/types';
 import type { Project } from '../../_shared/types/project.types';
 import { InfoHint } from './InfoHint';
@@ -36,11 +37,14 @@ const MEANINGFUL: Record<string, string> = {
 function describe(event: ActivityEvent): { text: string; meaningful: boolean } {
   const template = event.system_template ?? '';
   const known = MEANINGFUL[template];
-  if (known) return { text: known, meaningful: true };
+  // The sentence the server saved wins over the generic label ("PRJQ-2026-0009 copied from
+  // PRJQ-2026-0003 for ...", QUOTE-DUPLICATE-PARTY crew pass); never an internal key.
+  const saved = event.body_text?.trim();
+  if (known) return { text: saved || known, meaningful: true };
   if (event.kind === 'user_update') {
-    return { text: event.body_text || 'Posted an update', meaningful: true };
+    return { text: saved || 'Posted an update', meaningful: true };
   }
-  return { text: event.body_text || template.replace(/_/g, ' ') || 'Activity', meaningful: false };
+  return { text: saved || formatSystemEvent(template, event.system_payload) || 'Activity', meaningful: false };
 }
 
 export function ProjectActivityPanel({ project }: { project: Project }) {

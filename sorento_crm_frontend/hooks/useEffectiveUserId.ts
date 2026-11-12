@@ -2,6 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useImpersonationSession } from '@/lib/impersonation-store';
+import { useSessionOrSignedOut } from '@/hooks/useSessionOrSignedOut';
 
 /**
  * The acting user's id, impersonation-aware.
@@ -19,4 +20,20 @@ export function useEffectiveUserId(): string | null {
   const { data: session } = useSession();
   const impersonation = useImpersonationSession();
   return impersonation?.targetUser?.id ?? session?.user?.id ?? null;
+}
+
+/**
+ * The acting user's name, impersonation-aware like `useEffectiveUserId`: the impersonated
+ * target's name during a view-as (the backend saves created_by as that user), otherwise the
+ * signed-in user's. A new quotation shows it as Prepared By (owner ruling 11 Nov 2026).
+ */
+export function useEffectiveUserName(): string | null {
+  // Read as signed out where no SessionProvider wraps the tree (the quotation form renders in
+  // isolation in its tests), the same guard `usePermissions` uses.
+  const { data: session } = useSessionOrSignedOut();
+  const impersonation = useImpersonationSession();
+  if (impersonation?.targetUser) {
+    return impersonation.targetUser.name || impersonation.targetUser.email || null;
+  }
+  return session?.user?.name ?? null;
 }

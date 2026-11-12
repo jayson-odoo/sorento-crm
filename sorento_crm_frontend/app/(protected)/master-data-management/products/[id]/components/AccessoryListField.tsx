@@ -23,6 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { AttachmentImage } from '@/components/common/AttachmentImage';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -34,31 +35,32 @@ import { getProducts } from '../../services/productService';
 import { searchAccessories } from '../../../accessories/services/accessoryService';
 import {
   useCreateAccessory,
-  fetchBoxStyleOptions,
-  useBoxStyleOptions,
   useOwnerAccessories,
   useReplaceOwnerAccessories,
 } from '../../../accessories/hooks/useAccessories';
 import {
   entryKey,
   hasOverrides,
+  rowPicture,
   type AccessoryEntry,
   type AccessoryOwnerKind,
 } from '../../../accessories/types/accessory.types';
 import { AccessoryEntryDialog } from './AccessoryEntryDialog';
 
 function AccessoryThumb({ accessory }: { accessory: AccessoryEntry }) {
-  return accessory.image ? (
-    // A signed CDN URL, not an asset next/image can optimise.
-    <img
-      src={accessory.image.url}
-      alt=""
+  // The row's own pick (`entry.image_id`), so a Save shows it at once through the optimistic write.
+  const picture = rowPicture(accessory);
+  return (
+    <AttachmentImage
+      thumbUrl={picture?.thumb_url}
+      url={picture?.url}
       className="size-10 shrink-0 rounded-md border object-cover"
+      fallback={
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed px-0.5 text-center text-2xs leading-tight text-muted-foreground">
+          No picture
+        </span>
+      }
     />
-  ) : (
-    <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed px-0.5 text-center text-2xs leading-tight text-muted-foreground">
-      No picture
-    </span>
   );
 }
 
@@ -168,9 +170,6 @@ export function AccessoryListField({
 }) {
   const { data } = useOwnerAccessories(kind, ownerId);
   const save = useReplaceOwnerAccessories(kind, ownerId);
-  // The owner's box style rides in the same answer as its list.
-  const boxStyleId = data?.box_style_id ?? null;
-  const { data: styleOptions = [] } = useBoxStyleOptions(true);
   const create = useCreateAccessory();
   const items = data ?? [];
   const known = useRef(new Map<string, AccessoryEntry>());
@@ -194,28 +193,34 @@ export function AccessoryListField({
 
   const has = (key: string) => items.some((a) => entryKey(a) === key);
 
-  const fetchOptions = async (query: string): Promise<SearchableSelectOption[]> => {
-    const found = await searchAccessories(query);
-    return found
+  /**
+   * ONE picker for both kinds (owner 10 Nov): the accessory library on the first page, then the
+   * catalogue products, server-searched and paged. Values carry the kind (`accessory:<id>`,
+   * `product:<id>`), the same key the list itself uses.
+   */
+  const fetchOptions = async (query: string, pageIndex: number): Promise<SearchableSelectOption[]> => {
+    const [accessories, products] = await Promise.all([
+      pageIndex === 0 ? searchAccessories(query) : Promise.resolve([]),
+      getProducts({
+        pageIndex,
+        pageSize: PRODUCT_PAGE_SIZE,
+        sorting: [],
+        searchQuery: query,
+        status: 'active',
+      }),
+    ]);
+    const accessoryOptions = accessories
       .filter((a) => !has(`accessory:${a.id}`))
       .map((a) => {
         known.current.set(`accessory:${a.id}`, { ...a, kind: 'accessory', code: null, list_price: null });
-        return { value: a.id, label: a.name, description: richOneLine(a.spec) || undefined };
+        return {
+          value: `accessory:${a.id}`,
+          label: a.name,
+          description: richOneLine(a.spec) || undefined,
+          group: 'Accessories',
+        };
       });
-  };
-
-  const fetchProductOptions = async (
-    query: string,
-    pageIndex: number,
-  ): Promise<SearchableSelectOption[]> => {
-    const products = await getProducts({
-      pageIndex,
-      pageSize: PRODUCT_PAGE_SIZE,
-      sorting: [],
-      searchQuery: query,
-      status: 'active',
-    });
-    return (products.data ?? [])
+    const productOptions = (products.data ?? [])
       .filter((p) => p.id !== ownerHostId && !has(`product:${p.id}`))
       .map((p) => {
         known.current.set(`product:${p.id}`, {
@@ -230,11 +235,15 @@ export function AccessoryListField({
           list_price: null,
         });
         return {
-          value: p.id,
+          value: `product:${p.id}`,
           label: codeWithName(p.product_code, p.product_name),
           searchText: `${p.product_code} ${p.product_name}`,
+          // Still pickable, with the grey hint the other combo pickers use (owner 7 Nov).
+          description: p.is_discontinued ? 'Discontinued' : undefined,
+          group: 'Products',
         };
       });
+    return [...accessoryOptions, ...productOptions];
   };
 
   const add = (key: string) => {
@@ -302,50 +311,22 @@ export function AccessoryListField({
         }}
       />
       {canEdit ? (
-        <div className="space-y-1.5">
-          <Label>Box style</Label>
-          <SearchableSelect
-            value={boxStyleId ?? ''}
-            fetchOptions={fetchBoxStyleOptions}
-            selectedOption={styleOptions.find((option) => option.value === boxStyleId)}
-            onChange={(value: string) => save.mutate({ next: items, boxStyleId: value || null })}
-            placeholder="Tag template's own box"
-            aria-label="Box style"
-            clearable
-          />
-        </div>
-      ) : (
-        <div className="space-y-1">
-          <Label>Box style</Label>
-          <p className="text-sm text-muted-foreground">
-            {styleOptions.find((option) => option.value === boxStyleId)?.label ??
-              (boxStyleId ? 'Saved accessories template' : "Tag template's own box")}
-          </p>
-        </div>
-      )}
-      {canEdit ? (
         <SearchableSelect
           value=""
-          onChange={(id) => add(`accessory:${id}`)}
-          fetchOptions={fetchOptions}
-          placeholder="Add accessory"
-          aria-label={`Add accessory${label ? ` to ${label}` : ''}`}
-          clearable={false}
-          createOption={{
-            label: (query) => `Create "${query}"`,
-            onCreate: (query) => void onCreate(query),
+          onChange={(key) => {
+            if (key) add(key);
           }}
-        />
-      ) : null}
-      {canEdit ? (
-        <SearchableSelect
-          value=""
-          onChange={(id) => add(`product:${id}`)}
-          fetchOptions={fetchProductOptions}
+          fetchOptions={fetchOptions}
           paginated
           pageSize={PRODUCT_PAGE_SIZE}
-          placeholder="Add product"
-          aria-label={`Add product${label ? ` to ${label}` : ''}`}
+          placeholder="Add accessory or product"
+          aria-label={`Add accessory or product${label ? ` to ${label}` : ''}`}
+          emptyMessage="No accessories or products found."
+          clearable={false}
+          createOption={{
+            label: (query) => (query.trim() ? `Create accessory "${query.trim()}"` : null),
+            onCreate: (query) => void onCreate(query.trim()),
+          }}
         />
       ) : null}
     </div>

@@ -110,8 +110,13 @@ function selectedChipsPlugin() {
   });
 }
 
-export const MergeFieldNode = Node.create({
+export const MergeFieldNode = Node.create<{ label: ((path: string) => string | null) | null }>({
   name: 'mergeField',
+
+  addOptions() {
+    // A chip's readable name (a combo part's "BASIN - SRTWB2380: code"); null = the token itself.
+    return { label: null };
+  },
   group: 'inline',
   inline: true,
   atom: true,
@@ -142,7 +147,7 @@ export const MergeFieldNode = Node.create({
           'dark:[&.merge-field-selected]:bg-sky-700 dark:[&.merge-field-selected]:text-white',
         ].join(' '),
       }),
-      `{{${node.attrs.path}}}`,
+      this.options.label?.(node.attrs.path) ?? `{{${node.attrs.path}}}`,
     ];
   },
 

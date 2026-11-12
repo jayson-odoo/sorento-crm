@@ -51,9 +51,9 @@ export function resolveReserveRowRequestAnchor(
 
 /**
  * N1 (fix round 4 nit, carried into round 4): a `SearchableSelect` option's own
- * `label` carries the available-qty suffix in production (`useReserveRowOptions.ts`:
- * `${location}  available ${qty}`, two spaces) - reading it straight would flash
- * "Reserve 20 @ DC1  available 20" on the staged chip. The BARE code is everything
+ * `label` carries the on-hand suffix in production (`useReserveRowOptions.ts`:
+ * `${location}  on hand ${qty}`, two spaces) - reading it straight would flash
+ * "Reserve 20 @ DC1  on hand 20" on the staged chip. The BARE code is everything
  * before that double space (absent in a fixture that never carries the suffix, where
  * this is a no-op).
  */

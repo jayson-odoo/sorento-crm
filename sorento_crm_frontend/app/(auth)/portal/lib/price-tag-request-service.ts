@@ -85,6 +85,7 @@
  * ===========================================================================
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
@@ -200,6 +201,23 @@ export interface PriceTagRequestLine {
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the template this line prints with, and its name. */
   tag_template_id?: string | null;
   tag_template_name?: string | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the variant members unticked for this tag. */
+  excluded_variant_ids?: string[];
+}
+
+/** PRICETAG-UPGRADE-VARIANTS: one member of a line product's variant tree (the chooser). */
+export interface VariantMemberOption {
+  product_id: string;
+  code: string;
+  name: string;
+  list_price: number | null;
+  is_discontinued: boolean;
+}
+
+/** `GET /lookups/variant-members/{product_id}`: the members and the product's own list price. */
+export interface VariantMembersLookup {
+  members: VariantMemberOption[];
+  own_list_price: number | null;
 }
 
 /** One template a product may print with (PRICETAG-TEMPLATE-PER-PRODUCT). */
@@ -219,6 +237,9 @@ export interface ProductTagTemplateOption {
   default_selling?: boolean;
   /** What the template reads from a combo (from its published layers). */
   needs?: TemplateNeeds;
+  /** PRICETAG-UPGRADE-VARIANTS: the template has a layer on "All variants" (the line then offers
+   *  "Variants on this tag"). Absent on an older server = no. */
+  reads_variants?: boolean;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -234,6 +255,8 @@ export interface TagPreviewLineInput {
   tag_template_id: string | null;
   /** PRICETAG-LPSP: null = the request's mode. */
   price_type?: PriceMode | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the members unticked on the line. */
+  excluded_variant_ids?: string[];
 }
 
 /** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */
@@ -251,12 +274,21 @@ export interface TagPreviewResponse {
  *  `selling` requires a promotion - the server rejects it without one. */
 export type PriceMode = 'list' | 'selling';
 
+/** One customer a request prints for (PRICETAG-REQUEST-LAYOUT). */
+export interface RequestCustomer {
+  code: string | null;
+  name: string;
+}
+
 export interface PriceTagRequestSummary {
   id: string;
   doc_number: string;
   debtor_code: string | null;
   /** Null on a draft: Save Draft validates nothing (D48a). */
   debtor_name: string | null;
+  /** Every customer, in pick order; the first is mirrored into `debtor_*`. Absent from an
+   *  older server; an older request answers its one debtor. */
+  customers?: RequestCustomer[];
   /** Null on a draft, for the same reason as `debtor_name`. */
   needed_by_date: string | null;
   notes: string | null;
@@ -429,6 +461,8 @@ export type PriceTagRequestLineInput = {
   tag_template_id?: string | null;
   /** PRICETAG-LPSP: this line's LP or SP; null/absent = the request's mode. */
   price_type?: PriceMode | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the variant members unticked for this tag ([] = all ticked). */
+  excluded_variant_ids?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -503,6 +537,8 @@ async function unwrapNamingFields<T>(res: Response, fallback: string): Promise<T
 export interface CreatePriceTagRequestInput {
   debtor_code: string | null;
   debtor_name: string | null;
+  /** PRICETAG-REQUEST-LAYOUT: every customer; the server mirrors the first into `debtor_*`. */
+  customers?: RequestCustomer[];
   // D1 (S6): no request-level `promotion_id` any more - both `PriceTagRequestCreate`
   // and `...Update` `extra="forbid"` it now; the promotion is a LINE fact
   // (`PriceTagRequestLineInput.promotion_id`).
@@ -636,6 +672,13 @@ export function makePriceTagRequestService(
     return unwrap<ProductTagTemplateOption[]>(res, 'Failed to load the tag templates for this product');
   }
 
+  /** PRICETAG-UPGRADE-VARIANTS: the line's "Variants on this tag" members. Called once per
+   *  product pick, like the combos lookup. */
+  async function lookupVariantMembers(productId: string): Promise<VariantMembersLookup> {
+    const res = await fetcher(`${LOOKUPS}/variant-members/${encodeURIComponent(productId)}`);
+    return unwrap<VariantMembersLookup>(res, 'Failed to load the variants of this product');
+  }
+
   /** The live preview: the form's lines in progress, nothing saved. */
   async function lookupTagPreview(
     priceMode: PriceMode,
@@ -713,14 +756,15 @@ export function makePriceTagRequestService(
         kind: 'price_tag_request' as const,
         // A draft may have no dealer yet, and a card with a blank first line reads
         // as a broken row rather than an unfinished one.
-        title: r.debtor_name || r.doc_number,
+        title: customersLabel(requestCustomers(r)) || r.doc_number,
         document_number: r.doc_number,
         reference: null,
         status: r.status,
         is_editable: isDraft,
         is_draft: isDraft,
         created_at: r.created_at,
-        customer_name: r.debtor_name,
+        customer_name: customersLabel(requestCustomers(r)),
+        customer_names: requestCustomers(r).map((c) => c.name).join(', ') || null,
         needed_by_date: r.needed_by_date,
         // AC-R7: the same revision fields the legacy kinds' own summaries carry
         // (D45's landing card reads these for the "Rev N" / "Revising" badges) -
@@ -977,6 +1021,7 @@ export function makePriceTagRequestService(
     lookupTagItems,
     lookupProductCombos,
     lookupProductTagTemplates,
+    lookupVariantMembers,
     lookupTagPreview,
     lookupLinePricing,
     listRequests,
@@ -1009,6 +1054,7 @@ export const {
   lookupTagItems,
   lookupProductCombos,
   lookupProductTagTemplates,
+  lookupVariantMembers,
   lookupTagPreview,
   lookupLinePricing,
   listRequests,

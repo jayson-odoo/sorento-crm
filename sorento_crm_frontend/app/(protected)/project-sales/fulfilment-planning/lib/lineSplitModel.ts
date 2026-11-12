@@ -31,6 +31,8 @@ export interface SplitLine {
   itemCode: string;
   /** The product AutoCount swapped the line from (email ITEM CODE); null = not swapped. */
   wasItemCode?: string | null;
+  /** The location AutoCount moved the line from (email LOCATION); null = not moved. */
+  wasLocation?: string | null;
   location: string;
   baseQty: number;
   baseDate: string | null;
@@ -568,6 +570,7 @@ export function fromPayload(payload: LineSplitsPayload): SplitLine[] {
     lineNo: line.line_no,
     itemCode: line.item_code,
     wasItemCode: line.was_item_code ?? null,
+    wasLocation: line.was_location ?? null,
     location: line.location,
     baseQty: Number(line.base_qty) || 0,
     baseDate: line.base_date,

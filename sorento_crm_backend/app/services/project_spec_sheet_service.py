@@ -54,6 +54,7 @@ from app.services.storage_router import (
     normalize_provider,
     resolve_signed_url,
 )
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +362,9 @@ def _version_lines(db: Session, version_ids: Sequence[str]) -> List[tuple]:
             heading = (line.band_label or "").strip()
             if heading:
                 section = heading
+            # A heading row sets the section and is never an item itself (PROPOSAL-FORM-COLLAPSE).
+            if line.is_section:
+                continue
             lines.append((line, section))
     return lines
 
@@ -419,7 +423,7 @@ def snapshot_items(
             "line_id": line.id,
             "product_id": (driver or {}).get("product_id") or line.product_id,
             "code": (driver or {}).get("product_code") or line.product_code_snapshot or "",
-            "description": (driver or {}).get("description") or line.description_snapshot or "",
+            "description": (driver or {}).get("description") or line_text(line) or "",
             "brand": line.brand_snapshot or "",
             "image_attachment_id": line.image_attachment_id,
             "drawing_attachment_id": line.drawing_attachment_id,
@@ -544,7 +548,7 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
     from app.services.dealer_kit import tag_data_service as tags
 
     if product is None:
-        return {"dimensions": "", "spec_lines": [], "specs": [], "barcode": None}
+        return {"dimensions": "", "spec_lines": [], "specs": [], "barcode": None, "description": None}
     if product.id not in spec_cache:
         rows = spec_cache.get(_ROWS) or {}
         spec_row = rows[str(product.id)] if str(product.id) in rows else tags._spec_row(db, product)
@@ -553,6 +557,8 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
             "spec_lines": tags.spec_lines(db, product, spec_row),
             "specs": tags.product_specs(db, product, spec_row),
             "barcode": product.barcode or None,
+            # {{product.description}}: the product master's plain description.
+            "description": product.description or None,
         }
     return spec_cache[product.id]
 
@@ -678,13 +684,12 @@ def _document_of(db: Session, sheet: ProjectQuotationSpecSheet) -> ProjectQuotat
 
 
 def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict:
-    from app.models.user import User
     from app.services.project_quotation_document_service import quotation_no
+    from app.services.project_quotation_template_service import prepared_by_user
 
     project = db.query(Project).filter(Project.id == document.project_id).first()
-    owner = None
-    if project is not None and project.owner_user_id:
-        owner = db.query(User).filter(User.id == project.owner_user_id).first()
+    # Prepared By is the document's creator (owner ruling 11 Nov 2026, compliance).
+    preparer = prepared_by_user(db, document)
     issue = db.get(ProjectQuotationIssue, sheet.issue_id) if sheet.issue_id else None
     number = (
         quotation_no(document.document_no, issue.issue_no, issue.revision_label)
@@ -702,10 +707,8 @@ def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict
         "quotation_no": number,
         # Q2 (a): the customer's own ref when there is one, else ours.
         "ref": your_ref or number,
-        "prepared_by": (document.signatory_name or (owner.name if owner else "") or "").strip(),
-        "prepared_by_phone": (
-            document.signatory_phone or (getattr(owner, "contact_number", None) if owner else "") or ""
-        ).strip(),
+        "prepared_by": ((preparer.name if preparer else "") or "").strip(),
+        "prepared_by_phone": ((preparer.contact_number if preparer else "") or "").strip(),
         "date": fmt_date(issued, naive_is_utc=False) if issued else "",
     }
 
@@ -739,6 +742,7 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
         "quantity": 1,
         "barcode": None,
         "price_tag_description": None,
+        "description": None,
         "drawing": None,
         "area": "",
         "comment": "",
@@ -1160,6 +1164,7 @@ def build_print_payload(
                     "images": [photo] if photo else [],
                     "drawing": _image(acc["_drawing"], urls),
                     "barcode": part_fields["barcode"],
+                    "description": part_fields["description"],
                     # A set part has no price of its own (the set line carries it); a
                     # hand-picked accessory carries its own quoted line price.
                     "list_price": acc.get("_price"),
@@ -1181,6 +1186,7 @@ def build_print_payload(
                 "images": [photo] if photo else [],
                 "drawing": _image(page["_drawing"], urls),
                 "barcode": fields["barcode"],
+                "description": fields["description"],
                 "parts": parts,
                 "own_parts": parts,
                 "area": page["area"].upper(),

@@ -31,6 +31,8 @@ export function FormSection({
   onOpenChange,
   children,
   className,
+  bodyClassName,
+  keepMounted = false,
 }: {
   title: string;
   /**
@@ -45,6 +47,13 @@ export function FormSection({
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
   className?: string;
+  /** Overrides the body's padding, e.g. for a child that is itself a card. */
+  bodyClassName?: string;
+  /**
+   * Keep the body mounted (hidden) while collapsed, for a section holding editors whose
+   * unsaved state must survive a fold (the proposal form's Header and Lines).
+   */
+  keepMounted?: boolean;
 }) {
   return (
     <Card className={cn('overflow-hidden', className)}>
@@ -76,8 +85,16 @@ export function FormSection({
             />
           </button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
-          <div className="min-w-0 space-y-4 border-t px-4 py-4">{children}</div>
+        <CollapsibleContent
+          // forceMount alone leaves the body shown (Radix counts it as present), so a kept
+          // body is hidden by hand while folded.
+          forceMount={keepMounted ? true : undefined}
+          hidden={keepMounted ? !open : undefined}
+          className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none"
+        >
+          <div className={cn('min-w-0 space-y-4 border-t px-4 py-4', bodyClassName)}>
+            {children}
+          </div>
         </CollapsibleContent>
       </Collapsible>
     </Card>

@@ -26,6 +26,7 @@ from app.schemas.new_product_application import (
 from app.services import new_product_application_service as svc
 from app.services import npa_xlsx
 from app.services.error_handler import AppException
+from app.services.handling_lock_service import assert_can_act_on_form
 from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
@@ -224,11 +225,86 @@ def download_application(
     )
 
 
+@router.post("/{application_id}/export/xlsx")
+def export_application_xlsx(
+    application_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The same workbook through My Downloads, the stock inquiry PDF's way (NPA-FORM-SLA, owner 9 Nov):
+    a `user_downloads` row the RQ worker fills, so the list's Print Count counts it and its button
+    re-downloads it. Whoever can view the record may take it."""
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_new_product_application_xlsx
+
+    app = _load(db, application_id)
+    svc.assert_can_view(app, _actor(db, user))
+    downloads = DownloadService(db)
+    # One in flight per viewer per application (security review N3), as the order inquiry exports.
+    if downloads.has_in_flight(
+        user_id=str(user["id"]),
+        kind="new_product_application_xlsx",
+        source_entity_type=svc.ENTITY,
+        source_entity_id=str(app.id),
+    ):
+        raise AppException(
+            status_code=409,
+            message="This workbook is already being prepared - check My Downloads.",
+            code="CONFLICT",
+        )
+    download = downloads.create(
+        user_id=str(user["id"]),
+        kind="new_product_application_xlsx",
+        source_entity_type=svc.ENTITY,
+        source_entity_id=str(app.id),
+        filename=f"{app.application_no}.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_new_product_application_xlsx,
+            str(download.id),
+            str(app.id),
+            str(user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:  # noqa: BLE001 - the drawer must show it, never a pending row forever
+        downloads.mark_failed(str(download.id), f"Could not queue the workbook: {e}")
+        raise AppException(status_code=500, message="Could not queue the workbook. Please try again.", code="INTERNAL_ERROR")
+    return DownloadResponse.model_validate(downloads.get(str(download.id)))
+
+
+#: The approver's and purchasing's moves: gated by the form handling lock like every SI move
+#: (`api/v1/procurement/stock_inquiries.py`, NPA-FORM-SLA). The applicant's own moves (submit,
+#: revise, cancel) are not stage work and stay open to them.
+_STAGE_WORK = {
+    svc.approve,
+    svc.reject,
+    svc.purchasing_reject,
+    svc.save_purchasing_response,
+    svc.save_feedback,
+    svc.link_new_code,
+    svc.close_new_code,
+    svc.undo_new_code,
+    svc.link_line,
+    svc.close_line,
+    svc.undo_line,
+}
+
+
+def _gate(db: Session, user: dict, app, fn) -> None:
+    if fn in _STAGE_WORK:
+        assert_can_act_on_form(db, str(app.id), user, source_entity_type=svc.ENTITY)
+
+
 def _move(db: Session, user: dict, application_id: str, fn, **kw):
     try:
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
+        _gate(db, user, app, fn)
         event = fn(db, app, actor=actor, **kw)
         return _done(db, app, event, actor.user_id)
     except Exception:
@@ -281,6 +357,7 @@ def _line_move(db: Session, user: dict, application_id: str, line_id: str, fn, *
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
+        _gate(db, user, app, fn)
         event = fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=actor, **kw)
         return _done(db, app, event, actor.user_id)
     except Exception:
@@ -383,9 +460,30 @@ def save_purchasing_response_and_reply(
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
+        _gate(db, user, app, svc.save_purchasing_response)
         inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+        si_chat = inquiry is not None and bool(
+            si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        )
+        if not si_chat and svc.raised_in_portal(app):
+            # Owner 9 Nov ~02:30: a portal-raised NPA with no stock inquiry chat replies to its
+            # applicant through the portal that raised it (an in-app notice with the text and the
+            # link to that portal page; the response shows on that page). No WhatsApp send.
+            event = svc.save_purchasing_response(
+                db, app, actor=actor, data=payload.model_dump(exclude_unset=True)
+            )
+            svc.mark_responded(app)
+            detail = _done(db, app, event, actor.user_id)
+            # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
+            svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
+            svc.notify_purchasing_reply(db, app)
+            db.commit()
+            return detail
         if inquiry is None:
-            raise refuse("Only an application raised from a stock inquiry can reply.", "stock_inquiry_id")
+            raise refuse(
+                "Only an application raised from a stock inquiry or in the portal can reply.",
+                "stock_inquiry_id",
+            )
         # The SI's own refusals, BEFORE the save and the commit, so a reply that cannot go saves
         # nothing: its response stage gate (crew answer 8 Nov: same check, same sentence as the
         # SI's Update & Reply; Save only stays open, as on the SI), then its conversation.
@@ -394,12 +492,16 @@ def save_purchasing_response_and_reply(
         identifier = si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
         if not identifier:
             raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")
+        svc.mark_responded(app)
         respond_user_id = _respond_user_id_from_current_user(user)
         message_body = svc.reply_message(db, app)
         update_text = app.purchasing_response or ""
         link = svc.portal_url(db, app)
         template_vars = svc.template_vars(db, app)
         detail = _done(db, app, event, actor.user_id)
+        # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
+        svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
+        db.commit()
     except Exception:
         db.rollback()
         raise

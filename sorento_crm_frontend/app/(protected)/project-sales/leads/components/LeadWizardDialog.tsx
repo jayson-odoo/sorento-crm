@@ -17,6 +17,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { PROJECT_NAME_MAX_LENGTH } from '../../_shared/lib/projectName';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { WizardSteps } from '@/components/common/WizardSteps';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -78,6 +79,7 @@ export function LeadWizardDialog({
   const submitOnly = !canEdit && canSubmit;
 
   const [title, setTitle] = React.useState(initialTitle);
+  const [name, setName] = React.useState('');
   const [developerPartyId, setDeveloperPartyId] = React.useState('');
   const [location, setLocation] = React.useState('');
 
@@ -132,6 +134,7 @@ export function LeadWizardDialog({
   async function submit() {
     const body: ProjectLeadBody & LeadInformantBody = {
       title: title.trim(),
+      name: name.trim() || null,
       customer_id: customerId,
       developer_party_id: developerPartyId || null,
       estimated_value: estimatedValue.trim() || null,
@@ -224,6 +227,15 @@ export function LeadWizardDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
+                  <Label htmlFor="lead-name">Project name</Label>
+                  <Input
+                    id="lead-name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    maxLength={PROJECT_NAME_MAX_LENGTH}
+                  />
+                </div>
+                <div className="space-y-1.5">
                   <Label htmlFor="lead-developer">Developer</Label>
                   <SearchableSelect
                     id="lead-developer"
@@ -308,6 +320,7 @@ export function LeadWizardDialog({
                 <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
                   <Fact label="Customer" value={customerName || null} />
                   <Fact label="Development" value={title.trim()} />
+                  <Fact label="Project name" value={name.trim() || null} />
                   <Fact
                     label="Developer"
                     value={

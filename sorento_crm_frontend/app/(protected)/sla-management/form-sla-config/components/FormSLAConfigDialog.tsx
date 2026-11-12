@@ -126,6 +126,7 @@ const FORM_TYPES: FormSLASourceType[] = [
   'sponsorship_form',
   'complaint',
   'price_tag_request',
+  'new_product_application',
 ];
 
 const NONE_VALUE = '__none__';

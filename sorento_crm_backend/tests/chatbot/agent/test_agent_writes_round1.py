@@ -55,6 +55,9 @@ from tests.chatbot.agent.test_agent_writes import (  # noqa: F401 - helpers, not
     tool_names,
 )
 from tests.chatbot.agent.test_agent_writes_contacts import (  # noqa: F401 - helpers, not tests
+    MCH_TAG,
+    SRT_TAG,
+    owner_tagged,
     EDIT,
     EDIT_OWN,
     FIND,
@@ -101,6 +104,9 @@ class Prov:
         self.seen: list[dict] = []
 
     def chat(self, messages, *, tools=None, reasoning_effort=None, **kw):
+        if kw.get("json_schema") is not None:  # the dealer-access check (UAC F2): not a scripted round
+            return ChatResult(content='{"dealer_access": false}', prompt_tokens=10, completion_tokens=2,
+                              total_tokens=12, cached_tokens=0, tool_calls=[])
         snap = {"messages": copy.deepcopy(messages), "tools": copy.deepcopy(tools)}
         self.seen.append(snap)
         item = self.script.pop(0)
@@ -739,15 +745,18 @@ def test_r7_the_note_keeps_its_case_and_collapses_whitespace(db):
 # ------------------------------------------------------------------ R8: role per company
 
 
+# DEALER-ACCESS-SCREEN crew pass: level = owner tag (owner ruling 9 Nov)
 def test_r8_owner_is_not_nothing_to_change_while_a_company_still_lacks_its_owner_type(db):
     from app.services.chatbot.agent import actions  # noqa: F401
 
     w = contact_world(db)
-    partial = dealer(db, w, types=("dealer", "cabana_dealer", "end_user"), companies=(SORENTO, w.mch), customers=(w.mine,))
-    complete = dealer(
+    partial = owner_tagged(db, dealer(
+        db, w, types=("dealer", "cabana_dealer", "end_user"), companies=(SORENTO, w.mch), customers=(w.mine,),
+    ))
+    complete = owner_tagged(db, dealer(
         db, w, types=("dealer", "cabana_dealer", "mocha_dealer", "end_user"), companies=(SORENTO, w.mch),
         customers=(w.mine,),
-    )
+    ), SRT_TAG, MCH_TAG)
 
     done, _ = _propose_contact(db, w, {"contact_id": complete.id, "role": "owner"}, complete.id)
     res, step = _propose_contact(db, w, {"contact_id": partial.id, "role": "owner"}, partial.id)

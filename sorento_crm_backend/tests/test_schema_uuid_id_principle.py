@@ -60,6 +60,11 @@ EXEMPTIONS: dict[str, str] = {
     # One row per project, keyed BY the project. A surrogate uuid would invite a
     # second row per project, which is exactly what the PK is there to prevent.
     "projects.sales_profile": "JUNCTION - 1:1 extension, PK is project_id",
+    # PRODUCT-COSTING: one-per-record extensions keyed BY the record they extend (same reason
+    # as sales_profile: a surrogate uuid would invite a second row per record).
+    "costing_category_rules": "JUNCTION - 1:1 extension, PK is category_id",
+    "costing_product_overrides": "JUNCTION - 1:1 extension, PK is product_id",
+    "customer_costing_profiles": "JUNCTION - 1:1 extension, PK is customer_id",
     # One snapshot per closed episode, keyed BY its frame (a uuid, no FK: retention trims
     # the frame and the fact stays). The writer's ON CONFLICT (frame_id) DO NOTHING is the
     # idempotency; a surrogate id would allow a second row per episode.

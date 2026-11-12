@@ -664,6 +664,7 @@ _FORM_SLA_TYPES = (
     "sample_request",
     "product_drawing",
     "product_photo",
+    "new_product_application",
 )
 
 

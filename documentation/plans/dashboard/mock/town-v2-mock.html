@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorento Town mock v4</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Tokens mirror sorento_crm_frontend/css/config.reui.css (light + dark). Fork of mock v3 (sorento-town-mock.html). */
+:root {
+  --background: #ffffff; --foreground: #09090b; --card: #ffffff; --popover: #ffffff;
+  --primary: #3b82f6; --primary-foreground: #ffffff;
+  --muted: #f4f4f5; --muted-foreground: #71717a;
+  --border: oklch(94% 0.004 286.32); --destructive: #dc2626;
+  --success: #15803d; --warning: #a16207;
+  --radius: 0.5rem; --ease-standard: cubic-bezier(0.2, 0, 0, 1); --duration-base: 200ms;
+  --material-regular: color-mix(in oklab, var(--background) 80%, transparent);
+  --material-edge: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --lit: #f59e0b; --low: #dc2626; --deliver: #2563eb; --approve: #7c3aed; --port: #0e7490;
+}
+:root.dark {
+  --background: #09090b; --foreground: #fafafa; --card: #18181b; --popover: #18181b;
+  --primary: #2563eb; --muted: #27272a; --muted-foreground: #a1a1aa; --border: #27272a;
+  --success: #4ade80; --warning: #facc15;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); font-size: 14px; }
+.page { max-width: 1440px; margin: 0 auto; padding: 16px; }
+.header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.header h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin: 0; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 0.75rem; }
+.chip.sample { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.chip.late { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.btn { font: inherit; border-radius: var(--radius); padding: 7px 14px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
+.btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+.split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 14px; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.colhead { font-size: 0.75rem; font-weight: 600; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
+.stage { position: relative; height: min(70vh, 660px); min-height: 440px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; background: linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%); }
+:root.night .stage { background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%); }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#scene.over { cursor: pointer; } #scene.dragging { cursor: grabbing; }
+.float { position: absolute; background: var(--material-regular); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--material-edge); border-radius: var(--radius); box-shadow: 0 4px 16px rgb(0 0 0 / 0.08); }
+.hud { left: 10px; bottom: 10px; padding: 8px 10px; font-size: 0.75rem; display: grid; gap: 4px; }
+.hud div { display: flex; align-items: center; gap: 7px; }
+.hud i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.hint { left: 50%; top: 12px; transform: translateX(-50%); padding: 8px 14px; font-weight: 600; pointer-events: none; transition: opacity 400ms var(--ease-standard); white-space: nowrap; }
+.hint.gone { opacity: 0; }
+.closed { top: 10px; left: 50%; transform: translateX(-50%); padding: 6px 14px; font-weight: 600; display: none; }
+:root.night .closed { display: block; }
+/* hover tooltip: Radix tooltip look (bg-popover, border, text-xs, shadow-md) */
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--popover); color: var(--foreground); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font-size: 0.75rem; line-height: 1.35; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); white-space: nowrap; display: none; transform: translate(-50%, calc(-100% - 12px)); }
+.tip b { font-weight: 600; } .tip .sub { color: var(--muted-foreground); }
+.tip.on { display: block; } .tip.touch::after { content: 'Tap again to open'; display: block; color: var(--primary); font-weight: 600; margin-top: 2px; }
+/* camera controls: icon buttons, bottom-right */
+.camctl { right: 10px; bottom: 10px; display: flex; gap: 4px; padding: 4px; }
+.ib { width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--foreground); cursor: pointer; display: grid; place-items: center; }
+.ib:hover { background: var(--muted); } .ib svg { width: 16px; height: 16px; }
+.tiltmeter { right: 10px; bottom: 56px; padding: 6px 8px; font-size: 0.6875rem; color: var(--muted-foreground); display: grid; gap: 3px; justify-items: center; }
+.tiltmeter .track { position: relative; width: 4px; height: 70px; border-radius: 2px; background: var(--muted); }
+.tiltmeter .knob { position: absolute; left: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--primary); }
+/* lightbox: Dialog look (centred, overlay, close X, Esc / outside click) */
+.overlay { position: fixed; inset: 0; z-index: 50; background: rgb(0 0 0 / 0.3); backdrop-filter: blur(4px); display: none; place-items: center; padding: 16px; }
+.overlay.open { display: grid; }
+.dialog { position: relative; width: 100%; max-width: 32rem; max-height: calc(100dvh - 32px); overflow: auto; background: var(--background); border: 1px solid var(--border); border-radius: 0.75rem; box-shadow: 0 20px 40px rgb(0 0 0 / 0.18); padding: 20px; animation: pop 200ms var(--ease-standard); }
+.dialog.wide { max-width: 44rem; }
+@keyframes pop { from { opacity: 0; transform: scale(0.96); } }
+.dialog h2 { margin: 0 0 2px; font-size: 1.0625rem; font-weight: 600; padding-right: 28px; }
+.dialog .meta { color: var(--muted-foreground); font-size: 0.8125rem; margin-bottom: 12px; }
+.dialog table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.dialog th { text-align: left; font-weight: 600; color: var(--muted-foreground); font-size: 0.75rem; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.dialog td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
+.dialog td.num, .dialog th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+.dialog .close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border: 0; background: transparent; font-size: 20px; cursor: pointer; color: var(--muted-foreground); border-radius: 6px; }
+.dialog .close:hover { background: var(--muted); }
+.dialog .empty { text-align: center; padding: 22px 0 8px; } .dialog .empty h3 { margin: 0; font-size: 0.9375rem; } .dialog .empty p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 0.8125rem; }
+.dialog .seg { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tablewrap { overflow-x: auto; }
+.bar { height: 6px; border-radius: 3px; background: var(--muted); overflow: hidden; margin-top: 3px; }
+.bar > i { display: block; height: 100%; }
+.cards { display: grid; gap: 10px; }
+.card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card); display: grid; grid-template-columns: 34px 1fr; gap: 2px 10px; align-items: start; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.card .ic { grid-row: span 3; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: #fff; font-weight: 700; }
+.card .q { font-size: 0.75rem; color: var(--muted-foreground); }
+.card .v { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
+.card .s { font-size: 0.8125rem; color: var(--muted-foreground); }
+.card ul { margin: 6px 0 0; padding: 0; list-style: none; font-size: 0.8125rem; display: grid; gap: 3px; }
+.card li { display: flex; justify-content: space-between; gap: 8px; }
+.card li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up { color: var(--success); font-weight: 600; } .down { color: var(--destructive); font-weight: 600; }
+.mockbar { margin-top: 14px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 0.8125rem; color: var(--muted-foreground); }
+.mockbar label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.mockbar select { font: inherit; }
+.notice { margin: 10px 0 0; font-size: 0.75rem; color: var(--muted-foreground); }
+section.map { margin-top: 22px; }
+section.map h2 { font-size: 1.125rem; margin: 0 0 8px; }
+.scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.map table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.8125rem; }
+.map th, .map td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.map th { background: var(--muted); font-weight: 600; }
+.map code { font-size: 0.75rem; background: var(--muted); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 640px) { .stage { height: 64vh; } .hud { display: none; } .dialog .sm-hide { display: none; } .dialog td { white-space: nowrap; } }
+</style>
+<script type="importmap">{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.min.js"}}</script>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <h1>Town</h1>
+      <span class="chip" id="asof"></span>
+      <span class="chip" id="company"></span>
+    </div>
+    <button class="btn primary" id="wallboardBtn">Wallboard</button>
+  </div>
+
+  <div class="split">
+    <div>
+      <p class="colhead">3D town</p>
+      <div class="stage" id="stage">
+        <canvas id="scene" aria-label="Town"></canvas>
+        <div class="tip" id="tip" role="tooltip"></div>
+        <div class="float closed">Closed for the day</div>
+        <div class="float hint" id="hint">Hover a building · drag to turn and tilt</div>
+        <div class="float hud" aria-label="Legend">
+          <div><i style="background:var(--lit)"></i>Lit shop = bought today</div>
+          <div><i style="background:var(--low)"></i>Red ! = low stock</div>
+          <div><i style="background:var(--deliver)"></i>Lorries = to deliver</div>
+          <div><i style="background:var(--approve)"></i>Badge = waiting approval</div>
+          <div><i style="background:var(--port)"></i>Ships = coming from overseas</div>
+        </div>
+        <div class="float tiltmeter" id="tiltmeter" aria-hidden="true"><span>Top</span><div class="track"><i class="knob" id="knob"></i></div><span>Street</span></div>
+        <div class="float camctl">
+          <button class="ib" id="zoomOut" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+          <button class="ib" id="zoomIn" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="ib" id="resetView" aria-label="Reset view" title="Reset view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="colhead">2D view (same snapshot; the fallback when 3D is off)</p>
+      <div class="cards" id="cards"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" id="dialog"><button class="close" aria-label="Close" id="dlgClose">&times;</button><div id="dlgBody"></div></div></div>
+
+  <div class="mockbar">
+    <b>Mock controls (not in the product):</b>
+    <label><input type="checkbox" id="tNight"> Night (after 22:00)</label>
+    <label><input type="checkbox" id="tRedact"> Viewer without sales report permission</label>
+    <label><input type="checkbox" id="tDark"> Dark theme</label>
+    <label>Shipments <select id="tShip"><option value="normal">sample: 12 open</option><option value="none">none</option><option value="many">sample: 140 open</option></select></label>
+    <label><input type="checkbox" id="tTouch"> Simulate touch (tap, tap again)</label>
+    <span id="calls"></span>
+  </div>
+  <p class="notice" id="dataNotice"></p>
+
+  <section class="map">
+    <h2>What changes in v2, element to component map</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Element</th><th>Behaviour</th><th>Component (repo path)</th><th>Data</th></tr></thead>
+      <tbody>
+        <tr><td>Hover tooltip</td><td>Pointer over a building or label: name + one number, no click. Touch: first tap = tooltip, second tap = lightbox.</td><td>New overlay <code>div</code> inside <code>town/components/TownScene.tsx</code>, styled like <code>components/ui/tooltip.tsx</code> (Radix needs a DOM trigger; a 3D object has none)</td><td>snapshot (no new field)</td></tr>
+        <tr><td>Lightbox</td><td>Click a building, label or card: centred modal over a dimmed town; Esc, X, click outside close. Replaces the side panel.</td><td><code>components/ui/dialog.tsx</code> (<code>Dialog</code>, <code>DialogContent</code>, <code>DialogHeader</code>, <code>DialogTitle</code>, <code>DialogDescription</code>, <code>DialogBody</code>); content moves from <code>TownPanel.tsx</code> (Sheet, removed) to <code>TownLightbox.tsx</code></td><td>snapshot</td></tr>
+        <tr><td>Tilt / zoom / reset</td><td>Drag left-right turns, up-down tilts (20 to 80 degrees), wheel / pinch zooms (0.7x to 2.2x), reset icon returns to the default view.</td><td><code>TownScene.tsx</code> camera (<code>placeCam</code>); <code>components/ui/button.tsx</code> <code>Button variant="ghost" mode="icon"</code> + lucide <code>Minus</code> / <code>Plus</code> / <code>RotateCcw</code> with <code>aria-label</code></td><td>none</td></tr>
+        <tr><td>Port (new)</td><td>Dock at the town's edge: ships = on the water, containers on the quay = arriving this week (red tag when late). Sign "Incoming: N".</td><td>three.js instanced meshes in <code>TownScene.tsx</code>; sign = existing <code>label()</code> sprite</td><td><code>incoming.*</code> (new snapshot key), built in <code>app/services/town/snapshot.py</code> with the filters of <code>app/services/incoming_stock_service.py:71-96</code></td></tr>
+        <tr><td>Port lightbox</td><td>Shipments by ETA: number, container, supplier, ETA, products, qty; Late badge; "+N more"; empty state; "Open packing lists".</td><td><code>Dialog</code> + <code>components/ui/badge.tsx</code> <code>Badge variant="destructive"</code> + <code>Button asChild</code> link to <code>/procurement-management/packing-lists</code></td><td><code>incoming.shipments[]</code> (earliest 30)</td></tr>
+        <tr><td>Sixth card</td><td>"What is coming in?" opens the same port lightbox (also the no-WebGL path).</td><td><code>town/components/TownCards.tsx</code> <code>Card</code></td><td><code>incoming.total</code>, <code>next_eta</code></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</div>
+<script id="town-data" type="application/json">{"schema": 1, "company": "Demo Company", "day": "2026-11-03", "as_of": "2026-11-03T22:00:00+08:00", "data_as_of": "2026-11-04T10:24:00+08:00", "phase": "day", "today": {"amount": "513912.31", "invoice_count": 227, "credit_note_count": 1, "customer_count": 114, "dealer_customer_count": 96, "dealer_amount": "322758.80"}, "shops": [{"key": "DEMO-001", "code": "DEMO-001", "name": "Dealer A01 Sdn Bhd", "account_label": null, "kind": "shop", "rank": 1, "ninety_day_amount": "1056208.79", "today_amount": null, "today_docs": null}, {"key": "DEMO-002", "code": "DEMO-002", "name": "Dealer B02 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 2, "ninety_day_amount": "628494.41", "today_amount": null, "today_docs": null}, {"key": "DEMO-003", "code": "DEMO-003", "name": "Dealer C03 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 3, "ninety_day_amount": "724495.55", "today_amount": "9589.40", "today_docs": 10}, {"key": "DEMO-004", "code": "DEMO-004", "name": "Dealer D04 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 4, "ninety_day_amount": "566084.18", "today_amount": null, "today_docs": null}, {"key": "DEMO-005", "code": "DEMO-005", "name": "Dealer E05 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 5, "ninety_day_amount": "392515.11", "today_amount": null, "today_docs": null}, {"key": "DEMO-006", "code": "DEMO-006", "name": "Dealer F06 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 6, "ninety_day_amount": "210309.31", "today_amount": null, "today_docs": null}, {"key": "DEMO-007", "code": "DEMO-007", "name": "Dealer G07 Sdn Bhd", "account_label": null, "kind": "shop", "rank": 7, "ninety_day_amount": "297459.18", "today_amount": null, "today_docs": null}, {"key": "DEMO-008", "code": "DEMO-008", "name": "Dealer H08 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 8, "ninety_day_amount": "176557.28", "today_amount": null, "today_docs": null}, {"key": "DEMO-009", "code": "DEMO-009", "name": "Dealer I09 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 9, "ninety_day_amount": "238537.48", "today_amount": null, "today_docs": null}, {"key": "DEMO-010", "code": "DEMO-010", "name": "Dealer J10 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 10, "ninety_day_amount": "163384.00", "today_amount": null, "today_docs": null}, {"key": "DEMO-011", "code": "DEMO-011", "name": "Dealer K11 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "shop", "rank": 11, "ninety_day_amount": "156037.36", "today_amount": null, "today_docs": null}, {"key": "DEMO-012", "code": "DEMO-012", "name": "Dealer L12 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 12, "ninety_day_amount": "213681.09", "today_amount": null, "today_docs": null}, {"key": "DEMO-013", "code": "DEMO-013", "name": "Dealer M13 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 13, "ninety_day_amount": "275417.24", "today_amount": null, "today_docs": null}, {"key": "DEMO-014", "code": "DEMO-014", "name": "Dealer N14 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 14, "ninety_day_amount": "150860.98", "today_amount": null, "today_docs": null}, {"key": "DEMO-015", "code": "DEMO-015", "name": "Dealer O15 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 15, "ninety_day_amount": "165229.42", "today_amount": null, "today_docs": null}, {"key": "DEMO-016", "code": "DEMO-016", "name": "Dealer P16 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 16, "ninety_day_amount": "225315.89", "today_amount": null, "today_docs": null}, {"key": "DEMO-017", "code": "DEMO-017", "name": "Dealer Q17 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 17, "ninety_day_amount": "276325.34", "today_amount": null, "today_docs": null}, {"key": "DEMO-018", "code": "DEMO-018", "name": "Dealer R18 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 18, "ninety_day_amount": "214379.17", "today_amount": null, "today_docs": null}, {"key": "DEMO-019", "code": "DEMO-019", "name": "Dealer S19 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 19, "ninety_day_amount": "180577.99", "today_amount": null, "today_docs": null}, {"key": "DEMO-020", "code": "DEMO-020", "name": "Dealer T20 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 20, "ninety_day_amount": "246255.08", "today_amount": null, "today_docs": null}, {"key": "DEMO-021", "code": "DEMO-021", "name": "Dealer U21 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 21, "ninety_day_amount": "108533.31", "today_amount": null, "today_docs": null}, {"key": "DEMO-022", "code": "DEMO-022", "name": "Dealer V22 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 22, "ninety_day_amount": "216804.13", "today_amount": null, "today_docs": null}, {"key": "DEMO-023", "code": "DEMO-023", "name": "Dealer W23 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 23, "ninety_day_amount": "133100.64", "today_amount": null, "today_docs": null}, {"key": "DEMO-024", "code": "DEMO-024", "name": "Dealer X24 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 24, "ninety_day_amount": "114254.89", "today_amount": null, "today_docs": null}, {"key": "DEMO-025", "code": "DEMO-025", "name": "Dealer Y25 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 25, "ninety_day_amount": "109596.40", "today_amount": null, "today_docs": null}, {"key": "DEMO-026", "code": "DEMO-026", "name": "Dealer Z26 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 26, "ninety_day_amount": "132540.33", "today_amount": null, "today_docs": null}, {"key": "DEMO-027", "code": "DEMO-027", "name": "Dealer A27 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 27, "ninety_day_amount": "188015.12", "today_amount": null, "today_docs": null}, {"key": "DEMO-028", "code": "DEMO-028", "name": "Dealer B28 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 28, "ninety_day_amount": "111443.34", "today_amount": null, "today_docs": null}, {"key": "DEMO-029", "code": "DEMO-029", "name": "Dealer C29 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 29, "ninety_day_amount": "158226.90", "today_amount": null, "today_docs": null}, {"key": "DEMO-030", "code": "DEMO-030", "name": "Dealer D30 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 30, "ninety_day_amount": "164686.18", "today_amount": "24269.29", "today_docs": 3}, {"key": "DEMO-031", "code": "DEMO-031", "name": "Dealer E31 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "12822.63", "today_docs": 2}, {"key": "DEMO-032", "code": "DEMO-032", "name": "Dealer F32 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "7867.97", "today_docs": 2}, {"key": "DEMO-033", "code": "DEMO-033", "name": "Dealer G33 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "7398.45", "today_docs": 4}], "warehouses": [{"pool": "WH01", "on_hand": 971213, "locations": [{"code": "WH01-01", "on_hand": 963400}, {"code": "WH01-02", "on_hand": 109727}, {"code": "WH01-03", "on_hand": 47442}, {"code": "WH01-04", "on_hand": 51047}, {"code": "WH01-05", "on_hand": 13927}, {"code": "WH01-06", "on_hand": 3404}, {"code": "WH01-07", "on_hand": 3982}, {"code": "WH01-08", "on_hand": 3200}, {"code": "WH01-09", "on_hand": 2216}, {"code": "WH01-10", "on_hand": 1207}, {"code": "WH01-11", "on_hand": 571}, {"code": "WH01-12", "on_hand": 945}, {"code": "WH01-13", "on_hand": 41}, {"code": "WH01-14", "on_hand": 0}, {"code": "WH01-15", "on_hand": 0}]}, {"pool": "WH02", "on_hand": 114132, "locations": [{"code": "WH02-01", "on_hand": 125396}, {"code": "WH02-02", "on_hand": 11627}, {"code": "WH02-03", "on_hand": 6383}, {"code": "WH02-04", "on_hand": 6162}, {"code": "WH02-05", "on_hand": 1860}, {"code": "WH02-06", "on_hand": 408}, {"code": "WH02-07", "on_hand": 169}, {"code": "WH02-08", "on_hand": 150}, {"code": "WH02-09", "on_hand": 75}, {"code": "WH02-10", "on_hand": 59}, {"code": "WH02-11", "on_hand": 0}]}, {"pool": "WH03", "on_hand": 174002, "locations": [{"code": "WH03-01", "on_hand": 144462}, {"code": "WH03-02", "on_hand": 14555}, {"code": "WH03-03", "on_hand": 13166}, {"code": "WH03-04", "on_hand": 1246}, {"code": "WH03-05", "on_hand": 1327}, {"code": "WH03-06", "on_hand": 300}, {"code": "WH03-07", "on_hand": 163}, {"code": "WH03-08", "on_hand": 120}, {"code": "WH03-09", "on_hand": 70}, {"code": "WH03-10", "on_hand": 73}, {"code": "WH03-11", "on_hand": 29}, {"code": "WH03-12", "on_hand": 0}]}, {"pool": "WH04", "on_hand": 70397, "locations": [{"code": "WH04-01", "on_hand": 41732}, {"code": "WH04-02", "on_hand": 4556}, {"code": "WH04-03", "on_hand": 4117}, {"code": "WH04-04", "on_hand": 1235}, {"code": "WH04-05", "on_hand": 432}, {"code": "WH04-06", "on_hand": 360}, {"code": "WH04-07", "on_hand": 400}, {"code": "WH04-08", "on_hand": 252}, {"code": "WH04-09", "on_hand": 79}, {"code": "WH04-10", "on_hand": 23}, {"code": "WH04-11", "on_hand": 7}, {"code": "WH04-12", "on_hand": 0}]}, {"pool": "WH05", "on_hand": 2948, "locations": [{"code": "WH05-01", "on_hand": 3032}]}, {"pool": "WH06", "on_hand": 1452, "locations": [{"code": "WH06-01", "on_hand": 1645}]}, {"pool": "WH07", "on_hand": 551, "locations": [{"code": "WH07-01", "on_hand": 813}]}, {"pool": "WH08", "on_hand": 107, "locations": [{"code": "WH08-01", "on_hand": 56}, {"code": "WH08-02", "on_hand": 0}, {"code": "WH08-03", "on_hand": 0}, {"code": "WH08-04", "on_hand": 0}, {"code": "WH08-05", "on_hand": 0}, {"code": "WH08-06", "on_hand": 0}, {"code": "WH08-07", "on_hand": 0}, {"code": "WH08-08", "on_hand": 0}]}, {"pool": "WH09", "on_hand": 5, "locations": [{"code": "WH09-01", "on_hand": 5}]}, {"pool": "WH10", "on_hand": 0, "locations": [{"code": "WH10-01", "on_hand": 0}]}, {"pool": "WH11", "on_hand": 0, "locations": [{"code": "WH11-01", "on_hand": 0}]}, {"pool": "WH12", "on_hand": 0, "locations": [{"code": "WH12-01", "on_hand": 0}]}], "reorder": {"below_count": 1527, "set_count": 11467, "examples": [{"code": "PRD-0001", "level": 200, "available": 40}, {"code": "PRD-0002", "level": 600, "available": 484}, {"code": "PRD-0003", "level": 150, "available": 38}]}, "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0}, "masked": true, "compare": {"label": "Tue 27 Oct", "last_week_amount": "468000.00"}, "deliveries": {"to_deliver": 14}, "samples": ["compare", "deliveries"]}</script>
+<script type="module">
+const DATA = JSON.parse(document.getElementById('town-data').textContent);
+const root = document.documentElement;
+const state = { redact: false, wallboard: false, night: false, ship: 'normal', touch: false };
+const rm = (s) => 'RM ' + Number(s).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const rm0 = (s) => 'RM ' + Math.round(Number(s)).toLocaleString('en-MY');
+const n = (v) => Number(v).toLocaleString('en-MY');
+const short = (name) => name.replace(/\s*(SDN\.?\s*BHD\.?|ENTERPRISE|MARKETING|TRADING|\(M\))/gi, '').replace(/\s+/g, ' ').trim();
+const shopLabel = (s) => state.redact ? 'Dealer' : state.wallboard ? (s.rank ? `Shop #${s.rank}` : 'Dealer') : short(s.name);
+const shopToday = (s) => state.redact || state.wallboard || !s.today_amount ? `${s.today_docs || 0} invoice${s.today_docs === 1 ? '' : 's'} today` : `${rm0(s.today_amount)} today`;
+const T = DATA.today, C = DATA.compare, D = DATA.deliveries, A = DATA.approvals, R = DATA.reorder;
+const bought = DATA.shops.filter(s => s.today_docs);
+const othersToday = Math.max(0, (T.dealer_customer_count || 0) - bought.length);
+const pct = C ? (Number(T.amount) - Number(C.last_week_amount)) / Number(C.last_week_amount) * 100 : null;
+const sample = new Set(DATA.samples || []);
+
+/* ---------------- incoming shipments (SAMPLE until the crew data request is answered) ---------------- */
+const DAY = new Date('2026-11-03T00:00:00');
+const addDays = (d, k) => { const x = new Date(d); x.setDate(x.getDate() + k); return x; };
+const iso = (d) => d.toISOString().slice(0, 10);
+const fmtDay = (s) => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric', month: 'short' }) : 'No ETA';
+function makeIncoming(kind) {
+  if (kind === 'none') return { on_water: 0, arriving_soon: 0, late: 0, total: 0, next_eta: null, shipments: [] };
+  const total = kind === 'many' ? 140 : 12;
+  // ETA offsets: a couple late, a few this week, the rest on the water, one with no ETA
+  const offs = Array.from({ length: total }, (_, i) => i === total - 1 ? null : [-6, -2, 1, 3, 6, 9, 13, 17, 22, 26, 31, 38][i % 12] + Math.floor(i / 12) * 2);
+  const rows = offs.map((o, i) => {
+    const eta = o == null ? null : iso(addDays(DAY, o));
+    const bucket = o == null || o > 7 ? 'on_water' : o < 0 ? 'late' : 'arriving_soon';
+    return { shipment_number: `SHP-${String(2601 + i).padStart(5, '0')}`, container: `CNTR${String(4410000 + i * 37).padStart(7, '0')}`,
+      supplier: `Supplier ${String.fromCharCode(65 + (i % 9))}`, eta, products: 4 + (i * 7) % 38, quantity: 300 + (i * 977) % 5200, bucket };
+  }).sort((a, b) => (a.eta ?? '9999') < (b.eta ?? '9999') ? -1 : 1);
+  const c = (b) => rows.filter(r => r.bucket === b).length;
+  return { on_water: c('on_water'), arriving_soon: c('arriving_soon'), late: c('late'), total, next_eta: rows.find(r => r.eta && r.eta >= iso(DAY))?.eta ?? null, shipments: rows.slice(0, 30) };
+}
+let IN = makeIncoming('normal');
+const supplierOf = (r) => state.redact || state.wallboard ? '' : r.supplier;
+const portSign = () => IN.total ? `Incoming: ${n(IN.total)}` : 'Incoming: none';
+const portSub = () => IN.total ? `${IN.on_water} on the water · ${IN.arriving_soon} this week${IN.late ? ` · ${IN.late} late` : ''}` : 'Nothing on the way';
+
+document.getElementById('asof').textContent = 'Tue 3 Nov 2026 · data as of 4 Nov, 10:24';
+document.getElementById('company').textContent = DATA.company;
+document.getElementById('dataNotice').textContent = (DATA.masked
+  ? 'Masked copy: names, codes and figures are scrambled. '
+  : 'Real dev data. ')
+  + 'Shipments are a SAMPLE (numbers, suppliers, ETAs invented) until the crew data request on the PR is answered; switch "Shipments" above to see none / 140. '
+  + 'Drag up and down to tilt, scroll to zoom, the round arrow resets the view.';
+
+/* ---------------- 2D cards ---------------- */
+function renderCards() {
+  const S = (k) => sample.has(k) ? ' <span class="chip sample">sample</span>' : '';
+  const vs = pct == null ? '' : `<span class="${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%</span> vs ${C.label}${S('compare')}`;
+  document.getElementById('cards').innerHTML = `
+    <button class="card" data-k="sales"><div class="ic" style="background:#0f766e">RM</div><div class="q">How much did we sell today?</div>
+      <div class="v">${state.redact ? n(T.invoice_count) + ' invoices' : rm(T.amount)}</div><div class="s">${state.redact ? '' : n(T.invoice_count) + ' invoices · '}${vs}</div></button>
+    <button class="card" data-k="bought"><div class="ic" style="background:var(--lit)">${bought.length + othersToday}</div><div class="q">Who bought today?</div>
+      <div class="v">${n(T.dealer_customer_count || bought.length)} dealers</div>
+      <ul>${bought.slice(0, 5).map(s => `<li><span>${shopLabel(s)}</span><span>${state.redact || state.wallboard || !s.today_amount ? s.today_docs + ' inv' : rm0(s.today_amount)}</span></li>`).join('')}</ul></button>
+    <button class="card" data-k="low"><div class="ic" style="background:var(--low)">!</div><div class="q">What stock is low?</div>
+      <div class="v">${n(R.below_count)} products</div><div class="s">below reorder level</div></button>
+    <button class="card" data-k="deliver"><div class="ic" style="background:var(--deliver)">${D ? D.to_deliver : '-'}</div><div class="q">What must go out?</div>
+      <div class="v">${D ? n(D.to_deliver) + ' to deliver' : '-'}${S('deliveries')}</div><div class="s">sales orders due</div></button>
+    <button class="card" data-k="approve"><div class="ic" style="background:var(--approve)">${A.total}</div><div class="q">What needs a decision?</div>
+      <div class="v">${A.total ? A.total + ' waiting' : 'All clear'}</div><div class="s">${A.purchase_requests} purchase request${A.purchase_requests === 1 ? '' : 's'} · ${A.quotation_documents} quotations</div></button>
+    <button class="card" data-k="port"><div class="ic" style="background:var(--port)">${IN.total > 99 ? '99+' : IN.total}</div><div class="q">What is coming in?</div>
+      <div class="v">${IN.total ? n(IN.total) + ' shipments' : 'Nothing on the way'} <span class="chip sample">sample</span></div>
+      <div class="s">${IN.total ? portSub() + (IN.next_eta ? ` · next ${fmtDay(IN.next_eta)}` : '') : 'from overseas suppliers'}</div></button>`;
+  document.querySelectorAll('.card').forEach(c => c.onclick = () => open[c.dataset.k]());
+}
+
+/* ---------------- lightbox (shared by both views) ---------------- */
+const overlay = document.getElementById('overlay'), dialog = document.getElementById('dialog'), dlgBody = document.getElementById('dlgBody');
+let lastFocus = null;
+const closeBox = () => { overlay.classList.remove('open'); lastFocus?.focus?.(); };
+document.getElementById('dlgClose').onclick = closeBox;
+overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeBox(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('open')) closeBox(); });
+const show = (html, wide = false) => {
+  lastFocus = document.activeElement; hideTip(); hideHint();
+  dlgBody.innerHTML = html.replace('<h2>', '<h2 id="dlgTitle">'); dialog.classList.toggle('wide', wide);
+  overlay.classList.add('open'); document.getElementById('dlgClose').focus();
+};
+const btn = (t) => `<p style="margin:14px 0 0"><button class="btn">${t}</button></p>`;
+const open = {
+  sales: () => show(`<h2>Today's sales</h2><div class="meta">Same figure as the sales report</div><table>
+      ${state.redact ? '' : `<tr><td>Invoiced today</td><td class="num">${rm(T.amount)}</td></tr>`}
+      <tr><td>Invoices</td><td class="num">${n(T.invoice_count)}</td></tr><tr><td>Credit notes</td><td class="num">${n(T.credit_note_count)}</td></tr>
+      <tr><td>Customers</td><td class="num">${n(T.customer_count)}</td></tr>
+      ${C && !state.redact ? `<tr><td>vs all of ${C.label}</td><td class="num">${rm(C.last_week_amount)}</td></tr>` : ''}</table>${state.redact ? '' : btn('Open sales report')}`),
+  bought: () => show(`<h2>Bought today</h2><div class="meta">${n(T.dealer_customer_count || bought.length)} dealers invoiced today</div><table>
+      ${bought.map(s => `<tr><td>${shopLabel(s)}</td><td class="num">${state.redact || state.wallboard || !s.today_amount ? s.today_docs + ' inv' : rm(s.today_amount)}</td></tr>`).join('')}
+      ${othersToday ? `<tr><td>+ ${othersToday} more dealers</td><td></td></tr>` : ''}</table>`),
+  shop: (s) => show(`<h2>${shopLabel(s)}</h2><div class="meta">${s.today_docs ? 'Bought today' : 'No invoice today'}${s.rank && !state.redact ? ' · rank ' + s.rank + ' of 30 (90 days)' : ''}</div><table>
+      <tr><td>Invoices today</td><td class="num">${s.today_docs || 0}</td></tr>
+      ${state.redact || state.wallboard || !s.today_amount ? '' : `<tr><td>Invoiced today</td><td class="num">${rm(s.today_amount)}</td></tr>`}
+      ${state.redact || state.wallboard || !s.ninety_day_amount ? '' : `<tr><td>Last 90 days</td><td class="num">${rm(s.ninety_day_amount)}</td></tr>`}</table>
+      ${state.redact ? '' : btn('Open invoices')}`),
+  low: () => show(`<h2>${n(R.below_count)} products low</h2><div class="meta">below their reorder level, of ${n(R.set_count)} with a level</div>${btn('Open reorder planning')}`),
+  deliver: () => show(`<h2>${D ? n(D.to_deliver) : '-'} to deliver</h2><div class="meta">Sales orders due today or overdue</div>${btn('Open sales orders')}`),
+  approve: () => show(`<h2>Approvals</h2><div class="meta">${A.total ? A.total + ' waiting for a decision' : 'All clear'}</div><table>
+      <tr><td>Purchase requests</td><td class="num">${A.purchase_requests}</td></tr><tr><td>Quotation documents</td><td class="num">${A.quotation_documents}</td></tr></table>${btn('Open purchase requests')}`),
+  port: () => {
+    if (!IN.total) return show(`<h2>Incoming shipments</h2><div class="empty"><h3>Nothing on the way</h3><p>No open shipment from an overseas supplier.</p></div>${btn('Open packing lists')}`);
+    const sup = !(state.redact || state.wallboard);
+    const rows = IN.shipments.map(r => `<tr><td>${r.shipment_number}</td><td class="sm-hide">${r.container}</td>${sup ? `<td>${r.supplier}</td>` : ''}
+      <td style="white-space:nowrap">${fmtDay(r.eta)}${r.bucket === 'late' ? ' <span class="chip late">Late</span>' : ''}</td><td class="num sm-hide">${r.products}</td><td class="num">${n(r.quantity)}</td></tr>`).join('');
+    const more = IN.total - IN.shipments.length;
+    show(`<h2>Incoming shipments</h2><div class="meta">Still to arrive from overseas suppliers, earliest first</div>
+      <div class="seg"><span class="chip">${IN.on_water} on the water</span><span class="chip">${IN.arriving_soon} arriving this week</span>${IN.late ? `<span class="chip late">${IN.late} late</span>` : ''}</div>
+      <div class="tablewrap"><table><thead><tr><th>Shipment</th><th class="sm-hide">Container</th>${sup ? '<th>Supplier</th>' : ''}<th>ETA</th><th class="num sm-hide">Products</th><th class="num">Qty</th></tr></thead><tbody>${rows}
+      ${more > 0 ? `<tr><td colspan="${sup ? 6 : 5}" style="color:var(--muted-foreground)">+ ${n(more)} more shipments</td></tr>` : ''}</tbody></table></div>${btn('Open packing lists')}`, true);
+  },
+};
+let hintTimer = setTimeout(hideHint, 6000);
+function hideHint() { clearTimeout(hintTimer); document.getElementById('hint').classList.add('gone'); }
+
+/* ---------------- tooltip ---------------- */
+const tip = document.getElementById('tip');
+let tipFor = null; // the object + instance the tooltip shows
+function showTip(text, sub, x, y, touch) {
+  tip.innerHTML = `<b>${text}</b>${sub ? `<div class="sub">${sub}</div>` : ''}`;
+  const stage = document.getElementById('stage').getBoundingClientRect();
+  tip.classList.add('on'); tip.classList.toggle('touch', !!touch);
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(Math.max(x, w / 2 + 6), stage.width - w / 2 - 6) + 'px';
+  tip.style.top = Math.max(y, h + 18) + 'px';
+}
+function hideTip() { tip.classList.remove('on'); tipFor = null; }
+
+/* ---------------- the scene ---------------- */
+let THREE; try { THREE = await import('three'); } catch { THREE = null; }
+const canvas = document.getElementById('scene');
+const webgl = THREE && (() => { try { return !!canvas.getContext('webgl2'); } catch { return false; } })();
+let api = webgl ? buildScene() : null;
+if (!api) document.getElementById('stage').innerHTML = '<div style="padding:24px;color:var(--muted-foreground)">3D is not available on this device; the 2D view beside shows the same answers.</div>';
+
+function buildScene() {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  const scene = new THREE.Scene(); const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+  // camera: yaw (turn), elevation (tilt), zoom; defaults = today's view
+  const DEG = Math.PI / 180, YAW0 = Math.PI / 4, EL0 = Math.atan2(70, 80), Z0 = 1, EL_MIN = 20 * DEG, EL_MAX = 80 * DEG, Z_MIN = 0.7, Z_MAX = 2.2, RADIUS = Math.hypot(70, 80), LOOK_Y = 2;
+  let yaw = YAW0, el = EL0, zoom = Z0, dirty = true;
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const knob = document.getElementById('knob');
+  const placeCam = () => {
+    cam.position.set(Math.cos(yaw) * Math.cos(el) * RADIUS, LOOK_Y + Math.sin(el) * RADIUS, Math.sin(yaw) * Math.cos(el) * RADIUS);
+    cam.lookAt(0, LOOK_Y, 0); cam.zoom = zoom; cam.updateProjectionMatrix(); keepBoardFacing?.();
+    knob.style.top = (64 * (1 - (el - EL_MIN) / (EL_MAX - EL_MIN)) - 2) + 'px'; dirty = true; hideTip();
+  };
+  let keepBoardFacing = null;
+  function resize() { const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false); const a = w / h; const z = a < 1 ? 33 / a : 31; cam.left = -z * a; cam.right = z * a; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix(); dirty = true; }
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xb6c2b0, 2.0); scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(-25, 50, 30); scene.add(sun);
+
+  const col = (h) => new THREE.Color(h);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), E = new THREE.Euler();
+  function part(geo, color, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0) {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0)), new THREE.Vector3(sx, sy, sz)));
+    const c = col(color), k = g.attributes.position.count, arr = new Float32Array(k * 3);
+    for (let i = 0; i < k; i++) arr.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3)); g.deleteAttribute('uv'); return g;
+  }
+  function merge(parts) { const out = new THREE.BufferGeometry(); ['position', 'normal', 'color'].forEach(key => { const arr = new Float32Array(parts.reduce((s, p) => s + p.attributes[key].array.length, 0)); let o = 0; parts.forEach(p => { arr.set(p.attributes[key].array, o); o += p.attributes[key].array.length; }); out.setAttribute(key, new THREE.BufferAttribute(arr, 3)); }); return out; }
+  const BOX = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const CYL = (r1, r2, h, s = 16) => new THREE.CylinderGeometry(r1, r2, h, s).translate(0, h / 2, 0);
+  const PRISM = (() => { const g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.rotateZ(Math.PI / 2); g.rotateX(Math.PI / 2); g.rotateY(Math.PI / 2); g.translate(0, 0.25, 0); return g; })();
+  const mat = () => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  // pickables: [object, open(instance), tooltip(instance) -> [title, sub]]
+  const pickables = []; const polar = (r, d) => [Math.cos(d * Math.PI / 180) * r, Math.sin(d * Math.PI / 180) * r];
+  const face = (x, z) => Math.atan2(x, z) + Math.PI;
+
+  // ground: one calm disc, a ring road, four short spokes
+  const ground = merge([
+    part(CYL(27, 28, 1.2, 48), 0xe7e2d6, 0, -1.2), part(CYL(26.6, 26.6, 0.1, 48), 0xd9e8cf, 0, -0.1),
+    part(CYL(9.5, 9.5, 0.06, 48), 0xc4c9cf, 0, 0), part(CYL(7.3, 7.3, 0.08, 48), 0xf3efe6, 0, 0),
+    ...[0, 90, 180, 270].map(a => { const [x, z] = polar(14, a); return part(BOX, 0xc4c9cf, x, 0, z, 9, 0.06, 2.2, -a * Math.PI / 180); }),
+  ]);
+  scene.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ vertexColors: true })));
+
+  function label(text, x, y, z, bg = 'rgba(255,255,255,0.95)', fg = '#111827', w = 360, scale = 1) {
+    const c = document.createElement('canvas'); c.width = w * 2; c.height = 112; const g = c.getContext('2d');
+    g.fillStyle = bg; g.beginPath(); g.roundRect(4, 4, c.width - 8, 104, 40); g.fill();
+    g.fillStyle = fg; g.font = '600 52px Inter, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, c.width / 2, 58);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false })); sp.renderOrder = 10;
+    const k = (canvas.clientWidth < 640 ? 2.0 : 1.4) * scale; sp.scale.set(c.width / 70 * k, c.height / 70 * k, 1); sp.position.set(x, y, z); scene.add(sp); return sp;
+  }
+
+  // (1) scoreboard
+  const board = document.createElement('canvas'); board.width = 1024; board.height = 400;
+  const boardTex = new THREE.CanvasTexture(board); boardTex.anisotropy = 4;
+  function drawBoard() {
+    const g = board.getContext('2d'); g.clearRect(0, 0, 1024, 400);
+    g.fillStyle = state.night ? '#0b1220' : '#0f172a'; g.beginPath(); g.roundRect(0, 0, 1024, 400, 36); g.fill();
+    g.fillStyle = '#94a3b8'; g.font = '600 46px Inter, sans-serif'; g.textAlign = 'center'; g.fillText(state.night ? 'CLOSED FOR THE DAY' : 'SOLD TODAY', 512, 74);
+    g.fillStyle = '#ffffff'; g.font = '700 112px Inter, sans-serif'; g.fillText(state.redact ? n(T.invoice_count) + ' invoices' : rm0(T.amount), 512, 200);
+    g.font = '600 48px Inter, sans-serif'; g.fillStyle = '#cbd5e1';
+    g.fillText((state.redact ? '' : n(T.invoice_count) + ' invoices   ') + (pct == null ? '' : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}% vs ${C.label}`), 512, 300);
+    boardTex.needsUpdate = true; dirty = true;
+  }
+  drawBoard();
+  const boardGroup = new THREE.Group();
+  boardGroup.add(new THREE.Mesh(merge([part(CYL(0.3, 0.35, 6.2, 8), 0x475569, -6.2, 0, 0), part(CYL(0.3, 0.35, 6.2, 8), 0x475569, 6.2, 0, 0), part(CYL(1.1, 1.3, 0.4, 16), 0x94a3b8, -6.2, 0, 0), part(CYL(1.1, 1.3, 0.4, 16), 0x94a3b8, 6.2, 0, 0)]), mat()));
+  const face1 = new THREE.Mesh(new THREE.PlaneGeometry(16.4, 6.4), new THREE.MeshBasicMaterial({ map: boardTex, transparent: true }));
+  face1.position.y = 9.2; boardGroup.add(face1);
+  scene.add(boardGroup); pickables.push([face1, () => open.sales(), () => ["Today's sales", state.redact ? `${n(T.invoice_count)} invoices` : `${rm0(T.amount)} · ${n(T.invoice_count)} invoices`]]);
+  keepBoardFacing = () => boardGroup.rotation.set(0, Math.atan2(cam.position.x, cam.position.z), 0);
+
+  // (2) dealer shops
+  const shops = DATA.shops.filter(s => s.kind === 'shop'), extra = DATA.shops.filter(s => s.kind !== 'shop');
+  const list = [...shops]; extra.forEach((s, k) => list.splice(Math.min(list.length, 4 + k * 9), 0, s));
+  const slot = list.map((s, i) => { const a = -78 + i * (156 / Math.max(1, list.length - 1)); const r = i % 2 ? 22 : 18.5; const [x, z] = polar(r, a); return { s, x, z, ry: face(x, z), lit: !!s.today_docs, h: 1.8 + (s.rank ? (30 - s.rank) / 30 * 1.6 : 0.6) }; });
+  const shopGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 2, 1, 1.8), part(PRISM, 0xffffff, 0, 1, 0, 2.3, 1.1, 2.0), part(BOX, 0xffffff, 0, 0.55, 1.05, 1.9, 0.08, 0.5, 0, -0.4)]);
+  const shopMesh = new THREE.InstancedMesh(shopGeo, new THREE.MeshLambertMaterial({ flatShading: true }), slot.length);
+  slot.forEach((o, i) => { M.compose(V.set(o.x, 0, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(1, o.h / 1.8, 1)); shopMesh.setMatrixAt(i, M); shopMesh.setColorAt(i, col(o.lit ? 0xfbbf24 : 0xd6d3d1)); });
+  scene.add(shopMesh);
+  pickables.push([shopMesh, (i) => open.shop(slot[i].s), (i) => [shopLabel(slot[i].s), slot[i].s.today_docs ? shopToday(slot[i].s) : 'No invoice today']]);
+  const tags = [];
+  function drawTags() {
+    tags.forEach(t => scene.remove(t)); tags.length = 0;
+    slot.filter(o => o.lit).forEach((o, k) => tags.push(label(`${shopLabel(o.s)}${state.redact || state.wallboard || !o.s.today_amount ? '' : '  ' + rm0(o.s.today_amount)}`, o.x, o.h + 2.6 + (k % 3) * 1.9, o.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95)));
+    if (othersToday) { const [x, z] = polar(24, 30); tags.push(label(`+${othersToday} more dealers bought today`, x, 2.5, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95)); }
+    dirty = true;
+  }
+  drawTags();
+
+  // (3) warehouses
+  const wh = DATA.warehouses.slice(0, 6);
+  const whSlot = wh.map((w, i) => { const [x, z] = polar(i < 3 ? 15 : 21, 160 + (i % 3) * 22); return { w, x, z, ry: face(x, z) }; });
+  const barrel = new THREE.CylinderGeometry(1, 1, 1, 14, 1, false, 0, Math.PI); barrel.rotateZ(Math.PI / 2); barrel.rotateY(Math.PI / 2);
+  const whMesh = new THREE.InstancedMesh(merge([part(BOX, 0xe2e8f0, 0, 0, 0, 4, 1.6, 3), part(barrel, 0x94a3b8, 0, 1.6, 0, 2, 0.8, 1.5, Math.PI / 2), part(BOX, 0xcbd5e1, 0, 0.02, 1.52, 2.2, 1.1, 0.04)]), mat(), whSlot.length);
+  whSlot.forEach((o, i) => { M.compose(V.set(o.x, 0, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(1, 1, 1)); whMesh.setMatrixAt(i, M); });
+  scene.add(whMesh);
+  const whTip = (i) => [`Warehouse ${wh[i].pool}`, `${n(wh[i].on_hand)} on hand · ${n(R.below_count)} products low overall`];
+  pickables.push([whMesh, () => open.low(), whTip]);
+  const [bx, bz] = polar(18, 182);
+  const bang = label(`!  ${n(R.below_count)} low`, bx, 7, bz, '#dc2626', '#ffffff', 300, 1.05);
+  pickables.push([bang, () => open.low(), () => ['Low stock', `${n(R.below_count)} products below reorder level`]]);
+
+  // (4) depot + lorries
+  const [dx, dz] = polar(18, 248); const dry = face(dx, dz);
+  const depot = new THREE.Mesh(merge([part(BOX, 0xe0e7ff, 0, 0, 0, 6, 2.2, 3.4), part(BOX, 0x93c5fd, 0, 2.2, 0, 6.3, 0.25, 3.7), part(BOX, 0xbfdbfe, -1.5, 0.02, 1.71, 1.8, 1.6, 0.04), part(BOX, 0xbfdbfe, 1.5, 0.02, 1.71, 1.8, 1.6, 0.04)]), mat());
+  depot.position.set(dx, 0, dz); depot.rotation.y = dry; scene.add(depot);
+  const dTip = () => ['Depot', `${D ? n(D.to_deliver) : '-'} sales orders to deliver`];
+  pickables.push([depot, () => open.deliver(), dTip]);
+  const lorryN = Math.min(10, D ? D.to_deliver : 0);
+  const lorryGeo = merge([part(BOX, 0xffffff, 0.35, 0.22, 0, 1.4, 0.95, 0.85), part(BOX, 0x2563eb, -0.7, 0.22, 0, 0.6, 0.75, 0.82), ...[-0.65, 0.6].flatMap(x => [-0.42, 0.42].map(z => part(CYL(0.2, 0.2, 0.12, 10), 0x1f2937, x, 0.2, z, 1, 1, 1, 0, Math.PI / 2)))]);
+  const lorries = new THREE.InstancedMesh(lorryGeo, mat(), Math.max(1, lorryN));
+  const fwd = new THREE.Vector3(Math.sin(dry), 0, Math.cos(dry)), side = new THREE.Vector3(Math.cos(dry), 0, -Math.sin(dry));
+  for (let i = 0; i < lorryN; i++) { const p = new THREE.Vector3(dx, 0, dz).addScaledVector(fwd, 3.2 + Math.floor(i / 5) * 1.3).addScaledVector(side, -2.4 + (i % 5) * 1.2); M.compose(p, Q.setFromEuler(E.set(0, dry + Math.PI / 2, 0)), S.set(0.8, 0.8, 0.8)); lorries.setMatrixAt(i, M); }
+  lorries.count = lorryN; scene.add(lorries); pickables.push([lorries, () => open.deliver(), dTip]);
+  const dsign = label(`To deliver: ${D ? n(D.to_deliver) : '-'}`, dx, 5.4, dz, '#1d4ed8', '#ffffff', 380, 0.9); pickables.push([dsign, () => open.deliver(), dTip]);
+
+  // (5) approvals office
+  const [ox, oz] = polar(16, 112);
+  const office = new THREE.Mesh(merge([part(BOX, 0xf5f3ff, 0, 0, 0, 3.6, 3.2, 3), part(BOX, 0xddd6fe, 0, 3.2, 0, 3.9, 0.3, 3.3), part(BOX, 0xc4b5fd, 0, 0.02, 1.52, 1, 1.6, 0.04)]), mat());
+  office.position.set(ox, 0, oz); office.rotation.y = face(ox, oz); scene.add(office);
+  const aTip = () => ['Approvals office', A.total ? `${A.purchase_requests} purchase requests · ${A.quotation_documents} quotations waiting` : 'All clear'];
+  pickables.push([office, () => open.approve(), aTip]);
+  const badge = label(A.total ? `Approvals  ${A.total}` : 'Approvals: all clear', ox, 6, oz, A.total ? '#7c3aed' : '#dcfce7', A.total ? '#ffffff' : '#166534', 380, 0.9); pickables.push([badge, () => open.approve(), aTip]);
+
+  // (6) NEW: the port at the town's edge (behind the warehouses and the depot, the top of the default view)
+  const PA = 226; const [qx, qz] = polar(28.6, PA); const qry = face(qx, qz);
+  const sea = new THREE.Mesh(merge([part(CYL(10.5, 10.5, 0.1, 40), 0x7dd3fc, 0, -0.9)]), new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }));
+  const [sx0, sz0] = polar(35, PA); sea.position.set(sx0, 0, sz0); sea.scale.set(1, 1, 1); scene.add(sea);
+  const quay = new THREE.Mesh(merge([
+    part(BOX, 0xcbd5e1, 0, -0.9, 0, 11, 0.9, 4.2), part(BOX, 0x94a3b8, 0, 0, -1.9, 11, 0.12, 0.4),
+    part(BOX, 0x0e7490, 4.3, 0, 1.2, 0.35, 5.2, 0.35), part(BOX, 0x0e7490, 2.6, 4.9, 1.2, 3.8, 0.35, 0.35), // crane
+  ]), mat());
+  quay.position.set(qx, 0, qz); quay.rotation.y = qry; scene.add(quay);
+  const qFwd = new THREE.Vector3(Math.sin(qry), 0, Math.cos(qry)), qSide = new THREE.Vector3(Math.cos(qry), 0, -Math.sin(qry));
+  const portTip = () => ['Port', portSub() + (IN.next_eta ? ` · next ETA ${fmtDay(IN.next_eta)}` : '')];
+  pickables.push([quay, () => open.port(), portTip]);
+  const boxGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 1.9, 0.8, 0.8), part(BOX, 0x000000, 0, 0.8, 0, 1.92, 0.04, 0.82)]);
+  const contMesh = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial({ flatShading: true }), 12);
+  const hullGeo = merge([part(BOX, 0x1e3a5f, 0, -0.5, 0, 6, 0.9, 1.9), part(PRISM, 0x1e3a5f, 3.4, -0.5, 0, 0.9, 0.9, 1.9, 0), part(BOX, 0xf8fafc, -2.1, 0.4, 0, 1.3, 1.1, 1.5), part(BOX, 0xf97316, 0.4, 0.4, 0, 1.4, 0.6, 1.5), part(BOX, 0x0ea5e9, 1.9, 0.4, 0, 1.4, 0.6, 1.5)]);
+  const shipMesh = new THREE.InstancedMesh(hullGeo, mat(), 6);
+  scene.add(contMesh); scene.add(shipMesh);
+  let portSignSprite = null, lateSprite = null;
+  const shipRows = { boxes: [], ships: [] };
+  function drawPort() {
+    const quayRows = IN.shipments.filter(r => r.bucket !== 'on_water');
+    const seaRows = IN.shipments.filter(r => r.bucket === 'on_water');
+    const nBox = Math.min(12, IN.arriving_soon + IN.late), nShip = Math.min(6, IN.on_water);
+    shipRows.boxes = quayRows.slice(0, nBox); shipRows.ships = seaRows.slice(0, nShip);
+    for (let i = 0; i < nBox; i++) {
+      const r = shipRows.boxes[i]; const layer = Math.floor(i / 6), k = i % 6;
+      const p = new THREE.Vector3(qx, 0.8 * layer, qz).addScaledVector(qSide, -3.2 + (k % 3) * 2.05).addScaledVector(qFwd, (k < 3 ? -0.3 : 0.6));
+      M.compose(p, Q.setFromEuler(E.set(0, qry, 0)), S.set(1, 1, 1)); contMesh.setMatrixAt(i, M);
+      contMesh.setColorAt(i, col(r?.bucket === 'late' ? 0xdc2626 : [0xf97316, 0x0ea5e9, 0x22c55e, 0xeab308][i % 4]));
+    }
+    contMesh.count = nBox; contMesh.instanceMatrix.needsUpdate = true; if (contMesh.instanceColor) contMesh.instanceColor.needsUpdate = true;
+    for (let i = 0; i < nShip; i++) {
+      const a = PA - 13 + (i % 3) * 13 + (i >= 3 ? 6 : 0), r = 32.5 + (i >= 3 ? 3.6 : 0) + (i % 2) * 0.8; const [x, z] = polar(r, a);
+      M.compose(V.set(x, 0, z), Q.setFromEuler(E.set(0, face(x, z) + Math.PI / 2 + 0.25, 0)), S.setScalar(0.85)); shipMesh.setMatrixAt(i, M);
+    }
+    shipMesh.count = nShip; shipMesh.instanceMatrix.needsUpdate = true;
+    if (portSignSprite) scene.remove(portSignSprite); if (lateSprite) { scene.remove(lateSprite); lateSprite = null; }
+    portSignSprite = label(portSign(), qx, 7.2, qz, '#0e7490', '#ffffff', 340, 0.95);
+    pickables.splice(0, pickables.length, ...pickables.filter(p => p[0].userData.port !== true));
+    portSignSprite.userData.port = true; pickables.push([portSignSprite, () => open.port(), portTip]);
+    if (IN.late) { lateSprite = label(`${IN.late} late`, qx, 3.4, qz, '#dc2626', '#ffffff', 200, 0.8); lateSprite.userData.port = true; pickables.push([lateSprite, () => open.port(), () => ['Late shipments', `${IN.late} past their ETA, not yet received`]]); }
+    dirty = true;
+  }
+  contMesh.userData.port = shipMesh.userData.port = false;
+  pickables.push([contMesh, () => open.port(), (i) => { const r = shipRows.boxes[i]; return r ? [`${r.shipment_number}${r.bucket === 'late' ? ' · late' : ''}`, `ETA ${fmtDay(r.eta)} · ${r.products} products${supplierOf(r) ? ' · ' + supplierOf(r) : ''}`] : portTip(); }]);
+  pickables.push([shipMesh, () => open.port(), (i) => { const r = shipRows.ships[i]; return r ? [`${r.shipment_number} on the water`, `ETA ${fmtDay(r.eta)} · ${r.products} products${supplierOf(r) ? ' · ' + supplierOf(r) : ''}`] : portTip(); }]);
+  drawPort();
+
+  // trees
+  const treeGeo = merge([part(CYL(0.14, 0.18, 0.8, 6), 0xa16207), part(new THREE.IcosahedronGeometry(0.8, 1).translate(0, 1.4, 0), 0x86c17a)]);
+  const treeAt = [[-6, 6], [6, -6], [-6, -6], [6.2, 6.2], ...[0, 72, 144, 216, 288].filter(a => Math.abs(a + 30 - PA) > 20).map(a => polar(25, a + 30))];
+  const trees = new THREE.InstancedMesh(treeGeo, mat(), treeAt.length);
+  treeAt.forEach(([x, z], i) => { M.compose(V.set(x, 0, z), Q.identity(), S.setScalar(0.9)); trees.setMatrixAt(i, M); }); scene.add(trees);
+
+  // render on demand, 30 fps cap while moving, pause when hidden
+  let last = 0;
+  function frame(now) { requestAnimationFrame(frame); if (document.hidden || !dirty || now - last < 33) return; last = now; renderer.render(scene, cam); dirty = false; document.getElementById('calls').textContent = `draw calls: ${renderer.info.render.calls} · tilt ${(el / DEG).toFixed(0)}° · zoom ${zoom.toFixed(2)}x`; }
+  new ResizeObserver(resize).observe(canvas); resize(); placeCam(); requestAnimationFrame(frame);
+
+  // input: drag X turns, drag Y tilts, wheel / pinch zooms, hover shows a tooltip, click opens the lightbox
+  const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let drag = null; const touches = new Map(); let pinch = null;
+  const pick = (cx, cy) => {
+    const r = canvas.getBoundingClientRect(); ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ptr, cam); const hits = ray.intersectObjects(pickables.map(p => p[0]).filter(o => o.visible !== false && (!o.isInstancedMesh || o.count > 0)), false);
+    if (!hits.length) return null; const p = pickables.find(p => p[0] === hits[0].object); return p ? { p, i: hits[0].instanceId ?? 0, x: cx - r.left, y: cy - r.top } : null;
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2) { const [a, b] = [...touches.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom }; drag = null; return; }
+    drag = { x: e.clientX, y: e.clientY, yaw, el, moved: false };
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touches.size === 2) { const [a, b] = [...touches.values()]; zoom = clamp(pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d, Z_MIN, Z_MAX); placeCam(); return; }
+    if (drag) {
+      const dxp = e.clientX - drag.x, dyp = e.clientY - drag.y;
+      if (Math.hypot(dxp, dyp) > 4) { drag.moved = true; canvas.classList.add('dragging'); }
+      if (drag.moved) { yaw = drag.yaw - dxp * 0.006; el = clamp(drag.el + dyp * 0.005, EL_MIN, EL_MAX); placeCam(); }
+      return;
+    }
+    if (e.target !== canvas || e.pointerType === 'touch' || state.touch) return;
+    const hit = pick(e.clientX, e.clientY); canvas.classList.toggle('over', !!hit);
+    if (!hit) return hideTip();
+    const [t, s] = hit.p[2](hit.i); showTip(t, s, hit.x, hit.y, false); tipFor = { o: hit.p[0], i: hit.i };
+  });
+  canvas.addEventListener('pointerleave', () => { if (!drag && !state.touch) hideTip(); canvas.classList.remove('over'); });
+  window.addEventListener('pointerup', (e) => {
+    touches.delete(e.pointerId); if (touches.size < 2) pinch = null;
+    const moved = drag && drag.moved; drag = null; canvas.classList.remove('dragging'); if (moved || e.target !== canvas) return;
+    const hit = pick(e.clientX, e.clientY);
+    const touch = e.pointerType === 'touch' || state.touch;
+    if (!hit) return hideTip();
+    if (touch && !(tipFor && tipFor.o === hit.p[0] && tipFor.i === hit.i)) { const [t, s] = hit.p[2](hit.i); hideTip(); showTip(t, s, hit.x, hit.y, true); tipFor = { o: hit.p[0], i: hit.i }; hideHint(); return; }
+    hit.p[1](hit.i);
+  });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoom = clamp(zoom * Math.exp(-e.deltaY * 0.0015), Z_MIN, Z_MAX); placeCam(); }, { passive: false });
+  document.getElementById('zoomIn').onclick = () => { zoom = clamp(zoom * 1.25, Z_MIN, Z_MAX); placeCam(); };
+  document.getElementById('zoomOut').onclick = () => { zoom = clamp(zoom / 1.25, Z_MIN, Z_MAX); placeCam(); };
+  document.getElementById('resetView').onclick = () => { yaw = YAW0; el = EL0; zoom = Z0; placeCam(); };
+  return {
+    refresh() { drawBoard(); drawTags(); drawPort(); },
+    setNight(on) { hemi.intensity = on ? 0.55 : 2.0; sun.intensity = on ? 0.2 : 1.3; slot.forEach((o, i) => shopMesh.setColorAt(i, col(o.lit ? (on ? 0xfde68a : 0xfbbf24) : (on ? 0x57534e : 0xd6d3d1)))); shopMesh.instanceColor.needsUpdate = true; dirty = true; },
+    view(y, e, z) { yaw = y ?? yaw; el = e != null ? e * DEG : el; zoom = z ?? zoom; placeCam(); },
+    tipAt(name) { // for screenshots: show the tooltip of a named target at its screen point
+      const targets = { shop: [shopMesh, slot.findIndex(o => o.lit)], port: [quay, 0], ship: [shipMesh, 0], box: [contMesh, 0] };
+      const [o, i] = targets[name]; const m = new THREE.Matrix4(); const p = new THREE.Vector3();
+      if (o.isInstancedMesh) { o.getMatrixAt(i, m); p.setFromMatrixPosition(m); p.y += name === 'shop' ? 2 : 1; } else { p.copy(o.position); p.y += 1; }
+      p.project(cam); const r = canvas.getBoundingClientRect(); const x = (p.x + 1) / 2 * r.width, y = (1 - p.y) / 2 * r.height;
+      const pk = pickables.find(q => q[0] === o); const [t, s] = pk[2](i); showTip(t, s, x, y, state.touch); tipFor = { o, i };
+    },
+  };
+}
+
+/* ---------------- controls ---------------- */
+const tNight = document.getElementById('tNight'), tRedact = document.getElementById('tRedact'), tDark = document.getElementById('tDark'), tShip = document.getElementById('tShip'), tTouch = document.getElementById('tTouch');
+function sync() {
+  state.night = tNight.checked; state.redact = tRedact.checked; state.touch = tTouch.checked;
+  if (state.ship !== tShip.value) { state.ship = tShip.value; IN = makeIncoming(state.ship); }
+  root.classList.toggle('night', state.night); root.classList.toggle('dark', tDark.checked);
+  renderCards(); closeBox(); hideTip(); if (api) { api.setNight(state.night); api.refresh(); }
+}
+[tNight, tRedact, tDark, tShip, tTouch].forEach(el => el.addEventListener('change', sync));
+document.getElementById('wallboardBtn').onclick = (e) => { state.wallboard = !state.wallboard; e.target.textContent = state.wallboard ? 'Exit wallboard' : 'Wallboard'; sync(); };
+sync();
+window.__mock = { open, DATA, api, setShip: (k) => { tShip.value = k; sync(); }, hideHint };
+</script>
+</body>
+</html>

@@ -61,7 +61,12 @@ export function RichTextView({
             ...(block.kind === 'li' ? { paddingLeft: `${(block.level ?? 1) * 1.25}rem` } : {}),
           }}
         >
-          {block.kind === 'li' ? <span className="mr-1">{block.marker}</span> : null}
+          {block.kind === 'li' ? (
+            // Marked so a click point can be read as typed text, which a marker is not.
+            <span className="mr-1" data-rt-marker="">
+              {block.marker}
+            </span>
+          ) : null}
           {block.runs.length === 0 ? ' ' : block.runs.map((run, at) => <Run key={at} run={run} />)}
         </p>
       ))}

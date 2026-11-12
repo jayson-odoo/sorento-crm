@@ -109,6 +109,20 @@ MANAGE_PERMISSION = "projects.projects.manage"
 # --------------------------------------------------------------- validation
 
 
+def project_display_name(lead) -> str:
+    """The lead's short name, else its title (one rule with the project's)."""
+    from app.services.project_service import project_display_name as display
+
+    return display(lead)
+
+
+def _clean_name(value: Any) -> Optional[str]:
+    """The short name as stored (PROJECT-NAME): one rule with the project's."""
+    from app.services.project_service import checked_project_name
+
+    return checked_project_name(value)
+
+
 def _clean_title(raw: Optional[str]) -> str:
     title = " ".join((raw or "").split())
     if not title:
@@ -305,6 +319,7 @@ def create_lead(
         customer_id=payload.get("customer_id"),
         developer_party_id=payload.get("developer_party_id"),
         title=title,
+        name=_clean_name(payload.get("name")),
         normalised_title=normalise_project_title(title),
         source=payload.get("source"),
         source_detail=payload.get("source_detail"),
@@ -451,6 +466,8 @@ def update_lead(db: Session, lead: ProjectLead, payload: Dict[str, Any]) -> Proj
         title = _clean_title(payload.get("title"))
         lead.title = title
         lead.normalised_title = normalise_project_title(title)
+    if "name" in payload:
+        lead.name = _clean_name(payload.get("name"))
     if "customer_id" in payload:
         # The route refuses clearing a customer the lead has; the service stays permissive.
         _assert_buyer(db, payload.get("customer_id"))
@@ -798,7 +815,8 @@ def notify_lead_assigned(
         developer = _party_name(db, lead.developer_party_id)
         value = f"RM {lead.estimated_value}" if lead.estimated_value is not None else None
         facts = " | ".join(str(part) for part in (developer, lead.location, value) if part)
-        body = f"{lead.title}"
+        # The short name, else the title (PROJECT-NAME rule 7).
+        body = project_display_name(lead)
         if facts:
             body += f"\n{facts}"
         if note:
@@ -818,6 +836,7 @@ def notify_lead_assigned(
                 "lead_id": str(lead.id),
                 "lead_code": lead.lead_code,
                 "title": lead.title,
+                "name": lead.name,
                 "developer_name": developer,
                 "estimated_value": (
                     str(lead.estimated_value)
@@ -860,7 +879,8 @@ def notify_lead_declined(
     """
     try:
         decliner = _user_label(db, actor_user_id)
-        body = f"{lead.title}"
+        # The short name, else the title (PROJECT-NAME rule 7).
+        body = project_display_name(lead)
         if decliner:
             body += f"\n{decliner} declined it: {lead.declined_reason}"
         else:
@@ -995,8 +1015,12 @@ def qualify_lead(
     payload = dict(project_payload or {})
     title = payload.pop("title", None) or lead.title
     developer_party_id = payload.pop("developer_party_id", None) or lead.developer_party_id
+    # A name sent on the confirm step wins; otherwise the lead's travels (PROJECT-NAME Q5).
+    name = _clean_name(payload.pop("name", None)) or lead.name
 
     details = payload.pop("details", None) or {}
+    if name and not details.get("name"):
+        details["name"] = name
     # Carry across what the lead already knows, without overwriting anything the
     # confirm step edited: re-asking for the location we were told about is exactly
     # the re-keying this module exists to remove.
@@ -1198,6 +1222,7 @@ def serialize_leads(
                 "id": lead.id,
                 "lead_code": lead.lead_code,
                 "title": lead.title,
+                "name": lead.name,
                 "customer_id": lead.customer_id,
                 "customer_name": customers.get(lead.customer_id or ""),
                 "developer_party_id": lead.developer_party_id,
@@ -1336,7 +1361,11 @@ def list_leads(
     if query:
         like = f"%{query.strip()}%"
         q = q.filter(
-            or_(ProjectLead.title.ilike(like), ProjectLead.lead_code.ilike(like))
+            or_(
+                ProjectLead.title.ilike(like),
+                ProjectLead.name.ilike(like),
+                ProjectLead.lead_code.ilike(like),
+            )
         )
     if acceptance_state:
         # AC-A7: marketing filters the ordinary list by handshake state too, so
@@ -1430,7 +1459,11 @@ def awaiting_acceptance(
     if query:
         like = f"%{query.strip()}%"
         q = q.filter(
-            or_(ProjectLead.title.ilike(like), ProjectLead.lead_code.ilike(like))
+            or_(
+                ProjectLead.title.ilike(like),
+                ProjectLead.name.ilike(like),
+                ProjectLead.lead_code.ilike(like),
+            )
         )
     if min_hours and float(min_hours) > 0:
         q = q.filter(ProjectLead.assigned_at <= now - timedelta(hours=float(min_hours)))

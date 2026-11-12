@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   type ColumnDef,
@@ -28,14 +28,21 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import {
+  formatDateTimeInMalaysia,
+  malaysiaCivilYyyyMmDdFromApi,
+  malaysiaDayEndIso,
+  malaysiaDayStartIso,
+  todayMalaysiaYyyyMmDd,
+} from '@/lib/helpers';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
 import { useFailedChatbotContacts } from './hooks/useChatbotTurns';
 import { stageLabel } from './turnPresentation';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
-import { TurnDetailDrawer } from './components/TurnDetailDrawer';
+import { useTraceDrawer } from './components/TraceDrawer';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { stripWhatsAppMarkup } from '@/lib/whatsappText';
 import type {
@@ -43,12 +50,6 @@ import type {
   ChatHistoryGroupBy,
   ChatMessageRow,
 } from './types/chatHistory.types';
-
-function localInput(offsetHours: number): string {
-  const d = new Date(Date.now() - offsetHours * 3600_000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 const GROUP_BY_OPTIONS = [
   { value: 'none', label: 'No grouping' },
@@ -72,10 +73,17 @@ function LatencyCell({ seconds }: { seconds: number | null }) {
   );
 }
 
+function defaultDateRange() {
+  return {
+    from: malaysiaCivilYyyyMmDdFromApi(Date.now() - 86_400_000) ?? '',
+    to: todayMalaysiaYyyyMmDd(),
+  };
+}
+
 export default function ChatHistoryPage() {
-  // Default to the last 24h - an unbounded scan of this table is never the intent.
-  const [dateFrom, setDateFrom] = useState(() => localInput(24));
-  const [dateTo, setDateTo] = useState(() => localInput(0));
+  // Default to yesterday through today (whole Malaysia days) - an unbounded scan of this table is never the intent.
+  const [dateFrom, setDateFrom] = useState(() => defaultDateRange().from);
+  const [dateTo, setDateTo] = useState(() => defaultDateRange().to);
   const [direction, setDirection] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
   // AC-255. Narrows the LIST to contacts whose chatbot turns failed in this range.
@@ -93,16 +101,26 @@ export default function ChatHistoryPage() {
   // is opened by id straight into its own drawer instead of being looked for in a list
   // that can never hold it (browser pass 2, step 3).
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const linkedTurnId = searchParams.get('turn');
-  const [tracedTurnId, setTracedTurnId] = useState<string | null>(linkedTurnId);
+  // Closing drops `turn` from the address, so the same link followed again re-opens it.
+  const { openTrace, traceDrawer } = useTraceDrawer(linkedTurnId, () => {
+    if (!searchParams.has('turn')) return;
+    const rest = new URLSearchParams(searchParams.toString());
+    rest.delete('turn');
+    const query = rest.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  });
   useEffect(() => {
-    setTracedTurnId(linkedTurnId);
+    openTrace(linkedTurnId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the link changes
   }, [linkedTurnId]);
 
   const range: ChatHistoryFilters = useMemo(
     () => ({
-      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-      date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+      date_from: malaysiaDayStartIso(dateFrom),
+      date_to: malaysiaDayEndIso(dateTo),
       direction: direction || undefined,
       breached_only: breachedOnly || undefined,
     }),
@@ -313,32 +331,26 @@ export default function ChatHistoryPage() {
             active: filtersActive > 0,
             activeCount: filtersActive,
             content: (
-              <div className="space-y-4 w-72">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label htmlFor="from" className="text-xs">From</Label>
-                    <Input
-                      id="from"
-                      type="datetime-local"
-                      value={dateFrom}
-                      onChange={(e) => {
-                        setDateFrom(e.target.value);
-                        resetPage();
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="to" className="text-xs">To</Label>
-                    <Input
-                      id="to"
-                      type="datetime-local"
-                      value={dateTo}
-                      onChange={(e) => {
-                        setDateTo(e.target.value);
-                        resetPage();
-                      }}
-                    />
-                  </div>
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <Label htmlFor="chat-date-range" className="text-xs">Date range</Label>
+                  <DateRangePicker
+                    id="chat-date-range"
+                    aria-label="Date range"
+                    from={dateFrom}
+                    to={dateTo}
+                    onChange={({ from, to }) => {
+                      if (!from && !to) {
+                        const d = defaultDateRange();
+                        setDateFrom(d.from);
+                        setDateTo(d.to);
+                      } else {
+                        setDateFrom(from ?? '');
+                        setDateTo(to ?? '');
+                      }
+                      resetPage();
+                    }}
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Direction</Label>
@@ -456,10 +468,7 @@ export default function ChatHistoryPage() {
       </Container>
 
       <ChatThreadDrawer row={selected} onOpenChange={(open) => !open && setSelected(null)} />
-      <TurnDetailDrawer
-        turnId={tracedTurnId}
-        onOpenChange={(open) => !open && setTracedTurnId(null)}
-      />
+      {traceDrawer}
     </>
   );
 }

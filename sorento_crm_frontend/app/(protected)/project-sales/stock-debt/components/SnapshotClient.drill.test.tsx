@@ -111,7 +111,7 @@ vi.mock('../../_shared/hooks/useReserveRowOptions', () => ({
             { value: 'wh-brw', label: 'BRW' },
             { value: 'wh-mwh', label: 'MWH' },
           ],
-          availableQtyByWarehouseId: {},
+          onHandQtyByWarehouseId: {},
         },
       ]),
     ),

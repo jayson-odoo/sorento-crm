@@ -13,6 +13,7 @@ import { sumCells, type MatrixCells } from '../../_shared/lib/quotationMatrix';
 import type {
   QuotationLine,
   QuotationLineBulkItem,
+  StagedQuotationLine,
   UnitType,
 } from '../../_shared/types/project.types';
 
@@ -73,6 +74,7 @@ export function cellsPatch(cells: MatrixCells | null, quantity?: string): LineDr
 
 /** A stored line as an editable draft. Every field the bulk write sends has to be in here. */
 export function serverToDraft(line: QuotationLine, withCells = false): LineDraft {
+  if (line.is_section) return sectionDraft(line.band_label ?? '');
   return {
     ...(withCells ? { [CELLS_KEY]: JSON.stringify(line.qty_cells ?? {}) } : {}),
     product_id: line.product_id ?? '',
@@ -96,6 +98,60 @@ export function serverToDraft(line: QuotationLine, withCells = false): LineDraft
     // Read under the rate, never sent back (the server snapshots it from the product).
     list_price: line.list_price ?? '',
   };
+}
+
+/**
+ * The draft key that marks a heading row (PROPOSAL-FORM-COLLAPSE, owner 10 Nov 2026: "a heading
+ * shouldnt be tied to line"): the row IS the section heading, its text in `band_label`. It has
+ * its own place in the list, so moving or removing a line never moves or drops it.
+ */
+export const SECTION_KEY = 'is_section';
+
+export function isSectionDraft(draft: LineDraft): boolean {
+  return isInlineChecked(draft[SECTION_KEY]);
+}
+
+/** A heading row's draft: the heading and nothing to price. */
+export function sectionDraft(label = ''): LineDraft {
+  return { [SECTION_KEY]: INLINE_CHECKED, band_label: label };
+}
+
+/**
+ * A product line that still carries a heading from before heading rows existed is shown as a
+ * heading row above it, and the line loses it; the next Save writes it that way. Pure and
+ * idempotent: the split rows are keyed `heading:<line key>`, so seeding twice changes nothing.
+ */
+export function splitCarriedHeadings(lines: StagedQuotationLine[]): StagedQuotationLine[] {
+  const out: StagedQuotationLine[] = [];
+  // The section in force, as the PDF reads a carried label: a repeat on the next line is the same
+  // section (printed once), so it opens no second heading (review should-fix 2).
+  let current: string | null = null;
+  lines.forEach((line) => {
+    const label = (line.draft.band_label ?? '').trim();
+    if (isSectionDraft(line.draft)) {
+      current = label || null;
+      out.push(line);
+      return;
+    }
+    if (!label) {
+      out.push(line);
+      return;
+    }
+    if (label === current) {
+      out.push({ ...line, draft: { ...line.draft, band_label: '' } });
+      return;
+    }
+    current = label;
+    out.push({
+      id: null,
+      key: `heading:${line.key}`,
+      line: null,
+      draft: sectionDraft(label),
+      removed: false,
+    });
+    out.push({ ...line, draft: { ...line.draft, band_label: '' } });
+  });
+  return out;
 }
 
 /** A brand-new row's starting draft. Also the "untouched" comparison. */
@@ -140,6 +196,7 @@ export function isUntouched(draft: LineDraft): boolean {
  */
 export function lineErrors(draft: LineDraft): Record<string, string> {
   const errors: Record<string, string> = {};
+  if (isSectionDraft(draft)) return errors;
   if (!draft.product_id && !draft.product_set_id) errors.product = 'Pick a catalogue product or set';
   // A grid line (PS-QUOTE-MATRIX): every cell a quantity of 0 or more, or blank.
   const cells = draftCells(draft);
@@ -163,7 +220,7 @@ export function lineErrors(draft: LineDraft): Record<string, string> {
 export function totalFromDrafts(drafts: LineDraft[]): string | null {
   return sumMoney(
     drafts
-      .filter((draft) => !isInlineChecked(draft.is_rate_only))
+      .filter((draft) => !isSectionDraft(draft) && !isInlineChecked(draft.is_rate_only))
       .map((draft) => multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
   );
 }
@@ -180,6 +237,9 @@ export function toBody(
   draft: LineDraft,
   stored: QuotationLine | null,
 ): QuotationLineBulkItem {
+  if (isSectionDraft(draft)) {
+    return { is_section: true, band_label: (draft.band_label ?? '').trim() || null };
+  }
   const body: QuotationLineBulkItem = {
     product_id: draft.product_id || null,
     description_snapshot: (draft.description ?? '').trim() || null,

@@ -86,6 +86,10 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
   product_drawing: { base: '/master-data-management/products', label: 'Product drawing' },
   product_photo: { base: '/master-data-management/products', label: 'Product photo' },
+  new_product_application: {
+    base: '/procurement-management/new-product-applications',
+    label: 'New product application',
+  },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;

@@ -58,6 +58,10 @@ vi.mock('../lib/portal-client', () => ({
   fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
 }));
 
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -116,6 +120,7 @@ vi.mock('./AIExtractDialog', () => ({
 }));
 
 import { lookupDebtors, lookupTagItems } from '../lib/price-tag-request-service';
+import { chooseUpload } from '@/test-utils';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -151,7 +156,7 @@ beforeEach(() => {
 // default - no customer is picked in these tests, so it never auto-opens
 // (AC-P3), and Radix's Collapsible unmounts its content while closed.
 function openSalesOrderSection() {
-  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+  chooseUpload();
 }
 
 /**

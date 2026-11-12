@@ -21,7 +21,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
-import { withBoxStyle } from '../types/accessory.types';
 import type {
   Accessory,
   AccessoryEntry,
@@ -31,7 +30,6 @@ import type {
   AccessoryOwnerKind,
   AccessoryPicture,
   AccessoryWrite,
-  OwnerAccessories,
 } from '../types/accessory.types';
 
 const BASE = '/api/v1/master-data/accessories';
@@ -140,29 +138,53 @@ function ownerPath(kind: AccessoryOwnerKind, id: string): string {
 export async function listOwnerAccessories(
   kind: AccessoryOwnerKind,
   id: string,
-): Promise<OwnerAccessories> {
+): Promise<AccessoryEntry[]> {
   const res = await apiFetch(ownerPath(kind, id));
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the accessories'));
-  const body = (await res.json()) as { data?: AccessoryEntry[]; box_style_id?: string | null };
-  return withBoxStyle(body.data ?? [], body.box_style_id);
+  const body = (await res.json()) as { data?: AccessoryEntry[] };
+  return body.data ?? [];
 }
 
-/**
- * Replace the whole ordered list. `boxStyleId` is sent only when given: a template id sets the owner's
- * box style, null clears it, left out leaves it as it is.
- */
+/** Replace the whole ordered list. The box style is never sent, so the server leaves it alone. */
 export async function replaceOwnerAccessories(
   kind: AccessoryOwnerKind,
   id: string,
   items: AccessoryItemRef[],
-  boxStyleId?: string | null,
 ): Promise<AccessoryEntry[]> {
   const res = await apiFetch(ownerPath(kind, id), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(boxStyleId === undefined ? { items } : { items, box_style_id: boxStyleId }),
+    body: JSON.stringify({ items }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the accessories'));
-  const body = (await res.json()) as { data?: AccessoryEntry[]; box_style_id?: string | null };
-  return withBoxStyle(body.data ?? [], body.box_style_id);
+  const body = (await res.json()) as { data?: AccessoryEntry[] };
+  return body.data ?? [];
+}
+
+/** What a copy did (or, with `dryRun`, would do): ACC-COPY-TO-PRODUCTS. */
+export interface AccessoryCopySummary {
+  targets: number;
+  targets_with_a_list: number;
+  entries_added: number;
+  entries_already_there: number;
+  box_style_set: number;
+}
+
+/**
+ * Add this product's entries to the picked products: each keeps its own list and gets the
+ * entries it is missing at the end; the box style goes to products with none. One transaction.
+ * `dryRun` answers the same summary and writes nothing (the confirm step).
+ */
+export async function copyProductAccessories(
+  sourceId: string,
+  targetIds: string[],
+  dryRun = false,
+): Promise<AccessoryCopySummary> {
+  const res = await apiFetch(`${ownerPath('product', sourceId)}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_product_ids: targetIds, dry_run: dryRun }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to copy the accessories'));
+  return (await res.json()) as AccessoryCopySummary;
 }

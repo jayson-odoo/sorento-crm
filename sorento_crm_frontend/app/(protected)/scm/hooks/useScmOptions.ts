@@ -5,6 +5,7 @@ import {
   getOrderTypeOptions,
   getProductOptions,
   getSupplierOptions,
+  getActiveWarehouseOptions,
   getWarehouseOptions,
 } from '../services/scmOptionsService';
 
@@ -12,6 +13,15 @@ const opts = { staleTime: 5 * 60_000, retry: 1 } as const;
 
 export function useWarehouseOptions() {
   return useQuery({ queryKey: ['scm', 'opts', 'warehouses'], queryFn: getWarehouseOptions, ...opts });
+}
+
+/** The reorder / low stock / daily job scope pickers: active locations only. */
+export function useActiveWarehouseOptions() {
+  return useQuery({
+    queryKey: ['scm', 'opts', 'warehouses', 'active'],
+    queryFn: getActiveWarehouseOptions,
+    ...opts,
+  });
 }
 
 export function useSupplierOptions() {

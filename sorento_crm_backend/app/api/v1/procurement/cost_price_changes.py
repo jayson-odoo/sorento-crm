@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.utils.multi_value import multi_uuids, multi_values
 from app.database import get_db
-from app.dependencies import require_any_permission, require_permission
+from app.dependencies import get_current_user, require_any_permission, require_permission
+from app.services.cost_access import require_cost_view
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.procurement import cost_price_change_service as service
 from app.services.procurement.supplier_price_list_reader import MAX_FILE_BYTES
@@ -22,7 +23,10 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 from app.utils.heavy_work import heavy
 
-router = APIRouter()
+# SUPPLIER-COST-ACCESS: every route here is supplier unit costs (current, new, the price list
+# itself), so the router also needs `products.cost.view`: `procurement.cost_price_changes.view`
+# is held by sales-side roles (project.customer.service, marketing) that must not see cost.
+router = APIRouter(dependencies=[Depends(require_cost_view(get_current_user))])
 
 UPLOAD_PERM = service.UPLOAD_PERM
 VIEW_PERM = service.VIEW_PERM

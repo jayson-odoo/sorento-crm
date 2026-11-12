@@ -131,7 +131,10 @@ def test_a_failed_po_read_leaves_the_version_row_saying_failed(seeded):
     db.expire_all()
     reread = db.query(ProjectPOVersion).filter(ProjectPOVersion.id == row_id).one()
     assert reread.extraction_state == "failed"
-    assert "page 3 would not render" in (reread.extraction_error or "")
+    # A sentence the user can act on, never the exception's own text (PO-EXTRACT-LIST-FIX:
+    # "'list' object has no attribute 'get'" reached a customer's screen this way).
+    assert reread.extraction_error
+    assert "page 3 would not render" not in reread.extraction_error
 
 
 def test_a_failed_schedule_read_leaves_the_version_row_saying_failed(seeded):
@@ -149,7 +152,8 @@ def test_a_failed_schedule_read_leaves_the_version_row_saying_failed(seeded):
         .one()
     )
     assert reread.extraction_state == "failed"
-    assert "no programme grid found" in (reread.extraction_error or "")
+    assert reread.extraction_error
+    assert "no programme grid found" not in reread.extraction_error
 
 
 def test_it_still_writes_when_the_caller_left_the_transaction_broken(seeded):

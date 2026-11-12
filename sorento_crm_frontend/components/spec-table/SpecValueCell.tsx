@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,6 +71,7 @@ export function SpecValueCell({
   onAddValueToKey,
   synonyms,
   busy = false,
+  trailing,
 }: {
   row: SpecTableRow;
   editing: boolean;
@@ -90,6 +91,8 @@ export function SpecValueCell({
   /** The key's merged synonyms, so "brushed brass" finds "Brushed Brass". */
   synonyms?: Record<string, string[]>;
   busy?: boolean;
+  /** Drawn after the read-only value (the price-tag icons it carries); never in edit. */
+  trailing?: ReactNode;
 }) {
   const [saving, setSaving] = useState(false);
   // Set by a Save that found a blank or invalid number; the sentence then follows the typing.
@@ -113,6 +116,24 @@ export function SpecValueCell({
 
   if (!editing) {
     const displayed = readableValue(row.value, row.unit ?? undefined, row.valueLabels);
+    if (trailing) {
+      // Inline after the value (SPEC-VALUE-ICONS 1a): the value keeps its own click to edit
+      // and truncates first, so the trailing pictures stay whole at 375px.
+      return (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onStartEdit}
+            className="min-w-0 truncate text-start text-sm hover:underline"
+            title={displayed}
+            data-spec-value={row.specKey}
+          >
+            {displayed}
+          </button>
+          {trailing}
+        </div>
+      );
+    }
     return (
       <button
         type="button"

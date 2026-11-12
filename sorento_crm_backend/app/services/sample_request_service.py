@@ -33,6 +33,7 @@ from app.services.error_handler import AppException, handle_not_found
 from app.services.scm.so_party import so_parties, with_party
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -1108,13 +1109,16 @@ def _quotation_items(
     # (product id or None, what a person would recognise the line by)
     wanted: List[tuple] = []
     for line in quote_lines:
+        if line.is_section:
+            # A heading row is not an item to sample (PROPOSAL-FORM-COLLAPSE).
+            continue
         if line.product_id:
             wanted.append((str(line.product_id), line.product_code_snapshot))
         elif line.set_parts_snapshot:
             for part in line.set_parts_snapshot:
                 wanted.append((part.get("product_id"), part.get("product_code")))
         else:
-            text = line.description_snapshot or line.product_code_snapshot or ""
+            text = line_text(line) or line.product_code_snapshot or ""
             wanted.append((None, " ".join(text.split())))
     return wanted
 

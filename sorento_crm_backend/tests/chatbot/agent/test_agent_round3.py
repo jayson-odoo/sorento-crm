@@ -168,13 +168,15 @@ def test_registry_carries_the_contact_grants():
 
     # AGENTIC-UNIFY PR 4: the ported reads carry no contact grant, but the order analytics asks the sales reveal
     # (a staff member's is their own `sales.reports.view`, so a user without it is not offered the totals).
-    ported = {n: None for n in AC1_NAMES}
+    from tests.chatbot.agent._ported_reads_support import LOCAL_PORTED
+
+    ported = {n: None for n in [*AC1_NAMES, *LOCAL_PORTED]}
     ported["crm_order_analytics"] = "sales_orders.sales_report"
     assert {n: d.contact_grant for n, d in REGISTRY.items()} == {**EXPECTED_GRANTS, **ported}
 
 
 def test_dispatch_denies_a_tool_whose_contact_grant_is_missing(held):
-    held.update({"scm.purchase_orders.view"})
+    held.update({"products.cost.view"})  # SUPPLIER-COST-ACCESS: PO cost's staff slug
     rec = Rec()
     out = _dispatch(COST, {"query": "x"}, rec, ctx=_ctx())
     assert out.status == "denied" and rec.calls == []
@@ -375,21 +377,11 @@ def test_a_repair_call_cannot_outlast_the_turn(db, contact):
 
 
 def test_a_second_turn_for_the_same_contact_is_busy(db, contact):
-    from app.database import engine
-    from app.services.chatbot.agent.loop import AgentBusy
+    from app.services.chatbot.agent.loop import AgentBusy, single_flight
 
-    holder = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-    try:
-        holder.execute(
-            text("SELECT pg_advisory_lock(hashtext(:k))"), {"k": f"agent:{contact['respond_id']}"}
-        )
+    with single_flight(contact["respond_id"]):  # another turn of this contact is running
         with pytest.raises(AgentBusy):
             run(db, contact, Prov([answer("hi")]))
-    finally:
-        holder.execute(
-            text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": f"agent:{contact['respond_id']}"}
-        )
-        holder.close()
 
 
 def test_the_lock_is_released_after_a_turn(db, contact):
@@ -538,6 +530,7 @@ def test_only_the_resolver_and_grn_are_not_render_tools():
     # AGENTIC-UNIFY PR 4: the ported reads are plain routes with no presenter; `crm_find` alone renders.
     assert {n for n, d in REGISTRY.items() if not d.render} == {
         "crm_resolve", "crm_products_find", GRN, "crm_knowledge_search", "user_guides_read",
+        "crm_project_quotation_lines",  # AGENT-QUOTE-COMPARE
         *(n for n in AC1_NAMES if n != "crm_find"),
     }
 

@@ -1,11 +1,11 @@
-# Host prep for the Patroni watchdog (both CRM nodes)
+# Host prep for the controller's watchdog (both CRM nodes)
 
-Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2 (watchdog row).
+Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 3 ("Why there can never be
+two writable databases"). The failover controller (root, on the host) pets `/dev/watchdog` every
+tick; if it hangs, the box reboots and Postgres comes back as a standby (rule D1).
 
-1. Load softdog now and at boot:
+1. Load softdog now and at boot (60 s default timeout, longer than the 15 s tick):
    `echo softdog | sudo tee /etc/modules-load.d/softdog.conf && sudo modprobe softdog`
-2. Give the container's postgres uid the device (the pgvector image's postgres is uid 999;
-   check with `docker run --rm <image> id postgres`):
-   `sudo cp 60-watchdog.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger`
-3. Recreate the db container; the Patroni log must show "watchdog activated". Then set
-   `watchdog.mode: required` in patroni.yml.
+2. Nothing else opens the device (no udev rule: the controller runs as root).
+3. Check after `systemctl start cf-failover`: `dmesg | grep -i watchdog` shows it armed;
+   `systemctl stop cf-failover` disarms it (log line "watchdog disarmed").

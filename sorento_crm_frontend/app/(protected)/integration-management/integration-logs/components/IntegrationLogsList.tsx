@@ -21,6 +21,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -88,6 +89,18 @@ export default function IntegrationLogsList() {
     () => searchParams.getAll('error_contains'),
   );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // A new search or filter is a new, usually smaller, result: show its first page, never
+  // "51 - 69 of 69" (crew pass on 086a3235). Never on mount, so Back to page 2 stays on page 2.
+  useResetPageOnFilterChange(setPagination, [
+    searchQuery,
+    statusFilter,
+    channelFilter,
+    tableFilter,
+    createdFrom,
+    createdTo,
+    statusCode,
+    errorContains.join('\u0000'),
+  ]);
 
   const { data, isLoading, isPlaceholderData, isFetching, refetch, isRefetching, error } = useIntegrationLogs({
     pageIndex: pagination.pageIndex,
@@ -132,7 +145,11 @@ export default function IntegrationLogsList() {
       {
         accessorKey: 'business_table',
         header: ({ column }) => <DataGridColumnHeader title="Business Table" column={column} />,
-        cell: ({ row }) => row.original.business_table,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.business_table}>
+            {row.original.business_table}
+          </span>
+        ),
         size: 150,
         meta: { headerTitle: 'Business Table' },
       },

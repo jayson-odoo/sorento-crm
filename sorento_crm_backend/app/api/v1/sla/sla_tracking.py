@@ -73,6 +73,12 @@ SOURCE_TYPE_READERS = {
     "workflow_submission": ["workflow_forms.submissions.view"],
     "price_tag_request": ["dealer_kit.price_tag_requests.view"],
     "sample_request": ["projects.sample_requests.view"],
+    # The NPA's view-all slugs (new_product_application_service.actor_from_slugs).
+    "new_product_application": [
+        "procurement.new_product_applications.view",
+        "procurement.new_product_applications.approve",
+        "procurement.new_product_applications.open_code",
+    ],
     # A quotation line's drawing or photo request is keyed on a product, and the product page
     # has no SLA tab: like a conversation ticket, it is read by the SLA module alone (its side
     # panel is GET /form-sla-tracking/{id}/media-request, scoped to the task's team chain).
@@ -92,8 +98,28 @@ def _require_any(db: Session, current_user: dict, slugs: list[str]) -> None:
     require_any_permission_with_api_key(slugs)(current_user=current_user, db=db)
 
 
-def _require_tracker_reader(db: Session, current_user: dict, source_entity_type: Optional[str]) -> None:
+def _require_tracker_reader(
+    db: Session,
+    current_user: dict,
+    source_entity_type: Optional[str],
+    source_entity_id: Optional[str] = None,
+) -> None:
     _require_any(db, current_user, tracker_reader_slugs(source_entity_type))
+    _require_source_visible(db, source_entity_type, source_entity_id)
+
+
+def _require_source_visible(
+    db: Session, source_entity_type: Optional[str], source_entity_id: Optional[str]
+) -> None:
+    """A New Product Application carries its own company (its read is company scoped), so its
+    trackers answer only a caller who can load the application in their company scope: 404
+    otherwise, the record's own answer (NPA-FORM-SLA security review S1). The other form types
+    keep the slug check alone."""
+    if source_entity_type != "new_product_application" or not source_entity_id:
+        return
+    from app.services import new_product_application_service as npa
+
+    npa.get_for(db, str(source_entity_id))
 
 
 def _require_event_log_reader(db: Session, current_user: dict, tracking) -> None:
@@ -103,7 +129,12 @@ def _require_event_log_reader(db: Session, current_user: dict, tracking) -> None
     if tracking is None:
         _require_any(db, current_user, [EVENT_LOGS_VIEW])
     else:
-        _require_tracker_reader(db, current_user, getattr(tracking, "source_entity_type", None))
+        _require_tracker_reader(
+            db,
+            current_user,
+            getattr(tracking, "source_entity_type", None),
+            getattr(tracking, "source_entity_id", None),
+        )
 
 
 def _tracking_or_404(db: Session, tracking_id: str):
@@ -2173,7 +2204,7 @@ def list_trackers_by_source(
 ):
     """All SLA trackers attached to a form row, ordered oldest first (multi-stage chain)."""
     # The slug set follows the type the caller names: this is the SLA tab of that record.
-    _require_tracker_reader(db, current_user, source_entity_type)
+    _require_tracker_reader(db, current_user, source_entity_type, source_entity_id)
     try:
         rows = (
             db.query(ConversationSLATracking)
@@ -2270,7 +2301,7 @@ async def get_sla_tracking_conversation(
         # A drawing or photo request on the requester's contact is read like a ticket (assignee
         # or manager), not through the form tracker's readers.
         if source_type in FORM_SLA_TYPES and not is_media_conversation(tracking):
-            _require_tracker_reader(db, current_user, source_type)
+            _require_tracker_reader(db, current_user, source_type, tracking.source_entity_id)
         elif not service.can_user_act_on_tracking(current_user["id"], tracking):
             raise handle_not_found("Conversation SLA tracking", str(tracking_id))
         return await run_in_threadpool(
@@ -2495,7 +2526,12 @@ def get_sla_tracking_record(
         service = ConversationSLATrackingService(db)
         tracking = service.get_tracking(tracking_id_str)
         # The slug set follows the record's type (SOURCE_TYPE_READERS), read after the 404.
-        _require_tracker_reader(db, current_user, getattr(tracking, "source_entity_type", None))
+        _require_tracker_reader(
+            db,
+            current_user,
+            getattr(tracking, "source_entity_type", None),
+            getattr(tracking, "source_entity_id", None),
+        )
         return build_conversation_sla_tracking_response(db, tracking)
     except HTTPException:
         raise

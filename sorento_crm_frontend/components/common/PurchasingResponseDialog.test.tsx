@@ -100,4 +100,41 @@ describe('PurchasingResponseDialog', () => {
     setup({ open: false });
     expect(screen.queryByTestId('purchasing-response-dialog')).toBeNull();
   });
+
+  describe('the subtitle says only what the dialog offers (owner re-test 9 Nov)', () => {
+    const REPLY = 'Save updates the record only. Update & Reply saves your text and sends it to the contact.';
+
+    it('keeps the Update & Reply sentence when the host can reply', () => {
+      setup({ canReply: true });
+      expect(screen.getByText(REPLY)).toBeInTheDocument();
+    });
+
+    it('names no missing button, and gives the host reason, when it cannot reply', () => {
+      setup({
+        canReply: false,
+        noReplyReason: 'No WhatsApp reply: this inquiry has no WhatsApp conversation.',
+      });
+      expect(screen.queryByText(/Update & Reply/)).toBeNull();
+      expect(
+        screen.getByText(
+          'Save updates the record only. No WhatsApp reply: this inquiry has no WhatsApp conversation.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('uses the host reply sentence when the reply goes another way', () => {
+      setup({ canReply: true, replySentence: 'Update & Reply saves your text and notifies the applicant in the portal.' });
+      expect(
+        screen.getByText(
+          'Save updates the record only. Update & Reply saves your text and notifies the applicant in the portal.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('says only "Save updates the record only." when it cannot reply and the host gives no reason', () => {
+      setup({ canReply: false });
+      expect(screen.getByText('Save updates the record only.')).toBeInTheDocument();
+      expect(screen.queryByText(/Update & Reply/)).toBeNull();
+    });
+  });
 });

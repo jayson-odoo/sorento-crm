@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { buildDataGridParams, extractApiError, type DataGridParamsInput } from '@/lib/api-client';
 import type {
   ScheduledTask,
   ScheduledTaskRun,
@@ -6,9 +7,23 @@ import type {
   ListResponse,
 } from '../types/scheduledTask.types';
 
-export async function getScheduledTasks(): Promise<ListResponse<ScheduledTask>> {
-  const response = await apiFetch('/api/v1/system/scheduled-tasks');
-  if (!response.ok) throw new Error('Failed to fetch scheduled tasks');
+/** The grid's query: server-side page, sort and search; every filter is multi-value. */
+export interface ScheduledTaskListParams extends DataGridParamsInput {
+  enabled?: string[];
+  last_status?: string[];
+  interval_unit?: string[];
+}
+
+export async function getScheduledTasks(
+  params: ScheduledTaskListParams,
+): Promise<ListResponse<ScheduledTask>> {
+  const sp = buildDataGridParams(params, {
+    enabled: params.enabled?.length ? params.enabled : undefined,
+    last_status: params.last_status?.length ? params.last_status : undefined,
+    interval_unit: params.interval_unit?.length ? params.interval_unit : undefined,
+  });
+  const response = await apiFetch(`/api/v1/system/scheduled-tasks?${sp.toString()}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch scheduled tasks'));
   return response.json();
 }
 

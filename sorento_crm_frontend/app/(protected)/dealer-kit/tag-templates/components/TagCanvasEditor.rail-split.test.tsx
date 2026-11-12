@@ -76,6 +76,8 @@ vi.mock('../../services/tagDataService', () => ({
 
 /** What the "canvas-left-rail" Panel's imperative `resize` records. */
 const rail = vi.hoisted(() => ({ resize: vi.fn() }));
+/** The side columns' imperative `resize` (SPEC-SHEET-DESIGNER-PARITY: stored widths restored). */
+const sides = vi.hoisted(() => ({ left: vi.fn(), right: vi.fn() }));
 
 vi.mock('@/components/ui/resizable', async () => {
   const React = await import('react');
@@ -99,7 +101,14 @@ vi.mock('@/components/ui/resizable', async () => {
     PanelStandInProps
   >(function ResizablePanelStandIn(props, ref) {
     React.useImperativeHandle(ref, () => ({
-      resize: props.id === 'canvas-left-rail' ? rail.resize : () => {},
+      resize:
+        props.id === 'canvas-left-rail'
+          ? rail.resize
+          : props.id === 'canvas-left'
+            ? sides.left
+            : props.id === 'canvas-right'
+              ? sides.right
+              : () => {},
       collapse: () => {},
       expand: () => {},
       getSize: () => 0,
@@ -149,6 +158,8 @@ describe('TagCanvasEditor rail split persistence (S7, GitHub #676)', () => {
     vi.stubGlobal('ResizeObserver', FakeResizeObserver);
     roCallback = null;
     rail.resize.mockClear();
+    sides.left.mockClear();
+    sides.right.mockClear();
     window.localStorage.clear();
   });
 
@@ -171,6 +182,30 @@ describe('TagCanvasEditor rail split persistence (S7, GitHub #676)', () => {
 
     // 300 / 600 = 50%.
     expect(rail.resize).toHaveBeenCalledWith(50);
+  });
+
+  it('applies the stored side widths once the group is measured (a width dragged in the spec sheet carries here)', () => {
+    writePanelLayout({ ...DEFAULT_PANEL_LAYOUT, left: 300, right: 360 });
+
+    render(
+      <TagCanvasEditor doc={emptyDoc()} onChange={vi.fn()} leftRail={<div>Tag Size</div>} />,
+    );
+    reportGroupHeight(600);
+
+    // Against the measured 1200px width: 300 -> 25%, 360 -> 30%.
+    expect(sides.left).toHaveBeenCalledWith(25);
+    expect(sides.right).toHaveBeenCalledWith(30);
+  });
+
+  it('leaves a stored collapsed column collapsed', () => {
+    writePanelLayout({ ...DEFAULT_PANEL_LAYOUT, left: 300, leftCollapsed: true });
+
+    render(
+      <TagCanvasEditor doc={emptyDoc()} onChange={vi.fn()} leftRail={<div>Tag Size</div>} />,
+    );
+    reportGroupHeight(600);
+
+    expect(sides.left).not.toHaveBeenCalled();
   });
 
   it('does not fight a later ResizeObserver tick once applied', () => {

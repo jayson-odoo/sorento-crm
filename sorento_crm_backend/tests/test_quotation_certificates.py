@@ -537,18 +537,19 @@ def test_05_a_new_revision_invalidates_the_quote_override_and_the_cache(files):
             assert len(d["boxes"]) == 1 and d["boxes"][0]["y"] != pytest.approx(0.2)
 
 
-def test_05_a_suggested_code_is_persisted_on_first_read_and_marks_the_row_suggested(files):
+def test_05_a_suggested_code_is_persisted_on_first_read_and_its_box_is_just_marked(files):
+    # CERT-TAB-UX (owner, 11 Nov): no "Suggested, check" state; a guessed code's box is "found".
     with blank_session() as db:
         c = _draft(db)
         cr = _cert(db, c, files, covers=[(c["a"], None, None)], pdf=_pdf("XX 1", "WB 1515"))
         cp = cr.cps[c["a"].id]
         with _api(db, c) as client:
             row = _items(client, c)[0]
-            assert row["marked"]["state"] == "suggested" and row["marked"]["count"] == 1
+            assert row["marked"]["state"] == "found" and row["marked"]["count"] == 1
             db.expire_all()
             assert cp.model_code == "WB 1515" and cp.model_code_source == "ai"
             d = _detail(client, c, cr.id)
-            assert d["products"][0]["state"] == "suggested"
+            assert d["products"][0]["state"] == "found"
             assert d["products"][0]["model_code_source"] == "ai"
 
 
@@ -1133,7 +1134,8 @@ def test_m3_a_reader_can_queue_the_certificates_pdf(files, queued):
 def test_m2_the_heavy_routes_are_marked():
     from app.api.v1.projects import quotation_certificates as routes
 
-    for name in ("list_certificates", "read_certificate", "read_certificate_file", "put_certificate_boxes"):
+    # The list is not heavy any more (CERT-TAB-UX, tests/test_quotation_certificates_perf.py).
+    for name in ("read_certificate", "read_certificate_file", "put_certificate_boxes"):
         assert getattr(getattr(routes, name), "heavy", False) is True, name
 
 
@@ -1252,7 +1254,7 @@ def test_r3_a_new_revision_discards_the_negative_cache(files):
             _new_revision(db, cr, files, _pdf("XX 1", "WB 1515"))
             db.commit()
             row = _items(client, c)[0]
-            assert row["marked"] == {"count": 1, "state": "suggested"}
+            assert row["marked"] == {"count": 1, "state": "found"}
             db.expire_all()
             assert cp.model_code == "WB 1515" and cp.model_code_source == "ai"
 
@@ -1400,3 +1402,202 @@ def test_r5_a_merged_box_names_its_products_and_a_default_save_gives_each_its_ow
                 json={"scope": "quote", "boxes": [{**merged, "product_id": None}]},
             )
             assert q.status_code == 200, q.text
+
+
+# ---------------------------------------------------------------- CERT-TAB-UX crew pass, 11 Nov
+
+
+def test_ux_a_remembered_miss_does_not_hide_a_file_that_is_back(files, monkeypatch):
+    """The box editor reads the file itself: when it is readable again the miss is forgotten."""
+    pdf = _pdf("WB 1515")
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=pdf)
+        files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+            files[str(cr.att.id)] = pdf
+            d = _detail(client, c, cr.id)
+            assert d["marked"]["state"] == "found" and len(d["boxes"]) == 1
+            assert _items(client, c)[0]["marked"] == {"count": 1, "state": "found"}
+
+
+def test_ux_a_product_whose_box_was_deleted_for_this_quote_is_not_marked(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        with _api(db, c) as client:
+            d = _detail(client, c, cr.id)
+            assert {p["state"] for p in d["products"]} == {"found"}
+            keep = [b for b in d["boxes"] if b["product_id"] == c["b"].id]
+            assert len(keep) == 1
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": keep})
+            assert r.status_code == 200, r.text
+            by = {p["product_id"]: p["state"] for p in r.json()["products"]}
+            assert by[c["a"].id] == "unmarked"
+            assert by[c["b"].id] == "found"
+            assert _items(client, c)[0]["marked"] == {"count": 1, "state": "edited"}
+
+
+def test_ux_a_merged_quote_box_keeps_both_products_marked(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_row_with_both_codes_pdf(),
+        )
+        with _api(db, c) as client:
+            (merged,) = _detail(client, c, cr.id)["boxes"]
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [merged]})
+            assert r.status_code == 200, r.text
+            assert {p["state"] for p in r.json()["products"]} == {"found"}
+            assert set(r.json()["boxes"][0]["product_ids"]) == {c["a"].id, c["b"].id}
+
+
+def test_ux_an_unattributed_quote_box_leaves_product_states_alone(files):
+    """A box drawn for this quote names no product, so it may be any product's: none is unmarked."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [_box()]})
+            assert r.status_code == 200, r.text
+            assert r.json()["products"][0]["state"] == "found"
+
+
+def test_ux_deleting_every_box_for_this_quote_unmarks_the_product(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": []})
+            assert r.status_code == 200, r.text
+            assert r.json()["products"][0]["state"] == "unmarked"
+            assert _items(client, c)[0]["marked"] == {"count": 0, "state": "edited"}
+
+
+def test_ux_a_remembered_miss_never_freezes_a_snapshot_without_its_boxes(files):
+    """Reviewer round 2: issuing reads the file itself; a miss the list remembered is not trusted."""
+    from app.models.projects import ProjectQuotationDocument
+    from app.services import quotation_certificate_service as svc
+
+    pdf = _pdf("WB 1515")
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=pdf)
+        files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+        files[str(cr.att.id)] = pdf
+        db.expire_all()
+        document = db.get(ProjectQuotationDocument, c["document"].id)
+        (entry,) = svc.snapshot(db, document)
+        assert entry["attachment_id"] and len(entry["boxes"]) == 1
+
+
+def test_ux_a_trusted_miss_makes_the_whole_certificate_no_file_without_reading(files, reads):
+    """Reviewer round 2: one product's remembered miss and another's cleared cache must agree."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        pdf = files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+            files[str(cr.att.id)] = pdf
+            cr.cps[c["b"].id].boxes = None  # a code edit or an ingest clears one product's cache
+            db.commit()
+            reads.clear()
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 0, "state": "no_file"}
+            assert reads == []
+
+
+def test_ux_a_default_with_no_box_for_one_product_unmarks_only_that_product(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        with _api(db, c, DEFAULTS) as client:
+            d = _detail(client, c, cr.id)
+            keep = [b for b in d["boxes"] if b["product_id"] == c["b"].id]
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "default", "boxes": keep})
+            assert r.status_code == 200, r.text
+            by = {p["product_id"]: p["state"] for p in r.json()["products"]}
+            assert by == {c["a"].id: "unmarked", c["b"].id: "edited"}
+
+
+def test_ux_a_bad_product_ids_entry_is_422(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            for entry in ("x" * 40, "abc"):
+                bad = {**_box(), "product_ids": [entry]}
+                r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [bad]})
+                assert r.status_code == 422, (entry, r.text)
+
+
+def test_ux_a_remembered_miss_never_overrides_a_file_read_in_the_same_request(files, reads):
+    """Fresh review: product a's stale cache reads the file fine; b's remembered miss must not then
+    turn the row into "No file"."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        pdf = files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "no_file"
+            files[str(cr.att.id)] = pdf
+            cr.cps[c["a"].id].boxes = None  # a (read first, code order) must read the file again
+            db.commit()
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 2, "state": "found"}
+
+
+def test_ux_a_miss_is_stamped_only_when_storage_was_asked(files, reads):
+    """Fresh review: a product skipped because another product's miss was trusted keeps its cache
+    untouched; no new miss is stamped without a storage call."""
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_pdf("WB 1515", "WC 8355"),
+        )
+        files.pop(str(cr.att.id))
+        with _api(db, c) as client:
+            _items(client, c)
+            cr.cps[c["b"].id].boxes = None
+            db.commit()
+            reads.clear()
+            _items(client, c)
+            assert reads == []
+            db.expire_all()
+            assert cr.cps[c["b"].id].boxes is None

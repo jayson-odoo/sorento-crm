@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Download, Link2, Trash2, XCircle } from 'lucide-react';
@@ -26,11 +27,14 @@ import AuditTrail from '@/components/audit/AuditTrail';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLATrackingTab';
+import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { useUrlTab } from '@/hooks/useUrlTab';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
 import NewProductApplicationPurchasingDialog from './NewProductApplicationPurchasingDialog';
@@ -56,12 +60,12 @@ import {
   useNewProductApplicationMutations,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import { downloadNewProductApplicationExcel } from '../services/newProductApplicationService';
+import { exportNewProductApplicationXlsx } from '../services/newProductApplicationService';
 
 // The sheet is read-only here, so no brand or product is ever searched.
 const NO_PRODUCTS = async () => [];
 
-const DETAIL_TABS = ['details', 'stock_inquiry'] as const;
+const DETAIL_TABS = ['details', 'stock_inquiry', 'sla'] as const;
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
@@ -218,6 +222,7 @@ function StaffNewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
+  const queryClient = useQueryClient();
   const { submit, approve, reject, revise, cancel, undo, purchasingReject } =
     useNewProductApplicationMutations();
   const canCreate = useHasPermission(
@@ -233,6 +238,15 @@ function StaffNewProductApplicationDetail({
   const canViewRecord = useHasPermission(
     'procurement.new_product_applications.view',
   );
+  // NPA-FORM-SLA: the SLA tab and the handling lock read the form SLA trackers, which the NPA's
+  // view-all slugs admit (api/v1/sla/sla_tracking.py SOURCE_TYPE_READERS), as on the SI.
+  const canSeeSla = canViewRecord || canApprove || canOpen;
+  const handlingLock = useHandlingLock({
+    sourceEntityType: 'new_product_application',
+    sourceEntityId: canSeeSla ? applicationId : null,
+    entityKey: application?.updated_at,
+    enabled: canSeeSla,
+  });
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
   const [tab, setTab] = useUrlTab({ tabs: DETAIL_TABS, defaultTab: 'details' });
@@ -264,6 +278,12 @@ function StaffNewProductApplicationDetail({
     cancel.isPending ||
     undo.isPending ||
     purchasingReject.isPending;
+  // The approver's and purchasing's buttons, gated by the handling lock like the SI's.
+  const stageLocked = !handlingLock.businessCtasEnabled;
+  const workBusy = busy || stageLocked;
+  const lockedTitle = stageLocked
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
+    : undefined;
 
   if (isLoading) {
     return (
@@ -287,7 +307,9 @@ function StaffNewProductApplicationDetail({
   const isOwner = Boolean(userId) && r.applicant_id === userId;
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
-  const locked = isAwaitingReview(r.status) || r.status === 'approved';
+  // Purchasing works it while Approved, and after Update & Reply, Responded (as the SI).
+  const withPurchasing = r.status === 'approved' || r.status === 'responded';
+  const locked = isAwaitingReview(r.status) || withPurchasing;
   const anyResolved =
     Boolean(r.new_product_id || r.new_code_closed_reason) ||
     r.lines.some(isResolved);
@@ -298,14 +320,21 @@ function StaffNewProductApplicationDetail({
   const pillStatus = r.display_status ?? r.status;
   const stamp = r.submitted_at ?? r.created_at;
   const canAnswer =
-    canOpen && (r.status === 'approved' || r.status === 'completed');
+    canOpen && (withPurchasing || r.status === 'completed');
   const sheetState = savedState;
 
+  // Through My Downloads, the stock inquiry PDF's way (owner 9 Nov): the list's Print Count counts it.
   const downloadExcel = async () => {
     try {
-      await downloadNewProductApplicationExcel(r.id);
+      await exportNewProductApplicationXlsx(r.id);
+      void queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      void queryClient.invalidateQueries({
+        queryKey: ['entity-downloads', 'new_product_application', r.id],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['new-product-applications'] });
+      toast.success('Preparing the workbook… it will appear in My Downloads.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to download');
+      toast.error(e instanceof Error ? e.message : 'Failed to start the download');
     }
   };
 
@@ -394,13 +423,6 @@ function StaffNewProductApplicationDetail({
             >
               {r.status_label}
             </span>
-            {r.lines_total > 0 && (
-              <>
-                {' · '}
-                {r.lines_done} of {r.lines_total}{' '}
-                {r.lines_total === 1 ? 'line' : 'lines'} done
-              </>
-            )}
           </p>
         </div>
         <DetailActions
@@ -448,6 +470,10 @@ function StaffNewProductApplicationDetail({
                   Delete draft
                 </DropdownMenuItem>
               )}
+              <HandlingLockReleaseMenuItem
+                state={handlingLock.state}
+                onRelease={handlingLock.release}
+              />
             </DetailActionsMenu>
           }
           primary={
@@ -459,13 +485,18 @@ function StaffNewProductApplicationDetail({
               )}
               {isAwaitingReview(r.status) && canApprove && (
                 <>
-                  <Button disabled={busy} onClick={() => approve.mutate(r.id)}>
+                  <Button
+                    disabled={workBusy}
+                    title={lockedTitle}
+                    onClick={() => approve.mutate(r.id)}
+                  >
                     Approve
                   </Button>
                   <Button
                     variant="outline"
                     className="border-destructive text-destructive hover:bg-destructive/10"
-                    disabled={busy}
+                    disabled={workBusy}
+                    title={lockedTitle}
                     onClick={() => setAsking({ kind: 'reject' })}
                   >
                     Reject
@@ -487,13 +518,18 @@ function StaffNewProductApplicationDetail({
                 </Button>
               )}
               {canAnswer && (
-                <Button disabled={busy} onClick={() => setPurchasingOpen(true)}>
+                <Button
+                  disabled={workBusy}
+                  title={lockedTitle}
+                  onClick={() => setPurchasingOpen(true)}
+                >
                   Edit purchasing response
                 </Button>
               )}
-              {canAnswer && r.status === 'approved' && (
+              {canAnswer && withPurchasing && (
                 <RejectOutlineButton
-                  disabled={busy}
+                  disabled={workBusy}
+                  title={lockedTitle}
                   onClick={() => setAsking({ kind: 'purchasingReject' })}
                 />
               )}
@@ -502,11 +538,6 @@ function StaffNewProductApplicationDetail({
         />
       </div>
 
-      {r.status === 'approved' && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {`Approved${r.decided_by_name ? ` by ${r.decided_by_name}` : ''}${r.decided_at ? ` on ${day(r.decided_at)}` : ''}.`}
-        </div>
-      )}
       {r.status === 'rejected' && (
         <RejectionReasonBanner
           reason={r.reject_reason}
@@ -515,20 +546,23 @@ function StaffNewProductApplicationDetail({
         />
       )}
 
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
+      />
+
+      {/* The SI's way (FormDetailWithSLATabs): every tab body lives in its TabsContent INSIDE the
+          Tabs, so the SLA tab mounts in its own panel (crew pass 9 Nov: a body rendered outside the
+          Tabs froze the page when the SLA tab was clicked). */}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
+          {canSeeSla && <TabsTrigger value="sla">SLA Tracking</TabsTrigger>}
         </TabsList>
-      </Tabs>
-
-      {tab === 'stock_inquiry' ? (
-        <NewProductApplicationStockInquiry
-          inquiry={r.stock_inquiry}
-          href={(id) => `/procurement-management/stock-inquiries/${id}`}
-        />
-      ) : (
-        <>
+        <TabsContent value="details" className="mt-6 space-y-6">
           <Card className="border-2 shadow-sm">
             <CardContent className="px-5 pb-8 pt-6 sm:px-10">
               <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -595,89 +629,20 @@ function StaffNewProductApplicationDetail({
                       </InquiryReadValue>
                     }
                     costField={
-                      r.lines.length === 0 ? (
-                        <InquiryReadValue>
-                          {r.cost_price == null || r.cost_price === ''
-                            ? ''
-                            : `MYR ${r.cost_price}`}
-                        </InquiryReadValue>
-                      ) : undefined
+                      <InquiryReadValue>
+                        {r.cost_price == null || r.cost_price === ''
+                          ? ''
+                          : `MYR ${r.cost_price}`}
+                      </InquiryReadValue>
                     }
                     customerField={
                       <span className="flex flex-wrap items-center gap-2">
                         {[r.customer_code, r.customer_name]
                           .filter(Boolean)
                           .join(' - ') || 'None'}
-                        {!r.customer_code && r.customer_name && (
-                          <Badge variant="secondary">No debtor code</Badge>
-                        )}
                       </span>
                     }
                   />
-                  {(!r.stock_inquiry_id || r.lines.length > 0) && (
-                    <div className="mt-6">
-                      <NewProductApplicationLines
-                        lines={sheetState.lines}
-                        onChange={() => {}}
-                        readOnly
-                        showCost
-                        renderOpenedAs={
-                          r.lines.some(isResolved)
-                            ? (draftLine) => {
-                                const l = r.lines.find(
-                                  (x) => x.id === draftLine.id,
-                                );
-                                if (!l || !isResolved(l)) return null;
-                                const showUndo =
-                                  canOpen &&
-                                  ['approved', 'completed'].includes(r.status);
-                                return (
-                                  <div className="min-w-0 space-y-0.5">
-                                    {l.opened_product_id ? (
-                                      <div className="flex flex-wrap items-center gap-1.5">
-                                        <Link
-                                          href={`/master-data-management/products/${l.opened_product_id}`}
-                                          className="truncate font-medium text-primary hover:underline"
-                                        >
-                                          {codeWithName(
-                                            l.opened_product_code,
-                                            l.opened_product_name,
-                                          )}
-                                        </Link>
-                                        {l.opened_product_active === false && (
-                                          <Badge variant="secondary">
-                                            Inactive
-                                          </Badge>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <span className="break-words">
-                                        Rejected: {l.closed_reason}
-                                      </span>
-                                    )}
-                                    {showUndo && (
-                                      <button
-                                        type="button"
-                                        className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
-                                        disabled={busy}
-                                        onClick={() =>
-                                          undo.mutate({
-                                            id: r.id,
-                                            lineId: l.id,
-                                          })
-                                        }
-                                      >
-                                        Undo
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              }
-                            : undefined
-                        }
-                      />
-                    </div>
-                  )}
                 </>
               )}
             </CardContent>
@@ -696,8 +661,22 @@ function StaffNewProductApplicationDetail({
               title="Audit Trail"
             />
           )}
-        </>
-      )}
+        </TabsContent>
+        <TabsContent value="stock_inquiry" className="mt-6">
+          <NewProductApplicationStockInquiry
+            inquiry={r.stock_inquiry}
+            href={(id) => `/procurement-management/stock-inquiries/${id}`}
+          />
+        </TabsContent>
+        {canSeeSla && (
+          <TabsContent value="sla" className="mt-6">
+            <FormSLATrackingTab
+              sourceEntityType="new_product_application"
+              sourceEntityId={r.id}
+            />
+          </TabsContent>
+        )}
+      </Tabs>
 
       {dialog}
       {purchasingOpen && (

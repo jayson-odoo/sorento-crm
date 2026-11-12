@@ -354,8 +354,10 @@ def test_full_field_round_trip_on_update(api):
         "expected_delivery_from": "2027-01-01",
         "expected_delivery_to": "2027-06-30",
         "admin_ref": "PS26-9999",
-        "architect_party_id": architect.id,
-        "main_contractor_party_id": main_contractor.id,
+        "party_links": [
+            {"role": "architect", "party_id": architect.id},
+            {"role": "main_contractor", "party_id": main_contractor.id},
+        ],
     }
 
     response = client.put(f"{PROJECTS_BASE}/{project['id']}", json=payload)
@@ -368,8 +370,9 @@ def test_full_field_round_trip_on_update(api):
     assert fetched["expected_delivery_from"] == "2027-01-01"
     assert fetched["expected_delivery_to"] == "2027-06-30"
     assert fetched["admin_ref"] == "PS26-9999"
-    assert fetched["architect_party_id"] == architect.id
-    assert fetched["main_contractor_party_id"] == main_contractor.id
+    assert sorted((r["role"], r["party_id"]) for r in fetched["party_links"]) == sorted(
+        [("architect", architect.id), ("main_contractor", main_contractor.id)]
+    )
 
 
 # ------------------------------------------------ review round (PR #1345, round 1)

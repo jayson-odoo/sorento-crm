@@ -28,6 +28,7 @@ const HANDLING_LOCK_FORMS = [
   { type: 'stock_inquiry', label: 'Stock Inquiry' },
   { type: 'purchase_request', label: 'Purchase Request' },
   { type: 'sponsorship_form', label: 'Sponsorship Form' },
+  { type: 'new_product_application', label: 'New Product Application' },
 ] as const;
 
 /** Parse a comma list ("1,2") into a set of valid tier numbers. */

@@ -5,11 +5,13 @@ import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
   addProductComboPart,
+  copyProductCombo,
   createProductCombo,
   listProductCombos,
   listProductSoldWith,
   updateProductCombo,
   updateProductComboPart,
+  type ComboCopySummary,
 } from '../services/productComboService';
 import type {
   ProductComboCreate,
@@ -79,7 +81,11 @@ export function useUpdateProductCombo(productId: string) {
       toast.success('Combo saved');
       return queryClient.invalidateQueries({ queryKey: combosKey(productId) });
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to save the combo'),
+    onError: (error: Error, input) => {
+      // A refused rename is answered under the name input (COMBO-RENAME), not in a toast too.
+      if ('name' in input.write) return;
+      toast.error(error.message || 'Failed to save the combo');
+    },
   });
 }
 
@@ -135,4 +141,44 @@ export function useProductComboPartDelete(
       ...partProductIds.map((partId) => soldWithKey(partId)),
     ],
   });
+}
+
+/** The result toast of a combo copy: what was created, overwritten and skipped. */
+export function comboCopyResultLine(summary: ComboCopySummary): string {
+  const parts = [`${summary.created} created`];
+  if (summary.overwritten) parts.push(`${summary.overwritten} overwritten`);
+  if (summary.skipped.length) parts.push(`${summary.skipped.length} skipped`);
+  const links = summary.template_links_copied
+    ? ''
+    : ' Price tag templates were not copied.';
+  return `Combo copied: ${parts.join(', ')}.${links}`;
+}
+
+/**
+ * COMBO-COPY-TO-PRODUCTS: `preview` is the dry run behind the confirm step, `copy` the write.
+ * Every product's combos and "Sold with" mirrors are refetched after a copy, since any may change.
+ */
+export function useCopyProductCombo(comboId: string) {
+  const queryClient = useQueryClient();
+  const preview = useMutation({
+    mutationFn: (targetIds: string[]) =>
+      copyProductCombo(comboId, targetIds, [], true),
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const copy = useMutation({
+    mutationFn: ({
+      targetIds,
+      overwriteIds,
+    }: {
+      targetIds: string[];
+      overwriteIds: string[];
+    }) => copyProductCombo(comboId, targetIds, overwriteIds),
+    onSuccess: (summary) => {
+      queryClient.invalidateQueries({ queryKey: ['product-combos'] });
+      queryClient.invalidateQueries({ queryKey: ['product-sold-with'] });
+      toast.success(comboCopyResultLine(summary));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  return { preview, copy };
 }

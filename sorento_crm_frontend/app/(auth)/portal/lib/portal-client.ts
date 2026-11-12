@@ -122,6 +122,9 @@ export interface PortalSubmissionSummary {
   project_name?: string | null;
   project_customer?: string | null;
   customer_name?: string | null;
+  /** Price tag request (PRICETAG-REQUEST-LAYOUT): every customer, for the hover; the shown
+   *  `customer_name` reads "First +N". */
+  customer_names?: string | null;
   delivery_order_number?: string | null;
   item_description?: string | null;
   sponsor_subject?: string | null;
@@ -1137,6 +1140,7 @@ export interface ProjectLookupItem {
   id: string;
   project_code: string;
   title: string;
+  name?: string | null;
   company_name?: string | null;
 }
 

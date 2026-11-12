@@ -12,6 +12,7 @@
 import { Fragment } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { promotionOptionName } from '@/lib/dealer-kit/line-pricing-types';
+import { cn } from '@/lib/utils';
 import { formatRM } from '@/lib/dealer-kit/price-tag-draft-lines';
 import { sameDisplayText } from '@/lib/product-display';
 import type { PriceMode } from '@/app/(auth)/portal/lib/price-tag-request-service';
@@ -107,10 +108,12 @@ interface PriceTagLinesViewProps {
 
 export function PriceTagLinesView({ lines, priceMode, isMobile }: PriceTagLinesViewProps) {
   const viewSelling = priceMode === 'selling';
-  const viewSpan = isMobile ? 4 : viewSelling ? 7 : 5;
+  const viewSpan = isMobile ? 3 : viewSelling ? 7 : 5;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[520px] table-fixed text-sm">
+      {/* No width floor on a phone (crew pass 11 Nov): #, Item and Qty stay columns and prices
+          and remarks stack under the item, so Qty is never cut at 375px. */}
+      <table className={cn('w-full table-fixed text-sm', !isMobile && 'min-w-[520px]')}>
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th className="w-10 px-2 py-2 text-left">#</th>
@@ -121,7 +124,7 @@ export function PriceTagLinesView({ lines, priceMode, isMobile }: PriceTagLinesV
                 // View and Edit share the layout - Item stays
                 // the widest column in every mode.
                 isMobile
-                  ? 'w-[46%] px-2 py-2 text-left'
+                  ? 'px-2 py-2 text-left'
                   : viewSelling
                     ? 'w-[31%] px-2 py-2 text-left'
                     : 'w-[43%] px-2 py-2 text-left'
@@ -132,7 +135,7 @@ export function PriceTagLinesView({ lines, priceMode, isMobile }: PriceTagLinesV
             <th
               className={
                 isMobile
-                  ? 'w-[12%] px-2 py-2 text-left'
+                  ? 'w-[4.5rem] px-2 py-2 text-left'
                   : viewSelling
                     ? 'w-[9%] px-2 py-2 text-left'
                     : 'w-[12%] px-2 py-2 text-left'
@@ -161,21 +164,17 @@ export function PriceTagLinesView({ lines, priceMode, isMobile }: PriceTagLinesV
                 </th>
               </>
             )}
-            <th
-              className={
-                // No trailing action column here (nothing to
-                // delete on a read-only line), so Remarks
-                // absorbs the edit table's action-column share
-                // too.
-                isMobile
-                  ? 'w-[42%] px-2 py-2 text-left'
-                  : viewSelling
-                    ? 'w-[21%] px-2 py-2 text-left'
-                    : 'w-[31%] px-2 py-2 text-left'
-              }
-            >
-              Remarks
-            </th>
+            {!isMobile && (
+              <th
+                className={
+                  // No trailing action column here (nothing to delete on a read-only line),
+                  // so Remarks absorbs the edit table's action-column share too.
+                  viewSelling ? 'w-[21%] px-2 py-2 text-left' : 'w-[31%] px-2 py-2 text-left'
+                }
+              >
+                Remarks
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -213,6 +212,11 @@ export function PriceTagLinesView({ lines, priceMode, isMobile }: PriceTagLinesV
                         {viewSelling && viewSellingPriceCell(line, true)}
                       </div>
                     )}
+                    {isMobile && line.remarks && (
+                      <div className="mt-1 text-xs text-muted-foreground break-words">
+                        {line.remarks}
+                      </div>
+                    )}
                   </td>
                   <td className="px-2 py-2">{line.quantity}</td>
                   {!isMobile && (
@@ -230,12 +234,14 @@ export function PriceTagLinesView({ lines, priceMode, isMobile }: PriceTagLinesV
                       </td>
                     </>
                   )}
-                  <td
-                    className="px-2 py-2 text-muted-foreground truncate"
-                    title={line.remarks ?? undefined}
-                  >
-                    {line.remarks || '-'}
-                  </td>
+                  {!isMobile && (
+                    <td
+                      className="px-2 py-2 text-muted-foreground truncate"
+                      title={line.remarks ?? undefined}
+                    >
+                      {line.remarks || '-'}
+                    </td>
+                  )}
                 </tr>
                 {/* The package under the line, exactly as it was asked
                     for (AC-S2-8): the parts that go on the tag, and each

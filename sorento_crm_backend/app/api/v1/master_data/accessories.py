@@ -8,6 +8,7 @@ under three path roots, like `product_combos.py`.
 """
 from __future__ import annotations
 
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.accessory import (
+    AccessoryCopyIn,
+    AccessoryCopyOut,
     AccessoryCreate,
     AccessoryItemsIn,
     AccessoryColourOut,
@@ -29,6 +32,7 @@ from app.schemas.accessory import (
     AccessoryUpdate,
 )
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
+from app.services.error_handler import AppException
 from app.services.accessory_service import MAX_IMAGE_BYTES, UNSET, AccessoryService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -232,6 +236,25 @@ def set_product_accessories(
     service = AccessoryService(db)
     data = service.set_product_list(product_id, _items(payload), _style(payload))
     return {"data": data, "box_style_id": service.box_style_id_of(product_id=product_id)}
+
+
+@router.post("/products/{product_id}/accessories/copy", response_model=AccessoryCopyOut)
+def copy_product_accessories(
+    product_id: str,
+    payload: AccessoryCopyIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """ACC-COPY-TO-PRODUCTS: add this product's entries to hand-picked products, one transaction."""
+    validate_uuid_path(product_id, resource="Product")
+    for value in payload.target_product_ids:
+        try:
+            uuid.UUID(value)
+        except ValueError:
+            raise AppException(status_code=422, message="Each target must be a product id")
+    return AccessoryService(db).copy_product_list(
+        product_id, payload.target_product_ids, dry_run=payload.dry_run
+    )
 
 
 @router.get("/product-combos/{combo_id}/accessories", response_model=AccessoryListOut)

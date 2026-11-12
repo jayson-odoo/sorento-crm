@@ -37,6 +37,9 @@ class Provider:
         self.seen: list[dict] = []
 
     def chat(self, messages, *, tools=None, reasoning_effort=None, **kw):
+        if kw.get("json_schema") is not None:  # the dealer-access check (UAC F2): not a scripted round
+            return ChatResult(content='{"dealer_access": false}', prompt_tokens=10, completion_tokens=2,
+                              total_tokens=12, cached_tokens=0, tool_calls=[])
         self.seen.append({"messages": copy.deepcopy(messages), "tools": copy.deepcopy(tools)})
         return ChatResult(
             content="", prompt_tokens=10, completion_tokens=2, total_tokens=12,

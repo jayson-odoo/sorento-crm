@@ -96,8 +96,7 @@ function detail(over: Record<string, unknown> = {}) {
   return {
     id: 'a-1', application_no: 'NPA-000001', status: 'draft', status_label: 'Draft', source: 'portal',
     applicant_id: 'u-owner', applicant_name: 'Owner', stock_inquiry_id: null, stock_inquiry_number: null,
-    customer_id: null, customer_code: null, customer_name: 'EXAMPLE DEVELOPER SDN BHD', project_name: 'TOWER B',
-    first_line: 'XY-1234-MB', lines_total: 1, lines_done: 0, opened_codes: [], needed_by: null, submitted_at: null,
+    customer_id: null, customer_code: null, customer_name: 'EXAMPLE DEVELOPER SDN BHD', project_name: 'TOWER B', opened_codes: [], needed_by: null, submitted_at: null,
     created_at: '2026-10-17T01:00:00', updated_at: null, remark: null, lead_time: null, attachments: [],
     decided_at: null, decided_by: null, decided_by_name: null, reject_reason: null, revise_reason: null,
     cancelled_at: null, cancel_reason: null, completed_at: null, lines: [line()],

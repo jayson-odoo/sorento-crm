@@ -9,10 +9,17 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { IndexMatchSection } from './IndexMatchSection';
 import { SpanPassSection } from './SpanPassSection';
+import {
+  AgentContextSection,
+  AgentRoundsSection,
+  AgentThinkingSection,
+  AgentToolsSection,
+} from './AgentTraceSections';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { factText, shortTurnId } from '../turnPresentation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type {
+  EntityMatch,
   TurnDetail,
   TurnDetailApplyDiff,
   TurnDetailApplyDiffEntry,
@@ -70,7 +77,7 @@ export function TurnDetailDrawer({
               Could not load this turn. Reload to try again.
             </p>
           )}
-          {turn && <Sections detail={turn.trace_detail} />}
+          {turn && <Sections key={turn.id} detail={turn.trace_detail} />}
         </div>
       </SheetContent>
     </Sheet>
@@ -78,6 +85,31 @@ export function TurnDetailDrawer({
 }
 
 function Sections({ detail }: { detail: TurnDetail }) {
+  if (detail.agent) {
+    // The agent writes none of the bot pipeline's records, so those sections would only say "Not recorded".
+    const agent = detail.agent;
+    return (
+      <>
+        <Section title="Agent rounds" testId="section-agent-rounds" defaultOpen>
+          <AgentRoundsSection agent={agent} />
+        </Section>
+        <Section title="Thinking" testId="section-agent-thinking" defaultOpen>
+          <AgentThinkingSection agent={agent} />
+        </Section>
+        <Section title="Tool calls" testId="section-agent-tools" defaultOpen>
+          <AgentToolsSection agent={agent} />
+        </Section>
+        <Section title="Context sent to the AI" testId="section-agent-context" defaultOpen>
+          <AgentContextSection context={agent.context} />
+        </Section>
+        {detail.stages.length > 0 && (
+          <Section title="Stages" testId="section-stages">
+            <StagesSection stages={detail.stages} />
+          </Section>
+        )}
+      </>
+    );
+  }
   return (
     <>
       <Section title="Order" testId="section-order" defaultOpen>
@@ -91,6 +123,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       <Section title="Index match" testId="section-index-match">
         <IndexMatchSection indexMatch={detail.index_match ?? null} />
+      </Section>
+      <Section title="Entity match" testId="section-entity-match" defaultOpen={!!detail.entity_match}>
+        <EntityMatchSection entityMatch={detail.entity_match ?? null} />
       </Section>
       {detail.span_extract && (
         <Section title="Span pass" testId="section-span-pass">
@@ -115,7 +150,7 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Focus" testId="section-focus">
         <FocusSection focus={detail.focus} />
       </Section>
-      <Section title="Tool" testId="section-tool">
+      <Section title="Tool" testId="section-tool" defaultOpen={!!detail.tool}>
         <ToolSection tool={detail.tool} />
       </Section>
       <Section title="Cross-domain" testId="section-crossdomain">
@@ -627,11 +662,19 @@ function OrderSection({ order }: { order: TurnDetail['order'] }) {
       <dd>{waitedText(order)}</dd>
       <dt className="text-muted-foreground">Ran after</dt>
       <dd className="text-muted-foreground">
-        {order.previous ? orderNeighborText(order.previous) : 'Not recorded on this turn.'}
+        {order.previous
+          ? orderNeighborText(order.previous)
+          : order.neighbours_checked
+            ? 'First message in this conversation'
+            : 'Not recorded on this turn.'}
       </dd>
       <dt className="text-muted-foreground">Next</dt>
       <dd className="text-muted-foreground">
-        {order.next ? orderNeighborText(order.next) : 'Not recorded on this turn.'}
+        {order.next
+          ? orderNeighborText(order.next)
+          : order.neighbours_checked
+            ? 'No later message yet'
+            : 'Not recorded on this turn.'}
       </dd>
     </dl>
   );
@@ -696,6 +739,68 @@ function FocusSection({ focus }: { focus: TurnDetailFocus[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** The resolver's `match_tier` values (`entity_resolver.ResolvedEntity`), in words. */
+const TIER_WORDS: Record<string, string> = {
+  exact: 'exact',
+  prefix: 'starts with',
+  substring: 'contains',
+  and: 'all words',
+  embedding: 'by meaning',
+  head_code: 'head code',
+  spec_search: 'by spec',
+  trgm: 'close spelling',
+  span: 'phrase',
+};
+
+function EntityMatchSection({ entityMatch }: { entityMatch: EntityMatch | null }) {
+  if (!entityMatch) return <Empty>No code lookup this turn.</Empty>;
+  const { words, unplaced, not_checked: notChecked } = entityMatch;
+  return (
+    <div className="space-y-2 text-xs" data-testid="entity-match">
+      {words.length > 0 && (
+        <ul className="space-y-1.5">
+          {words.map((w, i) => (
+            <li key={`${w.word}-${i}`} className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="font-medium">{w.word}</span>
+              <span className="text-muted-foreground">&rarr;</span>
+              {w.codes.length > 0 ? (
+                <span className="min-w-0 break-words">
+                  {w.codes.join(', ')}
+                  {w.more > 0 && <span className="text-muted-foreground"> +{w.more} more</span>}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">no match</span>
+              )}
+              {w.tiers.map((t) => (
+                <Badge key={t} variant="secondary" size="sm">
+                  {TIER_WORDS[t] ?? t.replace(/_/g, ' ')}
+                </Badge>
+              ))}
+              {w.ambiguous && (
+                <Badge variant="warning" size="sm">
+                  more than one
+                </Badge>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {unplaced.length > 0 && (
+        <p data-testid="entity-match-unplaced">
+          <span className="text-muted-foreground">Nothing matched: </span>
+          {unplaced.join(', ')}
+        </p>
+      )}
+      {notChecked.length > 0 && (
+        <p>
+          <span className="text-muted-foreground">Not looked up: </span>
+          {notChecked.join(', ')}
+        </p>
+      )}
+    </div>
   );
 }
 

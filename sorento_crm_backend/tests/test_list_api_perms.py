@@ -479,6 +479,12 @@ def test_source_type_readers_cover_every_form_sla_type():
         # the SLA module alone, as a conversation ticket
         "product_drawing": [],
         "product_photo": [],
+        # NPA-FORM-SLA: the NPA's view-all slugs (new_product_application_service.actor_from_slugs)
+        "new_product_application": [
+            "procurement.new_product_applications.view",
+            "procurement.new_product_applications.approve",
+            "procurement.new_product_applications.open_code",
+        ],
     }
 
 

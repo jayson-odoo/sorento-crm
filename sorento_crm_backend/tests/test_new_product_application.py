@@ -436,14 +436,13 @@ def test_ac10_submit_names_the_product_and_the_missing_product_type(world):
     assert len(after["lines"]) == 2
 
 
-def test_ac11_submit_moves_to_submitted_and_tells_the_approvers(world):
+def test_ac11_submit_moves_to_submitted(world):
     d = _submitted(world)
     assert d["status"] == "submitted"
     assert d["submitted_at"]
-    told = _to(world, d["id"], "new_product_application_submitted")
-    # Active, non-integration approvers of the company; the applicant (who holds approve too)
-    # is not told about their own application.
-    assert told == {world.manager}
+    # NPA-FORM-SLA (owner 8 Nov 21:45): no permission-holder broadcast; the Form SLA stage tells
+    # its assignee (tests/test_npa_form_sla.py). With no stage row here, nobody is told.
+    assert _to(world, d["id"], "new_product_application_submitted") == set()
 
 
 def test_ac11_only_the_applicant_submits(world):
@@ -467,7 +466,8 @@ def test_ac12_a_rejected_application_is_edited_and_resubmitted_in_one_press(worl
     # RESUBMITTED-STATUS (owner, 27 Oct): a submit answering a rejection is a resubmit.
     assert again.json()["status"] == "resubmitted"
     assert again.json()["status_label"] == "Appealed"
-    assert _to(world, d["id"], "new_product_application_resubmitted") == {world.manager}
+    # NPA-FORM-SLA: the approval stage tells its assignee (tests/test_npa_form_sla.py).
+    assert _to(world, d["id"], "new_product_application_resubmitted") == set()
     assert _to(world, d["id"], "new_product_application_submitted") == set()
 
 
@@ -499,11 +499,13 @@ def test_resubmitted_locks_every_write_like_submitted(world):
     assert "new_product_application_locked" in res.text
 
 
-def test_revise_from_resubmitted_tells_the_approvers_it_was_withdrawn(world):
+def test_revise_from_resubmitted_tells_no_approver_without_a_stage(world):
     d = _resubmitted(world)
     world.sent.clear()
     assert _act(world, d["id"], "revise", world.sales, reason="typo").status_code == 200
-    assert _to(world, d["id"], "new_product_application_withdrawn") == {world.manager}
+    # NPA-FORM-SLA (owner 8 Nov 21:45): no permission-holder broadcast; the Form SLA stage tells
+    # its assignee (tests/test_npa_form_sla.py). With no stage row here, nobody is told.
+    assert _to(world, d["id"], "new_product_application_withdrawn") == set()
 
 
 def test_resubmitted_can_be_cancelled(world):
@@ -537,11 +539,13 @@ def test_ac13_reject_needs_a_reason(world):
     assert _act(world, d["id"], "reject", world.manager, reason="  ").status_code == 422
 
 
-def test_ac13_approve_tells_purchasing_and_stamps_the_decision(world):
+def test_ac13_approve_stamps_the_decision(world):
     d = _approved(world)
     assert d["status"] == "approved"
     assert d["decided_by"] == world.manager
-    assert _to(world, d["id"], "new_product_application_approved") == {world.buyer}
+    # NPA-FORM-SLA (owner 8 Nov 21:45): no permission-holder broadcast; the Form SLA stage tells
+    # its assignee (tests/test_npa_form_sla.py). With no stage row here, nobody is told.
+    assert _to(world, d["id"], "new_product_application_approved") == set()
 
 
 @pytest.mark.parametrize("state", ["submitted", "approved"])
@@ -588,11 +592,13 @@ def test_ac20_revise_only_from_submitted_or_approved(world):
     assert _act(world, d["id"], "revise", world.sales, reason="x").status_code == 409
 
 
-def test_ac21_revise_from_submitted_tells_the_approvers_it_was_withdrawn(world):
+def test_ac21_revise_from_submitted_tells_no_approver_without_a_stage(world):
     d = _submitted(world)
     world.sent.clear()
     assert _act(world, d["id"], "revise", world.sales, reason="typo").status_code == 200
-    assert _to(world, d["id"], "new_product_application_withdrawn") == {world.manager}
+    # NPA-FORM-SLA (owner 8 Nov 21:45): no permission-holder broadcast; the Form SLA stage tells
+    # its assignee (tests/test_npa_form_sla.py). With no stage row here, nobody is told.
+    assert _to(world, d["id"], "new_product_application_withdrawn") == set()
 
 
 def test_ac22_revise_and_cancel_are_refused_once_a_line_is_resolved(world):

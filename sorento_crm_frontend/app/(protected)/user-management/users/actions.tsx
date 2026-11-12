@@ -164,8 +164,8 @@ export function useUserActions(
             <AlertDialogDescription>
               You will browse the system as{' '}
               <strong>{user.name || user.email}</strong> with their access rights.
-              All records you create or modify will still be attributed to you.
-              Continue?
+              Records you create are saved as {user.name || user.email}; the audit log shows you
+              did it. Continue?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -169,7 +169,7 @@ def test_9_put_refuses_a_party_or_type_of_another_company(world):
     c = as_user(world, world.root)
     for body in (
         {"developer_party_id": foreign_dev.id},
-        {"architect_party_id": foreign_arch.id},
+        {"party_links": [{"role": "architect", "party_id": foreign_arch.id}]},
         {"type_id": foreign_type.id},
     ):
         res = c.put(f"{STAFF}/{staff_project.id}", json=body)
@@ -344,7 +344,6 @@ def test_f3_a_legacy_cross_company_link_left_untouched_still_saves(world):
         json={
             "developer_party_id": foreign_dev.id,
             "type_id": foreign_type.id,
-            "architect_party_id": foreign_arch.id,
             "brand_ids": [foreign_brand.id, own_brand.id],
             "mukim": "Tebrau",
         },
@@ -357,6 +356,6 @@ def test_f3_a_newly_picked_cross_company_record_is_still_refused(world):
     foreign_contractor = developer(world.db, world.other_company, "Foreign Builder", "main_contractor")
     world.db.commit()
     c = as_user(world, world.root)
-    for body in ({"main_contractor_party_id": foreign_contractor.id},):
+    for body in ({"party_links": [{"role": "main_contractor", "party_id": foreign_contractor.id}]},):
         res = c.put(f"{STAFF}/{staff_project.id}", json=body)
         assert res.status_code == 422, (body, res.status_code, res.text)

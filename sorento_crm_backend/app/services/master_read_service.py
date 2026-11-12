@@ -104,6 +104,11 @@ _READ_COLUMNS: dict[str, dict[str, str]] = {
         "description": "description",
         "is_active": "is_active",
     },
+    "payment_terms": {
+        "code": "term_code",
+        "rule": "term_rule",
+        "is_active": "is_active",
+    },
 }
 
 
