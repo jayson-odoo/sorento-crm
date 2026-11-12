@@ -35,6 +35,11 @@ def u16(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
 
+def _url_of(call):
+    _, args, kwargs = call
+    return args[2] if len(args) > 2 else kwargs.get("url")
+
+
 def _sends(fake, name="send_message"):
     return [c for c in fake.calls if c[0] == name]
 
@@ -103,6 +108,13 @@ def test_row06_at_most_ten_buttons_are_sent_trimmed(db, factory, turn_id, as_lis
     assert fake.calls[0][1][2] == [f"opt{i}" for i in range(10)]
 
 
+def test_row06_labels_are_trimmed_and_empty_ones_dropped_before_the_cap(db, factory, turn_id):
+    raw = "a, ,b,,  c ," + ",".join(f"n{i}" for i in range(12))
+    fake = FakeClient()
+    _run(factory, turn_id, [{"kind": "send_message", "text": "Pick", "quick_replies": raw}], fake)
+    assert fake.calls[0][1][2] == ["a", "b", "c"] + [f"n{i}" for i in range(7)]
+
+
 # --------------------------------------------------------------------------- #
 # Row 7: an empty assignee id is never sent to respond.io
 # --------------------------------------------------------------------------- #
@@ -149,10 +161,8 @@ def test_row11_limits_count_utf16_units_plain():
     from app.services.chatbot.crm_sender import split_text
 
     text = "😀" * 2000  # 2000 characters, 4000 units
-    parts = split_text(text, with_quick_replies=False)
-    assert len(parts) >= 2
-    assert all(u16(p) <= 3900 for p in parts)
-    assert "".join(parts) == text
+    # No whitespace: a hard cut at 3900 units, which falls between two whole emoji.
+    assert split_text(text, with_quick_replies=False) == ["😀" * 1950, "😀" * 50]
 
 
 def test_row11_limits_count_utf16_units_with_buttons():
@@ -176,6 +186,23 @@ def test_row13_a_button_part_stays_within_1000_utf8_bytes(char):
         assert len(part.encode("utf-8")) <= 1000
         assert u16(part) <= 1024
     assert "".join(parts) == text
+
+
+def test_row13_a_short_text_over_1000_bytes_still_splits_by_the_09_shrink():
+    from app.services.chatbot.crm_sender import split_text
+
+    # 600 units (under 1024) but 1800 bytes. lim 600 -> 540 -> 486 -> 437 -> 393 -> 353 -> 317
+    # (951 bytes); no break point, so the hard cut is at 317 and the remaining 283 fit.
+    assert split_text("あ" * 600, with_quick_replies=True) == ["あ" * 317, "あ" * 283]
+    # The same text without buttons has no byte cap.
+    assert split_text("あ" * 600, with_quick_replies=False) == ["あ" * 600]
+
+
+def test_row13_emoji_buttons_shrink_to_whole_emoji_under_1000_bytes():
+    from app.services.chatbot.crm_sender import split_text
+
+    # 300 emoji = 600 units, 1200 bytes. lim 600 -> 540 (1080 bytes) -> 486 (972 bytes).
+    assert split_text("😀" * 300, with_quick_replies=True) == ["😀" * 243, "😀" * 57]
 
 
 def test_row13_buttons_ride_the_last_part_only(db, factory, turn_id):
@@ -225,6 +252,71 @@ def test_row12_the_floor_is_450_with_buttons():
     first = "a" * 400 + "\n" + "x" * 300
     before = first + " " + "y" * 800
     assert split_text(before, with_quick_replies=True) == [first, "y" * 800]
+
+
+def _js_split(text: str, buttons: bool) -> list[str]:
+    """The live n8n sendmsg chunker, ported line for line (lengths in UTF-16 units)."""
+    import struct
+
+    def enc(value):
+        raw = value.encode("utf-16-le", "surrogatepass")
+        return list(struct.unpack(f"<{len(raw) // 2}H", raw))
+
+    def dec(units):
+        return struct.pack(f"<{len(units)}H", *units).decode("utf-16-le", "surrogatepass")
+
+    def nbytes(units):
+        return len(dec(units).encode("utf-8", "surrogatepass"))
+
+    def trim(units):
+        return enc(dec(units).strip())
+
+    def last_index(units, ch, frm):
+        for i in range(min(frm, len(units) - 1), -1, -1):
+            if units[i] == ord(ch):
+                return i
+        return -1
+
+    limit, floor, cap = (1024, 450, 1000) if buttons else (3900, 800, float("inf"))
+    rest = trim(enc(text))
+    parts: list[str] = []
+    while len(rest) > limit or nbytes(rest) > cap:
+        lim = min(limit, len(rest))
+        while lim > 1 and nbytes(rest[:lim]) > cap:
+            lim = int(lim * 0.9)
+        at = last_index(rest, "\n", lim)
+        if at < floor:
+            at = last_index(rest, " ", lim)
+        if at < floor:
+            at = lim
+        if 0 < at < len(rest) and 0xD800 <= rest[at - 1] <= 0xDBFF:
+            at -= 1
+        parts.append(dec(trim(rest[:at])))
+        rest = trim(rest[at:])
+    if rest:
+        parts.append(dec(rest))
+    return parts
+
+
+_SAMPLES = [
+    ("word " * 900, False),
+    ("word " * 900, True),
+    (("line of text\n" * 120) + "tail " * 300, False),
+    (("あいう えお\n" * 150), True),
+    ("😀 smile " * 400, True),
+    ("para one\n\n" + "x" * 2000 + " " + "y" * 3000, False),
+    ("a" * 449 + "\n" + "b" * 900, True),
+    ("a" * 450 + "\n" + "b" * 900, True),
+    ("a" * 799 + "\n" + "b " * 2500, False),
+    ("a" * 800 + "\n" + "b " * 2500, False),
+]
+
+
+@pytest.mark.parametrize("text,buttons", _SAMPLES, ids=[f"sample{i}" for i in range(len(_SAMPLES))])
+def test_row12_matches_the_live_chunker_part_for_part(text, buttons):
+    from app.services.chatbot.crm_sender import split_text
+
+    assert split_text(text, with_quick_replies=buttons) == _js_split(text, buttons)
 
 
 def test_row12_never_cuts_inside_a_surrogate_pair():
@@ -307,6 +399,34 @@ def test_row23_cdn_urls_are_presigned_and_other_urls_pass_as_is(db, factory, tur
     assert seen == [cdn], "only the cdn-sorento url is presigned"
 
 
+def test_row23_the_cdn_match_is_case_sensitive(db, factory, turn_id, monkeypatch):
+    from app.services.chatbot import crm_sender
+
+    monkeypatch.setattr(crm_sender, "_presign", lambda *a, **k: "https://signed.test/zzt?sig=1")
+    upper = "https://files.CDN-SORENTO.test/a.pdf"
+    fake = FakeClient()
+    _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": [{"url": upper}]}], fake)
+    assert _url_of(fake.calls[0]) == upper
+
+
+@pytest.mark.parametrize("failure", ["raises", "returns_none"])
+def test_row23_a_presign_failure_sends_the_bare_original_url(db, factory, turn_id, monkeypatch, failure):
+    from app.services import storage_router
+    from app.services.chatbot import direct_ingress
+
+    def broken(path, **kw):
+        if failure == "raises":
+            raise TimeoutError("signing too slow")
+        return None
+
+    monkeypatch.setattr(storage_router, "resolve_signed_url", broken)
+    url = "https://files.cdn-sorento.test/a.pdf"
+    fake = FakeClient()
+    result = _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": [{"url": url}]}], fake)
+    assert result == direct_ingress.SEND_OK
+    assert _url_of(fake.calls[0]) == url
+
+
 def test_row23_the_presign_asks_for_one_hour(db, monkeypatch):
     from app.services import storage_router
     from app.services.chatbot import crm_sender
@@ -334,26 +454,31 @@ def test_row25_send_attachment_receives_the_entry_filename(db, factory, turn_id)
     assert fake.calls[0][2].get("filename") == "Quarterly Sheet.pdf"
 
 
-def test_row25_respond_client_puts_the_name_in_the_payload():
+@pytest.mark.parametrize("kind", ["image", "video", "file"])
+def test_row25_respond_client_puts_the_name_in_the_payload(kind):
     from unittest.mock import patch
 
     from app.services.integration_service import RespondClient
 
     client = RespondClient(api_key="zzt-key", base_url="https://api.test")
     with patch.object(RespondClient, "_post_contact_message", return_value={"messageId": 1}) as post:
-        client.send_attachment("900000008", "file", "https://files.test/a.pdf", filename="Quarterly Sheet.pdf")
-    payload = post.call_args.args[1]
-    assert payload["message"]["attachment"]["fileName"] == "Quarterly Sheet.pdf"
+        client.send_attachment("900000008", kind, "https://files.test/a", filename="Quarterly Sheet")
+    assert post.call_args.args[1] == {
+        "message": {
+            "type": "attachment",
+            "attachment": {"type": kind, "url": "https://files.test/a", "fileName": "Quarterly Sheet"},
+        }
+    }
 
 
 # --------------------------------------------------------------------------- #
-# Row 27: a file respond.io refuses is sent as a link, and the run goes on
+# Row 27: a file respond.io refuses goes out as its bare link, and the run goes on
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize("code", [400, 404])
-def test_row27_a_refused_file_falls_back_to_its_link_as_text_and_continues(db, factory, turn_id, code):
-    from app.services.chatbot import crm_sender, direct_ingress
+def test_row27_a_refused_file_falls_back_to_its_bare_url_as_text_and_continues(db, factory, turn_id, code):
+    from app.services.chatbot import direct_ingress
 
     atts = [
         {"url": "https://files.test/a.pdf", "filename": "a.pdf"},
@@ -366,18 +491,83 @@ def test_row27_a_refused_file_falls_back_to_its_link_as_text_and_continues(db, f
     ]
     assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_OK
     assert fake.names() == ["send_attachment", "send_message", "send_attachment", "create_comment"]
-    link = crm_sender.FILE_LINK_FALLBACK_TEXT.format(url="https://files.test/a.pdf", filename="a.pdf")
-    assert fake.calls[1][1][1] == link
+    assert fake.calls[1][1] == (f"id:{CONTACT}", "https://files.test/a.pdf")
+
+
+def test_row27_the_fallback_link_is_the_presigned_url_when_the_url_was_a_cdn_one(db, factory, turn_id, monkeypatch):
+    from app.services.chatbot import crm_sender
+
+    monkeypatch.setattr(crm_sender, "_presign", lambda *a, **k: "https://signed.test/zzt?sig=1")
+    atts = [{"url": "https://files.cdn-sorento.test/a.pdf", "filename": "a.pdf"}]
+    fake = FakeClient({0: _status_error(400)})
+    _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": atts}], fake)
+    assert fake.calls[1][1][1] == "https://signed.test/zzt?sig=1"
+
+
+def test_row27_a_connection_failure_is_not_turned_into_a_link(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ConnectError("down")})
+    atts = [{"url": "https://files.test/a.pdf", "filename": "a.pdf"}]
+    result = _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": atts}], fake)
+    assert result == direct_ingress.SEND_REFUSED
+    assert fake.names() == ["send_attachment"]
+
+
+# --------------------------------------------------------------------------- #
+# Row 23 / 25: a video travels with its ORIGINAL url; image and file with the presigned one
+# --------------------------------------------------------------------------- #
+
+
+def test_row23_a_video_is_sent_with_the_original_url_but_image_and_file_with_the_presigned_one(
+    db, factory, turn_id, monkeypatch
+):
+    from app.services.chatbot import crm_sender
+
+    monkeypatch.setattr(crm_sender, "_presign", lambda *a, **k: "https://signed.test/zzt?sig=1")
+    base = "https://files.cdn-sorento.test"
+    atts = [
+        {"url": f"{base}/v.mp4", "filename": "v.mp4", "attachmentType": "video"},
+        {"url": f"{base}/i.png", "filename": "i.png", "attachmentType": "image"},
+        {"url": f"{base}/d.pdf", "filename": "d.pdf", "attachmentType": "file"},
+    ]
+    fake = FakeClient()
+    _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": atts}], fake)
+    assert [_url_of(c) for c in fake.calls] == [
+        f"{base}/v.mp4",
+        "https://signed.test/zzt?sig=1",
+        "https://signed.test/zzt?sig=1",
+    ]
+
+
+def test_row27_a_refused_cdn_video_falls_back_to_the_presigned_link(db, factory, turn_id, monkeypatch):
+    from app.services.chatbot import crm_sender
+
+    monkeypatch.setattr(crm_sender, "_presign", lambda *a, **k: "https://signed.test/zzt?sig=1")
+    atts = [{"url": "https://files.cdn-sorento.test/v.mp4", "filename": "v.mp4", "attachmentType": "video"}]
+    fake = FakeClient({0: _status_error(400)})
+    _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": atts}], fake)
+    assert _url_of(fake.calls[0]) == "https://files.cdn-sorento.test/v.mp4"
+    assert fake.calls[1][1][1] == "https://signed.test/zzt?sig=1"
 
 
 # --------------------------------------------------------------------------- #
 # Row 31: an engine that raises sends the n8n failure sentence
 # --------------------------------------------------------------------------- #
 
+LIVE_FAILURE_SENTENCE = (
+    "Sorry, I couldn't process that just now \u2014 something went wrong on our side. "
+    "Please try again in a moment."
+)
+
+
+def test_row31_the_failure_sentence_is_the_live_n8n_one():
+    from app.services.chatbot import crm_sender
+
+    assert crm_sender.FAILURE_REPLY_TEXT == LIVE_FAILURE_SENTENCE
+
 
 def test_row31_an_engine_that_raises_sends_the_failure_sentence(db, factory, workspace, fake_respond, monkeypatch):
-    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
-
     _settings(db, chatbot_reply_sender_mode="all")
     tid, claimed_at = _claimed_row(db)
 
@@ -386,4 +576,4 @@ def test_row31_an_engine_that_raises_sends_the_failure_sentence(db, factory, wor
 
     _drain_turn(db, factory, monkeypatch, tid, claimed_at, boom)
     sent = [c[1][1] for c in fake_respond["client"].calls if c[0] == "send_message"]
-    assert sent == [FAILURE_REPLY_TEXT]
+    assert sent == [LIVE_FAILURE_SENTENCE]
