@@ -526,9 +526,8 @@ def test_a_plain_files_upload_does_not_collide_with_a_project_document(db, world
 
 def test_replace_without_an_entity_never_overwrites_a_project_file_in_a_folder(db, world):
     """A project file filed into a folder is not "here" for a plain upload either, so Replace
-    never overwrites it: the project's file keeps its bytes. The folder still allows one
-    file per name (migration 198's index), so the upload is a plain 409 naming the file and
-    the folder (FILES-MOVE-DUPLICATE; before, this reached the index as a 500)."""
+    makes a new file and the project's file keeps its bytes. Same names in one folder are
+    allowed (owner, 12 Nov), so the new file simply lands beside it."""
     _as(world, "siti")
     folder = _folder(db)
     name = f"{unique_code('shared')}.pdf"
@@ -540,11 +539,33 @@ def test_replace_without_an_entity_never_overwrites_a_project_file_in_a_folder(d
         files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
     )
 
-    assert res.status_code == 409, res.text
-    body = res.json()
-    assert body["message"].endswith(" already exists in " + body["details"]["folder_name"] + ".")
-    assert "existing_attachment_id" not in body["details"], "another project's file id must not leak"
+    assert res.status_code == 201, res.text
+    assert res.json()["id"] != theirs
     assert _row(db, theirs).file_hash == "original-bytes"
+
+
+def test_upload_keep_both_lands_beside_a_same_named_file(db, world):
+    """The upload window's Keep both: a second file of the same name in the folder."""
+    _as(world, "siti")
+    folder = _folder(db)
+    name = f"{unique_code('same')}.pdf"
+    first = _seed_file(db, None, name, directory_id=folder)
+
+    asked = world["client"].post(
+        f"{BASE}/",
+        data={"attachment_type_id": world["type_id"], "directory_id": folder},
+        files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
+    )
+    kept = world["client"].post(
+        f"{BASE}/",
+        data={"attachment_type_id": world["type_id"], "directory_id": folder, "on_conflict": "keep"},
+        files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
+    )
+
+    assert asked.status_code == 409, asked.text
+    assert kept.status_code == 201, kept.text
+    assert kept.json()["id"] != first
+    assert kept.json()["stored_filename"] == name
 
 
 # ------------------------------------------------------- moves, folders, other bulk writes

@@ -1,7 +1,8 @@
 /**
- * FILES-MOVE-DUPLICATE: the move flow behind "Move to..." and drag (hand test 12 Nov).
- * Every conflict is found before anything moves; one dialog walks them "1 of N" with
- * "Do this for the remaining" (Windows-style); Cancel / X / Esc cancel the whole move.
+ * FILES-MOVE-DUPLICATE: same-name files are allowed (owner, 12 Nov 17:35), and every clash
+ * is asked first. One window, Windows-style: "1 of N", Keep both (main) / Rename / Replace /
+ * Skip, "Apply to all N remaining conflicts" (Keep all / Rename all / Replace all / Skip all),
+ * Cancel / X / Esc stop the whole action. Move, drag and restore share it; Rename asks one.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -9,19 +10,24 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const bulkMoveAttachments = vi.fn();
+const bulkRestoreAttachments = vi.fn();
 const updateDirectory = vi.fn();
 let canDelete = true;
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => canDelete }));
 vi.mock('../../attachments/services/attachmentService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../attachments/services/attachmentService')>();
-  return { ...actual, bulkMoveAttachments: (...args: unknown[]) => bulkMoveAttachments(...args) };
+  return {
+    ...actual,
+    bulkMoveAttachments: (...args: unknown[]) => bulkMoveAttachments(...args),
+    bulkRestoreAttachments: (...args: unknown[]) => bulkRestoreAttachments(...args),
+  };
 });
 vi.mock('../../attachments/services/directoryService', () => ({
   updateDirectory: (...args: unknown[]) => updateDirectory(...args),
 }));
 
-import { useMoveFiles } from './useMoveFiles';
+import { useMoveFiles, type ClashChoice } from './useMoveFiles';
 import type { MoveOutcome } from './driveMoveSummary';
 
 function conflict(i: number) {
@@ -35,17 +41,15 @@ function conflict(i: number) {
   };
 }
 
-type Handle = {
-  move: (ids: string[], dest: string | null, folders?: { id: string; name: string }[]) => Promise<MoveOutcome>;
-};
+type Handle = ReturnType<typeof useMoveFiles>;
 
 function Harness({ refObj }: { refObj: { current: Handle | null } }) {
-  const { moveFiles, MoveClashDialog } = useMoveFiles();
-  refObj.current = { move: moveFiles };
-  return <div>{MoveClashDialog}</div>;
+  const hook = useMoveFiles();
+  refObj.current = hook;
+  return <div>{hook.MoveClashDialog}</div>;
 }
 
-function mount() {
+function mount(): Handle {
   const refObj: { current: Handle | null } = { current: null };
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -55,142 +59,148 @@ function mount() {
   return refObj.current!;
 }
 
-/** First call = the check-only preflight, second = the move itself. */
-function preflight(
-  conflicts: ReturnType<typeof conflict>[],
-  execute: { updated: number; not_moved: unknown[]; renamed?: number; replaced?: number } = { updated: 0, not_moved: [] }
-) {
-  bulkMoveAttachments.mockImplementation(async (_ids: string[], _dest: string, opts?: { checkOnly?: boolean }) =>
-    opts?.checkOnly ? { updated: 0, not_moved: conflicts } : execute
-  );
+type Execute = { updated: number; not_moved: unknown[]; renamed?: number; replaced?: number };
+
+/** First call = the check-only pass, second = the action itself. */
+function preflight(fn: ReturnType<typeof vi.fn>, conflicts: ReturnType<typeof conflict>[], execute: Execute = { updated: 0, not_moved: [] }) {
+  fn.mockImplementation(async (_ids: string[], ...rest: unknown[]) => {
+    const opts = rest[rest.length - 1] as { checkOnly?: boolean } | undefined;
+    return opts?.checkOnly ? { updated: 0, not_moved: conflicts } : execute;
+  });
 }
+
+const button = (name: string) => screen.getByRole('button', { name });
 
 describe('useMoveFiles', () => {
   beforeEach(() => {
     bulkMoveAttachments.mockReset();
+    bulkRestoreAttachments.mockReset();
     updateDirectory.mockReset();
     canDelete = true;
   });
 
-  it('no conflict: checks first, then moves everything in one call, no dialog', async () => {
-    preflight([], { updated: 3, not_moved: [] });
-    const outcome = await mount().move(['a', 'b', 'c'], 'dir-b');
+  it('no conflict: checks first, then moves everything in one call, no window', async () => {
+    preflight(bulkMoveAttachments, [], { updated: 3, not_moved: [] });
+    const outcome = await mount().moveFiles(['a', 'b', 'c'], 'dir-b');
     expect(bulkMoveAttachments).toHaveBeenNthCalledWith(1, ['a', 'b', 'c'], 'dir-b', { checkOnly: true });
     expect(bulkMoveAttachments).toHaveBeenNthCalledWith(2, ['a', 'b', 'c'], 'dir-b', { resolutions: {} });
-    expect(outcome).toMatchObject({ cancelled: false, moved: 3, renamed: 0, replaced: 0 });
+    expect(outcome).toMatchObject({ cancelled: false, moved: 3 });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('100 files, 100 conflicts: one decision with "Do this for the remaining" renames all', async () => {
+  it('unticked: Keep both is the main button, beside Rename, Replace, Skip and Cancel', async () => {
+    preflight(bulkMoveAttachments, [conflict(1), conflict(2)], { updated: 2, not_moved: [] });
+    const pending = mount().moveFiles(['f-1', 'f-2'], 'dir-b');
+    expect(await screen.findByText('1 of 2')).toBeTruthy();
+    for (const name of ['Cancel', 'Skip', 'Replace', 'Rename', 'Keep both']) expect(button(name)).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'New name' })).toHaveProperty('value', 'scan 1 (1).pdf');
+    fireEvent.click(button('Keep both'));
+    expect(await screen.findByText('2 of 2')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'New name' }), { target: { value: 'mine.pdf' } });
+    fireEvent.click(button('Rename'));
+    await pending;
+    expect(bulkMoveAttachments.mock.calls[1][2]).toEqual({
+      resolutions: { 'f-1': { action: 'keep' }, 'f-2': { action: 'rename', name: 'mine.pdf' } },
+    });
+  });
+
+  it('100 conflicts take one decision: tick "Apply to all", then Keep all', async () => {
     const conflicts = Array.from({ length: 100 }, (_, i) => conflict(i));
-    const ids = conflicts.map((c) => c.attachment_id);
-    preflight(conflicts, { updated: 100, renamed: 100, not_moved: [] });
-    const pending = mount().move(ids, 'dir-b');
+    preflight(bulkMoveAttachments, conflicts, { updated: 100, not_moved: [] });
+    const pending = mount().moveFiles(conflicts.map((c) => c.attachment_id), 'dir-b');
     expect(await screen.findByText('1 of 100')).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 99 remaining conflicts' }));
-    // Ticked: the name row stays in place with a plain hint instead of the box (no jump).
-    expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
-    expect(screen.getByText('Each file gets a number added, like (1).')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+    for (const name of ['Cancel', 'Skip all', 'Replace all', 'Rename all', 'Keep all']) expect(button(name)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Keep both' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Skip all' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Replace all' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Rename all' }));
+    // The name row stays (no jump) with a hint instead of the box.
+    expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
+    expect(screen.getByText('Rename all adds a number to each name, like (1).')).toBeTruthy();
+    fireEvent.click(button('Keep all'));
     const outcome = await pending;
-    const [, , opts] = bulkMoveAttachments.mock.calls[1];
-    expect(Object.keys(opts.resolutions)).toHaveLength(100);
-    expect(opts.resolutions['f-0']).toEqual({ action: 'rename' });
-    expect(opts.resolutions['f-99']).toEqual({ action: 'rename' });
+    const { resolutions } = bulkMoveAttachments.mock.calls[1][2];
+    expect(Object.keys(resolutions)).toHaveLength(100);
+    expect(new Set(Object.values(resolutions).map((r) => JSON.stringify(r)))).toEqual(new Set(['{"action":"keep"}']));
     expect(bulkMoveAttachments).toHaveBeenCalledTimes(2);
-    expect(outcome).toMatchObject({ cancelled: false, moved: 0, renamed: 100 });
+    expect(outcome).toMatchObject({ moved: 100 });
   });
 
-  it('without the tick box each conflict is asked; the typed name goes with that file only', async () => {
-    preflight([conflict(1), conflict(2)], { updated: 1, renamed: 1, not_moved: [conflict(2)] });
-    const pending = mount().move(['f-1', 'f-2'], 'dir-b');
-    expect(await screen.findByText('1 of 2')).toBeTruthy();
-    fireEvent.change(screen.getByRole('textbox', { name: 'New name' }), { target: { value: 'mine.pdf' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-    expect(await screen.findByText('2 of 2')).toBeTruthy();
-    expect(screen.getByDisplayValue('scan 2 (1).pdf')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-    const outcome = await pending;
-    expect(bulkMoveAttachments.mock.calls[1][2]).toEqual({
-      resolutions: { 'f-1': { action: 'rename', name: 'mine.pdf' }, 'f-2': { action: 'skip' } },
-    });
-    expect(outcome).toMatchObject({ renamed: 1, moved: 0, skipped: ['scan 2.pdf'], notMoved: [] });
+  it('Rename all, Replace all and Skip all send that answer for every conflict', async () => {
+    for (const [label, action] of [
+      ['Rename all', 'rename'],
+      ['Replace all', 'replace'],
+      ['Skip all', 'skip'],
+    ] as const) {
+      bulkMoveAttachments.mockReset();
+      preflight(bulkMoveAttachments, [conflict(1), conflict(2)], { updated: 2, not_moved: [] });
+      const hook = mount();
+      const pending = hook.moveFiles(['f-1', 'f-2'], 'dir-b');
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
+      fireEvent.click(button(label));
+      await pending;
+      expect(bulkMoveAttachments.mock.calls[1][2].resolutions).toEqual({
+        'f-1': { action },
+        'f-2': { action },
+      });
+      document.body.innerHTML = '';
+    }
   });
 
-  it('Replace for all sends replace for every conflict', async () => {
-    preflight([conflict(1), conflict(2), conflict(3)], { updated: 4, replaced: 3, not_moved: [] });
-    const pending = mount().move(['plain', 'f-1', 'f-2', 'f-3'], 'dir-b');
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Apply to all 2 remaining conflicts' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Replace all' }));
-    const outcome = await pending;
-    expect(bulkMoveAttachments.mock.calls[1][2].resolutions).toEqual({
-      'f-1': { action: 'replace' },
-      'f-2': { action: 'replace' },
-      'f-3': { action: 'replace' },
-    });
-    expect(outcome).toMatchObject({ moved: 1, replaced: 3 });
-  });
-
-  it('Cancel cancels the whole move: nothing moves, folders included', async () => {
-    preflight([conflict(1)]);
-    const pending = mount().move(['plain', 'f-1'], 'dir-b', [{ id: 'd-1', name: 'Specs' }]);
-    expect(await screen.findByText('scan 1.pdf already exists in Folder B.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    const outcome = await pending;
-    expect(outcome.cancelled).toBe(true);
-    expect(bulkMoveAttachments).toHaveBeenCalledTimes(1); // the check only
+  it('Cancel stops the whole move: no move call, folders untouched', async () => {
+    preflight(bulkMoveAttachments, [conflict(1)]);
+    const pending = mount().moveFiles(['plain', 'f-1'], 'dir-b', [{ id: 'd-1', name: 'Specs' }]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect((await pending).cancelled).toBe(true);
+    expect(bulkMoveAttachments).toHaveBeenCalledTimes(1);
     expect(updateDirectory).not.toHaveBeenCalled();
   });
 
-  it('Esc (closing the window) also cancels the whole move', async () => {
-    preflight([conflict(1), conflict(2)]);
-    const pending = mount().move(['f-1', 'f-2'], 'dir-b');
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.keyDown(dialog, { key: 'Escape' });
+  it('Esc also cancels the whole move', async () => {
+    preflight(bulkMoveAttachments, [conflict(1), conflict(2)]);
+    const pending = mount().moveFiles(['f-1', 'f-2'], 'dir-b');
+    fireEvent.keyDown(await screen.findByRole('dialog'), { key: 'Escape' });
     await waitFor(async () => expect((await pending).cancelled).toBe(true));
     expect(bulkMoveAttachments).toHaveBeenCalledTimes(1);
   });
 
-  it('one conflict shows no "1 of" counter and no tick box', async () => {
-    preflight([conflict(1)], { updated: 1, renamed: 1, not_moved: [] });
-    const pending = mount().move(['f-1'], 'dir-b');
+  it('one conflict: no counter and no tick box', async () => {
+    preflight(bulkMoveAttachments, [conflict(1)], { updated: 1, not_moved: [] });
+    const pending = mount().moveFiles(['f-1'], 'dir-b');
     await screen.findByText('scan 1.pdf already exists in Folder B.');
     expect(screen.queryByText('1 of 1')).toBeNull();
     expect(screen.queryByRole('checkbox')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-    expect((await pending).renamed).toBe(1);
+    fireEvent.click(button('Keep both'));
+    await pending;
   });
 
   it('Replace is not offered without the permission to delete files', async () => {
     canDelete = false;
-    preflight([conflict(1)], { updated: 0, not_moved: [conflict(1)] });
-    const pending = mount().move(['f-1'], 'dir-b');
+    preflight(bulkMoveAttachments, [conflict(1)], { updated: 0, not_moved: [conflict(1)] });
+    const pending = mount().moveFiles(['f-1'], 'dir-b');
     await screen.findByRole('button', { name: 'Skip' });
     expect(screen.queryByRole('button', { name: 'Replace' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    fireEvent.click(button('Skip'));
     expect((await pending).skipped).toEqual(['scan 1.pdf']);
   });
 
-  it('a file the server still refused is named with its reason', async () => {
-    preflight([conflict(1)], {
-      updated: 0,
-      not_moved: [{ ...conflict(1), message: 'You cannot change that file.' }],
+  it('server counts and refusals feed the summary', async () => {
+    preflight(bulkMoveAttachments, [conflict(1), conflict(2)], {
+      updated: 2,
+      renamed: 1,
+      replaced: 0,
+      not_moved: [{ ...conflict(2), message: 'You cannot change that file.' }],
     });
-    const pending = mount().move(['f-1'], 'dir-b');
+    const pending = mount().moveFiles(['plain', 'f-1', 'f-2'], 'dir-b');
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Replace' }));
     const outcome = await pending;
-    expect(outcome.replaced).toBe(0);
-    expect(outcome.notMoved).toEqual([{ name: 'scan 1.pdf', reason: 'You cannot change that file.' }]);
+    expect(outcome).toMatchObject({ moved: 1, renamed: 1, replaced: 0 });
+    expect(outcome.notMoved).toEqual([{ name: 'scan 2.pdf', reason: 'You cannot change that file.' }]);
   });
 
   it('folders move after the decisions; a refused folder is named', async () => {
-    preflight([], { updated: 2, not_moved: [] });
+    preflight(bulkMoveAttachments, [], { updated: 2, not_moved: [] });
     updateDirectory.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('Cannot move a folder into itself'));
-    const outcome = await mount().move(['a', 'b'], 'dir-b', [
+    const outcome = await mount().moveFiles(['a', 'b'], 'dir-b', [
       { id: 'd-1', name: 'Specs' },
       { id: 'd-2', name: 'Drafts' },
     ]);
@@ -198,26 +208,24 @@ describe('useMoveFiles', () => {
     expect(outcome.notMoved).toEqual([{ name: 'Drafts', reason: 'Cannot move a folder into itself' }]);
   });
 
-  it('a resolved file whose clash vanished counts as a plain move (server counts)', async () => {
-    preflight([conflict(1)], { updated: 1, renamed: 0, replaced: 0, not_moved: [] });
-    const pending = mount().move(['f-1'], 'dir-b');
-    fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
-    expect(await pending).toMatchObject({ moved: 1, renamed: 0, replaced: 0 });
+  it('restore from Trash: same check-first window, one restore call', async () => {
+    preflight(bulkRestoreAttachments, [conflict(1)], { updated: 2, not_moved: [] });
+    const pending = mount().restoreFiles(['f-1', 'free']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep both' }));
+    const outcome = await pending;
+    expect(bulkRestoreAttachments).toHaveBeenNthCalledWith(1, ['f-1', 'free'], { checkOnly: true });
+    expect(bulkRestoreAttachments).toHaveBeenNthCalledWith(2, ['f-1', 'free'], {
+      resolutions: { 'f-1': { action: 'keep' } },
+    });
+    expect(outcome).toMatchObject({ cancelled: false, moved: 2 });
   });
 
-  it('unticked, the buttons read Rename / Skip / Replace; one remaining conflict reads singular', async () => {
-    preflight([conflict(1), conflict(2)], { updated: 2, renamed: 2, not_moved: [] });
-    const pending = mount().move(['f-1', 'f-2'], 'dir-b');
-    expect(await screen.findByRole('checkbox', { name: 'Apply to all 1 remaining conflict' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Replace' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
-    // Unticking brings the editable box back with the suggestion.
-    expect(screen.getByDisplayValue('scan 1 (1).pdf')).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Rename all' }));
-    expect(await pending).toMatchObject({ renamed: 2 });
+  it('askOne: a single clash (Rename in a folder) gets the same window without counter', async () => {
+    const hook = mount();
+    const pending: Promise<ClashChoice> = hook.askOne(conflict(1));
+    await screen.findByText('scan 1.pdf already exists in Folder B.');
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    fireEvent.click(button('Keep both'));
+    expect(await pending).toEqual({ kind: 'keep', forAll: false });
   });
 });
