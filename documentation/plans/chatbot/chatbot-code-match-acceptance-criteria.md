@@ -48,9 +48,8 @@ marker or default size.
   up to 3; none answered directly. No code letter is read as a role.
 - AC-3 Token `TWC604PRL` (equal with dashes folded) answers the set: members and the complete-sets figure.
 - AC-23 A set whose members the dealer may not see (`visible_set_clauses`) is neither answered nor offered.
-- AC-24 The family rule no longer inserts an "X" after the letters (`product_code_family.py:88`); a code previously
-  reached only that way is reached through the set/member rule or the probe, or is offered; no regression in the
-  frozen set.
+- AC-1b Picking the offered set ("1") answers the set at the carried quantity, as an exact set ask; picking a member
+  answers that member.
 
 ## Slice 4: size from stored values (R4)
 
@@ -68,6 +67,13 @@ Seed a registry size key scoped to the test category (Q2 a) in mm.
   cm prints cm.
 - AC-18 `scripts/chatbot_products_without_size.sql` (read-only SELECT): active products in categories with a size key
   and no stored value (code, category); crew runs it on the dev copy.
+
+## Slice 5: X insert replaced from catalogue data
+
+- AC-24 (crew ruling 12 Nov) The family link the "X" insert gives (`product_code_family.py:88`) comes from catalogue
+  data (set membership, variant group or family field) and the letter rule is gone, with the 16 owner tests in
+  `test_attribute_asks_round7.py` and `test_narrow_code_own_line.py` green unchanged. If the data lacks the link, the
+  insert stays and the generic audit names it "kept until the catalogue carries the link" with the data needed.
 
 ## Not changed
 

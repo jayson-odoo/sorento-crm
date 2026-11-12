@@ -40,12 +40,11 @@ Console questions (staff and dealer):
 ### Slice 3: sets through the membership table (R3)
 Change: a token close to a registered set offers the set then its members (`product_set_members`); an exact set on a
 stock ask answers the set.
-Also: the "X" insert in the family rule (`product_code_family.py:88`) is removed (plan v2 section 3b, D3); the
-set rule replaces it; the frozen set (slice 5) must show no regression.
+The "X" insert moved to slice 5 (crew ruling 12 Nov, see there).
 Console questions:
 1. "CWC604RL x 2" - before: refer line / unrelated list; after: offer CWC604-P-RL (set) then its members.
 2. "CWC604PRL stock" - after: the set answered (members' stock, complete sets).
-3. "Srtwc7604 p trap price" (was found by the X insert) - same answer as before, now through the set/member rule.
+3. Reply "1" to question 1 - the set answered at x2, as an exact set ask.
 4. A dealer asking a set whose members they may not see - not offered.
 
 ### Slice 4: size from stored values (R4)
@@ -59,7 +58,13 @@ Console questions:
 3. "SRTWC8152-SH-UF-400" (no member holds 400) - after: "Couldn't find" plus close codes with stored sizes.
 4. A category with two length keys holding the typed number - every matching key offered, none guessed.
 
-### Slice 5: frozen set + before/after
+### Slice 5: X insert replaced from catalogue data, frozen set, before/after
+X insert (crew ruling 12 Nov): do NOT remove it while it breaks owner-tested behaviour (27 Sep #833 and the 16 tests in
+`test_attribute_asks_round7.py` and `test_narrow_code_own_line.py` stay green, always). REPLACE it: derive the same
+family link from catalogue data (set membership, a variant group or a family field) so those 16 tests pass with the
+letter rule gone. If the catalogue lacks that link for these codes, keep the X insert, list it in the generic audit
+as "kept until the catalogue carries the link", and name the data that would remove it.
+
 Gate: the frozen set = the 23 sampled defect turns + the 34 recovered typos + every past owner-FAIL code-lookup /
 stock "not found" turn + multi-turn follow-ups (refine, answer the bot's question, topic switch). Pass = 0 wrong codes
 answered directly, and no regression on turns that pass on main. Order: US$0 replay of recorded turns first; then LIVE
