@@ -884,3 +884,51 @@ def test_upload_refuses_a_visible_twin_with_another_original(db):
 
     assert ei.value.status_code == 409
     _assert_plain(ei.value.detail["message"], "photo.jpg", "Folder A")
+
+
+# --- review round 3: every remaining writer into a folder ---------------------------- #
+
+
+def test_folder_restore_leaves_a_visible_twin_in_trash(db):
+    from app.services.resources_service import AttachmentDirectoryService
+
+    folder = _folder(db, "Folder A")
+    gone = _file(db, "photo.jpg", folder, original="first.jpg")
+    other = _file(db, "other.jpg", folder)
+    for row in (gone, other):
+        row.is_deleted = True
+    db.flush()
+    _file(db, "photo.jpg", folder, original="second.jpg")
+    directory = db.query(AttachmentDirectory).filter(AttachmentDirectory.id == folder).one()
+    directory.is_deleted = True
+    db.flush()
+
+    result = AttachmentDirectoryService(db).restore_directory(folder)
+
+    assert result["attachments_restored"] == 1
+    assert len(result["attachments_not_restored"]) == 1
+    assert _reload(db, gone.id).is_deleted is True
+
+
+def test_zip_import_collision_sees_a_renamed_file_holding_the_original_name(db):
+    """The zip import asks Skip / Copy / Replace off this helper: a file renamed away from
+    the entry's name but still holding it as its original name is a collision too."""
+    from app.api.v1.resources.attachments import _folder_name_collision
+
+    folder = _folder(db, "Folder A")
+    renamed = _file(db, "holiday.jpg", folder, original="photo.jpg")
+    twin = _file(db, "invoice.pdf", folder, original="old-invoice.pdf")
+
+    assert str(_folder_name_collision(db, folder, "photo.jpg").id) == renamed.id
+    assert str(_folder_name_collision(db, folder, "INVOICE.pdf").id) == twin.id
+    assert _folder_name_collision(db, folder, "free.jpg") is None
+
+
+def test_catalogue_pdf_name_skips_a_visible_twin(db):
+    from app.services.catalogue_photo_service import _free_pdf_name
+
+    folder = _folder(db, "Catalogues")
+    _file(db, "catalogue.pdf", folder, original="older-upload.pdf")
+    root = db.query(AttachmentDirectory).filter(AttachmentDirectory.id == folder).one()
+
+    assert _free_pdf_name(db, root, "catalogue.pdf") == "catalogue - copy.pdf"

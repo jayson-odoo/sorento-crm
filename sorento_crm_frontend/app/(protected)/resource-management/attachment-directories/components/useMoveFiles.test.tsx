@@ -90,7 +90,7 @@ describe('useMoveFiles', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 99 remaining conflicts' }));
     // Ticked: the name row stays in place with a plain hint instead of the box (no jump).
     expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
-    expect(screen.getByText('Each file keeps its own name with (1) added.')).toBeTruthy();
+    expect(screen.getByText('Each file keeps its own name with a number added, like (1).')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Skip all' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Replace all' })).toBeTruthy();
