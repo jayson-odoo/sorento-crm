@@ -15,7 +15,7 @@ from app.services.dealer_kit.pricing import line_pricing
 from app.services.dealer_kit.viewer import ViewerContext
 from tests._pg_fixture import blank_session, unique_code
 from tests.test_portal_price_tag_routes import _seed_contact_who_can_see_the_form
-from tests.test_price_tag_line_pricing import _product
+from tests.test_price_tag_line_pricing import _product, _promotion
 
 _SORENTO = "00000000-0000-0000-0000-000000000001"
 _ROUTE = "/api/v1/public/portal/lookups/line-pricing"
@@ -25,7 +25,9 @@ def _viewer() -> ViewerContext:
     return ViewerContext(is_staff=True, is_internal_copy=True)
 
 
-def _set(db, members: list[tuple], *, override: str | None = None) -> str:
+def _set(
+    db, members: list[tuple], *, override: str | None = None, company_id: str = _SORENTO
+) -> str:
     """``members`` is a list of (product, quantity)."""
     from app.models.product_set import ProductSet, ProductSetMember
 
@@ -33,7 +35,7 @@ def _set(db, members: list[tuple], *, override: str | None = None) -> str:
         id=str(uuid.uuid4()),
         set_code=unique_code("ZZTSET"),
         name="ZZT Set",
-        company_id=_SORENTO,
+        company_id=company_id,
         list_price_override=Decimal(override) if override is not None else None,
     )
     db.add(row)
@@ -84,6 +86,62 @@ def test_set_with_no_members_has_no_list_price():
         row = _price(db, _set(db, []))
 
         assert row["list_price"] is None
+
+
+def _set_with_a_member_on_offer(db):
+    a = _product(db, list_price="100.00")
+    b = _product(db, list_price="250.00")
+    promotion = _promotion(db, [(a, "80.00")])
+    return _set(db, [(a, 2), (b, 1)]), promotion
+
+
+def test_without_a_promotion_id_a_set_on_offer_sells_at_list_like_the_saved_tag():
+    """D3: the saved tag prints ``list`` when no promotion is stored, so the screen must too."""
+    with blank_session() as db:
+        set_id, _promotion_row = _set_with_a_member_on_offer(db)
+
+        row = _price(db, set_id)
+
+        assert float(row["list_price"]) == 450.0
+        assert float(row["sell_price"]) == float(row["list_price"])
+        assert row["sell_price_basis"] == "list"
+
+
+def test_with_the_promotion_id_the_set_sells_at_the_offer_the_tag_prints():
+    from app.models.product_set import ProductSet
+    from app.services.dealer_kit.tag_data_service import product_set_tag_data
+
+    with blank_session() as db:
+        set_id, promotion = _set_with_a_member_on_offer(db)
+        expected = product_set_tag_data(db, db.get(ProductSet, set_id), _viewer(), promotion.id)[
+            "offer_price"
+        ]
+
+        row = line_pricing(
+            db, [{"key": "k", "product_set_id": set_id, "promotion_id": promotion.id}], _viewer()
+        )[0]
+
+        assert expected is not None
+        assert float(row["sell_price"]) == float(expected)
+        assert row["sell_price_basis"] == "promotion"
+
+
+def test_a_set_of_another_company_gives_no_figures():
+    from app.models.base import company_scope
+    from app.models.company import Company
+
+    with blank_session() as db:
+        other = Company(id=str(uuid.uuid4()), name="ZZT Other", code=unique_code("ZZ")[:50])
+        db.add(other)
+        db.flush()
+        a = _product(db, list_price="100.00")
+        theirs = _set(db, [(a, 2)], company_id=other.id)
+
+        with company_scope(db, frozenset({_SORENTO})):
+            row = _price(db, theirs)
+
+        assert row["list_price"] is None
+        assert row["sell_price"] is None
 
 
 @pytest.fixture
