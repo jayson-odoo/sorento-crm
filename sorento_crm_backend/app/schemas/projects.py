@@ -1074,6 +1074,8 @@ class QuotationLineVerdictResponse(BaseModel):
 
     is_non_standard: bool
     is_below_floor: bool
+    # Below the default price (series price, else list price): the save's `is_discounted`.
+    is_discounted: bool = False
     floor_value: Optional[Decimal] = None
     floor_level: Optional[str] = None
 
@@ -2061,6 +2063,14 @@ class ProjectQuotationRecipientPick(BaseModel):
     attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
 
 
+class ProjectQuotationDocumentDuplicate(BaseModel):
+    """QUOTE-DUPLICATE-PARTY: the party the copy is for and its Attn people, nothing else."""
+
+    recipient_party_id: str = Field(min_length=1, max_length=64)
+    recipient_role: Optional[str] = Field(default=None, max_length=32)
+    attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
+
+
 class ProjectQuotationDocumentCreate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """Every field optional on purpose (AC-A2).
 
@@ -2245,6 +2255,8 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     below_floor_line_count: int = 0
     # PS-QUOTE-RULES: any discount and any off-series line need approval, routed to one person.
     discounted_line_count: int = 0
+    # Discounted and not below the floor, per line: the "Below default price" pill's count.
+    below_default_line_count: int = 0
     off_series_line_count: int = 0
     approval_reasons: Optional[str] = None
     approver_user_id: Optional[str] = None
@@ -2259,6 +2271,9 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     source_document_id: Optional[str] = None
     source_label: Optional[str] = None
     quotation_document_id: Optional[str] = None
+    # QUOTE-DUPLICATE-PARTY: the document this one was duplicated from, and its number.
+    copied_from_document_id: Optional[str] = None
+    copied_from_label: Optional[str] = None
     recipient_party_type: Optional[str] = None
     # The role the recipient plays on THIS project (developer, or its party link), for the caption.
     recipient_role: Optional[str] = None

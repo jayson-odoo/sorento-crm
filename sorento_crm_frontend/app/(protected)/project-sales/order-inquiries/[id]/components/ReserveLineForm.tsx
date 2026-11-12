@@ -61,10 +61,10 @@ export interface ReserveLineFormProps {
   mode: 'reserve' | 'amend';
   /** The request row's own `qty_requested` - the input's own ceiling either way. */
   requestedQty: string;
-  /** Reserve mode only: the row's own pools, `available_qty` per warehouse id, and
+  /** Reserve mode only: the row's own pools, plain on hand per warehouse id, and
    * which one Reserved defaults to. */
   locationOptions?: SearchableSelectOption[];
-  availableQtyByLocation?: Record<string, number>;
+  onHandQtyByLocation?: Record<string, number>;
   defaultLocationId?: string | null;
   /** Amend mode only: the answered location's own code (read-only text, never a
    * `SearchableSelect` - the location itself is locked on an amend), and the row's
@@ -87,7 +87,7 @@ export function ReserveLineForm({
   mode,
   requestedQty,
   locationOptions = [],
-  availableQtyByLocation = {},
+  onHandQtyByLocation = {},
   defaultLocationId = null,
   lockedLocationLabel,
   initialQty,
@@ -113,23 +113,24 @@ export function ReserveLineForm({
   const showReason = (qty ?? requested) < requested;
   const canStage = !showReason || reason.trim().length > 0;
 
-  // AC-RS-85: "options = the row's pools with availability" - the availability reads
-  // as its own DESCRIPTION line (the shared `SearchableSelect` primitive's own second
-  // row), never baked into the primary label - `useReserveRowOptions`' own combined
-  // string ("BRW  available 107") would otherwise print in full as the SELECTED
-  // value's own trigger text (no UUID in the UI is the letter of the rule; a
-  // duplicated "available N" clause on the CLOSED control is the same spirit of it).
+  // AC-RS-85: the row's pools, each with its plain on hand (RESERVE-DIALOG-ON-HAND,
+  // owner 11 Nov 2026) as its own DESCRIPTION line (the shared `SearchableSelect`
+  // primitive's own second row), never baked into the primary label -
+  // `useReserveRowOptions`' own combined string ("BRW  on hand 107") would otherwise
+  // print in full as the SELECTED value's own trigger text (no UUID in the UI is the
+  // letter of the rule; a duplicated "on hand N" clause on the CLOSED control is the
+  // same spirit of it).
   const displayLocationOptions = React.useMemo(
     () =>
       locationOptions.map((option) => {
-        const available = availableQtyByLocation[option.value];
+        const onHand = onHandQtyByLocation[option.value];
         return {
           ...option,
           label: bareLocationCode(option.label),
-          description: available != null ? `available ${available}` : option.description,
+          description: onHand != null ? `on hand ${onHand}` : option.description,
         };
       }),
-    [locationOptions, availableQtyByLocation],
+    [locationOptions, onHandQtyByLocation],
   );
 
   function handleStage() {

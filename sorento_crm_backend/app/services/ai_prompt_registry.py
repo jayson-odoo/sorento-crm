@@ -708,6 +708,10 @@ def _po_extractor_fallback() -> str:
     two-line-wrapped stock code is the one that mattered most: the customer's column
     is narrow, so `SRTWC86` and `08-RL` are one code printed on two rows, and reading
     them as two codes produces a PO that reconciles to nothing.
+
+    The JSON block below is also enforced as a structured-output schema
+    (``project_po_reading.PO_PAGE_SCHEMA``). A published prompt version that asks for a
+    NEW key gets nothing back for it until that schema carries the key too.
     """
     return (
         "You are reading ONE PAGE of a scanned customer PURCHASE ORDER sent to Sorento "

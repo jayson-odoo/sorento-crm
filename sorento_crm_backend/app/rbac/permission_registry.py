@@ -240,6 +240,10 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Compla
 PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))
 PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.export", "name": "Export Suppliers", "description": "Permission to export suppliers with dynamic fields."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "product_suppliers", "Product-Suppliers"))
+# SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost price, supplier unit costs, last purchase /
+# PO costs and the product Suppliers / Purchase History tabs. Granted by slug in
+# `sca_0001_products_cost_view` to purchasing and management roles only.
+PERMISSION_REGISTRY.append({"slug": "products.cost.view", "name": "View Product Cost", "description": "See cost price, supplier unit costs, last purchase / PO costs and the product Suppliers and Purchase History tabs; History shows cost values."})
 # Cost price from the supplier (#1288, Lane A, plan section 10). Verify is Sorento-staff
 # only - never an integration role, never reachable from a public route - and a migration
 # sweep grants all four to every "purchasing role" (whoever holds `scm.proforma_invoice.
@@ -1154,3 +1158,16 @@ PERMISSION_REGISTRY.append({
     "name": "Edit Own Dealer Contacts' Access",
     "description": "Give, change or end the access of dealer contacts on customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
 })
+
+
+# PRODUCT-COSTING: edit the Costing page (mark-ups, transport, cost methods), party costing
+# profiles, SST and transport rules. Migration `pc_0001_product_costing` grants it by role slug
+# to admin and director. `products.cost.view` (the read gate) comes with SUPPLIER-COST-ACCESS.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "products.party_costing.manage",
+        "name": "Manage party costing",
+        "description": "Edit mark-ups, transport and cost methods on the Costing page, and manage party "
+                       "costing profiles, products, the SST factor and transport rules.",
+    },
+])

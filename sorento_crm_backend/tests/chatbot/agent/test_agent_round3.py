@@ -176,7 +176,7 @@ def test_registry_carries_the_contact_grants():
 
 
 def test_dispatch_denies_a_tool_whose_contact_grant_is_missing(held):
-    held.update({"scm.purchase_orders.view"})
+    held.update({"products.cost.view"})  # SUPPLIER-COST-ACCESS: PO cost's staff slug
     rec = Rec()
     out = _dispatch(COST, {"query": "x"}, rec, ctx=_ctx())
     assert out.status == "denied" and rec.calls == []
@@ -377,21 +377,11 @@ def test_a_repair_call_cannot_outlast_the_turn(db, contact):
 
 
 def test_a_second_turn_for_the_same_contact_is_busy(db, contact):
-    from app.database import engine
-    from app.services.chatbot.agent.loop import AgentBusy
+    from app.services.chatbot.agent.loop import AgentBusy, single_flight
 
-    holder = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-    try:
-        holder.execute(
-            text("SELECT pg_advisory_lock(hashtext(:k))"), {"k": f"agent:{contact['respond_id']}"}
-        )
+    with single_flight(contact["respond_id"]):  # another turn of this contact is running
         with pytest.raises(AgentBusy):
             run(db, contact, Prov([answer("hi")]))
-    finally:
-        holder.execute(
-            text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": f"agent:{contact['respond_id']}"}
-        )
-        holder.close()
 
 
 def test_the_lock_is_released_after_a_turn(db, contact):

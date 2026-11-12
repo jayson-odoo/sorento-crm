@@ -15,7 +15,7 @@
  * looks like, not how many copies print.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import { toast } from '@/lib/toast';
@@ -53,7 +53,9 @@ interface Props {
    * still run so Approve knows whether every tag can be drawn; the sheet itself shows in the
    * lightbox only while `open`.
    */
-  popup?: { open: boolean; onClose: () => void };
+  /** `footer`: the popup's own actions, e.g. the request form's Back to edit + Approve
+   *  (PRICETAG-REQUEST-LAYOUT: Preview, then Approve inside). */
+  popup?: { open: boolean; onClose: () => void; footer?: ReactNode };
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
@@ -249,6 +251,7 @@ export function PriceTagLivePreview({
         }}
         title={docNumber || 'Preview'}
         payload={payload}
+        footer={popup.footer}
       />
     );
   }

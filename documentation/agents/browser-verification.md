@@ -7,6 +7,8 @@ Frontend changes are not done until verified in a real browser. Type-check + Vit
 
 **Use `agent-browser` (headless). Playwright MCP is retired for verification - do not use the `mcp__plugin_playwright_playwright__*` tools.** The committed specs under `e2e/` are unchanged and still run, but no NEW one is added - see "Persisted Playwright spec" below.
 
+**Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
+
 Two paths, pick one:
 
 ## 1. Interactive verification via agent-browser (preferred during a task)
@@ -45,9 +47,9 @@ Policy, unchanged from the MCP era:
 - **Always navigate to a feature by clicking through the sidebar / top nav from the home page - never `open` a deep URL directly.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
 - Command flow: `open http://localhost:3000`, `snapshot -i` to find the relevant sidebar group button, `click @ref` to expand, `click @ref` the leaf entry, `snapshot` the destination, then `click` / `fill` / `select` and re-snapshot to assert state.
 - Always check `console` (and `errors`) after the interaction. Treat unexpected error / warning output as a regression.
-- Use `screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → confirm-delete dialog → row gone).
+- Use `screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → Delete countdown → row gone after the window, no confirm dialog).
 - Use `network requests --filter /api/v1/` to verify the FE hit the expected endpoint with the right method/payload - confirms the hook → service → api-client chain wired correctly.
-- Test the golden path AND edge cases: empty states (every section per CRUD UX standard), validation errors, delete confirmation copy, RBAC denial.
+- Test the golden path AND edge cases: empty states (every section per CRUD UX standard), validation errors, the Delete countdown and its Cancel, RBAC denial.
 - **End states over frames, never a mid-animation read.** A collapse/expand, dialog, or sheet needs its transition settled (poll geometry until two consecutive reads agree) before you assert against it - a mid-transition frame can look broken, or worse, look fine while the end state isn't (the S8 sidebar collapse regression; see the end-states-over-frames lesson in LESSONS-LEARNT.md). Per-slice, run the persisted guardrail for this class of bug: `npm run layout:smoke` (`sorento_crm_frontend/scripts/layout-smoke.mjs`) asserts sidebar collapse/expand/collapse geometry and dialog/sheet open/close/reopen unmount, against `BASE_URL` (default `http://localhost:3090`).
 - `close` when done. Never `close --all` - it closes every session, including other agents' browsers on the same machine.
 

@@ -215,10 +215,14 @@ def _intent(turn: dict[str, Any]) -> str | None:
 
 def _tools(turn: dict[str, Any]) -> list[str]:
     """Distinct tool names in call order. The generic fetch path writes only `{domain}`
-    on its tool event, so a tool event with no `name` contributes its domain instead."""
+    on its tool event; TRACE-ENTITY-TOOL: that bare event stands for the tool only when
+    the turn has no named tool event at all (the business lane writes the named one
+    first, for the SAME call), so a named call is never counted twice."""
+    events = _events(turn, "tool")
+    named = any(e.get("name") for e in events)
     seen: list[str] = []
-    for event in _events(turn, "tool"):
-        name = event.get("name") or event.get("domain")
+    for event in events:
+        name = event.get("name") or (None if named else event.get("domain"))
         if name and str(name) not in seen:
             seen.append(str(name))
     return seen

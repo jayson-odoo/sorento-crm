@@ -34,7 +34,7 @@ vi.mock('../hooks/useReserveRowOptions', () => ({
             isLoading: !optionsReady,
             defaultWarehouseId: own?.default ?? null,
             options: own?.options ?? [],
-            availableQtyByWarehouseId: {},
+            onHandQtyByWarehouseId: {},
           },
         ];
       }),

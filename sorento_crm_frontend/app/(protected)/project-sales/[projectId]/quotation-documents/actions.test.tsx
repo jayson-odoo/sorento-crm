@@ -121,7 +121,7 @@ describe('useQuotationDocumentActions Send via WhatsApp', () => {
     const latestIssue = { id: 'i3', document_id: 'd1', issue_no: 3 } as unknown as QuotationIssue;
     renderHarness(latestIssue);
     fireEvent.click(screen.getByText('go'));
-    expect(await screen.findByText('Send R3 via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send R3 to the customer via WhatsApp')).toBeInTheDocument();
     expect(listQuotationIssues).not.toHaveBeenCalled();
   });
 
@@ -132,7 +132,7 @@ describe('useQuotationDocumentActions Send via WhatsApp', () => {
     ]);
     renderHarness();
     fireEvent.click(screen.getByText('go'));
-    expect(await screen.findByText('Send R2 via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send R2 to the customer via WhatsApp')).toBeInTheDocument();
     expect(listQuotationIssues).toHaveBeenCalledWith('p1', 'd1');
   });
 });

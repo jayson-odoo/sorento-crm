@@ -43,6 +43,9 @@ class AuditLogResponse(BaseModel):
     reason: Optional[str] = None
     root_entity_type: Optional[str] = None
     root_entity_id: Optional[str] = None
+    # SUPPLIER-COST-ACCESS: the cost fields whose values were replaced by "hidden" for this
+    # reader (no `products.cost.view`), so the History can say "Cost price changed".
+    masked_fields: Optional[list[str]] = None
 
     _normalize_id = field_validator("id", mode="before")(_str_or_uuid)
     _normalize_entity_id = field_validator("entity_id", mode="before")(_str_or_uuid)

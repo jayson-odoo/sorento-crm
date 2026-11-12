@@ -258,8 +258,9 @@ describe('Attn from the contacts popup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Attn at PGB CONTOH SDN BHD')).toBeInTheDocument();
-    fireEvent.click(await within(dialog).findByLabelText(/MS\. ANNE CONTOH/));
-    fireEvent.click(within(dialog).getByLabelText(/MS IIYANA CONTOH/));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    fireEvent.click(await screen.findByRole('option', { name: /MS\. ANNE CONTOH/ }));
+    fireEvent.click(screen.getByRole('option', { name: /MS IIYANA CONTOH/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
     await waitFor(() =>
       expect(onChange).toHaveBeenCalledWith({
@@ -269,6 +270,127 @@ describe('Attn from the contacts popup', () => {
         recipient_email_snapshot: 'anne@pgb.example',
       }),
     );
+  });
+
+  it('edit: the contacts already in Attn come up ticked, so a change starts from them (crew pass 11 Nov)', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', is_active: true },
+      { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, is_active: true },
+      { id: 'c3', party_id: 'p-pgb', name: 'EN. OTHER CONTOH', phone: null, is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_name: 'MS. ANNE CONTOH & MS IIYANA CONTOH' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    expect(await screen.findByRole('option', { name: /MS\. ANNE CONTOH/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: /MS IIYANA CONTOH/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: /EN\. OTHER CONTOH/ })).toHaveAttribute('aria-checked', 'false');
+    // Unticking one keeps the other: Done never starts from an empty pick.
+    fireEvent.click(screen.getByRole('option', { name: /MS IIYANA CONTOH/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ attn_contact_ids: ['c1'], attn_name: 'MS. ANNE CONTOH' }),
+      ),
+    );
+  });
+
+  it('edit: Done with nothing changed leaves Attn alone, even a name that matches no contact', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_name: 'Renamed Person' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('combobox', { name: 'Contacts' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('edit: a typed name that matches no contact is kept after the ticked names', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', is_active: true },
+      { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_name: 'MS. ANNE CONTOH & Typed Person' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    fireEvent.click(await screen.findByRole('option', { name: /MS IIYANA CONTOH/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attn_contact_ids: ['c1', 'c2'],
+          attn_name: 'MS. ANNE CONTOH & MS IIYANA CONTOH & Typed Person',
+        }),
+      ),
+    );
+  });
+
+  it('edit: two contacts with the same name each get ticked once', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 't1', party_id: 'p-pgb', name: 'MS. TWIN', phone: null, is_active: true },
+      { id: 't2', party_id: 'p-pgb', name: 'MS. TWIN', phone: null, is_active: true },
+    ]);
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_name: 'MS. TWIN & MS. TWIN' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    const rows = await screen.findAllByRole('option', { name: /MS\. TWIN/ });
+    expect(rows.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'true']);
+  });
+
+  it('a contact picked earlier, then Attn edited by hand: the popup follows the text, not the old pick', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', is_active: true },
+      { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, is_active: true },
+    ]);
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', attn_contact_ids: ['c1'], attn_name: 'MS IIYANA CONTOH' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    expect(await screen.findByRole('option', { name: /MS IIYANA CONTOH/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: /MS\. ANNE CONTOH/ })).toHaveAttribute('aria-checked', 'false');
   });
 
   it('a contact without a number or email keeps the party ones the pick loaded', async () => {
@@ -286,7 +408,8 @@ describe('Attn from the contacts popup', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
     const dialog = await screen.findByRole('dialog');
-    fireEvent.click(await within(dialog).findByLabelText(/MS IIYANA CONTOH/));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    fireEvent.click(await screen.findByRole('option', { name: /MS IIYANA CONTOH/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
     await waitFor(() =>
       expect(onChange).toHaveBeenCalledWith(

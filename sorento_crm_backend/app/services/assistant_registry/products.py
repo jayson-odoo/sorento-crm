@@ -1,7 +1,7 @@
 """Products (`/master-data-management/products`), with their brand and category.
 
-Cost price needs `procurement.cost_price_changes.view` here, stricter than the product page, which shows it to
-every product viewer: the assistant answers in chat, where a figure travels further than a screen.
+Cost price needs `products.cost.view` (SUPPLIER-COST-ACCESS, management 9 Nov 2026), the same permission
+the product page and API now check: purchasing and management only.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from app.models.product import Brand, Product, ProductCategory
 from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
-COST_PRICE_VIEW = "procurement.cost_price_changes.view"
+COST_PRICE_VIEW = "products.cost.view"
 
 register(
     EntityDef(

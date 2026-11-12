@@ -21,12 +21,24 @@ def _num(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
+def vs_list(listed: Any, unit: Any) -> str | None:
+    """The unit price against the list price, as words the model can quote as is: "74.52% below list",
+    "12% above list", "at list". None without a list price. A bare percent in an answer left the reader
+    guessing what it measured (owner, 11 Nov), so the tool never hands one out."""
+    if not listed:
+        return None
+    listed = Decimal(listed)
+    unit = Decimal(unit or 0)
+    pct = round(abs(listed - unit) / listed * 100, 2)
+    if not pct:  # equal, or a difference that rounds to 0.00
+        return "at list"
+    shown = f"{pct:.2f}".rstrip("0").rstrip(".")  # 74.52, 10, 12.5
+    return f"{shown}% {'below' if unit < listed else 'above'} list"
+
+
 def _line(row: Any) -> dict[str, Any]:
     listed = row.list_price_snapshot
     unit = Decimal(row.unit_price or 0)
-    # Below list only: a line priced above list is not a discount (a negative one cannot be verified in an answer).
-    discount = round(float((listed - unit) / listed * 100), 2) if listed and unit <= listed else None
-    above = round(float((unit - listed) / listed * 100), 2) if listed and unit > listed else None
     return {
         "code": row.product_code_snapshot,
         "description": svc.line_text(row),  # plain text, never the stored rich-text markup
@@ -34,8 +46,7 @@ def _line(row: Any) -> dict[str, Any]:
         "uom": row.uom,
         "list_price": _num(listed),
         "unit_price": _num(unit),
-        "discount_pct": discount,
-        "above_list_pct": above,
+        "vs_list": vs_list(listed, unit),
         "line_total": _num(row.line_total),
         "rate_only": bool(row.is_rate_only),
     }

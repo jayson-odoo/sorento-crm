@@ -63,8 +63,23 @@ def _u() -> str:
     return str(uuid.uuid4())
 
 
+#: SUPPLIER-COST-ACCESS: every product-supplier and cost-price-change route also needs
+#: `products.cost.view`. A user given a `procurement.product_suppliers.*` or
+#: `procurement.cost_price_changes.*` slug here gets it too, so these suites keep testing
+#: those routes; `tests/test_supplier_cost_access.py` turns this off to test the refusal.
+COST_VIEW_PERM = "products.cost.view"
+
+
 class CostPriceEnv:
     """One test's own company, users, catalogue and authenticated `TestClient`."""
+
+    auto_cost_view = True
+
+    def _with_cost_view(self, perm_slugs: tuple[str, ...]) -> tuple[str, ...]:
+        cost_routes = ("procurement.product_suppliers.", "procurement.cost_price_changes.")
+        if self.auto_cost_view and any(s.startswith(cost_routes) for s in perm_slugs):
+            return (*perm_slugs, COST_VIEW_PERM)
+        return perm_slugs
 
     def __init__(self, db):
         self.db = db
@@ -110,6 +125,7 @@ class CostPriceEnv:
             UserRolePermission,
         )
 
+        perm_slugs = self._with_cost_view(perm_slugs)
         uid = _u()
         role_id = _u()
         self.db.add(
@@ -170,6 +186,7 @@ class CostPriceEnv:
             UserRolePermission,
         )
 
+        perm_slugs = self._with_cost_view(perm_slugs)
         role_id = _u()
         self.db.add(
             UserRole(

@@ -33,6 +33,7 @@ import {
 } from '../../../../_shared/hooks/useQuotationDocuments';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import {
+  useFindScopeWithLine,
   useProject,
   useProjectQuotationVersions,
   useQuotationMutations,
@@ -47,7 +48,13 @@ import {
   quotationStanding,
 } from '../../../../_shared/lib/quotationDecision';
 import { useQuotationDocumentActions } from '../../actions';
-import { APPROVE_PERMISSION, QuotationApprovalPanel } from './QuotationApprovalPanel';
+import {
+  APPROVE_PERMISSION,
+  QuotationApprovalPanel,
+  type ApprovalLineFlag,
+} from './QuotationApprovalPanel';
+import { LINE_FLAG_FILTERS } from '../../../components/QuotationVersionEditor';
+import { storedLineFacts } from '../../../components/QuotationLineFlags';
 import { QuotationRejectDialog } from './QuotationRejectDialog';
 import { ReviseApprovalDialog } from './ReviseApprovalDialog';
 import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
@@ -56,6 +63,7 @@ import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
 import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
+import { projectDisplayName } from '../../../../_shared/lib/projectName';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -144,6 +152,46 @@ export function QuotationDocumentClient({
   );
 
   const selectScope = React.useCallback((scopeId: string) => setActiveScopeId(scopeId), []);
+
+  // The lines filter (PROJECT-QUOTE-LINE-TOOLS): on across area tabs, and set by the banner.
+  const [lineFlags, setLineFlags] = React.useState<string[]>([]);
+  const [linesScrollRequest, setLinesScrollRequest] = React.useState(0);
+  const linesScrollPending = React.useRef(false);
+  const consumeLinesScroll = React.useCallback(() => {
+    const pending = linesScrollPending.current;
+    linesScrollPending.current = false;
+    return pending;
+  }, []);
+  const findScopeWithLine = useFindScopeWithLine();
+  /**
+   * A banner count, pressed: the lines filtered to what it counts, on the first area holding one,
+   * on the Header tab where the lines are. Judged by the STORED flags, which are what it counts.
+   */
+  const showFlaggedLines = React.useCallback(
+    async (flag: ApprovalLineFlag) => {
+      setLineFlags([flag]);
+      // The banner counts the CURRENT versions, so the lines shown are the current ones too.
+      setVersionNo(null);
+      const header = `/project-sales/${projectId}/quotation-documents/${documentId}`;
+      if (pathname !== header) router.push(header);
+      const option = LINE_FLAG_FILTERS.find((row) => row.value === flag);
+      const scopes = [...(document.data?.scopes ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+      if (!option) return;
+      try {
+        const scopeId = await findScopeWithLine(
+          scopes.map((scope) => ({ scopeId: scope.id, versionId: scope.current_version_id })),
+          (line) => option.test(storedLineFacts(line)),
+        );
+        if (scopeId) setActiveScopeId(scopeId);
+      } catch {
+        // The filter is on all the same; the open area stays as it was.
+      }
+      // Bring the lines into view, after the area switch, whether or not one was found.
+      linesScrollPending.current = true;
+      setLinesScrollRequest((n) => n + 1);
+    },
+    [document.data?.scopes, documentId, findScopeWithLine, pathname, projectId, router],
+  );
 
   // Memoised because the total below is: `?? []` mints a new array whenever the document has no
   // scopes, which would re-sum the header on every render of the page.
@@ -251,9 +299,6 @@ export function QuotationDocumentClient({
   const record = document.data;
   const canEdit = project.data.can_edit;
   const standing = quotationStanding(record);
-  // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
-  // the next revision is always the one after whatever the customer currently holds.
-  const nextIssueNo = (record.current_issue_no ?? 0) + 1;
   const latestIssue = issues.data?.[0] ?? null;
   const sorentoSignature = record.signatory_signature ?? null;
   /**
@@ -465,11 +510,14 @@ export function QuotationDocumentClient({
           </>
         }
         subtitle={[
+          // The project's short name (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "just show project
+          // name so it doesn't clutter"; PROJECT-NAME `projects.name`, the title when none yet).
+          // The full title is the Header section's Project row.
           <TruncatedTextCell
             key="title"
-            text={record.subject_title}
+            text={projectDisplayName(project.data)}
             lines={2}
-            dialogTitle="Title"
+            dialogTitle="Project"
           />,
           record.is_issued ? (
             <QuotationViewCount key="views" projectId={projectId} document={record} />
@@ -615,10 +663,11 @@ export function QuotationDocumentClient({
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button type="button" size="sm" disabled={mutations.issue.isPending}>
-                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
-                          stays in the label, as it did, because R2 is a different paper from R1. The
-                          API and the status names keep "issue". */}
-                      {`Send to Customer ${record.next_revision_label ?? `R${nextIssueNo}`}`}
+                      {/* Just "Send", then Email or WhatsApp (QUOTE-HEADER-TIDY, owner hand test
+                          11 Nov 2026: "simple as that"). "Send to Customer A" read as a customer
+                          called A; the revision and the party now show only in the WhatsApp
+                          prompt's title. The API and the status names keep "issue". */}
+                      Send
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
@@ -663,7 +712,7 @@ export function QuotationDocumentClient({
 
       {/* The price-floor gate. Renders nothing at all unless a line on this quotation is
           priced below its floor, so the ordinary quotation gains no chrome and no extra step. */}
-      <QuotationApprovalPanel document={record} />
+      <QuotationApprovalPanel document={record} onShowLines={showFlaggedLines} />
 
       {/* The letterhead card and, under it, the lines are the Header tab (#1341; lines moved there
           by PROPOSAL-HEADER-LAYOUT, 5 Nov 2026). */}
@@ -684,6 +733,10 @@ export function QuotationDocumentClient({
           sorentoSignature,
           activeScopeId,
           selectScope,
+          lineFlags,
+          setLineFlags,
+          linesScrollRequest,
+          consumeLinesScroll,
           versionNo,
           recheckResults,
           dismissRecheck,

@@ -16,6 +16,13 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 interface History {
   stack: TagLayer[][];
   index: number;
+  /**
+   * The array the last undo / redo handed the canvas: a fresh copy of `stack[index]`, because the
+   * canvas adopts host layers only when the array is a new one (undo, edit, undo to the same step
+   * twice otherwise never reached the screen). The canvas echoing it back is no edit. The stack
+   * itself keeps its own arrays, so a canvas that remounts from the payload still matches it.
+   */
+  handed?: TagLayer[];
 }
 
 /**
@@ -172,7 +179,12 @@ export function useSheetEditing(
       // switched templates, so the page is drawn again from the server) echoes that document
       // first. It is the page's new starting point, not an edit: nothing is saved, and the old
       // template's undo steps go.
-      if (prior && layers === base && layers !== prior.stack[prior.index]) {
+      if (
+        prior &&
+        layers === base &&
+        layers !== prior.stack[prior.index] &&
+        layers !== prior.handed
+      ) {
         histories.current.set(key, { stack: [base], index: 0 });
         drafts.current.delete(key);
         bump((n) => n + 1);
@@ -181,7 +193,8 @@ export function useSheetEditing(
       const history = prior ?? { stack: [base], index: 0 };
       histories.current.set(key, history);
       // The same array again (the canvas echoing what the host gave it, or no change at all).
-      if (layers === history.stack[history.index]) return;
+      if (layers === history.stack[history.index] || layers === history.handed) return;
+      history.handed = undefined;
       const stack = [
         ...history.stack.slice(0, history.index + 1),
         layers,
@@ -204,7 +217,9 @@ export function useSheetEditing(
       if (to < 0 || to >= history.stack.length) return;
       history.index = to;
       last.current = key;
-      const layers = history.stack[to];
+      // A fresh array every step (see `History.handed`), remembered so its echo is no edit.
+      const layers = [...history.stack[to]];
+      history.handed = layers;
       drafts.current.set(key, layers);
       setExternal((prev) => ({ ...prev, [key]: layers }));
       schedule(key);

@@ -569,15 +569,8 @@ export default function NewProductApplicationForm({
                 </InquiryReadValue>
               ) : undefined
             }
-            costField={
-              application ? (
-                <InquiryReadValue>
-                  {application.cost_price == null || application.cost_price === ''
-                    ? ''
-                    : `MYR ${application.cost_price}`}
-                </InquiryReadValue>
-              ) : undefined
-            }
+            // SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost is never shown to a dealer;
+            // the portal API no longer sends it, so no COST row.
             customerField={
               <>
                 {readOnly ? (

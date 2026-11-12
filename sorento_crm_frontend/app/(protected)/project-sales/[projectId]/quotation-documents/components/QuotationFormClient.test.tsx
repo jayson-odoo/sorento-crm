@@ -611,7 +611,8 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Attn')).toBeInTheDocument();
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    expect(screen.getByLabelText('Date')).toHaveValue(today);
+    const [ty, tm, td] = today.split('-');
+    expect(screen.getByLabelText('Date')).toHaveValue(`${td}/${tm}/${ty}`);
     // The subject arrives as the project's title, the same default the server would use.
     await waitFor(() =>
       expect(screen.getByLabelText('Project title')).toHaveValue('Menara Test'),
@@ -680,12 +681,21 @@ describe('QuotationFormClient create', () => {
       ),
     );
 
+    // Remove takes the line out at once through the same stage handler (owner hand test 11 Nov:
+    // no struck-through row; Undo is the way back).
     fireEvent.click(within(card).getByRole('button', { name: 'Remove line 1' }));
-    expect(toggleRemovedSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/^new-scope:/),
-      expect.any(String),
+    await waitFor(() =>
+      expect(stageScopeSpy).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^new-scope:/),
+        [
+          expect.objectContaining({
+            draft: expect.objectContaining({ band_label: 'OPTIONAL ITEMS' }),
+          }),
+          expect.objectContaining({ id: null }),
+        ],
+      ),
     );
-    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    expect(within(card).queryByText('Removed on save')).toBeNull();
     expect(createQuotationDocument).not.toHaveBeenCalled();
     expect(replaceQuotationLines).not.toHaveBeenCalled();
   });
@@ -918,13 +928,13 @@ describe('QuotationFormClient edit', () => {
     );
   });
 
-  it('AC-QF071: a line removed on the form is struck through and left out of the PATCH', async () => {
+  it('AC-QF071: a line removed on the form leaves at once and is left out of the PATCH', async () => {
     renderForm('d1');
     const card = await openSavedLines();
 
     fireEvent.click(within(card).getByRole('button', { name: 'Remove SRT-WC-01' }));
-    expect(toggleRemovedSpy).toHaveBeenCalledWith('q1', 'l1');
-    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    await waitFor(() => expect(stageScopeSpy).toHaveBeenLastCalledWith('q1', []));
+    expect(within(card).queryByText('Removed on save')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
@@ -1611,14 +1621,26 @@ describe('QuotationFormClient cover page fields', () => {
     expect(screen.getByLabelText('Terms project')).toHaveTextContent('p1');
   });
 
-  it('shows Prepared By read-only on the Header tab as the project salesperson', async () => {
-    getProject.mockResolvedValue(withEmail());
-    getQuotationLetterTemplates.mockResolvedValue(templates);
-    renderForm();
+  it('shows Prepared By read-only as whoever creates the quotation, not the project owner (owner, 11 Nov)', async () => {
+    // The creator here is the effective user of a view-as: the backend saves created_by as them.
+    const { impersonationStore } = await import('@/lib/impersonation-store');
+    impersonationStore.setSession({
+      sessionId: 'imp-1',
+      startedAt: '2026-11-11T00:00:00Z',
+      targetUser: { id: 'u-9', name: 'Test Creator B', email: 'b@x.test', avatar: null, role_name: null },
+    });
+    try {
+      getProject.mockResolvedValue(withEmail());
+      getQuotationLetterTemplates.mockResolvedValue(templates);
+      renderForm();
 
-    expect(await screen.findByText('Prepared By')).toBeInTheDocument();
-    expect(screen.getByText('Ahmad Faizal')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
+      expect(await screen.findByText('Prepared By')).toBeInTheDocument();
+      expect(screen.getByText('Test Creator B')).toBeInTheDocument();
+      expect(screen.queryByText('Ahmad Faizal')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
+    } finally {
+      impersonationStore.setSession(null);
+    }
   });
 
   it('Save sends recipient_email_snapshot, the terms and their picks, and no quotation_purpose', async () => {
@@ -2098,6 +2120,20 @@ describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT
     expect(within(header).getByText('v1')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
     expect(recomputeQuotationVersion).not.toHaveBeenCalled();
+  });
+
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the record card names the project by its short name;
+  // the full title is the Header's own Project title field below it.
+  it('F7: the record card reads the project short name, not the full title', async () => {
+    const savedTitle = 'Menara Test';
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
+    renderForm('d1');
+
+    const header = await screen.findByTestId('record-header-card');
+    expect(await within(header).findByText('Menara Ujian')).toBeInTheDocument();
+    const field = await screen.findByLabelText('Project title');
+    expect(field).toHaveValue(savedTitle);
+    expect(within(header).queryByText(savedTitle)).toBeNull();
   });
 
   it('F6: a new proposal has no record card yet (nothing numbered, no version)', async () => {

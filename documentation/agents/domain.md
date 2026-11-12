@@ -4,9 +4,8 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT-MAP.md`** at the repo root - this repo is multi-context. The map lists
-  each glossary and what it covers. Read the one covering your area; read both when
-  a change crosses them.
+- **`CONTEXT-MAP.md`** at the repo root - the map lists each glossary and what it
+  covers (today only `documentation/CONTEXT.md`; a root `CONTEXT.md` was never committed).
 - **`documentation/adr/`** - read ADRs that touch the area you're about to work in.
   All ADRs live here, system-wide and module-scoped alike; there are no per-context
   ADR directories.
@@ -20,9 +19,6 @@ This repo is multi-context (`CONTEXT-MAP.md` present at the root):
 ```
 /
 ├── CONTEXT-MAP.md                     ← index of the glossaries below
-├── CONTEXT.md                         ← Dealer Sales Kit, Authoring, Products and
-│                                        selling, Space and design, After-sales,
-│                                        Supply and purchasing
 ├── documentation/
 │   ├── CONTEXT.md                     ← Project Sales, Company vs Tenant,
 │   │                                    Core vs Module

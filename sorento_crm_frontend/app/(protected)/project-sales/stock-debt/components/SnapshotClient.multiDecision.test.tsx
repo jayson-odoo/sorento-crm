@@ -101,10 +101,10 @@ vi.mock('../../_shared/hooks/useReserveRowOptions', () => ({
           isLoading: false,
           defaultWarehouseId: 'wh-brw',
           options: [
-            { value: 'wh-brw', label: 'BRW  available 972' },
-            { value: 'wh-mwh', label: 'MWH  available 0' },
+            { value: 'wh-brw', label: 'BRW  on hand 972' },
+            { value: 'wh-mwh', label: 'MWH  on hand 0' },
           ],
-          availableQtyByWarehouseId: { 'wh-brw': 972, 'wh-mwh': 0 },
+          onHandQtyByWarehouseId: { 'wh-brw': 972, 'wh-mwh': 0 },
         },
       ]),
     ),

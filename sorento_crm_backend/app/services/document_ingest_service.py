@@ -1430,7 +1430,13 @@ class DocumentIngestService(MasterRefResolver):
                     ILLEGAL_CHARACTERS_RE.sub("", line.product_name or "").strip() or None
                 )
         if "from_so_line_ref" in line.model_fields_set:
-            values["from_so_line_ref"] = line.from_so_line_ref
+            ref = line.from_so_line_ref
+            # B13 (AC-E2E-DB3, 10 Nov): AutoCount's `FromSODtlKey 0` means the row has NO link.
+            # A ref naming DtlKey 0 is that explicit unlink, so it clears like a `null` does,
+            # never an unresolvable ref (AC-RL-47 keeps those). Absent stays "unknown".
+            if ref and ref.strip().rsplit(":", 1)[-1] == "0":
+                ref = None
+            values["from_so_line_ref"] = ref
         if "from_po_line_ref" in line.model_fields_set:
             values["from_po_line_ref"] = line.from_po_line_ref
         if "from_po_number" in line.model_fields_set:
@@ -1562,11 +1568,12 @@ class DocumentIngestService(MasterRefResolver):
         # AC-REKEY-SAME-LINE: a line AutoCount only re-keyed takes over its old row's slot in
         # `by_ref` (the matched loop below then writes the new `source_ref` onto it), so it is
         # neither swept as removed nor created afresh.
-        rekeyed = (
-            self._pair_rekeyed_lines(by_ref, line_values)
-            if spec.entity_type == "sales_orders"
-            else 0
-        )
+        if spec.entity_type == "sales_orders":
+            rekeyed = self._pair_rekeyed_lines(by_ref, line_values)
+        elif spec.entity_type == "purchase_orders":
+            rekeyed = self._pair_replaced_po_lines(by_ref, line_values)
+        else:
+            rekeyed = 0
 
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
         if rekeyed:
@@ -1816,6 +1823,50 @@ class DocumentIngestService(MasterRefResolver):
             if order is not None:
                 ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
         return counts
+
+    def _pair_replaced_po_lines(
+        self, by_ref: dict[str, Any], line_values: list[dict[str, Any]]
+    ) -> int:
+        """B12 (AC-E2E-DB3, crew ruling 10 Nov 2026): a Stock Debt PO link, change link or unlink
+        is a REPLACE in AutoCount (SS #230): the row comes back under a new DtlKey and Seq, and
+        this push can land before the CRM reads `replacedLines`. A stored line whose ref this
+        push no longer carries, and which the link service recorded as being replaced
+        (`po_replace_hint`), is the SAME line as the ONE incoming unmatched line of the same
+        product, qty and SO link: it takes over that ref (same CRM line id, not removed, its
+        order inquiry links kept). Anything ambiguous stays a removal plus a create, and the
+        link service's `_apply` merges the pair. Renames the `by_ref` key; returns the pairs."""
+        from app.services.scm import po_replace_hint
+
+        incoming_refs = {values["source_ref"] for values in line_values}
+        # A line already retired before this push is history, not a row being replaced now.
+        vanished = [
+            ref for ref, row in by_ref.items()
+            if ref not in incoming_refs and row.line_status != CANCELLED
+        ]
+        if not vanished:
+            return 0
+        hints = po_replace_hint.lookup(vanished)
+        if not hints:
+            return 0
+        unmatched = [values for values in line_values if values["source_ref"] not in by_ref]
+        paired = 0
+        for old_ref, hint in hints.items():
+            row = by_ref.get(old_ref)
+            if row is None:
+                continue
+            candidates = [
+                values for values in unmatched
+                if str(values.get("product_id")) == str(row.product_id)
+                and po_replace_hint.matches(hint, values)
+            ]
+            if len(candidates) != 1:
+                continue
+            values = candidates[0]
+            unmatched.remove(values)
+            by_ref[values["source_ref"]] = by_ref.pop(old_ref)
+            paired += 1
+            logger.info("B12: PO line %s replaced %s -> %s", row.id, old_ref, values["source_ref"])
+        return paired
 
     def _pair_rekeyed_lines(
         self, by_ref: dict[str, Any], line_values: list[dict[str, Any]]

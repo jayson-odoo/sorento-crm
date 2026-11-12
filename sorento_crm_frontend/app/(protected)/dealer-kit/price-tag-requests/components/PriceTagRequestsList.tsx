@@ -7,7 +7,9 @@
  * listing pattern (DataGrid + search + filters + row click to detail).
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { useEffect, useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -30,7 +32,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   priceTagStatusLabel,
@@ -59,6 +62,18 @@ const STATUS_OPTIONS = [
   { value: 'void', label: 'Void' },
 ];
 
+/** The listing's shipped default, used until the user has left one behind. */
+const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
+ * LIST-FILTER-MEMORY-4). BUMP whenever `PriceTagRequestsFilters` changes, so a blob written
+ * by the old shape is discarded rather than applied (AC-B4).
+ */
+const FILTERS_VERSION = 1;
+
+type PriceTagRequestsFilters = { status?: string };
+
 /** A saved, unsent request keeps status `new`; `portal_draft_at` is what makes it a draft. */
 const displayStatus = (row: PriceTagRequestSummary) => (row.portal_draft_at ? 'draft' : row.status);
 
@@ -73,15 +88,30 @@ export default function PriceTagRequestsList() {
 }
 
 function StaffPriceTagRequestsList() {
+  const pathname = usePathname();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
   });
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
-  ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  // The sort and the status filter are remembered per user, per listing, the same way
+  // Stock Inquiries and Sales Orders do. `pathname` is the key DataGrid uses for the column
+  // preferences, so both writers address one row. Page number and search text are
+  // deliberately NOT remembered.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<PriceTagRequestsFilters>({
+    listingKey: pathname,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+  const statusFilter = viewFilters?.status ?? '';
+  // An empty selection is stored as no filter at all (AC-C2).
+  const setStatusFilter = (next: string) => setViewFilters(next ? { status: next } : null);
   const [data, setData] = useState<{
     data: PriceTagRequestSummary[];
     pagination: { total: number };
@@ -111,6 +141,8 @@ function StaffPriceTagRequestsList() {
   };
 
   useEffect(() => {
+    // One fetch, with the remembered view already applied (AC-B3).
+    if (isViewPrefsLoading) return;
     let cancelled = false;
     setIsLoading(true);
     fetchData()
@@ -126,7 +158,7 @@ function StaffPriceTagRequestsList() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter]);
+  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter, isViewPrefsLoading]);
 
   const handleRetry = () => {
     setIsLoading(true);
@@ -183,6 +215,12 @@ function StaffPriceTagRequestsList() {
 
   const filtersActiveCount = statusFilter ? 1 : 0;
 
+  // The chip above the grid that states the remembered filter in plain words, with Clear.
+  const statusLabels = splitMulti(statusFilter).map(
+    (v) => STATUS_OPTIONS.find((o) => o.value === v)?.label ?? 'Selected',
+  );
+  const activeFilterLabel = statusLabels.length ? multiChipLabel('Status', statusLabels) : '';
+
   const columns = useMemo<ColumnDef<PriceTagRequestSummary>[]>(
     () => [
       {
@@ -207,12 +245,19 @@ function StaffPriceTagRequestsList() {
           <DataGridColumnHeader title="Customer" column={column} />
         ),
         size: 200,
-        cell: ({ row }) => (
-          // A portal draft has no dealer yet (D48a).
-          <span className="truncate" title={row.original.debtor_name ?? '-'}>
-            {row.original.debtor_name ?? '-'}
-          </span>
-        ),
+        cell: ({ row }) => {
+          // A portal draft has no dealer yet (D48a); several customers read "First +2", every
+          // name in the tooltip (PRICETAG-REQUEST-LAYOUT).
+          const customers = requestCustomers(row.original);
+          return (
+            <span
+              className="truncate"
+              title={customers.map((c) => c.name).join(', ') || '-'}
+            >
+              {customersLabel(customers) ?? '-'}
+            </span>
+          );
+        },
         meta: {
           headerTitle: 'Customer',
           skeleton: <Skeleton className="h-4 w-32" />,
@@ -433,6 +478,9 @@ function StaffPriceTagRequestsList() {
               kind: 'custom',
               active: filtersActiveCount > 0,
               activeCount: filtersActiveCount,
+              activeSummary: activeFilterLabel
+                ? { label: activeFilterLabel, onClear: () => setStatusFilter('') }
+                : undefined,
               content: (
                 <div className="space-y-4">
                   <div>

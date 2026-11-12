@@ -117,7 +117,8 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_incoming_stock_by_product", "procurement.packing_lists.view", None),
     ("crm_incoming_stock_shipments", "procurement.packing_lists.view", None),
     ("crm_procurement_grn_summary", "procurement.grn.view", "purchase_orders.placed"),
-    ("crm_procurement_po_last_cost_list", "scm.purchase_orders.view", "purchase_orders.cost"),
+    # SUPPLIER-COST-ACCESS: PO cost is for purchasing and management.
+    ("crm_procurement_po_last_cost_list", "products.cost.view", "purchase_orders.cost"),
     ("crm_procurement_po_placed_list", "scm.purchase_orders.view", "purchase_orders.placed"),
     ("crm_procurement_spo_allocations_last_receipt_list", "procurement.spo_allocations.view", "purchase_orders.placed"),
     ("crm_order_management_orders_by_product_list", "order_management.orders.view", None),
@@ -382,13 +383,14 @@ QUOTATION_LINES_SCHEMA: dict[str, Any] = {
         "description": (
             "A project's quotation documents with their lines. Alone enough to compare them: do not call the "
             "quotations list first. Per document and scope: version, total, lines (code, description, qty, uom, "
-            "list price, unit price, discount %, above_list_pct, line total, rate_only). A rate_only line is priced per unit and "
+            "list price, unit price, vs_list, line total, rate_only). vs_list is the unit price against the list "
+            "price in words (\"74.52% below list\", \"12% above list\", \"at list\"). A rate_only line is priced per unit and "
             "is not in the scope total. refs narrows to a document number or an issued revision (document number, "
             "a dash, its revision label: PRJQ-2026-0007-B, QT-2026-0003-R1); no match goes in not_found. "
             "project_id is the open page's project or from crm_projects_find. Show a comparison as one compact "
-            "markdown table: a row per item code, a column per document with qty x unit price (discount %) = line "
-            "total, a totals row, then one sentence on the differences. A line with above_list_pct is priced above list: "
-            "show it as (N% above list, list RM X), never a discount, and never compute a percent the tool did not give."
+            "markdown table: a row per item code, a column per document with qty x unit price (vs_list as given) = line "
+            "total, a totals row, then one sentence on the differences. Never write a bare percent: always with its "
+            "words (below list / above list), and never compute a percent the tool did not give."
         ),
         "parameters": {
             "type": "object",

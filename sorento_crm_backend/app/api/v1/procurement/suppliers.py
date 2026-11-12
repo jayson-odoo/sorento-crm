@@ -6,6 +6,7 @@ from typing import Optional, List, Any
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, require_permission
+from app.services.cost_access import require_cost_view
 from app.services.procurement_service import SupplierService
 from app.schemas.procurement import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -210,7 +211,11 @@ def delete_supplier(
         raise handle_internal_error(str(e))
 
 
-@router.get("/{supplier_id}/cost-lists")
+@router.get(
+    "/{supplier_id}/cost-lists",
+    # SUPPLIER-COST-ACCESS: the supplier's unit costs, purchasing + management only.
+    dependencies=[Depends(require_cost_view(get_current_user))],
+)
 def get_supplier_cost_lists(
     supplier_id: str,
     query: Optional[str] = Query(None),
