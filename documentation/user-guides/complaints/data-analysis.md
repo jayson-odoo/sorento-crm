@@ -60,6 +60,8 @@ A single customer complaint about a delivered product / order, moving through a 
 * `contact_id` / `space_id` - scope to one Respond.io contact/space (external callers only).
 * `page`, `limit`, `sort`, `dir`.
 
+The Complaints list remembers each user's sort order and filters (Assigned to, Status, Root cause, Resolution) and restores them when the user comes back to it or reloads the page; page number and search always start fresh. The cross on the filter chip, or **Clear filters**, goes back to the default.
+
 **Sortable columns:** `complaint_date` (default, `asc`), `created_at`, `delivery_order_number`, `customer_name`, `product_code`, `salesperson`, `assigned_to`, `status`. (Unknown sort keys fall back to `complaint_date`; `complaints.id` is always the deterministic tie-breaker.)
 
 **List columns (UI, verbatim):** **DO Number**, **Complaint Number**, **Complaint Date**, **Created at**, **Customer Name**, **Product Code**, **Complaint Type**, **Project Title**, **Salesperson**, **Status**, **Assigned To**, **Attachments**, **Print Count**.
