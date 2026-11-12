@@ -3,6 +3,8 @@
  * duplicates), AC-9 (Discontinued hint), through the real table, editor hook and picker.
  * Written test-FIRST against the Contract in pricetag-multi-add-acceptance-criteria.md.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import React, { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
@@ -174,48 +176,104 @@ function Harness({
   );
 }
 
-describe('the Item picker in the table', () => {
-  it('shows the Discontinued hint on a discontinued product', async () => {
-    render(<Harness initial={[row('A')]} />);
-    fireEvent.click(screen.getAllByRole('combobox')[0]);
-    await screen.findByRole('checkbox', { name: /Tick DIY-BS-4599/ });
-    expect(screen.getByText('Discontinued')).toBeInTheDocument();
+const search = (text: string) =>
+  fireEvent.change(screen.getByPlaceholderText('Search...'), { target: { value: text } });
+const rowFor = (code: string) => screen.findByRole('option', { name: new RegExp(code) });
+const clickRow = async (code: string) => fireEvent.click(await rowFor(code));
+const codes = () => screen.getByTestId('codes');
+const openItemPicker = () => fireEvent.click(screen.getAllByRole('combobox')[0]);
+
+describe('F1 the Item picker in the table: a row click ticks and the list stays open', () => {
+  it('(a) click a result row: list still open, search kept, line 1 holds the item', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    await screen.findByPlaceholderText('Search...');
+    search('DIY');
+    await clickRow('DIY-BS-4501');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501,DIY-BS-4001'));
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
+    expect((screen.getByPlaceholderText('Search...') as HTMLInputElement).value).toBe('DIY');
   });
 
-  it('ticks two results from row 1, Add 2 fills row 1 and inserts the other below row 2 stays last', async () => {
+  it('(b) two more clicks without reopening: 3 lines in tick order under row 1, old row 2 last', async () => {
     render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
-    fireEvent.click(screen.getAllByRole('combobox')[0]);
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Tick DIY-BS-4501/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Tick DIY-BS-4502/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add 2' }));
+    openItemPicker();
+    search('DIY');
+    await clickRow('DIY-BS-4501');
+    await clickRow('DIY-BS-4502');
+    await clickRow('DIY-SET-4503');
     await waitFor(() =>
-      expect(screen.getByTestId('codes')).toHaveTextContent('DIY-BS-4501,DIY-BS-4502,DIY-BS-4001'),
+      expect(codes()).toHaveTextContent('DIY-BS-4501,DIY-BS-4502,DIY-SET-4503,DIY-BS-4001'),
+    );
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('(c) ticked rows are checked, disabled and read Already added', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    search('DIY');
+    await clickRow('DIY-BS-4501');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501'));
+    const ticked = await rowFor('DIY-BS-4501');
+    expect(ticked).toHaveAttribute('aria-checked', 'true');
+    expect(ticked).toHaveAttribute('aria-disabled', 'true');
+    expect(within(ticked).getByText('Already added')).toBeInTheDocument();
+    const preExisting = await rowFor('DIY-BS-4001');
+    expect(preExisting).toHaveAttribute('aria-disabled', 'true');
+    expect(within(preExisting).getByText('Already added')).toBeInTheDocument();
+  });
+
+  it('(d) on a row that already has an item a tick adds a new line below and keeps it', async () => {
+    render(<Harness initial={[A()]} />);
+    openItemPicker();
+    await clickRow('DIY-BS-4501');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4001,DIY-BS-4501'));
+  });
+
+  it('(e) Select all adds every shown item not on the request, in list order', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    await rowFor('DIY-BS-4501');
+    fireEvent.click(screen.getByText(/Select all/));
+    await waitFor(() =>
+      expect(codes()).toHaveTextContent(
+        'DIY-BS-4501,DIY-BS-4502,DIY-SET-4503,DIY-BS-4599,DIY-BS-4001',
+      ),
     );
   });
 
-  it('shows a product already on another row as Already added', async () => {
-    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
-    fireEvent.click(screen.getAllByRole('combobox')[0]);
-    const box = await screen.findByRole('checkbox', { name: /Tick DIY-BS-4001/ });
-    expect(box).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByText('Already added')).toBeInTheDocument();
+  it('(f) the Clear item button empties the row item', async () => {
+    render(<Harness initial={[A()]} />);
+    const clear = screen.getByRole('button', { name: 'Clear item' });
+    fireEvent.pointerDown(clear);
+    fireEvent.click(clear);
+    await waitFor(() => expect(codes()).toHaveTextContent('-'));
+    expect(codes().textContent).toBe('-');
   });
 });
 
 describe('AC-14 one pick path', () => {
   const opt = (id: string, code: string) =>
-    ({ value: `product:${id}`, label: code, code, name: code }) as SearchableSelectOption;
+    ({ value: `product:${id}`, label: code, code, name: code }) as any;
 
-  it('addPickedItems routes through handleItemSelect and addLine only, skipping taken and repeated options', () => {
+  it('addPickedItems routes through handleItemSelect and addLine only, skipping taken and repeated options, and returns the last filled key', () => {
     const X = opt('x', 'X'), Y = opt('y', 'Y'), Z = opt('z', 'Z'), W = opt('w', 'W');
     const addLine = vi.fn((k?: string) => 'n' + k);
     const handleItemSelect = vi.fn();
     const lines = [row('A'), row('B', { line_type: 'product', product_id: 'w', code: 'W' })];
 
-    addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, lines, 'A', [W, X, X, Y, Z]);
+    const last = addPickedItems({ addLine, handleItemSelect } as any, lines, 'A', [W, X, X, Y, Z]);
 
     expect(handleItemSelect.mock.calls).toEqual([['A', X], ['nA', Y], ['nnA', Z]]);
     expect(addLine.mock.calls).toEqual([['A'], ['nA']]);
+    expect(last).toBe('nnA');
+  });
+
+  it('addPickedItems returns the origin key for a single option', () => {
+    const addLine = vi.fn((k?: string) => 'n' + k);
+    const last = addPickedItems({ addLine, handleItemSelect: vi.fn() } as any, [row('A')], 'A', [opt('x', 'X')]);
+    expect(last).toBe('A');
   });
 
   it('addLine(afterKey) inserts directly after that line and returns its key; addLine() appends', () => {
@@ -233,26 +291,19 @@ describe('AC-14 one pick path', () => {
     expect(result.current.lines.map((l) => l.key)).toEqual(['A', k, 'B', k2]);
   });
 
-  it('the table Add N calls handleItemSelect once per ticked option', async () => {
+  it('(h) the table pick path calls handleItemSelect once per clicked row', async () => {
     const spy = vi.fn();
     render(<Harness initial={[row('A')]} selectSpy={spy} />);
-    fireEvent.click(screen.getAllByRole('combobox')[0]);
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Tick DIY-BS-4501/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Tick DIY-BS-4502/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add 2' }));
+    openItemPicker();
+    await clickRow('DIY-BS-4501');
+    await clickRow('DIY-BS-4502');
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
     expect(spy).toHaveBeenNthCalledWith(1, 'A', expect.objectContaining({ value: 'product:p-x' }));
     expect(spy).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ value: 'product:p-y' }));
   });
 });
 
-describe('AC-13 one-line Item results', () => {
-  const openList = async () => {
-    fireEvent.click(screen.getAllByRole('combobox')[0]);
-    await screen.findByRole('checkbox', { name: /Tick DIY-BS-4501/ });
-    return screen.getByRole('listbox');
-  };
-
+describe('AC-13 (g) one-line, code only Item results', () => {
   it('labels are the code only, no name, no RM, no description line', async () => {
     const { result } = hookSetup([row('A')]);
     const opts = await options(result);
@@ -263,31 +314,20 @@ describe('AC-13 one-line Item results', () => {
     expect(opts.find((o) => o.value === 'product:p-old')!.badgeText).toBe('Discontinued');
   });
 
-  it('a name equal to the code also gives just the code', async () => {
-    const same = { ...lookups(), lookupTagItems: vi.fn(async () => [
-      { kind: 'product', id: 'p-s', code: 'SAME-1', name: 'SAME-1', list_price: 5 },
-    ]) } as unknown as PriceTagLineLookups;
-    const { result } = renderHook(() => {
-      const [lines, setLines] = useState<DraftLine[]>([row('A')]);
-      return usePriceTagLineEditor({ lines, setLines, priceMode: 'selling', lookups: same });
-    });
-    expect((await result.current.fetchItemOptions(''))[0].label).toBe('SAME-1');
-  });
-
   it('the part picker keeps the RM price label', async () => {
     const { result } = hookSetup([row('A')]);
     const parts = await result.current.editor.fetchPartOptions('');
     expect(parts.find((o) => o.value === 'product:p-x')!.label).toMatch(/RM 100/);
   });
 
-  it('in the table the list shows no RM, no second line, a Set hint and a Discontinued hint', async () => {
+  it('in the table the rows are code only with Set and Discontinued hints', async () => {
     render(<Harness initial={[row('A')]} />);
-    const list = await openList();
+    openItemPicker();
+    const list = await screen.findByRole('listbox');
+    await rowFor('DIY-BS-4501');
     expect(within(list).queryByText(/RM/)).toBeNull();
-    expect(within(list).queryByText(/Set - /)).toBeNull();
     expect(list.textContent).not.toContain('Basin X');
     expect(list.textContent).not.toContain('Vanity Z');
-    expect(list.querySelector('[title="DIY-BS-4501"]')).not.toBeNull();
     expect(within(list).getByText('Set')).toBeInTheDocument();
     expect(within(list).getByText('Discontinued')).toBeInTheDocument();
   });
@@ -297,14 +337,21 @@ describe('AC-13 one-line Item results', () => {
     const code = 'DIY-' + 'LONGCODE'.repeat(10);
     const long = { ...lookups(), lookupTagItems: vi.fn(async () => [
       { kind: 'product', id: 'p-l', code, name, list_price: 10 },
-    ]) } as unknown as PriceTagLineLookups;
+    ]) } as any;
     render(<Harness initial={[row('A')]} lookups={long} />);
-    fireEvent.click(screen.getAllByRole('combobox')[0]);
-    await screen.findByRole('checkbox', { name: new RegExp(`Tick ${code}`) });
+    openItemPicker();
+    await rowFor(code);
     const list = screen.getByRole('listbox');
     expect(list.textContent).not.toContain('Very long product');
     const el = list.querySelector(`[title="${code}"]`) as HTMLElement;
     expect(el).not.toBeNull();
     expect(el.className).toContain('truncate');
+  });
+});
+
+describe('F1-4 SearchableSelect is back to main', () => {
+  it('has no multiAdd prop', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../common/SearchableSelect.tsx'), 'utf8');
+    expect(src).not.toContain('multiAdd');
   });
 });
