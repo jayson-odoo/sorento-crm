@@ -612,16 +612,37 @@ def test_no_change_string_uses_an_ascii_arrow():
         assert len(_by_kind(events, "confirm_refused")[0]["lines"]) == 1
 
 
-def test_a_user_holding_only_view_own_who_can_open_the_order_reads_its_history():
-    """AC-SH-W2-1: the detail route takes `projects.projects.view_own` too; the History tab on
-    that page must not 403 for the same person."""
+def test_a_user_holding_only_view_own_reads_the_history_of_an_order_they_can_open():
+    """AC-SH-W2-1: the projects router narrows a `view_own`-only holder to their own projects
+    (`_own_scope.py`: owner_user_id). Where the detail page opens (200) its History tab must
+    too; a project SO of somebody else's project is 404 on both routes."""
+    from app.services import project_seed_service
+    from app.services.project_service import register_project
+
     with blank_session() as db:
         world = _world(db)
+        project_seed_service.run(db, company_id=world["company_id"])
+        mine = register_project(
+            db, company_id=world["company_id"], actor_user_id=world["buyer"].id,
+            developer_party_id=None, title=f"ZZT Own Project {_uid()[:8]}",
+            owner_user_id=world["buyer"].id,
+        )
+        theirs = register_project(
+            db, company_id=world["company_id"], actor_user_id=world["cs"].id,
+            developer_party_id=None, title=f"ZZT Their Project {_uid()[:8]}",
+            owner_user_id=world["cs"].id,
+        )
+        foreign = _adopted_order(db, world["company_id"], f"ZZTSO{_uid()[:8]}")
+        world["order"].project_id = mine.id
+        foreign.project_id = theirs.id
         db.commit()
         own = ["projects.projects.view_own"]
+        detail_url = "/api/v1/project-sales/sales-orders/{}"
+        user = world["buyer"].id
 
-        # The detail route's own READ is (view, view_own); the adopted fixture order has no
-        # project, so only the guard (not row ownership) is under test here.
-        history = _get(db, world["buyer"].id, PSO_URL.format(world["order"].id), own)
-
+        assert _get(db, user, detail_url.format(world["order"].id), own).status_code == 200
+        history = _get(db, user, PSO_URL.format(world["order"].id), own)
         assert history.status_code == 200, history.text
+
+        assert _get(db, user, detail_url.format(foreign.id), own).status_code == 404
+        assert _get(db, user, PSO_URL.format(foreign.id), own).status_code == 404
