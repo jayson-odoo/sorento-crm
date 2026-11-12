@@ -657,9 +657,16 @@ def _set_line_row(db: Session, line: dict, viewer: ViewerContext) -> dict:
     from app.services.dealer_kit.tag_data_service import get_product_set, product_set_tag_data
 
     product_set = get_product_set(db, line["product_set_id"])
-    data = product_set_tag_data(db, product_set, viewer) if product_set is not None else None
+    # D3, as the tag reads it (`_tag_sell_price_basis`, auto_pick=False): only a promotion the line
+    # carries prices it; with none, the set sells at its list price.
+    promotion_id = line.get("promotion_id")
+    data = (
+        product_set_tag_data(db, product_set, viewer, promotion_id)
+        if product_set is not None
+        else None
+    )
     list_price = data["list_price"] if data else None
-    offer_price = data["offer_price"] if data else None
+    offer_price = data["offer_price"] if data and promotion_id else None
     manual = line.get("manual_sell_price")
     if manual is not None:
         sell_price, basis = _as_decimal(manual), "manual"
