@@ -39,9 +39,22 @@ class EmbeddingHTTPError(RuntimeError):
 #: connection instead of paying a new DNS + TCP + TLS handshake (every call built its own client since #1967).
 #: Re-made after a fork (gunicorn workers, RQ work-horses): a child never uses its parent's sockets.
 #: The timeout is per request, so each caller keeps its own.
+#: httpx drops an idle connection after 5 s by default, which a quiet worker's next turn outlives; 30 s stays under
+#: the providers' own idle close. A connection the server closed while idle is discarded before reuse.
+KEEPALIVE_EXPIRY_SECONDS = 30.0
 _client: httpx.Client | None = None
 _client_pid: int | None = None
 _client_lock = threading.Lock()
+
+
+def _reset_after_fork() -> None:
+    # A fork while another thread held the lock would leave the child's copy locked forever.
+    global _client_lock
+    _client_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 def _shared_client() -> httpx.Client:
@@ -49,7 +62,7 @@ def _shared_client() -> httpx.Client:
     pid = os.getpid()
     with _client_lock:
         if _client is None or _client_pid != pid:
-            _client = httpx.Client()
+            _client = httpx.Client(limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS))
             _client_pid = pid
         return _client
 
