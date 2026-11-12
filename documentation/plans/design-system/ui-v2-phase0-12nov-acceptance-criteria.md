@@ -42,11 +42,11 @@ R16 means every item lands as ONE shared token, component or pattern.
 
 | ID | Tag | Given / When / Then |
 | --- | --- | --- |
-| B-1 | [BE] | Given any user, when `GET /api/v1/auth/me` (and the `get_user` builder) responds, then the body has `ui_version` (`"v1"` by default) and `ui_v2_available` (true only when the user holds `ui.v2.preview` AND `system_settings.ui_v2_enabled` is true). |
-| B-2 | [BE] | Given a user with `ui.v2.preview`, when they `PUT /api/v1/auth/me/ui-version {"ui_version":"v2"}`, then 200 and a later `/me` returns `"v2"`; `{"ui_version":"v1"}` switches back. |
+| B-1 | [BE] | Given any user, when `GET /api/v1/user-management/users/me` (and the `get_user` and `PUT /me/profile` builders) respond, then the body has `ui_version` (`"v1"` by default) and `ui_v2_available` (true only when the user holds `ui.v2.preview` AND `system_settings.ui_v2_enabled` is true). |
+| B-2 | [BE] | Given a user with `ui.v2.preview`, when they `PUT /api/v1/user-management/users/me/ui-version {"ui_version":"v2"}`, then 200 and a later `/me` returns `"v2"`; `{"ui_version":"v1"}` switches back. |
 | B-3 | [BE] | Given a user WITHOUT `ui.v2.preview`, when they PUT `"v2"`, then 403 and nothing is stored; PUT `"v1"` is always allowed (a way back never needs a permission). |
 | B-4 | [BE] | Given any value other than `"v1"`/`"v2"`, then 422. |
-| B-5 | [BE] | Given `system_settings.ui_v2_enabled = false`, then `/me` returns `ui_v2_available: false` and an effective `ui_version: "v1"` for every user, whatever is stored; the stored choice is kept for when it is turned back on. |
+| B-5 | [BE] | Given `system_settings.ui_v2_enabled = false` (written through `PUT /settings/general`, read by every user through `/settings/app-config`), then `/me` returns `ui_v2_available: false` and an effective `ui_version: "v1"` for every user, whatever is stored; the stored choice is kept for when it is turned back on. |
 | B-6 | [BE] | Given the migration, then the permission slug `ui.v2.preview` exists, is granted to NO role by default, and is grantable like any other slug; `users.ui_version` defaults to `'v1'`; `system_settings.ui_v2_enabled` defaults to true. Single alembic head. |
 | B-7 | [FE] | Given `ui_v2_available` false, then the avatar menu shows no version item. Given true and `ui_version` v1, it shows "Switch to the new version"; given v2, "Switch to the previous version". |
 | B-8 | [FE] | When the item is clicked, then the PUT is sent, the session's version updates, and the same URL (path and query) renders in the other version without a full sign-out; on a failed PUT the version does not change and a toast says it could not switch. |
@@ -63,8 +63,8 @@ R16 means every item lands as ONE shared token, component or pattern.
 | C-2 | [FE] | Given each preset (Sorento Blue `#3b82f6`, Sorento Red `#b44d2e`, Teal `#0f766e`, Graphite `#3f3f46`, Indigo `#4f46e5`) and stress inputs (`#facc15`, `#ffffff`, `#000000`), in light AND dark, then `primary` vs `primary-foreground` contrast is >= 4.5:1 and `primary` vs the page background is >= 3:1. |
 | C-3 | [FE] | (D6) Given the Sorento Blue preset in light mode, then `primary` is exactly `#246bdd` and the foreground white. |
 | C-4 | [FE] | Given an achromatic input (white, black, grey), then the ramp is neutral (chroma 0), not tinted. |
-| C-5 | [BE] | Given `users.theme_mode` (`light`/`dark`/`system`, default `system`), when `PUT /api/v1/auth/me/theme-mode`, then 200 and `/me` returns it; other values 422; any signed-in user may set their own. |
-| C-6 | [BE] | Given `system_settings.theme` (`{"preset": "sorento-blue", "custom_hex": null}` by default), when an admin with the settings-write permission PUTs a preset or a `#rrggbb` custom hex, then it is stored and `/me` returns the company theme; a non-admin gets 403; an invalid hex 422. |
+| C-5 | [BE] | Given `users.theme_mode` (`light`/`dark`/`system`, default `system`), when `PUT /api/v1/user-management/users/me/theme-mode`, then 200 and `/me` returns it; other values 422; any signed-in user may set their own. |
+| C-6 | [BE] | Given `system_settings.theme` (`{"preset": "sorento-blue", "custom_hex": null}` by default), when a user with `user_management.settings.edit` sends it through `PUT /api/v1/user-management/settings/general`, then it is stored and `GET /api/v1/user-management/settings/app-config` (any signed-in user) returns it together with `ui_v2_enabled`; a non-admin gets 403; an invalid hex 422. |
 | C-7 | [FE] | Given v2, then the v2 ThemeProvider sets the generated semantic tokens as CSS variables on `<html>` before the v2 shell paints (no flash of v1 colours) and applies the user's mode; v1 keeps `next-themes` behaviour unchanged. |
 | C-8 | [FE] | Given Settings, then Appearance (admin): preset swatches, a custom colour input with a live contrast readout ("Button text 5.0:1, passes"), a preview (button, badge, selected row) in light and dark, Save, and "Reset to Sorento Blue". |
 | C-9 | [FE] | (D9) Given v2, then a selected toggle, toggle-group item and pill tab use the soft tint with primary text through ONE token pair (`--toggle-selected-bg`, `--toggle-selected-fg`); in v1 the same tokens resolve to today's primary fill, so v1 pixels do not change. |
@@ -74,9 +74,9 @@ R16 means every item lands as ONE shared token, component or pattern.
 
 | ID | Tag | Given / When / Then |
 | --- | --- | --- |
-| D-1 | [BE] | Given a signed-in user, when `POST /api/v1/ui/page-views` with a batch of up to 50 items `{route, viewport, ms_to_first_data, ui_version, at}`, then 204 and one `ui_page_views` row per item, `user_id` from the session (never from the body). |
+| D-1 | [BE] | Given a signed-in user, when `POST /api/v1/system/page-views` with a batch of up to 50 items `{route, viewport, ms_to_first_data, ui_version, at}`, then 204 and one `ui_page_views` row per item, `user_id` from the session (never from the body). |
 | D-2 | [BE] | Given a route containing an id-like segment (UUID, digits) or a query string, then it is stored as a pattern (`/project-sales/order-inquiries/[id]`), never the raw id or query. |
-| D-3 | [BE] | Given more than 50 items, a viewport outside `phone/tablet/desktop`, a negative or > 600000 ms value, then 422 and nothing is stored. Unauthenticated: 401. |
+| D-3 | [BE] | Given more than 50 items, a viewport outside `phone/tablet/desktop`, a negative or > 600000 ms value, then 422 and nothing is stored. Unauthenticated: 401. Body over 16 KB: 413. More than 120 posts per user per hour: 429 (the table is the counter, as `client_error_report_service.is_rate_limited`). |
 | D-4 | [BE] | Given rows older than 90 days, when the daily retention job runs, then they are deleted; younger rows stay. |
 | D-5 | [FE] | Given the v2 shell, then ONE hook `components/v2/shell/usePageView.ts`, mounted once in `AppShell`, records each route change and flushes in batches (on 10 items, after 15 s, and on page hide via `sendBeacon`); v1 sends nothing. |
 | D-6 | [T] | Given the inventory guard, then no file outside `components/v2/shell` imports `usePageView`. |
