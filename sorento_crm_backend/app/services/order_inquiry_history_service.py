@@ -22,6 +22,7 @@ UAC: `documentation/plans/audit/standard-history-10nov-acceptance-criteria.md` A
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -180,6 +181,17 @@ _EDIT_FIELD_LABEL = (
 )
 
 
+def _shown(field: str, value: Any) -> Any:
+    """A price reads as money, two decimals (`25.00`), the way the Lines tab prints it; a
+    masked value ("hidden") and every other field as they are."""
+    if field != "unit_cost" or value is None:
+        return value
+    try:
+        return format(Decimal(str(value)), ",.2f")
+    except (InvalidOperation, ValueError):
+        return value
+
+
 def _request_events(
     db: Session, inquiry_id: str, rows: _Rows, *, mask_cost: bool = False
 ) -> List[dict]:
@@ -214,7 +226,8 @@ def _request_events(
                 lines = [
                     rows.line(
                         row_id,
-                        f"{_LINE_FIELD_LABEL[field]} {old.get(field)} → {new.get(field)}",
+                        f"{_LINE_FIELD_LABEL[field]} {_shown(field, old.get(field))} → "
+                        f"{_shown(field, new.get(field))}",
                     )
                 ]
         elif kind == "edited":
@@ -228,7 +241,7 @@ def _request_events(
                     continue
                 was = prior.get(str(entry["row_id"]), {})
                 moved = [
-                    f"{label} {was.get(field)} → {entry.get(field)}"
+                    f"{label} {_shown(field, was.get(field))} → {_shown(field, entry.get(field))}"
                     for field, label in _EDIT_FIELD_LABEL
                     if field in entry
                 ]

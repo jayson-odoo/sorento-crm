@@ -1919,7 +1919,9 @@ class OrderInquiryWorklistService:
         ordering = column.desc().nulls_last() if descending else column.asc().nulls_last()
         rows = (
             base.with_entities(*_COLUMNS)
-            .order_by(ordering, OrderInquiryRow.id.asc())
+            # A spare part request's rows tie on their date and keep the order they were
+            # entered in (`line_no`, NULL on a sales-order row, so those are unchanged).
+            .order_by(ordering, OrderInquiryRow.line_no.asc().nulls_last(), OrderInquiryRow.id.asc())
             .offset((page - 1) * limit)
             .limit(limit)
             .all()

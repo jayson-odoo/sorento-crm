@@ -68,6 +68,9 @@ function columnStateFingerprint(state: {
   ].join(';');
 }
 
+/** What a failed preferences read stands for: no saved config, so the defaults apply. */
+const NO_SAVED_CONFIG = { config: null } as unknown as UserListColumnConfigResponse;
+
 export function useListingColumnPreferences<TData extends object>({
   table,
   listingKey,
@@ -170,13 +173,20 @@ export function useListingColumnPreferences<TData extends object>({
    */
   const persistedRef = useRef<string | null>(null);
 
-  const { data: saved, isFetching } = useQuery({
+  const { data, isFetching, isError } = useQuery({
     queryKey: ['list-column-config', key],
     queryFn: () => getUserListColumnConfig(key),
     enabled: Boolean(key),
     staleTime: Infinity,
     retry: 0,
   });
+  // Nothing hangs (owner standing rule): a refused or failed read applies the defaults,
+  // exactly as "no saved row yet" does, so the grid never waits on its preferences.
+  const saved = data ?? (isError ? NO_SAVED_CONFIG : undefined);
+  // ...and writes nothing back: the server refused or lost the read, so a save would only be
+  // refused too, or overwrite a layout this session never saw.
+  const readFailedRef = useRef(false);
+  readFailedRef.current = isError && !data;
 
   // Apply saved config to the TanStack table.
   //
@@ -405,7 +415,7 @@ export function useListingColumnPreferences<TData extends object>({
   useEffect(() => {
     if (!key) return;
     if (isFetching) return;
-    if (!appliedRef.current) return;
+    if (!appliedRef.current || readFailedRef.current) return;
     if (suppressPersist) return;
     if (skipSaveOnceRef.current) {
       skipSaveOnceRef.current = false;
@@ -480,7 +490,7 @@ export function useListingColumnPreferences<TData extends object>({
   useEffect(() => {
     if (!key) return;
     if (isFetching) return;
-    if (!appliedRef.current) return;
+    if (!appliedRef.current || readFailedRef.current) return;
     if (suppressPersist) return;
     if (skipPageSizeSaveOnceRef.current) {
       skipPageSizeSaveOnceRef.current = false;

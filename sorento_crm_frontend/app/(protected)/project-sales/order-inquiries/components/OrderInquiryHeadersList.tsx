@@ -395,7 +395,8 @@ export function OrderInquiryHeadersList() {
         id: 'inquiry_type',
         accessorFn: (row) => inquiryTypeLabel(row),
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        size: 150,
+        // D7: "Spare part request" whole, with the sort control beside it.
+        size: 190,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={inquiryTypeLabel(row.original)}>

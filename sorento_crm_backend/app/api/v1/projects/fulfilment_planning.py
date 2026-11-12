@@ -32,6 +32,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
 from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
+from app.services.stock_read_scope import SPARE_PART_CREATE, quantities_only
 from app.services.user_service import holds_permission
 from app.dependencies import (
     require_any_permission_with_api_key,
@@ -1030,19 +1031,6 @@ def _probe_order(entry, result: dict, budget: int, probe, line_error) -> int:
     return budget
 
 
-def _quantities_only(detail: dict) -> dict:
-    """SPARE-PART-ORDER-REQUEST (C1): the stock read for a caller without the projects view
-    grant (a spare part requester): per-location quantities, no document behind them - no
-    sales order, customer, project, agent, SPO or supplier."""
-    return {
-        **detail,
-        "sales_orders": [],
-        "incoming": [],
-        "holds": [],
-        "locations": [{**loc, "incoming": []} for loc in detail.get("locations") or []],
-    }
-
-
 @router.get("/fulfilment-planning/stock-detail", response_model=StockDetail)
 def get_stock_detail(
     product_id: str = Query(..., description="Addressing only; the board's cell carries it."),
@@ -1068,7 +1056,7 @@ def get_stock_detail(
     # SPARE-PART-ORDER-REQUEST (B3): a spare part requester reads a line's stock too (the
     # line's stock table, UAC R3). Quantities and document numbers only; no cost is on it.
     _user: dict = Depends(
-        require_any_permission_with_api_key([VIEW, "procurement.spare_part_requests.create"])
+        require_any_permission_with_api_key([VIEW, SPARE_PART_CREATE])
     ),
     db: Session = Depends(get_db),
 ):
@@ -1099,7 +1087,12 @@ def get_stock_detail(
         ).stock_detail(
             product_id, warehouse_id, line_ids=wanted, group=group
         )
-        return detail if holds_permission(db, _user, VIEW) else _quantities_only(detail)
+        if holds_permission(db, _user, VIEW):
+            return detail
+        # SPARE-PART-ORDER-REQUEST (C1): a spare part requester gets quantities only.
+        return quantities_only(
+            detail, ("sales_orders", "incoming", "holds"), nested={"locations": ("incoming",)}
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

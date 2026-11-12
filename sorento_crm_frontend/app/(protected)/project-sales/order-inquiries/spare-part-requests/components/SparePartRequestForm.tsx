@@ -302,7 +302,9 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     : 'Choose a location';
 
   return (
-    <div className="space-y-4">
+    // D4: min-w-0 so the page never grows to the lines table's width at 375 (it scrolls in
+    // its own box instead).
+    <div className="min-w-0 space-y-4">
       <FormSection
         title="Request"
         summary={summaries.request}

@@ -1573,6 +1573,9 @@ class OrderInquiryHeaderDetailOut(OrderInquiryHeaderOut):
     can_decide: bool = False
     can_edit: bool = False
     can_revise: bool = False
+    #: A spare part request's amount (qty x unit price, lines still standing); null on a
+    #: sales-order inquiry and for a reader who may not see its prices.
+    total: Optional[str] = None
 
 
 class OrderInquiryRelatedPOOut(BaseModel):

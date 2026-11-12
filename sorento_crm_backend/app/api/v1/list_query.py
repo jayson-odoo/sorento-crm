@@ -196,6 +196,17 @@ def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
     return UserPermissionService(db).check_user_has_permission(user_id, slug)
 
 
+#: Listings opened by a grant other than their key's own slug (column-config only).
+_LISTING_ALSO_OPEN_TO = {
+    key: ("procurement.spare_part_requests.create",)
+    for key in (
+        "projects.projects.view::order-inquiry-headers",
+        "projects.projects.view::order-inquiry-lines",
+        "projects.projects.view::order-inquiry-worklist",
+    )
+}
+
+
 def _can_view_listing_key(
     db: Session, user_id: str, listing_key: str, *, fail_closed: bool = False
 ) -> bool:
@@ -229,6 +240,11 @@ def _can_view_listing_key(
 
     service = UserPermissionService(db)
     if service.check_user_has_permission(user_id, perm_slug):
+        return True
+    # SPARE-PART-ORDER-REQUEST (D1): the Order Inquiries listings a spare part requester opens
+    # (narrowed to their own requests on the server) keep their own column layout too.
+    also = _LISTING_ALSO_OPEN_TO.get(listing_key)
+    if not fail_closed and also and any(service.check_user_has_permission(user_id, s) for s in also):
         return True
     # A holder of only `<module>.view_own` sees the same listing, narrowed to their own rows
     # on the server (PORTAL-P2-ONLY-THEIRS), so their own column layout is theirs too. Not

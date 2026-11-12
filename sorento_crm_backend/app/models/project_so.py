@@ -1179,6 +1179,8 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     unit_price = Column(Numeric(15, 4), nullable=True)
     requested_qty = Column(Numeric(15, 4), nullable=True)
     requested_unit_price = Column(Numeric(15, 4), nullable=True)
+    #: The order the requester entered a spare part request's lines in (1-based).
+    line_no = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     #: PLAN-scm-supplied-with-companions.md section 3.2. DERIVED, never typed - the one
     #: writer is `ProjectOrderInquiryService.derive_bundles`. How much of THIS row's

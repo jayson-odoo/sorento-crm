@@ -54,6 +54,8 @@ _ROW_COLUMNS = (
     "ADD COLUMN IF NOT EXISTS unit_price NUMERIC(15, 4)",
     "ADD COLUMN IF NOT EXISTS requested_qty NUMERIC(15, 4)",
     "ADD COLUMN IF NOT EXISTS requested_unit_price NUMERIC(15, 4)",
+    # The order the requester entered the lines in (1-based); NULL on a sales-order row.
+    "ADD COLUMN IF NOT EXISTS line_no INTEGER",
 )
 
 _CHECKS = (
@@ -129,7 +131,10 @@ def downgrade() -> None:
         "ALTER TABLE projects.order_inquiry_rows "
         + ", ".join(
             f"DROP COLUMN IF EXISTS {c}"
-            for c in ("product_id", "description", "unit_price", "requested_qty", "requested_unit_price")
+            for c in (
+                "product_id", "description", "unit_price", "requested_qty",
+                "requested_unit_price", "line_no",
+            )
         )
     )
     op.execute(

@@ -639,12 +639,14 @@ function sparePartLineColumns({
       id: 'unit_price',
       accessorFn: (row) => Number(lineOf(row).primary.unit_price ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
-      size: 190,
+      // D7: wide enough for the value and its "was RM 35.00" mark (which also wraps under it).
+      size: 240,
       meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
         return (
-          <span className="flex min-w-0 items-center">
+          // D7: the "was" mark wraps under the value, never clipped beside it.
+          <span className="flex min-w-0 flex-col items-start">
             {editable && onEditLine ? (
               <ApproverNumberCell
                 value={primary.unit_price}
@@ -679,6 +681,14 @@ function sparePartLineColumns({
             {formatMoneyExact(total, currency)}
           </span>
         );
+      },
+      // D5: the request's amount, over the lines still standing (a cancelled line is 0).
+      footer: ({ table }) => {
+        const rows = table.getPrePaginationRowModel().rows.map((r) => lineOf(r.original).primary);
+        const live = rows.filter((r) => r.state !== 'cancelled');
+        if (live.some((r) => r.line_total == null)) return <span className="text-muted-foreground">-</span>;
+        const sum = live.reduce((acc, r) => acc + Number(r.line_total ?? 0), 0).toFixed(4);
+        return <span className="tabular-nums font-medium">{formatMoneyExact(sum, currency)}</span>;
       },
     },
     poColumn(),

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatMoneyExact } from '../../../_shared/lib/money';
 import { isSparePartInquiry, sparePartStateLabel } from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryHeaderDetail } from '../../../_shared/types/orderInquiry.types';
 
@@ -69,6 +70,9 @@ export function OrderInquiryGeneralTab({ header }: { header: OrderInquiryHeaderD
             </Field>
             <Field label="Currency">{header.currency ?? <NotStated />}</Field>
             <Field label="Default location">{header.default_location ?? <NotStated />}</Field>
+            <Field label="Total">
+              {header.total != null ? formatMoneyExact(header.total, header.currency) : <NotStated />}
+            </Field>
             <div className="min-w-0 sm:col-span-2">
               <dt className="text-xs text-muted-foreground">Reason</dt>
               <dd className="whitespace-pre-line break-words text-sm font-medium">

@@ -143,6 +143,14 @@ def _visibility(db: Session, user: dict):
     return spare_part_request_service.visibility_clause(db, uid, has_view=has_view)
 
 
+def _holds_oi_read(db: Session, user: dict) -> bool:
+    """One of the three grants that open every order inquiry's own reads (view, acknowledge,
+    reserve); without them the caller is a spare part requester scoped to their own."""
+    service = UserPermissionService(db)
+    uid = str(user.get("id") or "")
+    return any(service.check_user_has_permission(uid, slug) for slug in (VIEW, ACKNOWLEDGE, RESERVE))
+
+
 def _assert_inquiry_visible(db: Session, inquiry_id: str, user: dict) -> OrderInquiry:
     inquiry = (
         db.query(OrderInquiry)
@@ -590,12 +598,13 @@ def order_inquiry_worklist_summary(
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     inquiry_no: Optional[list[str]] = Query(None),
     reserve_request: Optional[list[str]] = Query(None),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """The strip above the list, and the month / supplier / project controls beside it."""
     try:
         return OrderInquiryWorklistService(db).summary(
+            visibility=_visibility(db, _user),
             **_worklist_filters(
                 query,
                 delivery_month,
@@ -1500,14 +1509,18 @@ def commit_order_inquiry_reserve(
     "/order-inquiries/reserve-status/summary", response_model=ReserveStatusSummaryOut
 )
 def order_inquiry_reserve_status_summary(
-    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    current_user: dict = Depends(
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, SPARE_PART_CREATE])
+    ),
     db: Session = Depends(get_db),
 ):
     """OI-STAGED-NOTIFY (AC-SN-31): OIs per reserve status (everyone's) and the caller's
-    own parked requests / notices."""
+    own parked requests / notices. A spare part requester (none of the three OI grants)
+    counts their own requests only."""
     try:
         return OrderInquiryReserveService(db).reserve_status_summary(
-            actor_user_id=current_user["id"]
+            actor_user_id=current_user["id"],
+            visibility=None if _holds_oi_read(db, current_user) else _visibility(db, current_user),
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -1699,7 +1712,9 @@ def sales_order_line_decision_trail(
 )
 def list_order_inquiry_reserve_requests(
     inquiry_id: str,
-    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    current_user: dict = Depends(
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, SPARE_PART_CREATE])
+    ),
     db: Session = Depends(get_db),
 ):
     """Every reserve request this header has ever raised, newest first - the Lines tab's
@@ -1712,6 +1727,9 @@ def list_order_inquiry_reserve_requests(
     inquiry's own Lines tab at all."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
+        if not _holds_oi_read(db, current_user):
+            # A spare part requester: their own request only.
+            _assert_inquiry_visible(db, inquiry_id, current_user)
         requests = (
             db.query(OrderInquiryReserveRequest)
             .filter(OrderInquiryReserveRequest.order_inquiry_id == inquiry_id)
@@ -2127,6 +2145,8 @@ def get_order_inquiry_header(
             header.can_decide = spare_part_request_service.can_decide(db, inquiry, uid)
             header.can_edit = spare_part_request_service.can_edit(inquiry, uid)
             header.can_revise = spare_part_request_service.can_revise(db, inquiry, uid)
+            if spare_part_request_service.prices_visible(db, inquiry, uid):
+                header.total = spare_part_request_service.request_total(db, inquiry)
         return header
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

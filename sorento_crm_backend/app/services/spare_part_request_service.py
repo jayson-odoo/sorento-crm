@@ -323,13 +323,23 @@ def _rows(db: Session, inquiry: OrderInquiry) -> List[OrderInquiryRow]:
     return (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
-        .order_by(OrderInquiryRow.created_at, OrderInquiryRow.id)
+        .order_by(
+            OrderInquiryRow.line_no.asc().nulls_last(),
+            OrderInquiryRow.created_at,
+            OrderInquiryRow.id,
+        )
         .all()
     )
 
 
 def _line_total(row: OrderInquiryRow) -> Decimal:
     return Decimal(row.qty or 0) * Decimal(row.unit_price or 0)
+
+
+def request_total(db: Session, inquiry: OrderInquiry) -> str:
+    """The request's amount: qty x unit price over its lines still standing, server-side."""
+    rows = _rows(db, inquiry)
+    return _num(sum((_line_total(r) for r in rows if r.state != INQUIRY_CANCELLED), _ZERO)) or "0"
 
 
 def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[str, Any]:
@@ -349,7 +359,7 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
             db.query(Product).filter(Product.id.in_(product_ids)).all() if product_ids else []
         )
     }
-    total = sum((_line_total(r) for r in rows if r.state != INQUIRY_CANCELLED), _ZERO)
+    total = request_total(db, inquiry)
     lines = []
     for row in rows:
         product = products.get(str(row.product_id)) if row.product_id else None
@@ -390,7 +400,7 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
         "can_decide": can_decide(db, inquiry, user_id),
         "can_edit": can_edit(inquiry, user_id),
         "can_revise": can_revise(db, inquiry, user_id),
-        "total": (_num(total) or "0") if show_prices else None,
+        "total": total if show_prices else None,
         "lines": lines,
     }
 
@@ -486,6 +496,7 @@ def _replace_lines(db: Session, inquiry: OrderInquiry, lines: Iterable[Dict[str,
         row.unit_price = unit_price
         row.delivery_date = inquiry.needed_by
         row.state = INQUIRY_DRAFT
+        row.line_no = index  # D3: the order the lines were entered in
     for row_id, row in existing.items():
         if row_id not in kept:
             EntityAttachmentService(db).delete_links_for_entity(OI_ROW.entity_type, row_id)
@@ -927,10 +938,8 @@ def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] 
             raised_at=now,
         )
     )
-    _audit(
-        db, inquiry, "SPR_RAISED",
-        f"Raised to purchasing: {len(to_buy)} line{'' if len(to_buy) == 1 else 's'}", actor,
-    )
+    # History's "Raised" entry is this raise row (the same one every OI raise writes); no
+    # second audit line for the same moment.
     db.flush()
     _notify_purchasing(db, inquiry, to_buy)
     return inquiry

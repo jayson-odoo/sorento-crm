@@ -1532,6 +1532,8 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
   can_decide?: boolean;
   can_edit?: boolean;
   can_revise?: boolean;
+  /** A spare part request's amount; null when the reader may not see its prices. */
+  total?: string | null;
 }
 
 export interface OrderInquiryHeaderListParams {
