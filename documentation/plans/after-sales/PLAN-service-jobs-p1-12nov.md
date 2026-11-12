@@ -193,6 +193,39 @@ number must be same component as the project sales module, like where we verify 
     returns a 422.
   - Display: one local format, as `display_phone` / `formatPhone` do.
 
+## Owner ruling 12 Nov ~20:49 MYT (binding, supersedes the complaint parts above)
+
+"The after sales shouldn't affect how our current complaints work because our current complaint is for
+project. So I want to not affect what's live now for the complaint."
+
+**Zero change to the live Complaints module.** That covers its screens, menus, statuses, permissions, data,
+notifications and exports.
+
+After-sales is the standalone `after_sales` module, with its own tables, routes (`/after-sales/...`,
+`/api/v1/after-sales/...`) and menu section ("After-Sales Service"). Shared components are reused read-only
+and never changed in behaviour.
+
+**What this removes from the design above:**
+- the Site fields on complaints;
+- the Service Jobs section and the gear "Raise service job" on the complaint page;
+- "Requires service job" on resolutions and its auto-raise;
+- every complaint-scope coupling (view_own, brand scope).
+
+**The new shape:**
+- **Creating a job.** A service job is created from After-Sales Service > Service Jobs > Create. Create and
+  Edit use one dialog. It carries its own details:
+  - Customer name (required)
+  - Contact on site
+  - Contact phone (the project-sales `PhoneInput` + `clean_phone`)
+  - Site address
+  - Problem
+- **Related complaint.** An optional reference on the job side only (`service_jobs.complaint_id`, nullable).
+  It is picked read-only from the existing complaints list, and nothing on the complaint side reads it. One
+  live job per related complaint still applies.
+- **Visibility.** The after_sales permissions plus company scope.
+- **Guard tests.** These pin main's complaints routes, complaint and resolution schemas, and model columns,
+  plus main's Complaints menu. They also check that no complaints code imports after-sales.
+
 ## Out of P1 (named)
 
 - Not taken by the owner: G4 WhatsApp the customer, G5 send the job to the technician, G6 completion report,

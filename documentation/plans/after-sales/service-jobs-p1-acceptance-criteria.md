@@ -1,5 +1,31 @@
 # UAC: After-sales P1, service jobs
 
+**Owner ruling 12 Nov ~20:49 MYT (binding):** zero change to the live Complaints module. These lines are
+superseded:
+- A1 to A3 (Site on the complaint)
+- B1 to B8 where they raise from a complaint or a resolution
+- D6 (the Service Jobs section on the complaint)
+- G1 (the resolution flag)
+- H3's complaint-scope coupling
+
+They are replaced by:
+- **N1.** After-Sales Service > Service Jobs > Create (one dialog for Create and Edit) makes a job in
+  Proposed with a number. Required: Customer name. Optional:
+  - Contact on site
+  - Contact phone (the project-sales phone field, stored E.164, 422 on an invalid number)
+  - Site address lines, postcode, city, state, country (default Malaysia)
+  - Problem
+  - Related complaint (read-only pick from the existing complaints list)
+- **N2.** At most one live job per related complaint. A second create with the same related complaint while
+  one is live is refused with 409.
+- **N3.** The job page shows a Customer card (Customer, Contact on site, Contact phone in local format,
+  Related complaint) + Site + Visit. Edit uses the same dialog as Create.
+- **N4.** The Complaints module behaves exactly as on main. Its routes, schemas, model columns and menu are
+  pinned by guard tests, and nothing under complaints imports after-sales.
+- **N5.** The sidebar has a separate section "After-Sales Service" (Service Jobs, Dispatch Board,
+  Technicians), behind the `after_sales` module and permissions `after_sales.service_jobs.view` /
+  `.dispatch` and `after_sales.technicians.manage`.
+
 Status: in build (lane AFTER-SALES-REVIVE, PR #2365). Plan: `PLAN-service-jobs-p1-12nov.md`.
 Dates in examples are dd/mm/yyyy. Times are MYT.
 
