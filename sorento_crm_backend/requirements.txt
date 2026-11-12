@@ -43,6 +43,8 @@ pytest-split>=0.10  # CI shards the backend suite across runners (--splits/--gro
 # --reruns flag - that would mask new flakes. See LESSONS-LEARNT.md / the marked tests
 # for the issue each guards against.
 pytest-rerunfailures>=14.0
+# tests/test_no_undefined_names.py: static "undefined name" guard over app/.
+pyflakes>=3.2
 pgvector
 # LOOKUP-WARM-STORM: below 2.0. PyMuPDF 2.0 (19 Oct 2026) builds an onnxruntime layout model at
 # `import fitz`, so the preloading gunicorn master owns its thread pool and a forked worker that

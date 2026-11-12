@@ -520,6 +520,9 @@ class Order(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("uq_orders_company_order_number", "company_id", "order_number", unique=True),
         Index("ix_orders_customer_id", "customer_id"),
+        # TOWN-PROJECT-CITY: a customer's delivery orders newest first (the Town reads the last 20 per dealer
+        # for its state); migration town_0003_orders_cust_date
+        Index("ix_orders_customer_order_date", "customer_id", text("order_date DESC NULLS LAST"), text("created_at DESC")),
         Index("ix_orders_order_status_id", "order_status_id"),
         Index("ix_orders_order_date", "order_date"),
         Index("ix_orders_order_number", "order_number"),
