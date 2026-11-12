@@ -100,13 +100,15 @@ vi.mock(
 
 import SampleRequestForm from './SampleRequestForm';
 import { listPartyContacts } from '../../_shared/services/projectService';
+import { getSampleRequestQuotationPrefill } from '../services/sampleRequestService';
 
 const SECTIONS = ['Customer & project', 'Ship to', 'Items', 'Delivery'] as const;
 const trigger = (title: string) => screen.getByRole('button', { name: new RegExp(`^${title}`) });
 const expanded = (title: string) => trigger(title).getAttribute('aria-expanded');
 
+let client: QueryClient;
 function renderForm(props: { requestId?: string; projectId?: string } = {}) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <SampleRequestForm {...props} />
@@ -151,6 +153,10 @@ const READY_DRAFT = {
 
 beforeEach(() => {
   mut.existing = undefined;
+  (listPartyContacts as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => CONTACTS);
+  (getSampleRequestQuotationPrefill as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+    documents: [], document_id: null, issue_id: null, lines: [], skipped: [],
+  }));
 });
 
 describe('F1: sections open like the price tag request', () => {
@@ -225,5 +231,52 @@ describe('F4: every chosen contact keeps its phone', () => {
     expect((screen.getByLabelText('Contact person') as HTMLInputElement).value).toBe('Mei Ling Tan & Ravi Kumar');
     await waitFor(() => expect(screen.getByText(/012-345 6789/)).toBeTruthy());
     expect(screen.getByText(/011-1111 1111/)).toBeTruthy();
+  });
+});
+
+describe('review round (owner F1-F4)', () => {
+  it('B1: a contact added inside the popup keeps its phone once the contact list refreshes', async () => {
+    // The popup's own refetch lands after it hands back the picks: the form catches up from it.
+    (listPartyContacts as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => [CONTACTS[0]]);
+    renderForm({ projectId: 'proj-1' });
+    await screen.findByText('Customer & project');
+    fireEvent.click(trigger('Ship to'));
+    await pickParty();
+    await waitFor(() => expect(listPartyContacts).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    (listPartyContacts as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => CONTACTS);
+    await client.invalidateQueries();
+    await waitFor(() => expect(screen.getByText(/011-1111 1111/)).toBeTruthy());
+    expect(screen.getByText(/012-345 6789/)).toBeTruthy();
+  });
+
+  it('S1: a loaded draft with lines but no party opens Items', async () => {
+    mut.existing = { ...READY_DRAFT, ship_to_party_id: null, ship_to_name: '', ship_to_address: '', delivery_date: null };
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    await waitFor(() => expect(expanded('Items')).toBe('true'));
+  });
+
+  it('S2: a quotation prefill fills the lines but Delivery waits for the party', async () => {
+    (getSampleRequestQuotationPrefill as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      documents: [{ id: 'q-1', label: 'Q1' }], document_id: 'q-1', issue_id: null,
+      lines: [{ product_id: 'p-1', product_code: 'TPE-9101', product_name: 'ZZT Tape' }], skipped: [],
+    }));
+    renderForm({ projectId: 'proj-1' });
+    await screen.findByText('Customer & project');
+    await waitFor(() => expect(getSampleRequestQuotationPrefill).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(expanded('Delivery')).toBe('false');
+  });
+
+  it('S2: a Submit problem in Items opens Items, even after it was shut by hand', async () => {
+    renderForm();
+    await screen.findByText('Customer & project');
+    fireEvent.click(trigger('Items'));
+    fireEvent.click(trigger('Items'));
+    expect(expanded('Items')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    await waitFor(() => expect(expanded('Items')).toBe('true'));
   });
 });

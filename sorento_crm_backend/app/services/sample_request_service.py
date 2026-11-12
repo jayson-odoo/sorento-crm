@@ -510,8 +510,12 @@ def _contact_phones_text(contacts: List[Any], display_phone: Any) -> Optional[st
     if not with_phone:
         return None
     if len(with_phone) == len(contacts):
-        return " & ".join(phone for _name, phone in with_phone)
-    return " & ".join(f"{name} {phone}" for name, phone in with_phone)
+        text = " & ".join(phone for _name, phone in with_phone)
+    else:
+        text = " & ".join(f"{name} {phone}" for name, phone in with_phone)
+    # The column holds 255 (srv2_0003); a longer list keeps its start (review S3).
+    return text if len(text) <= 255 else text[:252] + "..."
+
 
 
 def _apply_ship_to(

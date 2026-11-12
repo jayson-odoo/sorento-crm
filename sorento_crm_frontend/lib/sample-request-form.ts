@@ -375,9 +375,16 @@ export function contactPhonesText(contacts: { name: string; phone?: string | nul
     .map((c) => ({ name: c.name, phone: (c.phone ? formatPhone(c.phone) || c.phone : '').trim() }))
     .filter((c) => c.phone);
   if (withPhone.length === 0) return '';
-  if (withPhone.length === contacts.length) return withPhone.map((c) => c.phone).join(' & ');
-  return withPhone.map((c) => `${c.name} ${c.phone}`).join(' & ');
+  const text =
+    withPhone.length === contacts.length
+      ? withPhone.map((c) => c.phone).join(' & ')
+      : withPhone.map((c) => `${c.name} ${c.phone}`).join(' & ');
+  // The column holds 255 (srv2_0003); a longer list keeps its start (review S3).
+  return text.length > CONTACT_PHONE_MAX ? `${text.slice(0, CONTACT_PHONE_MAX - 3)}...` : text;
 }
+
+/** `projects.sample_requests.site_contact_phone` (srv2_0003). */
+export const CONTACT_PHONE_MAX = 255;
 
 /** The contact person = the party's people picked in the registration popup: "A & B", and every
  * one's phone (`contactPhonesText`). */

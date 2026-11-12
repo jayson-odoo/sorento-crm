@@ -229,3 +229,12 @@ describe('contactPhonesText', () => {
     expect(contactPhonesText([{ name: 'A', phone: null }, { name: 'B' }])).toBe('');
   });
 });
+
+describe('contactPhonesText fits the column (review S3)', () => {
+  it('never longer than 255 characters, however many contacts', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: `Person number ${i}`, phone: i % 2 ? '0123456789' : null }));
+    const text = contactPhonesText(many);
+    expect(text.length).toBeLessThanOrEqual(255);
+    expect(text.startsWith('Person number 1 012-345 6789')).toBe(true);
+  });
+});

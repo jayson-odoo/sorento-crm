@@ -234,14 +234,28 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     if (hasCustomer) openOnce('shipTo');
   }, [hasCustomer, openOnce]);
   useEffect(() => {
-    if (hasParty) openOnce('items');
-  }, [hasParty, openOnce]);
+    if (hasParty || (Boolean(requestId) && hasLine)) openOnce('items');
+  }, [hasParty, hasLine, requestId, openOnce]);
   useEffect(() => {
     if ((hasParty && hasLine) || (Boolean(requestId) && hasDelivery)) openOnce('delivery');
   }, [hasParty, hasLine, hasDelivery, requestId, openOnce]);
 
   // Every chosen contact's phone (owner 12 Nov ~15:45): the chooser hands back the first one's only.
   const shipToContacts = usePartyContacts(state.ship_to_party_id || null);
+  // A contact added inside the popup arrives with the popup's own refetch, after it handed back
+  // the picks: once every chosen contact is in the list, the phones are read again (review B1).
+  const chosenIds = state.ship_to_contact_ids.join(',');
+  useEffect(() => {
+    const people = shipToContacts.data;
+    if (!people || !chosenIds) return;
+    const chosen = chosenIds
+      .split(',')
+      .map((cid) => people.find((c) => c.id === cid))
+      .filter((c): c is (typeof people)[number] => Boolean(c));
+    if (chosen.length !== chosenIds.split(',').length) return;
+    const phones = withShipToContacts(EMPTY_FORM, chosen).site_contact_phone;
+    if (phones) setState((prev) => (prev.site_contact_phone === phones ? prev : { ...prev, site_contact_phone: phones }));
+  }, [shipToContacts.data, chosenIds]);
 
   // A project passed in the URL starts the request on that project, its buyer prefilled.
   const startProject = useProject(!requestId ? projectId : undefined);

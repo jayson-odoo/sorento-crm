@@ -474,3 +474,18 @@ def test_five_contacts_keep_all_five_phones(world):
     res = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[p.id for p in people])
     assert res.status_code in (200, 201), res.text
     assert res.json()["site_contact_phone"] == " & ".join(["012-345 6789"] * 5)
+
+
+def test_the_phone_text_never_outgrows_its_column():
+    """Review S3: however many contacts, the text fits the 255 characters of srv2_0003."""
+    from types import SimpleNamespace
+
+    from app.services import project_party_contact_service as party_contacts
+    from app.services.sample_request_service import _contact_phones_text
+
+    many = [
+        SimpleNamespace(name=f"Person number {i}", phone="0123456789" if i % 2 else None) for i in range(30)
+    ]
+    text = _contact_phones_text(many, party_contacts.display_phone)
+    assert len(text) <= 255
+    assert text.startswith("Person number 1 012-345 6789")
