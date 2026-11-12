@@ -1703,6 +1703,43 @@ describe('FulfilmentBoardPanel: states', () => {
     expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
   });
 
+  /**
+   * OI-WHOLE-SO-CANCEL (AC-WC-9, browser pass): a header-cancel push or an SO delete leaves an
+   * order whose ONLY lines are read-only cancelled contributions waiting on a pending batch.
+   * The server sends them in `contributions` and no `cells` by design, so the "no cells"
+   * empty state must not hide them: the line reads Cancelled and the board's own header
+   * Confirm (`board-confirm`, the same button the one-removed-line case uses, counted off the
+   * book-cancelled contribution) is offered so CS can retire it.
+   */
+  it('AC-WC-9: an order with only pending cancelled lines shows them and offers Confirm, not the empty state', async () => {
+    currentSearchParams = new URLSearchParams('view=list&scope=all');
+    const base = withContribution(
+      boardOf([demand()]),
+      () => true,
+      (entry) => ({
+        ...entry,
+        qty: '0',
+        cancelled: true,
+        pending_change_batch_id: 'b1',
+      }),
+    );
+    getPlanningBoard.mockResolvedValue({
+      ...base,
+      cells: [],
+      line_count: 0,
+      orders: base.orders.map((order) => ({ ...order, pending_change_batch_id: 'b1' })),
+    });
+
+    renderPanel(['SO403340']);
+
+    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalled());
+    expect(
+      screen.queryByText('No lines to plan on these sales orders'),
+    ).not.toBeInTheDocument();
+    expect((await screen.findAllByText(/Cancelled/)).length).toBeGreaterThan(0);
+    expect(await screen.findByTestId('board-confirm')).toBeEnabled();
+  });
+
   it('does not flash an empty or error state while loading', () => {
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
 
