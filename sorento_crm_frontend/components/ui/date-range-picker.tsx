@@ -86,9 +86,9 @@ function dateFromParts(d: string, m: string, y: string): Date | undefined {
 }
 
 /** Typed `DD/MM/YYYY - DD/MM/YYYY`, a single `DD/MM/YYYY` (from = to = that day),
- *  `DD/MM/YYYY -` (From only) or `- DD/MM/YYYY` (To only). A day that does not exist, a full range whose end is before its start, or any
- *  other text is unparseable and the caller reverts the input; empty text is handled by the
- *  caller, which clears both ends. */
+ *  `DD/MM/YYYY -` (From only) or `- DD/MM/YYYY` (To only). A day that does not exist, a full
+ *  range whose end is before its start, or any other text is unparseable and the caller
+ *  reverts the input; empty text is handled by the caller, which clears both ends. */
 function parseRangeInput(raw: string): { from: Date | null; to: Date | null } | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;

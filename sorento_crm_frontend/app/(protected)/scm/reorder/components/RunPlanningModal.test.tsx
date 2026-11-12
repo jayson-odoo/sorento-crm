@@ -513,13 +513,16 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       );
     });
 
-    it('To before From is refused inline and blocks submit', async () => {
+    it('To before From is refused by the range field and blocks submit', async () => {
       const { onSubmit } = await renderModal();
-      typeRange(delivery(), '2026-06-01', '2026-01-01');
+      const range = delivery() as HTMLInputElement;
+      fireEvent.change(range, { target: { value: '01/06/2026 - 01/01/2026' } });
+      fireEvent.keyDown(range, { key: 'Enter' });
+      // The field reverts to its previous (empty) value instead of keeping a backwards range.
+      expect(range.value).toBe('');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).not.toHaveBeenCalled();
-      expect(screen.getByText(/to.*before.*from|from.*after.*to/i)).toBeInTheDocument();
     });
 
     it('submits both dates in ManualPlanInputs when both are set', async () => {
