@@ -5023,6 +5023,22 @@ def _set_then_its_members(keep: list, first: int, close: list) -> list:
     return keep[:first] + group + rest
 
 
+def set_members_of(match: Any) -> dict[str, Any]:
+    """CHATBOT-CODE-MATCH R3: what an exact ask of an offered set resolves to, carried on its
+    offer row so a pick of it answers the same way: its member products, each with its own
+    code and uuid, in the membership table's order (the gate's own set expansion,
+    `gate.run_gate`, reads the same `display.members`). Empty for any other row."""
+    if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product_set":
+        return {}
+    display = jsc.get(match, "display")
+    members = [
+        {"uuid": jsc.get(m, "uuid"), "code": jsc.get(m, "product_code")}
+        for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
+        if isinstance(m, dict) and jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(jsc.get(m, "product_code"))
+    ]
+    return {"members": members} if members else {}
+
+
 #: The entity kinds whose did-you-mean is a code, ranked by the typed parts it holds.
 _CODE_KINDS = frozenset({"product", "product_set"})
 #: A typed code's parts: each run of letters, each run of digits (any script).
@@ -5603,6 +5619,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(match, "entity_type")
                         if jsc.truthy(jsc.get(match, "entity_type"))
                         else None,
+                        **set_members_of(match),
                     }
                 )
                 out["dym_candidates"].append(
@@ -5680,6 +5697,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(p["m"], "entity_type")
                         if jsc.truthy(jsc.get(p["m"], "entity_type"))
                         else None,
+                        **set_members_of(p["m"]),
                     }
                     for i, p in enumerate(picks)
                 ]
@@ -5761,6 +5779,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(p["m"], "entity_type")
                         if jsc.truthy(jsc.get(p["m"], "entity_type"))
                         else None,
+                        **set_members_of(p["m"]),
                     }
                     for i, p in enumerate(picks)
                 ]

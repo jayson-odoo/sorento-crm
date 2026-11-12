@@ -618,6 +618,9 @@ def _roster_option(row: dict[str, Any], *, kind: str, position: int) -> dict[str
     stamp = row.get("stamp")
     if stamp:
         option["stamp"] = stamp
+    if row.get("members"):
+        # CHATBOT-CODE-MATCH R3: an offered set carries what its exact ask resolves to.
+        option["members"] = list(row["members"])
     for key in ("value", "team"):
         if row.get(key) is not None:
             option["payload"][key] = row[key]

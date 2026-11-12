@@ -142,6 +142,8 @@ def did_you_mean(
                 "code": str(code),
                 "uuid": str(row["uuid"]),
                 "entity_type": row.get("entity_type") or "product",
+                # An offered set carries what its exact ask resolves to (`answer.set_members_of`).
+                **({"members": list(row["members"])} if row.get("members") else {}),
             }
         )
     options = options[:MAX_SLOTS]
