@@ -81,11 +81,14 @@ export const complaintsPagerQuery = {
     getComplaints(complaintsListParamsFromUrl(params)),
 };
 
-export function useComplaints(params: ComplaintsListParams) {
+/** `enabled` holds the fetch until the remembered view is applied; it stays OUT of the key. */
+export function useComplaints(params: ComplaintsListParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: complaintsListQueryKey(params),
-    queryFn: () => getComplaints(params),
+    queryKey: complaintsListQueryKey(listParams),
+    queryFn: () => getComplaints(listParams),
+    enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     retry: 1,

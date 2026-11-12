@@ -9,6 +9,7 @@
 
 import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { useEffect, useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -31,7 +32,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   priceTagStatusLabel,
@@ -42,7 +44,7 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
-import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
+import { LastActivityFilter, lastActivityActive, lastActivityLabel } from '@/components/common/LastActivityFilter';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -61,6 +63,22 @@ const STATUS_OPTIONS = [
   { value: 'void', label: 'Void' },
 ];
 
+/** The listing's shipped default, used until the user has left one behind. */
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
+ * LIST-FILTER-MEMORY-4). BUMP whenever `PriceTagRequestsFilters` changes, so a blob written
+ * by the old shape is discarded rather than applied (AC-B4).
+ */
+const FILTERS_VERSION = 1;
+
+type PriceTagRequestsFilters = {
+  status?: string;
+  last_activity_from?: string;
+  last_activity_to?: string;
+};
+
 /** A saved, unsent request keeps status `new`; `portal_draft_at` is what makes it a draft. */
 const displayStatus = (row: PriceTagRequestSummary) => (row.portal_draft_at ? 'draft' : row.status);
 
@@ -75,16 +93,43 @@ export default function PriceTagRequestsList() {
 }
 
 function StaffPriceTagRequestsList() {
+  const pathname = usePathname();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
   });
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'last_activity_at', desc: true },
-  ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
+  // The sort and the status filter are remembered per user, per listing, the same way
+  // Stock Inquiries and Sales Orders do. `pathname` is the key DataGrid uses for the column
+  // preferences, so both writers address one row. Page number and search text are
+  // deliberately NOT remembered.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<PriceTagRequestsFilters>({
+    listingKey: pathname,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+  const statusFilter = viewFilters?.status ?? '';
+  const lastActivity = useMemo(
+    () => ({ from: viewFilters?.last_activity_from, to: viewFilters?.last_activity_to }),
+    [viewFilters],
+  );
+  // Merges a change over the current filters; an empty selection is stored as no filter at all (AC-C2).
+  const applyFilters = (partial: Partial<PriceTagRequestsFilters>) => {
+    const merged: PriceTagRequestsFilters = { ...(viewFilters ?? {}), ...partial };
+    const cleaned: PriceTagRequestsFilters = {};
+    if (merged.status) cleaned.status = merged.status;
+    if (merged.last_activity_from) cleaned.last_activity_from = merged.last_activity_from;
+    if (merged.last_activity_to) cleaned.last_activity_to = merged.last_activity_to;
+    setViewFilters(Object.keys(cleaned).length ? cleaned : null);
+  };
+  const setStatusFilter = (next: string) => applyFilters({ status: next });
+  const clearFilters = () => setViewFilters(null);
   const [data, setData] = useState<{
     data: PriceTagRequestSummary[];
     pagination: { total: number };
@@ -116,6 +161,8 @@ function StaffPriceTagRequestsList() {
   };
 
   useEffect(() => {
+    // One fetch, with the remembered view already applied (AC-B3).
+    if (isViewPrefsLoading) return;
     let cancelled = false;
     setIsLoading(true);
     fetchData()
@@ -131,7 +178,7 @@ function StaffPriceTagRequestsList() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter, lastActivity.from, lastActivity.to]);
+  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter, lastActivity.from, lastActivity.to, isViewPrefsLoading]);
 
   const handleRetry = () => {
     setIsLoading(true);
@@ -191,6 +238,17 @@ function StaffPriceTagRequestsList() {
   };
 
   const filtersActiveCount = (statusFilter ? 1 : 0) + lastActivityActive(lastActivity);
+
+  // The chip above the grid that states the remembered filter in plain words, with Clear.
+  const statusLabels = splitMulti(statusFilter).map(
+    (v) => STATUS_OPTIONS.find((o) => o.value === v)?.label ?? 'Selected',
+  );
+  const activeFilterLabel = [
+    statusLabels.length ? multiChipLabel('Status', statusLabels) : '',
+    lastActivityLabel(lastActivity),
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   const columns = useMemo<ColumnDef<PriceTagRequestSummary>[]>(
     () => [
@@ -466,6 +524,9 @@ function StaffPriceTagRequestsList() {
               kind: 'custom',
               active: filtersActiveCount > 0,
               activeCount: filtersActiveCount,
+              activeSummary: activeFilterLabel
+                ? { label: activeFilterLabel, onClear: clearFilters }
+                : undefined,
               content: (
                 <div className="space-y-4">
                   <div>
@@ -479,16 +540,17 @@ function StaffPriceTagRequestsList() {
                       clearable
                     />
                   </div>
-                  <LastActivityFilter id="ptr-last-activity" value={lastActivity} onChange={setLastActivity} />
+                  <LastActivityFilter
+                    id="ptr-last-activity"
+                    value={lastActivity}
+                    onChange={(v) => applyFilters({ last_activity_from: v.from, last_activity_to: v.to })}
+                  />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          setStatusFilter('');
-                          setLastActivity({});
-                        }}
+                        onClick={clearFilters}
                       >
                         Clear filters
                       </Button>

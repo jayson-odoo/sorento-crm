@@ -23,6 +23,7 @@ Element.prototype.scrollIntoView = vi.fn();
 Element.prototype.hasPointerCapture = vi.fn();
 
 const url = vi.hoisted(() => ({ search: '' }));
+const remembered = vi.hoisted(() => ({ config: null as Record<string, unknown> | null }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
   usePathname: () => '/procurement-management/purchase-requests',
@@ -32,7 +33,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
-  getUserListColumnConfig: vi.fn(async (listingKey: string) => ({ listing_key: listingKey, config: null })),
+  getUserListColumnConfig: vi.fn(async (listingKey: string) => ({ listing_key: listingKey, config: remembered.config })),
   upsertUserListColumnConfig: vi.fn(async (listingKey: string, config: unknown) => ({ listing_key: listingKey, config })),
   resetUserListColumnConfig: vi.fn(async () => undefined),
 }));
@@ -65,6 +66,7 @@ const ROW = { id: 'pr-1', request_number: 'ZZT-PR-001', request_type: 'purchase_
 
 beforeEach(() => {
   url.search = '';
+  remembered.config = null;
   vi.clearAllMocks();
   usePR.mockReset();
   usePR.mockReturnValue({
@@ -105,8 +107,13 @@ describe('Purchase requests list - Last activity', () => {
     expect(first.sorting).toEqual([{ id: 'last_activity_at', desc: true }]);
   });
 
-  it('F3: a last-activity range in the URL reaches the data hook as from/to', async () => {
-    url.search = 'last_activity_from=2026-03-11&last_activity_to=2026-03-12';
+  it('F3: a last-activity range in the remembered view reaches the data hook as from/to', async () => {
+    remembered.config = {
+      version: 1,
+      sorting: [{ id: 'last_activity_at', desc: true }],
+      filters: { last_activity_from: '2026-03-11', last_activity_to: '2026-03-12' },
+      filtersVersion: 1,
+    };
     renderList();
     await screen.findByText('ZZT-PR-001');
     await waitFor(() => {
