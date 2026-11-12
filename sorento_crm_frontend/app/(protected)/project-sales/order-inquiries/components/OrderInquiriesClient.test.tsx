@@ -543,7 +543,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is 
     expect(screen.queryByLabelText(/^Clear filter:/)).not.toBeInTheDocument();
   });
 
-  it('the Status filter offers To order, Done, ..., Rejected, All (AC-CF-13, AC-AC-18)', async () => {
+  it('the Status filter offers the Status column\'s words and All (AC-CF-13, AC-AC-18; owner F1 12 Nov)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
@@ -560,7 +560,10 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is 
     openFilters();
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     const labels = [...select.options].map((option) => option.textContent);
-    expect(labels).toEqual(['Any', 'To order (1)', 'Done (1)', 'Rejected (0)', 'All']);
+    expect(labels).toEqual([
+      'Any', 'To order (1)', 'Done (1)', 'Rejected (0)',
+      'Waiting for CS', 'SO cancelled', 'Line cancelled', 'All',
+    ]);
     expect(labels.join('|')).not.toMatch(/To confirm|Confirmed/);
   });
 });
