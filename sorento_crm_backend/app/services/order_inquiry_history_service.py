@@ -44,7 +44,7 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrderLine,
 )
-from app.services.history_common import RAISE_WINDOW, ROW_AUDIT_TYPES, iso
+from app.services.history_common import RAISE_WINDOW, ROW_AUDIT_TYPES, audit_actor, iso
 from app.services.project_service import resolve_user_names
 
 _ROW_AUDIT_TYPES = ROW_AUDIT_TYPES
@@ -190,6 +190,7 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
         .all()
     )
     out = []
+    actors = audit_actor(db, audits)
     for audit in audits:
         new = audit.new_values or {}
         if audit.event == "OI_ROW_CANCELLED":
@@ -203,6 +204,7 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
                     f"audit-{audit.id}", "cancelled", audit.changed_at, audit.user_id,
                     f"Cancelled {rows.by_id[row_id].item_code or '1 line'}",
                     [rows.line(row_id, change, new.get("qty"))],
+                    actor=actors.get(str(audit.id)),
                 )
             )
             continue
@@ -235,7 +237,7 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
             _event(
                 f"audit-{audit.id}", kind, audit.changed_at, audit.user_id,
                 f"{verb} {_what(lines)}{', back to To confirm' if kind == 'unconfirmed' else ''}",
-                lines,
+                lines, actor=actors.get(str(audit.id)),
             )
         )
     return out

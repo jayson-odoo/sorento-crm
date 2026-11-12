@@ -21,7 +21,7 @@ from app.models.planning_change import PlanningChangeBatch
 from app.models.project_so import OrderInquiry, ProjectSalesOrder
 from app.services import order_inquiry_history_service as oi_history
 from app.services import planning_history_service as planning
-from app.services.history_common import iso
+from app.services.history_common import audit_actor, iso
 from app.services.project_service import resolve_user_names
 
 _CAUSE_LABEL = {
@@ -170,7 +170,7 @@ def _presses(db: Session, ids: List[str]) -> List[dict]:
 
 def _splits(db: Session, ids: List[str]) -> List[dict]:
     out = []
-    for audit in (
+    audits = (
         db.query(AuditLog)
         .filter(
             AuditLog.entity_type == "project_so_line_splits",
@@ -178,7 +178,9 @@ def _splits(db: Session, ids: List[str]) -> List[dict]:
             AuditLog.root_entity_id.in_(ids),
         )
         .all()
-    ):
+    )
+    actors = audit_actor(db, audits)
+    for audit in audits:
         new = audit.new_values or {}
         line_no = new.get("line_no")
         parts = [
@@ -196,14 +198,14 @@ def _splits(db: Session, ids: List[str]) -> List[dict]:
         event_id = f"audit-{audit.id}"
         out.append(
             _event(event_id, "line_split", audit.changed_at, audit.user_id, title,
-                   [_entry(0, event_id, line_no, None, None, change)])
+                   [_entry(0, event_id, line_no, None, None, change)], actor=actors.get(str(audit.id)))
         )
     return out
 
 
 def _status(db: Session, ids: List[str]) -> List[dict]:
     out = []
-    for audit in (
+    audits = (
         db.query(AuditLog)
         .filter(
             AuditLog.entity_type == "project_sales_orders",
@@ -211,11 +213,14 @@ def _status(db: Session, ids: List[str]) -> List[dict]:
             AuditLog.entity_id.in_(ids),
         )
         .all()
-    ):
+    )
+    actors = audit_actor(db, audits)
+    for audit in audits:
         new = audit.new_values or {}
         if "status" not in new:
             continue
         old = (audit.old_values or {}).get("status")
         title = f"Status: {_label(old)} → {_label(new['status'])}" if old else f"Status: {_label(new['status'])}"
-        out.append(_event(f"audit-{audit.id}", "status_changed", audit.changed_at, audit.user_id, title, []))
+        out.append(_event(f"audit-{audit.id}", "status_changed", audit.changed_at, audit.user_id, title, [],
+                          actor=actors.get(str(audit.id))))
     return out
