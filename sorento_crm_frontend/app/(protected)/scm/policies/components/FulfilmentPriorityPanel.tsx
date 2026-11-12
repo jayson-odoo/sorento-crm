@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -359,11 +360,10 @@ export function FulfilmentPriorityPanel() {
                     Purchasing covers demand until
                   </Label>
                   <div className="flex items-center gap-2">
-                    <Input
+                    <DatePickerField
                       id="fulfilment-coverage-until"
-                      type="date"
                       value={reorderCoverageUntil}
-                      onChange={(e) => setReorderCoverageUntil(e.target.value)}
+                      onChange={(v) => setReorderCoverageUntil(v ?? '')}
                       className="w-full"
                     />
                     {reorderCoverageUntil ? (
@@ -389,11 +389,10 @@ export function FulfilmentPriorityPanel() {
                     TBA date from
                   </Label>
                   <div className="flex items-center gap-2">
-                    <Input
+                    <DatePickerField
                       id="fulfilment-tba-date-from"
-                      type="date"
                       value={tbaDateFrom}
-                      onChange={(e) => setTbaDateFrom(e.target.value)}
+                      onChange={(v) => setTbaDateFrom(v ?? '')}
                       className="w-full"
                     />
                     {tbaDateFrom !== DEFAULT_TBA_DATE_FROM ? (

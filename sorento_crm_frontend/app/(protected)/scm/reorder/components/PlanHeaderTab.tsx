@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardHeading, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -326,31 +327,16 @@ export function PlanHeaderTab({
             </Field>
             <Field label="Sales orders needed">
               {isEditing ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="plan-header-window-start" className="mb-0.5 block text-2xs text-muted-foreground">
-                      From
-                    </Label>
-                    <Input
-                      id="plan-header-window-start"
-                      type="date"
-                      value={horizonStart}
-                      onChange={(e) => setHorizonStart(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="plan-header-cutoff" className="mb-0.5 block text-2xs text-muted-foreground">
-                      To
-                    </Label>
-                    <Input
-                      id="plan-header-cutoff"
-                      type="date"
-                      min={today}
-                      value={horizon}
-                      onChange={(e) => setHorizon(e.target.value)}
-                    />
-                  </div>
-                </div>
+                <DateRangePicker
+                  id="plan-header-window-range"
+                  aria-label="Sales orders needed"
+                  from={horizonStart || null}
+                  to={horizon || null}
+                  onChange={({ from, to }) => {
+                    setHorizonStart(from ?? '');
+                    setHorizon(to ?? '');
+                  }}
+                />
               ) : (
                 <span className="tabular-nums">
                   {describeWindow(run.plan_horizon_start, run.plan_horizon_date)}

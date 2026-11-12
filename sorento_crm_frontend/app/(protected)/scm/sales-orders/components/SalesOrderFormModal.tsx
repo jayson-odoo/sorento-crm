@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
@@ -181,10 +182,11 @@ export function SalesOrderFormModal({
             </div>
             <div>
               <Label className="mb-1 block">Requested delivery date</Label>
-              <Input
-                type="date"
+              <DatePickerField
+                portal
+                ariaLabel="Requested delivery date"
                 value={requestedDate}
-                onChange={(e) => setRequestedDate(e.target.value)}
+                onChange={(v) => setRequestedDate(v ?? '')}
               />
             </div>
           </div>

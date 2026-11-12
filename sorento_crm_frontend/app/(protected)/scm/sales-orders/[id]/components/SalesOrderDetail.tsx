@@ -47,6 +47,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -1263,20 +1264,20 @@ export function SalesOrderDetail({
           if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="date"
-                aria-label={`Delivery date on ${row.original.sku}`}
+              <DatePickerField
+                ariaLabel={`Delivery date on ${row.original.sku}`}
+                inputClassName="h-8"
+                portal
                 value={draft.required_date}
-                onChange={(e) =>
+                onChange={(v) =>
                   setLineDrafts((prev) => ({
                     ...prev,
                     [row.original.id]: {
                       ...draftOrRow(prev, row.original),
-                      required_date: e.target.value,
+                      required_date: v ?? '',
                     },
                   }))
                 }
-                className="h-8"
               />
             );
           }
@@ -1985,12 +1986,11 @@ export function SalesOrderDetail({
                   demand trend reads 24 months of this column. */}
               <Field label="Order date" htmlFor={isEditing ? 'so-edit-order-date' : undefined}>
                 {isEditing ? (
-                  <Input
+                  <DatePickerField
                     id="so-edit-order-date"
-                    type="date"
+                    inputClassName="h-8"
                     value={orderDate}
-                    onChange={(e) => setOrderDate(e.target.value)}
-                    className="h-8"
+                    onChange={(v) => setOrderDate(v ?? '')}
                   />
                 ) : (
                   fmtDate(so.order_date)
@@ -2003,12 +2003,11 @@ export function SalesOrderDetail({
                 htmlFor={isEditing ? 'so-edit-requested-date' : undefined}
               >
                 {isEditing ? (
-                  <Input
+                  <DatePickerField
                     id="so-edit-requested-date"
-                    type="date"
+                    inputClassName="h-8"
                     value={requestedDate}
-                    onChange={(e) => setRequestedDate(e.target.value)}
-                    className="h-8"
+                    onChange={(v) => setRequestedDate(v ?? '')}
                   />
                 ) : so.requested_delivery_date ? (
                   fmtDate(so.requested_delivery_date)
