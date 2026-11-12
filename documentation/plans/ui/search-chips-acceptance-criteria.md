@@ -20,6 +20,14 @@ Plan: `PLAN-search-chips-12nov.md`.
 - B8. One SQL statement for the list regardless of the number of values (no per-value query);
   the WHERE uses `ILIKE ANY (ARRAY[...])` per column, not one OR branch per value.
 
+- B9. Migration: GIN trigram indexes on sales_orders so_number, debtor_name, project_label,
+  po_ref, po_ref_key, and on products product_code / product_name and customers customer_name
+  unless a trigram index already covers that column; built CONCURRENTLY; downgrade drops only
+  its own `ix_search_trgm_*` indexes; single alembic head.
+- B10. The search clause uses `= ANY(ARRAY(SELECT ...))` for the customer, agent and line
+  product branches (no correlated EXISTS), results identical to B1-B7, company scope kept.
+- B11. On the prod-size copy the 50-value list count runs as a BitmapOr, well under 1 s.
+
 ## Frontend: shared `ListSearchInput` (chips mode)
 
 - F1. Without the `chips` prop the box behaves exactly as today (existing tests stay green).

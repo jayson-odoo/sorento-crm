@@ -1,7 +1,7 @@
 # PLAN: List search chips (SEARCH-CHIPS)
 
-Status: Plan, behaviour card + mock v1 filed to the owner (PR #2367), waiting on the answers.
-Track: M, LEAD pattern, cloud lane. No migration, no auth/RBAC change.
+Status: Build (round 2). Mock v1 approved, rule (a) ANY; crew ruling 12 Nov: trigram indexes + clause rewrite.
+Track: L (was M; one index migration added by crew ruling), LEAD pattern, cloud lane. No auth/RBAC change.
 
 Owner, 12 Nov: type a value, press Enter, it becomes a chip in the search box; keep typing and
 pressing Enter to add more; the list shows the result for all chips together. Cases: several sales
@@ -61,6 +61,17 @@ dropped; more than 200 values -> 422 "at most 200 values" from `multi_text` (box
 200 and says so); a chip that matches nothing just adds no rows.
 
 Mock v1: `documentation/mockups/SEARCH-CHIPS/index.html`.
+
+## Query cost and the index migration (crew ruling (a), 12 Nov)
+
+Measured on a prod-size synthetic copy (211,570 SOs, 887,180 lines, 15,621 products, 6,905
+customers, 117 agents): the per-column `ILIKE ANY` clause is a seq scan on sales_orders, 585 ms
+at 1 value, 1.1 s at 3, 13 s at 50 (the page runs it twice). With GIN trigram indexes on
+sales_orders (so_number, debtor_name, project_label, po_ref, po_ref_key) and the three lookups
+rewritten as `= ANY(ARRAY(SELECT ...))` (customer, agent, line product), Postgres uses one
+BitmapOr: 32 ms at 50 values. One migration, CONCURRENTLY, IF NOT EXISTS, own `ix_search_trgm_`
+names; products / customers indexes only where no trgm index already covers the column
+(migration 169 may or may not be present in prod). All indexes in one revertable commit.
 
 ## Roll-out (slice 2, new branch + PR after the slice-1 hand test)
 
