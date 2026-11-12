@@ -1,0 +1,87 @@
+# PLAN: CREW-TESTENV-LEAN (lean test copies)
+
+Status: Plan, behaviour card filed with crew (12 Nov 2026). Track: M (crew tool, not the product). Code lives in
+a COPY of crew at `foundryx/crew-lean/` (git repo of its own); crew swaps it in after review. This sorento PR carries
+the plan only.
+
+## Journey
+
+Owner, 12 Nov ~18:05: test copies are the bottleneck because of RAM; more copies should fit. Evidence
+`crew/state/files/TESTENV-CAPACITY/measure-12nov.md`: a copy is 3.6-4.3 GB footprint (`next dev --turbopack`
+2.5-2.9 GB, `uvicorn --reload` 1.0-1.4 GB); swap 93% used with 3-4 copies while `memory_pressure` reads 32% free, so
+the gate (`crew:1039`, `min_mem_free_pct = 15`) is blind; cap `max_testenvs = 4` (`crew.toml:45`).
+Re-measured 12 Nov ~19:00: `vm.swapusage` total 15360M used 14074M free 1286M (the total shrank from 18432M: macOS
+grows and shrinks swap files on demand, free stays ~1.3 GB); `memory_pressure` 33%; compressor occupies 482379 x 16 KB
+= 7.4 GB.
+
+## Discovery (existing functions, reuse decisions)
+
+| Piece | Existing (crew-lean/crew) | Decision |
+|---|---|---|
+| free-% probe | `mem_free_pct` :987 | reuse as is |
+| admission | `admission_problems` :1028, `admit` :1059 | extend: one swap rule next to the free-% rule |
+| failure message | `cmd_testenv` :2361 emits `testenv_failed` with `str(e)` and `mark_testenv_failed` :2356 | reuse as is (message comes from the problem text) |
+| service start | `testenv_up` :2770 (one herdr pane per `[[services]]`, `wait-output --match ready --timeout 240000`) | extend: optional `build` step before `cmd`, optional per-service `ready_timeout` |
+| copy teardown | `testenv_down` :2223 (no ask change) vs `stop_copy` :2334 (resolves the HAND TEST ask) | park calls `testenv_down` + keeps `last_slot` + keeps the ask |
+| daemon rule pattern | `stale_copy(l)` -> `testenv_stale` event + `refresh_testenv` action (:4912) | copy it for park: `park_due(l, asks, now)` -> `testenv_parked` event + `park_testenv` action |
+| bring back | `cmd_testenv up` (admit + `testenv_up` + `publish_testenv`); ask text is deduped by text (`add_ask` :1450), so the owner's forwarded ask survives an up on the same slot + sha | reuse as is |
+| prod FE recipe | `scripts/never-stuck-smoke.sh:83-90`: `NEVER_STUCK_API_PROXY=1 NEXT_SKIP_TYPECHECK=1 npx next build` then `npx next start` (rewrites baked at build, `next.config.mjs:61`) | copy the recipe and its reason |
+
+## Architecture
+
+- Layer: crew CLI/daemon (`crew-lean/crew`) + `crew-lean/crew.toml`; no product code changes.
+- Build once per head: frontend service gains `build` + `build_stamp`; crew computes a build key = head sha + digest
+  of the frontend env file crew just wrote (`.env.local`: `FASTAPI_INTERNAL_URL` is baked into the rewrites at build,
+  so a slot move changes the key). Key matches the stamp -> pane runs `cmd` only; else
+  `build && write stamp && cmd`. Stamp lives in `.next/` (gitignored, dies with the build).
+- Swap gate: `swap_used_gb()` from `sysctl vm.swapusage`; admission refuses above `[admission] max_swap_used_gb`.
+- Auto-park: pure `park_due(lane, asks, now)`; daemon emits `testenv_parked`, action takes the copy down without
+  resolving its ask, lane gets `parked = {ts, slot, sha}`; `crew testenv up` clears it.
+
+## Behaviour card (filed as crew ask; answers decide the build)
+
+Rules (proposed):
+1. Copy frontend = production build (`next build`, then `next start` on the same port, same NODE_OPTIONS header size,
+   same tailnet serve). Rebuild only when the head sha or the copy's frontend env changes. Backend runs without
+   `--reload`.
+2. A new copy is refused when swap used >= 8 GB (half of RAM), on top of the existing free-% rule. Message, e.g.
+   "refused testenv: swap used 14.1 GB (>= 8 GB, vm.swapusage); park or stop a copy first".
+3. Park: a copy goes down when its HAND TEST ask has been the owner's for > 2 h AND the copy has been up > 2 h AND
+   (if Q3 = b) nothing requested it for 2 h. The ask stays open; the board shows "parked"; `crew testenv up LANE`
+   brings it back (cold start = build time). A crew-owned ask (pass pending) is never parked.
+
+Real examples (crew state 12 Nov ~19:00):
+- OI-WHOLE-SO-CANCEL: copy up 2.3 h, ask forwarded to owner 0.1 h ago -> not parked (owner's for < 2 h).
+- SAMPLE-REQUEST-V2: up 0.7 h, ask crew's -> never parked (pass pending).
+- Same lane, owner forwarded 3 h ago, copy up 3.5 h, owner never opened it -> parked; ask stays.
+- Owner brings it back at 4 h -> `testenv up` on the same slot + sha: no rebuild, same ask (deduped), new 2 h grace.
+- Head moves while parked -> next up rebuilds (new key), new ask on the new build (existing refresh rule).
+
+Edge cases: build fails (no stamp written, copy fails like any service, `testenv_failed`); two builds at once (both
+pass admission seconds apart; no lock unless the trial shows the peak hurts); `.next` removed by worktree-gc (stamp
+gone -> rebuild); worker edits uncommitted files on a local lane (not in the build; same as today's sha rule).
+
+## UAC
+
+1. Copy frontend is `next start` serving a build of the copy's head; a second `testenv up` on the same head and env
+   does not rebuild (pane shows no `next build`).
+2. Head change or slot move -> rebuild before start.
+3. Backend copy cmd has no `--reload`.
+4. Admission refuses a testenv/local spawn with swap used >= `max_swap_used_gb`; `testenv_failed` names swap used
+   and the cap. Free-% rule unchanged.
+5. Park per rule 3; ask kept; lane shows parked; `testenv up` brings it back and clears parked.
+6. Never park a copy whose ask is crew's, or the owner's for < 2 h.
+7. RAM before/after measured on one trial copy; new cap proposed from the numbers.
+
+## Tests (crew-lean/tests/test_crew.py, red first)
+
+Swap gate (above/below cap, unknown swap = no refusal, message text); build key + stamp (match -> no build, sha
+change -> build, env change -> build, missing stamp -> build, stamp written only after build succeeds); park rules
+(crew ask, owner < 2 h, owner > 2 h + up > 2 h, up < 2 h after bring-back, Q3 traffic); park keeps the ask; up clears
+parked.
+
+## Standing rules that apply
+
+Owner standing rules are product UI rules; none apply to a crew tool change except "Reuse functions, not only
+components" (Discovery table) and "Every background or scheduled job ... last run" (n/a: park runs in the existing
+daemon tick, reported as an event).
