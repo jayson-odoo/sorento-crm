@@ -150,3 +150,11 @@ search, Discontinued flag, portal/CRM parity, Upload a file, Save Draft, Preview
 - Tests: click a result row (not a box) -> list still open, search text kept, line added; tick 3 in a row without
   reopening -> 3 lines in tick order under the row; ticked item disabled with "Already added"; empty row filled by the
   first tick; Select all adds the rest in list order; clear button empties the row; SearchableSelect has no multiAdd.
+
+### F1-5 Untick inside the picker (crew, after the F1 plan)
+An item ticked in THIS picker session (since the list last opened) stays ticked but not greyed; clicking it again
+unticks it and removes the line that tick added (`removeLine`), if that line is still untouched (qty and remarks
+as the fresh pick left them). A touched line stays, and so does its tick. Items already on the request when the list
+opened are ticked, greyed, "Already added", removable only with the line's bin icon. After close and reopen, the
+earlier session's items count as already on the request. The session starts when the list opens (the row learns it
+from `renderTrigger`'s `open` state; `SearchableMultiSelect` stays unchanged).
