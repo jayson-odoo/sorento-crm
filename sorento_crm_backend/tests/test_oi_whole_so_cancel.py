@@ -18,6 +18,7 @@ Postgres only. Every test seeds its own chain. No real names, phones, emails or 
 """
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import text
 
 from app.models.audit import AuditLog
@@ -263,6 +264,15 @@ def test_ac_wc_8_a_header_reopened_before_cs_decides_leaves_nothing_to_do(env, m
 
 # ====================================================== Q1(b) section (owner answer pending)
 # Q1(b): pending owner answer.
+#: OI-WHOLE-SO-CANCEL Q1 is with the owner. While WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC is True (today's
+#: 30 Oct auto-done kept) the two Q1(b) tests below are expected to fail. Strict: flipping the
+#: switch to False makes them pass, which fails the run until this mark is removed.
+_Q1_PENDING = pytest.mark.xfail(
+    strict=True, reason="OI-WHOLE-SO-CANCEL Q1 pending: auto-done at sync is still on"
+)
+
+
+@_Q1_PENDING
 def test_ac_wc_6_q1b_a_header_cancel_push_leaves_the_oi_row_state_and_ack_alone(env):
     record, header, line_x, y = _push_so(env)
     row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
@@ -275,6 +285,7 @@ def test_ac_wc_6_q1b_a_header_cancel_push_leaves_the_oi_row_state_and_ack_alone(
 
 
 # Q1(b): pending owner answer.
+@_Q1_PENDING
 def test_ac_wc_6_q1b_an_so_delete_leaves_the_oi_row_state_and_ack_alone(env):
     record, header, line_x, y = _push_so(env)
     row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
