@@ -45,7 +45,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() } }));
 
-const perms = vi.hoisted(() => ({ has: (_slug: string) => true }));
+const perms = vi.hoisted(() => ({ has: (_slug: string): boolean => true }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.has(slug),
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
@@ -72,7 +72,7 @@ vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
   const Stub = ({ value, onChange, options, fetchOptions, placeholder }: Props) => {
     const [loaded, setLoaded] = React.useState(options ?? []);
     React.useEffect(() => {
-      if (fetchOptions) void fetchOptions('').then(setLoaded);
+      if (fetchOptions) void fetchOptions('', 0).then(setLoaded);
     }, [fetchOptions]);
     return (
       <select multiple aria-label={placeholder ?? 'multi'} value={value}
