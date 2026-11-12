@@ -20,6 +20,7 @@ import {
   updateAttachment,
   type AttachmentNotMoved,
 } from '../../attachments/services/attachmentService';
+import { updateDirectory } from '../../attachments/services/directoryService';
 import type { MoveOutcome, MoveSkipped } from './driveMoveSummary';
 
 type Choice = { kind: 'skip' } | { kind: 'replace' } | { kind: 'rename'; name: string };
@@ -66,7 +67,8 @@ export function useMoveFiles() {
       let current = entry;
       for (;;) {
         const choice = await ask(current);
-        if (choice.kind === 'skip') return { name: current.file_name, reason: current.message };
+        // Skipped: named as the file is, with the clash it was first moved into.
+        if (choice.kind === 'skip') return { name: entry.file_name, reason: entry.message };
         try {
           await updateAttachment(
             current.attachment_id,
@@ -82,7 +84,7 @@ export function useMoveFiles() {
             continue;
           }
           return {
-            name: current.file_name,
+            name: entry.file_name,
             reason: err instanceof Error ? err.message : 'could not be moved',
           };
         }
@@ -92,23 +94,43 @@ export function useMoveFiles() {
   );
 
   const moveFiles = useCallback(
-    async (fileIds: string[], destinationId: string | null): Promise<MoveOutcome> => {
-      if (fileIds.length === 0) return { moved: 0, notMoved: [] };
+    async (
+      fileIds: string[],
+      destinationId: string | null,
+      folders: { id: string; name: string }[] = []
+    ): Promise<MoveOutcome> => {
       let moved = 0;
       const notMoved: MoveSkipped[] = [];
-      try {
-        const result = await bulkMoveAttachments(fileIds, destinationId);
-        moved = result.updated;
-        for (const entry of result.not_moved ?? []) {
-          const skipped = await resolveOne(entry, destinationId);
-          if (skipped) notMoved.push(skipped);
-          else moved += 1;
+      // Folders: each on its own, so one refusal (e.g. into its own subfolder) names that folder.
+      const folderResults = await Promise.allSettled(
+        folders.map((folder) => updateDirectory(folder.id, { parent_id: destinationId }))
+      );
+      folderResults.forEach((r, i) => {
+        if (r.status === 'fulfilled') moved += 1;
+        else
+          notMoved.push({
+            name: folders[i].name,
+            reason: r.reason instanceof Error ? r.reason.message : '',
+          });
+      });
+      if (fileIds.length > 0) {
+        try {
+          const result = await bulkMoveAttachments(fileIds, destinationId);
+          moved += result.updated;
+          for (const entry of result.not_moved ?? []) {
+            const skipped = await resolveOne(entry, destinationId);
+            if (skipped) notMoved.push(skipped);
+            else moved += 1;
+          }
+        } catch (err) {
+          notMoved.push({
+            name: fileIds.length === 1 ? 'The file' : `${fileIds.length} files`,
+            reason: err instanceof Error ? err.message : 'could not be moved',
+          });
         }
-      } catch (err) {
-        notMoved.push({
-          name: fileIds.length === 1 ? 'The file' : `${fileIds.length} files`,
-          reason: err instanceof Error ? err.message : 'could not be moved',
-        });
+      }
+      if (folders.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       }
       queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });

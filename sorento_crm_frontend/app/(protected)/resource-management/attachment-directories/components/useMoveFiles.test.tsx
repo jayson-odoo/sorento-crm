@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const bulkMoveAttachments = vi.fn();
 const updateAttachment = vi.fn();
+const updateDirectory = vi.fn();
 let canDelete = true;
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => canDelete }));
@@ -20,6 +21,10 @@ vi.mock('../../attachments/services/attachmentService', async (importOriginal) =
     updateAttachment: (...args: unknown[]) => updateAttachment(...args),
   };
 });
+
+vi.mock('../../attachments/services/directoryService', () => ({
+  updateDirectory: (...args: unknown[]) => updateDirectory(...args),
+}));
 
 import { useMoveFiles } from './useMoveFiles';
 import { AttachmentMoveClashError } from '../../attachments/services/attachmentService';
@@ -34,7 +39,9 @@ const CLASH = {
   suggested_name: 'photo (1).jpg',
 };
 
-type Handle = { move: (ids: string[], dest: string | null) => Promise<MoveOutcome> };
+type Handle = {
+  move: (ids: string[], dest: string | null, folders?: { id: string; name: string }[]) => Promise<MoveOutcome>;
+};
 
 function Harness({ refObj }: { refObj: { current: Handle | null } }) {
   const { moveFiles, MoveClashDialog } = useMoveFiles();
@@ -56,6 +63,7 @@ describe('useMoveFiles', () => {
   beforeEach(() => {
     bulkMoveAttachments.mockReset();
     updateAttachment.mockReset();
+    updateDirectory.mockReset();
     canDelete = true;
   });
 
@@ -141,5 +149,36 @@ describe('useMoveFiles', () => {
     expect(screen.queryByRole('button', { name: 'Replace' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
     await waitFor(async () => expect((await pending).notMoved).toHaveLength(1));
+  });
+
+  it('Skip after a second clash names the file as it is, with its first reason', async () => {
+    bulkMoveAttachments.mockResolvedValue({ updated: 0, not_moved: [CLASH] });
+    updateAttachment.mockRejectedValueOnce(
+      new AttachmentMoveClashError('taken.jpg already exists in Folder B.', {
+        file_name: 'taken.jpg',
+        folder_name: 'Folder B',
+        existing_file_name: 'taken.jpg',
+        suggested_name: 'taken (1).jpg',
+      })
+    );
+    const pending = mount().move(['f-2'], 'dir-b');
+    fireEvent.change(await screen.findByDisplayValue('photo (1).jpg'), { target: { value: 'taken.jpg' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    await screen.findByText('taken.jpg already exists in Folder B.');
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    expect((await pending).notMoved).toEqual([
+      { name: 'photo.jpg', reason: 'photo.jpg already exists in Folder B.' },
+    ]);
+  });
+
+  it('folders move too; a refused folder is named and the files still move', async () => {
+    updateDirectory.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('Cannot move a folder into itself'));
+    bulkMoveAttachments.mockResolvedValue({ updated: 2, not_moved: [] });
+    const outcome = await mount().move(['a', 'b'], 'dir-b', [
+      { id: 'd-1', name: 'Specs' },
+      { id: 'd-2', name: 'Drafts' },
+    ]);
+    expect(updateDirectory).toHaveBeenCalledWith('d-1', { parent_id: 'dir-b' });
+    expect(summarizeMove(outcome).text).toBe('3 moved. 1 not moved: Drafts: Cannot move a folder into itself.');
   });
 });

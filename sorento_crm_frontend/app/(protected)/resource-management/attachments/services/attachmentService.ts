@@ -562,10 +562,16 @@ export async function restoreAttachment(id: string): Promise<void> {
   }
 }
 
-export async function bulkRestoreAttachments(ids: string[]): Promise<{ restored_count: number }> {
+export async function bulkRestoreAttachments(
+  ids: string[]
+): Promise<{ restored_count: number; not_restored: string[] }> {
   const results = await Promise.allSettled(ids.map((id) => restoreAttachment(id)));
   const restored = results.filter((r) => r.status === 'fulfilled').length;
-  return { restored_count: restored };
+  // One file that cannot come back never hides the rest; each one is named.
+  const notRestored = results.flatMap((r) =>
+    r.status === 'rejected' ? [r.reason instanceof Error ? r.reason.message : 'A file could not be restored.'] : []
+  );
+  return { restored_count: restored, not_restored: notRestored };
 }
 
 export async function downloadAttachment(id: string): Promise<Blob> {

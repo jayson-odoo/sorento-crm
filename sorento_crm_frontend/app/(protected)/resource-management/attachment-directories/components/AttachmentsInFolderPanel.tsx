@@ -72,7 +72,6 @@ import {
   useUpdateDirectory,
   useDeleteDirectory,
 } from '../../attachments/hooks/useAttachments';
-import { updateDirectory } from '../../attachments/services/directoryService';
 import { useMoveFiles } from './useMoveFiles';
 import { summarizeMove } from './driveMoveSummary';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
@@ -879,34 +878,21 @@ export default function AttachmentsInFolderPanel({
       setIsMoving(true);
       setMoveDialogOpen(false);
       try {
-        const folderResults = await Promise.allSettled(
-          folderIds.map((id) => updateDirectory(id, { parent_id: destinationId }))
+        const outcome = await moveFiles(
+          fileIds,
+          destinationId,
+          folderIds.map((id) => ({ id, name: folderName(id) }))
         );
-        const fileOutcome = await moveFiles(fileIds, destinationId);
-        let moved = fileOutcome.moved;
-        const notMoved = [...fileOutcome.notMoved];
-        folderResults.forEach((r, i) => {
-          if (r.status === 'fulfilled') moved += 1;
-          else
-            notMoved.push({
-              name: folderName(folderIds[i]),
-              reason: r.reason instanceof Error ? r.reason.message : '',
-            });
-        });
-        const summary = summarizeMove({ moved, notMoved });
+        const summary = summarizeMove(outcome);
         if (summary.ok) toast.success(summary.text);
         else toast.error(summary.text);
-        if (folderIds.length > 0) {
-          queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
-        }
-        queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       } finally {
         setIsMoving(false);
         setMoveContextItem(null);
         if (!moveContextItem) clearSelection();
       }
     },
-    [moveContextItem, selectedFileIds, selectedFolderIds, items, moveFiles, queryClient, clearSelection]
+    [moveContextItem, selectedFileIds, selectedFolderIds, items, moveFiles, clearSelection]
   );
 
   // ---- Folder context-menu handlers ---------------------------------------

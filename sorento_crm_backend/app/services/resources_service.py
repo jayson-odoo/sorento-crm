@@ -447,9 +447,14 @@ class AttachmentDirectoryService:
             synchronize_session=False,
         )
         attachment_service = AttachmentService(self.db)
-        restored = attachment_service.restore_attachments_in_directories(dir_ids)
+        restored, not_restored = attachment_service.restore_attachments_in_directories_report(dir_ids)
         self.db.commit()
-        return {"directories_restored": len(dir_ids), "attachments_restored": restored}
+        return {
+            "directories_restored": len(dir_ids),
+            "attachments_restored": restored,
+            # Files left in Trash because their folder holds their name again, in plain words.
+            "attachments_not_restored": not_restored,
+        }
 
     def permanent_delete_directory(self, directory_id: str, deleted_by: str) -> dict:
         """Permanently delete a deleted directory, its descendants, and all attachments in them. Cannot be undone."""
@@ -2579,32 +2584,101 @@ class AttachmentService:
         self.db.commit()
         return {"message": f"{count} attachment(s) archived successfully", "archived_count": count}
 
+    def _restore_refusal(self, attachment: Attachment) -> Optional[str]:
+        """The plain reason ``attachment`` cannot leave Trash, or None.
+
+        Its folder may hold its original name again (Replace, or a new file meanwhile); the
+        folder index would refuse the restore.
+        """
+        if not attachment.directory_id:
+            return None
+        if self._folder_clash(attachment.directory_id, attachment.original_filename, exclude_id=attachment.id) is None:
+            return None
+        return self._restore_refusal_text(
+            attachment.stored_filename or attachment.original_filename, attachment.directory_id
+        )
+
+    def _restore_refusal_text(self, file_name: str, directory_id: str) -> str:
+        return (
+            f"{file_name} cannot be restored to {self._folder_label(directory_id)}: "
+            "a file with the same name is there now. Rename or move that file first."
+        )
+
     def restore_attachment(self, attachment_id: str):
-        """Restore an archived attachment."""
+        """Restore an archived attachment. A name clash in its folder is a plain 409."""
         attachment = self.get_attachment(attachment_id)
+        if attachment.is_deleted:
+            refusal = self._restore_refusal(attachment)
+            if refusal:
+                raise handle_conflict(refusal)
         attachment.is_deleted = False
         attachment.deleted_at = None
         attachment.deleted_by = None
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            if not _is_folder_name_clash(exc):
+                raise
+            raise handle_conflict(
+                self._restore_refusal(self.get_attachment(attachment_id))
+                or "A file with the same name is in that folder now. Rename or move that file first."
+            )
         return {"message": "Attachment restored successfully"}
 
     def restore_attachments_in_directories(self, directory_ids: list[str]) -> int:
         """Restore all archived attachments whose directory_id is in the given list. Returns count."""
+        return self.restore_attachments_in_directories_report(directory_ids)[0]
+
+    def restore_attachments_in_directories_report(self, directory_ids: list[str]) -> tuple[int, list[str]]:
+        """Restore the archived files in these folders; one name clash never fails the batch.
+
+        Clash-free files go back in one bulk UPDATE (folder restores can be large). A file whose
+        folder holds its original name again (an active file, or another file in this same
+        restore) stays in Trash and is named in the returned list.
+        """
         if not directory_ids:
-            return 0
-        q = self.db.query(Attachment).filter(
-            Attachment.directory_id.in_(directory_ids),
-            Attachment.is_deleted == True,
+            return 0, []
+        trashed = (
+            self.db.query(
+                Attachment.id, Attachment.directory_id, Attachment.original_filename, Attachment.stored_filename
+            )
+            .filter(Attachment.directory_id.in_(directory_ids), Attachment.is_deleted == True)  # noqa: E712
+            .order_by(Attachment.uploaded_at, Attachment.id)
+            .all()
         )
-        count = q.update(
-            {
-                Attachment.is_deleted: False,
-                Attachment.deleted_at: None,
-                Attachment.deleted_by: None,
-            },
-            synchronize_session=False,
-        )
-        return count
+        if not trashed:
+            return 0, []
+        active = {
+            (str(d), (n or "").lower())
+            for d, n in self.db.query(Attachment.directory_id, Attachment.original_filename).filter(
+                Attachment.directory_id.in_(directory_ids), Attachment.is_deleted == False  # noqa: E712
+            )
+        }
+        restore_ids: list[str] = []
+        refusals: list[str] = []
+        for row_id, directory_id, original, stored in trashed:
+            key = (str(directory_id), (original or "").lower())
+            if key in active:
+                refusals.append(self._restore_refusal_text(stored or original, str(directory_id)))
+                continue
+            active.add(key)
+            restore_ids.append(str(row_id))
+        count = 0
+        if restore_ids:
+            count = (
+                self.db.query(Attachment)
+                .filter(Attachment.id.in_(restore_ids))
+                .update(
+                    {
+                        Attachment.is_deleted: False,
+                        Attachment.deleted_at: None,
+                        Attachment.deleted_by: None,
+                    },
+                    synchronize_session=False,
+                )
+            )
+        return count, refusals
 
     def _s3_key_from_file_path(self, file_path: str) -> str:
         """Extract S3 key from file_path (URL or raw key)."""
