@@ -296,6 +296,24 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     );
   });
 
+  it('owner 17:50: the Item cell shows the CODE for a set and a product, the name on hover', () => {
+    render(
+      <Harness
+        initial={[
+          row('A', { line_type: 'product_set', product_set_id: 's-z', code: 'DIY-SET-KT60', name: 'Demo kitchen starter set' }),
+          row('B', { line_type: 'product', product_id: 'p-x', code: 'DIY-BS-4501', name: 'Demo basin cabinet' }),
+        ]}
+      />,
+    );
+    const setCell = screen.getByRole('combobox', { name: 'Item for line 1' });
+    const productCell = screen.getByRole('combobox', { name: 'Item for line 2' });
+    expect(setCell).toHaveTextContent(/^DIY-SET-KT60$/);
+    expect(productCell).toHaveTextContent(/^DIY-BS-4501$/);
+    expect(screen.queryByText('Demo kitchen starter set')).toBeNull();
+    expect(setCell.querySelector('[title="Demo kitchen starter set"]')).not.toBeNull();
+    expect(productCell.querySelector('[title="Demo basin cabinet"]')).not.toBeNull();
+  });
+
   it('(f) the Clear item button empties the row item', async () => {
     render(<Harness initial={[A()]} />);
     const clear = screen.getByRole('button', { name: 'Clear item' });
