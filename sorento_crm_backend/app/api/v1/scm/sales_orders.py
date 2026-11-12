@@ -27,6 +27,7 @@ from app.schemas.scm_orders import (
 )
 from app.services.document_relations import RELATED_SORT_PATTERN
 from app.services.scm.sales_order_service import SalesOrderService
+from app.utils.list_search import search_values
 from app.utils.multi_value import multi_uuids, multi_values
 
 router = APIRouter()
@@ -81,7 +82,9 @@ def list_sales_orders(
     limit: int = Query(50, ge=1, le=200),
     sort: Optional[str] = Query(None),
     dir: str = Query("desc"),
-    query: Optional[str] = Query(None),
+    query: Optional[list[str]] = Query(
+        None, description="Search values, one repeated param each; a row matching any is kept."
+    ),
     status: Optional[list[str]] = Query(None),
     priority: Optional[list[str]] = Query(None),
     source: Optional[list[str]] = Query(
@@ -134,8 +137,8 @@ def list_sales_orders(
     """
     svc = SalesOrderService(db)
     out = svc.list(
-        page, limit, sort, dir, query, multi_values(status), multi_values(priority),
-        multi_values(source),
+        page, limit, sort, dir, search_values(query, "Search"),
+        multi_values(status), multi_values(priority), multi_values(source),
         date_from=date_from, date_to=date_to, customer_code=multi_values(customer_code),
         outstanding=outstanding, sales_agent_id=multi_uuids(sales_agent_id, "Sales agent"),
         demand_class=multi_values(demand_class), transferable=transferable, doc_type=doc_type,

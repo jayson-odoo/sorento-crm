@@ -2089,6 +2089,15 @@ class ProjectOrderInquiryService:
                     OrderInquiryRow.so_line_id == line.id,
                     OrderInquiryRow.verb.in_(owned_verbs),
                 )
+                # A fixed order, so the email's "ORDER 10 & ORDER 3" reads the same every
+                # time: rows written in one save tie on created_at and their ids are random.
+                .order_by(
+                    OrderInquiryRow.verb,
+                    OrderInquiryRow.stock_location.nullslast(),
+                    OrderInquiryRow.delivery_date.nullslast(),
+                    OrderInquiryRow.qty.desc(),
+                    OrderInquiryRow.id,
+                )
                 .all()
                 # K7: a borrow's order-back on this line is `_raise_borrow_shortfalls`'s.
                 if not _is_borrow_order_back(row)
