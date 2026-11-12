@@ -364,12 +364,21 @@ describe('QuotationApprovalPanel line-count links', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: '4 lines are' }));
     fireEvent.click(screen.getByRole('button', { name: 'one line is' }));
-    fireEvent.click(screen.getByRole('button', { name: '11 lines are' }));
-    expect(onShowLines.mock.calls.map((call) => call[0])).toEqual([
-      'non_standard',
-      'below_floor',
-      'below_default',
-    ]);
+    // QUOTE-BELOW-DEFAULT-OFF (owner 12 Nov 2026): no lines filter for the default price any
+    // more, so its count stays text; the words are unchanged.
+    expect(screen.queryByRole('button', { name: '11 lines are' })).toBeNull();
+    expect(onShowLines.mock.calls.map((call) => call[0])).toEqual(['non_standard', 'below_floor']);
+  });
+
+  it('QUOTE-BELOW-DEFAULT-OFF: a below-default-price count stays text, same words', () => {
+    render(
+      <QuotationApprovalPanel
+        document={pending({ discounted_line_count: 2, approval_reasons: '2 lines are priced below the default price' })}
+        onShowLines={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByText(/2 lines are priced below the default price/)).toBeInTheDocument();
   });
 
   it('a below-proposal count stays text: there is no line filter for it', () => {

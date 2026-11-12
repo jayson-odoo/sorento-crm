@@ -6,8 +6,6 @@ returns the SAME body as ``POST /auth/login``, with ``auth_method = dev_login``.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -98,23 +96,18 @@ def list_dev_login_users(db: Session = Depends(get_db)) -> DevLoginUsersResponse
 
 @router.post("/dev-login", response_model=LoginResponse, dependencies=[Depends(require_dev_login)])
 def dev_login_sign_in(payload: DevLoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
-    from app.services.phone_signin_service import build_login_response
-    from app.services.user_session_service import mint_session
+    from app.services.phone_signin_service import finish_sign_in
 
     wanted = payload.email.strip().lower()
     user = next((u for u in _signable_users(db) if str(u.email).lower() == wanted), None)
     if user is None:
         raise _not_found()
 
-    user.last_sign_in_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.add(user)
-    db.commit()
-
-    session_row = mint_session(
+    # The same tail as every other sign-in (PASSKEY-LOGIN review round).
+    return finish_sign_in(
         db,
-        str(user.id),
+        user,
         user_agent=request.headers.get("user-agent"),
         ip_address=request.client.host if request.client else None,
         auth_method="dev_login",
     )
-    return build_login_response(db, user, session_row)

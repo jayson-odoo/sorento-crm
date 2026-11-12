@@ -393,6 +393,9 @@ class UserResponse(UserBase):
     phone_differs_from_contact: bool = False
     last_sign_in_method: Optional[str] = None
     needs_invitation: bool = False
+    # PASSKEY-LOGIN (AC-06, AC-45), from the same `sign_in_summary`.
+    passkey_enabled: bool = False
+    passkey_count: int = 0
 
     class Config:
         from_attributes = True

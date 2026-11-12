@@ -150,14 +150,21 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
     return user, contact
 
 
-def send_signin_code(db: Session, contact: RespondContact, *, dispatch_inline: bool = False) -> None:
+def send_signin_code(
+    db: Session,
+    contact: RespondContact,
+    *,
+    dispatch_inline: bool = False,
+    purpose: str = "sign_in",
+) -> None:
     """Create + dispatch a sign-in OTP for an eligible contact.
 
     Swallows every failure (the contact's own DB cooldown/cap, or a
     dispatch/send failure) - AC-21's 200 answer never depends on whether a
     send actually went out. ``dispatch_inline`` (security round S1) is set by
     :func:`app.tasks.respond_io_tasks.dispatch_phone_signin_code`, which is
-    already running inside the ``respond_io`` queue's own job.
+    already running inside the ``respond_io`` queue's own job. ``purpose`` is ``"reauth"``
+    for the passkey re-check (PASSKEY-LOGIN AC-27), so that code can never sign anyone in.
     """
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
@@ -170,6 +177,7 @@ def send_signin_code(db: Session, contact: RespondContact, *, dispatch_inline: b
         PortalService(db).create_and_dispatch_otp(
             contact, space_id, SIGNIN_OTP_TEXT, send_login_otp_respond_message,
             dispatch_inline=dispatch_inline,
+            purpose=purpose,
         )
     except Exception as e:  # noqa: BLE001
         # Fix lane round 2 (reviewer Nit 3): the type only above DEBUG. A
@@ -299,6 +307,37 @@ def rate_limited_minutes_message(retry_after_seconds: int) -> str:
     return f"Too many tries. Try again in {minutes} {word}."
 
 
+def rate_limited_body(retry_after_seconds: int) -> dict:
+    """The RATE_LIMITED body every code check answers with its 429."""
+    return {
+        "code": "RATE_LIMITED",
+        "message": rate_limited_minutes_message(retry_after_seconds),
+        "retry_after_seconds": retry_after_seconds,
+    }
+
+
+def wrong_code_refusal(num: str, reservation: WrongAttemptResult, *, code: str) -> tuple[int, dict]:
+    """(status, body) for a wrong WhatsApp code, against the typed number's attempt budget.
+
+    The ONE place phone sign-in (``/auth/phone/verify``) and the passkey re-check build this
+    answer, so the lock-on-the-5th and the "N tries left" wording cannot drift apart.
+
+    Fix lane round 2 (reviewer B1): the 5th wrong answer spends the budget, so it answers the
+    lock itself (429), not "0 tries left". Redis down (no count): fail open on the count, not
+    on the refusal itself.
+    """
+    if reservation.attempts_left == 0:
+        return 429, rate_limited_body(check_locked(num) or _TRIES_LOCK_SECONDS)
+    if reservation.attempts_left is not None:
+        tries_word = "try" if reservation.attempts_left == 1 else "tries"
+        return 401, {
+            "code": code,
+            "message": f"That code is not right. {reservation.attempts_left} {tries_word} left.",
+            "attempts_left": reservation.attempts_left,
+        }
+    return 401, {"code": code, "message": "That code is not right."}
+
+
 def is_salesperson(db: Session, user: User) -> bool:
     """An active, untrashed salesperson (roles within salesperson + portal_user) with a linked contact."""
     from app.services.user_service import UserPermissionService
@@ -380,37 +419,74 @@ def build_login_response(db: Session, user: User, session_row: UserSession) -> L
     )
 
 
-def attempt_verify(
+def require_active(user: User) -> None:
+    """The 403 `/auth/login` has always answered a user who is not ACTIVE."""
+    from fastapi import HTTPException, status
+
+    if str(getattr(user, "status", "") or "") != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account not activated. Please verify your email.",
+        )
+
+
+def finish_sign_in(
     db: Session,
-    num: str,
-    code: str,
+    user: User,
     *,
     user_agent: Optional[str],
     ip_address: Optional[str],
-) -> Optional[LoginResponse]:
-    """AC-24: the right code for an eligible number mints a `user_sessions`
-    row and returns the shared login shape; anything else (unknown number, an
-    ineligible user, no outstanding code, a wrong code) answers ``None`` -
-    the router's 401 carries no enumeration tell either way.
+    auth_method: str,
+) -> LoginResponse:
+    """The tail every sign-in shares once the credential itself has passed: password,
+    phone code, portal link and passkey (PASSKEY-LOGIN).
+
+    A user who is not ACTIVE gets the 403 ``/auth/login`` has always answered; otherwise
+    ``last_sign_in_at`` is stamped, the 30-day sliding session is minted and the shared
+    login shape is returned.
+    """
+    from app.services.user_session_service import mint_session
+
+    require_active(user)
+    user.last_sign_in_at = _utcnow()
+    db.add(user)
+    db.commit()
+
+    session_row = mint_session(
+        db,
+        str(user.id),
+        user_agent=user_agent,
+        ip_address=ip_address,
+        auth_method=auth_method,
+    )
+    return build_login_response(db, user, session_row)
+
+
+def check_code(db: Session, contact: Optional[RespondContact], code: str, *, purpose: str) -> bool:
+    """Whether ``code`` is the contact's outstanding WhatsApp code for ``purpose``
+    (``"sign_in"`` or ``"reauth"``), consuming it if so. A code is only ever checked against
+    its own purpose, so a re-check code never mints a session (PASSKEY-LOGIN AC-27).
+
+    The one reserve / compare / consume path, shared by phone sign-in
+    (:func:`attempt_verify`) and the passkey re-check (``passkey_service``), which proves
+    the phone without minting a session. ``contact=None`` (nobody eligible) pays for the
+    same statements against the nil id and answers False.
 
     Security round B2 (#1280): the attempt is RESERVED (an atomic
     ``UPDATE ... RETURNING`` on ``portal_otp_codes.attempts``,
     :meth:`PortalService.reserve_attempt`) before the code is ever compared,
     and a match is CONSUMED (:meth:`PortalService.consume_reserved`) with the
-    same atomicity before a session is minted - closing the race where two
-    parallel requests could each read a stale ``attempts`` value, or both
-    read "not yet consumed" and each mint a session for the same one-time
-    code. An unknown/ineligible number still pays for the same two UPDATE
-    statements, against :data:`app.services.portal_service.NIL_OTP_ID` (which
-    can never match a row), so the timing carries no eligibility tell.
+    same atomicity - closing the race where two parallel requests could each
+    read a stale ``attempts`` value, or both read "not yet consumed" and each
+    use the same one-time code. An unknown/ineligible number still pays for the
+    same two UPDATE statements, against :data:`app.services.portal_service.NIL_OTP_ID`
+    (which can never match a row), so the timing carries no eligibility tell.
     """
     import hmac
 
     from app.services.portal_service import NIL_OTP_ID
-    from app.services.user_session_service import mint_session
 
     portal = PortalService(db)
-    eligible = find_eligible(db, num)
 
     # Fix lane round 2 (reviewer Nit 2): the OTP lookup runs for every number,
     # keyed by the nil id when nobody is eligible (0 rows), so an unknown
@@ -418,13 +494,14 @@ def attempt_verify(
     otp = (
         db.query(PortalOtpCode)
         .filter(
-            PortalOtpCode.contact_id == (eligible[1].id if eligible else NIL_OTP_ID),
+            PortalOtpCode.contact_id == (contact.id if contact is not None else NIL_OTP_ID),
             PortalOtpCode.consumed_at.is_(None),
+            PortalOtpCode.purpose == purpose,
         )
         .order_by(PortalOtpCode.created_at.desc())
         .first()
     )
-    if eligible is None:
+    if contact is None:
         otp = None
     # No OTP row, or an expired one, reserves against the nil id instead (0
     # rows either way) - reserve_attempt's own WHERE clause already guards
@@ -437,36 +514,44 @@ def attempt_verify(
         # Timing parity even on the "can't reserve" path (locked out, no code,
         # expired, or nil) - still pays for the second UPDATE, a no-op either way.
         portal.consume_reserved(NIL_OTP_ID, _utcnow())
-        return None
+        return False
     _attempts_after, code_hash = reserved
     # A reservation only succeeds against a real row, which only an eligible
-    # number's lookup can return.
-    if eligible is None:
+    # contact's lookup can return.
+    if contact is None:
+        return False
+
+    if not hmac.compare_digest(code_hash, _hash_otp(code)):
+        return False
+
+    # A parallel verify consumed this exact code first - refuse rather than
+    # let one one-time code pass twice.
+    return portal.consume_reserved(otp_id, _utcnow())
+
+
+def attempt_verify(
+    db: Session,
+    num: str,
+    code: str,
+    *,
+    user_agent: Optional[str],
+    ip_address: Optional[str],
+) -> Optional[LoginResponse]:
+    """AC-24: the right code for an eligible number mints a `user_sessions`
+    row and returns the shared login shape; anything else (unknown number, an
+    ineligible user, no outstanding code, a wrong code) answers ``None`` -
+    the router's 401 carries no enumeration tell either way. The code itself is
+    checked by :func:`check_code`.
+    """
+    eligible = find_eligible(db, num)
+    if not check_code(db, eligible[1] if eligible else None, code, purpose="sign_in") or eligible is None:
         return None
     user = eligible[0]
 
-    if not hmac.compare_digest(code_hash, _hash_otp(code)):
-        return None
-
-    if not portal.consume_reserved(otp_id, _utcnow()):
-        # A parallel verify consumed this exact code first - refuse rather
-        # than mint a second session for a one-time code.
-        return None
-
-    now = _utcnow()
-    user.phone_verified_at = now
-    user.last_sign_in_at = now
-    db.add(user)
-    db.commit()
-
-    session_row = mint_session(
-        db,
-        str(user.id),
-        user_agent=user_agent,
-        ip_address=ip_address,
-        auth_method="phone_otp",
+    user.phone_verified_at = _utcnow()
+    return finish_sign_in(
+        db, user, user_agent=user_agent, ip_address=ip_address, auth_method="phone_otp"
     )
-    return build_login_response(db, user, session_row)
 
 
 # --------------------------------------------------------------------------- #
@@ -564,8 +649,6 @@ def exchange_portal_link_secret(
     contact's eligible user. ``None`` for every refusal (unknown, spent or expired
     secret, no Redis, the user no longer eligible), so the router answers one
     401 body whatever the reason."""
-    from app.services.user_session_service import mint_session
-
     contact_id = _take_portal_link_secret(secret)
     if contact_id is None:
         return None
@@ -573,15 +656,6 @@ def exchange_portal_link_secret(
     if user is None:
         return None
 
-    user.last_sign_in_at = _utcnow()
-    db.add(user)
-    db.commit()
-
-    session_row = mint_session(
-        db,
-        str(user.id),
-        user_agent=user_agent,
-        ip_address=ip_address,
-        auth_method="portal_link",
+    return finish_sign_in(
+        db, user, user_agent=user_agent, ip_address=ip_address, auth_method="portal_link"
     )
-    return build_login_response(db, user, session_row)

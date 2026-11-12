@@ -119,6 +119,11 @@ export interface User {
   /** Has an email, no password, and has never been sent an invite. */
   needsInvitation?: boolean;
   needs_invitation?: boolean;
+  /** PASSKEY-LOGIN: the per-user "Passkey sign-in" switch, and how many passkeys are stored. */
+  passkeyEnabled?: boolean;
+  passkey_enabled?: boolean;
+  passkeyCount?: number;
+  passkey_count?: number;
 }
 
 export interface UserRole {

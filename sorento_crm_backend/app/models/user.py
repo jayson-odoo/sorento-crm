@@ -74,6 +74,9 @@ class User(Base):
     respond_contact_id = Column(String, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
     # When the user last proved they hold `contact_number` (phone sign-in code). Naive UTC.
     phone_verified_at = Column(DateTime(timezone=False), nullable=True)
+    # PASSKEY-LOGIN AC-06: an admin turns passkey sign-in on per user. Off keeps the stored
+    # passkeys but refuses them at sign-in and hides the Passkeys card.
+    passkey_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     # Per-channel notification toggles (default off until a contact is linked).
     notify_whatsapp = Column(Boolean, default=False, nullable=False, server_default="false")  # legacy; superseded by the per-event toggles below
     notify_whatsapp_summary = Column(Boolean, default=False, nullable=False, server_default="false")  # daily summary template

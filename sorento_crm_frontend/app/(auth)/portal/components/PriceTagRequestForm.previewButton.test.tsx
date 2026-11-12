@@ -102,17 +102,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: { value: string[]; disabled?: boolean }) => (
-    <select
-      multiple
-      aria-label="Alternatives"
-      disabled={props.disabled}
-      value={props.value}
-      onChange={() => {}}
-    />
-  ),
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 // The live preview is tested in components/dealer-kit; here it records the props the form hands
 // each instance: the whole-request one must be in popup mode, never an inline card.

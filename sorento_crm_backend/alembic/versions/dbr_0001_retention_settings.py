@@ -7,13 +7,13 @@ scm.order_summary_location_allocation, and seeds the seven daily scheduled tasks
 in batches, from their first night (02:00 Malaysia time = 18:00 UTC).
 
 Revision ID: dbr_0001_retention_settings
-Revises: town_0003_orders_cust_date
+Revises: passkey_0001_user_passkeys
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "dbr_0001_retention_settings"
-down_revision = "town_0003_orders_cust_date"
+down_revision = "passkey_0001_user_passkeys"
 branch_labels = None
 depends_on = None
 
