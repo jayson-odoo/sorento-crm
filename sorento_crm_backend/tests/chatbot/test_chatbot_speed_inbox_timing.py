@@ -45,7 +45,7 @@ def _drain_one(world, label: str) -> dict[str, Any]:
 def test_a_drained_turn_stores_one_inbox_timing_event(world):
     row = _drain_one(world, "time1")
     events = _inbox_events(row)
-    assert len(events) == 1, row["trace"]
+    assert len(events) == 1, [(e.get("kind"), e.get("stage")) for e in row["trace"]] + [row["status"], row["stage"]]
     event = events[0]
     for key in ("queued_ms", "lookup_ms", "send_ms"):
         assert isinstance(event.get(key), int) and event[key] >= 0, event
