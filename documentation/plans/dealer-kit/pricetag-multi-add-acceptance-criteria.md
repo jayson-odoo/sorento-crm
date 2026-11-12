@@ -158,3 +158,12 @@ as the fresh pick left them). A touched line stays, and so does its tick. Items 
 opened are ticked, greyed, "Already added", removable only with the line's bin icon. After close and reopen, the
 earlier session's items count as already on the request. The session starts when the list opens (the row learns it
 from `renderTrigger`'s `open` state; `SearchableMultiSelect` stays unchanged).
+
+### F1-6 Item cell shows the code (owner hand test round 3, 12/11/2026 ~17:50)
+Once picked, the Item cell shows the item's code, for a set exactly as for a product; the name shows on hover (title)
+and in the eye preview. Same component for create, edit, CRM and portal.
+
+### D1 Save Draft and a blank line (crew ruling)
+Save Draft reuses Submit's blank-row check (`emptyRowIndexes`): a completely blank line is left out; a no-item line
+with a quantity or remarks stops the save with "Pick a set or a product for this line."; the backend answers 422
+"Pick a set or a product for every line." (never 500); a server row error maps back to the screen row.

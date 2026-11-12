@@ -1,6 +1,6 @@
 # PLAN: Price tag request, tick several items from one search (PRICETAG-MULTI-ADD)
 
-Status: Build (answers in 12/11/2026: Q1a Q2a Q3b Q4a Q5a). UAC: `pricetag-multi-add-acceptance-criteria.md`. Track: M (LEAD pattern), no migration.
+Status: Build, owner hand test round 4 pending (12/11/2026): round 3 = reuse SearchableMultiSelect, each tick adds its line; D1 Save Draft blank line; Item cell shows the code. UAC: `pricetag-multi-add-acceptance-criteria.md`. Track: M (LEAD pattern), no migration.
 
 ## Owner ask (12 Nov ~13:20)
 
