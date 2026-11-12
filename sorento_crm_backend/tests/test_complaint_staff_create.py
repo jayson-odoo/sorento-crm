@@ -13,6 +13,7 @@ All names are invented.
 from __future__ import annotations
 
 import typing
+import uuid
 
 from tests._forms_chain_support import (
     CX_BASE,
@@ -24,12 +25,36 @@ from tests._forms_chain_support import (
 ZZT_KEY = "zzt-external-key"
 
 
-def _staff_body(**over):
+def _delivery_order(db) -> str:
+    """The staff modal picks a real DO number; the route checks it against orders."""
+    from app.models.order import Order
+
+    number = f"ZZTDO-{uuid.uuid4().hex[:8]}"
+    db.add(Order(id=str(uuid.uuid4()), order_number=number))
+    db.commit()
+    return number
+
+
+def _staff_body(do_number: str, **over):
+    """A complete standard ComplaintCreate body, the shape the staff Create modal posts."""
     body = {
+        "delivery_order_number": do_number,
         "complaint_date": "2026-11-12",
         "customer_name": f"{MARKER} customer",
+        "customer_type": "dealer",
+        "customer_address": "1 Zzt Road",
+        "contact_person": f"{MARKER} contact",
+        "contact_number": "0000000",
         "product_code": f"{MARKER}-P1",
+        "product_type": "basin",
+        "complaint_type": "Broken",
         "defect_description": "cracked edge on delivery",
+        "defects_discovered": "on delivery",
+        "within_warranty": "Yes",
+        "salesperson": f"{MARKER} salesperson",
+        "project_title": f"{MARKER} project",
+        "contact_id": "zzt-contact",
+        "space_id": "zzt-space",
         "quantity": "2",
     }
     body.update(over)
@@ -39,7 +64,7 @@ def _staff_body(**over):
 def test_staff_user_creates_a_complaint_with_the_standard_body(world):
     w = world
     staff = user(w.db, "complaint creator")
-    res = w.as_user(staff).post(f"{CX_BASE}/", json=_staff_body())
+    res = w.as_user(staff).post(f"{CX_BASE}/", json=_staff_body(_delivery_order(w.db)))
     assert res.status_code == 201, res.text
     created = res.json()
     assert created["customer_name"] == f"{MARKER} customer"
@@ -58,7 +83,7 @@ def test_staff_create_does_not_notify_handlers_as_external(world, monkeypatch):
     )
     w = world
     staff = user(w.db, "complaint creator")
-    res = w.as_user(staff).post(f"{CX_BASE}/", json=_staff_body())
+    res = w.as_user(staff).post(f"{CX_BASE}/", json=_staff_body(_delivery_order(w.db)))
     assert res.status_code == 201, res.text
     assert calls == []
 
@@ -79,12 +104,13 @@ def test_external_api_key_request_needs_confirmation_then_notifies(world, monkey
     staff = user(w.db, "complaint creator")
     c = w.as_user(staff)
     headers = {"X-API-Key": ZZT_KEY}
+    do_number = _delivery_order(w.db)
 
-    unconfirmed = c.post(f"{CX_BASE}/", json=_staff_body(), headers=headers)
+    unconfirmed = c.post(f"{CX_BASE}/", json=_staff_body(do_number), headers=headers)
     assert unconfirmed.status_code == 400, unconfirmed.text
     assert "Explicit user confirmation" in unconfirmed.text
 
-    confirmed = c.post(f"{CX_BASE}/", json=_staff_body(user_confirmed=True), headers=headers)
+    confirmed = c.post(f"{CX_BASE}/", json=_staff_body(do_number, user_confirmed=True), headers=headers)
     assert confirmed.status_code == 201, confirmed.text
     assert calls == [confirmed.json()["id"]]
 
