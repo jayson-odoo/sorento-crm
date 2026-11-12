@@ -177,3 +177,20 @@ def test_deleting_a_technician_on_a_job_is_refused_when_parked_not_after_the_cou
         assert refused.status_code == 409, refused.text
         assert "Archive instead" in refused.text
         assert client.post("/api/v1/pending-actions", json={**body, "entity_id": free.id}).status_code == 202
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("column", ["phone", "employment_type"])
+def test_empty_values_sort_last_both_ways(env, column, direction):
+    tag = unique_code("TE", alpha=True)
+    full = make_tech(env, f"{tag} full")
+    none = make_tech(env, f"{tag} none")
+    blank = make_tech(env, f"{tag} blank")
+    setattr(full, column, "+60123456789" if column == "phone" else "employee")
+    setattr(none, column, None)
+    setattr(blank, column, "")
+    env.db.flush()
+    with api(env) as client:
+        rows = client.get(TECHS, params={"query": tag, "sort": column, "dir": direction, "limit": 50}).json()["data"]
+    ids = [r["id"] for r in rows]
+    assert ids[0] == full.id and set(ids[1:]) == {none.id, blank.id}, (column, direction, ids)

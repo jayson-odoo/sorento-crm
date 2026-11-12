@@ -227,3 +227,27 @@ def test_a_job_with_no_related_complaint_lists_and_sorts_with_a_blank_complaint_
     with api(env) as client:
         rows = client.get(JOBS, params={"query": tag, "sort": "complaint_number", "dir": "asc"}).json()["data"]
     assert [r["id"] for r in rows] == [job.id] and rows[0]["complaint_number"] is None
+
+
+# ------------------------------------------------------------------ round 7 (R7-3): empty values sort last
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("column,field", [("city", "site_city"), ("customer", "customer_name"), ("complaint_number", None)])
+def test_empty_values_sort_last_both_ways(env, column, field, direction):
+    tag = unique_code("EM", alpha=True)
+    make = lambda n, **kw: make_job(env, kw.pop("complaint", None), "proposed", job_number=f"SVT-{tag}-{n}", **kw)  # noqa: E731
+    if column == "complaint_number":
+        full = make("a", complaint=make_complaint(env, "em", complaint_number=f"{tag}-zzz"), customer_name=f"{tag} x")
+        none = make("b", customer_name=f"{tag} y")
+        empty = make("c", customer_name=f"{tag} z")
+    else:
+        base = {"customer_name": f"{tag} base"}
+        mk = lambda n, v: make(n, **{**base, field: v})  # noqa: E731
+        full = mk("a", f"{tag} value")
+        none = mk("b", None) if field != "customer_name" else mk("b", " ")
+        empty = mk("c", "") if field != "customer_name" else mk("c", "   ")
+    with api(env) as client:
+        rows = client.get(JOBS, params={"query": tag, "sort": column, "dir": direction, "limit": 50}).json()["data"]
+    ids = [r["id"] for r in rows]
+    assert ids[0] == full.id, (column, direction, ids)
+    assert set(ids[1:]) == {none.id, empty.id}
