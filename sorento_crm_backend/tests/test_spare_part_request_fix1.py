@@ -25,6 +25,7 @@ Postgres only; every row seeded here.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -347,3 +348,174 @@ def test_G3_a_partial_link_reads_partly_linked(real, buyer_api):
     real.db.commit()
     assert reload(real.db, inquiry).state == "raised", "a partly linked row keeps its inquiry open"
     assert _committed(real.db, pid, code) == before
+
+
+# =============================================================================
+# Security review fix round (scratchpad security-review.md): G4 B1, G5 S1, G6 S2, G7 S3
+# =============================================================================
+
+from ._forms_chain_support import open_tracker, sla_chain, trackers  # noqa: E402
+from ._spare_part_request_support import (  # noqa: E402,F401  (fixture)
+    KIND,
+    OI_RAISED_NOTICE,
+    TWO_STAGES,
+    approve,
+    role_grant,
+    two_staged,
+)
+
+
+def _purchasing_notices(w) -> list:
+    return [c for c in w.sent if c[0] == w.buyer and c[1] == OI_RAISED_NOTICE]
+
+
+def test_G4_a_second_approve_racing_the_first_cannot_close_stage_two(two_staged, monkeypatch):
+    """B1. Deterministic interleave of two approves by the SAME stage-1 member: request B
+    passes its authorisation while stage 1 is open, then request A runs to completion
+    (stage 1 resolved, stage 2 started), then B continues. B must be refused (403/409) and
+    must not resolve stage 2: the decision is bound to the stage the actor was authorised
+    on, re-checked under a row lock (security review fix)."""
+    w = two_staged
+    inquiry = submitted(w)
+    module = svc()
+    real_can_decide = module.can_decide
+    state = {"interleaved": False, "inside_a": False}
+
+    def racing_can_decide(db, inq, user_id):
+        verdict = real_can_decide(db, inq, user_id)
+        if not state["interleaved"] and not state["inside_a"]:
+            state["interleaved"] = True
+            state["inside_a"] = True
+            try:
+                module.approve(w.db, reload(w.db, inquiry), w.stage1.tier1)  # request A
+                w.db.commit()
+            finally:
+                state["inside_a"] = False
+        return verdict
+
+    monkeypatch.setattr(module, "can_decide", racing_can_decide)
+    with pytest.raises(AppException) as excinfo:
+        module.approve(w.db, reload(w.db, inquiry), w.stage1.tier1)  # request B
+    assert state["interleaved"], "approve authorises the actor through can_decide"
+    assert excinfo.value.status_code in (403, 409)
+    w.db.rollback()
+
+    after = reload(w.db, inquiry)
+    assert after.state == "pending_approval"
+    tracker = open_tracker(w.db, KIND, inquiry.id)
+    assert tracker.team_set_code == w.stage2.team_set, "stage 2 is still waiting for its own team"
+    stage1 = [t for t in trackers(w.db, KIND, inquiry.id) if t.team_set_code == w.stage1.team_set]
+    assert len(stage1) == 1 and stage1[0].is_resolved, "exactly one stage-1 approval recorded"
+    assert all(r.state == "draft" for r in rows_of(w.db, inquiry))
+    assert not _purchasing_notices(w)
+
+
+def test_G4_approve_locks_the_inquiry_row(staged):
+    """B1 contract: the decide path takes SELECT ... FOR UPDATE on the inquiry before it
+    re-checks who may decide."""
+    from sqlalchemy import event
+
+    w = staged
+    inquiry = submitted(w)
+    seen: list[str] = []
+    bind = w.db.connection()
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        seen.append(statement)
+
+    event.listen(bind, "before_cursor_execute", capture)
+    try:
+        approve(w, inquiry, w.stage1.tier1)
+    finally:
+        event.remove(bind, "before_cursor_execute", capture)
+    locked = re.compile(r"FROM\s+\S*order_inquiries\b.*\bFOR\s+(NO\s+KEY\s+)?UPDATE", re.I | re.S)
+    assert any(locked.search(s) for s in seen), (
+        "no SELECT ... FOR UPDATE on projects.order_inquiries during approve"
+    )
+
+
+def _parallel(w):
+    """S1: two stages that BOTH start on 'submitted' (parallel sign-off), no chain."""
+    chain = sla_chain(
+        w.db, KIND,
+        [
+            {"start_event": "submitted", "resolve_event": "approved,rejected"},
+            {"start_event": "submitted", "resolve_event": "approved,rejected"},
+        ],
+    )
+    for stage in chain.stages:
+        stage.config.next_config_id = None
+        role_grant(w.db, stage.tier1, "projects.projects.view", "procurement.spare_part_requests.create")
+        role_grant(w.db, stage.tier2, "projects.projects.view", "procurement.spare_part_requests.create")
+    w.db.commit()
+    return chain.stages
+
+
+def test_G5_parallel_stages_one_teams_approval_closes_only_its_own_stage(world):
+    w = world
+    team_a, team_b = _parallel(w)
+    inquiry = submitted(w)
+    assert len(trackers(w.db, KIND, inquiry.id, open_only=True)) == 2
+
+    inquiry = approve(w, inquiry, team_a.tier1)
+    assert inquiry.state == "pending_approval", "team B has not decided"
+    still_open = trackers(w.db, KIND, inquiry.id, open_only=True)
+    assert [t.team_set_code for t in still_open] == [team_b.team_set]
+    assert svc().can_decide(w.db, inquiry, team_a.tier1) is False
+    assert not _purchasing_notices(w)
+
+    inquiry = approve(w, inquiry, team_b.tier1)
+    assert inquiry.state == "raised"
+    assert len(_purchasing_notices(w)) == 1
+
+
+def test_G6_approval_fails_closed_when_the_next_stage_cannot_start(two_staged):
+    """S2: stage 2's team is emptied; approving stage 1 must not raise the request."""
+    from app.models.access import AgentTeam, TeamMember
+
+    w = two_staged
+    inquiry = submitted(w)
+    team_ids = [t.team_id for t in w.db.query(AgentTeam).filter(AgentTeam.code == w.stage2.team_set).all()]
+    w.db.query(TeamMember).filter(TeamMember.team_id.in_(team_ids)).delete(synchronize_session=False)
+    w.db.commit()
+
+    try:
+        svc().approve(w.db, reload(w.db, inquiry), w.stage1.tier1)
+        w.db.commit()
+    except AppException as exc:
+        assert exc.status_code in (409, 422)
+        assert exc.message and "_" not in exc.message, "a plain message for the admin"
+        w.db.rollback()
+
+    after = reload(w.db, inquiry)
+    assert after.state == "pending_approval", "never raised on one level of sign-off"
+    assert all(r.state == "draft" for r in rows_of(w.db, inquiry))
+    assert not _purchasing_notices(w)
+
+
+def test_G7_a_draft_or_pending_row_cannot_be_linked_to_a_po(staged):
+    w = staged
+    po = _po_line(w.db, w.product_a, w.loc_a, qty=30)
+    w.db.commit()
+    draft = create(w)
+    pending = submitted(w)
+    for inquiry in (draft, pending):
+        row = row_for(w.db, inquiry, w.product_a)
+        res = w.as_user(w.buyer).post(
+            f"/api/v1/project-sales/order-inquiry-rows/{row.id}/place-on-po",
+            json={"po_line_id": str(po.line.id)},
+        )
+        assert res.status_code == 409, res.text
+        res = w.as_user(w.buyer).get(f"/api/v1/project-sales/order-inquiry-rows/{row.id}/po-candidates")
+        assert res.status_code == 409, res.text
+        assert row_for(w.db, inquiry, w.product_a).state == "draft"
+
+
+def test_G7_the_service_link_guard_refuses_a_draft_row(staged):
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    w = staged
+    row = row_for(w.db, submitted(w), w.product_a)
+    with pytest.raises(AppException) as excinfo:
+        ProjectOrderInquiryService(w.db)._assert_linkable(row)
+    assert excinfo.value.status_code == 409
