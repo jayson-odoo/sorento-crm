@@ -2015,6 +2015,7 @@ HeaderListSort = Literal[
     "agent",
     "so_date",
     "status",
+    "inquiry_type",
 ]
 _MAX_HEADER_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 

@@ -58,7 +58,7 @@ import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAt
 import { NumberInput } from '@/components/ui/number-input';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatMoneyExact } from '../../../_shared/lib/money';
-import { changedFrom, plainNumber } from '../../../_shared/lib/sparePartRequest';
+import { changedFrom } from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryType } from '../../../_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
@@ -418,6 +418,104 @@ function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | '
   return String(total);
 }
 
+/** The chevron that opens a line's splits (if any) and its stock table (AC-RS-40), shared by
+ *  the sales-order and spare part column sets. */
+function stockExpandColumn(): ColumnDef<OrderInquiryLineRow> {
+  return {
+    id: 'expand',
+    header: () => <span className="sr-only">Expand</span>,
+    cell: ({ row }) => (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="size-6"
+        aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} stock for ${
+          row.original.item_code ?? 'this line'
+        }`}
+        aria-expanded={row.getIsExpanded()}
+        onClick={(event) => {
+          event.stopPropagation();
+          row.toggleExpanded();
+        }}
+      >
+        {row.getIsExpanded() ? (
+          <ChevronDown className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5" aria-hidden />
+        )}
+      </Button>
+    ),
+    size: 44,
+    minSize: 44,
+    enableSorting: false,
+    enableResizing: false,
+    enableHiding: false,
+    meta: {
+      headerTitle: 'Expand',
+      expandedContent: (line: OrderInquiryLineRow) => (
+        <div className="px-3 py-2">
+          <LineSplitsList splits={line.splits ?? []} itemCode={line.item_code} />
+          {line.product_id ? (
+            <OrderInquiryStockGrid productId={line.product_id} location={line.location ?? null} />
+          ) : (
+            <p className="text-xs text-muted-foreground">No product resolved for this line yet.</p>
+          )}
+        </div>
+      ),
+    },
+  };
+}
+
+function locationColumn(): ColumnDef<OrderInquiryLineRow> {
+  return {
+    accessorKey: 'location',
+    header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+    size: 130,
+    meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
+    cell: ({ row }) => <LocationCell row={row.original} />,
+  };
+}
+
+function poColumn(): ColumnDef<OrderInquiryLineRow> {
+  return {
+    id: 'po_number',
+    accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
+    size: 200,
+    meta: { headerTitle: 'PO' },
+    cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
+  };
+}
+
+/** AC-ND-13 (owner ruling 26 Sep, G3): the line's ONE History icon. */
+function LineHistoryButton({
+  line,
+  onClick,
+}: {
+  line: OrderInquiryLine;
+  onClick?: (line: OrderInquiryLine) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      mode="icon"
+      variant="ghost"
+      size="sm"
+      className="size-6 shrink-0"
+      aria-label="History"
+      title="History"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.(line);
+      }}
+    >
+      <HistoryIcon className="size-3.5" aria-hidden />
+    </Button>
+  );
+}
+
 /** SPARE-PART-ORDER-REQUEST (UAC A3): what the approver changed on a line. */
 export interface SparePartLineEdit {
   qty?: string;
@@ -429,7 +527,7 @@ function WasMark({ current, submitted }: { current?: string | null; submitted?: 
   if (!changedFrom(current, submitted)) return null;
   return (
     <span className="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">
-      was {plainNumber(submitted)}
+      was {formatInquiryQty(submitted)}
     </span>
   );
 }
@@ -487,51 +585,7 @@ function sparePartLineColumns({
   canEditAttachments: boolean;
 }): ColumnDef<OrderInquiryLineRow>[] {
   return [
-    {
-      id: 'expand',
-      header: () => <span className="sr-only">Expand</span>,
-      cell: ({ row }) => (
-        <Button
-          type="button"
-          mode="icon"
-          variant="ghost"
-          size="sm"
-          className="size-6"
-          aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} stock for ${
-            row.original.item_code ?? 'this line'
-          }`}
-          aria-expanded={row.getIsExpanded()}
-          onClick={(event) => {
-            event.stopPropagation();
-            row.toggleExpanded();
-          }}
-        >
-          {row.getIsExpanded() ? (
-            <ChevronDown className="size-3.5" aria-hidden />
-          ) : (
-            <ChevronRight className="size-3.5" aria-hidden />
-          )}
-        </Button>
-      ),
-      size: 44,
-      minSize: 44,
-      enableSorting: false,
-      enableResizing: false,
-      enableHiding: false,
-      meta: {
-        headerTitle: 'Expand',
-        // UAC R3: information only, never caps the qty.
-        expandedContent: (line: OrderInquiryLineRow) => (
-          <div className="px-3 py-2">
-            {line.product_id ? (
-              <OrderInquiryStockGrid productId={line.product_id} location={line.location ?? null} />
-            ) : (
-              <p className="text-xs text-muted-foreground">No product resolved for this line yet.</p>
-            )}
-          </div>
-        ),
-      },
-    },
+    stockExpandColumn(),
     buildSelectColumn<OrderInquiryLineRow>({
       rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
     }),
@@ -546,13 +600,7 @@ function sparePartLineColumns({
         </span>
       ),
     },
-    {
-      accessorKey: 'location',
-      header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-      size: 130,
-      meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
-      cell: ({ row }) => <LocationCell row={row.original} />,
-    },
+    locationColumn(),
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
@@ -617,14 +665,7 @@ function sparePartLineColumns({
         );
       },
     },
-    {
-      id: 'po_number',
-      accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
-      header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-      size: 200,
-      meta: { headerTitle: 'PO' },
-      cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
-    },
+    poColumn(),
     {
       accessorKey: 'verb',
       header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
@@ -654,21 +695,7 @@ function sparePartLineColumns({
                 <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
               )}
             </span>
-            <Button
-              type="button"
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              className="size-6 shrink-0"
-              aria-label="History"
-              title="History"
-              onClick={(event) => {
-                event.stopPropagation();
-                onLineHistoryClick?.(line);
-              }}
-            >
-              <HistoryIcon className="size-3.5" aria-hidden />
-            </Button>
+            <LineHistoryButton line={line} onClick={onLineHistoryClick} />
             <SoLineAttachmentsButton
               lineId={primary.id}
               target={{ kind: 'order_inquiry_row', id: primary.id }}
@@ -768,56 +795,7 @@ export function useOrderInquiryHeaderLinesColumns({
     const columns: ColumnDef<OrderInquiryLineRow>[] = [
       // `PLAN-oi-request-cs-reserve.md` 3.9 (AC-RS-40): the board's own stock grid, a
       // chevron away - purchasing used to open the fulfilment board just to check BRW.
-      {
-        id: 'expand',
-        header: () => <span className="sr-only">Expand</span>,
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            mode="icon"
-            variant="ghost"
-            size="sm"
-            className="size-6"
-            aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} stock for ${
-              row.original.item_code ?? 'this line'
-            }`}
-            aria-expanded={row.getIsExpanded()}
-            onClick={(event) => {
-              event.stopPropagation();
-              row.toggleExpanded();
-            }}
-          >
-            {row.getIsExpanded() ? (
-              <ChevronDown className="size-3.5" aria-hidden />
-            ) : (
-              <ChevronRight className="size-3.5" aria-hidden />
-            )}
-          </Button>
-        ),
-        size: 44,
-        minSize: 44,
-        enableSorting: false,
-        enableResizing: false,
-        enableHiding: false,
-        meta: {
-          headerTitle: 'Expand',
-          expandedContent: (line: OrderInquiryLineRow) => (
-            <div className="px-3 py-2">
-              <LineSplitsList splits={line.splits ?? []} itemCode={line.item_code} />
-              {line.product_id ? (
-                <OrderInquiryStockGrid
-                  productId={line.product_id}
-                  location={line.location ?? null}
-                />
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No product resolved for this line yet.
-                </p>
-              )}
-            </div>
-          ),
-        },
-      },
+      stockExpandColumn(),
       buildSelectColumn<OrderInquiryLineRow>({
         rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
       }),
@@ -913,14 +891,7 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <SupplierCell row={row.original} />,
       },
-      {
-        id: 'po_number',
-        accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 200,
-        meta: { headerTitle: 'PO' },
-        cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
-      },
+      poColumn(),
       {
         id: 'spo_number',
         accessorFn: (row) => lineDocumentsOf(lineOf(row), 'spo')[0]?.document ?? '',
@@ -937,13 +908,7 @@ export function useOrderInquiryHeaderLinesColumns({
       // AC-LT-07: the SAME Suggested column the worklist carries, right after SPO. It
       // reads the primary row's suggestions (S2 wires a line-level read).
       orderInquirySuggestedColumn() as ColumnDef<OrderInquiryLineRow>,
-      {
-        accessorKey: 'location',
-        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) => <LocationCell row={row.original} />,
-      },
+      locationColumn(),
       {
         accessorKey: 'verb',
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
@@ -1010,23 +975,7 @@ export function useOrderInquiryHeaderLinesColumns({
           // AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon on every line - rows,
           // decisions and reserve history behind one dialog - never gated on a core line
           // or on `canReserve`.
-          const history = (
-            <Button
-              type="button"
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              className="size-6 shrink-0"
-              aria-label="History"
-              title="History"
-              onClick={(event) => {
-                event.stopPropagation();
-                onLineHistoryClick?.(line);
-              }}
-            >
-              <HistoryIcon className="size-3.5" aria-hidden />
-            </Button>
-          );
+          const history = <LineHistoryButton line={line} onClick={onLineHistoryClick} />;
           // #1312 (AC-U6): the same paperclip the fulfilment board carries, on every
           // line that names a core sales-order line - a row raised before AutoCount
           // reconciled it (`core_line_id` null) has nowhere to file a clarification

@@ -25,7 +25,8 @@ import {
   useSubmitSparePartRequest,
 } from '../../../_shared/hooks/useSparePartRequest';
 import { formatMoneyExact } from '../../../_shared/lib/money';
-import { changedFrom, plainNumber } from '../../../_shared/lib/sparePartRequest';
+import { changedFrom } from '../../../_shared/lib/sparePartRequest';
+import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryHeaderDetail,
   OrderInquiryWorklistRow,
@@ -42,11 +43,11 @@ export function approverChanges(rows: OrderInquiryWorklistRow[]): string[] {
   rows.forEach((row, index) => {
     const name = row.item_code ? `${row.item_code}` : `line ${index + 1}`;
     if (changedFrom(row.qty, row.submitted_qty)) {
-      out.push(`${name} qty ${plainNumber(row.submitted_qty)} to ${plainNumber(row.qty)}`);
+      out.push(`${name} qty ${formatInquiryQty(row.submitted_qty)} to ${formatInquiryQty(row.qty)}`);
     }
     if (changedFrom(row.unit_price, row.submitted_unit_price)) {
       out.push(
-        `${name} unit price ${plainNumber(row.submitted_unit_price)} to ${plainNumber(row.unit_price)}`,
+        `${name} unit price ${formatInquiryQty(row.submitted_unit_price)} to ${formatInquiryQty(row.unit_price)}`,
       );
     }
     const added = row.photo_changes?.added ?? 0;
@@ -174,10 +175,9 @@ export function SparePartRequestActions({
         </Dialog>
 
         <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
-          <DialogContent>
+          <DialogContent aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Reject {header.inquiry_no}</DialogTitle>
-              <DialogDescription>The requester can change it and submit it again.</DialogDescription>
             </DialogHeader>
             <DialogBody className="space-y-1.5">
               <Label htmlFor="spr-reject-reason">

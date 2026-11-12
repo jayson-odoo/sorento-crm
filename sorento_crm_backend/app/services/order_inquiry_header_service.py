@@ -135,6 +135,7 @@ HeaderSort = Literal[
     "agent",
     "so_date",
     "status",
+    "inquiry_type",
 ]
 HeaderState = Literal["outstanding", "completed", "all"]
 
@@ -538,6 +539,7 @@ class OrderInquiryHeaderService:
             "project": _PROJECT_TITLE,
             "agent": _AGENT_NAME,
             "so_date": _SO_DATE,
+            "inquiry_type": OrderInquiry.inquiry_type,
             "status": case(
                 (func.coalesce(agg.c.lines_to_confirm, 0) > 0, "outstanding"),
                 else_="completed",
@@ -591,14 +593,12 @@ class OrderInquiryHeaderService:
             OrderInquiryRaiseHistoryEntryOut(kind=raise_row.kind, by_name=name, at=raise_row.raised_at)
             for raise_row, name in raises
         ]
+        from app.services.project_service import resolve_user_names
+
         inquiry: OrderInquiry = row[0]
-        names = {}
-        people = {u for u in (inquiry.requested_by, inquiry.approved_by) if u}
-        if people:
-            names = {
-                str(uid): name
-                for uid, name in self.db.query(User.id, User.name).filter(User.id.in_(people)).all()
-            }
+        names = resolve_user_names(
+            self.db, {u for u in (inquiry.requested_by, inquiry.approved_by) if u}
+        )
         return OrderInquiryHeaderDetailOut(
             **header.model_dump(),
             order_type=order_type,

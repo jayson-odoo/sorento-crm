@@ -66,10 +66,3 @@ export function changedFrom(
   if (submitted == null || submitted === '' || current == null || current === '') return false;
   return Number(current) !== Number(submitted);
 }
-
-/** `10.0000` -> `10`, `12.5000` -> `12.5`. */
-export function plainNumber(value: string | number | null | undefined): string {
-  if (value == null || value === '') return '';
-  const n = Number(value);
-  return Number.isFinite(n) ? String(n) : String(value);
-}

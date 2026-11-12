@@ -166,6 +166,9 @@ export async function searchSupplierOptions(
 export async function searchProductOptions(
   query: string,
   pageIndex = 0,
+  /** What an option's value is: the product code (default), or its id for a caller that
+   *  stores the product itself (a spare part request line). */
+  valueKey: 'product_code' | 'id' = 'product_code',
 ): Promise<Option[]> {
   const search = new URLSearchParams({
     limit: String(SELECT_PAGE_SIZE),
@@ -175,10 +178,10 @@ export async function searchProductOptions(
   const res = await apiFetch(`/api/v1/master-data/products/select?${search.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load products'));
   const body = (await res.json()) as {
-    data: { product_code: string; product_name: string }[];
+    data?: { id: string; product_code: string; product_name: string }[];
   };
-  return body.data.map((p) => ({
-    value: p.product_code,
+  return (body.data ?? []).map((p) => ({
+    value: valueKey === 'id' ? String(p.id) : p.product_code,
     label: codeWithName(p.product_code, p.product_name, ' · '),
     searchText: `${p.product_code} ${p.product_name}`,
   }));

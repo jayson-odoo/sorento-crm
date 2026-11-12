@@ -391,11 +391,10 @@ export function OrderInquiryHeadersList() {
         ),
       },
       {
-        // SPARE-PART-ORDER-REQUEST (P3). Not sortable: the list's sort vocabulary has no type.
+        // SPARE-PART-ORDER-REQUEST (P3): sorted by the server on `inquiry_type`.
         id: 'inquiry_type',
         accessorFn: (row) => inquiryTypeLabel(row),
-        header: () => <span>Type</span>,
-        enableSorting: false,
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         size: 150,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (

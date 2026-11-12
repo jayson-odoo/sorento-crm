@@ -2,11 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { searchStockVisibilityWarehouses } from '@/services/stockVisibilityService';
 import {
   approveSparePartRequest,
   createSparePartRequest,
   editSparePartLine,
-  getSparePartLocations,
   getSparePartRequest,
   rejectSparePartRequest,
   reviseSparePartRequest,
@@ -37,8 +37,18 @@ export function useSparePartRequest(id: string | null | undefined) {
   });
 }
 
+/** Active locations by code (a line's `stock_location` is the warehouse code), through the
+ *  shared warehouse search every staff user can read. */
 export function useSparePartLocations() {
-  return useQuery({ queryKey: LOCATIONS_KEY, queryFn: getSparePartLocations, staleTime: 5 * 60_000 });
+  return useQuery({
+    queryKey: LOCATIONS_KEY,
+    queryFn: async () =>
+      (await searchStockVisibilityWarehouses('')).map((w) => ({
+        value: w.code,
+        label: w.name ? `${w.code} · ${w.name}` : w.code,
+      })),
+    staleTime: 5 * 60_000,
+  });
 }
 
 function useRefreshInquiry() {

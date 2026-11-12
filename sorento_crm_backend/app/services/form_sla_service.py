@@ -156,7 +156,8 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "product_drawing": ("products", "product_code", False),
     "product_photo": ("products", "product_code", False),
     "new_product_application": ("new_product_applications", "application_no", False),
-    "spare_part_request": ("projects.order_inquiries", "inquiry_no", False),
+    # spare_part_request: read through the model in `_resolve_entity_number` (its table is
+    # in the `projects` schema).
 }
 
 
@@ -167,6 +168,20 @@ def _resolve_entity_number(db: Session, source_entity_type: str, source_entity_i
     Revisable types render at their revision (``SI-26-0184-R2``), so an SLA
     notification names the version the recipient is actually being asked to work.
     """
+    if source_entity_type == "spare_part_request" and source_entity_id:
+        # Read through the model, not raw SQL: the order inquiry lives in the `projects`
+        # schema, which a raw table name would have to hard-code.
+        from app.models.project_so import OrderInquiry
+
+        try:
+            return (
+                db.query(OrderInquiry.inquiry_no)
+                .filter(OrderInquiry.id == str(source_entity_id))
+                .scalar()
+            )
+        except Exception:  # pragma: no cover - never break notifications on lookup
+            logger.warning("SLA notify: number lookup failed for %s", source_entity_id, exc_info=True)
+            return None
     src = _ENTITY_NUMBER_SOURCE.get(source_entity_type)
     if not src or not source_entity_id:
         return None
@@ -473,15 +488,7 @@ class FormSLAOrchestrator:
 
         Unlike `emit_event` this RAISES: a caller that decides on a stage must know the
         decision (or the next stage's start) did not happen."""
-        config = (
-            self.db.query(FormSLAConfig)
-            .filter(
-                FormSLAConfig.source_entity_type == tracker.source_entity_type,
-                FormSLAConfig.team_set_code == tracker.team_set_code,
-                FormSLAConfig.is_active.is_(True),
-            )
-            .first()
-        )
+        config = self._config_for_tracker(tracker)
         if config is None:
             raise handle_validation_error("This approval stage is no longer configured.")
         outer_started = self._started_in_emit
@@ -497,18 +504,30 @@ class FormSLAOrchestrator:
         finally:
             self._started_in_emit = outer_started
 
+    def _config_for_tracker(self, tracker: ConversationSLATracking) -> Optional[FormSLAConfig]:
+        """The active stage config a tracker was started from. A team set can serve more
+        than one stage of a form (each stage naming its own agent), so the tracker's AGENT is
+        part of the match, not the team set alone."""
+        query = self.db.query(FormSLAConfig).filter(
+            FormSLAConfig.source_entity_type == tracker.source_entity_type,
+            FormSLAConfig.is_active.is_(True),
+        )
+        if tracker.team_set_code is None:
+            query = query.filter(FormSLAConfig.team_set_code.is_(None))
+        else:
+            query = query.filter(FormSLAConfig.team_set_code == tracker.team_set_code)
+        if tracker.agent_id:
+            agent_code = (
+                self.db.query(AccessAgent.code).filter(AccessAgent.id == tracker.agent_id).scalar()
+            )
+            if agent_code:
+                query = query.filter(FormSLAConfig.agent_code == agent_code)
+        return query.order_by(FormSLAConfig.id).first()
+
     def next_stage_config(self, tracker: ConversationSLATracking, event_name: str):
         """The active config the stage `tracker` is on chains to when it resolves with
         `event_name`, or None when that resolve ends the chain."""
-        config = (
-            self.db.query(FormSLAConfig)
-            .filter(
-                FormSLAConfig.source_entity_type == tracker.source_entity_type,
-                FormSLAConfig.team_set_code == tracker.team_set_code,
-                FormSLAConfig.is_active.is_(True),
-            )
-            .first()
-        )
+        config = self._config_for_tracker(tracker)
         if config is None or not config.next_config_id:
             return None
         advance_on = (getattr(config, "advance_on_event", None) or "").strip()
@@ -1604,6 +1623,8 @@ class FormSLAOrchestrator:
         _FE_RECORD_ROUTES = {
             "stock_inquiry", "complaint", "purchase_request", "sponsorship_form",
             "product_drawing", "product_photo", "new_product_application",
+            # SPARE-PART-ORDER-REQUEST: the request opens on its order inquiry page.
+            "spare_part_request",
         }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link

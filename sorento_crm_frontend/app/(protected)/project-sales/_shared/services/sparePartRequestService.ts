@@ -1,7 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import { codeWithName } from '@/lib/product-display';
-import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { extractApiError } from '@/lib/api-client';
 
 /**
  * SPARE-PART-ORDER-REQUEST (`PLAN-spare-part-order-request-12nov.md`). The request IS an
@@ -152,44 +150,4 @@ export function rejectSparePartRequest(id: string, reason: string): Promise<Spar
 
 export function reviseSparePartRequest(id: string): Promise<SparePartRequest> {
   return send(`${BASE}/${id}/revise`, json('POST'), 'Failed to revise');
-}
-
-/** The catalogue, searched on the server by code and name (UAC R2), one page at a time. */
-export async function searchSparePartProducts(
-  query: string,
-  pageIndex = 0,
-): Promise<SearchableSelectOption[]> {
-  const search = buildDataGridParams(
-    { pageIndex: 0, pageSize: 50, sorting: [], searchQuery: query.trim() },
-    { offset: pageIndex * 50 },
-  );
-  const response = await apiFetch(`/api/v1/master-data/products/select?${search.toString()}`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load products'));
-  const body = (await response.json()) as {
-    data?: { id: string; product_code: string; product_name: string }[];
-  };
-  return (Array.isArray(body?.data) ? body.data : []).map((p) => ({
-    value: String(p.id),
-    label: codeWithName(p.product_code, p.product_name, ' · '),
-    code: p.product_code,
-    name: p.product_name,
-    searchText: `${p.product_code} ${p.product_name}`,
-  }));
-}
-
-/** Active locations, by code (a line's `stock_location` is the warehouse code). */
-export async function getSparePartLocations(): Promise<SearchableSelectOption[]> {
-  const search = buildDataGridParams(
-    { pageIndex: 0, pageSize: 200, sorting: [{ id: 'warehouse_code', desc: false }], searchQuery: '' },
-    { is_active: true },
-  );
-  const response = await apiFetch(`/api/v1/inventory/warehouses?${search.toString()}`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load locations'));
-  const body = (await response.json()) as {
-    data?: { warehouse_code: string; warehouse_name?: string | null }[];
-  };
-  return (Array.isArray(body?.data) ? body.data : []).map((w) => ({
-    value: w.warehouse_code,
-    label: w.warehouse_name ? `${w.warehouse_code} · ${w.warehouse_name}` : w.warehouse_code,
-  }));
 }

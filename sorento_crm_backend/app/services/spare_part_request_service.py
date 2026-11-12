@@ -126,19 +126,14 @@ def _plain(value: Optional[Decimal]) -> Any:
 
 
 def is_admin(db: Session, user_id: Optional[str]) -> bool:
-    """One read every call, never the 30 s RBAC cache: every list request then costs the
-    same queries whatever was cached before it (the header list's bounded-query rule)."""
-    from app.models.user import UserRole, UserRoleAssignment
+    """The shared role-slug read, uncached: every list request then costs the same queries
+    whatever an earlier one cached (the header list's bounded-query rule)."""
+    from app.services.user_service import UserPermissionService
 
     if not user_id:
         return False
-    return (
-        db.query(UserRoleAssignment.id)
-        .join(UserRole, UserRole.id == UserRoleAssignment.role_id)
-        .filter(UserRoleAssignment.user_id == str(user_id), UserRole.slug.in_(_ADMIN_ROLE_SLUGS))
-        .first()
-        is not None
-    )
+    slugs = UserPermissionService(db).get_user_role_slugs(str(user_id), use_cache=False)
+    return bool(slugs & _ADMIN_ROLE_SLUGS)
 
 
 def is_requester(inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
@@ -522,11 +517,82 @@ def update(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str)
         raise _forbidden("Only the requester can edit this request.")
     if inquiry.state not in _EDITABLE:
         raise _conflict("Only a draft or rejected request can be edited.")
+    before = _snapshot(db, inquiry)
     _apply_header(inquiry, data)
     _replace_lines(db, inquiry, data.get("lines") or [])
-    _audit(db, inquiry, "SPR_EDITED", "Edited", actor)
+    after = _snapshot(db, inquiry)
+    _audit_edit(db, inquiry, before, after, actor)
     db.flush()
     return inquiry
+
+
+_HEADER_LABELS = (
+    ("currency", "Currency"),
+    ("needed_by", "Needed by"),
+    ("default_location", "Default location"),
+    ("reason", "Reason"),
+)
+#: A line's audited fields. The price goes under the COST key `unit_cost` (it is the expected
+#: supplier cost), so every History reader masks it like any cost.
+_LINE_AUDIT_FIELDS = ("product", "stock_location", "qty", "unit_cost")
+
+
+def _snapshot(db: Session, inquiry: OrderInquiry) -> Dict[str, Any]:
+    from app.utils.date_format import fmt_date
+
+    db.flush()
+    return {
+        "currency": inquiry.currency,
+        "needed_by": fmt_date(inquiry.needed_by) if inquiry.needed_by else None,
+        "default_location": inquiry.default_location,
+        "reason": inquiry.reason,
+        "lines": {
+            str(row.id): {
+                "row_id": str(row.id),
+                "item_code": row.item_code,
+                "product": row.item_code,
+                "stock_location": row.stock_location,
+                "qty": _plain(row.qty),
+                "unit_cost": _plain(row.unit_price),
+            }
+            for row in _rows(db, inquiry)
+        },
+    }
+
+
+def _audit_edit(db: Session, inquiry, before: Dict[str, Any], after: Dict[str, Any], actor) -> None:
+    """R5: the requester's edit as History, old -> new per changed header field and line.
+    Header changes are the entry's title; each changed line is one of its lines (the reader
+    renders them). An edit that changes nothing writes nothing."""
+    parts = [
+        f"{label} {before[key] or 'not set'} → {after[key] or 'not set'}"
+        for key, label in _HEADER_LABELS
+        if before[key] != after[key]
+    ]
+    old_lines, new_lines = before["lines"], after["lines"]
+    removed = [line for row_id, line in old_lines.items() if row_id not in new_lines]
+    changed_old, changed_new = [], []
+    for row_id, line in new_lines.items():
+        prior = old_lines.get(row_id)
+        if prior is None:
+            changed_new.append({**line, "added": True})
+            continue
+        fields = [f for f in _LINE_AUDIT_FIELDS if prior.get(f) != line.get(f)]
+        if fields:
+            changed_old.append({"row_id": row_id, **{f: prior.get(f) for f in fields}})
+            changed_new.append({"row_id": row_id, "item_code": line["item_code"], **{f: line.get(f) for f in fields}})
+    if removed:
+        codes = ", ".join(str(line["item_code"] or "a line") for line in removed)
+        parts.append(f"removed {codes}")
+    if not parts and not changed_new:
+        return
+    _audit(
+        db, inquiry, "SPR_EDITED",
+        "Edited" + (f": {'; '.join(parts)}" if parts else ""),
+        actor,
+        old={**{k: before[k] for k, _ in _HEADER_LABELS}, "lines": changed_old},
+        new={**{k: after[k] for k, _ in _HEADER_LABELS}, "lines": changed_new},
+    )
 
 
 def _validate_submit(db: Session, inquiry: OrderInquiry) -> List[OrderInquiryRow]:
@@ -888,8 +954,13 @@ def revise(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     inquiry.approved_by = None
     inquiry.reject_reason = None
     for row in _rows(db, inquiry):
+        # A clean slate: purchasing's earlier refusal was about the request as approved,
+        # and the request is about to change and be approved again.
         row.state = INQUIRY_DRAFT
         row.ack_state = ACK_AWAITING
+        row.rejected_by = None
+        row.rejected_at = None
+        row.rejected_reason = None
         row.acknowledged_by = None
         row.acknowledged_at = None
         row.ack_override = None

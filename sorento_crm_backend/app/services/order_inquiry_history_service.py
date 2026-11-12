@@ -171,6 +171,13 @@ _REQUEST_KINDS = {
 #: `unit_cost`: a spare part line's price is the expected supplier cost, audited under the
 #: cost key so every History reader masks it (`cost_access.COST_AUDIT_KEYS`).
 _LINE_FIELD_LABEL = {"qty": "Qty", "unit_cost": "Unit price"}
+#: The fields a requester's edit can move on a line, in the order History reads them.
+_EDIT_FIELD_LABEL = (
+    ("product", "Product"),
+    ("stock_location", "Location"),
+    ("qty", "Qty"),
+    ("unit_cost", "Unit price"),
+)
 
 
 def _request_events(
@@ -210,6 +217,23 @@ def _request_events(
                         f"{_LINE_FIELD_LABEL[field]} {old.get(field)} → {new.get(field)}",
                     )
                 ]
+        elif kind == "edited":
+            # R5: each changed line, old -> new per field (the header's changes are the title).
+            prior = {str(e.get("row_id")): e for e in (old.get("lines") or []) if isinstance(e, dict)}
+            for entry in new.get("lines") or []:
+                if not isinstance(entry, dict) or str(entry.get("row_id")) not in rows.by_id:
+                    continue
+                if entry.get("added"):
+                    lines.append(rows.line(str(entry["row_id"]), "Added"))
+                    continue
+                was = prior.get(str(entry["row_id"]), {})
+                moved = [
+                    f"{label} {was.get(field)} → {entry.get(field)}"
+                    for field, label in _EDIT_FIELD_LABEL
+                    if field in entry
+                ]
+                if moved:
+                    lines.append(rows.line(str(entry["row_id"]), ", ".join(moved)))
         elif kind is None:
             if "attachment_added" in new:
                 kind, verb, name = "photo_added", "Added", new.get("attachment_added")

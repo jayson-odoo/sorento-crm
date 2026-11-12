@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { DatePickerField } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
@@ -14,6 +15,8 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { BASE_CURRENCY, CURRENCY_NAMED_OPTIONS } from '@/lib/currencies';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import { searchProductOptions } from '@/app/(protected)/scm/services/scmOptionsService';
 import { toast } from '@/lib/toast';
 import { formatMoneyExact } from '../../../_shared/lib/money';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
@@ -26,11 +29,14 @@ import {
   useSubmitSparePartRequest,
 } from '../../../_shared/hooks/useSparePartRequest';
 import {
-  searchSparePartProducts,
   SparePartRequestError,
   type SparePartRequest,
   type SparePartRequestInput,
 } from '../../../_shared/services/sparePartRequestService';
+
+/** The catalogue by code and name (UAC R2), valued by product id. */
+const searchProducts = (query: string, pageIndex: number) =>
+  searchProductOptions(query, pageIndex, 'id');
 
 type SectionKey = 'request' | 'lines';
 
@@ -64,6 +70,19 @@ function lineTotal(line: DraftLine): string | null {
   return (line.qty * line.unitPrice).toFixed(4);
 }
 
+/** A saved request's line ids onto the form's lines (R2): each line with a product takes the
+ *  first unclaimed saved line of the same product, so the next save updates those rows. */
+function withSavedIds(lines: DraftLine[], saved: SparePartRequest): DraftLine[] {
+  const unclaimed = [...saved.lines];
+  return lines.map((line) => {
+    if (!line.product) return line;
+    const at = unclaimed.findIndex((l) => l.product_id === line.product?.value);
+    if (at < 0) return line;
+    const [match] = unclaimed.splice(at, 1);
+    return { ...line, id: match.id };
+  });
+}
+
 function fromRequest(request: SparePartRequest): DraftLine[] {
   return request.lines.map((l) => ({
     key: l.id,
@@ -92,6 +111,9 @@ function fromRequest(request: SparePartRequest): DraftLine[] {
 export function SparePartRequestForm({ id }: { id?: string } = {}) {
   const router = useRouter();
   const existing = useSparePartRequest(id);
+  // R2: the draft this form has written to. Set by the first save of a New form, so a
+  // refused Submit followed by another Submit or Save updates that draft, never a second one.
+  const [savedId, setSavedId] = useState<string | undefined>(id);
   const locations = useSparePartLocations();
   const save = useSaveSparePartRequest();
   const submit = useSubmitSparePartRequest();
@@ -141,7 +163,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     [lines],
   );
   const summaries: Record<SectionKey, string | null> = {
-    request: [currency || null, neededBy ? `needed by ${neededBy.split('-').reverse().join('/')}` : null]
+    request: [currency || null, neededBy ? `needed by ${formatDateInMalaysia(neededBy)}` : null]
       .filter(Boolean)
       .join(', ') || null,
     lines: lines.some((l) => l.product)
@@ -205,12 +227,23 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     else toast.error(message);
   };
 
-  const busy = save.isPending || submit.isPending;
+  // R7: an Edit form writes nothing until its request has loaded (an empty `lines` would
+  // remove every line and its photos).
+  const notLoaded = Boolean(id) && !existing.data;
+  const busy = save.isPending || submit.isPending || notLoaded;
+
+  const persist = async () => {
+    const saved = await save.mutateAsync({ id: savedId, body: body() });
+    setSavedId(saved.id);
+    setLines((prev) => withSavedIds(prev, saved));
+    return saved;
+  };
 
   const onSaveDraft = async () => {
     setProblems({ byLine: {} });
+    if (busy) return;
     try {
-      const saved = await save.mutateAsync({ id, body: body() });
+      const saved = await persist();
       toast.success('Saved as draft');
       router.push(`/project-sales/order-inquiries/${saved.id}`);
     } catch (error) {
@@ -219,6 +252,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
   };
 
   const onSubmit = async () => {
+    if (busy) return;
     const found = checkForSubmit();
     setProblems(found);
     if (found.currency || found.lines || Object.keys(found.byLine).length) {
@@ -226,7 +260,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
       return;
     }
     try {
-      const saved = await save.mutateAsync({ id, body: body() });
+      const saved = await persist();
       await submit.mutateAsync(saved.id);
       router.push(`/project-sales/order-inquiries/${saved.id}`);
     } catch (error) {
@@ -234,12 +268,31 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     }
   };
 
-  if (id && existing.data && !existing.data.can_edit) {
+  if (id && existing.isError) {
     return (
-      <p className="text-sm text-muted-foreground">
-        This request can be edited only by its requester while it is a draft or rejected.
-      </p>
+      <div className="space-y-3 rounded-md border border-border p-6 text-center">
+        <p className="text-sm font-semibold">Could not load this request</p>
+        <p className="text-sm text-muted-foreground">
+          {existing.error instanceof Error ? existing.error.message : 'Try again in a moment.'}
+        </p>
+        <Button type="button" variant="outline" onClick={() => void existing.refetch()}>
+          Try again
+        </Button>
+      </div>
     );
+  }
+
+  if (notLoaded) {
+    return (
+      <div className="space-y-4" role="status" aria-label="Loading the request">
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (id && existing.data && !existing.data.can_edit) {
+    return <p className="text-sm text-muted-foreground">This request is no longer a draft.</p>;
   }
 
   const locationOptions = locations.data ?? [];
@@ -360,7 +413,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                         onChange={() => undefined}
                         onOptionChange={(option) => updateLine(line.key, { product: option })}
                         selectedOption={line.product ?? undefined}
-                        fetchOptions={searchSparePartProducts}
+                        fetchOptions={searchProducts}
                         paginated
                         placeholder="Search code or name"
                         wrapOptions
