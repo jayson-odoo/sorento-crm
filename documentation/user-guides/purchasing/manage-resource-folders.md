@@ -56,13 +56,13 @@ Every file that can move goes straight away. A folder can hold only one file wit
 
 | Choice | What happens |
 |----|----|
-| **Rename** | The file moves under the new name shown in the box (for example `photo (1).jpg`). You can type another name. The file itself, its links to products, promotions and forms, and any link already shared stay the same. |
+| **Rename** | The file moves under the new name shown in the box (for example `photo (1).jpg`). You can type another name. The file itself, its links to products, promotions and forms, and any link already shared stay the same. The new name also becomes the file's original name, because a folder allows one file per original name. |
 | **Replace** | The file already in the target folder goes to **Trash** and this file takes its place. Records linked to the replaced file stay linked to it. To undo, first rename or move the file that took its place, then search for the replaced file in **Trash** and restore it (while its name is taken in that folder, Restore says so and leaves it in Trash). Only users who may delete files see this choice. |
 | **Skip** | The file stays where it is. |
 
 When the move is done, one message sums it up, for example: *2 moved. 1 not moved: photo.jpg already exists in Folder B.*
 
-A file renamed earlier still counts under the name it was first uploaded with. If the target folder holds a file first uploaded under that same name, the message says so, for example: *holiday.jpg cannot be moved into Folder B: photo.jpg there has the same original file name.* Choose **Rename** to move it under a new name.
+A file renamed earlier still counts under the name it was first uploaded with. Open a file to see both: its name, and under it **Original name** when the two differ. If the target folder holds a file first uploaded under that same name, the message says so, for example: *holiday.jpg cannot be moved into Folder B: photo.jpg there has the same original file name.* Choose **Rename** to move it under a new name.
 
 The same rule applies when you upload a file into a folder: a name already used there (including a file first uploaded under it and renamed since) is refused with a plain message naming the file and the folder.
 

@@ -2242,8 +2242,11 @@ class AttachmentService:
         lands on a name the user already sees in that folder."""
         from app.services.storage_router import sanitize_storage_filename
 
-        if self._folder_clash(directory_id, sanitize_storage_filename(display_name), exclude_id):
-            return False
+        # Upload stores the sanitised name, the clash dialog's Rename stores it as typed: both
+        # forms must be free for a suggestion to work either way.
+        for original in {display_name, sanitize_storage_filename(display_name)}:
+            if self._folder_clash(directory_id, original, exclude_id):
+                return False
         q = self.db.query(Attachment.id).filter(
             Attachment.directory_id == directory_id,
             func.lower(Attachment.stored_filename) == display_name.lower(),
@@ -2332,9 +2335,10 @@ class AttachmentService:
         if on_conflict == "rename":
             if not update_data.get("stored_filename"):
                 raise handle_validation_error("Type the new name for the file.")
-            from app.services.storage_router import sanitize_storage_filename
-
-            update_data["original_filename"] = sanitize_storage_filename(update_data["stored_filename"])
+            # Kept exactly as typed (brackets included): original_filename no longer builds any
+            # storage key after upload (the key is frozen in file_path), so nothing needs it
+            # sanitised, and the details window shows it.
+            update_data["original_filename"] = update_data["stored_filename"]
 
         # The clash check runs before anything is written.
         target_dir = update_data["directory_id"] if "directory_id" in update_data else attachment.directory_id

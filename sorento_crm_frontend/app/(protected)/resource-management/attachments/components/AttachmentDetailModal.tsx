@@ -49,6 +49,7 @@ import {
 } from '../hooks/useAttachments';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
+import { attachmentDisplayNames } from '../types/attachmentDisplayName';
 import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
@@ -894,7 +895,7 @@ export default function AttachmentDetailModal({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = file.original_filename || 'download';
+      a.download = file.stored_filename || file.original_filename || 'download';
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -908,6 +909,8 @@ export default function AttachmentDetailModal({
     setPreviewOpen(true);
   };
 
+  const displayNames = attachment ? attachmentDisplayNames(attachment) : null;
+
   const previewItems = useMemo<AttachmentPreviewItem[]>(() => {
     if (!attachment) return [];
     const fp = attachment.file_path || '';
@@ -915,7 +918,7 @@ export default function AttachmentDetailModal({
     return [
       {
         id: attachment.id,
-        name: attachment.original_filename,
+        name: attachment.stored_filename || attachment.original_filename,
         url: cdn,
         downloadUrl:
           typeof window !== 'undefined'
@@ -931,8 +934,22 @@ export default function AttachmentDetailModal({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0">
           <DialogHeader className="px-6 pt-6 pb-0 pr-12 flex flex-row items-center justify-between gap-4">
-            <DialogTitle className="text-xl truncate min-w-0 flex-1">
-              {attachment?.original_filename ??
+            <DialogTitle className="text-xl min-w-0 flex-1">
+              {displayNames ? (
+                <>
+                  <span className="block truncate" title={displayNames.name}>
+                    {displayNames.name}
+                  </span>
+                  {displayNames.originalName && (
+                    <span
+                      className="block truncate text-sm font-normal text-muted-foreground"
+                      title={displayNames.originalName}
+                    >
+                      Original name: {displayNames.originalName}
+                    </span>
+                  )}
+                </>
+              ) :
                 (isLoading ? (
                   // A `<h2>` (DialogTitle's element) may only hold phrasing content, so
                   // this is `Skeleton` rendered `asChild` onto a `span` (M5-01/M5-02
