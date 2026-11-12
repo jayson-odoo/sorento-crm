@@ -467,6 +467,12 @@ class RespondClient:
         payload = {"message": {"type": "text", "text": text}}
         return self._post_contact_message(identifier, payload, timeout=15)
 
+    def send_quick_reply(self, identifier: str, text: str, replies: list[str]) -> dict:
+        """Send a text with tap-to-answer buttons. Payload shape UNVERIFIED against
+        Respond's live API (N8N-RETIRE-A Q4); proven at the stage-2 own-number test."""
+        payload = {"message": {"type": "quick_reply", "title": text, "replies": replies}}
+        return self._post_contact_message(identifier, payload, timeout=15)
+
     def send_attachment(
         self,
         identifier: str,
