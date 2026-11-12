@@ -65,6 +65,8 @@ def test_each_call_keeps_its_own_timeout(transport):
     timeouts = [r.extensions["timeout"] for _, r in transport["requests"]]
     assert [t["read"] for t in timeouts] == [3.0, 30.0]
     assert [t["connect"] for t in timeouts] == [3.0, 30.0]
+    assert [t["write"] for t in timeouts] == [3.0, 30.0]
+    assert [t["pool"] for t in timeouts] == [3.0, 30.0]
 
 
 def test_a_forked_process_builds_its_own_client(transport, monkeypatch):
@@ -75,3 +77,12 @@ def test_a_forked_process_builds_its_own_client(transport, monkeypatch):
     embedding_client.embed_texts(["b"], "openai", "text-embedding-3-small", api_key="test-key", timeout=3.0)
     assert len(transport["clients"]) == 2
     assert transport["requests"][0][0] is not transport["requests"][1][0]
+
+
+def test_an_idle_connection_outlives_the_gap_between_turns(transport):
+    """httpx drops an idle connection after 5 s by default, so two turns more than 5 s apart paid the handshake again.
+    The shared client keeps it for `KEEPALIVE_EXPIRY_SECONDS` (reviewer, 12 Nov)."""
+    embedding_client.embed_texts(["a"], "openai", "text-embedding-3-small", api_key="test-key", timeout=3.0)
+    client = transport["clients"][0]
+    assert client._transport._pool._keepalive_expiry == embedding_client.KEEPALIVE_EXPIRY_SECONDS
+    assert embedding_client.KEEPALIVE_EXPIRY_SECONDS >= 30
