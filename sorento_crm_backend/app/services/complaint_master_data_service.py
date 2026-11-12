@@ -150,6 +150,7 @@ class ComplaintResolutionService:
                 "name": r.name,
                 "description": r.description,
                 "is_active": r.is_active,
+                "requires_service_job": bool(r.requires_service_job),
                 "created_at": r.created_at,
                 "updated_at": r.updated_at,
                 "complaint_count": count_by_id.get(r.id, 0),

@@ -1928,8 +1928,35 @@ class ComplaintService:
             self._populate_lines_from_legacy_csv(complaint)
 
         self.db.commit()
+        if update_data.get("resolution_id"):
+            self._raise_service_job_for_resolution(complaint)
         self.db.refresh(complaint)
         return complaint
+
+    def _raise_service_job_for_resolution(self, complaint: Complaint) -> None:
+        """A resolution flagged ``requires_service_job`` raises a job (idempotent, never deletes).
+
+        Runs after the complaint save is committed and inside a savepoint, so a failure here
+        (graph or numbering not set up) leaves the save intact (after-sales P1, UAC B6/B7).
+        """
+        from app.models.complaint_master_data import ComplaintResolution
+        from app.services import service_job_service
+
+        try:
+            flagged = (
+                self.db.query(ComplaintResolution.requires_service_job)
+                .filter(ComplaintResolution.id == complaint.resolution_id)
+                .scalar()
+            )
+            if not flagged:
+                return
+            with self.db.begin_nested():
+                service_job_service.raise_job(self.db, str(complaint.id), None, commit=False)
+            self.db.commit()
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "service job not raised for complaint %s", complaint.id, exc_info=True
+            )
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
         """Resolve contact identifier from respond_inbox_url to a numeric respond_io_id.

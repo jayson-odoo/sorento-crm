@@ -151,6 +151,16 @@ class ComplaintBase(BaseModel):
     contact_person: Optional[str] = None
     contact_number: Optional[str] = None
     customer_address: Optional[str] = None
+    site_address_line1: Optional[str] = None
+    site_address_line2: Optional[str] = None
+    site_postcode: Optional[str] = None
+    site_city: Optional[str] = None
+    site_state: Optional[str] = None
+    site_country: Optional[str] = None
+    site_contact_name: Optional[str] = None
+    site_contact_phone: Optional[str] = None
+    site_latitude: Optional[float] = None
+    site_longitude: Optional[float] = None
     project_title: Optional[str] = None
     # AC-L3. The link is a UUID on the wire; `project_code` / `project_name` are the
     # read-only resolved display values the UI actually shows.
@@ -207,6 +217,16 @@ class ComplaintUpdate(BaseModel):
     contact_person: Optional[str] = None
     contact_number: Optional[str] = None
     customer_address: Optional[str] = None
+    site_address_line1: Optional[str] = None
+    site_address_line2: Optional[str] = None
+    site_postcode: Optional[str] = None
+    site_city: Optional[str] = None
+    site_state: Optional[str] = None
+    site_country: Optional[str] = None
+    site_contact_name: Optional[str] = None
+    site_contact_phone: Optional[str] = None
+    site_latitude: Optional[float] = None
+    site_longitude: Optional[float] = None
     project_title: Optional[str] = None
     # AC-L3. The link is a UUID on the wire; `project_code` / `project_name` are the
     # read-only resolved display values the UI actually shows.
