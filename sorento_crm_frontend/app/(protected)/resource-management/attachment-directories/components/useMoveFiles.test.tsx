@@ -97,7 +97,7 @@ describe('useMoveFiles', () => {
   });
 
   it('without the tick box each conflict is asked; the typed name goes with that file only', async () => {
-    preflight([conflict(1), conflict(2)], { updated: 2, not_moved: [conflict(2)] });
+    preflight([conflict(1), conflict(2)], { updated: 1, not_moved: [conflict(2)] });
     const pending = mount().move(['f-1', 'f-2'], 'dir-b');
     expect(await screen.findByText('1 of 2')).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox', { name: 'New name' }), { target: { value: 'mine.pdf' } });

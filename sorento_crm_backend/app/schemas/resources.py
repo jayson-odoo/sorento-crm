@@ -285,10 +285,34 @@ class AttachmentReorderRequest(BaseModel):
         return v
 
 
+class AttachmentMoveResolution(BaseModel):
+    """What to do with one file whose name is already in the target folder."""
+    action: Literal["skip", "replace", "rename"]
+    # Rename only: the new name; omitted = a free "name (1).ext" style name.
+    name: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if any(ch in s for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in s) or len(s) > 255:
+            raise ValueError("The new name cannot contain / or \\ and must be at most 255 characters.")
+        return s
+
+
 class AttachmentsBulkMoveRequest(BaseModel):
     """Move many attachments into the same target folder in one transaction."""
     attachment_ids: list[str]
     directory_id: Optional[str] = None
+    # FILES-MOVE-DUPLICATE: True = write nothing, return every name conflict (asked about
+    # before anything moves, so Cancel leaves everything in place).
+    check_only: bool = False
+    # {attachment_id: resolution} for the files that clash; a clashing file without one is skipped.
+    resolutions: dict[str, AttachmentMoveResolution] = {}
 
     @field_validator("attachment_ids")
     @classmethod

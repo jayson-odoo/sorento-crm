@@ -52,15 +52,18 @@ File rows in the attachments table no longer have a pencil / **Actions** column 
 1. Tick the files (and folders) to move, then choose **Move to…** from the action menu, or right-click one file and choose **Move to…**. You can also drag files onto a folder in the sidebar.
 2. Pick the target folder and confirm.
 
-Every file that can move goes straight away. A folder can hold only one file with a given name, so if the target folder already has a file with the same name, a window opens for that file with three choices:
+A folder can hold only one file with a given name. Before anything moves, the system checks every file. If some names are already taken in the target folder, a window opens for the first one (it shows, for example, *1 of 4*) with these choices:
 
 | Choice | What happens |
 |----|----|
 | **Rename** | The file moves under the new name shown in the box (for example `photo (1).jpg`). You can type another name. The file itself, its links to products, promotions and forms, and any link already shared stay the same. The new name also becomes the file's original name, because a folder allows one file per original name. |
 | **Replace** | The file already in the target folder goes to **Trash** and this file takes its place. Records linked to the replaced file stay linked to it. To undo, first rename or move the file that took its place, then search for the replaced file in **Trash** and restore it (while its name is taken in that folder, Restore says so and leaves it in Trash). Only users who may delete files see this choice. |
 | **Skip** | The file stays where it is. |
+| **Cancel** | The whole move is cancelled: nothing moves, not even the files without a clash. Closing the window or pressing Esc does the same. |
 
-When the move is done, one message sums it up, for example: *2 moved. 1 not moved: photo.jpg already exists in Folder B.*
+Tick **Do this for the remaining … conflicts** to give the same answer to every other clash at once; no more windows open. With **Rename** ticked for all, each file gets its own free name such as `photo (1).jpg`. The **New name** box is only for the file the window is showing.
+
+When the move is done, one message sums it up, for example: *6 moved, 3 renamed, 1 replaced. 1 skipped: photo.jpg.*
 
 A file renamed earlier still counts under the name it was first uploaded with. Open a file to see both: its name, and under it **Original name** when the two differ. If the target folder holds a file first uploaded under that same name, the message says so, for example: *holiday.jpg cannot be moved into Folder B: photo.jpg there has the same original file name.* Choose **Rename** to move it under a new name.
 

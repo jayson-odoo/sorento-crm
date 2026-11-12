@@ -1,6 +1,6 @@
 # PLAN: Files move / upload name clash (FILES-MOVE-DUPLICATE)
 
-Status: Build (track: standard; no migration; RBAC touched by Replace, so security-reviewer runs)
+Status: Build, hand-test round 2 (track: standard; no migration; RBAC touched by Replace, so security-reviewer runs)
 
 ## Problem (production, 12 Nov)
 
@@ -44,3 +44,17 @@ AND is_deleted = false`. The model did not declare it, so no test schema had it.
 - `sorento_crm_frontend/.../attachment-directories/components/driveMoveSummary.test.ts`,
   `useMoveFiles.test.tsx`
 - Three older fixtures seeded same-original twins in one folder (impossible in prod); fixed.
+
+## Hand test round 2 (owner, 12 Nov 14:16)
+
+Windows-style conflict handling:
+- `POST /bulk-move` with `check_only: true` returns every conflict (folder + same-batch twins)
+  and writes nothing. The client asks about all of them first.
+- One window, "1 of N", with "Do this for the remaining N-1 conflicts": Skip / Replace /
+  Rename for all (Rename picks a free "name (1)" per file; the New name box is for the current
+  file only and hides when the box is ticked).
+- Cancel, the X and Esc cancel the whole move: no write call is made.
+- Then one `POST /bulk-move` with `resolutions` {id: {action, name?}}; one summary
+  "N moved, R renamed, P replaced. S skipped: ...".
+- Folders cannot clash (no name rule on `attachment_directories`); Files has no Duplicate action.
+- Title padding keeps long names clear of the close X.

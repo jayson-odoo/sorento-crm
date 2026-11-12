@@ -1653,8 +1653,27 @@ def bulk_move_attachments(
         # A moved file is under that folder's delete / restore cascade from then on.
         assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
+        resolutions = {k: v.model_dump() for k, v in body.resolutions.items()}
+        if any(r["action"] == "replace" for r in resolutions.values()) and not body.check_only:
+            # Replace sends the file already there to Trash: the Archive slug, plus the
+            # per-record write check run on each row it trashes.
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "resource.attachments.delete"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Replacing a file needs the permission to delete files.",
+                )
         updated, not_moved = service.bulk_move_report(
-            body.attachment_ids, body.directory_id, viewer_id=str(current_user["id"])
+            body.attachment_ids,
+            body.directory_id,
+            viewer_id=str(current_user["id"]),
+            check_only=body.check_only,
+            resolutions=resolutions,
+            actor_id=str(current_user["id"]),
+            replace_guard=lambda row: assert_can_write_existing(
+                db, row.entity_type, row.entity_id, current_user
+            ),
         )
         return AttachmentsBulkMoveResponse(updated=updated, not_moved=not_moved)
     except HTTPException:

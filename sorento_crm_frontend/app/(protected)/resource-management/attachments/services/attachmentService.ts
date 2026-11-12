@@ -421,19 +421,33 @@ export async function updateAttachment(
   return response.json();
 }
 
+export type AttachmentMoveResolution =
+  | { action: 'skip' }
+  | { action: 'replace' }
+  | { action: 'rename'; name?: string };
+
+/**
+ * Move many files into one folder. `checkOnly` writes nothing and returns every name
+ * conflict (FILES-MOVE-DUPLICATE: decided before anything moves). `resolutions` says what to
+ * do with each file that clashes; a clashing file without one is skipped and listed.
+ */
 export async function bulkMoveAttachments(
   attachmentIds: string[],
   directoryId: string | null,
+  options: { checkOnly?: boolean; resolutions?: Record<string, AttachmentMoveResolution> } = {}
 ): Promise<{ updated: number; not_moved: AttachmentNotMoved[] }> {
   const response = await apiFetch('/api/v1/resource-management/attachments/bulk-move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ attachment_ids: attachmentIds, directory_id: directoryId }),
+    body: JSON.stringify({
+      attachment_ids: attachmentIds,
+      directory_id: directoryId,
+      check_only: options.checkOnly ?? false,
+      resolutions: options.resolutions ?? {},
+    }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to move attachments' }));
-    const message = typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to move attachments';
-    throw new Error(message);
+    throw new Error(await extractApiError(response, 'Failed to move attachments'));
   }
   return response.json();
 }
