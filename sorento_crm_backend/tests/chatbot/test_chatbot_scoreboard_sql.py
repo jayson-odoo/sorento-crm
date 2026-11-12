@@ -248,3 +248,36 @@ def test_statement_3_any_date_shows_its_window_only():
     assert rows[0]["daily_line"].startswith(
         "15/01/2031: stock not-found too few (n=0) [7d too few (n=0), target 8%]; "
     )
+
+
+# Review round 1 (reviewer findings 4 and 6).
+
+
+def test_a_send_whose_outgoing_row_is_still_pending_is_a_delivery_failure():
+    """Only a confirmed status (sent, delivered, read) shows the reply went out; a row still
+    `pending` (or with no status) is as unconfirmed as the send itself."""
+    with pg_session() as db:
+        from app.services.analytics_connector.views import ensure_cost_views, ensure_views
+
+        ensure_views(db)
+        ensure_cost_views(db)
+        _ask(db, 1, intent="check_order", outcome="technical", status="failed", stage="send_unconfirmed",
+             outgoing="pending")
+        _ask(db, 2, intent="check_order", outcome="technical", status="failed", stage="send_unconfirmed",
+             outgoing=None)
+        _ask(db, 3, intent="check_order", outcome="technical", status="failed", stage="send_unconfirmed",
+             outgoing="sent")
+        row = _week_all(_run(db, _statements()[0]), "audience", "all")
+    assert float(row["tech_delivery_pct"]) == 66.7  # 2 of 3
+
+
+def test_statement_3_the_7_day_figure_is_that_day_and_the_6_before_it():
+    """A day exactly 7 days back is outside the window; 6 days back is inside."""
+    with pg_session() as db:
+        _seed_daily(db)
+        for n in range(50):  # 1 Jan 2031: 6 days before 7 Jan, 7 days before 8 Jan
+            _ask(db, n - 6 * 24 * 60, intent="check_stock", outcome="answered_empty")
+        rows = _run(db, _statement_3())
+    jan7, jan8 = rows[0]["daily_line"], rows[1]["daily_line"]
+    assert jan7.startswith("07/01/2031: stock not-found 10.0% (dead-end 10.0%) [7d 50.9%, target 8%]; "), jan7
+    assert jan8.startswith("08/01/2031: stock not-found too few (n=0) [7d 10.0%, target 8%]; "), jan8

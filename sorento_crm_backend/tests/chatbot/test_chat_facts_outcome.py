@@ -678,7 +678,7 @@ def test_scoreboard_reply_words_alone_never_make_a_question():
     assert _outcome(turn) == ("answered_empty", None)
 
 
-@pytest.mark.parametrize("kind", ["product_pick", "customer_pick", "tier_pick", "form_pick"])
+@pytest.mark.parametrize("kind", ["product_pick", "customer_pick", "tier_pick", "kind_pick"])
 def test_scoreboard_a_pick_one_menu_is_clarified_not_answered(kind):
     """AC-2: a reply whose question is a pick-one menu asked the customer to choose."""
     turn = turn_dict(
@@ -780,4 +780,36 @@ def test_scoreboard_a_menu_after_an_answer_needs_no_state_event():
     """The menu rule reads only `replied.facts.asking`, so turns from before the `state`
     event are classified too."""
     turn = turn_dict(looked_up(sections=2), _replied_asking("customer_pick", sections=2))
+    assert _outcome(turn) == ("clarified", None)
+
+
+# Review round 1 (reviewer findings 1 and 2).
+
+
+@pytest.mark.parametrize("kind", ["outstanding_detail", "sales_report_detail", "top_selling_pick"])
+def test_scoreboard_a_drill_down_offer_after_an_answer_stays_answered(kind):
+    """The report or ranking IS the answer; the offer to show a row's detail rides after it,
+    like an escalation offer. Only which-one picks (the roster kinds less the ranking) ask."""
+    turn = turn_dict(
+        looked_up(sections=2),
+        _replied_asking(kind, sections=2),
+        _state(open_question=_pick(kind)),
+    )
+    assert _outcome(turn) == ("answered", None)
+
+
+def test_scoreboard_a_partial_fill_answer_with_sections_is_answered():
+    """The stock task fetched the lines answered now and left the task open for the rest
+    without asking anything: an answer with sections, not a quantity question."""
+    turn = turn_dict(
+        looked_up(sections=2, domains=["inventory"]),
+        _replied_asking(None, sections=2),
+        _state(_qty_task(opened=TURN_NO - 1, touched=TURN_NO)),
+    )
+    assert _outcome(turn) == ("answered", None)
+
+
+def test_scoreboard_a_quantity_question_with_no_lookup_is_clarified():
+    """The task asks the quantity before any fetch (no `looked_up` stage)."""
+    turn = turn_dict(_replied_asking(None), _state(_qty_task()), branch_kind="business_query")
     assert _outcome(turn) == ("clarified", None)
