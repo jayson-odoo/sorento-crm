@@ -4,8 +4,8 @@
  * Staff new / edit sample request (SR-CORE), restructured by SAMPLE-REQUEST-V2 (owner 11 Nov):
  * four guided sections like the price tag request (Customer & project / Ship to / Items /
  * Delivery), ship to = a party of the project (the proposal's party picker), the contact person
- * from that party's people (the registration contacts popup), and one main button, Preview, whose
- * popup submits. Every exit returns to where the person started (`?from=`, owner 16:30).
+ * from that party's people (the proposal's Attn chooser), and Submit as the main button with no
+ * Preview step (owner 12 Nov). Every exit returns to where the person started (`?from=`, owner 16:30).
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';

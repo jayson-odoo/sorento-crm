@@ -23,7 +23,7 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasAnyPermission: (slugs: string[]) => slugs.some((s) => state.perms.has(s)),
   usePermissions: () => ({ permissionSet: state.perms, permissions: [...state.perms], isLoading: false, isError: false }),
 }));
-vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => state.userId }));
+vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => state.userId, useEffectiveUserName: () => 'Ann Sales' }));
 vi.mock('@/hooks/useDeferredAction', () => ({ useDeferredAction: () => ({ countdown: null, isBlocked: false, start: vi.fn() }) }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/components/audit/AuditTrail', () => ({ default: () => <div data-testid="audit-trail" /> }));

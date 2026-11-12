@@ -1,17 +1,17 @@
 /**
  * SAMPLE-REQUEST-V2 slice 2 (owner Q1 a, 11 Nov), which replaced PORTAL-P4-REQUESTS R3a's portal form: a LIMITED
- * user (`view_own`, not `view`) now gets the SAME guided staff form as everyone else (four sections, Save as draft,
- * Preview, Submit inside the Preview popup), but every server call of THEIR form goes through My Requests
+ * user (`view_own`, not `view`) now gets the SAME guided staff form as everyone else (four sections that start
+ * collapsed, Save as draft, Submit as the main button with no Preview step: owner 12 Nov), but every server call of THEIR form goes through My Requests
  * (`/api/v1/my-requests/...`), never the staff sample request API. Their read-only VIEW is still the portal's
  * SampleRequestDetail. Entry points are the components the pages render: SampleRequestForm (new with ?project_id= /
  * edit), and SampleRequestDetailTabs + SampleRequestDetail (view). Staff keep today's screens.
  *
- * Marker that tells the guided form from the old portal one: the four section titles and the Preview button
+ * Marker that tells the guided form from the old portal one: the four section titles and the plain Submit button
  * (the portal form had "Submit sample request" and an "Items" card with "Add item").
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), search: '' }));
@@ -150,6 +150,14 @@ beforeEach(() => {
 
 const SECTIONS = ['Customer & project', 'Ship to', 'Items', 'Delivery'];
 const draftBtn = () => screen.getByRole('button', { name: 'Save as draft' });
+const submitBtn = () => screen.getByRole('button', { name: /^Submit$/ });
+/** Owner 12 Nov: every section starts collapsed; open them all (they stay mounted either way). */
+function openAll() {
+  for (const title of SECTIONS) {
+    const trigger = screen.queryByRole('button', { name: new RegExp(`^${title}`) });
+    if (trigger && trigger.getAttribute('aria-expanded') === 'false') fireEvent.click(trigger);
+  }
+}
 const posts = () => where((c) => c.method === 'POST' && c.url === MINE);
 /** A draft that passes every staff rule, as My Requests returns it. */
 const READY = {
@@ -159,21 +167,24 @@ const READY = {
 };
 
 describe('limited user, New Sample Request renders the guided form through My Requests', () => {
-  it('is the guided form (four sections, Save as draft, Preview), not the portal one, and not the staff API', async () => {
+  it('is the guided form (four collapsed sections, Save as draft, Submit, no Preview), not the portal one, and not the staff API', async () => {
     mountForm(LIMITED);
     for (const t of SECTIONS) expect((await screen.findAllByText(t, { selector: 'span' })).length).toBeGreaterThan(0);
+    for (const t of SECTIONS) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${t}`) }).getAttribute('aria-expanded')).toBe('false');
+    }
     expect(screen.getByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
+    expect(submitBtn()).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Submit sample request' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Add item/ })).toBeNull();
-    // Submit lives inside the Preview popup only.
-    expect(screen.queryByRole('button', { name: /^Submit$/ })).toBeNull();
     expect(staffApi()).toHaveLength(0);
   });
 
   it('customer and product search go to my-requests, projects to the own-scope CRM search', async () => {
     mountForm(LIMITED);
     await screen.findByText('Customer & project');
+    openAll();
     const customer = screen.getByLabelText(/^Customer/);
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'ZZ' } });
@@ -213,15 +224,13 @@ describe('limited user, New Sample Request renders the guided form through My Re
     expect(staffApi()).toHaveLength(0);
   });
 
-  it('Preview then Submit saves via PUT and POSTs .../<id>/submit on my-requests, then lands on the origin rule', async () => {
+  it('Submit saves via PUT and POSTs .../<id>/submit on my-requests (no popup), then lands on the origin rule', async () => {
     detailNow = detail(READY);
     mountForm(LIMITED, { requestId: 'sr-5' });
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Preview sample request')).toBeInTheDocument();
     expect(where((c) => c.url.endsWith('/submit'))).toHaveLength(0);
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Submit$/ }));
+    fireEvent.click(submitBtn());
+    expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === `${MINE}/sr-5/submit`)).toHaveLength(1));
     expect(where((c) => c.method === 'PUT' && c.url === `${MINE}/sr-5`)).toHaveLength(1);
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
@@ -233,8 +242,7 @@ describe('limited user, New Sample Request renders the guided form through My Re
     detailNow = detail(READY);
     mountForm(LIMITED, { requestId: 'sr-5' });
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /^Submit$/ }));
+    fireEvent.click(submitBtn());
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === `${MINE}/sr-5/submit`)).toHaveLength(1));
     expect(screen.queryByText('Customer & project')).not.toBeNull();
     await waitFor(() => expect(nav.push).toHaveBeenCalled());
@@ -266,8 +274,7 @@ describe('limited user, New Sample Request renders the guided form through My Re
     detailNow = detail(READY);
     mountForm(LIMITED, { requestId: 'sr-5' });
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /^Submit$/ }));
+    fireEvent.click(submitBtn());
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/pr-1?tab=sample-requests'));
     expect(staffApi()).toHaveLength(0);
   });
@@ -276,7 +283,8 @@ describe('limited user, New Sample Request renders the guided form through My Re
 describe('limited user, Sample Request edit loads from my-requests', () => {
   it('GETs my-requests/submissions/sample_request/<id>, shows the guided form, saves with PUT, never the staff API', async () => {
     mountForm(LIMITED, { requestId: 'sr-5' });
-    expect(await screen.findByRole('button', { name: 'Preview' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Submit$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
     expect(screen.getByText('Ship to', { selector: 'span' })).toBeInTheDocument();
     expect(where((c) => c.method === 'GET' && c.url === `${MINE}/sr-5`).length).toBeGreaterThan(0);
     fireEvent.click(draftBtn());
@@ -311,7 +319,8 @@ describe('limited user, Sample Request seeded from a project (?project_id=)', ()
   it('seeds project_id and the project title into the guided form and the saved body carries project_id', async () => {
     (getProject as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: PROJECT_ID, project_code: 'PRJ-0001', title: 'Project One' });
     mountForm(LIMITED, { projectId: PROJECT_ID });
-    expect(await screen.findByText(/PRJ-0001 - Project One/)).toBeInTheDocument();
+    // Shown both as the section's one-line summary and as the fixed Project value.
+    expect((await screen.findAllByText(/PRJ-0001 - Project One/)).length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain(PROJECT_ID);
     fireEvent.click(draftBtn());
     await waitFor(() => expect(posts()).toHaveLength(1));
@@ -383,7 +392,7 @@ describe('limited user, Sample Request shows exactly one Back (the CRM header\'s
   });
   it('edit form: no Back of its own', async () => {
     mountForm(LIMITED, { requestId: 'sr-5' });
-    await screen.findByRole('button', { name: 'Preview' });
+    await screen.findByRole('button', { name: /^Submit$/ });
     expectNoOwnBack();
   });
   it('read-only view: no Back of its own', async () => {
