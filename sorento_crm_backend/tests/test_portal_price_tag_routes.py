@@ -769,7 +769,8 @@ class TestSubmitRefusals:
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["portal_draft_at"] is None
-        assert body["status"] == "new"
+        assert body["status"] == "proof_ready"  # PRICETAG-SELF-APPROVAL: his own proof
+        assert body["assigned_to_id"] is None
 
     def test_a_request_cannot_be_submitted_twice(self, client):
         """The second submit would fire the form SLA again."""
@@ -1334,6 +1335,14 @@ def _seed_completed_export(
     return key
 
 
+def _set_status(db, request_id: str, status: str) -> None:
+    """PRICETAG-SELF-APPROVAL: the download route serves only an approved (or printed) request."""
+    from app.models.price_tag import PriceTagRequest
+
+    db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).update({"status": status})
+    db.commit()
+
+
 class TestTheDownloadRoute:
     def test_the_detail_route_says_whether_a_completed_export_exists(self, client):
         c, db, _contact_id = client
@@ -1359,6 +1368,7 @@ class TestTheDownloadRoute:
             _BASE,
             json={"lines": [{"line_type": "product", "product_id": product_id}]},
         ).json()
+        _set_status(db, created["id"], "approved")
 
         storage = FakeStorage()
         monkeypatch.setattr(portal_price_tag, "get_backend", lambda provider: storage)
@@ -1382,6 +1392,7 @@ class TestTheDownloadRoute:
             _BASE,
             json={"lines": [{"line_type": "product", "product_id": product_id}]},
         ).json()
+        _set_status(db, created["id"], "approved")
 
         storage = FakeStorage()
         monkeypatch.setattr(portal_price_tag, "get_backend", lambda provider: storage)
@@ -1399,6 +1410,23 @@ class TestTheDownloadRoute:
         assert res.status_code == 200, res.text
         assert res.content == b"v2 bytes"
 
+    @pytest.mark.parametrize("status", ["proof_ready", "new", "designing", "changes_requested"])
+    def test_an_unapproved_request_refuses_409_not_approved(self, client, status):
+        """PRICETAG-SELF-APPROVAL R5: an older PDF is not served until the tag is approved."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+        _seed_completed_export(db, created["id"])
+        _set_status(db, created["id"], status)
+
+        res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 409, res.text
+        assert res.json()["code"] == "NOT_APPROVED"
+
     def test_no_completed_export_refuses_with_404(self, client):
         c, db, _contact_id = client
         product_id = _seed_product(db)
@@ -1406,6 +1434,7 @@ class TestTheDownloadRoute:
             _BASE,
             json={"lines": [{"line_type": "product", "product_id": product_id}]},
         ).json()
+        _set_status(db, created["id"], "approved")
 
         res = c.get(f"{_BASE}/{created['id']}/download")
 
@@ -1465,6 +1494,7 @@ class TestTheDownloadRoute:
             _BASE,
             json={"lines": [{"line_type": "product", "product_id": product_id}]},
         ).json()
+        _set_status(db, created["id"], "approved")
 
         storage = FakeStorage()
         storage.downloading_fails = True
@@ -1967,9 +1997,9 @@ class TestReviseCrossCompanyPromotionGate:
                 },
             )
             # Matches `test_portal_price_tag_revise.py`'s `_seed_request`: a
-            # revisable request has answered who prints (r9 D7) and sits in an
-            # `allowed_statuses` status.
-            request.status = "new"
+            # revisable request has answered who prints (r9 D7) and sits in the
+            # salesperson's hands (PRICETAG-SELF-APPROVAL: his own proof).
+            request.status = "proof_ready"
             request.print_by = "office"
             request.portal_draft_at = None
             db.commit()
@@ -2243,3 +2273,69 @@ class TestAcS92PortalExportRoute:
         response = c.post(f"{_BASE}/{theirs.id}/export")
 
         assert response.status_code == 404, response.text
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-LPSP fix round 2 (bug 17): the Item picker option reads
+# "CODE  RM <list price>", so the lookup carries the list price on the wire
+# (response_model drops an undeclared field silently).
+# ---------------------------------------------------------------------------
+
+
+class TestItemLookupCarriesTheListPrice:
+    def test_a_priced_product_answers_its_list_price(self, client):
+        from app.models.product import Product
+
+        c, db, _contact_id = client
+        product = db.get(Product, _seed_product(db))
+        product.list_price = 1050
+        db.flush()
+
+        res = c.get(
+            "/api/v1/public/portal/lookups/price-tag-items",
+            params={"q": product.product_code},
+        )
+
+        assert res.status_code == 200, res.text
+        (row,) = [r for r in res.json() if r["id"] == product.id]
+        assert row["list_price"] == 1050
+
+    def test_a_zero_list_price_answers_none(self, client):
+        from app.models.product import Product
+
+        c, db, _contact_id = client
+        product = db.get(Product, _seed_product(db))
+        product.list_price = 0
+        db.flush()
+
+        res = c.get(
+            "/api/v1/public/portal/lookups/price-tag-items",
+            params={"q": product.product_code},
+        )
+
+        assert res.status_code == 200, res.text
+        (row,) = [r for r in res.json() if r["id"] == product.id]
+        assert "list_price" in row
+        assert row["list_price"] is None
+
+    def test_a_set_answers_its_override_list_price(self, client):
+        from app.models.product_set import ProductSet
+
+        c, db, _contact_id = client
+        code = unique_code("ZZTSET")
+        row = ProductSet(
+            id=str(uuid.uuid4()),
+            set_code=code,
+            name="ZZT set",
+            list_price_override=2400,
+            is_active=True,
+        )
+        db.add(row)
+        db.flush()
+
+        res = c.get("/api/v1/public/portal/lookups/price-tag-items", params={"q": code})
+
+        assert res.status_code == 200, res.text
+        (hit,) = [r for r in res.json() if r["id"] == row.id]
+        assert hit["kind"] == "product_set"
+        assert hit["list_price"] == 2400

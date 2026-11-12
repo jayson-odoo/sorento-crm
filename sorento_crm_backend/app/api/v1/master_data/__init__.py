@@ -4,10 +4,12 @@ from app.api.v1.master_data import (
     products,
     brands,
     categories,
+    certificate_links,
     certificates,
     units_of_measure,
     countries,
     item_classes,
+    payment_terms,
     products_select,
     product_find,
     product_barcode_import,
@@ -23,9 +25,11 @@ from app.api.v1.master_data import (
     product_companions,
     product_alternatives,
     product_combos,
+    accessories,
     product_compatibility,
     sales_agents,
     catalogue_photo_readings,
+    costing,
 )
 
 router = APIRouter()
@@ -47,8 +51,10 @@ router.include_router(
 router.include_router(units_of_measure.router, prefix="/units-of-measure", tags=["units-of-measure"])
 router.include_router(countries.router, prefix="/countries", tags=["countries"])
 router.include_router(item_classes.router, prefix="/item-classes", tags=["item-classes"])
+router.include_router(payment_terms.router, prefix="/payment-terms", tags=["payment-terms"])
 router.include_router(product_attachments.router, prefix="/product-attachments", tags=["product-attachments"])
 router.include_router(certificates.router, prefix="/certificates", tags=["certificates"])
+router.include_router(certificate_links.router, prefix="/certificate-links", tags=["certificates"])
 router.include_router(product_sets.router, prefix="/product-sets", tags=["product-sets"])
 router.include_router(
     product_companions.router,
@@ -60,6 +66,9 @@ router.include_router(
 # hang one on. Registered here beside product_companions, the #779 precedent this
 # slice copies.
 router.include_router(product_combos.router, tags=["product-combos"])
+# PRICETAG-ACCESSORIES: no prefix, same reason (`/accessories`, `/products/{id}/accessories`,
+# `/product-combos/{id}/accessories`).
+router.include_router(accessories.router, tags=["accessories"])
 # NO prefix either: `/products/{id}/compatibility` and `/product-compatibility/...`.
 router.include_router(product_compatibility.router, tags=["product-compatibility"])
 router.include_router(
@@ -68,6 +77,8 @@ router.include_router(
     tags=["catalogue-photo-readings"],
 )
 router.include_router(sales_agents.router, prefix="/sales-agents", tags=["sales-agents"])
+# PRODUCT-COSTING: the Costing page, settings, dated exchange rates and party profiles.
+router.include_router(costing.router, prefix="/costing", tags=["costing"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
 router.include_router(lookup_eligibility.router, prefix="/lookup-eligibility", tags=["lookup-eligibility"])
 router.include_router(

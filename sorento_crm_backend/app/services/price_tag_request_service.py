@@ -14,11 +14,12 @@ The status graph:
 """
 import copy
 import logging
+import math
 import uuid
 from typing import Optional
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import Integer, and_, cast, func, or_, select
+from sqlalchemy import Integer, and_, cast, func, or_, select, text as sql_text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -66,6 +67,9 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     STATUS_PROOF_READY: {
         STATUS_APPROVED,
         STATUS_CHANGES_REQUESTED,
+        # PRICETAG-SELF-APPROVAL R6: the salesperson escalates his own proof to
+        # marketing, which starts the request over at `new` for them.
+        STATUS_NEW,
         STATUS_REJECTED,
         STATUS_VOID,
     },
@@ -83,7 +87,14 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     # The office hand-over (D8). `ready_for_collection` is reachable only when
     # somebody has said the office prints - `transition_status` checks that on
     # top of this table, because the graph alone cannot see `print_by`.
-    STATUS_APPROVED: {STATUS_READY_FOR_COLLECTION, STATUS_REJECTED, STATUS_VOID},
+    # `new` is the escalation edge (PRICETAG-SELF-APPROVAL R6): a problem found
+    # after approval goes to marketing.
+    STATUS_APPROVED: {
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_NEW,
+        STATUS_REJECTED,
+        STATUS_VOID,
+    },
     # Its ONLY exit: the tags exist, they are on the counter, and the single
     # remaining question is whether anybody has taken them.
     STATUS_READY_FOR_COLLECTION: {STATUS_COLLECTED},
@@ -94,6 +105,11 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     STATUS_REJECTED: set(),
     STATUS_VOID: set(),
 }
+
+# The most sheets one self-approved tag sheet may carry (PRICETAG-SELF-APPROVAL B2):
+# far past any real request, small enough that a posted sheet cannot become a
+# flood for the PDF worker.
+_MAX_SHEETS = 50
 
 # How many times a create re-derives its number after losing an insert race
 # before it gives up. Five is far past what a human-paced portal ever needs; the
@@ -206,6 +222,13 @@ class PriceTagRequestService:
                 print_by=data.get("print_by"),
                 doc_number=doc_number,
                 portal_draft_at=datetime.utcnow(),
+                # Last, so the first customer's mirror into the debtor pair wins
+                # (PRICETAG-REQUEST-LAYOUT); omitted, the pair above stands alone.
+                **(
+                    {"customers": data["customers"]}
+                    if data.get("customers") is not None
+                    else {}
+                ),
             ),
             company_id,
         )
@@ -261,10 +284,11 @@ class PriceTagRequestService:
         detail: str | None = None,
     ) -> None:
         """AC-S6-4: a manual price and a promotion are mutually exclusive on
-        a line, and a manual figure only means anything in Selling mode -
-        List mode prints the list price regardless of what was typed, so a
-        stray manual figure there is a mistake worth naming rather than a
-        value silently thrown away.
+        a line, and a manual figure only means anything on a selling price
+        line (``price_mode`` here is the LINE's effective type, its own
+        ``price_type`` else the request's) - an LP line prints the list price
+        regardless of what was typed, so a stray manual figure there is a
+        mistake worth naming rather than a value silently thrown away.
 
         The ONE seam every arm that can set a line's price basis passes
         through - create, update and revise (`_add_lines`), and the CRM line
@@ -291,7 +315,7 @@ class PriceTagRequestService:
         if price_mode != "selling":
             raise AppException(
                 status_code=422,
-                message="A manual price only applies in Selling mode.",
+                message="A manual price only applies on a selling price line.",
                 detail=detail,
                 code="INVALID_LINE_PRICE",
             )
@@ -303,12 +327,14 @@ class PriceTagRequestService:
         lines: list[dict],
         *,
         carry_tags: dict[tuple, list[dict]] | None = None,
+        kept_picks: set[tuple] | None = None,
         viewer=None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
 
         ``show_promo_price`` is DERIVED per line (D1/D3/AC-S7-5) from the
-        request's header ``price_mode`` AND the line's own
+        line's effective price type (its own ``price_type``, else the
+        request's header ``price_mode``) AND the line's own
         ``sell_price_basis`` (through ``line_pricing`` - S7): a line in
         Selling mode with no covering promotion and no manual figure is
         still LP, same as a line whose promotion offer does not beat list.
@@ -339,7 +365,6 @@ class PriceTagRequestService:
 
         viewer = viewer or staff_viewer()
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
-        selling = request.price_mode == "selling"
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
@@ -386,10 +411,17 @@ class PriceTagRequestService:
                     code="INVALID_PART",
                 )
 
+            excluded_variant_ids = PriceTagRequestService._clean_excluded_variants(
+                db, product_id, line_data.get("excluded_variant_ids"), idx
+            )
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
+            # PRICETAG-LPSP: LP or SP is the LINE's fact; none sent = the header's mode,
+            # stored explicitly so a later header change never rewrites the line.
+            price_type = line_data.get("price_type") or request.price_mode
+            selling = price_type == "selling"
             PriceTagRequestService._validate_line_price_basis(
-                promotion_id, manual_sell_price, request.price_mode, detail=f"line:{idx}"
+                promotion_id, manual_sell_price, price_type, detail=f"line:{idx}"
             )
             # D1/D3/AC-S7-5: a line's price basis, resolved through the SAME
             # engine the portal's and the CRM's own line-pricing routes call
@@ -420,29 +452,53 @@ class PriceTagRequestService:
                     if not p.get("product_id")
                     for c in (p.get("candidates") or [])
                 ]
-                pricing_row = line_pricing(
-                    db,
-                    lines=[
-                        {
-                            "key": "_p",
-                            "product_id": product_id,
-                            "part_product_ids": resolved_part_ids,
-                            "candidate_product_ids": candidate_ids,
-                            "combo_id": combo_id,
-                            "promotion_id": promotion_id,
-                            "manual_sell_price": manual_sell_price,
-                        }
-                    ],
-                    viewer=viewer,
-                    # A SAVED line's basis is what the salesperson committed
-                    # to, never the lookup's auto pick (owner ruling, review
-                    # round 2): with no stored promotion the line is `list`,
-                    # however many promotions cover its product.
-                    auto_pick=False,
-                )[0]
-                if promotion_id and promotion_id not in {
-                    option["id"] for option in pricing_row["promotion_options"]
-                }:
+                def _price(promo_id, candidates):
+                    return line_pricing(
+                        db,
+                        lines=[
+                            {
+                                "key": "_p",
+                                "product_id": product_id,
+                                "part_product_ids": resolved_part_ids,
+                                "candidate_product_ids": candidates,
+                                "combo_id": combo_id,
+                                "promotion_id": promo_id,
+                                "manual_sell_price": manual_sell_price,
+                            }
+                        ],
+                        viewer=viewer,
+                        # A SAVED line's basis is what the salesperson committed
+                        # to, never the lookup's auto pick (owner ruling, review
+                        # round 2): with no stored promotion the line is `list`,
+                        # however many promotions cover its product.
+                        auto_pick=False,
+                    )[0]
+
+                def _offered(row) -> bool:
+                    return promotion_id in {o["id"] for o in row["promotion_options"]}
+
+                pricing_row = _price(promotion_id, candidate_ids)
+                if (
+                    promotion_id
+                    and not _offered(pricing_row)
+                    and combo_id
+                    and _offered(
+                        _price(
+                            promotion_id,
+                            PriceTagRequestService._combo_part_ids(db, combo_id),
+                        )
+                    )
+                ):
+                    # PRICETAG-DISCONTINUED-PICK (crew pass, 7 Nov): the form
+                    # pre-fills a promotion while a group is open, when any
+                    # option covers it (AC-S7-2). A pick that narrows the group
+                    # past every covered option leaves a promotion that covers
+                    # one of the line's OWN package options but nothing on the
+                    # line: it prices nothing, so it is dropped rather than
+                    # refusing the save. The form says so after the save.
+                    promotion_id = None
+                    pricing_row = _price(None, candidate_ids)
+                if promotion_id and not _offered(pricing_row):
                     # AC-S6-5: a line's promotion must be active, visible to
                     # this viewer, and cover at least one product on the line
                     # (the parent, a resolved part, or any candidate) -
@@ -507,10 +563,12 @@ class PriceTagRequestService:
                     product_id=product_id,
                     product_set_id=product_set_id,
                     show_promo_price=selling and basis != "list",
+                    price_type=price_type,
                     quantity=line_data.get("quantity", 1),
                     combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
+                    excluded_variant_ids=excluded_variant_ids,
                     sort_order=idx if sort_order is None else sort_order,
                     promotion_id=promotion_id,
                     manual_sell_price=manual_sell_price,
@@ -522,6 +580,15 @@ class PriceTagRequestService:
                         line_type=line_data["line_type"],
                         product_id=product_id,
                         sent=line_data.get("tag_template_id"),
+                        combo_id=combo_id,
+                        price_type=price_type,
+                        # AC-37: a re-sent pick equal to the one this line already stored, for
+                        # the same price type, is not re-checked.
+                        kept={
+                            template_id
+                            for (pid, cid, ptype, template_id) in (kept_picks or set())
+                            if pid == product_id and cid == combo_id and ptype == price_type
+                        },
                     ),
                 )
             )
@@ -535,6 +602,26 @@ class PriceTagRequestService:
                 company_id=request.company_id,
             )
             PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
+
+    @staticmethod
+    def _clean_excluded_variants(db: Session, product_id, sent, idx: int) -> list[str]:
+        """PRICETAG-UPGRADE-VARIANTS S3: the line's unticked variant members, de-duplicated in the
+        order sent. Every id must be a member of the line product's variant tree (the product
+        itself is not one); anything else is a 422 ``NOT_A_VARIANT`` naming the line."""
+        from app.services.dealer_kit.variant_service import variant_members
+
+        wanted = list(dict.fromkeys(str(item) for item in sent or []))
+        if not wanted:
+            return []
+        members = {m["product_id"] for m in variant_members(db, product_id)}
+        if any(item not in members for item in wanted):
+            raise AppException(
+                status_code=422,
+                message="A variant on this line is not part of its product's family.",
+                detail=f"line:{idx}",
+                code="NOT_A_VARIANT",
+            )
+        return wanted
 
     @staticmethod
     def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:
@@ -846,6 +933,27 @@ class PriceTagRequestService:
         return [row.product_id for row in rows if row.product_id]
 
     @staticmethod
+    def _combo_part_ids(db: Session, combo_id: str) -> list[str]:
+        """The package's fixed parts and group options, never its upgrades.
+
+        Upgrades are left out on purpose: the tag prices every upgrade of the package under the
+        line's promotion, picked or not (`tag_data_service._line_slots`), so a promotion on an
+        upgrade is NOT inert and must not be dropped.
+        """
+        from app.models.product_combo import ProductComboPart
+
+        return [
+            pid
+            for (pid,) in db.query(ProductComboPart.part_product_id)
+            .filter(
+                ProductComboPart.combo_id == combo_id,
+                ProductComboPart.is_upgrade.isnot(True),
+            )
+            .all()
+            if pid
+        ]
+
+    @staticmethod
     def _resolve_combo_id(db: Session, line_data: dict, company_id: str | None) -> str | None:
         """The package this line is asked for as, or None.
 
@@ -982,10 +1090,15 @@ Marketing's own work is not part of the form's payload, so it is captured
             ]
             for old in request.lines
         }
+        kept_picks = {
+            (old.product_id, old.combo_id, old.price_type or request.price_mode, old.tag_template_id)
+            for old in request.lines
+            if old.tag_template_id
+        }
         request.lines.clear()
         db.flush()
         PriceTagRequestService._add_lines(
-            db, request, lines, carry_tags=carry_tags, viewer=viewer
+            db, request, lines, carry_tags=carry_tags, kept_picks=kept_picks, viewer=viewer
         )
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not
@@ -1051,8 +1164,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         if "manual_sell_price" in data and data["manual_sell_price"] is not None:
             promotion_id = None
 
+        price_type = line.price_type or request.price_mode
         PriceTagRequestService._validate_line_price_basis(
-            promotion_id, manual_sell_price, request.price_mode
+            promotion_id, manual_sell_price, price_type
         )
 
         basis = "list"
@@ -1131,7 +1245,7 @@ Marketing's own work is not part of the form's payload, so it is captured
 
         line.promotion_id = promotion_id
         line.manual_sell_price = manual_sell_price
-        line.show_promo_price = request.price_mode == "selling" and basis != "list"
+        line.show_promo_price = price_type == "selling" and basis != "list"
 
         for tag in line.tags:
             tag.pinned_tag_data = None
@@ -1346,8 +1460,14 @@ Marketing's own work is not part of the form's payload, so it is captured
             try:
                 from app.services.dealer_kit import tag_sheet_export_service
 
+                # A self-approved request has nobody assigned, so the
+                # salesperson's own contact asked for this PDF - the same
+                # fallback the portal's Download PDF route uses.
                 tag_sheet_export_service.request_tag_sheet_export(
-                    db, request_id=request_id, user_id=user_id, sheet_ids=None,
+                    db,
+                    request_id=request_id,
+                    user_id=user_id or request.assigned_to_id or request.contact_id,
+                    sheet_ids=None,
                 )
             except Exception:
                 logger.warning(
@@ -1610,6 +1730,399 @@ Marketing's own work is not part of the form's payload, so it is captured
             )
 
     @staticmethod
+    def is_with_marketing(request: PriceTagRequest) -> bool:
+        """Marketing holds this request (PRICETAG-SELF-APPROVAL R8).
+
+        Derived, not stored. The normal flow never puts a submitted request at
+        `new`, `designing` or `changes_requested`, and its own proof has nobody
+        assigned; only an escalation (or a request that was already with
+        marketing at deploy) reaches those states or carries an assignee on a
+        proof. So in-flight work needs no backfill to keep its place.
+        """
+        if request.portal_draft_at is not None:
+            return False
+        if request.status in (STATUS_NEW, STATUS_DESIGNING, STATUS_CHANGES_REQUESTED):
+            return True
+        return request.status == STATUS_PROOF_READY and bool(request.assigned_to_id)
+
+    @staticmethod
+    def is_with_salesperson(request: PriceTagRequest) -> bool:
+        """The salesperson may edit, approve his own tag, or escalate (R3/R4/R6).
+
+        His own proof, or an approved request whatever drew it. Once the office
+        has printed (`ready_for_collection` onwards) the paper exists and the
+        answer is no (owner, Q4 a, 2 Nov): that is the one check to change if
+        the owner ever wants (b).
+        """
+        if request.portal_draft_at is not None:
+            return False
+        if request.status == STATUS_APPROVED:
+            return True
+        return request.status == STATUS_PROOF_READY and not request.assigned_to_id
+
+    @staticmethod
+    def require_combo_prices(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval that would print a combo line with no price (K8).
+
+        A combo line prints the combo's stored price or nothing. The figure is the tag's own
+        (``resolve_tags_live``: stored or option price, typed price, marketing override), judged
+        for the line's own LP or SP. The salesperson can still escalate such a line.
+        """
+        from app.services.dealer_kit import tag_data_service
+
+        line_index = {line.id: index for index, _tag, line, _t in tag_data_service.ordered_tags(request)}
+        for row in tag_data_service.resolve_tags_live(db, request):
+            if not row.get("combo"):
+                continue
+            line = next(l for l in request.lines if l.id == row["line_id"])
+            mode = line.price_type or request.price_mode
+            figure = row["sell_price"] if mode == "selling" else row["list_price"]
+            if figure is None:
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        "This combo has no "
+                        + ("selling" if mode == "selling" else "list")
+                        + " price. Type the price or escalate it to marketing."
+                    ),
+                    detail=f"line:{line_index[line.id]}",
+                    code="COMBO_PRICE_MISSING",
+                )
+
+    @staticmethod
+    def require_template_positions(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval whose line lacks what its template prints (N1).
+
+        Judged against the stored template's needs and the line's combo, not the rows present, so
+        deleting a whole choice group row cannot slip through. A line with no combo or a template
+        that reads no such position is never refused. Escalate is unaffected.
+        """
+        from app.models.dealer_kit import TagTemplate
+        from app.models.product_combo import ProductCombo
+        from app.services.dealer_kit import tag_data_service
+        from app.services.dealer_kit.template_needs import missing_positions, template_needs
+
+        for index, _tag, line, _t in tag_data_service.ordered_tags(request):
+            if not line.combo_id or not line.tag_template_id:
+                continue
+            template = db.get(TagTemplate, line.tag_template_id)
+            combo = db.get(ProductCombo, line.combo_id)
+            version = template.published_version if template is not None else None
+            if combo is None or version is None:
+                continue
+            owed = missing_positions(
+                template_needs(version.doc), combo, [(p.role, p.product_id) for p in line.parts or []]
+            )
+            if owed:
+                raise AppException(
+                    status_code=422,
+                    message=" ".join(owed),
+                    detail=f"line:{index}",
+                    code="TEMPLATE_POSITIONS_MISSING",
+                )
+
+    @staticmethod
+    def self_approve(
+        db: Session, request: PriceTagRequest, doc: dict | None, approver_name: str | None,
+    ) -> PriceTagRequest:
+        """The salesperson approves a tag sheet (PRICETAG-SELF-APPROVAL R3, R7).
+
+        His own proof: ``doc`` is the sheet his screen built from this request's
+        tags and is REQUIRED. It is checked (a tag sheet; every placement one of
+        THIS request's tags), the tags are pinned to master data as it is now, and
+        the doc becomes the page's next version, which is what the auto-export
+        prints. So the PDF is exactly what he approved.
+
+        An escalated proof (an assignee drew it): marketing's saved version is
+        what he reviewed, so any ``doc`` is ignored and nothing is written.
+        """
+        # Review S2: two Approve clicks at once must not both write a version.
+        # The row lock makes the second wait, then read `approved` and refuse.
+        db.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).with_for_update().first()
+        db.refresh(request)
+        if request.status != STATUS_PROOF_READY:
+            raise AppException(
+                status_code=409,
+                message="This tag is not waiting for your approval.",
+                code="INVALID_TRANSITION",
+            )
+        if not request.assigned_to_id:
+            PriceTagRequestService.require_combo_prices(db, request)
+            PriceTagRequestService.require_template_positions(db, request)
+            if not doc:
+                raise AppException(
+                    status_code=422,
+                    message="Approve needs the tag sheet you are approving.",
+                    code="DOC_REQUIRED",
+                )
+            saved = PriceTagRequestService._server_sheet(db, request, doc)
+            from app.api.v1.dealer_kit.price_tag_requests import _snapshot_draft
+            from app.services.dealer_kit import tag_data_service
+
+            PriceTagRequestService.ensure_tag_sheet_page(db, request, None)
+            tag_data_service.pin_tags(db, request, only_unpinned=False)
+            from app.models.dealer_kit import Page
+
+            page = db.query(Page).filter(Page.id == request.page_id).first()
+            _snapshot_draft(
+                db,
+                page,
+                saved,
+                None,
+                f"Approved by {approver_name}" if approver_name else "Approved by the salesperson",
+            )
+            db.flush()
+        return PriceTagRequestService.transition_status(
+            db, str(request.id), STATUS_APPROVED, user_id=request.assigned_to_id,
+        )
+
+    @staticmethod
+    def _check_sheet(request: PriceTagRequest, doc: dict) -> None:
+        """Refuse a document that is not a tag sheet of THIS request's tags."""
+        PriceTagRequestService._placements(request, doc)
+
+    @staticmethod
+    def _placements(request: PriceTagRequest, doc: dict) -> list[tuple[str, list[dict]]]:
+        """``(sheet id, [placement])`` from a client sheet, checked (R3).
+
+        A tag sheet; at most ``_MAX_SHEETS`` sheets; every placement prints one
+        of this request's tags. Every printed tag is placed exactly as many times
+        as its quantity (review N1: a sheet that leaves a tag out would print a
+        PDF silently missing it); a tag marked Not printed may be placed up to
+        its quantity, since the export drops it anyway.
+        """
+        def refuse(message: str):
+            return AppException(status_code=422, message=message, code="INVALID_DOC")
+
+        if not isinstance(doc, dict) or doc.get("kind") != "tag_sheet":
+            raise refuse("That is not a tag sheet.")
+        sheets = doc.get("sheets")
+        if not isinstance(sheets, list) or not sheets or len(sheets) > _MAX_SHEETS:
+            raise refuse("That is not a tag sheet.")
+        quantity = {
+            tag.id: max(int(tag.quantity or 0), 1)
+            for line in request.lines
+            for tag in line.tags or []
+        }
+        excluded = {
+            tag.id
+            for line in request.lines
+            for tag in line.tags or []
+            if tag.print_excluded
+        }
+        seen: dict[str, int] = {}
+        out: list[tuple[str, list[dict]]] = []
+        for sheet in sheets:
+            tags = sheet.get("tags") if isinstance(sheet, dict) else None
+            if not isinstance(tags, list):
+                raise refuse("That is not a tag sheet.")
+            for tag in tags:
+                tag_id = tag.get("request_tag_id") if isinstance(tag, dict) else None
+                if tag_id not in quantity:
+                    raise refuse(
+                        "The tag sheet does not match this request's tags. Reload and try again."
+                    )
+                seen[tag_id] = seen.get(tag_id, 0) + 1
+                if seen[tag_id] > quantity[tag_id]:
+                    raise refuse("The tag sheet prints a tag more often than asked for.")
+            out.append((str(sheet.get("id") or f"sheet-{len(out) + 1}")[:64], tags))
+        if not seen:
+            raise refuse("The tag sheet has no tags on it.")
+        short = [
+            tag_id
+            for tag_id, wanted in quantity.items()
+            if tag_id not in excluded and seen.get(tag_id, 0) != wanted
+        ]
+        if short:
+            raise AppException(
+                status_code=422,
+                message="The tag sheet leaves out some of this request's tags. Reload and try again.",
+                code="INVALID_DOC",
+            )
+        return out
+
+    @staticmethod
+    def _server_sheet(db: Session, request: PriceTagRequest, doc: dict) -> dict:
+        """The sheet that is SAVED: positions from the client, content from us.
+
+        Security review (B2): the salesperson's screen arranges the tags, but
+        what each tag says is not his to write. Every placement's template and
+        layers are rebuilt here from the line's own published template - the
+        same pick the preview drew from, bound to the line's product or set
+        exactly as the client builder binds it - and its size is the
+        template's print size. Only the sheet, the position and the placement
+        id are taken from the client; every other key is dropped. A line with
+        no template has nothing to draw, so a placement for it is refused.
+        """
+        import copy as _copy
+        from app.services.dealer_kit import product_tag_template_service
+
+        preview = product_tag_template_service.preview_for_request(db, request)
+        templates = preview["templates"]
+        missing = [line for line in request.lines if line.tags and line.id not in templates]
+        if missing:
+            # The screen draws nothing for such a line, so its tags are missing
+            # from the sheet: say why rather than "leaves out some tags", in the
+            # words the salesperson's preview already uses (#2100).
+            code_by_line = {}
+            for row in preview.get("lines") or []:
+                code_by_line.setdefault(row.get("line_id"), row.get("code"))
+            codes = [code_by_line.get(line.id) or "an item" for line in missing]
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"No tag template yet for {', '.join(dict.fromkeys(codes))}. "
+                    "Escalate it to marketing."
+                ),
+                code="NO_TEMPLATE",
+            )
+        sheets = PriceTagRequestService._placements(request, doc)
+        line_by_tag = {
+            tag.id: line for line in request.lines for tag in line.tags or []
+        }
+
+        def number(value, low: float, high: float) -> float:
+            try:
+                n = float(value)
+            except (TypeError, ValueError):
+                n = 0.0
+            if not math.isfinite(n):
+                # JSONB refuses NaN/Infinity, which would surface as a 500.
+                n = low
+            return min(max(n, low), high)
+
+        imposition_in = doc.get("imposition") if isinstance(doc.get("imposition"), dict) else {}
+        imposition = {
+            "preset": str(imposition_in.get("preset") or "auto")[:32],
+            "page_width_mm": number(imposition_in.get("page_width_mm", 210), 50, 2000),
+            "page_height_mm": number(imposition_in.get("page_height_mm", 297), 50, 2000),
+            "bleed_mm": number(imposition_in.get("bleed_mm", 5), 0, 50),
+            "gap_mm": number(imposition_in.get("gap_mm", 0), 0, 50),
+        }
+        out_sheets = []
+        for sheet_id, placements in sheets:
+            placed = []
+            for index, tag in enumerate(placements):
+                line = line_by_tag[tag["request_tag_id"]]
+                template = templates.get(line.id)
+                if template is None:
+                    raise AppException(
+                        status_code=422,
+                        message="An item on this request has no tag template. Escalate it to marketing.",
+                        code="NO_TEMPLATE",
+                    )
+                binding = (
+                    {"product_set_id": line.product_set_id}
+                    if line.line_type == "product_set"
+                    else {"product_id": line.product_id}
+                )
+                layers = []
+                for layer in _copy.deepcopy((template.get("doc") or {}).get("layers") or []):
+                    props = layer.get("props") or {}
+                    if props.get("kind") == "group":
+                        layer["props"] = {**props, "binding": binding}
+                    elif props.get("kind") == "barcode" and layer.get("text_override") is not None:
+                        layer["text_override"] = None
+                    layers.append(layer)
+                size = template.get("print_size") or {}
+                placed.append(
+                    {
+                        "id": str(tag.get("id") or f"{sheet_id}-{index}")[:80],
+                        "template_id": template["id"],
+                        "request_tag_id": tag["request_tag_id"],
+                        "x_mm": number(tag.get("x_mm"), 0, 2000),
+                        "y_mm": number(tag.get("y_mm"), 0, 2000),
+                        "width_mm": number(size.get("width_mm"), 1, 2000),
+                        "height_mm": number(size.get("height_mm"), 1, 2000),
+                        # Turned at print time by arrange (S7): 0 or 90, nothing else.
+                        "rotation": 90 if tag.get("rotation") == 90 else 0,
+                        "layers": layers,
+                    }
+                )
+            out_sheets.append({"id": sheet_id, "tags": placed})
+        return {"kind": "tag_sheet", "imposition": imposition, "sheets": out_sheets}
+
+    @staticmethod
+    def escalate(
+        db: Session, request: PriceTagRequest, note: str, contact_id: str,
+    ) -> PriceTagRequest:
+        """Send the request to marketing with the salesperson's note (R6).
+
+        The note is a general review comment, the thread marketing's designer
+        already reads. The request starts over at `new`, the form SLA `submit`
+        event opens a tracker under whatever config is active, and the existing
+        auto-assign hands it to that config's assignee - nobody is named here.
+        No config, or none with an assignee: it waits at `new` for a Claim.
+        """
+        if not PriceTagRequestService.is_with_salesperson(request):
+            raise AppException(
+                status_code=409,
+                message="This request cannot be escalated in its current status.",
+                code="INVALID_STATE",
+            )
+        text = (note or "").strip()
+        if not text:
+            raise AppException(
+                status_code=422,
+                message="Say what marketing needs to fix.",
+                code="NOTE_REQUIRED",
+            )
+        from app.services import price_tag_review_service
+
+        price_tag_review_service.create_comments(
+            db, request, comments=[], note=text, author_contact_id=contact_id,
+        )
+        # Whoever drew it last is not automatically who gets it now: the config
+        # decides, and with no config the request is unclaimed.
+        request.assigned_to_id = None
+        db.flush()
+        PriceTagRequestService.transition_status(db, str(request.id), STATUS_NEW)
+        try:
+            # Review S1: an earlier escalation's timer can still be open (an
+            # approved price tag does not close it), and `submit` would reuse it -
+            # its old assignee and its old, already-running clock. Each escalation
+            # is a fresh stage, so the old one is closed first.
+            from app.services.form_sla_service import FormSLAOrchestrator
+
+            FormSLAOrchestrator(db).void_active_for_source(
+                "price_tag_request",
+                str(request.id),
+                reason="Escalated again by the salesperson.",
+                void_reason="escalated_again",
+            )
+        except Exception:
+            logger.warning(
+                "Closing the previous SLA stage failed for price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                db, "price_tag_request", str(request.id), "submit",
+                contact_id=request.contact_id,
+            )
+        except Exception:
+            logger.warning(
+                "Form SLA emit 'submit' failed for escalated price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
+        try:
+            PriceTagRequestService.auto_assign_from_tracker(db, request)
+        except Exception:
+            logger.warning(
+                "Auto-assign failed for escalated price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
+        db.commit()
+        return request
+
+    @staticmethod
     def validate_designable(request: PriceTagRequest) -> None:
         """Mirrors the FE's ``priceTagActions`` design/"view design" predicate.
 
@@ -1628,7 +2141,11 @@ Marketing's own work is not part of the form's payload, so it is captured
         legal_status = request.status in (
             STATUS_DESIGNING,
             STATUS_CHANGES_REQUESTED,
-            STATUS_PROOF_READY,
+        ) or (
+            # PRICETAG-SELF-APPROVAL R8: a proof nobody is assigned to is the
+            # salesperson's own; marketing designs it only once escalated.
+            request.status == STATUS_PROOF_READY
+            and PriceTagRequestService.is_with_marketing(request)
         )
         if not (legal_claimed_new or legal_status):
             raise AppException(
@@ -2363,6 +2880,14 @@ Marketing's own work is not part of the form's payload, so it is captured
                 or_(
                     PriceTagRequest.doc_number.ilike(like),
                     PriceTagRequest.debtor_name.ilike(like),
+                    # A request for several customers is found by any of them: their
+                    # names and codes only, never the JSON keys around them.
+                    sql_text(
+                        "EXISTS (SELECT 1 FROM jsonb_array_elements("
+                        "COALESCE(price_tag_requests.customers, '[]'::jsonb)) AS c "
+                        "WHERE c->>'name' ILIKE :customer_like "
+                        "OR c->>'code' ILIKE :customer_like)"
+                    ).bindparams(customer_like=like),
                 )
             )
         return q
@@ -2473,6 +2998,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         foreign key stores; the portal's generic product lookup answers with a code and
         no id at all, which is why a product line could never be saved.
 
+        Each row carries its `list_price` (None when unset or zero) for the option's
+        "CODE  RM <price>" line; a set answers its override only.
+
         Sets come first, then products, each ordered by code and each capped at `limit`
         (so at most `2 * limit` rows reach the picker). Sets lead because they are far
         fewer and are the thing a salesperson is likeliest to miss.
@@ -2488,6 +3016,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.set_code,
                 "name": row.name or "",
+                # The override only: the computed figure needs every member
+                # and its product loaded, per set, for a dropdown row.
+                "list_price": row.list_price_override or None,
             }
             for row in tag_data_service.search_product_sets(db, query, limit=limit)
         ]
@@ -2497,6 +3028,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.product_code,
                 "name": row.product_name or "",
+                "list_price": row.list_price or None,
             }
             for row in tag_data_service.search_products(db, query, limit=limit)
         )

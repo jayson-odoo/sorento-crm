@@ -13,6 +13,8 @@
  * never sold, and the chatbot searches sets; combos are invisible to it.
  */
 
+import type { AccessoryEntry } from '../../accessories/types/accessory.types';
+
 /** One part on a combo, as the reader sees it - never a bare id. */
 export interface ProductComboPartRow {
   id: string;
@@ -31,12 +33,17 @@ export interface ProductComboPartRow {
   topup_amount?: number | string | null;
   /** Upgrade rows are drawn in their own block, after the choice groups. */
   is_upgrade?: boolean;
+  /** COMBO-SETTINGS-UX: what the combo calls this part ("BASIN"), printed by `{{part.label}}`. */
+  label?: string | null;
 }
 
 /** The combo's own cover picture (S5), null with none uploaded yet. */
 export interface ProductComboImage {
   attachment_id: string;
   url: string;
+  /** The uploaded file's name and type, so the preview modal picks the right viewer. */
+  file_name?: string | null;
+  mime_type?: string | null;
 }
 
 export interface ProductComboRow {
@@ -45,11 +52,16 @@ export interface ProductComboRow {
   /** The catalogue's own wording, e.g. "3 in 1". Unique per host product. */
   name: string;
   sort_order: number;
-  /** PRICETAG-COMBO: printed on the tag; a blank price means the summed price. */
+  /** PRICETAG-COMBO: printed on the tag; a blank price prints no price (never a sum of the parts). */
   description?: string | null;
-  free_items?: string | null;
   list_price?: number | string | null;
   sell_price?: number | string | null;
+  /** COMBO-SETTINGS-UX: what the combo calls its main product ("CABINET"). */
+  main_label?: string | null;
+  /** COMBO-SETTINGS-UX: "Each part prints as", the rich line `{{combo.parts}}` repeats; null = the default. */
+  parts_line?: string | null;
+  /** PRICETAG-ACCESSORIES: the combo's own ordered list; replaces the old free text. */
+  accessories?: AccessoryEntry[];
   parts: ProductComboPartRow[];
   /** Optional so an older fixture/mock omitting it still type-checks;
    *  the backend always sends the key (null with no picture). */
@@ -82,6 +94,7 @@ export interface ProductComboPartUpdate {
   sell_price?: number | null;
   topup_amount?: number | null;
   is_upgrade?: boolean;
+  label?: string | null;
 }
 
 /** Omitted = left alone, null = cleared. */
@@ -89,7 +102,14 @@ export interface ProductComboUpdate {
   name?: string;
   sort_order?: number;
   description?: string | null;
-  free_items?: string | null;
   list_price?: number | null;
   sell_price?: number | null;
+  main_label?: string | null;
+  parts_line?: string | null;
 }
+
+/** `product_combos.name` is VARCHAR(100); the API answers 422 past it (COMBO-RENAME). */
+export const COMBO_NAME_MAX = 100;
+
+/** `product_combo_parts.label` / `product_combos.main_label` are VARCHAR(100). */
+export const COMBO_LABEL_MAX = 100;

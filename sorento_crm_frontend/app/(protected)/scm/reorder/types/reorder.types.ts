@@ -442,6 +442,9 @@ export interface ReorderRun {
   /** Header tab scope (plan 5.1, S5, AC-5.1) - pre-fills a Re-plan edit. */
   warehouse_codes?: string[];
   is_all_warehouses?: boolean;
+  /** SCM-INACTIVE-LOCATIONS: the codes in `warehouse_codes` deactivated since the run. A
+   *  Re-plan prefill drops them and the header says which. */
+  inactive_warehouse_codes?: string[];
   /** null = every product (the run stored no scope); a list, INCLUDING empty, is a real
    *  narrowing. */
   product_codes?: string[] | null;

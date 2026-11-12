@@ -3452,6 +3452,16 @@ def _ask_figures(figures: dict, measure: Any) -> str:
     return f"{pcs}, {rm}" if measure == "qty" else f"{rm}, {pcs}"
 
 
+def _ask_companies(body: dict, measure: Any) -> list[str]:
+    """Owner O-R2 (3 Nov): an ask naming no company runs over every company the contact holds; with two or more holding
+    figures the route sends each one's total (`companies`, the contact's company order), printed one line each right
+    before the combined Total. Fewer than two: nothing."""
+    companies = [c for c in body.get("companies") or [] if isinstance(c, dict)]
+    if len(companies) < 2:
+        return []
+    return [f"{c.get('name')} {_ask_figures(c, measure)}" for c in companies]
+
+
 def _ask_before(figures: dict, measure: Any) -> str:
     """REPORT-SMART-1021 `compare_to`: " (before <the sort measure's earlier figure>, +x%)",
     or "new" when the earlier figure is zero; "" when the body compares with nothing."""
@@ -3659,12 +3669,12 @@ def _report_ask(body: dict) -> str:
     if body.get("date_from") is None and body.get("date_to") is None:
         facts.append("Period: all dates")  # an outstanding basis asked with no period
     else:
-        facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+        facts.append(f"Period: {_ask_dates(body.get('date_from'), body.get('date_to'))}")
     skipped = _not_applied(body)
     if skipped:
         facts.append("Not applied: " + "; ".join(f"{n['label']} ({n['words']})" for n in skipped))
     if body.get("compare_to") and body.get("compare_from"):
-        facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")
+        facts.append(f"Compared with: {_ask_dates(body.get('compare_from'), body.get('compare_until'))}")
     measure = body.get("measure")
     figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
@@ -3691,8 +3701,9 @@ def _report_ask(body: dict) -> str:
         # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary in the pre-#1922
         # frame (header, a blank line, the block), its breakdowns the route's (the defaults, or the axis the user named).
         return "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], *_ask_summary(body["basis"], body["summary"])])
+    companies = _ask_companies(body, measure)
     if not group_by and outstanding_kind:
-        text = "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], f"Total {figures}"])
+        text = "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], *companies, f"Total {figures}"])
         if body.get("basis") == "outstanding" and not body.get("compare_to"):
             # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure.
             text += "\n\n" + _ASK_SO_LIST_OFFER
@@ -3705,7 +3716,7 @@ def _report_ask(body: dict) -> str:
             else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
             else f"Sales by {basis}"
         )
-        text = "\n".join([head, *facts, f"Total {figures}"])
+        text = "\n".join([head, *facts, *companies, f"Total {figures}"])
         if body.get("basis") == "outstanding" and not body.get("compare_to"):
             # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
             text += "\n\n" + _ASK_SO_LIST_OFFER
@@ -3741,6 +3752,7 @@ def _report_ask(body: dict) -> str:
             lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
     if more > 0:
         lines.append(f"and {more} more")
+    lines.extend(companies)
     lines.append(f"Total {figures}")
     text = "\n".join(lines)
     offer = _REPORT_ASK_OFFERS.get(group_by)
@@ -3759,6 +3771,18 @@ _CHAT_TRENDS = ("week", "month", "day")
 _CHAT_PLURALS = {"category": "categories", "salesperson": "salespeople", "asked by": "askers"}
 _CHAT_SINGULARS = {"asked by": "asker"}
 _CHAT_COVERAGE_FLOOR = 80
+
+
+def _ask_dates(date_from: Any, date_to: Any) -> str:
+    """CP-4 (crew console pass): a report's dates as `dd/mm/yyyy - dd/mm/yyyy`; an unreadable date as it came."""
+
+    def one(value: Any) -> str:
+        try:
+            return datetime.strptime(str(value), "%Y-%m-%d").strftime("%d/%m/%Y")
+        except ValueError:
+            return str(value)
+
+    return f"{one(date_from)} - {one(date_to)}"
 
 
 def _chat_date(value: Any) -> str:

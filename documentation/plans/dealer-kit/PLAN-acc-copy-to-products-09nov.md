@@ -1,0 +1,77 @@
+# PLAN: Copy a product's accessories list to other products (ACC-COPY-TO-PRODUCTS)
+
+Status: Merge-ready pending the owner hand test (laneboard/scripts/2280.md) - built, reviewed (reviewer READY, security no blockers, findings fixed), browser pass 12/12 PASS. Track: small fix track + security review. Track: small fix track (no migration, existing permission), plus security review because it is a bulk write.
+
+## Journey
+
+Owner, 9 Nov: many bathtubs carry the same accessories (pressure pump, soap and bath bomb set,
+freestanding mixer tap). Today each list is built one product at a time. Owner picked: a "Copy to
+other products" button on a product's Accessories included list, and they pick the targets by hand.
+
+## Facts (origin/main 609b53bb)
+
+- Lists: `product_accessories` (sorento_crm_backend/app/models/accessory.py:116), combos
+  `product_combo_accessories` (:160). Unique per (owner, accessory) and (owner, item product).
+- PUT replaces the whole list: `AccessoryService.set_product_list` (app/services/accessory_service.py:705),
+  max 100 entries (app/schemas/accessory.py:124), write gate `master_data.products.edit` signed-in only
+  (app/api/v1/master_data/accessories.py:57).
+- UI: `AccessoryListField.tsx` shared by product and combo sections.
+
+Behaviour card: see the `crew-ask` comment on the PR; answers are recorded here once given.
+
+## Behaviour card (asked 9 Nov; owner answered 9 Nov ~14:20, all (a))
+
+1. **Button.** "Copy to other products" in the header of the product's "Accessories included" card
+   (ProductAccessoriesSection.tsx). Shown only to `master_data.products.edit` holders and only when
+   the saved list has at least one entry. Not on combos' Free items (Q4).
+2. **Picker.** A dialog with the system DataGrid of products: server-side search by code/name,
+   Category / Brand multi-select filters (the same hooks ProductsList uses:
+   `useProductCategorySelectQuery`, `useBrandSelectQuery`), checkbox column from
+   `buildSelectColumn` (shift-click range, drag), "Select all N" banner from
+   `DataGridListToolbar` (capped at 500). Active products only; a discontinued product that is still
+   active is offered, since the list endpoint has no discontinued filter and it may still be on display.
+   The source product cannot be ticked. Every column sorts server-side (Category and Brand were added
+   to the product list's sort map for this, which fixes the Products list's own headers too).
+   Grid-in-dialog already exists (ConvertToPackingListDialog.tsx), so no mock.
+3. **Mode.** Q2.
+4. **What copies.** Q3.
+5. **Confirm step.** "Copy 3 entries to 12 products. 4 already have a list: their entries stay,
+   the missing ones are added at the end." Then one call.
+6. **Server.** `POST /api/v1/master-data/products/{id}/accessories/copy` `{target_product_ids: [...]}`
+   (max 500 targets). Edit permission; every target resolved in the caller's company scope (a
+   missing or out-of-scope id = 404 for the whole call); one transaction, all or nothing; a target
+   that would pass 100 entries refuses the call naming it. The source itself is ignored if picked.
+   Audit: the existing row listeners on `product_accessories` (`__audit_parent__ = product_id`)
+   write one trail per target product.
+
+## Owner answers (9 Nov ~14:20)
+
+Verbatim: "for the picker, it should be a product list multi select, yeah we can add the missing one, we
+should copy the whole set, box style also copy, product as target only".
+
+- Q1 (a): product list grid dialog, multi-select (search, Category/Brand multi-select filters,
+  shift/drag, Select all N).
+- Q2 (a): add mode. The target keeps its list; only the missing entries are added at the end, in the
+  source's order. An entry the target already lists keeps the target's version.
+- Q3 (a): each copied entry carries the source row's name/spec/remark overrides and picture pick.
+- Q4 (a): the source's box style goes only to targets with none set; a target's own style is kept.
+- Q5 (a): products only as targets.
+
+## Tests
+
+- Backend: `sorento_crm_backend/tests/test_accessory_copy_to_products.py`.
+- Frontend: the copy dialog's vitest beside it.
+
+## Review (9 Nov)
+
+- reviewer: READY; should-fixes taken: "Selecting..." stuck after a filter change, Category/Brand
+  sort (backend sort map), dialog mounted only while open, all-company caller test for the
+  company check, PUT locks the product row like the copy, plan corrections; nits: ids normalised,
+  dialog description, no lock on a dry run.
+- security-reviewer: no blockers; lock is FOR NO KEY UPDATE (no deadlock with the FK checks of
+  the inserted rows), none on a dry run. Accepted: worst case 500 x 100 rows in one request, editors only.
+
+## Assistant coverage (DoD 6-8)
+
+No new list screen. The copy is a picking task on a grid, so no ActionDef: a user would not
+name 500 products in words. No eval prompts for the same reason.

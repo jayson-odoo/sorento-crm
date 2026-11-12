@@ -8,10 +8,12 @@ import {
   isInlineChecked,
   type InlineDraft,
 } from '../../_shared/components/InlineLineTable';
-import { multiplyMoney, sumMoney } from '../../_shared/lib/money';
+import { compareMoney, isDecimalString, multiplyMoney, sumMoney } from '../../_shared/lib/money';
+import { sumCells, type MatrixCells } from '../../_shared/lib/quotationMatrix';
 import type {
   QuotationLine,
   QuotationLineBulkItem,
+  StagedQuotationLine,
   UnitType,
 } from '../../_shared/types/project.types';
 
@@ -30,12 +32,51 @@ export const PRICED_PER_OPTIONS: { value: UnitType; label: string }[] = [
   { value: 'common_area', label: 'Whole site (common area)' },
 ];
 
+/**
+ * The code of the product or set picked on a line in this session, carried on the DRAFT. The
+ * editor's own lookup of picked products dies with it on a section or tab switch, and a line not
+ * saved yet has no stored code, so without this it came back as "Selected product". Read by the
+ * label and the picker; never sent (`toBody` names its fields).
+ */
+export const PICKED_CODE_KEY = 'picked_code';
+
 /** The two picked files a line can carry. Only ever sent when set, or when clearing one. */
 const PICKS = ['image_attachment_id', 'drawing_attachment_id'] as const;
 
+/**
+ * The draft key that holds a grid line's cells (PS-QUOTE-MATRIX), as JSON: the draft is all
+ * strings. PRESENT only on a version with columns, which is what tells the Save body to send
+ * `qty_cells`; a scope without columns never carries it, so its body is exactly today's.
+ */
+export const CELLS_KEY = 'qty_cells';
+
+/** The line's cells, or null on a scope without columns. */
+export function draftCells(draft: LineDraft): MatrixCells | null {
+  const raw = draft[CELLS_KEY];
+  if (raw === undefined || raw === '') return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as MatrixCells) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The patch that puts `cells` on a draft: the cells, and the quantity they sum to (R6), so every
+ * total, stock chip and price check that reads `quantity` keeps working unchanged. Null takes the
+ * grid off the line (its quantity is left as given).
+ */
+export function cellsPatch(cells: MatrixCells | null, quantity?: string): LineDraft {
+  if (cells === null) return { [CELLS_KEY]: '', ...(quantity !== undefined ? { quantity } : {}) };
+  return { [CELLS_KEY]: JSON.stringify(cells), quantity: sumCells(cells) };
+}
+
 /** A stored line as an editable draft. Every field the bulk write sends has to be in here. */
-export function serverToDraft(line: QuotationLine): LineDraft {
+export function serverToDraft(line: QuotationLine, withCells = false): LineDraft {
+  if (line.is_section) return sectionDraft(line.band_label ?? '');
   return {
+    ...(withCells ? { [CELLS_KEY]: JSON.stringify(line.qty_cells ?? {}) } : {}),
     product_id: line.product_id ?? '',
     product_set_id: line.product_set_id ?? '',
     description: line.description ?? '',
@@ -57,6 +98,60 @@ export function serverToDraft(line: QuotationLine): LineDraft {
     // Read under the rate, never sent back (the server snapshots it from the product).
     list_price: line.list_price ?? '',
   };
+}
+
+/**
+ * The draft key that marks a heading row (PROPOSAL-FORM-COLLAPSE, owner 10 Nov 2026: "a heading
+ * shouldnt be tied to line"): the row IS the section heading, its text in `band_label`. It has
+ * its own place in the list, so moving or removing a line never moves or drops it.
+ */
+export const SECTION_KEY = 'is_section';
+
+export function isSectionDraft(draft: LineDraft): boolean {
+  return isInlineChecked(draft[SECTION_KEY]);
+}
+
+/** A heading row's draft: the heading and nothing to price. */
+export function sectionDraft(label = ''): LineDraft {
+  return { [SECTION_KEY]: INLINE_CHECKED, band_label: label };
+}
+
+/**
+ * A product line that still carries a heading from before heading rows existed is shown as a
+ * heading row above it, and the line loses it; the next Save writes it that way. Pure and
+ * idempotent: the split rows are keyed `heading:<line key>`, so seeding twice changes nothing.
+ */
+export function splitCarriedHeadings(lines: StagedQuotationLine[]): StagedQuotationLine[] {
+  const out: StagedQuotationLine[] = [];
+  // The section in force, as the PDF reads a carried label: a repeat on the next line is the same
+  // section (printed once), so it opens no second heading (review should-fix 2).
+  let current: string | null = null;
+  lines.forEach((line) => {
+    const label = (line.draft.band_label ?? '').trim();
+    if (isSectionDraft(line.draft)) {
+      current = label || null;
+      out.push(line);
+      return;
+    }
+    if (!label) {
+      out.push(line);
+      return;
+    }
+    if (label === current) {
+      out.push({ ...line, draft: { ...line.draft, band_label: '' } });
+      return;
+    }
+    current = label;
+    out.push({
+      id: null,
+      key: `heading:${line.key}`,
+      line: null,
+      draft: sectionDraft(label),
+      removed: false,
+    });
+    out.push({ ...line, draft: { ...line.draft, band_label: '' } });
+  });
+  return out;
 }
 
 /** A brand-new row's starting draft. Also the "untouched" comparison. */
@@ -86,20 +181,35 @@ export function isUntouched(draft: LineDraft): boolean {
   const empty = emptyDraft();
   const keys = new Set([...Object.keys(empty), ...Object.keys(draft)]);
   for (const key of keys) {
+    // An empty grid is no more typed-into than an empty Qty.
+    if (key === CELLS_KEY && Object.keys(draftCells(draft) ?? {}).length === 0) continue;
+    if (key === 'quantity' && draftCells(draft) !== null) continue;
     if ((draft[key] ?? '') !== (empty[key] ?? '')) return false;
   }
   return true;
 }
 
 /**
- * The one rule a quotation line has to satisfy before it can be stored, keyed by the field at
+ * The rules a quotation line has to satisfy before it can be stored, keyed by the field at
  * fault: it names a catalogue product or a product set, whatever its description says. Used to
  * mark the Product cell and to stop a Save that would only come back as the server's 422.
  */
 export function lineErrors(draft: LineDraft): Record<string, string> {
-  return !draft.product_id && !draft.product_set_id
-    ? { product: 'Pick a catalogue product or set' }
-    : {};
+  const errors: Record<string, string> = {};
+  if (isSectionDraft(draft)) return errors;
+  if (!draft.product_id && !draft.product_set_id) errors.product = 'Pick a catalogue product or set';
+  // A grid line (PS-QUOTE-MATRIX): every cell a quantity of 0 or more, or blank.
+  const cells = draftCells(draft);
+  if (
+    cells &&
+    Object.values(cells).some((value) => {
+      const text = (value ?? '').trim();
+      return text !== '' && (!isDecimalString(text) || compareMoney(text, '0') === -1);
+    })
+  ) {
+    errors.cells = 'A quantity is not a number';
+  }
+  return errors;
 }
 
 /**
@@ -110,7 +220,7 @@ export function lineErrors(draft: LineDraft): Record<string, string> {
 export function totalFromDrafts(drafts: LineDraft[]): string | null {
   return sumMoney(
     drafts
-      .filter((draft) => !isInlineChecked(draft.is_rate_only))
+      .filter((draft) => !isSectionDraft(draft) && !isInlineChecked(draft.is_rate_only))
       .map((draft) => multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
   );
 }
@@ -127,6 +237,9 @@ export function toBody(
   draft: LineDraft,
   stored: QuotationLine | null,
 ): QuotationLineBulkItem {
+  if (isSectionDraft(draft)) {
+    return { is_section: true, band_label: (draft.band_label ?? '').trim() || null };
+  }
   const body: QuotationLineBulkItem = {
     product_id: draft.product_id || null,
     description_snapshot: (draft.description ?? '').trim() || null,
@@ -150,6 +263,17 @@ export function toBody(
     const value = (draft[key] ?? '').trim() || null;
     if (value || stored?.[key]) body[key] = value;
   });
+  // A grid line: its cells, blanks left out; the server derives `quantity` from them.
+  const cells = draftCells(draft);
+  if (cells !== null) {
+    const sent: Record<string, string> = {};
+    Object.entries(cells).forEach(([key, value]) => {
+      const text = (value ?? '').trim();
+      if (text) sent[key] = text;
+    });
+    body.qty_cells = sent;
+    body.quantity = sumCells(sent);
+  }
   return body;
 }
 

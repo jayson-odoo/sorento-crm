@@ -4,7 +4,6 @@ import * as React from 'react';
 import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   ClipboardList,
   Clock,
@@ -53,12 +52,16 @@ import {
   projectsPagerQuery,
   useApproveProject,
   useChangeProjectStatus,
+  useSetProjectOutcome,
   useDeleteProject,
+  usePartyRoles,
   useProject,
   useRejectProject,
 } from '../../_shared/hooks/useProjects';
+import { PARTY_ROLE_DEVELOPER } from '../../_shared/lib/partyRoles';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
-import { canWorkOnProject, isProjectApproved } from '../../_shared/lib/projectApproval';
+import { projectDisplayName } from '../../_shared/lib/projectName';
+import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
   ApprovalStatePill,
   isAwaitingDecision,
@@ -72,9 +75,10 @@ import {
   splitStatusMoves,
 } from './ProjectStatusAction';
 import { ProjectStatusPill } from './ProjectStatusPill';
+import { ProjectLossDialog } from './ProjectLossDialog';
+import { OutcomePill } from '../../_shared/components/OutcomePill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
-import { ProjectDocumentsPanel, UploadDialog } from './ProjectDocumentsPanel';
-import { projectDocumentsKey, useProjectDocuments } from '../../_shared/hooks/useProjectDocuments';
+import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { ReassignProjectDialog } from './ReassignProjectDialog';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
@@ -136,13 +140,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const activeTab = resolveProjectTab(searchParams.get('tab'));
 
   const { data: project, isLoading, isError, error } = useProject(projectId);
+  const partyRoles = usePartyRoles();
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
   const move = useChangeProjectStatus();
-  const documents = useProjectDocuments(projectId, {
-    enabled: project?.status_key === 'registered',
-  });
-  const queryClient = useQueryClient();
-  const [uploadingRequirement, setUploadingRequirement] = React.useState(false);
+  const setOutcome = useSetProjectOutcome();
+  // The Lost rung it was dropped on asks for a reason first; nothing moves until Save.
+  const [losingTo, setLosingTo] = React.useState<string | null>(null);
   const remove = useDeleteProject();
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
@@ -209,17 +212,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const canDecide = mayApprove && isAwaitingReview(project.approval_state, 'pending');
   const moves =
     project.can_edit && !waiting ? availableStatusMoves(graph.data, project.status_id) : [];
-  // A Registered project needs a document before Spec In (server rule, 422 otherwise): with
-  // none, Spec In is hidden and the header offers the upload instead. A failed read falls back
-  // to today's header; the server still refuses.
-  const specInMove = moves.find((option) => option.toKey === 'specified');
-  const gatedOnDocument = project.status_key === 'registered' && Boolean(specInMove);
-  const needsRequirement =
-    gatedOnDocument && documents.isSuccess && (documents.data ?? []).length === 0;
-  const awaitingDocuments = gatedOnDocument && documents.isLoading;
-  const secondaryMoves = splitStatusMoves(moves).secondary.filter(
-    (option) => !(needsRequirement && option.toKey === 'specified'),
-  );
+  const secondaryMoves = splitStatusMoves(moves).secondary;
   // The gear's items, each with its own rule; the gear itself shows only when one applies,
   // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
   // no stage moves) never opens an empty menu.
@@ -231,9 +224,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
     narrowed && (isDraft || project.approval_state === 'rejected');
   const showEditItem = !canDecide;
   const showDeleteItem = isProjectApproved(project) || isManager;
+  const canMarkWon = !waiting && project.outcome === 'open';
+  const canReopen =
+    !waiting &&
+    (project.outcome === 'won' || project.outcome === 'lost') &&
+    project.status_key !== 'po_received';
   const hasGearItems =
     !narrowed &&
-    (showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem);
+    (showEditItem ||
+      isManager ||
+      secondaryMoves.length > 0 ||
+      showDeleteItem ||
+      canMarkWon ||
+      canReopen);
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -243,6 +246,10 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
    */
   function moveTo(toStatusId: string) {
     const target = moves.find((option) => option.toStatusId === toStatusId);
+    if (target?.toKey === 'lost') {
+      setLosingTo(toStatusId);
+      return;
+    }
     move.mutate(
       { projectId: project!.id, toStatusId },
       {
@@ -306,10 +313,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 {stale.label}
               </Badge>
             )}
+            {project.outcome === 'won' && project.status_key !== 'po_received' && (
+              <OutcomePill outcome="won" />
+            )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
+          {/* The short name (PROJECT-NAME); the full title sits in "The development". With no
+              name yet the title stands in, clamped as before. */}
           <h2 className="mt-1 text-xl font-semibold">
-            <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+            {project.name?.trim() ? (
+              <span className="break-words">{project.name}</span>
+            ) : (
+              <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+            )}
           </h2>
         </div>
 
@@ -380,6 +396,22 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     {option.label}
                   </DropdownMenuItem>
                 ))}
+                {canMarkWon && (
+                  <DropdownMenuItem
+                    disabled={setOutcome.isPending}
+                    onSelect={() => setOutcome.mutate({ projectId: project.id, outcome: 'won' })}
+                  >
+                    Mark won
+                  </DropdownMenuItem>
+                )}
+                {canReopen && (
+                  <DropdownMenuItem
+                    disabled={setOutcome.isPending}
+                    onSelect={() => setOutcome.mutate({ projectId: project.id, outcome: 'open' })}
+                  >
+                    Re-open
+                  </DropdownMenuItem>
+                )}
                 {/* An unapproved registration is Rejected, not deleted, unless a manager
                     removes it (security S2): the server refuses anyone else with 403. */}
                 {showDeleteItem && (
@@ -403,13 +435,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Button type="button" onClick={() => router.push(`/project-sales/${project.id}/edit`)}>
                 Submit for approval
               </Button>
-            ) : needsRequirement ? (
-              canWorkOnProject(project) ? (
-                <Button type="button" onClick={() => setUploadingRequirement(true)}>
-                  Upload Requirement
-                </Button>
-              ) : null
-            ) : awaitingDocuments ? null : (
+            ) : (
               <ProjectStatusAction
                 moves={moves}
                 isPending={move.isPending}
@@ -419,17 +445,6 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           }
         />
       </header>
-
-      {uploadingRequirement && (
-        <UploadDialog
-          requirement
-          projectId={project.id}
-          onDone={() => setUploadingRequirement(false)}
-          onUploaded={() =>
-            queryClient.invalidateQueries({ queryKey: projectDocumentsKey(project.id) })
-          }
-        />
-      )}
 
       {/* Read-only metadata of a portal registration, directly under the header (R7). */}
       {project.registration && <RegistrationFacts project={project} />}
@@ -493,6 +508,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               it carries its own actions and notes and reads badly squeezed into a column. */}
           <div className="grid gap-4 md:grid-cols-2 [&>*]:h-full">
             <Section title="The development">
+              <div className="min-w-0 sm:col-span-2">
+                <dt className="text-xs text-muted-foreground">Project title</dt>
+                <dd className="text-sm">
+                  <TruncatedTextCell text={project.title} lines={3} dialogTitle="Project title" />
+                </dd>
+              </div>
               <Fact label="Developer" value={project.developer_name} />
               <Fact label="Registered company / SPV" value={project.registered_company_name} />
               <Fact label="Location" value={project.location} />
@@ -536,21 +557,27 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             </Section>
 
             <Section title="Parties">
-              <Fact label="Architect" value={project.architect_name} />
-              <Fact label="Main contractor" value={project.main_contractor_name} />
-              {LINKED_ROLES.map(([role, label]) => (
-                <Fact
-                  key={role}
-                  label={label}
-                  value={
-                    (project.party_links ?? [])
-                      .filter((link) => link.role === role)
-                      .map((link) => link.name)
-                      .filter(Boolean)
-                      .join(', ') || null
-                  }
-                />
-              ))}
+              {/* Same roles, order and labels as the form: the editable role list. */}
+              {(partyRoles.data ?? [])
+                .filter(
+                  (role) =>
+                    role.value !== PARTY_ROLE_DEVELOPER &&
+                    (role.is_active ||
+                      (project.party_links ?? []).some((link) => link.role === role.value)),
+                )
+                .map((role) => (
+                  <Fact
+                    key={role.value}
+                    label={role.is_active ? role.label : `${role.label} (inactive)`}
+                    value={
+                      (project.party_links ?? [])
+                        .filter((link) => link.role === role.value)
+                        .map((link) => link.name)
+                        .filter(Boolean)
+                        .join(', ') || null
+                    }
+                  />
+                ))}
             </Section>
 
             <SourceCard project={project} />
@@ -593,6 +620,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </TabsContent>
       </Tabs>
 
+      {losingTo && (
+        <ProjectLossDialog
+          projectId={project.id}
+          toStatusId={losingTo}
+          onDone={() => setLosingTo(null)}
+        />
+      )}
       {reassigning && (
         <ReassignProjectDialog project={project} onDone={() => setReassigning(false)} />
       )}
@@ -609,7 +643,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title="Confirm delete"
-        description={`Delete ${projectCodeLabel(project)} "${project.title}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
+        description={`Delete ${projectCodeLabel(project)} "${projectDisplayName(project)}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}
@@ -840,15 +874,6 @@ function formatMyr(value: string): string {
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
 }
 
-/** The roles a project links beyond architect and main contractor, in display order. */
-const LINKED_ROLES: [string, string][] = [
-  ['subcontractor', 'Subcontractors'],
-  ['trading_house', 'Trading houses'],
-  ['tender_party', 'Tender parties'],
-  ['consultant', 'Consultant'],
-  ['interior_designer', 'Interior designer'],
-];
-
 /** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
 function labelise(value?: string | null): string | null {
   if (!value) return null;
@@ -860,9 +885,5 @@ function formatDate(iso?: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDateInMalaysia(date);
 }

@@ -42,6 +42,9 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 # both of 354's directions leave them exactly where their own migration put them.
 BORN_AFTER_THE_MOVE = frozenset({
     "so_supply_decisions",
+    # SPEC-SHEET-V2 (migration ssv2_0001_spec_sheets): the saved spec sheets of a quotation,
+    # born straight into `projects`.
+    "quotation_spec_sheets",
     # OI-LINE-SPLIT (migration ols_0001_so_line_splits): the delivery splits staff plan for one
     # SO line, born straight into `projects` beside `sales_order_lines`.
     "so_line_splits",
@@ -98,6 +101,13 @@ BORN_AFTER_THE_MOVE = frozenset({
     "party_links",
     # PS-QUOTE-VIEWS (#2102, migration qiv_0001_issue_views): counted opens of a sign link.
     "quotation_issue_views",
+    # QUOTE-CERT-TAB (#2245, migration qcert_0001_quote_certificates): the certificates a quote
+    # document carries, born straight into `projects` beside `quotation_documents`.
+    "quotation_document_certificates",
+    # QUOTE-AUTOSAVE (#2303, migration qas_0001_quote_form_drafts): the proposal/quotation form's
+    # autosaved state and its insert-only History, born straight into `projects`.
+    "quotation_document_drafts",
+    "quotation_document_snapshots",
 })
 
 MIGRATION = (

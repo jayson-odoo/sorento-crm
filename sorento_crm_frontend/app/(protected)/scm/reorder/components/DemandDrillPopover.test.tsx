@@ -136,6 +136,40 @@ describe('DemandDrillPopover - states', () => {
   });
 });
 
+describe('DemandDrillPopover - customer and project (OI-UX-FILTER-SNAPSHOT)', () => {
+  it('prints CUSTOMER / project on a retail and a project line', () => {
+    renderDrill(
+      state({
+        data: {
+          ...DEALER,
+          retail_lines: [
+            { ...DEALER.retail_lines[0], customer_name: 'Seri Debtor', project_label: 'Tuju' },
+          ],
+          dealer_lines: [],
+        },
+      }),
+    );
+    openDrill();
+    expect(screen.getByText('Seri Debtor / Tuju')).toBeInTheDocument();
+  });
+
+  it('prints CUSTOMER / project on a project line instead of the customer alone', () => {
+    renderDrill(
+      state({
+        data: {
+          ...PROJECT,
+          project_lines: [
+            { ...PROJECT.project_lines[0], customer_name: 'Main Contractor', project_label: 'Tower B' },
+          ],
+        },
+      }),
+      { kind: 'project' },
+    );
+    openDrill();
+    expect(screen.getByText('Main Contractor / Tower B')).toBeInTheDocument();
+  });
+});
+
 describe('DemandDrillPopover - project demand (AC-C2.3)', () => {
   it('names the project, the sales order, the quantity and the required date', () => {
     renderDrill(state({ data: PROJECT }), { kind: 'project', totalQty: 480, lineCount: 3 });

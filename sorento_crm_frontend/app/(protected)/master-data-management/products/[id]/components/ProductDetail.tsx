@@ -8,6 +8,7 @@ import {
   Edit,
   FileText,
   GitBranch,
+  Layers,
   Paperclip,
   Receipt,
   ScrollText,
@@ -23,10 +24,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useProduct, useProductPurchaseHistory } from '../../hooks/useProducts';
+import { useProductCombos } from '../../hooks/useProductCombos';
 import { CHAT_SEARCH_LABEL, chatSearchState } from '../../types/product.types';
 import { formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
+import ProductLineageTab from '../../components/ProductLineageTab';
 import ProductStockTab from './ProductStockTab';
 import ProductPurchaseHistoryTab from './ProductPurchaseHistoryTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
@@ -34,6 +37,7 @@ import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
 import ProductSpecificationsTab from './ProductSpecificationsTab';
 import ProductCombosSection from './ProductCombosSection';
+import ProductAccessoriesSection from './ProductAccessoriesSection';
 import ProductTagTemplatesSection from './ProductTagTemplatesSection';
 import ProductSoldWithSection from './ProductSoldWithSection';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
@@ -80,10 +84,17 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   );
   const { data: product, isLoading } = useProduct(productId);
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
-  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
-  // The pager carries `?tab=` to the next product (NAV-KEEP-TAB); Suppliers hidden by
+  // SUPPLIER-COST-ACCESS: cost price, the last purchase price, Purchase History and Suppliers
+  // are for purchasing and management (`products.cost.view`); the API refuses them otherwise.
+  const canViewCost = useHasPermission('products.cost.view');
+  const canViewSupplierLinks = useHasPermission('procurement.product_suppliers.view');
+  const canViewSuppliers = canViewCost && canViewSupplierLinks;
+  // The pager carries `?tab=` to the next product (NAV-KEEP-TAB); a tab hidden by
   // permission falls back to Overview rather than an empty panel.
-  const activeTab = requestedTab === 'suppliers' && !canViewSuppliers ? 'overview' : requestedTab;
+  const activeTab =
+    (requestedTab === 'suppliers' && !canViewSuppliers) || (requestedTab === 'purchases' && !canViewCost)
+      ? 'overview'
+      : requestedTab;
   const canEditProduct = useHasPermission('master_data.products.edit');
 
   // Tab badge counts - same hooks the tab content components use, so React
@@ -98,9 +109,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const promotionsCount = Array.isArray(promotionsData) ? promotionsData.length : 0;
   // Same query the Purchase History tab reads, so the Overview's cost and the orders that
   // prove it can never disagree.
-  const { data: purchaseHistory } = useProductPurchaseHistory(productId || null);
+  const { data: purchaseHistory } = useProductPurchaseHistory(canViewCost && productId ? productId : null);
   const purchaseCost = purchaseHistory?.cost ?? null;
   const variantsCount = Array.isArray(product?.variants) ? product.variants.length : 0;
+  // Same query the Combos tab reads, so opening it costs no second request.
+  const { data: combosData } = useProductCombos(productId);
+  const combosCount = Array.isArray(combosData) ? combosData.length : 0;
 
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
@@ -317,10 +331,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <Boxes />
                 <span>Stock</span>
               </TabsTrigger>
-              <TabsTrigger value="purchases">
-                <Receipt />
-                <span>Purchase History</span>
-              </TabsTrigger>
+              {canViewCost ? (
+                <TabsTrigger value="purchases">
+                  <Receipt />
+                  <span>Purchase History</span>
+                </TabsTrigger>
+              ) : null}
               <TabsTrigger value="attachments">
                 <Paperclip />
                 <span>Attachments{attachmentsCount ? ` (${attachmentsCount})` : ''}</span>
@@ -331,6 +347,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                   <span>Suppliers</span>
                 </TabsTrigger>
               ) : null}
+              {/* COMBO-SETTINGS-UX (owner 10 Nov): the combo settings have a tab of their own. */}
+              <TabsTrigger value="combos">
+                <Layers />
+                <span>Combos{combosCount ? ` (${combosCount})` : ''}</span>
+              </TabsTrigger>
               <TabsTrigger value="promotions">
                 <Tag />
                 <span>Promotions{promotionsCount ? ` (${promotionsCount})` : ''}</span>
@@ -346,6 +367,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="specifications">
                 <ScrollText />
                 <span>Specifications</span>
+              </TabsTrigger>
+              <TabsTrigger value="lineage">
+                <GitBranch />
+                <span>Lineage</span>
               </TabsTrigger>
             </TabsList>
 
@@ -403,14 +428,16 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                             : '-'}
                         </p>
                       </div>
-                      <div>
-                        <p className="text-muted-foreground">Cost Price</p>
-                        <p className="font-medium text-lg">
-                          {product.cost_price != null
-                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.cost_price)
-                            : '-'}
-                        </p>
-                      </div>
+                      {canViewCost ? (
+                        <div>
+                          <p className="text-muted-foreground">Cost Price</p>
+                          <p className="font-medium text-lg">
+                            {product.cost_price != null
+                              ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.cost_price)
+                              : '-'}
+                          </p>
+                        </div>
+                      ) : null}
                       <div>
                         <p className="text-muted-foreground">Invoice Price</p>
                         <p className="font-medium text-lg">
@@ -434,35 +461,39 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                       />
                     </div>
 
-                    {/* Cost Price above is a figure somebody typed. This one is money that
-                        actually moved, and it names the order it came from - a cost with no
-                        provenance cannot be checked, and the planning that runs on it cannot
-                        be trusted either. */}
-                    <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                      <p className="text-muted-foreground">Last purchase price</p>
-                      {purchaseCost?.status === 'ok' ? (
-                        <>
-                          <p className="text-lg font-medium">
-                            {formatUnitCost(purchaseCost.unit_cost, purchaseCost.currency)}
-                            <span className="ms-1 text-xs font-normal text-muted-foreground">
-                              per unit
-                            </span>
+                    {canViewCost ? (
+                      <>
+                      {/* Cost Price above is a figure somebody typed. This one is money that
+                          actually moved, and it names the order it came from - a cost with no
+                          provenance cannot be checked, and the planning that runs on it cannot
+                          be trusted either. */}
+                      <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                        <p className="text-muted-foreground">Last purchase price</p>
+                        {purchaseCost?.status === 'ok' ? (
+                          <>
+                            <p className="text-lg font-medium">
+                              {formatUnitCost(purchaseCost.unit_cost, purchaseCost.currency)}
+                              <span className="ms-1 text-xs font-normal text-muted-foreground">
+                                per unit
+                              </span>
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {purchaseCost.po_number} ·{' '}
+                              {purchaseCost.supplier_name ?? 'no supplier on the order'} ·{' '}
+                              {formatDateSafe(purchaseCost.issue_date)}
+                              {purchaseCost.currency ? '' : ` · ${NO_CURRENCY_NOTE}`}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {purchaseCost?.status === 'no_price_recorded'
+                              ? 'Purchased before, but no unit cost was recorded on any order.'
+                              : 'Never purchased, so there is no cost from history.'}
                           </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {purchaseCost.po_number} ·{' '}
-                            {purchaseCost.supplier_name ?? 'no supplier on the order'} ·{' '}
-                            {formatDateSafe(purchaseCost.issue_date)}
-                            {purchaseCost.currency ? '' : ` · ${NO_CURRENCY_NOTE}`}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {purchaseCost?.status === 'no_price_recorded'
-                            ? 'Purchased before, but no unit cost was recorded on any order.'
-                            : 'Never purchased, so there is no cost from history.'}
-                        </p>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                      </>
+                    ) : null}
                   </div>
 
                   <div>
@@ -595,15 +626,16 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 </CardContent>
               </Card>
 
-              {/* PLAN-price-tag-combos.md D1: the catalogue packages this product is
-                  sold as ("Combos", it is the host) and the mirror of anyone else's
-                  ("Sold with", it is a part). A product can be both at once, so both
-                  sections render unconditionally, each with its own empty state. They
-                  sit on Overview rather than Suppliers because a combo is what the
-                  product IS sold as, not a fact about how it is bought. */}
-              <ProductCombosSection productId={productId} />
+              {/* PLAN-price-tag-combos.md D1: the mirror of anyone else's combos ("Sold with",
+                  this product is a part). The combos this product hosts have their own tab. */}
+              <ProductAccessoriesSection productId={productId} />
               <ProductTagTemplatesSection productId={productId} />
               <ProductSoldWithSection productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Combos (COMBO-SETTINGS-UX) */}
+            <TabsContent value="combos">
+              <ProductCombosSection productId={productId} productCode={product.product_code} />
             </TabsContent>
 
             {/* Tab: Stock */}
@@ -612,9 +644,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             </TabsContent>
 
             {/* Tab: Purchase History */}
-            <TabsContent value="purchases">
-              <ProductPurchaseHistoryTab productId={productId} />
-            </TabsContent>
+            {canViewCost ? (
+              <TabsContent value="purchases">
+                <ProductPurchaseHistoryTab productId={productId} />
+              </TabsContent>
+            ) : null}
 
             {/* Tab: Attachments */}
             <TabsContent value="attachments">
@@ -650,6 +684,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             {/* Tab: Specifications - what spec-search derived from this product */}
             <TabsContent value="specifications">
               <ProductSpecificationsTab productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Lineage - codes created through a New Product Application */}
+            <TabsContent value="lineage">
+              <ProductLineageTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}

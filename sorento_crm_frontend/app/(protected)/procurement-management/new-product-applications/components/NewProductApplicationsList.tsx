@@ -17,6 +17,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -41,6 +42,8 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { getUserLookup } from '@/services/userSelectService';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { revisionBadgeLabel } from '@/lib/document-number';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import type { NewProductApplicationSummary } from '@/types/newProductApplication';
 import {
   useNewProductApplicationListingKey,
@@ -49,11 +52,13 @@ import {
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
-const STATUS_OPTIONS: { value: string; label: string }[] = [
+export const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
   { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'approved', label: 'Approved' },
+  // The stock inquiry's Responded (owner re-test 9 Nov): Update & Reply moves it here.
+  { value: 'responded', label: 'Responded' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },
@@ -168,6 +173,26 @@ function StaffNewProductApplicationsList() {
         },
       },
       {
+        accessorKey: 'revision_no',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Rev" column={column} />
+        ),
+        size: 80,
+        cell: ({ row }) => {
+          const label = revisionBadgeLabel(row.original.revision_no);
+          if (!label) return <span className="text-muted-foreground"> - </span>;
+          return (
+            <Badge variant="secondary" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+        meta: {
+          headerTitle: 'Rev',
+          skeleton: <Skeleton className="h-4 w-10" />,
+        },
+      },
+      {
         id: 'status',
         accessorKey: 'status',
         header: ({ column }) => (
@@ -176,7 +201,7 @@ function StaffNewProductApplicationsList() {
         size: 130,
         cell: ({ row }) => (
           <span
-            className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.status)}`}
+            className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.display_status ?? row.original.status)}`}
           >
             {row.original.status_label}
           </span>
@@ -210,41 +235,60 @@ function StaffNewProductApplicationsList() {
           skeleton: <Skeleton className="h-4 w-28" />,
         },
       },
+      // The stock inquiry list's columns (owner hand test 9 Nov), same components as
+      // StockInquiriesList: Salesperson, Assigned To, Handled By, Print Count.
       {
-        accessorKey: 'first_line',
+        accessorKey: 'salesperson',
         header: ({ column }) => (
-          <DataGridColumnHeader title="First line" column={column} />
+          <DataGridColumnHeader title="Salesperson" column={column} />
         ),
-        size: 260,
-        cell: ({ row }) => truncated(row.original.first_line),
+        size: 150,
+        cell: ({ row }) => truncated(row.original.salesperson),
         meta: {
-          headerTitle: 'First line',
-          skeleton: <Skeleton className="h-4 w-36" />,
+          headerTitle: 'Salesperson',
+          skeleton: <Skeleton className="h-4 w-24" />,
         },
       },
       {
-        accessorKey: 'lines_total',
+        accessorKey: 'assigned_to_name',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Lines" column={column} />
+          <DataGridColumnHeader title="Assigned To" column={column} />
         ),
-        size: 80,
-        cell: ({ row }) => row.original.lines_total,
+        size: 160,
+        cell: ({ row }) => truncated(row.original.assigned_to_name),
         meta: {
-          headerTitle: 'Lines',
-          skeleton: <Skeleton className="h-4 w-8" />,
+          headerTitle: 'Assigned To',
+          skeleton: <Skeleton className="h-4 w-24" />,
         },
       },
       {
-        id: 'lines_done',
-        accessorKey: 'lines_done',
+        accessorKey: 'handled_by_name',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Done" column={column} />
+          <DataGridColumnHeader title="Handled By" column={column} />
         ),
-        size: 100,
-        cell: ({ row }) =>
-          `${row.original.lines_done} / ${row.original.lines_total}`,
+        size: 160,
+        cell: ({ row }) => truncated(row.original.handled_by_name),
         meta: {
-          headerTitle: 'Done',
+          headerTitle: 'Handled By',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
+      },
+      {
+        accessorKey: 'print_count',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Print Count" column={column} />
+        ),
+        size: 110,
+        cell: ({ row }) => (
+          <EntityDownloadsButton
+            entityType="new_product_application"
+            entityId={row.original.id}
+            label={row.original.application_no}
+            count={row.original.print_count ?? 0}
+          />
+        ),
+        meta: {
+          headerTitle: 'Print Count',
           skeleton: <Skeleton className="h-4 w-12" />,
         },
       },

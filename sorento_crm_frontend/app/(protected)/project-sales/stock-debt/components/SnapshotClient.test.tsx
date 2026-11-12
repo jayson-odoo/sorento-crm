@@ -140,10 +140,10 @@ vi.mock('../../_shared/hooks/useReserveRowOptions', () => ({
           isLoading: false,
           defaultWarehouseId: 'wh-brw',
           options: [
-            { value: 'wh-brw', label: 'BRW  available 972' },
-            { value: 'wh-mwh', label: 'MWH  available 0' },
+            { value: 'wh-brw', label: 'BRW  on hand 972' },
+            { value: 'wh-mwh', label: 'MWH  on hand 0' },
           ],
-          availableQtyByWarehouseId: { 'wh-brw': 972, 'wh-mwh': 0 },
+          onHandQtyByWarehouseId: { 'wh-brw': 972, 'wh-mwh': 0 },
         },
       ]),
     ),
@@ -202,7 +202,7 @@ function header(over: Record<string, unknown> = {}) {
       show_aux: true,
     },
     filters_label:
-      'Book Project · All locations · Delivery 01/01/2023 to 31/05/2027 · Only in debt · Stock and PO columns',
+      'Book Project · All locations · Delivery 01/01/2023 - 31/05/2027 · Only in debt · Stock and PO columns',
     months: ['2026-10', '2027-01'],
     tba_month: '2030-01',
     totals: {
@@ -354,7 +354,7 @@ describe('AC-F3 header and meta', () => {
     expect(page).toHaveTextContent('11:53');
     expect(page).toHaveTextContent('Jayson Foundryx');
     expect(page).toHaveTextContent('Project');
-    expect(page).toHaveTextContent('01/01/2023 to 31/05/2027');
+    expect(page).toHaveTextContent('01/01/2023 - 31/05/2027');
     expect(page).toHaveTextContent(/Only in debt/i);
     expect(page).toHaveTextContent('550 products');
     expect(page).toHaveTextContent('5 decided');
@@ -617,8 +617,8 @@ describe('AC-F4 Decision popover', () => {
     fireEvent.click(pick(popover, 'Reserve'));
     const from = within(popover).getByRole('combobox', { name: /from/i });
     expect(from).toHaveAttribute('data-clearable', 'true');
-    expect(within(from).getByRole('option', { name: /BRW\s+available 972/ })).toBeInTheDocument();
-    expect(within(from).getByRole('option', { name: /MWH\s+available 0/ })).toBeInTheDocument();
+    expect(within(from).getByRole('option', { name: /BRW\s+on hand 972/ })).toBeInTheDocument();
+    expect(within(from).getByRole('option', { name: /MWH\s+on hand 0/ })).toBeInTheDocument();
 
     fireEvent.click(pick(popover, 'Buy'));
     expect(within(popover).queryByRole('combobox', { name: /from/i })).not.toBeInTheDocument();

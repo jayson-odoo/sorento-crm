@@ -77,8 +77,8 @@ YEAR = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 SEP = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
 OCT = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
 NO_DATES = {"date_filter_start": None, "date_filter_end": None}
-KIND_WORDS = ("undelivered orders", "pending delivery")  # owner 29 Oct: unpaid is named, never offered
-KIND_QUESTION = "Undelivered orders or pending delivery?"
+KIND_WORDS = ("sales order", "delivery order")  # owner 29 Oct: unpaid is named, never offered
+KIND_QUESTION = "Sales order or delivery order?"
 MEASURE_Q = "By quantity or by amount?"
 BASIS_LABELS = {
     "delivered": "delivered sales", "ordered": "ordered sales", "outstanding": "outstanding orders",

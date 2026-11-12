@@ -1548,6 +1548,15 @@ class OrderService:
                 .all()
             )
             by_number = {no: {"id": str(sid), "so_number": no, "line_no": None} for sid, no in rows}
+        # OI-UX-FILTER-SNAPSHOT: each linked SO also names its customer and project.
+        from app.services.scm.so_party import so_parties, with_party
+
+        parties = so_parties(
+            self.db,
+            ids=[r["id"] for r in (*by_line.values(), *by_number.values())],
+        )
+        for ref in (*by_line.values(), *by_number.values()):
+            with_party(ref, parties, ref["id"])
         for line in lines:
             ref = by_line.get(str(line.sales_order_line_id or ""))
             if ref is None and line.from_doc_type in (None, "SO"):

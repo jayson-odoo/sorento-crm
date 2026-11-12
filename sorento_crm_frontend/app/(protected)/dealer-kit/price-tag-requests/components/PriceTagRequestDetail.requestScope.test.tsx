@@ -43,7 +43,9 @@ vi.mock('@/hooks/useDeferredAction', () => ({
 vi.mock('@/components/common/DetailActionsMenu', () => ({
   DetailActionsMenu: ({ children }: { children: React.ReactNode }) => <div data-testid="gear-menu">{children}</div>,
 }));
-vi.mock('@/components/ui/dropdown-menu', () => ({
+// The design lightbox's zoom menu needs the real DropdownMenu; only the item is stood in.
+vi.mock('@/components/ui/dropdown-menu', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   DropdownMenuItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: (e: { preventDefault: () => void }) => void }) => (
     <button role="menuitem" onClick={() => onSelect?.({ preventDefault: () => {} })}>{children}</button>
   ),
@@ -65,7 +67,17 @@ const apiFetch = vi.fn(async (url: string, init?: RequestInit) => {
     return json({ ...state.detail, revision: state.revision });
   }
   if (path.startsWith('/api/v1/my-requests/submissions/price_tag_request') && method !== 'GET') return json({ ...state.detail, id: 'req-1' });
-  if (path.endsWith('/design')) return json({ detail: 'none' }, 404);
+  // A proof awaiting approval has a design (the page opens it from Preview, owner 11 Nov).
+  if (path.endsWith('/design')) {
+    return json({
+      page_id: 'page-1', version: 1, source: 'version',
+      doc: {
+        kind: 'tag_sheet', imposition: { page_width_mm: 210, page_height_mm: 297 },
+        sheets: [{ id: 'sheet-1', tags: [{ id: 'tag-1', request_tag_id: 'l-1', x_mm: 20, y_mm: 30, width_mm: 80, height_mm: 40, layers: [] }] }],
+      },
+      lines: [], assets: {}, images: {}, fonts: [],
+    });
+  }
   if (path.includes('/lookups/debtors-for-agent') || path.endsWith('/debtors')) {
     return json([{ customer_id: 'c-1', customer_code: 'D-001', customer_name: 'ZZT Dealer', debtor_code: 'D-001', debtor_name: 'ZZT Dealer', source: 'customer' }]);
   }
@@ -119,15 +131,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Price Tag Request page, limited user, view', () => {
-  it('Submit POSTs through my-requests and never a staff write route', async () => {
+  it('Escalate on a draft POSTs through my-requests and never a staff write route', async () => {
     await mountDetail(LIMITED);
-    fireEvent.click(await screen.findByText('Submit'));
-    await waitFor(() => expect(posted('submit')).toHaveLength(1));
+    await sendToMarketing();
+    await waitFor(() => expect(posted('submit-escalate')).toHaveLength(1));
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
   });
 
   it('proof ready: Approve proof POSTs .../approve, Request changes is offered, the designer is not', async () => {
     await mountDetail(LIMITED, { portal_draft_at: null, status: 'proof_ready' });
+    // Owner hand test 11 Nov: the design, and its Approve, open from the page's Preview button.
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
     fireEvent.click((await screen.findAllByRole('button', { name: /^Approve/ }))[0]);
     await waitFor(() => expect(posted('approve')).toHaveLength(1));
     expect(screen.getByLabelText(/Anything else \(optional\)/)).toBeTruthy();
@@ -148,7 +162,7 @@ describe('Price Tag Request page, limited user, view', () => {
 describe('Price Tag Request page, page Back (owner hand test 2 point 4)', () => {
   it('a limited user sees no page-level Back link', async () => {
     await mountDetail(LIMITED);
-    await screen.findByText('Submit');
+    await screen.findByRole('button', { name: /escalate to marketing/i });
     expect(screen.queryByText(/^Back to /)).toBeNull();
     expect(screen.queryByRole('link', { name: /^Back to / })).toBeNull();
   });
@@ -161,10 +175,10 @@ describe('Price Tag Request page, page Back (owner hand test 2 point 4)', () => 
 });
 
 describe('Price Tag Request page, limited user, edit and create', () => {
-  it('Submit in edit mode ends in POST .../submit through my-requests', async () => {
+  it('Escalate in edit mode ends in POST .../submit-escalate through my-requests', async () => {
     await mountDetail(LIMITED, {}, 'edit=1');
-    fireEvent.click(await screen.findByRole('button', { name: 'Submit' }));
-    await waitFor(() => expect(posted('submit')).toHaveLength(1));
+    await sendToMarketing();
+    await waitFor(() => expect(posted('submit-escalate')).toHaveLength(1));
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
   });
 
@@ -178,3 +192,13 @@ describe('Price Tag Request page, staff user (control)', () => {
     expect(calls.filter((c) => c.url.startsWith('/api/v1/my-requests'))).toHaveLength(0);
   });
 });
+
+
+/** Owner ruling 3 Nov: no plain Submit; the draft goes out through Escalate (or Approve). */
+async function sendToMarketing() {
+  fireEvent.click(await screen.findByRole('button', { name: /escalate to marketing/i }));
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

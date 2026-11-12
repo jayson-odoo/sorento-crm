@@ -238,6 +238,7 @@ from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, Shi
 from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import line_date_sql as oi_line_date_sql, resolve as resolve_oi_date
 from app.services.numbering_defaults import (
     CRM_SPO_DOC_TYPE,
     seed_crm_spo_rule,
@@ -245,6 +246,7 @@ from app.services.numbering_defaults import (
 from app.services.numbering_service import NumberingService
 from app.services.rules import shipping_order_rules
 from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
+from app.services.scm.so_party import fill_party, so_parties, with_party
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 logger = logging.getLogger(__name__)
@@ -1206,7 +1208,7 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             OrderInquiryRow.state != INQUIRY_CANCELLED,
         )
         .order_by(
-            OrderInquiryRow.delivery_date.asc().nulls_last(),
+            oi_line_date_sql(OrderInquiryRow).asc().nulls_last(),
             OrderInquiryRow.id.asc(),
         )
         .all()
@@ -1268,6 +1270,7 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     }
 
     codes = _warehouse_ids_by_code(db)
+    needed_by = resolve_oi_date(db, [r for r, *_rest in rows])
     out: list[dict] = []
     for row, doc_no, provisional, project_title in rows:
         taken_qty = linked.get(str(row.id), 0.0)
@@ -1278,8 +1281,13 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             "key": f"{_COVERAGE_PROJECT}:{row.id}",
             "kind": _COVERAGE_PROJECT,
             "document": doc_no or provisional,
-            "customer_name": project_title,
-            "required_date": row.delivery_date.isoformat() if row.delivery_date else None,
+            "customer_name": None,
+            # The inquiry's own project until its sales order is read below; an order not
+            # synced from AutoCount yet (or named by its provisional ref) keeps it.
+            "project_label": project_title,
+            "required_date": (
+                needed_by[str(row.id)].date.isoformat() if needed_by[str(row.id)].date else None
+            ),
             "qty": need,
             "taken_qty": taken_qty,
             "taken_by": taken_by.get(str(row.id), []),
@@ -1289,6 +1297,11 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             # `sales_orders.demand_class` to read here, so this is a constant, not a lookup.
             "demand_class": _DEMAND_CLASS_PROJECT,
         })
+    # OI-UX-FILTER-SNAPSHOT: `customer_name` used to hold the project title; the title is now
+    # the row's `project_label`, and its sales order fills the customer (`fill_party`).
+    parties = so_parties(db, numbers=[o["document"] for o in out])
+    for o in out:
+        fill_party(o, parties, o["document"])
     return out
 
 
@@ -1366,6 +1379,9 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
             # vs a book line), `demand_class` says what the SO ITSELF is classified as.
             "demand_class": r.demand_class,
         })
+    parties = so_parties(db, numbers=[o["document"] for o in out])
+    for o in out:
+        with_party(o, parties, o["document"])
     return out
 
 
@@ -3440,6 +3456,22 @@ def unwind(db: Session, shipment_id: str, purchase_order_id: Optional[str] = Non
                 OrderLinkClaim.spo_allocation_id.in_(allocation_ids),
                 OrderLinkClaim.source == "planner",
             ).delete(synchronize_session=False)
+        # PACKING-LIST-RECALC: a bulk delete goes around the ORM listener, so the
+        # containers these allocations fed are noted for their recompute by hand.
+        from app.services.scm.packing_list_recalc import mark_stale
+
+        mark_stale(
+            db,
+            [
+                row[0]
+                for row in db.query(SPOAllocation.inbound_shipment_id)
+                .filter(
+                    SPOAllocation.po_line_id.in_(po_line_ids),
+                    SPOAllocation.inbound_shipment_id.isnot(None),
+                )
+                .distinct()
+            ],
+        )
         deleted_allocations = (
             db.query(SPOAllocation)
             .filter(SPOAllocation.po_line_id.in_(po_line_ids))
@@ -3557,6 +3589,10 @@ def plan_of(db: Session, purchase_order_id: str) -> dict:
                 "qty": qty,
                 "warehouse": row[3] if row else None,
             })
+
+    parties = so_parties(db, numbers=[c["so_number"] for c in covers])
+    for c in covers:
+        with_party(c, parties, c["so_number"])
 
     return {"pulls": pulls, "covers": covers}
 

@@ -28,6 +28,9 @@ import type { SpecRegistryKey } from '../types/productSpec.types';
 /** `finish` after an admin suppressed the shipped value staff had added a word to. */
 function finishWithASuppressedValue(): SpecRegistryKey {
   return {
+    id: 'k-finish',
+    parser_hint: null,
+    label_owned: false,
     spec_key: 'finish',
     label: 'Finish',
     data_type: 'enum',

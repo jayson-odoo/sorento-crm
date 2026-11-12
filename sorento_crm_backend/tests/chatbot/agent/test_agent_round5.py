@@ -168,7 +168,7 @@ def test_registry_has_crm_resolve_and_no_longer_crm_lookup_resolve():
 
     assert RESOLVE in REGISTRY
     assert "crm_lookup_resolve" not in REGISTRY
-    assert len(REGISTRY) == 13 + 11  # AGENTIC-UNIFY PR 4: the eleven ported reads; round 5e: crm_products_find; AGENTIC-KNOWLEDGE: crm_knowledge_search, user_guides_read
+    assert len(REGISTRY) == 13 + 11 + 1  # AGENT-QUOTE-COMPARE: crm_project_quotation_lines; AGENTIC-UNIFY PR 4: the eleven ported reads; round 5e: crm_products_find; AGENTIC-KNOWLEDGE: crm_knowledge_search, user_guides_read
 
 
 def test_found_ambiguous_and_not_found_per_term_and_the_body_sent(held, resolver):
@@ -820,7 +820,7 @@ def test_not_found_citing_an_empty_call_with_unresolved_ids_gets_the_prefix(db, 
     verdict = _payload(_tool_msgs(provider.seen[2]["messages"])[-1])
     assert verdict["status"] == "invalid"
     assert "stock for SRTWT7445" in verdict["message"]
-    assert "I could not confirm that nothing exists for: stock for SRTWT7445." in result.reply_text
+    assert "I did not search for stock for SRTWT7445, so I cannot say it does not exist." in result.reply_text
     assert "There is no stock." in result.reply_text
 
 
@@ -835,7 +835,7 @@ def test_not_found_citing_a_resolve_term_that_was_found_is_a_violation(db, conta
         ]
     )
     result = run(db, contact, provider)
-    assert "I could not confirm that nothing exists for: SRTWT7445." in result.reply_text
+    assert "I did not search for SRTWT7445, so I cannot say it does not exist." in result.reply_text
 
 
 def test_a_plain_text_reply_with_no_answer_call_gets_a_repair_round_asking_for_the_tool(db, contact, resolver):

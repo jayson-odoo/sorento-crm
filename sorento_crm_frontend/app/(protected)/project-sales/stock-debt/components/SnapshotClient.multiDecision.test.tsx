@@ -101,10 +101,10 @@ vi.mock('../../_shared/hooks/useReserveRowOptions', () => ({
           isLoading: false,
           defaultWarehouseId: 'wh-brw',
           options: [
-            { value: 'wh-brw', label: 'BRW  available 972' },
-            { value: 'wh-mwh', label: 'MWH  available 0' },
+            { value: 'wh-brw', label: 'BRW  on hand 972' },
+            { value: 'wh-mwh', label: 'MWH  on hand 0' },
           ],
-          availableQtyByWarehouseId: { 'wh-brw': 972, 'wh-mwh': 0 },
+          onHandQtyByWarehouseId: { 'wh-brw': 972, 'wh-mwh': 0 },
         },
       ]),
     ),
@@ -184,7 +184,7 @@ function header(over: Record<string, unknown> = {}) {
       show_aux: true,
     },
     filters_label:
-      'Book Project · All locations · Delivery 01/01/2023 to 31/05/2027 · Only in debt · Stock and PO columns',
+      'Book Project · All locations · Delivery 01/01/2023 - 31/05/2027 · Only in debt · Stock and PO columns',
     months: ['2026-10', '2027-01'],
     tba_month: '2030-01',
     totals: {

@@ -224,6 +224,9 @@ WRAPPED = {
     "app.api.v1.reports.reports.run_report",
     "app.api.v1.connector.query",
     "app.api.v1.list_query.export_rows",
+    "app.api.v1.projects.quotation_certificates.read_certificate",
+    "app.api.v1.projects.quotation_certificates.read_certificate_file",
+    "app.api.v1.projects.quotation_certificates.put_certificate_boxes",
 }
 
 

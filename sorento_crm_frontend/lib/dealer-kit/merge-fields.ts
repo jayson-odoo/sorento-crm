@@ -23,11 +23,17 @@
  * other to have finished loading.
  */
 
-import { comboOf, resolveSlotText, subjectOf } from './product-block';
+import { isRich, richPlainText } from './rich-text';
+import { comboPartField, comboPartsHtml } from './combo-parts';
+import { comboPositions } from './combo-slots';
+import { formatTagPrice } from './price-badge';
+import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
 import type {
   SlotBinding,
+  SubjectSlot,
   TagBindingData,
   TagLayer,
+  TagSlots,
   TagSpecValue,
 } from './tag-template-types';
 
@@ -39,7 +45,15 @@ import type {
 export type MergeFieldMode = 'print' | 'editor';
 
 /** How the Insert field dialog sorts the catalogue into sections. */
-export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line' | 'Combo' | 'Spec sheet';
+export type MergeFieldGroup =
+  | 'Product'
+  | 'Specs'
+  | 'Set'
+  | 'Line'
+  | 'Combo'
+  | 'Combo positions'
+  | 'Parts'
+  | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
  *  never an empty string or the raw token - same default the backend column
@@ -54,6 +68,8 @@ export interface MergeField {
   /** What a person calls the field. Never the raw path. */
   label: string;
   group: MergeFieldGroup;
+  /** The picker shows the label alone (a combo part's token carries an id nobody should read). */
+  hideToken?: boolean;
 }
 
 /** One key of the spec registry, as `GET /dealer-kit/spec-keys` answers it. */
@@ -94,6 +110,79 @@ const PATH_SLOTS: Record<string, Exclude<SlotBinding, null>> = {
   'set.members': 'set_members',
 };
 
+/**
+ * O1: the fields a `{{slot.*}}` token may read, each one a `product.<field>` path above, so a
+ * position token and a position-bound layer resolve through the same code.
+ *
+ * `kinds` limits a field to the positions that have it. PRICETAG-PICK-SELLPRICE: `sell_price` is
+ * the combo's own "Sell price if picked" for one choice (`combo.choices[].options[].sell_price`),
+ * so only a choice-group pick has one; it is read by `pickSellPrice`, not `product.sell_price`
+ * (that is the part's promo offer, a different number).
+ */
+const SLOT_TOKEN_FIELDS: { field: string; label: string; kinds?: SubjectSlot['kind'][] }[] = [
+  { field: 'code', label: 'code' },
+  { field: 'name', label: 'name' },
+  { field: 'list_price', label: 'list price' },
+  { field: 'price_tag_description', label: 'price tag description' },
+  { field: 'sell_price', label: 'sell price (if picked)', kinds: ['pick'] },
+];
+
+function slotFieldAllowed(slot: SubjectSlot, field: string): boolean {
+  const entry = SLOT_TOKEN_FIELDS.find((f) => f.field === field);
+  return Boolean(entry) && (!entry!.kinds || entry!.kinds.includes(slot.kind));
+}
+
+/** The combo's sell price for the pick at this position, bare like other tag prices; empty
+ *  (never `RM 0`) when the combo leaves it blank or the position has no pick. Matched by
+ *  product, not index: a real line places only the chosen option. */
+function pickSellPrice(data: TagBindingData, slots: TagSlots, slot: Extract<SubjectSlot, { kind: 'pick' }>): string {
+  const group = slots.groups[slot.group];
+  const pick = group?.picks[slot.index];
+  if (!pick) return '';
+  const choices = comboOf(data)?.choices ?? [];
+  const options = (choices.find((choice) => choice.role === group.role) ?? choices[slot.group])?.options ?? [];
+  const option =
+    options.find((o) => pick.product_id && o.product_id === pick.product_id) ??
+    options.find((o) => o.code === pick.code);
+  return option?.sell_price == null ? '' : formatTagPrice(Number(option.sell_price), false);
+}
+
+/** The token path for a position and field, numbered from 1 like the UI labels. */
+export function slotTokenPath(slot: SubjectSlot, field: string): string {
+  switch (slot.kind) {
+    case 'main':
+      return `slot.main.${field}`;
+    case 'fixed':
+      return `slot.fixed.${slot.index + 1}.${field}`;
+    case 'pick':
+      return `slot.pick.${slot.group + 1}.${slot.index + 1}.${field}`;
+    case 'upgrade':
+      return `slot.upgrade.${slot.index + 1}.${field}`;
+    case 'variants':
+      // "All variants" reads the main product for any field (only its icons differ).
+      return `slot.main.${field}`;
+  }
+}
+
+/** Read `slot.<kind>.<numbers>.<field>` back into a 0-based position, or null when malformed. */
+function parseSlotToken(path: string): { slot: SubjectSlot; field: string } | null {
+  const [head, kind, ...rest] = path.split('.');
+  if (head !== 'slot') return null;
+  const field = rest.pop();
+  const numbers = rest.map((n) => (/^[1-9][0-9]*$/.test(n) ? Number(n) - 1 : NaN));
+  if (!field || numbers.some(Number.isNaN)) return null;
+  if (kind === 'main' && numbers.length === 0) return { slot: { kind: 'main' }, field };
+  if (kind === 'fixed' && numbers.length === 1) return { slot: { kind: 'fixed', index: numbers[0] }, field };
+  if (kind === 'upgrade' && numbers.length === 1) return { slot: { kind: 'upgrade', index: numbers[0] }, field };
+  if (kind === 'pick' && numbers.length === 2) {
+    return { slot: { kind: 'pick', group: numbers[0], index: numbers[1] }, field };
+  }
+  return null;
+}
+
+/** The groups a price tag template offers in Insert field (the spec sheet's own are for its templates). */
+export const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions'];
+
 /** How each fixed path is named in the dialog. */
 const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = [
   { path: 'product.code', label: 'Code', group: 'Product' },
@@ -101,6 +190,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.dimensions', label: 'Dimensions', group: 'Product' },
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
   { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
+  { path: 'product.description', label: 'Description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
   { path: 'product.currency', label: 'Currency', group: 'Product' },
@@ -115,7 +205,9 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'line.parts_names', label: 'Parts (names)', group: 'Line' },
   { path: 'combo.name', label: 'Combo name', group: 'Combo' },
   { path: 'combo.description', label: 'Combo description', group: 'Combo' },
-  { path: 'combo.free_items', label: 'Combo free items', group: 'Combo' },
+  { path: 'combo.free_items', label: 'Combo accessories included', group: 'Combo' },
+  // COMBO-SETTINGS-UX: every part, printed through the combo's own "Each part prints as" line.
+  { path: 'combo.parts', label: 'All parts as a list', group: 'Combo' },
   // PS-SPEC-SHEET: filled on a project spec sheet page only; blank on a price tag.
   { path: 'product.brand', label: 'Brand', group: 'Spec sheet' },
   { path: 'line.area', label: 'Area', group: 'Spec sheet' },
@@ -206,7 +298,7 @@ function resolvePath(
     if (!subject) return null;
     const raw = resolveSlotText({ slot_binding: 'price_tag_description', props: layer?.props }, data);
     if (raw == null) return null;
-    return renderPriceTagDescription(raw, subject, mode);
+    return renderPriceTagDescription(isRich(raw) ? richPlainText(raw) : raw, subject, mode);
   }
 
   if (path.startsWith('spec.')) {
@@ -215,11 +307,26 @@ function resolvePath(
     return spec ? specText(spec) : null;
   }
 
+  // COMBO-SETTINGS-UX: a per-part field of the combo description, tied to the part's product.
+  const partValue = comboPartField(data, path);
+  if (partValue !== null) return partValue;
+
+  if (path === 'combo.all_parts') {
+    // "All parts (one line each)" before it is inserted: the default line for every part.
+    return richPlainText(comboPartsHtml(data, true));
+  }
+
+  if (path === 'combo.parts') {
+    // A plain layer reads the list as plain lines; a rich one splices it (`product-block`).
+    return richPlainText(comboPartsHtml(data));
+  }
+
   if (path === 'combo.name' || path === 'combo.description' || path === 'combo.free_items') {
     // Empty, never the raw token, on a line with no combo or an older payload (AC-4.2).
     const combo = comboOf(data);
     const field = path.slice('combo.'.length) as 'name' | 'description' | 'free_items';
-    return combo?.[field] ?? '';
+    const value = combo?.[field] ?? '';
+    return field === 'description' && isRich(value) ? richPlainText(value) : value;
   }
 
   if (path.startsWith('doc.')) {
@@ -232,6 +339,15 @@ function resolvePath(
     if (data.kind !== 'line' || !data.line.doc) return null;
     const field = path.slice('line.'.length) as 'area' | 'comment' | 'marker';
     return data.line[field] ?? '';
+  }
+
+  // The product's plain catalogue description (`products.description`), for the subject this
+  // layer reads (a part or position its own, else the line's / product's). A set has none.
+  if (path === 'product.description') {
+    const subject = subjectOf(data, layer);
+    if (subject?.kind === 'product') return subject.product.description ?? '';
+    if (subject?.kind === 'line') return subject.line.description ?? '';
+    return subject ? '' : null;
   }
 
   if (path === 'product.brand') {
@@ -269,6 +385,18 @@ function resolvePath(
           ? subject.set
           : subject.line;
     return source.currency ?? DEFAULT_TAG_CURRENCY;
+  }
+
+  if (path.startsWith('slot.')) {
+    // O1: a position of its own, through the same `subjectOf` position code a bound layer uses.
+    // Empty (never the main product, never the token) for a position the line does not have.
+    const parsed = parseSlotToken(path);
+    if (!parsed || !slotFieldAllowed(parsed.slot, parsed.field)) return '';
+    const slots = data.kind === 'line' ? data.line.slots : data.kind === 'product' ? data.product.slots : undefined;
+    if (!slots) return '';
+    if (parsed.slot.kind === 'pick' && parsed.field === 'sell_price') return pickSellPrice(data, slots, parsed.slot);
+    const at = { props: { kind: 'text', subjectSlot: parsed.slot } } as unknown as Pick<TagLayer, 'props'>;
+    return resolvePath(`product.${parsed.field}`, data, at, mode) ?? '';
   }
 
   const slot = PATH_SLOTS[path];
@@ -398,6 +526,7 @@ export function renderPriceTagDescription(
 export function mergeFieldCatalog(
   specKeys: SpecKeyOption[],
   groups?: MergeFieldGroup[],
+  slots?: TagSlots | null,
 ): MergeField[] {
   const fixed = FIELD_LABELS.map(({ path, label, group }) => ({
     path,
@@ -413,6 +542,20 @@ export function mergeFieldCatalog(
     group: 'Specs' as const,
   }));
 
+  // O1: the previewed combo's own positions with their codes, else the generic counts.
+  const positions: MergeField[] = comboPositions(slots).flatMap(({ slot, code, group }) =>
+    SLOT_TOKEN_FIELDS.filter(({ field }) => slotFieldAllowed(slot, field)).map(({ field, label }) => {
+      const path = slotTokenPath(slot, field);
+      const known = field === 'code' && code ? `: ${code}` : '';
+      return {
+        path,
+        token: `{{${path}}}`,
+        label: `${slotLabel(slot, slots)} ${label}${known}`,
+        group: 'Combo positions' as const,
+      };
+    }),
+  );
+
   // Product first, then the specs a designer is most likely hunting for, then
   // the two groups that only apply to some blocks.
   const all = [
@@ -421,6 +564,7 @@ export function mergeFieldCatalog(
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
     ...fixed.filter((field) => field.group === 'Combo'),
+    ...positions,
     // PS-SPEC-SHEET: offered on spec sheet templates; a price tag editor passes `groups`
     // without it, so it never shows there.
     ...fixed.filter((field) => field.group === 'Spec sheet'),

@@ -39,6 +39,7 @@ document, which is the fallback working rather than a degradation.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_datetime
 import copy
 import hashlib
 import logging
@@ -689,7 +690,7 @@ class ProjectScheduleService:
             status_code=409,
             message=(
                 f"This file is already version {existing.version_no} of this schedule "
-                f"(uploaded {uploaded_malaysia.strftime('%d/%m/%Y %H:%M')}). Open that "
+                f"(uploaded {fmt_datetime(uploaded_malaysia)}). Open that "
                 "version to read it again, or upload a changed file."
             ),
             code="schedule_version_duplicate",
@@ -957,10 +958,16 @@ class ProjectScheduleService:
             self.db.rollback()
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             return self._fail(version, str(detail.get("message") or exc.detail))
-        except Exception as exc:  # noqa: BLE001 - the row must never stay on "running"
+        except Exception:  # noqa: BLE001 - the row must never stay on "running"
             self.db.rollback()
             logger.exception("schedule extraction failed for version %s", schedule_version_id)
-            return self._fail(version, str(exc))
+            # The exception's own text stays in the log: on screen it is a Python sentence
+            # nobody can act on (PO-EXTRACT-LIST-FIX, the same fault on the PO panel).
+            return self._fail(
+                version,
+                "The reader stopped before it finished. Read it again; if it stops again, "
+                "upload it again.",
+            )
 
     def _fail(self, version: DeliveryScheduleVersion, message: str) -> dict:
         version.extraction_state = STATE_FAILED

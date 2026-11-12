@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { numberFieldError } from '@/lib/number-field';
+import { FEATURE_ICONS_KEY, kitLibraryClient } from '@/lib/dealer-kit/kit-library-cache';
 import {
   seedValuesFor,
   seedWordsFor,
@@ -14,7 +15,7 @@ import { useSpecRegistryMutations } from './useSpecRegistryMutations';
 import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
 import { SPEC_COVERAGE_QUERY_KEY } from './useSpecCoverageQuery';
 import { specKeyProductsKey } from './useSpecKeyProductsQuery';
-import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
+import type { IconCondition, SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
 
 export const dedupe = (list: string[]) => Array.from(new Set(list));
 
@@ -48,6 +49,14 @@ export interface SpecKeyDraft {
   droppedWords: Record<string, string[]>;
   /** value -> the display label a person reads instead of the slug (#423). */
   valueLabels: Record<string, string>;
+  /** value -> Dealer Kit icon ids, in display order (feature icons). */
+  valueIcons: Record<string, string[]>;
+  /** value -> icon id -> the other spec values the icon needs (SPEC-ICON-COMBINED). */
+  valueIconConditions: Record<string, Record<string, IconCondition[]>>;
+  /** Input string for the spec's Icon order; '' clears it. */
+  iconOrder: string;
+  /** Set by a refused Save; follows the field from then on. */
+  iconOrderError?: string;
   rules: SpecDerivationRule[];
 }
 
@@ -119,6 +128,11 @@ export function projectSpecKeyDraft(row: SpecRegistryKey): SpecKeyDraft {
     words,
     droppedWords,
     valueLabels: { ...(row.value_labels ?? {}) },
+    iconOrder: row.icon_order === null || row.icon_order === undefined ? '' : String(row.icon_order),
+    valueIcons: Object.fromEntries(
+      Object.entries(row.value_icons ?? {}).map(([value, ids]) => [value, [...ids]]),
+    ),
+    valueIconConditions: JSON.parse(JSON.stringify(row.value_icon_conditions ?? {})),
     // Given an identity on the way in so dragging (RulesTab) moves a RULE, not a
     // position, and Try it/preview keep reading the same row across an edit.
     rules: (row.effective_rules ?? row.derivation_rules ?? []).map((rule, index) => ({
@@ -138,6 +152,44 @@ function trimmedValueLabels(labels: Record<string, string>): Record<string, stri
   return next;
 }
 
+/** value_icons with empty lists dropped; null when they say what the row already holds. Sent
+ *  only on a change, so a save about something else never trips over an icon deleted since. */
+function changedValueIcons(
+  row: SpecRegistryKey,
+  icons: Record<string, string[]>,
+): Record<string, string[]> | null {
+  const clean = (map: Record<string, string[]>) =>
+    Object.fromEntries(Object.entries(map).filter(([, ids]) => ids.length > 0));
+  const next = clean(icons);
+  const before = clean(row.value_icons ?? {});
+  const keys = new Set([...Object.keys(next), ...Object.keys(before)]);
+  const same = [...keys].every(
+    (key) => (next[key] ?? []).join('\u0000') === (before[key] ?? []).join('\u0000'),
+  );
+  return same ? null : next;
+}
+
+/** Conditions with empty entries dropped; null when they say what the row already holds. */
+function changedIconConditions(
+  row: SpecRegistryKey,
+  conditions: Record<string, Record<string, IconCondition[]>>,
+): Record<string, Record<string, IconCondition[]>> | null {
+  const clean = (map: Record<string, Record<string, IconCondition[]>>) => {
+    const out: Record<string, Record<string, IconCondition[]>> = {};
+    for (const [value, byIcon] of Object.entries(map)) {
+      for (const [icon, list] of Object.entries(byIcon ?? {})) {
+        if (list.length > 0) (out[value] ??= {})[icon] = list;
+      }
+    }
+    return out;
+  };
+  const next = clean(conditions);
+  return JSON.stringify(next) === JSON.stringify(clean(row.value_icon_conditions ?? {})) ? null : next;
+}
+
+/** Icon order: a whole number 1..999, or blank (last). */
+export const ICON_ORDER_RULES = { min: 1, max: 999, integer: true, optional: true } as const;
+
 export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
   const { user_synonyms, suppressed_synonyms } = wordPayload(row, {
     words: draft.words,
@@ -148,6 +200,8 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     draft.liveValues,
     draft.droppedValues,
   );
+  const valueIcons = changedValueIcons(row, draft.valueIcons ?? {});
+  const valueIconConditions = changedIconConditions(row, draft.valueIconConditions ?? {});
   const maxValueTrimmed = draft.maxValue.trim();
   const maxValueNumber = maxValueTrimmed === '' ? null : Number(maxValueTrimmed);
   const maxValuePayload =
@@ -168,6 +222,9 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     user_values,
     suppressed_values,
     value_labels: trimmedValueLabels(draft.valueLabels),
+    ...(valueIcons ? { value_icons: valueIcons } : {}),
+    ...(valueIconConditions ? { value_icon_conditions: valueIconConditions } : {}),
+    icon_order: draft.iconOrder.trim() === '' ? null : Number(draft.iconOrder.trim()),
     derivation_rules: draft.rules,
   };
 }
@@ -223,6 +280,11 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
       setDraftState((current) => (current ? { ...current, maxValueError } : current));
       return false;
     }
+    const iconOrderError = numberFieldError(draft.iconOrder, ICON_ORDER_RULES);
+    if (iconOrderError) {
+      setDraftState((current) => (current ? { ...current, iconOrderError } : current));
+      return false;
+    }
     try {
       const body = buildPatchBody(row, draft);
       const updated = await update.mutateAsync({ specKey: row.spec_key, body });
@@ -251,6 +313,11 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
       // products it changed; there is nothing left to press, so the toast reports
       // the count and stops - every time, "Saved. 0 products updated." included,
       // never a bare "Saved." that leaves the reader guessing whether it re-read.
+      // The price tag designer caches the spec-value icon list in its own client: a save that
+      // changed icons or their order must reach it (review S1).
+      if ('value_icons' in body || 'value_icon_conditions' in body || 'icon_order' in body) {
+        void kitLibraryClient.invalidateQueries({ queryKey: FEATURE_ICONS_KEY });
+      }
       toast.success(
         `Saved. ${updated.products_updated} product${updated.products_updated === 1 ? '' : 's'} updated.`,
       );

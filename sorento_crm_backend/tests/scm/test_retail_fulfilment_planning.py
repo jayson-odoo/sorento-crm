@@ -411,7 +411,7 @@ def test_r1_a_planned_retail_order_that_closes_can_still_apply_its_pending_chang
     from app.services import planning_change_service
     from app.services.scm.outstanding_diff import CLOSED, Diff
 
-    from ..test_planning_changes import _diff_change
+    from ..test_planning_changes import _diff_change, apply_batch
 
     client, world = api
     core, lines = _planned_retail_order(client, world)
@@ -444,7 +444,7 @@ def test_r1_a_planned_retail_order_that_closes_can_still_apply_its_pending_chang
         world.db, str(batch.id), detail["orders"][0]["rows"][0]["id"], "confirm"
     )
     world.db.commit()
-    applied = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    applied = apply_batch(world.db, batch)
 
     assert applied.status_code == 200, applied.text
     assert applied.json()["failed_orders"] == [], applied.text

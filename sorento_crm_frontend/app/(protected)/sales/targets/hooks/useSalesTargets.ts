@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createSalesTarget,
@@ -10,11 +11,13 @@ import {
   getSalesTarget,
   getSalesTargetOptions,
   getSalesTargets,
+  requestCommissionStatement,
   downloadDealerTargetsTemplate,
   importDealerTargets,
   patchSalesTarget,
   patchSalesTargetPeriod,
   savePointRatio,
+  updatePointRatio,
   searchTargetCustomers,
   searchTargetProducts,
 } from '../services/salesTargetService';
@@ -36,7 +39,8 @@ export function useSalesTargets(params: SalesTargetListParams, enabled = true) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: [...SALES_TARGETS_KEY, params],
-    queryFn: () => getSalesTargets(params),
+    // The abort signal cancels a superseded search instead of letting it run on.
+    queryFn: ({ signal }) => getSalesTargets(params, signal),
     enabled,
   });
 }
@@ -166,6 +170,21 @@ export function useSavePointRatio() {
   });
 }
 
+export function useUpdatePointRatio() {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidateTargets();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string; effective_from: string; rm_per_point: number }) =>
+      updatePointRatio(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: POINT_RATIOS_KEY });
+      invalidate();
+      toast.success('Ratio saved');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the ratio'),
+  });
+}
+
 export function useImportDealerTargets() {
   const invalidate = useInvalidateTargets();
   return useMutation({
@@ -186,5 +205,22 @@ export function useDownloadDealerTemplate() {
   return useMutation({
     mutationFn: (year: number) => downloadDealerTargetsTemplate(year),
     onError: (error: Error) => toast.error(error.message || 'Failed to download the template'),
+  });
+}
+
+/** The commission statement through My Downloads: the drawer and, for one target, the
+ * target's own downloads refresh; the file is fetched from there once ready. */
+export function useDownloadCommissionStatement() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => requestCommissionStatement(ids),
+    onSuccess: (_job, ids) => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      if (ids.length === 1) {
+        queryClient.invalidateQueries({ queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'sales_target', ids[0]] });
+      }
+      toast.success('Preparing the commission statement - it will appear in My Downloads.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to start the commission statement'),
   });
 }

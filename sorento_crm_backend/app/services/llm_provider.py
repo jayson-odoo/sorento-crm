@@ -236,6 +236,7 @@ class LLMProvider(Protocol):
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         include_thoughts: bool = False,
+        tool_choice: Optional[str] = None,
     ) -> ChatResult: ...
 
     def embed(self, text: str) -> list[float]: ...
@@ -483,6 +484,7 @@ class OpenAIProvider:
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         include_thoughts: bool = False,
+        tool_choice: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -500,7 +502,8 @@ class OpenAIProvider:
             kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+            # "required" forces a tool call (the agent's dealer-access flow); "auto" everywhere else.
+            kwargs["tool_choice"] = tool_choice or "auto"
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         # Structured-output: force a schema-valid JSON object as the response
@@ -510,7 +513,7 @@ class OpenAIProvider:
                 "type": "json_schema",
                 "json_schema": {
                     "name": json_schema_name or "structured_result",
-                    "schema": json_schema,
+                    "schema": _without_property_ordering(json_schema),
                     "strict": True,
                 },
             }
@@ -883,6 +886,7 @@ class AnthropicProvider:
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         include_thoughts: bool = False,
+        tool_choice: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -915,7 +919,7 @@ class AnthropicProvider:
                 "tools": [{
                     "name": tool_name,
                     "description": "Emit the structured result.",
-                    "input_schema": json_schema,
+                    "input_schema": _without_property_ordering(json_schema),
                 }],
                 "tool_choice": {"type": "tool", "name": tool_name},
             }
@@ -979,6 +983,9 @@ class AnthropicProvider:
             if "thinking" in thinking_fields:
                 # Anthropic refuses a set temperature alongside thinking.
                 kwargs.pop("temperature")
+        if tools and tool_choice == "required" and "thinking" not in kwargs:
+            # Anthropic refuses a forced tool alongside thinking, so a thinking call keeps "auto".
+            kwargs["tool_choice"] = {"type": "any"}
 
         resp = client.messages.create(**kwargs)
 
@@ -1233,6 +1240,28 @@ _GEMINI_TYPE_KEYS = {
     "integer": {"minimum", "maximum", "format"},
 }
 _GEMINI_BRANCH_KEYS = set().union(*_GEMINI_TYPE_KEYS.values())
+
+
+def _without_property_ordering(schema: Any) -> Any:
+    """`schema` without Gemini's `propertyOrdering` keyword (a generation-order hint only Gemini reads; OpenAI strict
+    mode refuses a keyword it does not know). A schema that carries none is returned as it is."""
+    if '"propertyOrdering"' not in json.dumps(schema, default=str):
+        return schema
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, list):
+            return [strip(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            if key == "propertyOrdering":
+                continue
+            # A `properties` map's keys are field names, never keywords: only its values are schemas.
+            out[key] = {name: strip(prop) for name, prop in value.items()} if key == "properties" and isinstance(value, dict) else strip(value)
+        return out
+
+    return strip(schema)
 
 
 def _gemini_schema(schema: Any) -> Any:
@@ -1721,6 +1750,7 @@ class GeminiProvider:
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         include_thoughts: bool = False,
+        tool_choice: Optional[str] = None,
     ) -> ChatResult:
         """`prompt_cache_key` turns on the explicit context cache (`_generate`); its value is not sent."""
         from app.services import llm_cassette
@@ -1740,6 +1770,8 @@ class GeminiProvider:
             declarations = _convert_tools_to_gemini(tools)
             if declarations:
                 payload["tools"] = declarations
+                if tool_choice == "required":
+                    payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY"}}
 
         wants_json = json_schema is not None or (
             bool(response_format) and response_format.get("type") == "json_object"

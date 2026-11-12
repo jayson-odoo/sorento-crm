@@ -62,6 +62,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'BoardLineDecisionPanel - same as above',
   ],
   [
+    'app/(protected)/master-data-management/costing/components/CostingView.tsx',
+    'NESTED GRID: CostingSupplierGrid (PanelDataGrid), a row\'s suppliers. Fixed table layout, capped by the shared expanded-row wrapper',
+  ],
+  [
     'app/(protected)/scm/components/PlanRowDialog.tsx',
     'NESTED GRID: StockDocumentsPanel (PanelDataGrid) inside OnHandTable rows. Covered by the context default AND by its own scrollerMaxHeight={false}',
   ],
@@ -154,6 +158,10 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
     'app/(protected)/master-data-management/products/components/ProductsList.tsx',
     "NESTED GRID: BarcodeImportDialog (#1811, BARCODE-IMPORT) is rendered inside the products DataGrid and its preview step holds a DataGrid of the parsed rows. It names scrollerMaxHeight: '20rem', so the nested default leaves it alone and it keeps its sticky header inside that window, like the ComplaintFulfilmentOrdersSection items popover. (Line moved 1092 -> 1106 when #1923 CATALOG-IMAGES added the Extract photos from catalogue menu entry above it; the CatalogueUploadDialog it added on the next line renders no grid, so it is not a new site; 1106 -> 1115 when #1938 FILTER-MULTISELECT PR4 made the products filters multi-value above it; 1115 -> 1185 when #1972 ITEM-CLASS added the Item Class column and filter above it)",
   ],
+  [
+    'app/(protected)/master-data-management/products/components/ProductsList.tsx#2',
+    'NESTED GRID: ListPriceHistoryDialog (LIST-PRICE-CHANGE-UI) is rendered inside the products DataGrid, opened from the List Price cell, and holds the server-paged DataGrid of the product\'s list-price history. It names scrollerMaxHeight: false itself (its DialogBody scrolls), which the nested default agrees with',
+  ],
 ]);
 
 /**
@@ -228,6 +236,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   ],
   [
     'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx#2',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
+    'app/(protected)/project-sales/stock-debt/components/PoLinkDialog.tsx',
+    'AC-LINK-CRM-UI: the Link to PO / Unlink / Move popup opened from the Stock Debt snapshot drill, one row per ticked line. Already scrollerMaxHeight={false}.',
+  ],
+  [
+    'app/(protected)/project-sales/stock-debt/components/PoLinkDialog.tsx#2',
     'The DataGridTable of the same grid, not a second one',
   ],
   [

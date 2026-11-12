@@ -32,6 +32,7 @@ publishes once acknowledged with a reason, and the reason stays on the order for
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import csv
 import io
 import logging
@@ -92,11 +93,13 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.models.user import User
+from app.services.set_driver_pricing import split_set_driver_price
 from app.services.error_handler import AppException
 from app.services.scm.sales_agent_service import normalize_location_group
 from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
 )
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +206,10 @@ class _Component:
     numerator: Decimal  # component quantity per `denominator` parent units
     denominator: Decimal
     quotation_line_id: Optional[str] = None
+    # Set only on a quoted SET's driver part: the set's rate per set. The driver's own unit
+    # price then comes from `split_set_driver_price` per slice, so the split always adds up
+    # to the accepted money (owner ruling 5 Nov 2026) instead of the full set rate per part.
+    set_rate: Optional[Decimal] = None
 
 
 @dataclass
@@ -1098,7 +1105,9 @@ class ProjectSODraftService:
         parent_qty = _dec(parent.quantity)
         run = [parent]
         for line in lines[parent_index + 1 :]:
-            if _dec(line.unit_price) > _ZERO:
+            # A heading row is priced at 0 too, but it ends the run rather than joining it
+            # as a product-less component (PROPOSAL-FORM-COLLAPSE).
+            if line.is_section or _dec(line.unit_price) > _ZERO:
                 break
             run.append(line)
         if len(run) == 1:
@@ -1120,7 +1129,7 @@ class ProjectSODraftService:
                 _Component(
                     product_id=line.product_id,
                     code=line.product_code_snapshot,
-                    description=line.description_snapshot,
+                    description=line_text(line),
                     uom=line.uom,
                     unit_price=_dec(line.unit_price),
                     numerator=_dec(line.quantity),
@@ -1176,30 +1185,34 @@ class ProjectSODraftService:
                 component_qty = self._component_qty(qty, component)
                 if component_qty is None:
                     component_qty = qty
-                unit_price = component.unit_price
+                if component.set_rate is not None:
+                    priced = split_set_driver_price(component.set_rate, qty, component.numerator)
+                else:
+                    priced = [(component_qty, component.unit_price)]
                 area = (
                     learned.get(_norm_code(component.code))
                     or (phase.area_group if phase else None)
                 )
-                drafts.append(
-                    _LineDraft(
-                        area_group=area,
-                        product_id=component.product_id,
-                        product_code=component.code,
-                        description=component.description or source.description,
-                        qty=component_qty,
-                        uom=component.uom or source.uom,
-                        unit_price=unit_price,
-                        amount=_money(component_qty * unit_price),
-                        delivery_date=phase.delivery_date if phase else None,
-                        phase_id=phase.id if phase else None,
-                        phase_label=(phase.label or phase.area_group) if phase else None,
-                        explosion_source=source_kind,
-                        source_po_line_id=source.po_line_id,
-                        source_po_line_no=source.line_no,
-                        quotation_line_id=component.quotation_line_id,
+                for component_qty, unit_price in priced:
+                    drafts.append(
+                        _LineDraft(
+                            area_group=area,
+                            product_id=component.product_id,
+                            product_code=component.code,
+                            description=component.description or source.description,
+                            qty=component_qty,
+                            uom=component.uom or source.uom,
+                            unit_price=unit_price,
+                            amount=_money(component_qty * unit_price),
+                            delivery_date=phase.delivery_date if phase else None,
+                            phase_id=phase.id if phase else None,
+                            phase_label=(phase.label or phase.area_group) if phase else None,
+                            explosion_source=source_kind,
+                            source_po_line_id=source.po_line_id,
+                            source_po_line_no=source.line_no,
+                            quotation_line_id=component.quotation_line_id,
+                        )
                     )
-                )
         return drafts
 
     def _explosion_for(
@@ -1221,11 +1234,17 @@ class ProjectSODraftService:
         if package is not None:
             return package
 
-        # A quoted SET line carries its parts frozen at quote time: the driver at the quoted
-        # rate, the others at zero, so the set's price is counted once.
+        # A quoted SET line carries its parts frozen at quote time: the driver carries the
+        # set's money (set rate / its qty per set, see `split_set_driver_price`), the others
+        # ride at zero, so the set's price is counted once.
         # The snapshot alone triggers it: a set deleted since the quote (product_set_id nulled by
         # the FK) still splits from what was frozen.
         if quoted is not None and quoted.set_parts_snapshot:
+            # Only the FIRST part marked as the driver carries the money: a snapshot with two
+            # would otherwise count the set's price twice.
+            driver = next(
+                (part for part in quoted.set_parts_snapshot if part.get("is_driver")), None
+            )
             return _Explosion(
                 components=[
                     _Component(
@@ -1233,10 +1252,11 @@ class ProjectSODraftService:
                         code=part["product_code"],
                         description=part.get("description"),
                         uom=part.get("uom"),
-                        unit_price=parent_price if part.get("is_driver") else _ZERO,
+                        unit_price=parent_price if part is driver else _ZERO,
                         numerator=_dec(part["quantity"], Decimal("1")),
                         denominator=Decimal("1"),
                         quotation_line_id=quoted.id,
+                        set_rate=parent_price if part is driver else None,
                     )
                     for part in quoted.set_parts_snapshot
                 ],
@@ -1304,7 +1324,7 @@ class ProjectSODraftService:
         return _Component(
             product_id=source.product_id,
             code=(quoted.product_code_snapshot if quoted else None) or source.code,
-            description=(quoted.description_snapshot if quoted else None) or source.description,
+            description=(line_text(quoted) if quoted else None) or source.description,
             uom=source.uom or (quoted.uom if quoted else None),
             unit_price=_dec(quoted.unit_price) if quoted else source.unit_price,
             numerator=Decimal("1"),
@@ -1318,7 +1338,8 @@ class ProjectSODraftService:
         if quotation_version is None:
             return None
         query = self.db.query(ProjectQuotationLine).filter(
-            ProjectQuotationLine.version_id == quotation_version.id
+            ProjectQuotationLine.version_id == quotation_version.id,
+            ProjectQuotationLine.is_section.is_(False),
         )
         if source.product_id:
             return query.filter(ProjectQuotationLine.product_id == source.product_id).first()
@@ -1842,7 +1863,7 @@ class ProjectSODraftService:
                 "yet, so only the order value was compared."
             )
         else:
-            as_of = customer.ar_as_of.strftime("%d %b %Y") if customer.ar_as_of else "an unknown date"
+            as_of = fmt_date(customer.ar_as_of) if customer.ar_as_of else "an unknown date"
             detail = (
                 f"{customer.customer_name} owes {_money(outstanding)} as of {as_of}; with "
                 f"this order at {order_value} that is {_money(exposure)} against a limit of "

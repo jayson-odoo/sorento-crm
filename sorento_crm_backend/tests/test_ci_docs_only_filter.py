@@ -527,6 +527,15 @@ def test_release_with_skip_tests_zeroes_every_area_but_is_not_docs_only(tmp_path
     assert run_step(tmp_path, "merge_group", ["sorento_crm_backend/app/main.py"], skip_tests="true") == FULL_PIPELINE
 
 
+def test_full_suite_wins_over_the_default_skip_tests(tmp_path):
+    """CI-CLOUD-GATE: skip_tests defaults to true, so the emergency full suite on GitHub
+    (`-f full_suite=true` alone) must run the full shards rather than skip."""
+    out = run_step(tmp_path, "workflow_dispatch", [], last_release=LAST_RELEASE, skip_tests="true", full_suite="true")
+    assert out == FULL_PIPELINE
+    ran = _ran(_simulate("workflow_dispatch", outputs=out))
+    assert {"test-backend", "test-backend-scm", "validate-frontend"} <= ran, ran
+
+
 # ---------------------------------------------------------------------------
 # Changed tests on a PR: the `backend_tests` output (CI-TESTS-ONLY, #1387).
 # ---------------------------------------------------------------------------
@@ -657,7 +666,10 @@ def test_the_pr_gate_runs_the_fast_gates_as_its_first_steps():
     steps = _lean_gate_steps()
     for name, needle in (("Single alembic head", "python3 scripts/ci_alembic_heads.py"),
                          ("No personal data in tracked files", "python3 scripts/pii_guard.py"),
-                         ("Secret scan (gitleaks)", "bash scripts/ci_gitleaks.sh")):
+                         ("Secret scan (gitleaks)", "bash scripts/ci_gitleaks.sh"),
+                         # AI-GATE: diffs against the main the merge step merged in
+                         ("Assistant coverage of new list routes",
+                          'python3 scripts/ci_ai_coverage.py --base "${{ steps.merge.outputs.main }}"')):
         assert name in steps, names
         assert needle in steps[name], name
         assert "github.event_name == 'pull_request'" in steps[name], name
@@ -691,12 +703,12 @@ def test_the_alembic_head_script_passes_on_this_checkout_and_fails_on_two_heads(
     assert "python3 scripts/ci_alembic_heads.py" in _job_block("check-migration-heads")
 
 
-def test_the_pr_gate_collects_only_what_it_runs():
-    """CI-COST round 2: the whole-suite collect-only billed ~1.8 min of every PR gate
-    (38074897990). On a PR the selected files' own run collects them; the whole-suite
-    collect stays on the release, where it is the import check for every test."""
+def test_the_pr_gate_collects_every_test_file():
+    """CI-CLOUD-GATE: no selected test runs on a PR any more, so the whole-suite
+    collect-only (~1.8 min, 38074897990) is the PR's import check for every test file,
+    as it is on a release."""
     step = _lean_gate_steps()["Pytest collect-only (catches import errors in tests)"]
-    assert "github.event_name != 'pull_request'" in step
+    assert "pull_request" not in step and "--collect-only" in step
 
 
 def test_the_pr_gate_carries_the_frontend_and_mcp_checks():
@@ -851,11 +863,12 @@ def _lean_gate_steps() -> dict[str, str]:
 
 
 def test_changed_tests_job_steps_after_select_gate_on_its_output():
-    """The database steps, pytest included, skip on an empty list."""
+    """The database steps, pytest included, skip on an empty list, and never run on a
+    pull request (CI-CLOUD-GATE: the lane's sandbox runs them)."""
     steps = _lean_gate_steps()
     for name in ("Relax Postgres durability for the test run", "Bootstrap the database",
                  "Run the changed test files (executing gate)"):
-        assert "        if: steps.select.outputs.files != ''" in steps[name], name
+        assert "        if: github.event_name != 'pull_request' && steps.select.outputs.files != ''" in steps[name], name
     run = steps["Run the changed test files (executing gate)"]
     assert "--dist loadfile" in run and "$FILES" in run, "runs the selected files via env, under xdist"
 
@@ -2058,39 +2071,30 @@ def test_the_pr_gate_vitest_diffs_against_the_main_it_merged():
     assert _gh_eval(base, release) == LAST_RELEASE
 
 
-def test_the_selection_reads_the_same_live_merge():
+def test_the_selection_runs_on_a_lean_release_only():
+    """CI-CLOUD-GATE: a PR runs no test, so `changes` neither checks out nor selects on a
+    PR (the lane's scripts/crew-tests.sh selects in its sandbox), and it holds no merge
+    step of its own any more."""
     steps = _changes_steps()
-    names = list(steps)
-    checkout = steps["Checkout backend sources for test selection"]
-    assert _gh_eval(_with(checkout, "ref"), PR_CTX) == PR_HEAD
-    assert _gh_eval(_with(checkout, "ref"), RELEASE_CTX) == ""
-    depth = _with(checkout, "fetch-depth")
-    assert str(_gh_eval(depth, PR_CTX)) == "0", "the merge needs the history"
-    assert str(_gh_eval(depth, RELEASE_CTX)) == "1", "a release fetches as before"
-    merge = steps[MERGE_STEP]
-    assert names.index("Checkout backend sources for test selection") < names.index(MERGE_STEP) < names.index("Select backend tests by import")
-    cond = re.search(r"^        if: (.*)$", merge, re.M).group(1)
-    assert cond == ("github.event_name == 'pull_request' && "
-                    "(steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')"), cond
+    for name in ("Checkout backend sources for test selection", "Select backend tests by import"):
+        cond = re.search(r"^        if: (.*)$", steps[name], re.M).group(1)
+        assert cond == "steps.filter.outputs.lean == 'true'", (name, cond)
+    assert MERGE_STEP not in steps
 
 
-def test_both_merge_steps_run_the_same_inline_shell():
+def test_the_merge_step_is_inline_shell():
     """On a PR the workflow comes from GitHub's merge commit, but this step runs on
     the PR head before main is in it: a head that branched before this change holds
     no helper script, and `bash scripts/...` died with exit 127 on every such PR
     (reviewer, CI-STALE-MERGE-REF). So the shell is inline and reads nothing from
     the checkout."""
-    def body(step: str) -> str:
-        lines = []
-        for line in step.split("run: |\n", 1)[1].splitlines():
-            if line.strip() and not line.startswith(" " * 10):
-                break  # the next step's leading comments
-            lines.append(line)
-        return "\n".join(lines).strip()
-
-    lean, changes = _lean_gate_steps()[MERGE_STEP], _changes_steps()[MERGE_STEP]
-    assert body(lean) == body(changes)
-    assert not re.search(r"\bscripts/", body(lean))
+    lines = []
+    for line in _lean_gate_steps()[MERGE_STEP].split("run: |\n", 1)[1].splitlines():
+        if line.strip() and not line.startswith(" " * 10):
+            break  # the next step's leading comments
+        lines.append(line)
+    body = "\n".join(lines)
+    assert "merge --no-edit origin/main" in body and not re.search(r"\bscripts/", body)
 
 
 # No user identity anywhere: the runner has none either.
@@ -2181,8 +2185,9 @@ def test_the_merge_step_leaves_a_head_that_already_holds_main(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# FORMS-REGRESSION: a PR touching forms lifecycle code runs every forms chain
-# in the PR gate (owner, 30 Oct 2026), and every release runs them (core tier).
+# FORMS-REGRESSION: a change touching forms lifecycle code runs every forms chain
+# (owner, 30 Oct 2026): in the lane's sandbox since CI-CLOUD-GATE
+# (scripts/crew-tests.sh), and on every release (core tier).
 # ---------------------------------------------------------------------------
 
 FORMS_CHAIN_FILES = sorted(
@@ -2190,27 +2195,13 @@ FORMS_CHAIN_FILES = sorted(
     for p in (REPO / "sorento_crm_backend" / "tests").glob("test_forms_chain_*.py")
 ) + ["tests/test_form_handling_lock_routes.py", "tests/test_sla_due_escalations.py",
      "tests/test_complaint_status_guard.py"]
+CREW_TESTS = REPO / "scripts" / "crew-tests.sh"
 
 
-def _run_forms_detect(tmp_path, path: str) -> dict:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-q")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "main")
-    main = _git(repo, "rev-parse", "HEAD")
-    (repo / path).parent.mkdir(parents=True, exist_ok=True)
-    (repo / path).write_text("x\n")
-    _git(repo, "add", path)
-    _git(repo, "commit", "-q", "-m", "pr")
-    output = tmp_path / "out"
-    output.write_text("")
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Detect a forms lifecycle change")],
-        cwd=repo, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "MAIN": main, "GITHUB_OUTPUT": str(output)},
-        capture_output=True, text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
+def _forms_detect(path: str) -> bool:
+    """FORMS_RE as crew-tests.sh writes it, matched by grep -E as the script does."""
+    regex = re.search(r"^FORMS_RE='([^']*)'$", CREW_TESTS.read_text(encoding="utf-8"), re.M).group(1)
+    return subprocess.run(["grep", "-Eq", regex], input=path + "\n", text=True).returncode == 0
 
 
 @pytest.mark.parametrize("path", [
@@ -2231,10 +2222,9 @@ def _run_forms_detect(tmp_path, path: str) -> dict:
     "sorento_crm_backend/tests/conftest.py",
     "sorento_crm_backend/tests/test_forms_chain_complaint.py",
     "sorento_crm_backend/tests/_forms_chain_support.py",
-    ".github/workflows/deploy.yml",
 ])
-def test_a_forms_path_runs_the_forms_chains(tmp_path, path):
-    assert _run_forms_detect(tmp_path, path) == {"run": "true"}
+def test_a_forms_path_runs_the_forms_chains(path):
+    assert _forms_detect(path)
 
 
 @pytest.mark.parametrize("path", [
@@ -2243,22 +2233,18 @@ def test_a_forms_path_runs_the_forms_chains(tmp_path, path):
     "sorento_crm_frontend/app/page.tsx",
     "documentation/plans/forms/PLAN-x.md",
 ])
-def test_any_other_path_leaves_the_forms_chains_off(tmp_path, path):
-    assert _run_forms_detect(tmp_path, path) == {"run": "false"}
+def test_any_other_path_leaves_the_forms_chains_off(path):
+    assert not _forms_detect(path)
 
 
-def test_the_pr_gate_runs_the_forms_chains_under_xdist_on_the_bootstrapped_db():
-    steps = _lean_gate_steps()
-    run = steps["Run the forms lifecycle chains (executing gate)"]
-    assert "        if: steps.forms.outputs.run == 'true'" in run
-    assert "tests/test_forms_chain_*.py" in run and "--dist load" in run
+def test_crew_tests_lists_every_forms_chain_and_the_pr_gate_none():
+    script = CREW_TESTS.read_text(encoding="utf-8")
+    assert "tests/test_forms_chain_*.py" in script
     for f in FORMS_CHAIN_FILES[-3:]:
-        assert f in run, f"the PR gate step does not run {f}"
-    for name in ("Relax Postgres durability for the test run", "Bootstrap the database"):
-        assert "steps.forms.outputs.run == 'true'" in steps[name], name
-    names = list(steps)
-    assert names.index("Detect a forms lifecycle change") > names.index("Merge main's current head into the PR head")
-    assert names.index("Run the forms lifecycle chains (executing gate)") > names.index("Bootstrap the database")
+        assert f in script, f"crew-tests.sh does not run {f}"
+    steps = _lean_gate_steps()
+    assert "Detect a forms lifecycle change" not in steps
+    assert "Run the forms lifecycle chains (executing gate)" not in steps
 
 
 def test_every_release_runs_the_forms_chains():
@@ -2266,3 +2252,88 @@ def test_every_release_runs_the_forms_chains():
     assert len(FORMS_CHAIN_FILES) >= 9
     missing = [f for f in FORMS_CHAIN_FILES if f not in core]
     assert not missing, f"add to tests/release_core.txt: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# CI-CLOUD-GATE: which lean-gate steps run on a release and which on a PR, from
+# each step's own `if`, evaluated as written (reviewer kill tests K5, K6).
+# ---------------------------------------------------------------------------
+
+RELEASE_ONLY_STEPS = [
+    "Select the changed test files to run",
+    "Relax Postgres durability for the test run",
+    "Bootstrap the database",
+    "Run the changed test files (executing gate)",
+    "Pytest regression guards (executing gate)",
+    "MCP test suite (executing gate)",
+    "Run the vitest files related to the change (executing gate)",
+    "Run the source-scanning guard tests (always)",
+]
+
+
+def _step_if(name: str) -> str:
+    match = re.search(r"^        if: (.*)$", _lean_gate_steps()[name], re.M)
+    assert match, f"{name}: no if"
+    return _expression(match.group(1))
+
+
+def _step_ctx(event: str) -> dict:
+    return {
+        "github": {"event_name": event, "event": {"label": {"name": "ci"}} if event == "pull_request" else {}},
+        "needs": {"changes": {"outputs": {"backend": "true", "frontend": "true", "mcp": "true", "lean": "true"}}},
+        "steps": {"select": {"outputs": {"files": "tests/test_x.py"}}, "merge": {"outputs": {"main": MAIN}}},
+    }
+
+
+@pytest.mark.parametrize("name", RELEASE_ONLY_STEPS)
+def test_the_lean_release_still_runs_its_test_steps(name):
+    """A lean release (skip_tests=false) whose selection step stopped running would test
+    nothing and still deploy: every test step runs on a release, none on a PR."""
+    cond = _step_if(name)
+    assert _gh_eval(cond, _step_ctx("workflow_dispatch")), (name, cond)
+    assert not _gh_eval(cond, _step_ctx("pull_request")), (name, cond)
+
+
+def test_the_eslint_step_runs_on_a_frontend_pr_only():
+    cond = _step_if("Lint the changed frontend files")
+    assert _gh_eval(cond, _step_ctx("pull_request"))
+    no_frontend = _step_ctx("pull_request")
+    no_frontend["needs"]["changes"]["outputs"]["frontend"] = "false"
+    assert not _gh_eval(cond, no_frontend)
+    assert not _gh_eval(cond, _step_ctx("workflow_dispatch"))
+
+
+def test_the_eslint_step_lints_added_and_changed_frontend_files_only(tmp_path):
+    """Its shell against a real repo: added/modified/renamed .ts/.tsx files reach eslint,
+    a deleted file and a non-script file do not."""
+    repo = tmp_path / "repo"
+    fe = repo / "sorento_crm_frontend"
+    (fe / "lib").mkdir(parents=True)
+    _git(tmp_path, "init", "-q", "-b", "main", str(repo))
+    for name in ("keep.ts", "gone.ts", "old.tsx"):
+        (fe / "lib" / name).write_text("export const x = 1;\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main")
+    main = _git(repo, "rev-parse", "HEAD")
+    (fe / "lib" / "keep.ts").write_text("export const x = 2;\n")
+    (fe / "lib" / "gone.ts").unlink()
+    _git(repo, "mv", "sorento_crm_frontend/lib/old.tsx", "sorento_crm_frontend/lib/new.tsx")
+    (fe / "lib" / "added.ts").write_text("export const y = 1;\n")
+    (fe / "lib" / "notes.md").write_text("x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "pr")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "npx").write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$NPX_ARGS"\n')
+    (bindir / "npx").chmod(0o755)
+    args = tmp_path / "args.txt"
+    script = re.search(r"run: \|\n((?:          .*\n|\s*\n)+)", _lean_gate_steps()["Lint the changed frontend files"]).group(1)
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", textwrap.dedent(script)],
+        cwd=fe, env={**GIT_ENV, "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}", "MAIN": main, "NPX_ARGS": str(args)},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    got = args.read_text().split("\n")
+    assert got[:3] == ["eslint", "--no-warn-ignored", "--"], got
+    assert sorted(a for a in got[3:] if a) == ["lib/added.ts", "lib/keep.ts", "lib/new.tsx"], got

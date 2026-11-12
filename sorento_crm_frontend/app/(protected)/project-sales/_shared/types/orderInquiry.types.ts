@@ -259,6 +259,9 @@ export interface OrderInquiryLinkSuggestionCandidate {
   inquiry_no: string | null;
   item_code: string | null;
   so_number: string | null;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   delivery_date: string;
   open_qty: string;
 }
@@ -443,6 +446,8 @@ export interface OrderInquiryLineSplit {
   sits_on_line_id: string | null;
   /** What the screen prints for the line it sits on; the id is addressing only. */
   sits_on_line_no: number | null;
+  /** The SO line date of the line it sits on (ISO); null when none or undated. */
+  sits_on_line_date?: string | null;
   remark: string;
 }
 
@@ -774,6 +779,8 @@ export interface OrderInquiryWorklistParams {
   dead_document?: OrderInquiryDeadReason;
   /** Exact OI numbers, comma-joined (the reserve emails' button). */
   inquiry_no?: string;
+  /** Reserve request ids, comma-joined (the reserve emails' button for two or more OIs). */
+  reserve_request?: string;
   /**
    * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
    * the list for exactly this cell's axis + period rather than reading rows back out of
@@ -1046,6 +1053,9 @@ export interface OrderInquiryMatrixBucket {
 /** One EXISTING tag already on a candidate's PO line - the row's expand. */
 export interface OrderInquiryPoCandidateClaim {
   so_number?: string | null;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   item_code?: string | null;
   qty: string;
   placed_date?: string | null;
@@ -1104,6 +1114,9 @@ export interface OrderInquiryPoCandidate {
    * Null on the ordinary line, or when this row's own SO is the one holding it.
    */
   dedicated_to?: string | null;
+  /** The dedicating order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  dedicated_customer_name?: string | null;
+  dedicated_project_label?: string | null;
   /**
    * G12's project-bin lock: this line sits at a project-segment warehouse and NO SO has
    * claimed it, not even this row's own - "Unattributed - link manually". A manual link
@@ -1290,6 +1303,9 @@ export interface OrderInquiryPoDetailLine {
    * component, so a line's linkage reads identically on both screens. Never a guess.
    */
   book_so_number?: string | null;
+  /** That sales order's customer (debtor name, else customer master) and project label. */
+  book_so_customer_name?: string | null;
+  book_so_project_label?: string | null;
   /** True when the book named a sales order this CRM does not hold. */
   book_so_unresolved?: boolean | null;
   /** SUPPLY-SPO-LINK: every SPO this line was transferred onto, sorted; empty when none. */

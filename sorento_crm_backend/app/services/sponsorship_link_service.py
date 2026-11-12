@@ -73,6 +73,7 @@ def projects_for_contact(
             like = f"%{query.strip().lower()}%"
             rows = rows.filter(
                 func.lower(Project.title).like(like)
+                | func.lower(Project.name).like(like)
                 | func.lower(Project.project_code).like(like)
             )
         rows = rows.order_by(Project.created_at.desc()).limit(limit).all()
@@ -82,6 +83,7 @@ def projects_for_contact(
             "id": project.id,
             "project_code": project.project_code,
             "title": project.title,
+            "name": project.name,
             "company_id": project.company_id,
             "company_name": company_name,
         }

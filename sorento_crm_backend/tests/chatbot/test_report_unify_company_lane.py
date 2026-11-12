@@ -45,11 +45,14 @@ def _two_companies(bot) -> tuple[str, str]:
         db.close()
 
 
-def test_g5_no_named_subject_is_still_the_company_question(bot) -> None:
+def test_g5_no_named_subject_runs_over_every_company_with_no_company_arg(bot) -> None:
+    """O-R2: the bot never asks "<A> or <B>?"; a contact in two companies naming none runs with no `company` arg."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    assert calls == [], calls
-    assert f"{sorento} or {mocha}?" in text, text
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company question was asked: {text!r}"
+    args = _only_report_ask(calls)
+    assert "company" not in args, f"O-R2: a company arg was sent: {args}"
+    assert args["basis"] == "delivered" and args["date_from"] == "2026-01-01", args
 
 
 def _pick(position: int) -> dict:
@@ -58,15 +61,6 @@ def _pick(position: int) -> dict:
         message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
         open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None},
     )
-
-
-def test_r1_the_answer_runs_the_held_ask_for_that_company(bot) -> None:
-    sorento, mocha = _two_companies(bot)
-    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    text, calls = bot.say(_pick(2), mocha)
-    args = _only_report_ask(calls)
-    assert args["company"] == MOCHA_ID, args
-    assert args["basis"] == "delivered" and args["date_from"] == "2026-01-01", args
 
 
 def test_r1_a_named_subject_runs_without_the_question(bot) -> None:
@@ -94,16 +88,16 @@ def test_r1_a_contact_with_one_company_is_never_asked(bot) -> None:
 # ---------------------------------------------------------------- round 3: B1, B2, N5
 
 
-def test_b1_the_basis_comes_first_then_the_company_last(bot) -> None:
-    """Hand test 2 (28 Oct): the required fields first, the company last, just before it runs; the period rides through."""
+def test_b1_the_basis_comes_first_then_it_runs_over_every_company(bot) -> None:
+    """O-R2 (was: the company last): the basis question, then the pick runs with no company; the period rides through."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("sales_report", basis=None, **YEAR), "total sales 2026")
     assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
     text, calls = bot.say(_pick(2), "the second")  # Delivered
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_pick(2), mocha)
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company question was asked: {text!r}"
     args = _only_report_ask(calls)
-    assert args["company"] == MOCHA_ID and args["basis"] == "delivered", args
+    assert "company" not in args, f"O-R2: a company arg was sent: {args}"
+    assert args["basis"] == "delivered", args
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
@@ -112,8 +106,8 @@ def test_b1_a_bare_outstanding_asks_the_kind_and_never_the_company(bot) -> None:
     runs over the contact's own companies."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
-    assert calls == [] and "Undelivered orders" in text, (text, calls)
-    text, calls = bot.say(_pick(2), "the second")  # Pending delivery
+    assert calls == [] and "Sales order" in text, (text, calls)
+    text, calls = bot.say(_pick(2), "the second")  # Delivery order
     args = _only_report_ask(calls)
     assert f"{sorento} or {mocha}?" not in text, text
     assert "company" not in args and args["basis"] == "pending_delivery", args
@@ -136,10 +130,12 @@ def test_b2_a_named_company_the_contact_does_not_hold_is_said_and_nothing_runs(b
     assert "do not have access to that company" in text.lower(), text
 
 
-def test_n5_the_company_question_is_the_one_line_the_yearly_path_asks(bot) -> None:
+def test_n5_the_yearly_path_never_asks_the_company_question(bot) -> None:
+    """O-R2: the yearly path runs, its reply is not the company question."""
     sorento, mocha = _two_companies(bot)
-    text, _calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    assert text.strip() == f"{sorento} or {mocha}?", text
+    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    assert text.strip() != f"{sorento} or {mocha}?", f"O-R2: the yearly path asked the company: {text!r}"
+    assert "company" not in _only_report_ask(calls)
 
 
 # ---------------------------------------------------------------- round 3 fold-in
@@ -158,15 +154,6 @@ def _gave_up(text: str, calls) -> None:
     assert "I still can't read" in text, text
 
 
-def test_two_unreadable_company_answers_give_up_on_the_first_message_path(bot) -> None:
-    _two_companies(bot)
-    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    bot.say(_noise(), "blah blah")
-    text, calls = bot.say(_noise(), "zzz qqq")
-    _gave_up(text, calls)
-
-
-
 def test_the_low_stock_guard_is_the_inventory_domain_only(bot) -> None:
     """An outstanding ask carrying the low stock intent under the order domain is still the report ask's."""
     from app.services.chatbot.lanes.business import report_ask
@@ -177,10 +164,9 @@ def test_the_low_stock_guard_is_the_inventory_domain_only(bot) -> None:
     assert routed.get("order_status") == report_ask.ASK_NAME, routed
 
 
-def test_a_company_pick_whose_parse_guesses_another_axis_keeps_the_held_asks_axis(bot) -> None:
-    """Live (R6, parser_raw of the three turns, `by_words` absent): "total sales 2026" held as a yearly comparison, the
-    basis picked, then the company picked; the answer turns' parse carried a guessed `group_by` month. A guess routes
-    nothing: the held axis stands."""
+def test_a_basis_pick_whose_parse_guesses_another_axis_keeps_the_held_asks_axis(bot) -> None:
+    """Live (R6) reshaped by O-R2: "total sales 2026" held as a yearly comparison, the basis picked; the answer turn's parse
+    carried a guessed `group_by` month. A guess routes nothing: the held axis stands, and it runs with no company question."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(
         _status("sales_analysis", group_by="year", sales_basis=None, basis=None, entity_op="clear", **YEAR),
@@ -192,12 +178,6 @@ def test_a_company_pick_whose_parse_guesses_another_axis_keeps_the_held_asks_axi
         open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}, **YEAR,
     )
     text, calls = bot.say(basis_pick, "2")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    company_pick = _status(
-        "sales_analysis", group_by="month", basis="delivered", sales_company=sorento, entity_op="reuse",
-        continuation=True, reference_target="dym", reference_positions=[1],
-        open_question_answer={"mode": "pick", "picked": [1], "items": [], "qty_for_all": None}, **YEAR,
-    )
-    text, calls = bot.say(company_pick, "1")
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company question was asked: {text!r}"
     args = _only_report_ask(calls)
-    assert args["group_by"] == "year" and args["basis"] == "delivered" and args["company"] == DEFAULT_COMPANY_ID, args
+    assert args["group_by"] == "year" and args["basis"] == "delivered" and "company" not in args, args

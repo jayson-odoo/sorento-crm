@@ -1,5 +1,5 @@
 """Procurement schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
@@ -269,6 +269,13 @@ class InboundShipmentLineCreate(InboundShipmentLineBase):
 
 class InboundShipmentLineResponse(InboundShipmentLineBase):
     id: str
+
+    @field_serializer("unit_cost")
+    def _cost_for_reader(self, value):
+        """SUPPLIER-COST-ACCESS: PO / supplier unit cost, null without `products.cost.view`."""
+        from app.services.cost_access import cost_for_reader
+
+        return cost_for_reader(value)
     shipment_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -631,6 +638,13 @@ class LinkedGRNSimple(BaseModel):
 
 class SPOAllocationResponse(SPOAllocationBase):
     id: str
+
+    @field_serializer("unit_cost")
+    def _cost_for_reader(self, value):
+        """SUPPLIER-COST-ACCESS: PO / supplier unit cost, null without `products.cost.view`."""
+        from app.services.cost_access import cost_for_reader
+
+        return cost_for_reader(value)
     # The document half, since the SPO itself lives in this table (migration 420). Declared
     # here or `response_model` drops them on the way out however faithfully the service
     # reads them.
@@ -706,6 +720,9 @@ class SPODocumentLineSOCovered(BaseModel):
     AC-J2)."""
     document: Optional[str] = None
     customer: Optional[str] = None
+    #: The order's own customer (debtor name, else the customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     demand_class: str
     qty: float
     #: LINKAGE-UNIFY U4: the PO number a placement reached this SPO line through (it was
@@ -866,6 +883,13 @@ class PickingLineCreate(PickingLineBase):
 
 class PickingLineResponse(PickingLineBase):
     id: str
+
+    @field_serializer("unit_cost")
+    def _cost_for_reader(self, value):
+        """SUPPLIER-COST-ACCESS: PO / supplier unit cost, null without `products.cost.view`."""
+        from app.services.cost_access import cost_for_reader
+
+        return cost_for_reader(value)
     picking_header_id: str
     quantity_discrepancy: int = 0  # from DB generated column
     created_at: datetime
@@ -1068,6 +1092,9 @@ class StockInquiryUpdate(BaseModel):
     remark: Optional[str] = None
     additional_remark: Optional[str] = None
     purchasing_response: Optional[str] = None
+    #: NPA-FROM-SI: purchasing asks the salesperson to create a New Product Application. A
+    #: response write (gated like ``purchasing_response``); who / when are stamped by the server.
+    npa_requested: Optional[bool] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
     # Declared, but NOT editable on ANY update path (the plain PUT and
@@ -1177,6 +1204,11 @@ class StockInquiryResponse(StockInquiryBase):
     # gating an affordance and the server enforcing the rule read ONE source instead
     # of two status lists that drift. Same response_model rule as above.
     response_write_allowed: Optional[bool] = None
+    # NPA-FROM-SI: purchasing's "salesperson must create an NPA" (declared: response_model drops
+    # what it does not name).
+    npa_requested: Optional[bool] = None
+    npa_requested_at: Optional[datetime] = None
+    npa_requested_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []

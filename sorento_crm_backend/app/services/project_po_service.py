@@ -37,6 +37,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.services.error_handler import AppException
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ def qty_over_quotation(db: Session, project_id: str) -> List[Dict[str, Any]]:
             quoted[key] = quoted.get(key, Decimal("0")) + Decimal(line.quantity or 0)
             names.setdefault(
                 key,
-                {"product_code": line.product_code_snapshot, "description": line.description_snapshot},
+                {"product_code": line.product_code_snapshot, "description": line_text(line)},
             )
             # A product line is also findable by the code the PO printed.
             code = (line.product_code_snapshot or "").strip().upper()
@@ -460,9 +461,8 @@ def delete_po(db: Session, *, po: ProjectPurchaseOrder) -> None:
 def _advance_to_po_received(db: Session, project: Project) -> bool:
     """AC-F10. Returns whether the status actually moved.
 
-    Outcome is deliberately untouched: it is derived from quotations (AC-E10), and a PO
-    against a lost scope is a data problem somebody should see rather than something to
-    paper over by flipping the outcome.
+    When it moves, the project is Won (a PO is the commercial yes). When it does not move,
+    the outcome is untouched.
     """
     from app.models.status import Status
     from app.services import status_service
@@ -508,6 +508,8 @@ def _advance_to_po_received(db: Session, project: Project) -> bool:
                 db, entity_type, project.status_id, target.id, scope_id=scope_id
             )
         project.status_id = target.id
+        project.outcome = "won"
+        project.loss_reason = None
         db.flush()
         return True
     except AppException:
@@ -536,7 +538,8 @@ def _quoted_line_for(
     if version is None:
         return None
     query = db.query(ProjectQuotationLine).filter(
-        ProjectQuotationLine.version_id == version.id
+        ProjectQuotationLine.version_id == version.id,
+        ProjectQuotationLine.is_section.is_(False),
     )
     if product_id:
         return query.filter(ProjectQuotationLine.product_id == product_id).first()

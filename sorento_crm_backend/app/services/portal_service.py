@@ -15,6 +15,7 @@ Editing rules:
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import hashlib
 import hmac
 import logging
@@ -403,7 +404,7 @@ class PortalService:
     ) -> str:
         name = (contact.name or contact.first_name or "").strip()
         greeting = f"Hi {name}," if name else "Hi,"
-        expires_human = expires_at.strftime("%b %d, %Y")
+        expires_human = fmt_date(expires_at)
         return (
             f"{greeting} here is your secure portal link:\n"
             f"{portal_url}\n\n"
@@ -1598,6 +1599,21 @@ class PortalService:
                     # live label derivation, not a bare setattr.
                     continue
                 value = payload.get(field)
+                if kind == "price_tag_request" and field == "customers":
+                    # PRICETAG-REQUEST-LAYOUT: a list of {code, name}, not a multi-text field;
+                    # validated like the create/PUT body. The model mirrors the first into
+                    # the debtor pair, and this field comes after the pair, so it wins.
+                    from pydantic import ValidationError
+
+                    from app.schemas.price_tag import customers_from_payload
+
+                    try:
+                        setattr(row, field, customers_from_payload(value))
+                    except ValidationError:
+                        raise handle_validation_error(
+                            "Each customer needs a name, and a request takes at most 50."
+                        )
+                    continue
                 # Coerce list values for multi-text fields (e.g. complaint.delivery_order_number).
                 if isinstance(value, list):
                     value = ",".join(str(v).strip() for v in value if v not in (None, ""))
@@ -1812,6 +1828,8 @@ class PortalService:
             return (
                 "debtor_code",
                 "debtor_name",
+                # PRICETAG-REQUEST-LAYOUT: after the pair, so its mirror is the last write.
+                "customers",
                 "needed_by_date",
                 "notes",
                 "price_mode",
@@ -2194,7 +2212,13 @@ class PortalService:
         return self._contact_display_name(contact) if contact else None
 
     def _serialize_stock_inquiry_detail(self, row: StockInquiry) -> dict:
+        from app.services import new_product_application_service as npa_service
+        from app.services.portal_form_visibility_service import resolve_visible_form_types
+
         base = self._serialize_stock_inquiry_summary(row)
+        npa_visible = bool(row.contact_id) and "new_product_application" in resolve_visible_form_types(
+            self.db, str(row.contact_id)
+        )
         salesperson_contact_id = getattr(row, "salesperson_contact_id", None)
         base.update(
             {
@@ -2210,6 +2234,13 @@ class PortalService:
                 "purchasing_response": row.purchasing_response,
                 "salesperson_contact_id": salesperson_contact_id,
                 "salesperson_contact_name": self._resolve_contact_name_by_id(salesperson_contact_id),
+                # NPA-FROM-SI rules 1-2 + 7: purchasing's ask and the contact's own applications.
+                "npa_requested": bool(getattr(row, "npa_requested", False)),
+                # Whether this contact may raise one at all (the CTA and tab follow it).
+                "npa_form_visible": npa_visible,
+                "new_product_applications": (
+                    npa_service.portal_inquiry_applications(self.db, row) if npa_visible else []
+                ),
             }
         )
         return base

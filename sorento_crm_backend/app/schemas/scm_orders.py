@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -205,6 +205,13 @@ class SalesOrderLine(BaseModel):
     #: Sent on the SINGLE order read only. The list has no column for it and would pay two
     #: more queries a page for a fact nothing there prints.
     order_inquiry: Optional[SalesOrderLineInquiry] = None
+    #: SO-LINE-OI-STATUS-UNIFY (5 Nov 2026): EVERY order inquiry row of this line, live,
+    #: used and cancelled, in the OI worklist's own row shape (`OrderInquiryWorklistRow`,
+    #: dumped to JSON by the service; typed as dicts here only because that schema module
+    #: imports this one). The FE runs the OI Lines tab's own fold over them, so the SO
+    #: line and the OI row read ONE status. `None` on a line nobody raised a row on.
+    #: Single order read only, like `order_inquiry`.
+    order_inquiry_rows: Optional[List[Dict[str, Any]]] = None
     #: OI-SPLIT-VIEW (UAC B1, B7): the split popup of this line's planning mirror, the same
     #: value the OI reads carry; null on a line with no splits or no project order. Single
     #: order read only, like `order_inquiry`.
@@ -623,6 +630,9 @@ class PurchaseOrderLine(BaseModel):
     #: machine key (`AED_SORENTO:<DocKey>:<DtlKey>`), and no machine identifier reaches the
     #: UI, the same reason `from_po_line_ref` is not printed either.
     book_so_number: Optional[str] = None
+    #: That sales order's customer and project (OI-UX-FILTER-SNAPSHOT).
+    book_so_customer_name: Optional[str] = None
+    book_so_project_label: Optional[str] = None
     #: THREE wire values, not two (review of PR #764, F2). `False` - a ref is present and
     #: resolved, or there is no ref at all. `True` - a ref is present and the CRM does not
     #: hold the sales order it names ("linked, not held"). `None` - this response did NOT
@@ -638,6 +648,25 @@ class PurchaseOrderLine(BaseModel):
     #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`), so a
     #: placement on it reads "PO cancelled". Filled with `spos` (detail and update routes).
     dead_reason: Optional[Literal["po_cancelled"]] = None
+    #: PO-LINK-HISTORY: the line's latest S/O link event, for the S/O cell's popover.
+    #: `None` when no change was ever recorded. Detail and update routes only.
+    book_so_link: Optional["PoLineBookSoLink"] = None
+
+
+class PoLineBookSoLink(BaseModel):
+    """When the AutoCount sync last moved this line's S/O link (`po_link_history`)."""
+
+    #: When it was recorded. On an `estimated` row: the upper bound, "on or before".
+    changed_at: str
+    #: True for the backfill's "first seen" row (history began after the link).
+    estimated: bool = False
+    #: Whether the line named an S/O before this change; `None` when unknown (`estimated`).
+    previous_linked: Optional[bool] = None
+    #: That previous S/O's number, when this CRM holds it.
+    previous_so_number: Optional[str] = None
+
+
+PurchaseOrderLine.model_rebuild()
 
 
 class PurchaseOrderSpoLanding(BaseModel):
@@ -682,6 +711,10 @@ class PurchaseOrderPlacement(BaseModel):
     #: The sales order this quantity is owed to - its AutoCount number where it has one.
     so_number: Optional[str] = None
     customer: Optional[str] = None
+    #: `customer` split in two, the OI worklist's way: the issuing party's customer and the
+    #: project title with its PRE-ORDER note; a blank half is filled from the sales order.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     #: Who sold it, by person label, falling back to the agent code.
     agent: Optional[str] = None
     qty: float = 0.0
@@ -691,6 +724,11 @@ class PurchaseOrderPlacement(BaseModel):
     #: the demand is at BRW-BB. That difference IS the split instruction for AutoCount,
     #: which is why it is a mark on the row rather than a filter that hides it.
     location_differs: bool = False
+    #: PO-LINK-HISTORY: when the order-inquiry link was made, by whom (the user's name), and
+    #: whether the cascade made it (`auto`) rather than a person. `inquiry` rows only.
+    linked_at: Optional[str] = None
+    linked_by_name: Optional[str] = None
+    auto: Optional[bool] = None
 
 
 class PurchaseOrderDedication(BaseModel):
@@ -698,6 +736,9 @@ class PurchaseOrderDedication(BaseModel):
 
     #: The sales order document number - never an id.
     so_number: str
+    #: The sales order's customer (debtor name, else the customer master) and project.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     #: What the claiming sales order line still owes in full, its LIVE outstanding.
     reserved: float = 0.0
     #: What of that this document is holding, and therefore what comes off `free`: the
@@ -750,6 +791,9 @@ class SpoPlanCover(BaseModel):
 
     so_number: Optional[str] = None
     customer: Optional[str] = None
+    # OI-UX-FILTER-SNAPSHOT: the order's customer and project, as the SO list names them.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: float = 0.0
     warehouse: Optional[str] = None
 

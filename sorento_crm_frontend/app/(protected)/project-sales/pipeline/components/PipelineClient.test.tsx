@@ -154,6 +154,14 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 
 import { PipelineClient } from './PipelineClient';
 
+// The remembered Board/Grid view is read from the per-user column-config row; no row here.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (key: string) => ({ listing_key: key, config: null })),
+  upsertUserListColumnConfig: vi.fn(async (key: string) => ({ listing_key: key, config: null })),
+  resetUserListColumnConfig: vi.fn(async () => {}),
+}));
+
+
 function project(overrides: Partial<Project> = {}): Project {
   return {
     id: 'p1',
@@ -260,7 +268,7 @@ describe('PipelineClient', () => {
     switchToGrid();
 
     // The filters are reachable only through the toolbar's Filters button now.
-    const toolbar = (await screen.findByPlaceholderText(/Search title or code/i)).closest(
+    const toolbar = (await screen.findByPlaceholderText(/Search name, title or code/i)).closest(
       '[data-slot="card-header"]',
     ) as HTMLElement;
     expect(toolbar).not.toBeNull();
@@ -275,7 +283,7 @@ describe('PipelineClient', () => {
   it('filters from the toolbar popover and asks the server for it', async () => {
     renderClient();
     switchToGrid();
-    await screen.findByPlaceholderText(/Search title or code/i);
+    await screen.findByPlaceholderText(/Search name, title or code/i);
 
     openFilters();
     fireEvent.change(await screen.findByLabelText('All developers'), {
@@ -292,7 +300,7 @@ describe('PipelineClient', () => {
   it('counts the active filters on the Filters button', async () => {
     renderClient();
     switchToGrid();
-    await screen.findByPlaceholderText(/Search title or code/i);
+    await screen.findByPlaceholderText(/Search name, title or code/i);
 
     openFilters();
     fireEvent.change(await screen.findByLabelText('All types'), {
@@ -350,7 +358,7 @@ describe('PipelineClient', () => {
     renderClient();
 
     expect(
-      await screen.findByPlaceholderText(/Search title or code/i),
+      await screen.findByPlaceholderText(/Search name, title or code/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /filters/i })).toBeInTheDocument();
   });
@@ -430,7 +438,7 @@ describe('PipelineClient: the approval filter (R6, review round 3)', () => {
   ])('narrows the grid to %s registrations through the Filters popover', async (label, state) => {
     renderClient();
     switchToGrid();
-    await screen.findByPlaceholderText(/Search title or code/i);
+    await screen.findByPlaceholderText(/Search name, title or code/i);
 
     openFilters();
     const select = (await screen.findByLabelText('Any approval state')) as HTMLSelectElement;

@@ -63,9 +63,11 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import project_customer_label
 from app.services.scm import cover_service, plan_grain, po_book_service
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm import last_po_supplier as last_po_rule
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
+    OIR_DATE,
     ACTIVE_DECISION_STATE,
     BUY_VERB,
     UNPLACED_INQUIRY_STATE,
@@ -271,10 +273,15 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     # S15 (ruling 1): the sheet's Supplier column is the LAST-PO supplier, never the
     # `product_suppliers` link - see `_last_po_supplier_map`'s own docstring for why.
     last_po_supplier = _last_po_supplier_map(db, product_ids)
-    po_open = open_po_by_product(db, product_ids)
-    incoming_spo = open_spo_by_product(db, product_ids)
-    last_receipt = _last_receipt_map(db, product_ids)
-    pool_on_hand = _pool_on_hand_map(db, product_ids)
+    # LOWSTOCK-LASTIN-LOCATION (owner ruling 9 Nov 2026): every per-location column - BRW
+    # on hand, BRW PO qty, BRW incoming qty, Last in qty/date - reads the run's OWN
+    # locations, through ONE shared set, so a BRW report never prints another location's
+    # figure (a receipt split BRW 121 / BRW-BB 99 printed the 99).
+    report_wids = report_warehouse_ids(db, run)
+    po_open = open_po_by_product(db, product_ids, report_wids)
+    incoming_spo = open_spo_by_product(db, product_ids, report_wids)
+    last_receipt = _last_receipt_map(db, product_ids, report_wids)
+    pool_on_hand = _pool_on_hand_map(db, product_ids, report_wids)
     existing = {
         str(r.product_id): r
         for r in db.query(OrderSummaryRow)
@@ -788,9 +795,9 @@ def _earliest_project_need_dates(db: Session, product_ids: list[str]) -> dict[st
     """
     if not product_ids:
         return {}
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         SELECT sol.product_id::text AS pid,
-               MIN(COALESCE(oir.delivery_date, sol.required_date)) AS needed
+               MIN(COALESCE({OIR_DATE}, sol.required_date)) AS needed
         FROM projects.order_inquiry_rows oir
         JOIN projects.so_supply_decisions d
           ON d.id = oir.supply_decision_id AND d.state = :active
@@ -883,7 +890,59 @@ def _customers_list(bucket: dict[str, float]) -> list[dict[str, Any]]:
     )
 
 
-def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
+def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
+    """The ONE location set every per-location column of a run's report reads
+    (LOWSTOCK-LASTIN-LOCATION, owner ruling 9 Nov 2026: "when I run BRW stock report it
+    should take BRW only"; the same for Reorder Planning's low stock report and the daily
+    low stock job, whose run is created from its own `warehouse_codes`).
+
+    The run's own `warehouse_ids` (what the planner, or the daily job's config, selected),
+    AS-IS when locations were TICKED (LOWSTOCK-PROJECT-BINS, owner ruling 10 Nov 2026): a
+    project bin ticked by name (BRW-IB, BRW-BB) counts like any other ticked location, and
+    nothing the run did not select counts. Ticking replaces only the project-bin half of
+    the site-pool rule: an INACTIVE warehouse counts nowhere, ticked or not
+    (LOWSTOCK-BINS-REGRESS, the `is_active` leg of `pool_predicate.active_site_pool_sql`).
+
+    A run with NOTHING ticked is stamped with every active warehouse
+    (`reorder_run_service._resolve_warehouse_ids`), project bins included, so its stored
+    scope cannot say which bins anybody chose. That run reads the active SITE POOL only
+    (`pool_predicate.active_site_pool_sql`), as before #2293 (crew decision 10 Nov 2026,
+    option (b)): project stock never leaks into an unticked report, and a daily job with
+    empty `warehouse_codes` reads as it always did. "Nothing ticked" is the same test the
+    plans list labels "All" with (`reorder_run_service.resolve_run_scope`'s
+    `is_all_warehouses`: the scope covers every active warehouse the run could see).
+
+    None when the run stored no scope at all (NULL: `create_run` always stamps a list, so
+    only a run older than scopes, or a hand-built one): each reader then keeps its own
+    pre-lane network-wide site-pool reading rather than this guessing a scope nobody chose.
+    An empty stored scope is `[]`, which matches nothing.
+
+    ORM, so the session's company filter scopes `Warehouse`.
+    """
+    from app.services.scm.reorder_run_service import resolve_run_scope
+
+    if run.warehouse_ids is None:
+        return None
+    wids = [str(w) for w in run.warehouse_ids]
+    if not wids:
+        return []
+    # Active ids first, and only those feed the "nothing ticked" count: a ticked inactive id
+    # would otherwise lift the count to "All" and drop a project bin ticked beside it.
+    active = [str(wid) for (wid,) in db.query(Warehouse.id).filter(
+        Warehouse.id.in_(wids), Warehouse.is_active.is_(True),
+    ).all()]
+    if not active:
+        return []
+    if not resolve_run_scope(db, active, None, run.started_at)["is_all_warehouses"]:
+        return sorted(active)
+    q = db.query(Warehouse.id).filter(
+        Warehouse.id.in_(active), text(active_site_pool_sql("warehouses")),
+    )
+    return sorted(str(wid) for (wid,) in q.all())
+
+
+def _pool_on_hand_map(db: Session, product_ids: list[str],
+                      warehouse_ids: Optional[list[str]] = None) -> dict[str, float]:
     """``{product_id: qty}`` of `stock.quantity_on_hand` at SITE POOL warehouses only - the
     sheet's "BRW on hand" (S14, AC-S14.1), the same `pool_predicate` rule the PO and SPO
     columns already read - PLUS `counts_as_available` (captain's ruling, fix round 10 Sep):
@@ -896,20 +955,27 @@ def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
     ORM, not raw SQL: `Stock` is company-scoped and this query carries no manual predicate,
     so it relies on the ORM's own `do_orm_execute` isolation filter, same as
     `site_pool_supply.open_spo_by_product` beside it.
+
+    `warehouse_ids` is a run's own `report_warehouse_ids`: those locations replace the
+    site-pool rule (a ticked project bin counts, LOWSTOCK-PROJECT-BINS); None keeps the
+    network-wide site-pool reading (`stock_debt_service`). `counts_as_available` applies
+    either way.
     """
-    if not product_ids:
+    if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
-    rows = (
+    query = (
         db.query(Stock.product_id, func.sum(Stock.quantity_on_hand))
         .join(Warehouse, Warehouse.id == Stock.warehouse_id)
         .filter(
             Stock.product_id.in_(product_ids),
             Warehouse.counts_as_available.is_(True),
-            text(active_site_pool_sql("warehouses")),
         )
-        .group_by(Stock.product_id)
-        .all()
     )
+    if warehouse_ids is None:
+        query = query.filter(text(active_site_pool_sql("warehouses")))
+    else:
+        query = query.filter(Stock.warehouse_id.in_([str(w) for w in warehouse_ids]))
+    rows = query.group_by(Stock.product_id).all()
     return {str(pid): float(total or 0.0) for pid, total in rows}
 
 
@@ -1042,9 +1108,12 @@ def _last_cost_map(db: Session, product_codes: list[str]) -> dict[str, str]:
     return out
 
 
-def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+def _last_receipt_map(db: Session, product_ids: list[str],
+                      warehouse_ids: Optional[list[str]] = None) -> dict[str, dict]:
     """``{product_id: {date, qty, spo_number, container}}`` of the newest VISIBLE
-    `spo_allocations` line per product, network-wide, received or not - the sheet's "Last
+    `spo_allocations` line per product AT `warehouse_ids` (the run's own
+    `report_warehouse_ids`, LOWSTOCK-LASTIN-LOCATION; None is network-wide), received or
+    not - the sheet's "Last
     in" cell (PLAN-low-stock-last-in-and-list-scope S1, owner ruling second round, 15 Sep:
     "for last in, please refer to our MCP service, i think even haven't GR we also show as
     last in").
@@ -1056,7 +1125,7 @@ def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
     `last_receipt_rows(top_n=1)` makes for a product - `qty` is the SPO's own
     `allocated_quantity`, never `quantity_received`.
     """
-    receipts = last_in_map(db, product_ids)
+    receipts = last_in_map(db, product_ids, warehouse_ids)
     return {
         pid: {
             "date": r["date"],
@@ -1326,6 +1395,7 @@ _EXPORT_COLUMNS = (
     "Last in date", "Remarks",
 )
 
+# date-format-ok: month bucket label, no day to show
 _MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
               "Nov", "Dec")
 
@@ -1985,8 +2055,11 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
     total = 0.0
     line_ids = [str(r[4]) for r in rows if _channel_of(r[3]) == kind]
     decision_refs = _decision_refs(db, line_ids) if kind != RETAIL_KIND else {}
+    # OI-UX-FILTER-SNAPSHOT: `project_name` above is the customer (older readers); the order's
+    # own customer and project label travel as `customer_name` / `project_label`.
+    parties = so_parties(db, ids=[r[0] for r in rows if _channel_of(r[3]) == kind])
     for r in rows:
-        (_so_id, so_number, order_date, demand_class, line_id, qty_ordered, qty_delivered,
+        (so_id, so_number, order_date, demand_class, line_id, qty_ordered, qty_delivered,
          required_date, requested_delivery_date, customer_name, warehouse_code) = r
         # `public.sales_order_lines` carries no line number - the human one lives on the
         # reconciled PROJECT line, which is also where the decision reference comes from,
@@ -2001,7 +2074,7 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
         qty = float(qty_ordered or 0) - float(qty_delivered or 0)
         total += qty
         if kind == PROJECT_KIND:
-            project_lines.append({
+            project_lines.append(with_party({
                 # AC-C2.3 asks for the PROJECT name, and the SCM order book does not carry
                 # one: `sales_orders` has customer, type and dates, and the project-sales
                 # module's `project_sales_orders` is a separate book with no link to this
@@ -2019,9 +2092,9 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
                 "line_no": line_no,
                 "warehouse_code": warehouse_code,
                 "decision_ref": traced.get("ref"),
-            })
+            }, parties, so_id))
         elif kind == RETAIL_KIND:
-            retail_lines.append({
+            retail_lines.append(with_party({
                 "dealer_name": customer_name or "",
                 "so_number": so_number or "",
                 "qty": round(qty, 4),
@@ -2029,9 +2102,9 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
                     (today - order_date).days if order_date is not None else 0
                 ),
                 "ordered_date": order_date.isoformat() if order_date else None,
-            })
+            }, parties, so_id))
         else:
-            unclassified_lines.append({
+            unclassified_lines.append(with_party({
                 "customer_name": customer_name or "",
                 "so_number": so_number or "",
                 "line_no": line_no,
@@ -2041,7 +2114,7 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
                 # type, stated order type, market segment and sales agent and none of them
                 # said. That is a data-quality job, not a third channel.
                 "exception": "No demand class on the sales order",
-            })
+            }, parties, so_id))
 
     # Undated project lines LAST rather than first: `date.min` would put a line nobody has
     # dated at the top of a list ordered by urgency.

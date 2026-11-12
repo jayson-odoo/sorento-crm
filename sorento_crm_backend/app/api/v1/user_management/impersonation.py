@@ -66,7 +66,7 @@ def _serialize_target(db: Session, target: User) -> TargetUserSummary:
         db.query(UserRole.slug)
         .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
         .filter(UserRoleAssignment.user_id == target.id)
-        .order_by(UserRoleAssignment.assigned_at.asc())
+        .order_by(*UserRoleAssignment.primary_order())
         .first()
     )
     try:
@@ -156,20 +156,27 @@ def start_impersonation(
     return _serialize_session(db, row, target)
 
 
+class StopImpersonationRequest(BaseModel):
+    # The view-as the calling tab holds (PORTAL-IMPERSONATION-ISOLATE). A stale tab whose view-as
+    # was already replaced by a newer one elsewhere must not end that newer one. Omitted: the
+    # admin's open view-as, as before.
+    session_id: Optional[str] = None
+
+
 @router.post("/stop")
 def stop_impersonation(
     request: Request,
+    body: Optional[StopImpersonationRequest] = None,
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),
 ):
-    row = (
-        db.query(ImpersonationSession)
-        .filter(
-            ImpersonationSession.admin_user_id == real_user["id"],
-            ImpersonationSession.ended_at.is_(None),
-        )
-        .first()
+    query = db.query(ImpersonationSession).filter(
+        ImpersonationSession.admin_user_id == real_user["id"],
+        ImpersonationSession.ended_at.is_(None),
     )
+    if body is not None and body.session_id:
+        query = query.filter(ImpersonationSession.id == body.session_id)
+    row = query.first()
     if not row:
         return {"ended": False}
     row.ended_at = datetime.utcnow()

@@ -57,6 +57,10 @@ vi.mock('../lib/portal-client', () => ({
 // select is one per LINE (`promotion-${line.key}`), and only a real `id`
 // lets the component's own `<Label htmlFor>` pair with it so
 // `getByLabelText('Promotion for line 1')`-style queries work at all.
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -117,7 +121,7 @@ import {
   type ProductCombosLookup,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems } from '@/test-utils';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 const mockCombos = vi.mocked(lookupProductCombos);
@@ -157,6 +161,7 @@ beforeEach(() => {
 async function startWithALine(item: (typeof ITEMS)[number]) {
   render(<PriceTagRequestForm />);
   await selectOption('Customer', 'ZZTD01');
+  chooseTypedItems();
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', `${item.kind}:${item.id}`);
 }
@@ -173,6 +178,9 @@ function openPriceSection() {
 function chooseSelling() {
   openPriceSection();
   fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+  // PRICETAG-LPSP: the header is only the starting value for NEW lines, so a line already on
+  // the form is switched to SP on its own radio.
+  for (const sp of screen.getAllByRole('radio', { name: 'SP' })) fireEvent.click(sp);
 }
 
 // --------------------------------------------------------------------------- AC-S1-1
@@ -258,10 +266,12 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     const input = await screen.findByLabelText('Selling price for line 1');
     fireEvent.change(input, { target: { value: '480' } });
 
-    fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
+    // PRICETAG-LPSP: the typed price belongs to the LINE now, so it goes with the line's own
+    // LP/SP radio, not with the header default.
+    fireEvent.click(screen.getByRole('radio', { name: 'LP' }));
     expect(screen.queryByLabelText('Selling price for line 1')).toBeNull();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'SP' }));
     const restored = await screen.findByLabelText('Selling price for line 1');
     expect((restored as HTMLInputElement).value).toBe('480');
   });
@@ -284,7 +294,7 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     const remarksIndex = headers.indexOf('Remarks');
     expect(qtyIndex).toBeGreaterThanOrEqual(0);
     expect(remarksIndex).toBeGreaterThan(qtyIndex);
-    expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual(['List price']);
+    expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual(['Price', 'List price']);
     expect(headers).not.toContain('Promotion');
     expect(headers).not.toContain('Selling price');
 
@@ -297,7 +307,10 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(lineRow).toBeTruthy();
     expect(within(lineRow!).getByText('RM 850')).toBeInTheDocument();
 
-    expect(document.querySelector('td[colspan]')).toBeNull();
+    // (the red reasons sub-row is not a pricing row)
+    expect(
+      Array.from(document.querySelectorAll('td[colspan]')).filter((td) => !td.querySelector('[data-error-anchor]')),
+    ).toEqual([]);
   });
 
   it('Selling mode: the header has List price, Promotion, Selling price columns in order between Qty (tags) and Remarks, and the line row (not a colSpan sub-row) holds the select and value (AC-S1-3)', async () => {
@@ -311,6 +324,7 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(qtyIndex).toBeGreaterThanOrEqual(0);
     expect(remarksIndex).toBeGreaterThan(qtyIndex);
     expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual([
+      'Price',
       'List price',
       'Promotion',
       'Selling price',
@@ -327,7 +341,10 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(lineRow!.querySelector('select[id^="promotion-"]')).toBeTruthy();
     expect(within(lineRow!).getByText('RM 723')).toBeInTheDocument();
 
-    expect(document.querySelector('td[colspan]')).toBeNull();
+    // (the red reasons sub-row is not a pricing row)
+    expect(
+      Array.from(document.querySelectorAll('td[colspan]')).filter((td) => !td.querySelector('[data-error-anchor]')),
+    ).toEqual([]);
   });
 
   // ----------------------------------------------------------- kill: subRowSpan

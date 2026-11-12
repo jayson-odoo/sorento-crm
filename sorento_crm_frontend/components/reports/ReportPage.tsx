@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { ReportParamsContext } from '@/lib/report-params-context';
 import {
   type ColumnDef,
   type PaginationState,
@@ -301,6 +303,33 @@ function withParamDefaults(
   return filled;
 }
 
+/** The one-shot `?seed=` a screen links with (the leaderboard's "Open as report"): params merged over the defaults, and a pivot. */
+interface ReportSeed {
+  params: ReportParamValues;
+  pivot?: ReportViewConfig['pivot'];
+}
+
+function parseSeed(raw: string | null): ReportSeed | null {
+  if (!raw) return null;
+  try {
+    const seed = JSON.parse(raw) as Partial<ReportSeed>;
+    if (!seed || typeof seed !== 'object') return null;
+    if (seed.pivot && typeof seed.pivot.rows !== 'string') return null;
+    return { params: seed.params && typeof seed.params === 'object' ? seed.params : {}, pivot: seed.pivot };
+  } catch {
+    return null;
+  }
+}
+
+/** Drop `seed` from the address bar, keeping everything else (the tab included). */
+function dropSeedFromUrl() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('seed')) return;
+  url.searchParams.delete('seed');
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 /**
  * Is this set of params a whole question?
  *
@@ -407,6 +436,10 @@ export function ReportPage({
   const [gridOverride, setGridOverride] = useState<GridState | null>(null);
   const [configureOpen, setConfigureOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('detail');
+  // The seed is read once, on the first render: a later filter change is never overwritten by a lagging URL.
+  const searchParams = useSearchParams();
+  const seedRef = useRef<ReportSeed | null | undefined>(undefined);
+  if (seedRef.current === undefined) seedRef.current = parseSeed(searchParams?.get('seed') ?? null);
 
   const applyView = (view: ReportView | null, fallback: ReportViewConfig) => {
     const config = view?.view ?? fallback;
@@ -432,18 +465,33 @@ export function ReportPage({
     const fallback = views
       ? ([...views.mine, ...views.shared].find((v) => v.is_default) ?? null)
       : null;
+    // Not cleared once used: a strict-mode double run (and a cached meta, which runs this on mount) must apply the
+    // same seed again, never fall back to the default view.
+    const seed = seedRef.current;
+    const known = (key: string) => meta.catalog.some((c) => c.key === key);
+    const pivotOk =
+      !seed?.pivot ||
+      (known(seed.pivot.rows) &&
+        known(seed.pivot.cols) &&
+        Array.isArray(seed.pivot.measures) &&
+        seed.pivot.measures.every(known));
+    // An unknown pivot drops only the pivot: the seed's params still apply.
+    const usable = seed ? { params: seed.params, pivot: pivotOk ? seed.pivot : undefined } : null;
     const config = fallback?.view ?? meta.default_view;
     // A report opens on the tab it is read by: the Yearly comparison is its summary.
     if (meta.opens_on) setActiveTab(meta.opens_on);
+    if (seed) dropSeedFromUrl();
+    // A board's "Open as report" brings a pivot: it opens on the summary it asked for.
+    if (usable?.pivot) setActiveTab('summary');
     setState({
-      viewId: fallback?.id ?? null,
+      viewId: usable ? null : (fallback?.id ?? null),
       params: withParamDefaults(
-        config.params,
+        usable ? { ...meta.default_view.params, ...usable.params } : config.params,
         meta.params,
         meta.default_view.params,
       ),
-      detail: config.detail,
-      pivot: config.pivot,
+      detail: usable ? meta.default_view.detail : config.detail,
+      pivot: usable ? (usable.pivot ?? meta.default_view.pivot) : config.pivot,
       token: 0,
     });
   }, [state, meta, views, viewsLoading]);
@@ -714,7 +762,7 @@ export function ReportPage({
           ) : null
         }
       />
-      {belowHeader}
+      <ReportParamsContext.Provider value={runParams}>{belowHeader}</ReportParamsContext.Provider>
     </Container>
   );
 

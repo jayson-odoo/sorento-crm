@@ -120,6 +120,15 @@ class CertificateProductAddRequest(BaseModel):
     product_id: str
 
 
+class CertificateProductPatchRequest(BaseModel):
+    """Body for ``PATCH /certificates/{id}/products/{coverage_id}``: type the printed code, or
+    confirm the one the system read (no screen sends `confirm` since CERT-TAB-UX). Either way a
+    person owns it afterwards (`manual`)."""
+
+    model_code: Optional[str] = Field(None, max_length=60)
+    confirm: Optional[bool] = None
+
+
 class BulkDeleteCertificatesRequest(BaseModel):
     """Body for ``DELETE /certificates/bulk``: { ids: string[] }."""
 
@@ -185,6 +194,10 @@ class CertificateProductResponse(BaseModel):
     # None when the product row is gone (dangling product_id).
     company_name: Optional[str] = None
     source: str
+    # QUOTE-CERT-TAB: the code as printed on the certificate, ai = read by the system, manual = typed
+    # or confirmed by a person. CERT-TAB-UX (owner, 11 Nov 2026): both show the same; no Suggested.
+    model_code: Optional[str] = None
+    model_code_source: Optional[str] = None
     created_at: Optional[datetime] = None
     created_by: Optional[str] = None
 

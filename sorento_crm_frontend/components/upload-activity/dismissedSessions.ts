@@ -1,4 +1,5 @@
 'use client';
+import { localStore } from '@/lib/storage';
 
 /**
  * Which upload-activity sessions the user has already seen.
@@ -64,7 +65,7 @@ const listeners = new Set<() => void>();
 function readStorage(): readonly string[] {
   if (typeof window === 'undefined') return EMPTY;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = localStore.getItem(STORAGE_KEY);
     if (!raw) return EMPTY;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return EMPTY;
@@ -80,9 +81,9 @@ function writeStorage(ids: readonly string[]): void {
   if (typeof window === 'undefined') return;
   try {
     if (ids.length) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+      localStore.setItem(STORAGE_KEY, JSON.stringify(ids));
     } else {
-      window.localStorage.removeItem(STORAGE_KEY);
+      localStore.removeItem(STORAGE_KEY);
     }
   } catch {
     /* best effort */

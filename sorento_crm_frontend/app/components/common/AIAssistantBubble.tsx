@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AnimatePresence, motion } from 'motion/react';
@@ -12,13 +12,13 @@ import {
   ChevronsRight,
   GitBranch,
   History,
-  Loader2,
   Plus,
-  SendHorizonal,
   Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import AssistantComposer, { type AssistantComposerHandle } from '@/components/chatbot/AssistantComposer';
+import { MessageFiles } from '@/components/chatbot/MessageFiles';
 import { toast } from '@/lib/toast';
 import { WhatsAppBlocks } from '@/components/chatbot/WhatsAppBlocks';
 import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
@@ -41,9 +41,13 @@ import {
   sendAIAssistantMessage,
   type AIAssistantConversationSummary,
   type AIAssistantMessage,
+  type SentFile,
 } from '@/lib/aiAssistantChatApi';
 import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
+import { useTraceDrawer } from '@/app/(protected)/system-management/chat-history/components/TraceDrawer';
+import { localStore } from '@/lib/storage';
 
 const SIZE_STORAGE_KEY = 'sorento.ai.bubbleSize';
 const OPEN_STORAGE_KEY = 'sorento.ai.bubbleOpen';
@@ -148,8 +152,11 @@ function BrainReplyParts({
 
 export default function AIAssistantBubble() {
   const canUseAIAssistant = useHasPermission('system.ai_assistant_chat.use');
-  // Admins can jump from any assistant message to its per-turn trace (M2).
-  const canViewTrace = useHasPermission('system.ai_assistant_settings.view');
+  // Admins only (owner, AGENT-PANEL-FIXES F): the route pill, steps, reply meta and View trace. The backend strips the
+  // same data from a non-admin's thread (`panel_service.sees_trace`); this keeps the old path's link and the chrome off.
+  const canViewTrace = useEffectiveIsSuperadmin() === true;
+  // Trace drawer over the page, in this tab (AGENT-PANEL-FIXES E, TRACE-SIDEBAR).
+  const { openTrace, openMessageTrace, traceDrawer } = useTraceDrawer();
   const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
@@ -182,7 +189,9 @@ export default function AIAssistantBubble() {
   const deepLinkConvId = searchParams?.get('ai_conversation') ?? null;
   const deepLinkMsgId = searchParams?.get('ai_message') ?? null;
   const handledDeepLinkRef = useRef<string | null>(null);
-  const canSend = input.trim().length > 0 && !isSending;
+  const [canAttach, setCanAttach] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const composerRef = useRef<AssistantComposerHandle | null>(null);
   const prefersReducedMotion = useReducedMotion();
   const transition = surfaceTransition(prefersReducedMotion);
 
@@ -211,7 +220,7 @@ export default function AIAssistantBubble() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      if (window.localStorage.getItem(OPEN_STORAGE_KEY) === '1') setOpen(true);
+      if (localStore.getItem(OPEN_STORAGE_KEY) === '1') setOpen(true);
     } catch {
       // ignore unreadable storage
     }
@@ -224,7 +233,7 @@ export default function AIAssistantBubble() {
     focusAfterToggleRef.current = value ? 'panel' : 'handle';
     setOpen(value);
     try {
-      window.localStorage.setItem(OPEN_STORAGE_KEY, value ? '1' : '0');
+      localStore.setItem(OPEN_STORAGE_KEY, value ? '1' : '0');
     } catch {
       // ignore unwritable storage
     }
@@ -241,7 +250,7 @@ export default function AIAssistantBubble() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const raw = window.localStorage.getItem(SIZE_STORAGE_KEY);
+      const raw = localStore.getItem(SIZE_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<BubbleSize>;
         if (
@@ -285,6 +294,7 @@ export default function AIAssistantBubble() {
         if (cancelled) return;
         setGreeting(data.greeting || 'Hi, how can I help you?');
         setGreetingSuggestions(Array.isArray(data.suggestions) ? data.suggestions.slice(0, 5) : []);
+        setCanAttach(data.can_attach === true);
       } catch {
         // Silent fail - fallback strings already set.
       }
@@ -325,7 +335,7 @@ export default function AIAssistantBubble() {
 
   const persistSize = useCallback((size: BubbleSize) => {
     try {
-      window.localStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(size));
+      localStore.setItem(SIZE_STORAGE_KEY, JSON.stringify(size));
     } catch {
       // ignore
     }
@@ -397,15 +407,21 @@ export default function AIAssistantBubble() {
   );
 
   const sendText = useCallback(
-    async (text: string, confirmAction?: 'confirm' | 'cancel') => {
+    async (
+      text: string,
+      confirmAction?: 'confirm' | 'cancel',
+      attachments: { id: string; sheet: string | null }[] = [],
+      files: SentFile[] = [],
+    ): Promise<boolean> => {
       const trimmed = text.trim();
-      if (!trimmed || isSending) return;
+      if ((!trimmed && attachments.length === 0) || isSending) return false;
       setInput('');
       const optimistic: AIAssistantMessage = {
         id: `temp-user-${Date.now()}`,
         role: 'user',
         content: trimmed,
-        metadata_json: {},
+        // The files show on the sent bubble at once; the server's copy (with links) replaces them.
+        metadata_json: files.length > 0 ? { files } : {},
         created_at: new Date().toISOString(),
       };
       drawCountRef.current += 1;
@@ -413,16 +429,27 @@ export default function AIAssistantBubble() {
       setIsSending(true);
       // The thread this send started on: an answer for a thread no longer open is dropped.
       const startedOn = openThreadRef.current;
+      let sent = true;
       try {
         const snapshot = getPageSnapshot();
-        const conv = await sendAIAssistantMessage(trimmed, startedOn, snapshot, confirmAction);
+        const conv = await sendAIAssistantMessage(
+          trimmed,
+          startedOn,
+          snapshot,
+          confirmAction,
+          attachments,
+        );
         // Drawn when the thread on screen is the one this send started on, or the one the reply belongs to.
         if (openThreadRef.current === startedOn || openThreadRef.current === conv.id) {
           drawThread(conv.id, conv.messages || []);
         }
       } catch (err) {
+        sent = false;
+        // The words stay in the box for a retry (the composer keeps its file chips too); a Confirm or
+        // Cancel click is a button, not words the user typed, so it never lands in the box.
+        if (!confirmAction) setInput((current) => current || text);
         drawCountRef.current += 1;
-        if (openThreadRef.current !== startedOn) return;
+        if (openThreadRef.current !== startedOn) return false;
         const errorMessage: AIAssistantMessage = {
           id: `temp-error-${Date.now()}`,
           role: 'assistant',
@@ -434,6 +461,7 @@ export default function AIAssistantBubble() {
       } finally {
         setIsSending(false);
       }
+      return sent;
     },
     [drawThread, isSending],
   );
@@ -469,11 +497,7 @@ export default function AIAssistantBubble() {
     [drawThread],
   );
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!canSend) return;
-    await sendText(input);
-  };
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 
   const onNewConversation = () => {
     drawThread(undefined, []);
@@ -631,6 +655,21 @@ export default function AIAssistantBubble() {
           animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1, filter: 'blur(0px)' }}
           exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92, filter: 'blur(8px)' }}
           transition={transition}
+          onDragEnter={(e: React.DragEvent) => {
+            if (canAttach && hasFiles(e)) setDragging(true);
+          }}
+          onDragOver={(e: React.DragEvent) => {
+            if (canAttach && hasFiles(e)) e.preventDefault();
+          }}
+          onDragLeave={(e: React.DragEvent) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+          }}
+          onDrop={(e: React.DragEvent) => {
+            if (!canAttach) return;
+            e.preventDefault();
+            setDragging(false);
+            composerRef.current?.addFiles(Array.from(e.dataTransfer?.files ?? []));
+          }}
         >
           {/* Resize handles - Pointer Events + setPointerCapture (S8-05), touch included. */}
           <div
@@ -765,8 +804,11 @@ export default function AIAssistantBubble() {
                         if (node) messageRefs.current.set(m.id, node);
                         else messageRefs.current.delete(m.id);
                       }}
-                      className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      className={`flex ${m.role === 'user' ? 'flex-col items-end gap-1.5' : 'justify-start'}`}
                     >
+                      {m.role === 'user' && (m.metadata_json?.files?.length ?? 0) > 0 ? (
+                        <MessageFiles files={m.metadata_json.files ?? []} />
+                      ) : null}
                       <div
                         className={`max-w-[85%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed shadow-sm transition-shadow ${
                           m.role === 'user'
@@ -845,20 +887,27 @@ export default function AIAssistantBubble() {
                         !m.id.startsWith('temp-') &&
                         (!m.metadata_json?.route || m.metadata_json.chatbot_turn_id) ? (
                           <div className="mt-1.5 border-t border-border/50 pt-1.5">
-                            <Link
-                              href={
-                                m.metadata_json?.route
-                                  ? `/system-management/chat-history?turn=${encodeURIComponent(m.metadata_json.chatbot_turn_id ?? '')}`
-                                  : `/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`
-                              }
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
-                              data-testid="bubble-view-trace"
-                            >
-                              <GitBranch className="size-3" />
-                              View trace
-                            </Link>
+                            {m.metadata_json?.route ? (
+                              <button
+                                type="button"
+                                onClick={() => openTrace(m.metadata_json?.chatbot_turn_id ?? null)}
+                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
+                                data-testid="bubble-view-trace"
+                              >
+                                <GitBranch className="size-3" />
+                                View trace
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openMessageTrace(m.id)}
+                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
+                                data-testid="bubble-view-trace"
+                              >
+                                <GitBranch className="size-3" />
+                                View trace
+                              </button>
+                            )}
                           </div>
                         ) : null}
                         {/* M3a Clarifier - enumerable options as clickable chips.
@@ -956,34 +1005,29 @@ export default function AIAssistantBubble() {
                 </div>
               </div>
 
-              <form onSubmit={onSubmit} className="border-t border-border/70 bg-background/85 p-3">
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Ask the assistant..."
-                    className="rounded-xl"
-                  />
-                  <Button
-                    type="submit"
-                    size="icon"
-                    className="rounded-xl"
-                    disabled={!canSend}
-                    aria-label={isSending ? 'Sending' : 'Send message'}
-                  >
-                    {isSending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <SendHorizonal className="size-4" />
-                    )}
-                  </Button>
-                </div>
-              </form>
+              <AssistantComposer
+                ref={composerRef}
+                value={input}
+                onChange={setInput}
+                onSend={async ({ text, attachments, files }) => {
+                  // A failed send rejects so the composer puts its file chips back for a retry.
+                  if (!(await sendText(text, undefined, attachments, files))) throw new Error('Send failed');
+                }}
+                isSending={isSending}
+                canAttach={canAttach}
+              />
             </>
           )}
+          {dragging && canAttach ? (
+            <div className="pointer-events-none absolute inset-2 z-30 flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-primary bg-primary/10 font-semibold text-primary backdrop-blur-sm">
+              Drop to attach
+              <span className="text-xs font-normal text-muted-foreground">Images, Excel, CSV or PDF</span>
+            </div>
+          ) : null}
         </motion.div>
         )}
       </AnimatePresence>
+      {canViewTrace ? traceDrawer : null}
     </div>
   );
 }

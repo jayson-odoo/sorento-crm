@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AIAssistantConfigUpdate(BaseModel):
@@ -70,14 +70,40 @@ class PageSnapshotPayload(BaseModel):
     entity: PageEntityRef | None = None
 
 
+class AttachmentRef(BaseModel):
+    """A file uploaded to `/ai-assistant/attachments`, named on send, with the sheet to read."""
+
+    id: str
+    sheet: Optional[str] = None
+
+
 class AIAssistantMessageCreate(BaseModel):
     conversation_id: Optional[str] = None
-    message: str = Field(..., min_length=1)
+    # May be empty only when files ride along.
+    message: str = ""
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=5)
     page_snapshot: Optional[PageSnapshotPayload] = None
     # M3a write-confirmation: set by the FE Confirm/Cancel buttons rendered on a
     # pending-write assistant message. "confirm" executes the stored write;
     # "cancel" drops it. None = a normal turn.
     confirm_action: Optional[Literal["confirm", "cancel"]] = None
+
+    @model_validator(mode="after")
+    def _text_or_files(self):
+        if not self.message.strip() and not self.attachments:
+            raise ValueError("message is required")
+        return self
+
+
+class AttachmentUploadResponse(BaseModel):
+    id: str
+    filename: str
+    size: int
+    mime_type: str
+    kind: Literal["image", "sheet", "pdf"]
+    thumb_url: Optional[str] = None
+    sheets: list[dict[str, Any]] = Field(default_factory=list)
+    pages: Optional[int] = None
 
 
 class AIAssistantMessageResponse(BaseModel):
@@ -164,6 +190,7 @@ class TestModelResponse(BaseModel):
 class GreetingResponse(BaseModel):
     greeting: str
     suggestions: list[str] = Field(default_factory=list)
+    can_attach: bool = False
 
 
 # --- Usage analytics --------------------------------------------------------
@@ -301,6 +328,17 @@ class WishlistClusterItem(BaseModel):
     count: int
     last_seen_at: Optional[datetime] = None
     created_at: datetime
+
+
+class NoToolAskItem(BaseModel):
+    """GAP-SIGNAL: one ask the agent could not do for lack of a tool."""
+
+    turn_id: str
+    ask: str
+    area: Optional[str] = None
+    who: Optional[str] = None
+    channel: Optional[str] = None
+    asked_at: datetime
 
 
 _MAX_PRICE = 999999.999999

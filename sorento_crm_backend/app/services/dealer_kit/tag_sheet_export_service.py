@@ -11,6 +11,7 @@ refusing to print. AC-H.2 says to return 409 with a reason.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from typing import Optional
 
@@ -104,7 +105,7 @@ def _check_promotion_expired(db: Session, request: PriceTagRequest) -> None:
                 status_code=409,
                 message=(
                     f"Line {index}'s promotion '{promo.description or promo.id}' "
-                    f"expired on {promo.end_date.isoformat()}. Extend the "
+                    f"expired on {fmt_date(promo.end_date)}. Extend the "
                     "promotion or remove it from the line before exporting."
                 ),
                 code="PROMOTION_EXPIRED",
@@ -119,6 +120,49 @@ def _check_promotion_expired(db: Session, request: PriceTagRequest) -> None:
                 ),
                 code="PROMOTION_INACTIVE",
             )
+
+
+def _current_version_filter(db: Session, request_id: str):
+    """Only exports drawn from the request's LATEST design version count.
+
+    PRICETAG-SELF-APPROVAL R5: an edit and a re-approval write a new version,
+    and a PDF of the version before it must never be served, reported ready or
+    reused as "already in flight" - it prints the old price. A download with no
+    export row (none is written without one today) is left in, and a request
+    with no page has nothing to compare against.
+    """
+    from sqlalchemy import or_
+
+    page_id = (
+        db.query(PriceTagRequest.page_id).filter(PriceTagRequest.id == str(request_id)).scalar()
+    )
+    if not page_id:
+        return None
+    latest_id = (
+        db.query(PageVersion.id)
+        .filter(PageVersion.page_id == page_id)
+        .order_by(PageVersion.version.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_id is None:
+        return None
+    return or_(ExportRequest.id.is_(None), ExportRequest.page_version_id == latest_id)
+
+
+def _request_downloads(db: Session, request_id: str):
+    """This request's tag sheet downloads, of its latest design version only."""
+    query = db.query(UserDownload).outerjoin(
+        ExportRequest, ExportRequest.download_id == UserDownload.id
+    ).filter(
+        UserDownload.source_entity_type == "price_tag_request",
+        UserDownload.source_entity_id == str(request_id),
+        UserDownload.kind == KIND,
+    )
+    current = _current_version_filter(db, request_id)
+    if current is not None:
+        query = query.filter(current)
+    return query
 
 
 def request_tag_sheet_export(
@@ -166,11 +210,8 @@ def request_tag_sheet_export(
     # the portal export route can each trigger this same request's export,
     # and the second one to arrive must see the first's, not its own.
     in_flight = (
-        db.query(UserDownload)
+        _request_downloads(db, request_id)
         .filter(
-            UserDownload.source_entity_type == "price_tag_request",
-            UserDownload.source_entity_id == str(request_id),
-            UserDownload.kind == KIND,
             UserDownload.status.in_(
                 [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
             ),
@@ -310,13 +351,8 @@ def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownlo
     ``created_at`` alone cannot always tell "latest" from "simultaneous".
     """
     return (
-        db.query(UserDownload)
-        .filter(
-            UserDownload.source_entity_type == "price_tag_request",
-            UserDownload.source_entity_id == str(request_id),
-            UserDownload.kind == KIND,
-            UserDownload.status == DownloadStatus.READY.value,
-        )
+        _request_downloads(db, request_id)
+        .filter(UserDownload.status == DownloadStatus.READY.value)
         .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
         .first()
     )
@@ -330,12 +366,7 @@ def latest_export_status(db: Session, request_id: str) -> Optional[str]:
     the portal button has one waiting state, not two.
     """
     row = (
-        db.query(UserDownload)
-        .filter(
-            UserDownload.source_entity_type == "price_tag_request",
-            UserDownload.source_entity_id == str(request_id),
-            UserDownload.kind == KIND,
-        )
+        _request_downloads(db, request_id)
         .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
         .first()
     )
@@ -483,17 +514,36 @@ def design_media(
         for part in row.get("parts") or []:
             for image in part.get("images") or []:
                 images[image["attachment_id"]] = image["url"]
+        # PRICETAG-ACCESSORIES: the accessories box draws each accessory's own picture.
+        for item in row.get("accessories") or []:
+            image = item.get("image")
+            if image and image.get("attachment_id") and image.get("url"):
+                images[image["attachment_id"]] = image["url"]
+
+    # Feature icons (contract B5): a feature_icons layer draws whichever library icons the
+    # subject's specs match, so every rule-carrying icon travels with the media, signed.
+    # S2: a staff session may span companies; a request's render shows its OWN company's icons.
+    feature_icons = (
+        asset_service.feature_icon_rules(
+            db, company_id=request.company_id if request is not None else None
+        )
+        if asset_service.doc_has_feature_icons(doc or {})
+        else []
+    )
+    asset_ids = asset_service.tag_sheet_asset_ids(doc or {}) | {
+        icon["id"] for icon in feature_icons
+    }
 
     return rows, {
         # assetId -> signed URL, for every library asset the document names.
-        "assets": asset_service.urls_for(
-            db, asset_service.tag_sheet_asset_ids(doc or {})
-        ),
+        "assets": asset_service.urls_for(db, asset_ids),
         # attachmentId -> signed URL, for every product photo a bound layer may
         # be showing. Gated by `product_images` before it ever gets here.
         "images": images,
         # Brand fonts, loaded through @font-face before anything draws with them.
         "fonts": asset_service.font_assets(db),
+        # Rule-carrying icons, `[]` unless the document has a feature_icons layer.
+        "feature_icons": feature_icons,
     }
 
 

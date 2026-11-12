@@ -7,7 +7,10 @@
  */
 
 import type { PlanningChangeFromTo } from '@/app/(protected)/project-sales/_shared/types/planningChange.types';
-import type { LineSplitView } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
+import type {
+  LineSplitView,
+  OrderInquiryWorklistRow,
+} from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '@/app/(protected)/project-sales/_shared/types/lineSplit.types';
 import type { CancelSource } from '../lib/autocountCancel';
 
@@ -324,6 +327,10 @@ export interface SalesOrderLine {
    * more queries a page for a fact nothing there prints.
    */
   order_inquiry?: SalesOrderLineInquiry | null;
+  /** SO-LINE-OI-STATUS-UNIFY: every OI row of this line (live, used, cancelled) in the OI
+   * worklist row shape; the Order inquiry cell folds them as the OI Lines tab does.
+   * Single order read only; null on a line nobody raised a row on. */
+  order_inquiry_rows?: OrderInquiryWorklistRow[] | null;
   /** OI-SPLIT-VIEW (UAC B1): the split popup of this line's planning mirror; null when the
    * line has no splits or no project order. Single order read only. */
   split_view?: LineSplitView | null;
@@ -726,6 +733,9 @@ export interface PurchaseOrderLine {
    * (`PLAN-scm-book-linkage-on-document-lines.md`).
    */
   book_so_number?: string | null;
+  /** That sales order's customer (debtor name, else customer master) and project label. */
+  book_so_customer_name?: string | null;
+  book_so_project_label?: string | null;
   /** True when the book named a sales order this CRM does not hold. Three display states,
    *  not two - see `BookSoCell`. */
   book_so_unresolved?: boolean | null;
@@ -734,6 +744,20 @@ export interface PurchaseOrderLine {
   spos?: PurchaseOrderLineSpo[];
   /** `po_cancelled` when the line itself brings nothing; the SPO cell draws the red pill. */
   dead_reason?: 'po_cancelled' | null;
+  /** PO-LINK-HISTORY: the line's latest S/O link event (the S/O cell's popover). */
+  book_so_link?: BookSoLinkEvent | null;
+}
+
+/** PO-LINK-HISTORY: when the AutoCount sync last moved a PO line's S/O link. */
+export interface BookSoLinkEvent {
+  /** Naive UTC, as the audit log stores it. On an `estimated` event: an upper bound. */
+  changed_at: string;
+  /** True for the backfill's "first seen" event: history began after the link. */
+  estimated: boolean;
+  /** Whether the line named an S/O before; `null` when unknown (`estimated`). */
+  previous_linked: boolean | null;
+  /** That previous S/O's number, when this system holds it. */
+  previous_so_number: string | null;
 }
 
 /** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto (same shape as the order
@@ -787,6 +811,9 @@ export interface PurchaseOrderPlacement {
   so_number: string | null;
   /** `YOTU BUILDER / LOT 2752` - the same label the worklist's PROJECT/CUSTOMER prints. */
   customer: string | null;
+  /** That order's own customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   /** Who sold it, by person label or agent code. Null on an order with no agent. */
   agent: string | null;
   /** How much of the PO line this placement occupies. */
@@ -799,6 +826,11 @@ export interface PurchaseOrderPlacement {
    * mark on the row rather than a filter that hides it.
    */
   location_differs: boolean;
+  /** PO-LINK-HISTORY: when the link was made (naive UTC), by whom, and whether the cascade
+   *  made it. Order-inquiry rows only. */
+  linked_at?: string | null;
+  linked_by_name?: string | null;
+  auto?: boolean | null;
 }
 
 /** One purchase-order line's occupancy: the three figures, then who is on it (AC-G1). */
@@ -829,6 +861,9 @@ export interface PurchaseOrderLineAllocation {
 export interface PurchaseOrderDedication {
   /** The sales order document number - never an id. */
   so_number: string;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   /** What the claim reserves: that order line's LIVE outstanding. */
   reserved: number;
   /** How much of `reserved` the order has not placed on this line yet - what is actually
@@ -854,6 +889,9 @@ export interface SpoPlanPull {
 export interface SpoPlanCover {
   so_number: string | null;
   customer: string | null;
+  /** That order's own customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   qty: number;
   warehouse: string | null;
 }

@@ -26,6 +26,7 @@ it is reported in ``unmatched`` rather than dressed up as an instruction.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import io
 import logging
 from dataclasses import dataclass, field
@@ -149,6 +150,11 @@ def _as_date(value: Any) -> Optional[date]:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def _last(lines: Optional[List[ProjectSalesOrderLine]]) -> Optional[ProjectSalesOrderLine]:
+    """The row a per-product lookup has always answered with (the last one in line order)."""
+    return lines[-1] if lines else None
 
 
 def _iso(value: Optional[date]) -> Optional[str]:
@@ -287,14 +293,15 @@ class ProjectSODeltaService:
         order: ProjectSalesOrder,
         before: _PhaseFact,
         after: _PhaseFact,
-        lines: Dict[Tuple[str, int, str], ProjectSalesOrderLine],
+        lines: Dict[Tuple[str, int, str], List[ProjectSalesOrderLine]],
         rows: List[Dict[str, Any]],
         phase_summary: List[Dict[str, Any]],
     ) -> None:
         phase_lines = [
             line
-            for (area, sequence, _product), line in lines.items()
+            for (area, sequence, _product), same_product in lines.items()
             if (area, sequence) == before.key
+            for line in same_product
         ]
         relevant = bool(phase_lines) or before.area_group == order.area_group
         moved = before.delivery_date != after.delivery_date
@@ -344,7 +351,7 @@ class ProjectSODeltaService:
             if from_qty == to_qty:
                 continue
             qty_changed = True
-            line = lines.get((before.area_group, before.sequence, product_id))
+            line = _last(lines.get((before.area_group, before.sequence, product_id)))
             rows.append(
                 self._row(
                     order=order,
@@ -387,7 +394,7 @@ class ProjectSODeltaService:
         after: Dict[Tuple[str, int], _PhaseFact],
         only_before: set,
         only_after: set,
-        lines: Dict[Tuple[str, int, str], ProjectSalesOrderLine],
+        lines: Dict[Tuple[str, int, str], List[ProjectSalesOrderLine]],
         rows: List[Dict[str, Any]],
         unmatched: List[Dict[str, Any]],
     ) -> None:
@@ -412,7 +419,7 @@ class ProjectSODeltaService:
                     continue
                 paired.add(to_key)
                 for product_id in sorted(source.qty):
-                    line = lines.get((source.area_group, source.sequence, product_id))
+                    line = _last(lines.get((source.area_group, source.sequence, product_id)))
                     rows.append(
                         self._row(
                             order=order,
@@ -685,7 +692,7 @@ class ProjectSODeltaService:
         )
         for index, row in enumerate(delta["rows"]):
             row["row_key"] = str(index)
-        when = delivery_date.strftime("%d %b %Y") if delivery_date else "no date"
+        when = fmt_date(delivery_date) if delivery_date else "no date"
         return self._persist_amendment(
             order,
             delta,
@@ -1326,19 +1333,25 @@ class ProjectSODeltaService:
 
     def _lines_by_phase_product(
         self, order: ProjectSalesOrder
-    ) -> Dict[Tuple[str, int, str], ProjectSalesOrderLine]:
+    ) -> Dict[Tuple[str, int, str], List[ProjectSalesOrderLine]]:
+        """Every line per (area group, sequence, product), in line order.
+
+        A list, not one line: a set's main part can go as two rows of the same item when its
+        money does not divide into whole cents (`split_set_driver_price`), and a phase date
+        move must reach both rows. A qty change still lands on one row (the last), as it always did.
+        """
         phases = {
             phase.id: phase
             for phase in self.db.query(ProjectDeliveryPhase)
             .filter(ProjectDeliveryPhase.project_id == order.project_id)
             .all()
         }
-        out: Dict[Tuple[str, int, str], ProjectSalesOrderLine] = {}
+        out: Dict[Tuple[str, int, str], List[ProjectSalesOrderLine]] = {}
         for line in self._lines_of(order.id):
             phase = phases.get(line.phase_id or "")
             if phase is None or not line.product_id:
                 continue
-            out[(phase.area_group, phase.sequence, line.product_id)] = line
+            out.setdefault((phase.area_group, phase.sequence, line.product_id), []).append(line)
         return out
 
     def _assert_same_po(

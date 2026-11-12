@@ -1,0 +1,198 @@
+"""Accessories included with a product or a combo (PRICETAG-ACCESSORIES).
+
+An accessory is a library item (picture, name, one short spec line) that is NOT a product code:
+the chopping board, colander or drainer a sink ships with. A product and each of its combos keep
+their OWN ordered list, independently (owner ruling Q1, 6 Nov): a combo never inherits its host
+product's list. A list entry is EITHER a library accessory OR a real catalogue product (owner,
+6 Nov ~10:45: a FREE SRTW5000 popup waste on combo SRTWB7065), whose code, description, photo and
+list price are read live. The price tag's "Accessories" box prints the list.
+
+Plan: documentation/plans/dealer-kit/PLAN-pricetag-accessories-06nov.md.
+"""
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+
+from app.database import Base
+from app.models.base import CompanyScopedMixin
+
+
+def _uuid_str() -> str:
+    return str(uuid.uuid4())
+
+
+class Accessory(Base, CompanyScopedMixin):
+    """One library item. The name is unique per company ignoring case (one DRAINER, reused)."""
+
+    __tablename__ = "accessories"
+    __audit_track__ = True
+    __audit_entity_type__ = "accessory"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(100), nullable=False)
+    # Plain text or the sanitised rich HTML the shared editor emits (`app/utils/tag_rich_text.py`).
+    spec = Column(Text, nullable=True)
+    remark = Column(Text, nullable=True)
+    # SET NULL: deleting the attachment clears the pointer rather than blocking on it, the same
+    # rule `product_combos.image_attachment_id` follows.
+    image_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("uq_accessories_company_lower_name", "company_id", text("lower(name)"), unique=True),
+    )
+
+
+class AccessoryImage(Base):
+    """One picture of an accessory, ordered, optionally tagged with a colour (PRICETAG-ACCESSORY-DESIGNER).
+    Reached through the accessory, which carries the company partition. The first picture is the default."""
+
+    __tablename__ = "accessory_images"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="CASCADE"), nullable=False
+    )
+    attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False
+    )
+    colour_name = Column(String(40), nullable=True)
+    colour_hex = Column(String(7), nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "colour_hex IS NULL OR colour_hex ~ '^#[0-9a-fA-F]{6}$'",
+            name="ck_accessory_images_colour_hex",
+        ),
+        Index("ix_accessory_images_accessory_id", "accessory_id"),
+    )
+
+
+class AccessoryColour(Base):
+    """One entry of an accessory's ordered colours list (PRICETAG-ACCESSORY-DESIGNER S7): independent of its
+    pictures. The card's colour dots are this list, one dot per colour. Reached through the accessory."""
+
+    __tablename__ = "accessory_colours"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(40), nullable=True)
+    hex = Column(String(7), nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("hex ~ '^#[0-9a-fA-F]{6}$'", name="ck_accessory_colours_hex"),
+        Index("uq_accessory_colours_accessory_hex", "accessory_id", text("lower(hex)"), unique=True),
+    )
+
+
+class ProductAccessory(Base):
+    """One entry on a product's own list (an accessory or a product). Reached through the product, which carries the
+    company partition (like `product_combos`)."""
+
+    __tablename__ = "product_accessories"
+    __audit_parent__ = "product_id"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    # Exactly one of the two is set. RESTRICT on both: a listed accessory or product cannot vanish
+    # from under the list; the API refuses an accessory delete naming where it is used.
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="RESTRICT"), nullable=True
+    )
+    item_product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
+    )
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    # Per list row overrides (blank = the accessory's own).
+    image_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessory_images.id", ondelete="SET NULL"), nullable=True
+    )
+    name_override = Column(String(200), nullable=True)
+    spec_override = Column(Text, nullable=True)
+    remark_override = Column(Text, nullable=True)
+
+    accessory = relationship("Accessory", lazy="joined")
+    item_product = relationship("Product", foreign_keys=[item_product_id], lazy="joined")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(accessory_id IS NULL) <> (item_product_id IS NULL)",
+            name="ck_product_accessories_one_item",
+        ),
+        UniqueConstraint("product_id", "accessory_id", name="uq_product_accessories_pair"),
+        UniqueConstraint("product_id", "item_product_id", name="uq_product_accessories_product"),
+        Index("ix_product_accessories_product_id", "product_id"),
+        Index("ix_product_accessories_accessory_id", "accessory_id"),
+        Index("ix_product_accessories_item_product_id", "item_product_id"),
+    )
+
+
+class ProductComboAccessory(Base):
+    """One entry on a combo's own list (its "Free items"): an accessory or a product."""
+
+    __tablename__ = "product_combo_accessories"
+    __audit_parent__ = "combo_id"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    combo_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_combos.id", ondelete="CASCADE"), nullable=False
+    )
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="RESTRICT"), nullable=True
+    )
+    item_product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
+    )
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    # Per list row overrides (blank = the accessory's own).
+    image_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessory_images.id", ondelete="SET NULL"), nullable=True
+    )
+    name_override = Column(String(200), nullable=True)
+    spec_override = Column(Text, nullable=True)
+    remark_override = Column(Text, nullable=True)
+
+    accessory = relationship("Accessory", lazy="joined")
+    item_product = relationship("Product", foreign_keys=[item_product_id], lazy="joined")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(accessory_id IS NULL) <> (item_product_id IS NULL)",
+            name="ck_product_combo_accessories_one_item",
+        ),
+        UniqueConstraint("combo_id", "accessory_id", name="uq_product_combo_accessories_pair"),
+        UniqueConstraint("combo_id", "item_product_id", name="uq_product_combo_accessories_product"),
+        Index("ix_product_combo_accessories_combo_id", "combo_id"),
+        Index("ix_product_combo_accessories_accessory_id", "accessory_id"),
+        Index("ix_product_combo_accessories_item_product_id", "item_product_id"),
+    )

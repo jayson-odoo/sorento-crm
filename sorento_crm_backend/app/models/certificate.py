@@ -301,6 +301,17 @@ class CertificateProduct(Base):
     source = Column(String(10), nullable=False, server_default="ai", default=CERTIFICATE_SOURCE_AI)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
+    # QUOTE-CERT-TAB: the text as printed on the certificate, who set it, and the default box cache.
+    model_code = Column(String(60), nullable=True)
+    model_code_source = Column(String(10), nullable=True)
+    boxes = Column(JSONB, nullable=True)
+    # CERT-LINK-CLEANUP: is this link backed by the certificate's text? Read once per revision on
+    # the worker (`certificate_link_tasks`). `check_key` is what the verdict was read against
+    # (`certificate_link_report_service.check_key`); a different current key reads "Checking".
+    check_verdict = Column(String(12), nullable=True)
+    check_code = Column(String(60), nullable=True)
+    check_key = Column(Text, nullable=True)
+    checked_at = Column(DateTime(timezone=False), nullable=True)
 
     certificate = relationship("Certificate", back_populates="covered_products")
     product = relationship("Product")
@@ -309,6 +320,14 @@ class CertificateProduct(Base):
         CheckConstraint(
             "source IN ('ai', 'manual')",
             name="ck_certificate_products_source",
+        ),
+        CheckConstraint(
+            "model_code_source IS NULL OR model_code_source IN ('ai', 'manual')",
+            name="ck_certificate_products_code_source",
+        ),
+        CheckConstraint(
+            "check_verdict IS NULL OR check_verdict IN ('found', 'check', 'not_found', 'scanned', 'no_file')",
+            name="ck_certificate_products_check_verdict",
         ),
         Index(
             "uq_certificate_products_unique",

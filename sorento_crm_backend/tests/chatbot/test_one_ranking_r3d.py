@@ -136,11 +136,12 @@ def test_r3d_c_a_route_refusal_is_translated_by_the_final_reply_pass(console, mo
 # ---------------------------------------------------------------- d. the period range
 
 
-@pytest.mark.parametrize("lang, joiner", [("ms", "hingga"), ("zh", "至")])
-def test_r3d_d_the_period_range_is_localized(lang, joiner) -> None:
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_r3d_d_the_period_range_is_localized(lang) -> None:
+    # CP-4 (#2156): the range reads `dd/mm/yyyy - dd/mm/yyyy` (MCP `_ask_dates`), so no English
+    # word is left in it to translate; the label still is.
     line = next(ln for ln in _lines(_body(), lang) if ln.startswith(("Tempoh", "期间")))
-    assert joiner in line and " to " not in line, line
-    assert "1 Sep 2026" in line and "30 Sep 2026" in line, line
+    assert " to " not in line and line.endswith("01/09/2026 - 30/09/2026"), line
 
 
 # ---------------------------------------------------------------- e. guards
@@ -213,11 +214,12 @@ def test_r3d_g_a_count_measure_reads_as_a_count_not_a_grouping(lang, word) -> No
         assert word in head and measure not in head, head
 
 
-@pytest.mark.parametrize("lang, label, joiner", [("ms", "Berbanding dengan", "hingga"), ("zh", "对比期间", "至")])
-def test_r3d_g_the_compared_with_line_is_localized(lang, label, joiner) -> None:
+@pytest.mark.parametrize("lang, label", [("ms", "Berbanding dengan"), ("zh", "对比期间")])
+def test_r3d_g_the_compared_with_line_is_localized(lang, label) -> None:
+    # CP-4 (#2156): the range reads `dd/mm/yyyy - dd/mm/yyyy`; the label is translated.
     body = _body(compare_to="previous", compare_from="2026-08-01", compare_until="2026-08-31")
     line = next(ln for ln in _lines(body, lang) if ln.startswith(label))
-    assert joiner in line and " to " not in line and "1 Aug 2026" in line, line
+    assert " to " not in line and line.endswith("01/08/2026 - 31/08/2026"), line
 
 
 @pytest.mark.parametrize("lang", ["ms", "zh"])

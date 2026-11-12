@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { CornerUpLeft, Loader2, Mic, Paperclip, Plus, SendHorizonal, Sparkles, Trash2, X } from 'lucide-react';
 import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
@@ -26,6 +25,7 @@ import {
   StepsDisclosure,
 } from './AgentTurnParts';
 import { RoutePill } from './RoutePill';
+import { useTraceDrawer } from '../../chat-history/components/TraceDrawer';
 import { useChatbotConsole } from '../hooks/useChatbotConsole';
 import type { AgentActionResponse, AgentPendingAction } from '../types/agentConsole.types';
 import type { ChatbotConsoleMessage, ConsoleMediaInput, ConsoleQuote } from '../types/chatbotConsole.types';
@@ -99,9 +99,12 @@ function MessageBubble({
   onQuickReply,
   onRetryMedia,
   onReply,
+  onOpenTrace,
 }: {
   message: ChatbotConsoleMessage;
   cards: AgentCards;
+  /** Opens the shared turn trace drawer over the console (same tab, URL unchanged). */
+  onOpenTrace: (turnId: string) => void;
   onQuickReply: (text: string) => void;
   onRetryMedia: (media: ConsoleMediaInput, quote: ConsoleQuote | null) => void;
   /** Absent = nothing the backend can quote (greeting, status line, unacknowledged send). */
@@ -171,11 +174,19 @@ function MessageBubble({
             </button>
           </div>
         ) : null}
-        {message.branchKind || (!isUser && message.promptVersion != null) || (!isUser && message.turnId) ? (
+        {message.branchKind ||
+        (!isUser && message.promptVersion != null) ||
+        (!isUser && message.turnId) ||
+        (!isUser && message.simulatedContact) ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             {message.branchKind ? (
               <Badge variant="secondary" size="sm">
                 {message.branchKind}
+              </Badge>
+            ) : null}
+            {!isUser && message.simulatedContact ? (
+              <Badge variant="outline" size="sm" data-testid="chatbot-console-simulated-badge">
+                simulated contact, no real WhatsApp history
               </Badge>
             ) : null}
             {!isUser && message.promptVersion != null ? (
@@ -188,14 +199,13 @@ function MessageBubble({
               </span>
             ) : null}
             {message.turnId ? (
-              <Link
-                href={`/system-management/chat-history?turn=${encodeURIComponent(message.turnId)}`}
-                target="_blank"
-                rel="noreferrer noopener"
+              <button
+                type="button"
+                onClick={() => onOpenTrace(message.turnId as string)}
                 className="text-xs text-muted-foreground underline underline-offset-2 hover:text-primary"
               >
                 trace
-              </Link>
+              </button>
             ) : null}
           </div>
         ) : null}
@@ -567,6 +577,8 @@ export default function ChatbotConsole() {
     </div>
   ) : null;
 
+  const { openTrace, traceDrawer } = useTraceDrawer();
+
   const quotedLabel = quoted ? (quoted.role === 'user' ? contactLabel || 'Contact' : 'Chatbot') : '';
 
   return (
@@ -631,6 +643,7 @@ export default function ChatbotConsole() {
                 onQuickReply={sendChip}
                 onRetryMedia={retryMedia}
                 onReply={isQuotable(message) ? () => startReply(message.id) : undefined}
+                onOpenTrace={openTrace}
               />
               {outcome && !message.agentActions?.some((a) => a.status !== 'proposed') ? (
                 <ActionOutcome outcome={outcome} />
@@ -861,6 +874,7 @@ export default function ChatbotConsole() {
         onOpenChange={setPreviewOpen}
         items={stagedUrl && staged ? [{ id: 'staged', name: staged.name, url: stagedUrl }] : []}
       />
+      {traceDrawer}
     </div>
   );
 }

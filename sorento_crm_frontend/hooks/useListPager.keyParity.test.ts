@@ -124,6 +124,10 @@ import {
   loadingPlanPagerQuery,
 } from '@/app/(protected)/scm/hooks/useFulfilment';
 import {
+  promptListQueryKey,
+  promptsPagerQuery,
+} from '@/app/(protected)/system-management/ai-assistant/hooks/useAIAssistantPrompts';
+import {
   salesOrdersKey,
   projectSalesOrdersListParamsFromUrl,
 } from '@/app/(protected)/project-sales/_shared/hooks/useProjectSalesOrders';
@@ -610,6 +614,29 @@ const CASES: ParityCase[] = [
   })(),
 
   (() => {
+    // AI-PROMPTS-STD-VIEWS: both multi-select filters ride the URL comma-joined; the list keys
+    // them as arrays, and the pager splits them back.
+    const state = { pageIndex: 1, pageSize: 50, sorting: [{ id: 'model', desc: true }], searchQuery: 'parser' };
+    const filters = { status: 'active,dormant', model: 'default,gpt-5.4' };
+    return {
+      name: 'ai assistant prompts',
+      listKey: promptListQueryKey({ ...state, status: ['active', 'dormant'], model: ['default', 'gpt-5.4'] }),
+      url: buildDetailSearch(state, filters),
+      pagerKey: (s: URLSearchParams) => promptsPagerQuery.listQueryKey(parseDetailSearch(s)),
+    };
+  })(),
+
+  (() => {
+    const state = { pageIndex: 0, pageSize: 50, sorting: SORT_ASC, searchQuery: '' };
+    return {
+      name: 'ai assistant prompts (no filter)',
+      listKey: promptListQueryKey({ ...state, status: [], model: [] }),
+      url: buildDetailSearch(state),
+      pagerKey: (s: URLSearchParams) => promptsPagerQuery.listQueryKey(parseDetailSearch(s)),
+    };
+  })(),
+
+  (() => {
     const listParams = {
       pageIndex: 3,
       pageSize: 50,
@@ -852,6 +879,6 @@ describe('list key parity: the pager rebuilds the key the list used', () => {
     // One row per entity that ships a pager. When a new one is added, this count
     // is what makes forgetting the parity case a failing test rather than a
     // silent cache miss in production.
-    expect(CASES.length).toBe(32);
+    expect(CASES.length).toBe(34);
   });
 });

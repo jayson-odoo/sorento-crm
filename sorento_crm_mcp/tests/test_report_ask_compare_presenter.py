@@ -26,7 +26,7 @@ def _body(**over):
 
 def test_each_row_and_the_total_name_the_earlier_figure_and_the_change():
     lines = _report_ask(_body()).splitlines()
-    assert "Compared with: 2 Aug 2026 to 31 Aug 2026" in lines, lines
+    assert "Compared with: 02/08/2026 - 31/08/2026" in lines, lines
     assert "1. SA01 RM 1,000.00, 10 pcs (before RM 500.00, +100.0%)" in lines, lines
     assert "2. SA02 RM 600.00, 6 pcs (before RM 0.00, new)" in lines, lines
     assert lines[-1] == "Total RM 1,600.00, 16 pcs (before RM 1,400.00, +14.3%)", lines

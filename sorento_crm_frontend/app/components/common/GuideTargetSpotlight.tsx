@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { sessionStore } from '@/lib/storage';
 
 const SPOTLIGHT_CLASS = 'guide-spotlight';
 const SPOTLIGHT_DURATION_MS = 3200;
@@ -68,13 +69,13 @@ export default function GuideTargetSpotlight() {
       }
       let snapshot: string | null = null;
       try {
-        snapshot = sessionStorage.getItem('__GUIDE_TARGET_HASH__');
+        snapshot = sessionStore.getItem('__GUIDE_TARGET_HASH__');
       } catch {
         snapshot = null;
       }
       if (snapshot) {
         try {
-          sessionStorage.removeItem('__GUIDE_TARGET_HASH__');
+          sessionStore.removeItem('__GUIDE_TARGET_HASH__');
         } catch {
           // ignore
         }
@@ -97,7 +98,7 @@ export default function GuideTargetSpotlight() {
     const retry = () => {
       const liveHash = window.location.hash || null;
       const stashed = (() => {
-        try { return sessionStorage.getItem('__GUIDE_TARGET_HASH__'); } catch { return null; }
+        try { return sessionStore.getItem('__GUIDE_TARGET_HASH__'); } catch { return null; }
       })();
       if (liveHash || stashed) {
         update();

@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/popover';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
-import { formatDateTime, getInitials, timeAgo } from '@/lib/helpers';
+import { formatDateTime, formatMaybeDate, getInitials, timeAgo } from '@/lib/helpers';
 import { useActivityFeed } from '../hooks/useActivityFeed';
 import type {
   ActivityEntityType,
@@ -374,10 +374,10 @@ function TimelineRow({
                   >
                     <span className="font-medium">{c.field}:</span>
                     <span className="text-muted-foreground line-through">
-                      {c.from ?? '-'}
+                      {formatMaybeDate(c.from) || '-'}
                     </span>
                     <span aria-hidden>→</span>
-                    <span>{c.to ?? '-'}</span>
+                    <span>{formatMaybeDate(c.to) || '-'}</span>
                   </span>
                 ))}
               </div>

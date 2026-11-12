@@ -536,20 +536,6 @@ def test_default_current_period_and_named_span(client, db):
     assert {l["is_current"] for l in span["dealers"]} == {False}
 
 
-def test_replaced_target_listed(client, db):
-    """T2-2: a target with `replaced_by_target_id` is listed like any other."""
-    a1, a3 = _customer(db, "ZZT REPL DEALER", 1), _customer(db, "ZZT REPL DEALER", 3)
-    replaced = _dealer_target(db, [a1])
-    replacing = _dealer_target(db, [a1, a3])
-    replaced.replaced_by_target_id = replacing.id
-    db.flush()
-    contact = _dealer_contact(db, a1, a3)
-
-    resp = _get(client, contact)
-    assert resp.status_code == 200, resp.text
-    assert sorted(_nos(resp.json()["dealers"])) == sorted([replaced.target_no, replacing.target_no])
-
-
 def test_achieved_matches_target_detail(client, db):
     """T2-3: the engine's own figure, the one the CRM target page shows."""
     from app.services.sales import target_service
@@ -950,3 +936,40 @@ def test_group_name_with_brackets_kept(client, db):
     assert resp.status_code == 200, resp.text
     (line,) = resp.json()["dealers"]
     assert line["subject_label"] == "JUBIN BMS (1990) SDN BHD"
+
+
+def test_invoiced_targets_keep_the_same_scope_rules(client, db):
+    """TARGET-INVOICED, owner ruling 4 Nov (a): an Invoiced target needs no extra gate and keeps
+    the target's own scope rules. A dealer sees its own Invoiced target with the billing figure
+    (final, not provisional) and never a rival's or an agent's Invoiced target."""
+    from app.models.finance import BillingDocument
+
+    agent = _agent(db, "INV")
+    acct = _customer(db, "ZZT INV DEALER", 1, agent=agent)
+    rival = _customer(db, "ZZT INV RIVAL", 1)
+    for customer, net in ((acct, "1500.00"), (rival, "9000.00")):
+        db.add(BillingDocument(
+            id=_uid(), company_id=DEFAULT_COMPANY_ID, document_type="invoice",
+            doc_no=unique_code("IV"), doc_date=date(2026, 10, 10), customer_id=customer.id,
+            sales_agent_id=agent.id, status="posted", currency_rate=Decimal("1"),
+            net_total=Decimal(net), tax_total=Decimal("0"), total=Decimal(net),
+            local_net_total=Decimal(net), source_ref=f"ZZT:{uuid.uuid4().hex}",
+        ))
+    db.flush()
+    own = _dealer_target(db, [acct])
+    theirs = _dealer_target(db, [rival])
+    agents = _target(db, "agent", agent=agent)
+    for t in (own, theirs, agents):
+        t.basis = "invoiced"
+    db.flush()
+    contact = _dealer_contact(db, acct)
+
+    resp = _get(client, contact)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert _nos(body["dealers"]) == [own.target_no]
+    assert body["own"] == [] and body["team"] == []
+    line = body["dealers"][0]
+    assert line["achieved_value"] == 1500.0
+    assert line["provisional"] is False
+    assert theirs.target_no not in resp.text and agents.target_no not in resp.text

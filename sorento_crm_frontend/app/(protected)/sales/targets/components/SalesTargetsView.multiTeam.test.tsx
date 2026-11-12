@@ -25,8 +25,13 @@ const hooks = vi.hoisted(() => ({
   useSalesTargets: vi.fn(),
   usePointRatios: () => ({ data: { rows: [] }, isLoading: false }),
   useSavePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  POINT_RATIOS_KEY: ['sales-target-point-ratios'],
+  SALES_TARGETS_KEY: ['sales-targets'],
+  SALES_TARGET_KEY: ['sales-target'],
   useImportDealerTargets: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDownloadDealerTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useDownloadCommissionStatement: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../hooks/useSalesTargets', () => hooks);
 vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {

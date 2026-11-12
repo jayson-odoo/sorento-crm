@@ -16,8 +16,8 @@ vi.mock('@/lib/toast', () => ({
 
 const getStockDetail = vi.fn(async () => ({
   locations: [
-    { warehouse_id: 'wh-brw', location: 'BRW', available_qty: '972' },
-    { warehouse_id: 'wh-mwh', location: 'MWH', available_qty: '0' },
+    { warehouse_id: 'wh-brw', location: 'BRW', qty_on_hand: '972' },
+    { warehouse_id: 'wh-mwh', location: 'MWH', qty_on_hand: '0' },
   ],
 }));
 vi.mock('../services/fulfilmentPlanningService', async (importOriginal) => {

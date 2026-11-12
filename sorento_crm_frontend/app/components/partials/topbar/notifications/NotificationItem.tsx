@@ -23,6 +23,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { NotificationItem as NotificationItemType } from '@/services/notificationService';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 function formatTime(createdAt: string): string {
   // Backend sends naive UTC datetimes without 'Z'; JS parses those as local time.
@@ -38,7 +39,7 @@ function formatTime(createdAt: string): string {
   if (diffMins < 60) return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
   if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
   if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-  return d.toLocaleDateString();
+  return formatDateInMalaysia(d);
 }
 
 const URL_RE = /https?:\/\/[^\s<>"']+/g;
@@ -230,7 +231,9 @@ export default function NotificationItem({
           <div className="text-xs text-muted-foreground break-words">
             <div
               ref={bodyRef}
-              className={expanded ? '' : 'line-clamp-2'}
+              // whitespace-pre-line: digest bodies (e.g. list price changes) carry one
+              // product per line; without it the lines collapse into one paragraph.
+              className={`whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}
             >
               <LinkifiedBody
                 text={item.body}

@@ -932,6 +932,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
             "channel | account_type (the customer's AutoCount account type) | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
+            "sales_person (invoiced, delivered, ordered and outstanding: one row per sales person, agent codes sharing a person merged; \"who's top this month\" = basis=invoiced group_by=sales_person) | "
             "delivery_order (pending_delivery only: the delivery order list); absent = ONE total (an outstanding or "
             "pending_delivery total naming a product or customer also carries `summary`: counts, date range, by location, "
             "by customer or product). With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
@@ -941,7 +942,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
             "invoiced | delivered | ordered | outstanding | pending_delivery (delivery order lines not yet delivered) | unpaid "
             "(RM still owed on posted invoices; group by customer, sales_agent or month only; product, brand, category, spec, location and channel come back under `not_applied`); ask the person which basis when they did not say "
-            "(the bot asks 'Invoiced, delivered, ordered or outstanding?', and for an outstanding ask 'Undelivered orders, pending delivery or unpaid invoices?'). "
+            "(the bot asks 'Invoiced, delivered, ordered or outstanding?', and for an outstanding ask 'Sales order or delivery order?'). "
             "`compare_to` previous_period (the same number of days just before) | last_year (the "
             "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
             "total then carry `prev` and `change_pct` on the sort measure. "
@@ -958,6 +959,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "case-insensitive, at least 3 characters; no match is 404), `product_ids` (ANDed "
             "with `product_code` when both are given), `brand_ids`, "
             "`category_ids`, `sales_agent_ids`, `customer_ids` (repeated or csv UUIDs), "
+            "`sales_person` (repeatable person label, as group_by=sales_person prints it; invoiced, delivered, ordered, outstanding), "
             "`customer_agent_ids` (customers whose assigned agent on the customer card is one "
             "of these; `none` in either agent list = no agent), "
             "`spec` (repeatable `key:value`, e.g. `trap_type:p_trap`; the same key = any of, different keys = all of; "
@@ -1000,7 +1002,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
             "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
-            "group_offset", "account_types",
+            "group_offset", "account_types", "sales_person",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),
@@ -1670,8 +1672,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Only APPROVED projects are listed: a portal project registration still waiting for "
             "approval (or rejected) is not a project yet and is left out, so every row carries a "
             "project_code.\n\n"
-            "Each row returns project_code, title, developer_name, type_name, status_label, outcome "
-            "(open / won / lost / partial), owner_name, estimated_sales_value, launch_date, "
+            "Each row returns project_code, name (the short name people use; null when not set), "
+            "title (the full legal description), developer_name, type_name, status_label, outcome "
+            "(open / won / lost), owner_name, estimated_sales_value, launch_date, "
             "days_since_last_activity, next_action_date, next_action_overdue, stale_level (0 fine, "
             "1 nudged, 2 warned, 3 unattended) and is_unattended.\n\n"
             "ALL FILTERS OPTIONAL. FILTER BY UUID: `project_ids`, `owner_user_ids`, "
@@ -1685,8 +1688,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  * `status_key` -- funnel rung by stable key (from the status graph): identified, registered, "
             "specified (Spec In), sample_submission, final_negotiation, sponsorship_form, "
             "po_received, lost, dormant. An unknown key returns 422 naming the valid ones.\n"
-            "  * `outcome` -- open | won | lost | partial. Commercial result, DERIVED from the "
-            "quotations; a project can sit at 'final_negotiation' with outcome 'partial' when one scope is won.\n"
+            "  * `outcome` -- open | won | lost. The project's one commercial result: lost via the "
+            "Lost move (with a loss reason), won by a PO, a customer acceptance or Mark won.\n"
             "  * `only_critical=true` -- the critical flag (management actively involved), independent of the final_negotiation stage; for 'projects in final negotiation' use status_key=final_negotiation instead.\n"
             "SORT KEYS: created_at, updated_at, title, project_code, estimated_sales_value, "
             "last_meaningful_activity_at; combine with dir=asc|desc.\n\n"
@@ -1719,12 +1722,12 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Full detail for ONE project sales pursuit: registration facts (developer, registered "
             "company / SPV, location, architect, main contractor, brands, estimated value, launch date, "
-            "expected delivery window), the funnel stage and derived outcome, the owner, the critical "
+            "expected delivery window), the funnel stage, the outcome (open / won / lost) and the loss reason when lost, the owner, the critical "
             "flag with its management notes, activity recency and the derived next action, plus the "
             "staleness rung. "
             "USE after crm_projects_list when the user asks about one named project ('what is the status "
             "of Residensi Damai', 'who owns PRJ-000142', 'when does <project> launch'). "
-            "INVOCATION: `project_id` is the canonical project UUID -- resolve the project code or title "
+            "INVOCATION: `project_id` is the canonical project UUID -- resolve the project code, name or title "
             "first. For what we quoted on it, call crm_project_quotations_list.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
@@ -1741,12 +1744,12 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_project_quotations_list",
         (
             "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
-            "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "current version number and current total (scopes carry no outcome; won or lost is on the project). "
             "Each row names its document (`document_no`) and `document_kind`: 'proposal' (a priced offer, "
             "a project may hold several, one per party) or 'quotation' (the one the won project's POs "
             "are checked against; quote ITS figure when it exists). "
-            "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
-            "common area', 'why did we lose <project>'. "
+            "USE for 'what did we quote on <project>', 'how much is <project> worth'. For 'why did we "
+            "lose <project>' call crm_project_detail (it returns the loss reason). "
             "A project has MANY quotations, one per scope, and each quotation has versions -- the total "
             "returned is the CURRENT version's, which is the only figure that should be quoted back. "
             "INVOCATION: `project_id` is the canonical project UUID.\n\n"

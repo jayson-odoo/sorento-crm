@@ -111,7 +111,7 @@ vi.mock('../../_shared/hooks/useReserveRowOptions', () => ({
             { value: 'wh-brw', label: 'BRW' },
             { value: 'wh-mwh', label: 'MWH' },
           ],
-          availableQtyByWarehouseId: {},
+          onHandQtyByWarehouseId: {},
         },
       ]),
     ),
@@ -130,7 +130,11 @@ vi.mock('../services/stockDebtSnapshotService', () => ({
   getSnapshotRowLines: (...args: unknown[]) => getSnapshotRowLines(...args),
   setSnapshotDecision: vi.fn(),
   exportSnapshot: vi.fn(),
+  getPoLinkOptions: (...args: unknown[]) => getPoLinkOptions(...args),
+  getPoLinkSwitch: (...args: unknown[]) => getPoLinkSwitch(...args),
 }));
+const getPoLinkOptions = vi.fn();
+const getPoLinkSwitch = vi.fn();
 
 const getOrderInquiryHeaderLines = vi.fn();
 vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
@@ -289,6 +293,7 @@ const LINES = [
         qty: 10,
         remaining: 10,
         reserve_state: 'parked',
+        reserve_qty: 10,
         requestable: false,
         delivery_date: '2027-01-01',
       }),
@@ -311,6 +316,7 @@ const LINES = [
         qty: 633,
         remaining: 0,
         reserve_state: 'reserved',
+        reserve_qty: 633,
         requestable: false,
       }),
     ],
@@ -331,6 +337,7 @@ const LINES = [
         qty: 2,
         remaining: 2,
         reserve_state: 'requested',
+        reserve_qty: 2,
         requestable: false,
       }),
     ],
@@ -519,11 +526,31 @@ describe('AC-F5 grouping by OI', () => {
     await within(dialog).findAllByText('SO383872');
     const group = groupOf(dialog, 'OI-2609-0417');
     for (const name of [
-      'Sales order', 'Agent', 'Bin', 'Due', 'Ordered', 'Delivered', 'Outstanding',
+      'Sales order', 'Line', 'Agent', 'Location', 'Delivery date', 'Ordered', 'Delivered', 'Outstanding',
       'Assigned', 'Covered by', 'Status', 'Short', 'OI row', 'Now',
     ]) {
       expect(within(group).getByRole('columnheader', { name })).toBeInTheDocument();
     }
+  });
+
+  it('prints no CUSTOMER / project line under an OI heading: its table already has both columns (owner, 4 Nov)', async () => {
+    getSnapshotRowLines.mockResolvedValue({
+      lines: LINES.map((l) => ({
+        ...l,
+        customer_name: 'ZZT YUEN SENG SDN BHD (PROJECT)',
+        project_label: 'ZZT SURYA PJ SOUTH',
+      })),
+    });
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    const group = groupOf(dialog, 'OI-2609-0417');
+    expect(within(group).getByRole('columnheader', { name: 'Customer' })).toBeInTheDocument();
+    expect(within(group).getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    expect(within(group).getAllByText('ZZT YUEN SENG SDN BHD (PROJECT)').length).toBeGreaterThan(0);
+    expect(
+      within(dialog).queryByText('ZZT YUEN SENG SDN BHD (PROJECT) / ZZT SURYA PJ SOUTH'),
+    ).toBeNull();
   });
 
   it('groups lines by OI: two lines under OI-2609-0417 plus the shared one', async () => {
@@ -589,51 +616,54 @@ describe('AC-F5 grouping by OI', () => {
   });
 });
 
-describe('AC-F5 Now badges (AC-12)', () => {
-  it('prints the OI row state and the live open quantity', async () => {
+// OI-RESERVE-USED-ROW (owner, 4 Nov): Now is ONE pill per line, first match wins -
+// SO cancelled > Reserved N > Reserve requested / parked N > Open N. The OI row's state and
+// the "after the snapshot" badge left this cell.
+describe('AC-F5 Now, one pill per line', () => {
+  const pillsIn = (row: HTMLElement) => row.querySelectorAll('td:last-child span');
+
+  it('an open line with nothing requested reads Open N, and no OI row state', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
     const row = rowWith(groupOf(dialog, 'OI-2609-0417'), 'SO383872');
-    expect(row).toHaveTextContent('Raised');
     expect(row).toHaveTextContent('Open 30');
+    expect(row).not.toHaveTextContent('Raised');
+    expect(pillsIn(row)).toHaveLength(1);
   });
 
-  it('Reserve parked', async () => {
+  it('Reserve parked N', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0271'), 'SO391092')).toHaveTextContent('Reserve parked');
+    const row = rowWith(groupOf(dialog, 'OI-2609-0271'), 'SO391092');
+    expect(row).toHaveTextContent('Reserve parked 10');
+    expect(row).not.toHaveTextContent('Open 10');
   });
 
-  it('Reserve requested', async () => {
+  it('Reserve requested N', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0501'), 'SO400001')).toHaveTextContent('Reserve requested');
+    expect(rowWith(groupOf(dialog, 'OI-2609-0501'), 'SO400001')).toHaveTextContent('Reserve requested 2');
   });
 
-  it('Reserved', async () => {
+  it('SO cancelled wins over a reserve on the same line', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0733'), 'SO422078')).toHaveTextContent('Reserved');
+    const row = rowWith(groupOf(dialog, 'OI-2609-0733'), 'SO422078');
+    expect(row).toHaveTextContent('SO cancelled');
+    expect(row).not.toHaveTextContent('Reserved');
   });
 
-  it('SO cancelled', async () => {
-    renderPage();
-    const dialog = await openAllMonths();
-    await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0733'), 'SO422078')).toHaveTextContent('SO cancelled');
-  });
-
-  it('an OI row added after the snapshot is badged "after the snapshot"', async () => {
+  it('a row linked after the snapshot carries no badge: Now stays one pill', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
     const row = rowWith(groupOf(dialog, 'OI-2609-0637'), 'SO411132');
-    expect(row).toHaveTextContent(/after the snapshot/i);
-    expect(row).toHaveTextContent('Placed');
+    expect(row).not.toHaveTextContent(/after the snapshot/i);
+    expect(row).toHaveTextContent('Open 3');
   });
 });
 
@@ -927,3 +957,62 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     expect(within(request).getByText('0 of 1 lines')).toBeInTheDocument();
   });
 });
+
+describe('AC-LINK-CRM-UI the "AutoCount links from Stock Debt" switch (owner, 5 Nov)', () => {
+  const CAPS_ON = {
+    split_link: { enabled: true, reason: null },
+    link_row: { enabled: false, reason: 'Waiting for AutoCount' },
+    unlink_row: { enabled: false, reason: 'Waiting for AutoCount' },
+    relink_row: { enabled: false, reason: 'Waiting for AutoCount' },
+  };
+  const LINK = 'projects.stock_debt.link_po';
+
+  async function open() {
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    return dialog;
+  }
+
+  it('switch OFF: exactly today\'s UI - the single Request CS to reserve button, no ticks, no Decide', async () => {
+    permissions = new Set([...permissions, LINK]);
+    getPoLinkSwitch.mockResolvedValue(false);
+    const dialog = await open();
+    await waitFor(() => expect(getPoLinkSwitch).toHaveBeenCalled());
+    const group = groupOf(dialog, 'OI-2609-0417');
+    expect(within(group).getByRole('button', { name: 'Request CS to reserve' })).toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
+    expect(within(dialog).queryAllByRole('checkbox')).toHaveLength(0);
+    expect(getPoLinkOptions).not.toHaveBeenCalled();
+    // The button opens the shared dialog straight away, as today.
+    fireEvent.click(within(group).getByRole('button', { name: 'Request CS to reserve' }));
+    expect(await screen.findByRole('heading', { name: /request cs to reserve/i })).toBeInTheDocument();
+  });
+
+  it('switch ON: Decide replaces the button, with Request CS to reserve inside it beside the PO actions', async () => {
+    permissions = new Set([...permissions, LINK]);
+    getPoLinkSwitch.mockResolvedValue(true);
+    getPoLinkOptions.mockResolvedValue({ capabilities: CAPS_ON, po_lines: [], so_books: {} });
+    const dialog = await open();
+    const group = groupOf(dialog, 'OI-2609-0417');
+    const decide = await within(group).findByTestId('snapshot-decide-button');
+    expect(within(group).queryByRole('button', { name: 'Request CS to reserve' })).not.toBeInTheDocument();
+    fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
+    await waitFor(() => expect(decide).not.toBeDisabled());
+    expect(group).not.toHaveTextContent(/\d+ selected/);
+    fireEvent.keyDown(decide, { key: 'Enter' });
+    const items = (await screen.findAllByRole('menuitem')).map((item) => (item.textContent ?? '').split('…')[0]);
+    expect(items).toEqual([
+      'Request CS to reserve', 'Link to PO', 'Unlink from PO', 'Move PO to another sales order',
+    ]);
+  });
+
+  it('switch ON without the link permission: still today\'s single button', async () => {
+    getPoLinkSwitch.mockResolvedValue(true);
+    const dialog = await open();
+    const group = groupOf(dialog, 'OI-2609-0417');
+    expect(within(group).getByRole('button', { name: 'Request CS to reserve' })).toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
+  });
+});
+

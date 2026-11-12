@@ -6,7 +6,7 @@ routes (`/reports/{key}`)."""
 from fastapi import APIRouter, Depends
 
 from app.api.v1._request_own_scope import sales_opportunity_own_scope
-from app.api.v1.sales import analysis, customer_asks, opportunities, set_apart, target_progress, targets, teams
+from app.api.v1.sales import analysis, customer_asks, dealer_access, leaderboard, opportunities, set_apart, target_progress, targets, teams
 
 router = APIRouter()
 router.include_router(teams.router, prefix="/teams", tags=["sales-teams"])
@@ -20,6 +20,8 @@ router.include_router(
     dependencies=[Depends(sales_opportunity_own_scope)],
 )
 router.include_router(customer_asks.router, prefix="/customer-asks", tags=["sales-customer-asks"])
+router.include_router(dealer_access.router, prefix="/dealer-access", tags=["sales-dealer-access"])
 router.include_router(set_apart.router, prefix="/set-apart-customers", tags=["sales-set-apart"])
+router.include_router(leaderboard.router, tags=["sales-leaderboard"])
 router.include_router(analysis.router)
 router.include_router(target_progress.router)

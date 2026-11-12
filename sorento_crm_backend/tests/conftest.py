@@ -356,6 +356,33 @@ def _seed_packing_list_numbering_after_create(target, connection, **kw):  # noqa
     )
 
 
+# Same gap again for the project party roles (PROJECT-PARTY-ROLES): the list is rows of the lookup
+# set `project_party_role`, seeded by migration ppr_0001 from the one SEED_ROLES definition. Without
+# it every party create and every party link is refused as an unknown role.
+from app.models.lookup import LookupOption as _LookupOption  # noqa: E402
+from app.services import project_party_roles as _party_roles  # noqa: E402
+
+
+@_sa_scope_event.listens_for(_LookupOption.__table__, "after_create")
+def _seed_party_roles_after_create(target, connection, **kw):  # noqa: ANN001
+    from app.models.lookup import LookupSet as _LookupSet
+
+    # Through the Table objects, so a scratch schema's translate map applies to both inserts.
+    set_id = str(_uuid_for_seed.uuid4())
+    connection.execute(
+        _LookupSet.__table__.insert().values(
+            id=set_id, tenant_id=None, set_key=_party_roles.SET_KEY, name=_party_roles.SET_NAME, is_active=True
+        )
+    )
+    for order, (value, label, many) in enumerate(_party_roles.SEED_ROLES, start=1):
+        connection.execute(
+            target.insert().values(
+                id=str(_uuid_for_seed.uuid4()), set_id=set_id, value=value, label=label,
+                sort_order=order * 10, is_active=True, allows_many=many,
+            )
+        )
+
+
 @_sa_scope_event.listens_for(_SAScopeSession, "after_begin")
 def _default_company_scope_for_tests(session, transaction, connection):  # noqa: ANN001
     if getattr(_company_scope, "_ENFORCE", True):
@@ -453,6 +480,14 @@ def _reset_global_state():
         from app.services.storage_router import clear_signed_url_cache
 
         clear_signed_url_cache()
+    except Exception:
+        pass
+    try:
+        # IMAGE-UNIFY: the rendition service remembers which renditions exist (and which could
+        # not be made) per process; a later test's fake storage must not inherit that.
+        from app.services.image_thumbnailer import reset_rendition_memo
+
+        reset_rendition_memo()
     except Exception:
         pass
 
@@ -645,3 +680,30 @@ def ladder_steps_on(monkeypatch):
     monkeypatch.setattr(ladder_steps, "USE_INCOMING", True)
     monkeypatch.setattr(ladder_steps, "SUPPLY_BORROW", True)
     monkeypatch.setattr(ladder_steps, "ORDER_BORROW_NAMES_DONOR", True)
+
+
+@pytest.fixture()
+def as_board_confirm():
+    """FP-EMAIL-ONE-TRIGGER: run the test as if every write were the board Confirm.
+
+    Only a root transaction marked by `mark_purchasing_email_trigger` (the board Confirm)
+    emails purchasing.
+    A suite that pins WHAT the handover / changed-with-links email says, by calling the
+    service (`ProjectSupplyService.confirm`, `planning_change_service.apply`, ...) rather than
+    the Confirm route, opts in with `pytestmark = pytest.mark.usefixtures("as_board_confirm")`.
+    Which paths may email at all is pinned without it, in
+    `tests/scm/test_purchasing_email_one_trigger.py`."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from app.services.project_order_inquiry_service import _PURCHASING_TRIGGER_TX_KEY
+
+    def _mark(session, transaction, connection):  # noqa: ANN001
+        if transaction.parent is None:
+            session.info.setdefault(_PURCHASING_TRIGGER_TX_KEY, []).append(transaction)
+
+    event.listen(Session, "after_begin", _mark)
+    try:
+        yield
+    finally:
+        event.remove(Session, "after_begin", _mark)

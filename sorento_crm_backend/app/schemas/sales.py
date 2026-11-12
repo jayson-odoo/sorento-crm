@@ -294,6 +294,9 @@ class SalesOpportunityResponse(BaseModel):
     lost_reason_label: Optional[str] = None
     sales_order_id: Optional[str] = None
     sales_order_no: Optional[str] = None
+    #: The linked sales order's customer (debtor name, else customer master) and project.
+    sales_order_customer_name: Optional[str] = None
+    sales_order_project_label: Optional[str] = None
     source: str
     created_by_label: Optional[str] = None
     created_by_contact_id: Optional[str] = None
@@ -349,6 +352,7 @@ class SalesOpportunitySalesOrderOption(BaseModel):
     so_number: str
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     order_date: Optional[DateType] = None
 
 
@@ -372,7 +376,7 @@ def _uuid_str(value):
 UuidStr = Annotated[str, BeforeValidator(_uuid_str)]
 
 Metric = Literal["amount", "quantity"]
-Basis = Literal["ordered", "delivered"]
+Basis = Literal["ordered", "delivered", "invoiced"]
 ProductScope = Literal["all", "categories", "products", "brands"]
 SplitUnit = Literal["day", "week", "month"]
 
@@ -406,6 +410,8 @@ class SalesTargetTierRateIn(BaseModel):
 
     customer_id: UuidStr
     rate: float = Field(..., ge=0, le=99999)
+    #: This account's own fixed RM Additional (owner 8 Nov, Q3); null: none.
+    bonus_amount: Optional[float] = Field(None, ge=0, le=99999999)
 
 
 class SalesTargetTierIn(BaseModel):
@@ -419,9 +425,12 @@ class SalesTargetTierIn(BaseModel):
     threshold: Optional[float] = Field(None, ge=0, le=9999999999999)
     #: Amount target: % of the achieved amount. Quantity target: RM per unit.
     rate: float = Field(0, ge=0, le=99999)
-    #: RM paid once per period when the tier is reached.
+    #: The tier's RM Additional: paid once per period when this is the tier reached.
     bonus_amount: Optional[float] = Field(None, ge=0)
-    #: A "+ Additional" line, paid on top of the main tier (they stack).
+    #: The tier's % Additional (RM per unit on a quantity target), on top of `rate` when this is
+    #: the tier reached, on the same accounts. A tier has a % or an RM Additional, not both.
+    additional_rate: Optional[float] = Field(None, ge=0, le=99999)
+    #: Legacy "+ Additional" row, paid on top of the main tier (they stack) until folded.
     is_additional: bool = False
     #: `tiers_per_period` targets: the start of the period this tier belongs to.
     period_start: Optional[DateType] = None
@@ -465,10 +474,6 @@ class SalesTargetCreate(BaseModel):
     sales_team_id: Optional[UuidStr] = None
     #: Dealer targets: the accounts counted, in order.
     customer_ids: Optional[List[UuidStr]] = Field(None, max_length=50)
-    #: Dealer targets: the account paid; defaults to the first counted account.
-    payout_customer_id: Optional[UuidStr] = None
-    #: Dealer targets: the dealer target that replaces this one in a period it reaches a tier.
-    replaced_by_target_id: Optional[UuidStr] = None
     name: str = Field(..., max_length=120)
     metric: Metric
     basis: Basis = "ordered"
@@ -538,10 +543,6 @@ class SalesTargetUpdate(BaseModel):
     tiers_per_period: Optional[bool] = None
     #: Dealer targets: replaces the counted accounts.
     customer_ids: Optional[List[UuidStr]] = Field(None, max_length=50)
-    #: Dealer targets: sent as null, payment goes back to the first counted account.
-    payout_customer_id: Optional[UuidStr] = None
-    #: Dealer targets: sent as null, the target is no longer replaced.
-    replaced_by_target_id: Optional[UuidStr] = None
     #: Replaces every tier; `[]` removes them.
     tiers: Optional[List[SalesTargetTierIn]] = Field(None, max_length=600)
     #: Every changed figure in one request (F1): this target's periods, or on a team target its
@@ -618,10 +619,9 @@ class SalesTargetRow(BaseModel):
     achieved_value: Optional[float] = None
     achieved_pct: Optional[float] = None
     parent_target_id: Optional[str] = None
-    #: Dealer rows: the counted accounts' labels and the paid account's.
+    #: Dealer rows: the counted accounts' labels (each account is its own payee).
     account_labels: Optional[List[str]] = None
     account_codes: Optional[List[str]] = None
-    payout_label: Optional[str] = None
     threshold_unit: Optional[str] = None
     #: The current period's commission (null with no tiers).
     commission_earned: Optional[float] = None
@@ -658,6 +658,11 @@ class SalesTargetAccountOut(BaseModel):
     #: "A/C I" when the account has a level, else the customer's name.
     label: str
     achieved_value: Optional[float] = None
+    #: In a period: this account's own share of the period's commission + bonus (lane
+    #: TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov: each account is its own payee). Null with no tiers.
+    commission_earned: Optional[float] = None
+    #: Points targets: `achieved_value` in points at the period's ratio; null with no ratio.
+    achieved_points: Optional[float] = None
 
 
 class SalesTargetCommissionLine(BaseModel):
@@ -667,6 +672,20 @@ class SalesTargetCommissionLine(BaseModel):
     amount: float
 
 
+class SalesTargetRateEntry(BaseModel):
+    #: The account's label ("A/C I") on a per-account rate, else null.
+    label: Optional[str] = None
+    rate: Optional[float] = None
+
+
+class SalesTargetTierAdditional(BaseModel):
+    #: `pct` (on top of the rate) or `amount` (fixed RM, the tier's Bonus).
+    kind: str
+    value: float
+    #: An RM Additional set per account (owner 8 Nov, Q3): each account's own amount.
+    accounts: Optional[List["SalesTargetRateEntry"]] = None
+
+
 class SalesTargetPeriodOut(BaseModel):
     id: str
     period_start: DateType
@@ -674,6 +693,9 @@ class SalesTargetPeriodOut(BaseModel):
     target_value: float
     achieved_value: float
     achieved_pct: Optional[float] = None
+    #: Points targets: `achieved_value` in points at the ratio the tiers are read with (the
+    #: period's last day); null on other targets and with no ratio on file.
+    achieved_points: Optional[float] = None
     #: The period containing `on`.
     is_current: bool
     #: Plan 3.3: null when the target has no tiers.
@@ -682,25 +704,22 @@ class SalesTargetPeriodOut(BaseModel):
     commission_lines: List[SalesTargetCommissionLine] = Field(default_factory=list)
     #: 1-based main tier reached, null below the first.
     tier_reached: Optional[int] = None
+    #: The reached main tier's rate(s): one label-less entry, or one per account on per-account
+    #: rates (TARGET-COMMISSION-VIEW). Empty below the first tier.
+    tier_rates: List[SalesTargetRateEntry] = Field(default_factory=list)
+    #: The reached tier's Additional, `{kind: pct|amount, value}`; null when it has none.
+    tier_additional: Optional[SalesTargetTierAdditional] = None
     #: Points targets: the RM per point in force on the period's last day.
     point_ratio: Optional[float] = None
     ratio_missing: bool = False
-    #: Dealer targets: each counted account's achievement in the period.
+    #: Dealer targets: each counted account's achievement and its own commission in the period.
     accounts: List[SalesTargetAccountOut] = Field(default_factory=list)
-    #: The dealer target named in `replaced_by` reached a tier in this period, so this one pays
-    #: nothing (crew ruling 16 Oct).
-    replaced: bool = False
-
-
-class SalesTargetRef(BaseModel):
-    target_id: str
-    target_no: str
-    name: str
 
 
 class SalesTargetTierRateOut(BaseModel):
     customer_id: str
     rate: float
+    bonus_amount: Optional[float] = None
 
 
 class SalesTargetTierOut(BaseModel):
@@ -708,6 +727,7 @@ class SalesTargetTierOut(BaseModel):
     threshold: Optional[float] = None
     rate: Optional[float] = None
     bonus_amount: Optional[float] = None
+    additional_rate: Optional[float] = None
     is_additional: bool = False
     period_start: Optional[DateType] = None
     account_rates: Optional[List[SalesTargetTierRateOut]] = None
@@ -749,6 +769,10 @@ class SalesTargetDetail(BaseModel):
     counts_label: str
     scope: List[SalesTargetScopeItem]
     periods: List[SalesTargetPeriodOut]
+    #: Commission + bonus of the periods that ended before `on`, and of the period containing
+    #: it (shown apart: it can still change). Null on a target with no commission.
+    commission_to_date: Optional[float] = None
+    commission_current: Optional[float] = None
     children: List[SalesTargetChild]
     members_without_figure: List[SalesTargetMemberRef]
     child_count: int
@@ -757,11 +781,8 @@ class SalesTargetDetail(BaseModel):
     rounding: str = "sen"
     tiers_per_period: bool = False
     tiers: List[SalesTargetTierOut] = Field(default_factory=list)
-    #: Dealer targets: the counted accounts and the paid one.
+    #: Dealer targets: the counted accounts, each its own payee.
     accounts: List[SalesTargetAccountOut] = Field(default_factory=list)
-    payout_account: Optional[SalesTargetAccountOut] = None
-    #: Dealer targets: the dealer target that replaces this one once it reaches a tier.
-    replaced_by: Optional[SalesTargetRef] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

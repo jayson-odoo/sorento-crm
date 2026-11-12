@@ -14,6 +14,7 @@ import {
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
   getOrderInquiryHeaderRelatedDocuments,
+  getOrderInquiryHistory,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
   getOrderInquiryPoDetail,
@@ -84,6 +85,7 @@ export const ORDER_INQUIRY_MATRIX_KEY = 'order-inquiry-matrix';
 export const ORDER_INQUIRY_HEADERS_KEY = 'order-inquiry-headers';
 export const ORDER_INQUIRY_HEADER_KEY = 'order-inquiry-header';
 export const ORDER_INQUIRY_HEADER_LINES_KEY = 'order-inquiry-header-lines';
+export const ORDER_INQUIRY_HISTORY_KEY = 'order-inquiry-history';
 export const ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY =
   'order-inquiry-header-related-documents';
 export const ORDER_INQUIRY_RESERVE_REQUESTS_KEY = 'order-inquiry-reserve-requests';
@@ -180,6 +182,18 @@ export function useOrderInquiryHeaderLines(id: string | undefined) {
     queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id],
     queryFn: () => getOrderInquiryHeaderLines(id as string),
     enabled: Boolean(id),
+  });
+}
+
+/** STANDARD-HISTORY wave 1: the History tab and the line dialog's "All events" tab, one
+ * read per OI, shared by both. Refetched each time either opens, so a press made a moment
+ * ago is on it. */
+export function useOrderInquiryHistory(id: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_HISTORY_KEY, id],
+    queryFn: () => getOrderInquiryHistory(id as string),
+    enabled: Boolean(id),
+    refetchOnMount: 'always',
   });
 }
 
@@ -955,7 +969,7 @@ export function useHandoverResendPreview(ids: string[] | null, rowIds?: string[]
   });
 }
 
-/** Send to purchasing: one email per order inquiry; toast what went and what did not. */
+/** Send to purchasing: one email per order inquiry and matching row; toast what went and what did not. */
 export function useSendHandoverResend() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -974,6 +988,14 @@ export function useSendHandoverResend() {
         );
       } else if (result.emails_sent === 0) {
         toast.error('Nothing was sent: no open lines or no purchasing recipient.');
+      }
+      // OI-ROUTE-BY-RAISER: one OI goes through several rows; some went, some did not. Not
+      // retried here (that would email the rows that have it again), so say which.
+      const partly = result.skipped.filter((skip) => skip.reason === 'partly_failed');
+      if (partly.length > 0) {
+        toast.error(
+          `Sent to some recipients only: ${partly.map((skip) => skip.inquiry_no ?? 'order inquiry').join(', ')}. Check the automation run history.`,
+        );
       }
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HANDOVER_RESEND_PREVIEW_KEY] });
     },

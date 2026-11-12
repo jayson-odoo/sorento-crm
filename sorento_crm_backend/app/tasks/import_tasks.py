@@ -685,7 +685,6 @@ def process_attachment_bulk_import(
     from app.services.storage_router import (
         cdn_base_url,
         default_provider,
-        extract_key,
         get_backend,
         sanitize_storage_filename,
     )
@@ -938,9 +937,16 @@ def process_attachment_bulk_import(
                     stored_filename = original_filename
                     entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
                     if existing_to_replace is not None:
-                        # Replace overwrites the existing object's own key (no orphan).
-                        s3_file_path = extract_key(existing_to_replace.file_path) or (
-                            f"{entity_type}/{existing_to_replace.id}/{key_basename}"
+                        # A Replace never reuses a key: renditions are cached as immutable
+                        # (IMAGE-UNIFY), so the new bytes get a content-derived key and the old
+                        # objects stay for a cleanup job.
+                        from app.services.storage_router import replace_storage_key
+
+                        s3_file_path = replace_storage_key(
+                            entity_type,
+                            str(existing_to_replace.id),
+                            key_basename,
+                            hashlib.sha256(file_content).hexdigest(),
                         )
                     else:
                         s3_file_path = f"{entity_type}/{bulk_attachment_id}/{key_basename}"
@@ -964,6 +970,8 @@ def process_attachment_bulk_import(
 
                         existing_to_replace.attachment_type_id = attachment_type_id  # type: ignore[assignment]
                         existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
+                        replaced_provider = existing_to_replace.storage_provider
+                        replaced_file_path = existing_to_replace.file_path
                         existing_to_replace.file_path = cdn_base_url(storage_provider, s3_key)  # type: ignore[assignment]
                         existing_to_replace.thumbnail_path = bulk_thumbnail_path  # type: ignore[assignment]
                         existing_to_replace.file_size_bytes = len(file_content)  # type: ignore[assignment]
@@ -980,6 +988,12 @@ def process_attachment_bulk_import(
                         db.commit()
                         db.refresh(existing_to_replace)
                         attachment = existing_to_replace
+                        # Old bytes + renditions go in their own job, after the commit (#2133 (a)).
+                        from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
+
+                        enqueue_replaced_original_cleanup(
+                            replaced_provider, replaced_file_path, s3_key, db=db, attachment_id=attachment.id
+                        )
                         try:
                             create_and_send_webhook(
                                 db,

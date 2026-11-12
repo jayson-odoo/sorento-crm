@@ -126,15 +126,16 @@ describe('ensureFontsLoaded', () => {
     expect(result.failed).toEqual([]);
   });
 
-  it('a font that failed before is eligible to retry on the next call', async () => {
+  it('a font that failed is not requested again on later calls (no retry loop per tag)', async () => {
     FakeFontFace.behaviour = 'reject';
-    await ensureFontsLoaded([font({ family: 'ZZT Retry' })]);
+    const first = await ensureFontsLoaded([font({ family: 'ZZT NoRetry' })]);
+    expect(first.failed).toEqual(['ZZT NoRetry']);
 
     FakeFontFace.behaviour = 'resolve';
-    const result = await ensureFontsLoaded([font({ family: 'ZZT Retry' })]);
+    const second = await ensureFontsLoaded([font({ family: 'ZZT NoRetry' })]);
 
-    expect(result.failed).toEqual([]);
-    expect(added).toHaveLength(1);
+    expect(added).toHaveLength(0);
+    expect(second.failed).toEqual(['ZZT NoRetry']);
   });
 
   it('skips a font with no url or no family, without failing', async () => {

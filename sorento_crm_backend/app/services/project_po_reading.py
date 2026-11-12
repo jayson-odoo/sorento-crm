@@ -17,14 +17,6 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# Three string constants, not the ORM: the outcome rank below has to speak the same
-# vocabulary the quotation model does, and retyping the strings here is how the two
-# would silently diverge.
-from app.models.projects import (
-    QUOTATION_OUTCOME_LOST,
-    QUOTATION_OUTCOME_OPEN,
-    QUOTATION_OUTCOME_WON,
-)
 from app.models.project_so import ProjectPOLine
 from app.services.error_handler import AppException
 
@@ -123,16 +115,6 @@ _AMEND_WORDS = ("amend", "change", "revise", "correct", "replace", "update")
 
 _HEADER_TOTAL_KEYS = ("total", "grand_total", "total_amount", "po_total", "amount_total")
 
-# How good a quotation scope is as the thing a confirmed PO should be checked against. A
-# won scope is what a PO follows from; a lost one is still a document the customer was
-# given, so it is a last resort rather than no candidate at all.
-_OUTCOME_RANK = {
-    QUOTATION_OUTCOME_WON: 0,
-    QUOTATION_OUTCOME_OPEN: 1,
-    QUOTATION_OUTCOME_LOST: 2,
-}
-_OUTCOME_RANK_DEFAULT = 1
-
 # Where the extractor's header keys land on our own header block.
 _HEADER_ALIASES = {
     "po_number": ("po_number", "purchase_order_no", "po_no"),
@@ -142,6 +124,78 @@ _HEADER_ALIASES = {
     "customer_order_ref": ("cust_order_no", "customer_order_ref", "customer_order_no"),
     "remark": ("remark", "remarks", "note", "notes"),
 }
+
+
+def _strict_object(properties: Dict[str, Any]) -> Dict[str, Any]:
+    """An object every structured-output provider accepts: OpenAI strict mode refuses one
+    that leaves a property out of ``required`` or allows extras; ``propertyOrdering``
+    keeps Gemini writing the fields in the prompt's order (stripped for the others)."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": list(properties),
+        "propertyOrdering": list(properties),
+    }
+
+
+def _nullable(kind: str) -> Dict[str, Any]:
+    return {"type": [kind, "null"]}
+
+
+# The page shape the `po_extractor` prompt asks for (ai_prompt_registry
+# `_po_extractor_fallback`), sent as the reader's structured-output schema. JSON mode
+# alone lets a model answer a top-level array: on 11 Nov 2026 a 22-page customer PO
+# came back with page 5 as an array holding one page object, and the read failed with
+# "'list' object has no attribute 'get'". The keys are exactly the prompt's own. Keys
+# the prompt never asks for (a header total, an annotation's struck_parts) cannot come
+# back under the schema; ``persist_pages`` still reads them when an older answer has
+# them, and the total falls back to the sum of the lines, as it did in practice.
+PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
+    {
+        "header": _strict_object(
+            {
+                key: _nullable("string")
+                for key in (
+                    "po_number", "po_date", "term", "sales_person", "cust_order_no", "remark",
+                )
+            }
+        ),
+        "lines": {
+            "type": "array",
+            "items": _strict_object(
+                {
+                    "no": _nullable("integer"),
+                    "stock_code": _nullable("string"),
+                    "description": _nullable("string"),
+                    "qty": _nullable("number"),
+                    "uom": _nullable("string"),
+                    "unit_price": _nullable("number"),
+                    "amount": _nullable("number"),
+                    "struck_through": {"type": "boolean"},
+                    "struck_parts": {"type": "array", "items": {"type": "string"}},
+                }
+            ),
+        },
+        "annotations": {
+            "type": "array",
+            "items": _strict_object(
+                {
+                    "text": {"type": "string"},
+                    "date": _nullable("string"),
+                    "refers_to_items": {"type": "array", "items": {"type": "integer"}},
+                    "meaning": _nullable("string"),
+                    "kind": {
+                        "type": ["string", "null"],
+                        "enum": sorted(INTERPRETATIONS) + [None],
+                    },
+                    "proposed_code": _nullable("string"),
+                    "successor_po_number": _nullable("string"),
+                }
+            ),
+        },
+    }
+)
 
 
 

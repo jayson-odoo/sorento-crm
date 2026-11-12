@@ -56,6 +56,7 @@ import type {
   TagSheetDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import type { TagFont } from '@/lib/dealer-kit/fonts';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 
 export interface TagSheetDesignPayload {
@@ -71,6 +72,8 @@ export interface TagSheetDesignPayload {
   images: Record<string, string>;
   /** Brand fonts, loaded through `ensureFontsLoaded` before the sheet draws. */
   fonts: TagFont[];
+  /** Rule-carrying library icons, for `feature_icons` layers. */
+  featureIcons: FeatureIcon[];
 }
 
 /** The raw body either endpoint answers with. */
@@ -83,6 +86,7 @@ export interface TagSheetDesignResponse {
   assets?: Record<string, string> | null;
   images?: Record<string, string> | null;
   fonts?: TagFont[] | null;
+  feature_icons?: FeatureIcon[] | null;
 }
 
 /**
@@ -111,7 +115,17 @@ export function designPayloadFromResponse(
 
   const images: Record<string, string> = { ...(body.images ?? {}) };
   for (const line of lines) {
-    for (const image of line.images ?? []) {
+    // A combo position draws its own part's photos, which are signed on the part and not on the
+    // line: left out, the picture of every fixed part, pick and upgrade came back empty.
+    const slots = line.slots;
+    const parts = [
+      ...(line.parts ?? []),
+      ...(slots?.main ? [slots.main] : []),
+      ...(slots?.fixed ?? []),
+      ...(slots?.groups ?? []).flatMap((group) => group.picks),
+      ...(slots?.upgrades ?? []),
+    ];
+    for (const image of [...(line.images ?? []), ...parts.flatMap((part) => part.images ?? [])]) {
       if (image.url) images[image.attachment_id] = image.url;
     }
   }
@@ -125,6 +139,7 @@ export function designPayloadFromResponse(
     assets: body.assets ?? {},
     images,
     fonts: body.fonts ?? [],
+    featureIcons: body.feature_icons ?? [],
   };
 }
 

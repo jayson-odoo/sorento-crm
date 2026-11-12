@@ -29,7 +29,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -100,6 +100,14 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # the refusal can name the field that is missing.
     debtor_name = Column(String(255), nullable=True)
     needed_by_date = Column(Date, nullable=True)  # nullable since D48a, see debtor_name
+    # PRICETAG-REQUEST-LAYOUT: every customer this request prints for, ``[{code, name}]`` in the
+    # order picked (owner, 10 Nov: one request, N customers, one sheet; the tag carries no
+    # customer). The FIRST is mirrored into ``debtor_code`` / ``debtor_name`` by
+    # ``_mirror_first_customer`` so list, sort, search, SLA and revision labels keep reading the
+    # old pair. NULL on a request saved before this column: readers fall back to the pair.
+    # none_as_null: a None is SQL NULL, never a JSON null that the customer search's
+    # jsonb_array_elements would refuse (review, re-check round).
+    customers = Column(JSONB(none_as_null=True), nullable=True)
     notes = Column(Text, nullable=True)
     # Header-level price mode (D5, r7): 'list' | 'selling'. Replaces the old
     # per-line `show_promo_price` switch as the thing the salesperson picks;
@@ -134,6 +142,14 @@ class PriceTagRequest(Base, CompanyScopedMixin):
         onupdate=func.now(),
         nullable=False,
     )
+    @validates("customers")
+    def _mirror_first_customer(self, _key, value):
+        """Every write of ``customers`` (create, draft PUT, revise) moves the old pair with it."""
+        first = value[0] if value else None
+        self.debtor_code = first.get("code") if first else None
+        self.debtor_name = first.get("name") if first else None
+        return value
+
     # Portal submission revisions (R3-1, migration ptag_0006_revisions), denormalized
     # the same way StockInquiry / PurchaseRequestHeader carry their own pair.
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
@@ -213,6 +229,9 @@ class PriceTagRequestLine(Base):
         nullable=True,
     )
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
+    # PRICETAG-LPSP: 'list' | 'selling'. Effective type = this or the request's
+    # `price_mode`; a save stores it explicitly.
+    price_type = Column(String(16), nullable=True)
     quantity = Column(Integer, nullable=False, server_default="1")
     # D1 (ptag_0011): the promotion moved from the header to the LINE - a
     # request-level promotion breaks the moment two lines sit on two
@@ -251,6 +270,11 @@ class PriceTagRequestLine(Base):
     included_accessories = Column(Text, nullable=True)
     # Free-text note on the line (D6, r7).
     remarks = Column(Text, nullable=True)
+    # PRICETAG-UPGRADE-VARIANTS S3: the variant members the dealer UNTICKED for this tag, so a
+    # variant added later joins ticked. Product ids inside the line product's variant tree.
+    excluded_variant_ids = Column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     sort_order = Column(Integer, nullable=False, server_default="0")
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
@@ -272,6 +296,9 @@ class PriceTagRequestLine(Base):
         ),
         UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
+        CheckConstraint(
+            "price_type IN ('list','selling')", name="ck_price_tag_request_lines_price_type"
+        ),
         Index("ix_price_tag_request_lines_request_id", "request_id"),
         Index("ix_price_tag_request_lines_promotion_id", "promotion_id"),
     )

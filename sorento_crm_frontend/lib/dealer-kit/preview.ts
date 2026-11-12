@@ -18,6 +18,7 @@
  * data must not quietly bind it.
  */
 
+import { richPlainText } from './rich-text';
 import type { GroupBinding, SlotBinding, TagLayer } from './tag-template-types';
 import { layerDisplayName } from './product-block';
 
@@ -59,6 +60,8 @@ const PRODUCT_SLOTS: SlotBinding[] = [
   'spec_lines',
   'list_price',
   'sell_price',
+  'price',
+  'price_label',
   'set_members',
   'included_accessories',
   'barcode',
@@ -121,11 +124,23 @@ function blockLabel(group: TagLayer, children: TagLayer[], ordinal: number): str
   const code = children.find((child) => child.slot_binding === 'code');
   const placeholder =
     code?.text_override ?? (code?.props.kind === 'text' ? code.props.text : null);
-  const trailing = placeholder?.trim() ? ` - ${placeholder.trim()}` : '';
+  const words = richPlainText(placeholder).trim();
+  const trailing = words ? ` - ${words}` : '';
   return `${layerDisplayName(group)} - block ${ordinal}${trailing}`;
 }
 
-/** Every layer with a bindable slot that no group has claimed. */
+/**
+ * Whether a layer draws product data, so a product preview applies to it: a
+ * product slot binding, or a Feature icons layer, which reads its product's
+ * specs with no slot of its own (PRICETAG-DESIGNER-GAPS item 3).
+ */
+function readsProduct(layer: TagLayer): boolean {
+  // PRICETAG-ACCESSORIES: an Accessories box reads the product's (or combo's) own list.
+  if (layer.props.kind === 'feature_icons' || layer.props.kind === 'accessories') return true;
+  return layer.slot_binding !== null && PRODUCT_SLOTS.includes(layer.slot_binding);
+}
+
+/** Every layer that reads product data and that no group has claimed. */
 function looseBoundLayers(layers: TagLayer[]): TagLayer[] {
   const claimed = new Set<string>();
   for (const layer of layers) {
@@ -134,10 +149,7 @@ function looseBoundLayers(layers: TagLayer[]): TagLayer[] {
   }
   return layers.filter(
     (layer) =>
-      layer.props.kind !== 'group' &&
-      !claimed.has(layer.id) &&
-      layer.slot_binding !== null &&
-      PRODUCT_SLOTS.includes(layer.slot_binding),
+      layer.props.kind !== 'group' && !claimed.has(layer.id) && readsProduct(layer),
   );
 }
 
@@ -179,7 +191,7 @@ export function previewBlockOf(
  * what lets the request designer keep drawing its line while one block of the
  * tag is previewed against something else.
  *
- * A slot-bound layer that belongs to no group follows the implicit
+ * A slot-bound (or Feature icons) layer that belongs to no group follows the implicit
  * `WHOLE_TAG_BLOCK_ID` entry (D10, S6) - one product choice for every loose
  * end of the tag, from the frame's own eye, rather than piggy-backing on
  * whichever real block happened to be previewed first.
@@ -192,6 +204,13 @@ export function previewBindingFor(
   const owner = layer.props.kind === 'group' ? layer : groupOfChild.get(layer.id);
   if (owner) return previews[owner.id];
 
-  if (!layer.slot_binding || !PRODUCT_SLOTS.includes(layer.slot_binding)) return undefined;
-  return previews[WHOLE_TAG_BLOCK_ID];
+  if (!readsProduct(layer)) return undefined;
+  const whole = previews[WHOLE_TAG_BLOCK_ID];
+  if (whole || layer.props.kind !== 'accessories') return whole;
+  // PRICETAG-ACCESSORIES (crew pass 4, 6 Nov): a loose Accessories box sits beside the product
+  // block rather than inside it, and previewing that block's product must show THAT product's
+  // own list, not sample cards. Only when exactly one block is previewed: two at once leave it
+  // ambiguous, and the box keeps to the whole-tag eye.
+  const blocks = Object.values(previews);
+  return blocks.length === 1 ? blocks[0] : undefined;
 }

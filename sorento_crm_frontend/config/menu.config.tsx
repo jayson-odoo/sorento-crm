@@ -51,6 +51,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
+  Store,
   TrendingUp,
   UserCheck,
   UserCircle,
@@ -112,6 +113,14 @@ const STAFF_SIDEBAR: MenuConfig = [
     permissionsAny: ['sla_management.conversation_sla_tracking.view', 'sla.kpi.view'],
   },
   {
+    // SORENTO-TOWN: admin-only (owner, 10 Nov 2026, TOWN-V2) through its own permission, granted to the
+    // admin and superadmin roles; amounts are still redacted server-side for anyone else granted it.
+    title: 'Town',
+    icon: Store,
+    path: '/town',
+    permission: 'dashboards.town.view',
+  },
+  {
     title: 'Ideas',
     icon: Lightbulb,
     audience: 'staff',
@@ -162,6 +171,12 @@ const STAFF_SIDEBAR: MenuConfig = [
         title: 'Sales Teams',
         path: '/sales/teams',
         permission: 'sales.teams.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Leaderboard',
+        path: '/sales/leaderboard',
+        permission: 'sales.leaderboard.view',
         moduleKey: 'sales',
       },
       {
@@ -427,7 +442,9 @@ const STAFF_SIDEBAR: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
+        // SUPPLIER-COST-ACCESS: every row is a supplier unit cost; the API also needs
+        // `procurement.product_suppliers.view`, which every holder of this one has.
+        permission: 'products.cost.view',
       },
       {
         title: 'Cost Price Uploads',
@@ -587,6 +604,12 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/master-data-management/product-sets',
             permission: 'master_data.product_sets.view',
           },
+          {
+            // PRODUCT-COSTING: landing cost, mark-ups and party prices.
+            title: 'Costing',
+            path: '/master-data-management/costing',
+            permission: 'products.cost.view',
+          },
         ],
       },
       {
@@ -600,6 +623,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Spec Verification',
             path: '/master-data-management/spec-verification',
+            permission: 'master_data.products.view',
+          },
+          {
+            title: 'Accessories',
+            path: '/master-data-management/accessories',
             permission: 'master_data.products.view',
           },
           {
@@ -628,6 +656,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'master_data.item_classes.view',
           },
           {
+            title: 'Payment Terms',
+            path: '/master-data-management/payment-terms',
+            permission: 'master_data.payment_terms.view',
+          },
+          {
             title: 'Units of Measure',
             path: '/master-data-management/units-of-measure',
             permission: 'master_data.units_of_measure.view',
@@ -640,6 +673,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Certificates',
             path: '/master-data-management/certificates',
+            permission: 'master_data.certificates.view',
+          },
+          {
+            title: 'Certificate Links',
+            path: '/master-data-management/certificates/links',
             permission: 'master_data.certificates.view',
           },
         ],
@@ -717,6 +755,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Tag Sizes',
             path: '/dealer-kit/tag-sizes',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Accessory Templates',
+            path: '/dealer-kit/accessory-templates',
             permission: 'dealer_kit.page.view',
           },
         ],
@@ -1039,6 +1082,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             title: 'API Call Log',
             path: '/system-management/api-call-logs',
             permission: 'system_management.api_call_log.view',
+          },
+          {
+            title: 'Client Errors',
+            path: '/system-management/client-errors',
+            permission: 'system_management.client_error.view',
           },
         ],
       },
@@ -1517,10 +1565,25 @@ export const MENU_SIDEBAR: MenuConfig = [
     audience: 'salesperson',
   },
   {
+    // AI-TOOLS-WAVE2 (owner ruling 5 Nov): own agent targets with their commission.
+    title: 'My targets',
+    icon: TrendingUp,
+    path: '/sales/targets',
+    permission: 'sales.targets.view_own',
+    audience: 'salesperson',
+  },
+  {
     title: 'Customer asks',
     icon: Star,
     path: '/sales/customer-asks',
     permission: 'sales.customer_asks.view',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Dealer access',
+    icon: UserCheck,
+    path: '/sales/dealer-access',
+    permission: 'user_management.contacts.edit_own',
     audience: 'salesperson',
   },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
@@ -1996,6 +2059,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.certificates.view',
     },
     {
+      title: 'Certificate Links',
+      path: '/master-data-management/certificates/links',
+      permission: 'master_data.certificates.view',
+    },
+    {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
       permission: 'master_data.product_categories.view',
@@ -2008,6 +2076,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Spec Verification',
       path: '/master-data-management/spec-verification',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Accessories',
+      path: '/master-data-management/accessories',
       permission: 'master_data.products.view',
     },
     {
@@ -2024,6 +2097,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Item Classes',
       path: '/master-data-management/item-classes',
       permission: 'master_data.item_classes.view',
+    },
+    {
+      title: 'Payment Terms',
+      path: '/master-data-management/payment-terms',
+      permission: 'master_data.payment_terms.view',
     },
     {
       title: 'Units of Measure',
@@ -2050,7 +2128,9 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
+        // SUPPLIER-COST-ACCESS: every row is a supplier unit cost; the API also needs
+        // `procurement.product_suppliers.view`, which every holder of this one has.
+        permission: 'products.cost.view',
       },
       {
         title: 'Cost Price Uploads',
@@ -2543,6 +2623,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'API Call Log',
         path: '/system-management/api-call-logs',
         permission: 'system_management.api_call_log.view',
+      },
+      {
+        title: 'Client Errors',
+        path: '/system-management/client-errors',
+        permission: 'system_management.client_error.view',
       },
       {
         title: 'Email Event Configs',

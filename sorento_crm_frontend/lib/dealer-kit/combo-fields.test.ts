@@ -492,11 +492,13 @@ describe('Combo merge tokens (AC-4.2)', () => {
       'combo.description',
       'combo.free_items',
       'combo.name',
+      'combo.parts',
     ]);
     expect(comboFields.map((field) => field.token).sort()).toEqual([
       '{{combo.description}}',
       '{{combo.free_items}}',
       '{{combo.name}}',
+      '{{combo.parts}}',
     ]);
     expect(comboFields.every((field) => field.label && !field.label.includes('combo.'))).toBe(true);
   });
@@ -504,7 +506,7 @@ describe('Combo merge tokens (AC-4.2)', () => {
   it('leave the existing fields and their order alone', () => {
     const existing = mergeFieldCatalog([])
       // PS-SPEC-SHEET's group is new, after Combo; the price tag fields before it are unchanged.
-      .filter((field) => !['Combo', 'Spec sheet'].includes(field.group as string))
+      .filter((field) => !['Combo', 'Combo positions', 'Spec sheet'].includes(field.group as string))
       .map((field) => field.path);
     expect(existing).toEqual([
       'product.code',
@@ -512,6 +514,8 @@ describe('Combo merge tokens (AC-4.2)', () => {
       'product.dimensions',
       'product.spec_lines',
       'product.price_tag_description',
+      // SPEC-SHEET-DESIGNER-PARITY: the plain catalogue description, added after it.
+      'product.description',
       'product.list_price',
       'product.sell_price',
       'product.currency',

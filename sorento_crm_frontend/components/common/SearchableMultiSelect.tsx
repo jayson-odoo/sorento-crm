@@ -104,6 +104,11 @@ export type SearchableMultiSelectProps = {
    * already empty it, so existing callers are untouched.
    */
   clearable?: boolean;
+  /**
+   * At most this many picks: no Select all row, and every unselected option is disabled once
+   * `value.length >= max`. Opt-in.
+   */
+  max?: number;
   /** Notified whenever the search text changes, in both modes. */
   onSearchChange?: (query: string) => void;
   /**
@@ -148,6 +153,7 @@ export function SearchableMultiSelect({
   renderOption,
   renderTrigger,
   clearable = false,
+  max,
   onSearchChange,
   createOption,
 }: SearchableMultiSelectProps) {
@@ -322,6 +328,8 @@ export function SearchableMultiSelect({
   const misconfigured = !isAsync && options === undefined;
   const isDisabled = disabled || misconfigured;
 
+  const atMax = max !== undefined && value.length >= max;
+
   const toggle = (v: string) => {
     if (selectedSet.has(v)) onChange(value.filter((x) => x !== v));
     else onChange([...value, v]);
@@ -399,19 +407,23 @@ export function SearchableMultiSelect({
                   {/* No truncation: a chip that reads "CHAOZHOU JINBAICHUAN SANITAR..."
                       does not say which supplier was chosen. It wraps instead. */}
                   <span className="break-words">{opt.label}</span>
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    aria-label={`Remove ${opt.label}`}
-                    className="opacity-60 hover:opacity-100"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      remove(opt.value);
-                    }}
-                  >
-                    <X className="size-3" />
-                  </span>
+                  {/* No remove X on a disabled control, nor on a disabled option: neither
+                      can be changed from the list, so the chip must not change it either. */}
+                  {isDisabled || opt.disabled ? null : (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      aria-label={`Remove ${opt.label}`}
+                      className="opacity-60 hover:opacity-100"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        remove(opt.value);
+                      }}
+                    >
+                      <X className="size-3" />
+                    </span>
+                  )}
                 </span>
               ))}
             </span>
@@ -458,7 +470,7 @@ export function SearchableMultiSelect({
           )} align="start">
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
           <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
-          {!loading && selectable.length > 0 ? (
+          {!loading && selectable.length > 0 && max === undefined ? (
             <div className="border-b p-1">
               <button
                 type="button"
@@ -511,7 +523,7 @@ export function SearchableMultiSelect({
                       // Filtering is ours now, so this only has to be unique - two options
                       // sharing a label would otherwise collide in cmdk's keyboard nav.
                       value={opt.value}
-                      disabled={opt.disabled}
+                      disabled={opt.disabled || (atMax && !isSelected)}
                       // Whether this option is CHOSEN. It has to be an attribute
                       // and not only the tick below, because the tick is a bare
                       // icon with no text: to anything reading the page rather

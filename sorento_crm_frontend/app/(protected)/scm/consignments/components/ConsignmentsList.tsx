@@ -202,6 +202,23 @@ export function ConsignmentsList() {
         meta: { headerTitle: 'Customer' },
       },
       {
+        // OI-UX-FILTER-SNAPSHOT: the SO list's own Project column (sorted server-side there
+        // and here: `project_label` is in `sales_order_service.list`'s sort keys).
+        accessorKey: 'project_label',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => {
+          const label = row.original.project_label;
+          if (!label) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="block truncate" title={label}>
+              {label}
+            </span>
+          );
+        },
+        size: 200,
+        meta: { headerTitle: 'Project' },
+      },
+      {
         accessorKey: 'status',
         // Worded from the lines (At customer / Fully returned), not the stored status, so the
         // server cannot sort it.

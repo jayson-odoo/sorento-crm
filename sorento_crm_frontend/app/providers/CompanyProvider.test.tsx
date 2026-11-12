@@ -28,7 +28,12 @@ vi.mock('next-auth/react', () => ({
 
 vi.mock('@/app/(protected)/system-management/companies/services/companyService', () => ({
   getMyCompanyContext: () => getMyCompanyContextMock(),
-  switchCompany: vi.fn(),
+  switchCompany: vi.fn(async () => undefined),
+}));
+
+const invalidateKitLibraryMock = vi.fn(async () => undefined);
+vi.mock('@/lib/dealer-kit/kit-library-cache', () => ({
+  invalidateKitLibrary: () => invalidateKitLibraryMock(),
 }));
 
 const SORENTO = {
@@ -94,5 +99,39 @@ describe('CompanyProvider active company', () => {
     renderProvider();
 
     await waitFor(() => expect(screen.getByTestId('active')).toHaveTextContent('SRT'));
+  });
+
+  it('a switch also refreshes the designer library cache (its own client, old company data)', async () => {
+    const update = vi.fn(async () => undefined);
+    useSessionMock.mockReturnValue({
+      data: { user: { active_company_id: SORENTO.id } },
+      status: 'authenticated',
+      update,
+    });
+    getMyCompanyContextMock.mockResolvedValue({
+      companies: [MOCHA, SORENTO],
+      active_company_id: SORENTO.id,
+      last_active_company_id: SORENTO.id,
+    });
+    invalidateKitLibraryMock.mockClear();
+    let switchTo: ((id: string) => void) | null = null;
+    function Switcher() {
+      const { setActiveCompany } = useCompany();
+      switchTo = setActiveCompany;
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CompanyProvider>
+          <ActiveCompanyProbe />
+          <Switcher />
+        </CompanyProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('active')).toHaveTextContent('SRT'));
+    switchTo!(MOCHA.id);
+    await waitFor(() => expect(invalidateKitLibraryMock).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith({ active_company_id: MOCHA.id });
   });
 });

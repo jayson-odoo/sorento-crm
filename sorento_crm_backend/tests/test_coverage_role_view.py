@@ -22,7 +22,7 @@ def test_hod_assigned_auto_assign_with_expiry():
     assert v["coverage_mode"] == "auto-assign"
     assert v["summary"] == (
         "Sandy Lim covers for Emily, who is away. Assigned by Ms Tan. "
-        "Active until 03 Jul 2026 (auto-assign)."
+        "Active until 03/07/2026 (auto-assign)."
     )
 
 

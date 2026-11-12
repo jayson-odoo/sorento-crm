@@ -19,9 +19,15 @@ import {
   type ToolbarTrailingAction,
 } from '../components/CanvasToolbar';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 import { toast } from '@/lib/toast';
 const mockToastSuccess = vi.mocked(toast.success);
+
+// The header's prev/next pager has its own test (TemplateRecordPager.test.tsx); this page's tests
+// have no QueryClientProvider for it.
+vi.mock('../components/TemplateRecordPager', () => ({
+  TemplateRecordPager: () => <div data-testid="template-pager" />,
+}));
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'tmpl-1' }),
@@ -42,6 +48,7 @@ vi.mock('../../services/tagTemplateService', () => ({
   getTemplateVersion: vi.fn(),
   listTemplateVersions: vi.fn(),
   listPublishedTemplates: vi.fn(async () => []),
+  updateTemplateSettings: vi.fn(),
 }));
 
 // AC-S1-1: the template editor's Tag Size control is supposed to show the
@@ -54,6 +61,26 @@ vi.mock('../../tag-sizes/hooks/useTagSizes', () => ({
   useTagSizesQuery: (...args: unknown[]) => mockUseTagSizesQuery(...(args as [])),
   useDeleteTagSizePreset: () => ({ run: vi.fn(), targetId: null, isPending: false }),
   useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
+}));
+
+// The live link's hooks are react-query hooks this test has no QueryClientProvider for.
+vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
+  useUpdateAccessoryTemplate: () => ({ mutateAsync: vi.fn(async () => ({})) }),
+  useFetchAccessoryTemplate: () => vi.fn(async () => null),
+  useRefreshAccessoryTemplates: () => vi.fn(),
+}));
+
+// PRICETAG-TEMPLATE-PRODUCTS: the Products button's permission and count are react-query hooks this
+// test has no QueryClientProvider for; the dialog has its own test (TemplateProductsDialog.test.tsx).
+const mockCanManage = vi.hoisted(() => ({ value: true }));
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => mockCanManage.value }));
+vi.mock('../../hooks/useProductTagTemplates', () => ({
+  useTemplateProductIds: () => ({ data: ['p1', 'p2'] }),
+  // Products (N) counts linked products and combos together.
+  useTemplateComboIds: () => ({ data: ['c1'] }),
+}));
+vi.mock('../components/TemplateProductsDialog', () => ({
+  TemplateProductsDialog: () => <div data-testid="template-products-dialog" />,
 }));
 
 vi.mock('../components/TagCanvasEditor', () => ({
@@ -163,6 +190,7 @@ import {
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
+  updateTemplateSettings,
 } from '../../services/tagTemplateService';
 import TagTemplateEditorPage from './page';
 
@@ -172,6 +200,7 @@ const mockListPublished = vi.mocked(listPublishedTemplates);
 const mockPublish = vi.mocked(publishTemplate);
 const mockGetVersion = vi.mocked(getTemplateVersion);
 const mockRestore = vi.mocked(restoreTemplateVersion);
+const mockUpdateSettings = vi.mocked(updateTemplateSettings);
 
 function templateFixture(overrides: Partial<Awaited<ReturnType<typeof getTemplate>>> = {}) {
   return {
@@ -742,6 +771,36 @@ describe('template editor chrome (S7, AC-S7-2)', () => {
     expect(trailing.getByRole('button', { name: /Full screen/ })).toBeInTheDocument();
   });
 
+  it('PRICETAG-TEMPLATE-PRODUCTS: Products (N) opens the products dialog for a manager only', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    const { unmount } = render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    const trailing = within(screen.getByTestId('toolbar-trailing'));
+    fireEvent.click(trailing.getByRole('button', { name: /Products \(3\)/ }));
+    expect(screen.getByTestId('template-products-dialog')).toBeInTheDocument();
+    unmount();
+
+    mockCanManage.value = false;
+    try {
+      render(<TagTemplateEditorPage />);
+      await screen.findByTestId('canvas-editor');
+      expect(
+        within(screen.getByTestId('toolbar-trailing')).queryByRole('button', { name: /Products/ }),
+      ).toBeNull();
+    } finally {
+      mockCanManage.value = true;
+    }
+  });
+
+  it('PRICETAG-TEMPLATE-PRODUCTS: a spec sheet page has no Products button, even for a manager', async () => {
+    mockGet.mockResolvedValue(templateFixture({ family: 'spec_page' }));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    expect(
+      within(screen.getByTestId('toolbar-trailing')).queryByRole('button', { name: /Products/ }),
+    ).toBeNull();
+  });
+
   it('the page header carries Publish as the only action button (no Versions/Save/Full screen there)', async () => {
     mockGet.mockResolvedValue(templateFixture());
     render(<TagTemplateEditorPage />);
@@ -830,5 +889,134 @@ describe('Tag Size control on the template editor (S1, AC-S1-1)', () => {
     expect(
       screen.getByRole('option', { name: /My favourite \(80 x 50 mm\)/ }),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Template settings (PRICETAG-DESIGNER-GAPS item 4): name, family and size
+// are editable after create, from the editor.
+// ---------------------------------------------------------------------------
+
+describe('template settings', () => {
+  it('Settings renames the template, keeping the live badge', async () => {
+    mockGet.mockResolvedValue(
+      templateFixture({ family: 'sink_combo', published_version_id: 'v2', published_version_no: 2 }),
+    );
+    mockUpdateSettings.mockResolvedValue(
+      templateFixture({
+        name: 'Kitchen Sink with 1 Tap',
+        family: 'ala_carte',
+        published_version_id: 'v2',
+        published_version_no: 2,
+      }),
+    );
+    render(<TagTemplateEditorPage />);
+
+    await screen.findByTestId('canvas-editor');
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Name'), { target: { value: 'Kitchen Sink with 1 Tap' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(mockUpdateSettings).toHaveBeenCalledWith('tmpl-1', {
+        name: 'Kitchen Sink with 1 Tap',
+        family: 'sink_combo',
+        // Item 7: the Settings form carries Price type too, sent unchanged here.
+        price_type: null,
+      }),
+    );
+    expect(await screen.findByText('Kitchen Sink with 1 Tap')).toBeInTheDocument();
+    expect(screen.getByText('Live v2')).toBeInTheDocument();
+    // A settings-only edit does not write the draft doc.
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a size change from Settings goes through the draft autosave, not the settings PUT', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockGet.mockResolvedValue(templateFixture());
+      mockUpdate.mockResolvedValue(templateFixture());
+      render(<TagTemplateEditorPage />);
+
+      await screen.findByTestId('canvas-editor');
+      fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+      const dialog = within(await screen.findByRole('dialog'));
+      fireEvent.change(dialog.getByLabelText('Width (mm)'), { target: { value: '100' } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalledWith(
+        'tmpl-1',
+        expect.objectContaining({ width_mm: 100, height_mm: 58, print_size: { width_mm: 100, height_mm: 58 } }),
+        expect.anything(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// TAG-TEMPLATE-DUPLICATE item 7: the Settings form's Width/Height and the left TAG SIZE panel's
+// W/H are ONE value (the draft doc's size), linked both ways, so the two can never disagree.
+describe('Settings size and the TAG SIZE panel are one value (item 7)', () => {
+  it('a size saved in Settings shows in the TAG SIZE panel', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Width (mm)'), { target: { value: '100' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    const rail = within(screen.getByTestId('left-rail'));
+    fireEvent.click(rail.getByRole('button', { name: /Tag Size/ }));
+    expect(rail.getByLabelText('Tag width (mm)')).toHaveValue(100);
+    expect(rail.getByLabelText('Tag height (mm)')).toHaveValue(58);
+  });
+
+  it('a size set in the TAG SIZE panel is what Settings opens with', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    const rail = within(screen.getByTestId('left-rail'));
+    fireEvent.click(rail.getByRole('button', { name: /Tag Size/ }));
+    const width = rail.getByLabelText('Tag width (mm)');
+    fireEvent.change(width, { target: { value: '70' } });
+    fireEvent.blur(width);
+
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByLabelText('Width (mm)')).toHaveValue(70);
+    expect(dialog.getByLabelText('Height (mm)')).toHaveValue(58);
+  });
+});
+
+describe('Settings price type (item 7)', () => {
+  it('a price type change ALONE is saved through the settings PUT', async () => {
+    mockGet.mockResolvedValue(templateFixture({ price_type: 'list' } as never));
+    mockUpdateSettings.mockResolvedValue(templateFixture({ price_type: 'selling' } as never));
+    render(<TagTemplateEditorPage />);
+
+    await screen.findByTestId('canvas-editor');
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.click(within(dialog.getByRole('group', { name: 'Price type' })).getByRole('radio', { name: 'SP' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        'tmpl-1',
+        expect.objectContaining({ price_type: 'selling' }),
+      ),
+    );
   });
 });

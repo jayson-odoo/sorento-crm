@@ -73,7 +73,7 @@ beforeEach(() => {
 });
 
 describe('read-only view section order (AC-P11)', () => {
-  it('renders the four sections Customer, Sales Order & Lines, Price, Additional Information in that order', async () => {
+  it('renders the three sections Customers, Price tags, Additional information in that order', async () => {
     asMock(getRequest).mockResolvedValue({
       id: 'req-1',
       doc_number: 'PT-202609-0001',
@@ -120,12 +120,8 @@ describe('read-only view section order (AC-P11)', () => {
     const sectionTitles = Array.from(
       container.querySelectorAll('[data-slot="collapsible-trigger"]'),
     ).map((n) => n.textContent?.trim() ?? '');
-    expect(sectionTitles).toEqual([
-      'Customer',
-      'Sales Order & Lines',
-      'Price',
-      'Additional Information',
-    ]);
+    // PRICETAG-REQUEST-LAYOUT: the same three sections as the edit form.
+    expect(sectionTitles).toEqual(['Customers', 'Price tags', 'Additional information']);
 
     // Within that structure, the field order is unchanged from r7 (`Label`
     // text nodes, `data-slot="label"`) - just regrouped under the sections
@@ -136,10 +132,8 @@ describe('read-only view section order (AC-P11)', () => {
     const normalized = texts.map((t) => (t.startsWith('Lines') ? 'Lines' : t));
 
     expect(normalized).toEqual([
-      'Customer',
-      'Sales Order',
-      'Lines',
-      'Price',
+      'Customers',
+      'Preferred Default',
       // r10 S1: the "Who prints" control (and its `Printing` label) is gone -
       // the portal never asks, `printBy` is a constant 'self'. Additional
       // Information now opens directly on Need by / Notes.

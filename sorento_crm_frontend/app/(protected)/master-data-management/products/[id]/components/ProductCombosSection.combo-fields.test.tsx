@@ -11,7 +11,7 @@
  * as text, no input".
  *
  * Assumptions the coder may tighten with the captain: field labels are the UAC words
- * (List price, Sell price, Description, Free items; per part Sell price, Top-up,
+ * (List price, Sell price, Description, Accessories included; per part Sell price, Top-up,
  * Upgrade), saved through `useUpdateProductCombo().mutate({ comboId, write })` beside the
  * existing `useUpdateProductComboPart().mutate({ partId, write })`, on blur.
  */
@@ -24,6 +24,35 @@ import type { ProductComboPartRow, ProductComboRow } from '../../types/productCo
 const permission = vi.hoisted(() => ({ canEdit: true }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => permission.canEdit,
+}));
+
+// PRICETAG-COMBO-FORMAT AC-21: the description is the shared RichTextEditor (its own suite covers
+// tiptap) and the live tag preview has its own suite; both are stood in for here so these tests
+// keep pinning what they always did.
+vi.mock('@/components/ui/rich-text-editor', () => {
+  const Stand = (props: {
+    value?: string;
+    onChange: (v: string) => void;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      aria-labelledby={props['aria-labelledby']}
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange(e.target.value)}
+    />
+  );
+  return { RichTextEditor: Stand, default: Stand };
+});
+vi.mock('./ComboTagPreview', () => ({ ComboTagPreview: () => null }));
+
+vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+// The accessory list has its own suite; here it stands in as a labelled marker.
+vi.mock('./AccessoryListField', () => ({
+  AccessoryListField: (props: { label?: string; ownerId: string; canEdit: boolean }) => (
+    <div data-testid="accessory-list" data-owner={props.ownerId} data-can-edit={String(props.canEdit)}>
+      {props.label}
+    </div>
+  ),
 }));
 
 vi.mock('./AddComboModal', () => ({
@@ -120,7 +149,6 @@ const COMBO = {
   sort_order: 0,
   parts: [MIRROR, WHITE, BLACK, STONE],
   description: 'Cabinet, mirror and basin',
-  free_items: 'Tap, waste',
   list_price: 2500,
   sell_price: 1999,
   created_at: '2026-11-01T00:00:00Z',
@@ -143,14 +171,18 @@ beforeEach(() => {
 });
 
 describe('Combos card, combo fields (AC-6.1)', () => {
-  it('shows List price, Sell price, Description and Free items for each combo, editable', () => {
+  it('shows List price, Sell price, Description and Accessories included for each combo, editable', () => {
     const block = renderCard();
     const scope = within(block);
 
     expect(scope.getByLabelText(/^List price \(RM\)/i)).toHaveValue(2500);
     expect(scope.getByLabelText(/^Sell price \(RM\)/i)).toHaveValue(1999);
-    expect(scope.getByLabelText(/^Description/i)).toHaveValue('Cabinet, mirror and basin');
-    expect(scope.getByLabelText(/^Free items/i)).toHaveValue('Tap, waste');
+    expect(scope.getByLabelText(/^Description/i)).toHaveValue('<p>Cabinet, mirror and basin</p>');
+    // Accessories included is the accessory list now, not a text box (renamed from Free items, 7 Nov).
+    expect(scope.queryByLabelText(/^Free items/i)).toBeNull();
+    expect(scope.queryByText(/Free items/i)).toBeNull();
+    expect(scope.getByTestId('accessory-list')).toHaveTextContent('Accessories included');
+    expect(scope.getByTestId('accessory-list')).toHaveAttribute('data-owner', 'combo-3');
   });
 
   it('saves a changed combo price through the combo update hook with a number', () => {
@@ -166,18 +198,14 @@ describe('Combos card, combo fields (AC-6.1)', () => {
     expect(Object.keys(calls[0].write)).toEqual(['list_price']);
   });
 
-  it('saves a changed description and free items', () => {
+  it('saves a changed description', () => {
     const block = renderCard();
     const description = within(block).getByLabelText(/^Description/i);
     fireEvent.change(description, { target: { value: 'New text' } });
     fireEvent.blur(description);
-    const free = within(block).getByLabelText(/^Free items/i);
-    fireEvent.change(free, { target: { value: 'Tap' } });
-    fireEvent.blur(free);
 
     expect(written(updateComboMutate)).toEqual([
       { comboId: 'combo-3', write: { description: 'New text' } },
-      { comboId: 'combo-3', write: { free_items: 'Tap' } },
     ]);
   });
 
@@ -240,9 +268,8 @@ describe('Combos card, combo fields (AC-6.1)', () => {
 
     expect(scope.getByText(/List price/i)).toBeInTheDocument();
     expect(scope.getByText(/Sell price/i)).toBeInTheDocument();
-    expect(scope.getByText(/Free items/i)).toBeInTheDocument();
+    expect(scope.getByTestId('accessory-list')).toHaveAttribute('data-can-edit', 'false');
     expect(scope.getByText('Cabinet, mirror and basin')).toBeInTheDocument();
-    expect(scope.getByText('Tap, waste')).toBeInTheDocument();
     expect(scope.getByText(/2,?500/)).toBeInTheDocument();
     expect(scope.queryByLabelText(/^List price \(RM\)/i)).toBeNull();
     expect(scope.queryByLabelText(/^Description/i)).toBeNull();
@@ -307,6 +334,14 @@ describe('Combos card hygiene (AC-6.3, AC-6.4)', () => {
     expect(priceBox.className).toContain('sm:col-span-full');
     const comboFields = within(screen.getByTestId('combo-block')).getByLabelText(/^List price \(RM\)/i).closest('div.grid') as HTMLElement;
     expect(comboFields.className).toContain('sm:grid-cols-2');
+  });
+
+  it('the accessory list cell can shrink, so a long row never widens the page at 375px', () => {
+    renderCard();
+    // A grid item defaults to min-width:auto; without min-w-0 the list's truncating rows push
+    // the whole page past 375px (crew pass on #2273: 399px).
+    const cell = screen.getAllByTestId('accessory-list')[0].parentElement as HTMLElement;
+    expect(cell.className).toContain('min-w-0');
   });
 
   it('shows a message and does not save a negative figure', () => {

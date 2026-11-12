@@ -141,7 +141,9 @@ describe('QuotationSignScopes columns', () => {
     expect(screen.queryByText('PRODUCT IMAGE')).toBeNull();
   });
 
-  it('keeps the photo column in suggest mode, plus one icon column', () => {
+  // PS-QUOTE-MATRIX retired suggest mode: the icon column is the feedback button now.
+  it('keeps the photo column with feedback on, plus one icon column', () => {
+    const onFeedback = vi.fn();
     render(
       <QuotationSignScopes
         scopes={[
@@ -153,13 +155,60 @@ describe('QuotationSignScopes columns', () => {
           },
         ]}
         grandTotal="400.00"
-        suggest={{ edits: {}, onEdit: vi.fn(), onToggleRemove: vi.fn() }}
+        onFeedback={onFeedback}
       />,
     );
     expect(headers().slice(0, -1)).toEqual(
       SIGN_COLUMNS_WITH_IMAGE.map((c) => c.label),
     );
+    expect(headers()).toHaveLength(SIGN_COLUMNS_WITH_IMAGE.length + 1);
     expect(screen.getByAltText('Product photo, line 1')).toBeInTheDocument();
-    expect(screen.getByLabelText('Quantity on line 1')).toBeInTheDocument();
+    // Named by its description, never by the printed number the ITEM column shows.
+    screen.getByRole('button', { name: 'Leave feedback on Item 1' }).click();
+    expect(onFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ itemLabel: 'Item 1', scopeLabel: 'Sanitary ware' }),
+    );
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026): a heading is its own row. The sign page draws it
+ * as the band, as the PDF does; it is not an item, takes no number and gets no feedback button.
+ */
+describe('QuotationSignScopes heading rows', () => {
+  const heading: QuotationSignLine = {
+    ...line('h1', ''),
+    item_label: null,
+    description: null,
+    product_code: null,
+    brand: null,
+    quantity: '0',
+    unit_price: '0',
+    amount: null,
+    band_label: 'PAGE 1',
+    is_section: true,
+  };
+
+  it('draws a heading row as one band and counts only the items', () => {
+    render(
+      <QuotationSignScopes
+        scopes={[
+          {
+            scope_label: 'Sanitary ware',
+            scope_total: '400.00',
+            columns: SIGN_COLUMNS,
+            lines: [LINES[0], heading, LINES[1]],
+          },
+        ]}
+        grandTotal="400.00"
+        onFeedback={vi.fn()}
+      />,
+    );
+    const rows = Array.from(document.querySelectorAll('tbody tr'));
+    expect(rows).toHaveLength(3);
+    expect(rows[1].querySelectorAll('td')).toHaveLength(1);
+    expect(rows[1]).toHaveTextContent('PAGE 1');
+    expect(screen.getAllByRole('button', { name: /^Leave feedback on / })).toHaveLength(2);
+    expect(screen.getByText('2 items')).toBeInTheDocument();
   });
 });

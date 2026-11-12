@@ -3,7 +3,7 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import StockInquiryDetail from '../components/StockInquiryDetail';
-import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
+import StockInquiryDetailTabs from '../components/StockInquiryDetailTabs';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
 export const metadata: Metadata = {
@@ -41,14 +41,9 @@ async function StockInquiryDetailWrapper({
 }) {
   const { id } = await params;
   return (
-    <FormDetailTabsWithRevisions
-      sourceEntityType="stock_inquiry"
-      sourceEntityId={id}
-      revisionsKind="stock_inquiry"
-      commentsKind="stock_inquiry"
-    >
+    <StockInquiryDetailTabs inquiryId={id}>
       <RecordEntityRegistrar entityType="stock_inquiry" id={id} />
       <StockInquiryDetail inquiryId={id} />
-    </FormDetailTabsWithRevisions>
+    </StockInquiryDetailTabs>
   );
 }

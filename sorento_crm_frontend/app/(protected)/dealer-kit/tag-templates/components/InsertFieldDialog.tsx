@@ -34,7 +34,7 @@ import type { MergeField, MergeFieldGroup, SpecKeyOption } from '@/lib/dealer-ki
 import { mergeFieldCatalog, renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 
-const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Spec sheet'];
+const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Parts', 'Combo positions', 'Spec sheet'];
 
 interface InsertFieldDialogProps {
   open: boolean;
@@ -49,6 +49,14 @@ interface InsertFieldDialogProps {
    *  tag description passes `['Product', 'Specs']`: it cannot address a
    *  line, a set or a combo part. */
   groups?: MergeFieldGroup[];
+  /** Paths left out of the list (a combo description cannot insert itself). */
+  omitPaths?: string[];
+  /** Fields the caller builds itself (a combo's Parts, named by the part), after the catalog's. */
+  extraFields?: MergeField[];
+  /** A token's readable name. Given, the Content box shows each token by its name (read-only;
+   *  fields are added by clicking them) so no reference a person should not read (a part id)
+   *  ever shows; null keeps the token itself. */
+  tokenLabel?: (path: string) => string | null;
   onCancel: () => void;
   onDone: (content: string) => void;
 }
@@ -59,6 +67,9 @@ export function InsertFieldDialog({
   data,
   specKeys,
   groups,
+  omitPaths,
+  extraFields,
+  tokenLabel,
   onCancel,
   onDone,
 }: InsertFieldDialogProps) {
@@ -78,7 +89,15 @@ export function InsertFieldDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups), [specKeys, groups]);
+  // The previewed combo's own positions, when the data carries them.
+  const slots = data?.kind === 'line' ? data.line.slots : data?.kind === 'product' ? data.product.slots : undefined;
+  const catalog = useMemo(
+    () =>
+      [...mergeFieldCatalog(specKeys, groups, slots), ...(extraFields ?? [])].filter(
+        (field) => !omitPaths?.includes(field.path),
+      ),
+    [specKeys, groups, slots, omitPaths, extraFields],
+  );
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -132,19 +151,39 @@ export function InsertFieldDialog({
             <Label htmlFor="merge-field-content" className="text-xs text-muted-foreground">
               Content
             </Label>
-            <textarea
-              id="merge-field-content"
-              ref={contentRef}
-              className="min-h-[72px] w-full rounded-md border bg-background px-2 py-1 text-xs"
-              value={content}
-              onChange={(e) => {
-                setContent(e.target.value);
-                rememberCaret();
-              }}
-              onSelect={rememberCaret}
-              onKeyUp={rememberCaret}
-              onClick={rememberCaret}
-            />
+            {tokenLabel ? (
+              <div
+                id="merge-field-content"
+                role="textbox"
+                aria-readonly="true"
+                className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
+              >
+                {content.split(/(\{\{\s*[A-Za-z0-9_.]+\s*\}\})/).map((piece, index) => {
+                  const path = piece.match(/^\{\{\s*([A-Za-z0-9_.]+)\s*\}\}$/)?.[1];
+                  return path ? (
+                    <span key={index} className="rounded bg-sky-50 px-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                      {tokenLabel(path) ?? piece}
+                    </span>
+                  ) : (
+                    <span key={index}>{piece}</span>
+                  );
+                })}
+              </div>
+            ) : (
+              <textarea
+                id="merge-field-content"
+                ref={contentRef}
+                className="min-h-[72px] w-full rounded-md border bg-background px-2 py-1 text-xs"
+                value={content}
+                onChange={(e) => {
+                  setContent(e.target.value);
+                  rememberCaret();
+                }}
+                onSelect={rememberCaret}
+                onKeyUp={rememberCaret}
+                onClick={rememberCaret}
+              />
+            )}
           </div>
 
           <Input
@@ -154,26 +193,38 @@ export function InsertFieldDialog({
             className="h-8 text-xs"
           />
 
-          <ScrollArea className="h-56 rounded-md border">
+          {/* Radix's viewport wraps its content in a `display: table` box that grows to the
+              widest row, so a long token pushed the row past the dialog and was clipped
+              (owner 6 Nov). Forcing that box to `block` keeps every row at the dialog's width
+              and lets the token wrap on its own line instead. */}
+          <ScrollArea
+            className="h-56 rounded-md border"
+            viewportClassName="[&>div]:!block"
+          >
             <div className="flex flex-col p-1">
               {grouped.map((section) => (
                 <div key={section.group}>
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {section.group}
                   </div>
                   {section.fields.map((field) => (
                     <button
                       key={field.path}
                       type="button"
-                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs hover:bg-accent"
+                      className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-left text-xs hover:bg-accent"
                       onClick={() => insert(field)}
+                      title={field.hideToken ? field.label : field.token}
                     >
-                      <span className="truncate" title={field.label}>
-                        {field.label}
-                      </span>
-                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-                        {field.token}
-                      </span>
+                      <span className="w-full break-words">{field.label}</span>
+                      {/* The FULL token on its own line, wrapping, never clipped. */}
+                      {field.hideToken ? null : (
+                        <span
+                          data-testid="merge-field-token"
+                          className="w-full break-all whitespace-normal font-mono text-2xs text-muted-foreground"
+                        >
+                          {field.token}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>

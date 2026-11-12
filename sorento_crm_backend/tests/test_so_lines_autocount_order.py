@@ -11,7 +11,7 @@ UAC: `documentation/plans/scm/so-lines-autocount-order-acceptance-criteria.md`.
             `null` clears it.
   AC-S1-5   the D11 adopt path (ref-less pool row claimed by position) stores the incoming
             `line_no` on the claimed row.
-  AC-S1-6   purchase-order lines still pop `line_number`; no `line_no` attribute exists on
+  AC-S1-6   purchase-order lines keep `line_number` as `line_no` too (AC-LINK-CRM-UI); was: no `line_no` on
             `purchase_order_lines`.
   AC-S1-7   `GET /sales-orders/{id}` lines carry `line_no` and `source`, surviving
             `response_model` (asserted on the wire, via the pydantic schema, not the dict).
@@ -174,15 +174,10 @@ class TestIngestLineNo:
         assert claimed_t0["line_no"] == 1
         assert claimed_t1["line_no"] == 2
 
-    def test_ac_s1_6_purchase_order_lines_have_no_line_no_column(self, env):
-        """PO lines keep popping `line_number` - no column exists to hold it.
-
-        Not expected to be red today: the plan's own answer for a PO line is "gets
-        nothing" (no screen has asked for it), so this is a guard against the coder
-        widening the wrong table, not a gap being closed.
-        """
-        assert hasattr(PurchaseOrderLine, "line_no") is False
-
+    def test_ac_s1_6_purchase_order_lines_keep_autocount_line_number(self, env):
+        """AC-LINK-CRM-UI (crew pass round 2, 4 Nov): a screen now asks for it - the Stock
+        Debt PO picker numbers PO lines as AutoCount does - so a PO line keeps `line_number`
+        (AutoCount Seq) as `purchase_order_lines.line_no`, as a sales-order line does."""
         line = _po_line(env, qty_ordered=4, line_number=3)
         record = _po_record(env, lines=[line])
 
@@ -191,7 +186,7 @@ class TestIngestLineNo:
         assert res.status_code == 200, res.text
         header = env.header("purchase_orders", record["source_ref"])
         row = env.po_lines(header["id"])[0]
-        assert "line_no" not in row
+        assert row["line_no"] == 3
 
 
 # ================================================== serialize / sort / source (AC-S1-7..14)

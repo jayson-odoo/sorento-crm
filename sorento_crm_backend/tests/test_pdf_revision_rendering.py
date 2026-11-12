@@ -708,4 +708,4 @@ def test_request_revision_dates_print_in_malaysia_time(db, kind):
 
     assert "submitted 13/08/2026" in html
     # The Date cell beside the number carries the same day, in the type's format.
-    assert ("13-Aug-2026" if kind == "sponsorship_form" else "13/8/2026") in html
+    assert "13/08/2026" in html

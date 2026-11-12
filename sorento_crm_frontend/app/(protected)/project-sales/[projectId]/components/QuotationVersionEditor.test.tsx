@@ -18,6 +18,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MotionGlobalConfig } from 'motion/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@/lib/toast';
 import type {
@@ -50,6 +51,9 @@ const deleteQuotationLine = vi.fn();
 const replaceQuotationLines = vi.fn();
 const recomputeQuotationVersion = vi.fn();
 const judgeQuotationLine = vi.fn();
+const replaceQuotationColumns = vi.fn();
+/** The page's Save gate (PS-QUOTE-MATRIX): what the editor reports as a column-busy scope. */
+const setColumnsBusy = vi.fn();
 // Fix round 2: the service the coder must add to _shared/services/projectService.ts, read through
 // the hook `useQuotationLineImages(productId)` in _shared/hooks/useProjects.ts.
 const getQuotationLineImages = vi.fn();
@@ -71,6 +75,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
     replaceQuotationLines: (...args: unknown[]) => replaceQuotationLines(...args),
     recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
     judgeQuotationLine: (...args: unknown[]) => judgeQuotationLine(...args),
+    replaceQuotationColumns: (...args: unknown[]) => replaceQuotationColumns(...args),
     getQuotationLineImages: (...args: unknown[]) => getQuotationLineImages(...args),
     getSeriesSetRows: (...args: unknown[]) => getSeriesSetRows(...args),
   };
@@ -184,6 +189,21 @@ vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseSer
     })),
   };
 });
+// QUOTE-DESC-RICHTEXT: the Description cell opens the shared rich text editor in a popover. The
+// editor has its own tests; here it is a labelled textarea, so a test types plain text into it.
+vi.mock('@/components/ui/rich-text-editor', () => ({
+  RichTextEditor: (props: {
+    value: string;
+    onChange: (html: string) => void;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      aria-labelledby={props['aria-labelledby']}
+      value={props.value}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  ),
+}));
 // The viewer is the existing AttachmentPreviewModal; a stub says whether it opened and on what.
 vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   default: (props: { items: { name: string }[]; startIndex?: number }) => (
@@ -264,7 +284,6 @@ const QUOTATION: ProjectQuotation = {
   id: 'q1',
   project_id: 'p1',
   scope_label: 'House Units',
-  outcome: 'open',
   version_count: 2,
   current_version_id: 'v2',
   current_version_no: 2,
@@ -324,6 +343,7 @@ function Harness({
   editing,
   unsaved = false,
   seriesId,
+  showEditor = true,
 }: {
   projectOverrides: Partial<Project>;
   editing: boolean;
@@ -331,6 +351,8 @@ function Harness({
   unsaved?: boolean;
   /** The series the form has picked for the scope (undefined: the quotation's own). */
   seriesId?: string | null;
+  /** False unmounts the editor (a section or tab switch) while the session lives on. */
+  showEditor?: boolean;
 }) {
   const held = useQuotationEditSession();
   session = held;
@@ -350,11 +372,13 @@ function Harness({
             stage: (lines: Parameters<typeof stageScope>[1]) =>
               stageScope(QUOTATION.id, lines),
             toggleRemoved: (key: string) => toggleRemoved(QUOTATION.id, key),
+            setColumnsBusy,
           }
         : null,
     [isEditing, scopes, seedScope, stageScope, toggleRemoved],
   );
 
+  if (!showEditor) return null;
   return (
     <QuotationVersionEditor
       project={project(projectOverrides)}
@@ -487,9 +511,7 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     // The line IS the row: every field is a cell, so there is nothing to open.
-    expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-      'Wall-hung WC',
-    );
+    expect(descriptionCell('SRT-WC-01').textContent).toBe('Wall-hung WC');
     expect(screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' })).toHaveValue('10.00');
     expect(screen.queryByRole('button', { name: /Edit SRT-WC-01/i })).toBeNull();
     // And no per-row save affordance, because there is one Save for the whole document now.
@@ -509,9 +531,8 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('RM 900.00')).toBeInTheDocument();
   });
 
-  it('names the revision as the way out of a version the customer holds', async () => {
-    // The sentence that replaced "its lines cannot be changed. Open a revision to re-price it.",
-    // which stated a fact and offered no move. Reason and next action, in one line.
+  it('no longer says "The customer holds vN. Edit quotation opens vN+1" (owner, 5 Nov 2026)', async () => {
+    // Dropped with the header's twin of it: Edit's own prompt says it when it matters.
     listQuotationVersions.mockResolvedValue([
       version({ id: 'v1', version_no: 1, frozen_at: '2026-07-01T02:00:00' }),
       version({ id: 'v2', version_no: 2, is_current: true, is_issued: true, is_editable: false }),
@@ -519,9 +540,8 @@ describe('QuotationVersionEditor', () => {
 
     renderEditor();
 
-    expect(
-      await screen.findByText(/The customer holds v2\. Edit quotation opens v3/i),
-    ).toBeInTheDocument();
+    await screen.findByRole('button', { name: /^v2/ });
+    expect(screen.queryByText(/The customer holds v2/i)).toBeNull();
   });
 
   it('says what a revise will freeze before doing it', async () => {
@@ -541,7 +561,7 @@ describe('QuotationVersionEditor', () => {
     await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
   });
 
-  it('names the rule behind a below-floor line rather than just flagging it', async () => {
+  it('flags a below-floor line under its rate', async () => {
     listQuotationLines.mockResolvedValue([
       line({
         unit_price: '400.00',
@@ -556,7 +576,7 @@ describe('QuotationVersionEditor', () => {
 
     // Owner meeting 29 Oct: the flag sits UNDER the price, in the Rate cell, and names the
     // minimum price; the product cell no longer carries it.
-    const pill = await screen.findByText('Minimum price RM 700.00');
+    const pill = await screen.findByText('Below minimum price');
     const list = screen.getByText('List RM 1,000.00');
     expect(pill.closest('td')).toBe(list.closest('td'));
     // PRICING-UX-FIXES (owner, 1 Nov): no printed "Set on ..." line under the rate.
@@ -644,7 +664,7 @@ describe('QuotationVersionEditor', () => {
     expect(updateQuotationLine).not.toHaveBeenCalled();
   });
 
-  it('flags a price below the floor as it is typed, with the floor named', async () => {
+  it('flags a price below the floor as it is typed', async () => {
     listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
     judgeQuotationLine.mockResolvedValue({
       is_non_standard: false,
@@ -661,7 +681,7 @@ describe('QuotationVersionEditor', () => {
 
     // The minimum price is NAMED, so the refusal can be argued with rather than merely obeyed,
     // and it shows under the price being typed.
-    const pill = await screen.findByText('Minimum price RM 94.00', {}, { timeout: 5000 });
+    const pill = await screen.findByText('Below minimum price', {}, { timeout: 5000 });
     expect(pill.closest('td')).toBe(priceInput.closest('td'));
     expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
@@ -824,6 +844,8 @@ describe('QuotationVersionEditor', () => {
     expectNothingWritten();
   });
 
+  // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026): a heading a line still carries from before is
+  // shown as its own row right above that line, and is written that way on the next Save.
   it('opens a section with one heading above the line that carries it', async () => {
     listQuotationLines.mockResolvedValue([
       line({ band_label: 'BILL NO 3 PAGE 15/4' }),
@@ -832,16 +854,16 @@ describe('QuotationVersionEditor', () => {
 
     await renderEditing();
 
-    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading above SRT-WC-01' });
     expect(heading).toHaveValue('BILL NO 3 PAGE 15/4');
     // ONCE, and only for the line that carries it: the line below is inside the section, it
     // does not repeat the heading.
     expect(screen.getAllByDisplayValue('BILL NO 3 PAGE 15/4')).toHaveLength(1);
     expect(
-      screen.queryByRole('textbox', { name: 'Section heading on SRT-BIDET-09' }),
+      screen.queryByRole('textbox', { name: 'Section heading above SRT-BIDET-09' }),
     ).toBeNull();
 
-    // Directly above its own line, inside the same table, so the two cannot drift apart.
+    // Directly above that line, as a row of its own.
     const bandRow = heading.closest('tr');
     const lineRow = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' }).closest('tr');
     expect(bandRow?.nextElementSibling).toBe(lineRow);
@@ -856,20 +878,19 @@ describe('QuotationVersionEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
 
     const heading = await screen.findByRole('textbox', {
-      name: 'Section heading on line 2',
+      name: 'Section heading above line 2',
     });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
     // The line under the heading is ready to fill in: a section IS a line.
-    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
-      target: { value: 'Grab bar' },
-    });
+    await typeDescription('line 2', 'Grab bar');
 
+    // A heading row of its own, then the line under it (PROPOSAL-FORM-COLLAPSE).
     await waitFor(() =>
-      expect(stagedBody()[1]).toMatchObject({
-        band_label: 'OPTIONAL ITEMS FOR OKU TOILET',
-        description_snapshot: 'Grab bar',
-      }),
+      expect(stagedBody().slice(1)).toEqual([
+        { is_section: true, band_label: 'OPTIONAL ITEMS FOR OKU TOILET' },
+        expect.objectContaining({ description_snapshot: 'Grab bar', band_label: null }),
+      ]),
     );
     expectNothingWritten();
   });
@@ -879,11 +900,16 @@ describe('QuotationVersionEditor', () => {
 
     await renderEditing();
 
-    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading above SRT-WC-01' });
     fireEvent.change(heading, { target: { value: '' } });
+    fireEvent.blur(heading);
 
-    // Null, not an empty string: the column is nullable and a blank heading is no heading.
-    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ band_label: null }));
+    // A blank heading is no heading: its row goes, the line stays, and the line carries none.
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Section heading above SRT-WC-01' })).toBeNull(),
+    );
+    expect(stagedBody()).toHaveLength(1);
+    expect(stagedBody()[0]).toMatchObject({ id: 'l1', band_label: null });
   });
 
   it("reads a frozen version's bands and rate-only lines without offering an editor", async () => {
@@ -901,7 +927,7 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('BILL NO 3 PAGE 15/4')).toBeInTheDocument();
     expect(screen.getByText('rate only')).toBeInTheDocument();
     expect(
-      screen.queryByRole('textbox', { name: 'Section heading on SRT-WC-01' }),
+      screen.queryByRole('textbox', { name: 'Section heading above SRT-WC-01' }),
     ).toBeNull();
     expect(screen.queryByRole('checkbox', { name: 'Rate only on SRT-WC-01' })).toBeNull();
   });
@@ -957,7 +983,7 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on line 2' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Unit price on SRT-BASIN-02' }), {
@@ -980,12 +1006,10 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     // Typed into, so it is real data rather than a mis-click, but it names neither a product
     // nor a set. Marked as it is typed, not held back until Save (AC-9).
-    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
-      target: { value: 'Bespoke vanity top' },
-    });
+    await typeDescription('line 2', 'Bespoke vanity top');
 
     expect(await screen.findByText('Pick a catalogue product or set')).toBeInTheDocument();
     expect(screen.queryByText('A non-standard item needs a description')).toBeNull();
@@ -997,7 +1021,7 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
 
     // Empty is not wrong. Marking a row red the instant it appears would be the screen
     // shouting at somebody for pressing the button it offered them.
@@ -1012,9 +1036,7 @@ describe('QuotationVersionEditor', () => {
 
     // One decision answers the rest of the row, off the product record rather than off memory.
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-        'Vitreous china counter basin',
-      ),
+      expect(descriptionCell('SRT-WC-01').textContent).toBe('Vitreous china counter basin'),
     );
     expect(screen.getByRole('combobox', { name: 'Brand on SRT-WC-01' })).toHaveTextContent(
       'SORENTO',
@@ -1036,16 +1058,13 @@ describe('QuotationVersionEditor', () => {
     // including over an edit made before the re-pick. The cost was stated and accepted.
     await renderEditing();
 
-    const description = screen.getByRole('textbox', { name: 'Description on SRT-WC-01' });
-    fireEvent.change(description, { target: { value: 'Wording agreed with the QS' } });
+    await typeDescription('SRT-WC-01', 'Wording agreed with the QS');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
 
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-        'Vitreous china counter basin',
-      ),
+      expect(descriptionCell('SRT-WC-01').textContent).toBe('Vitreous china counter basin'),
     );
   });
 
@@ -1119,24 +1138,23 @@ describe('QuotationVersionEditor', () => {
     expect(footerText()).toContain('RM 2,700.00');
   });
 
-  it('strikes a removed line through instead of asking, and puts it back on request', async () => {
-    // Removing inside an edit session destroys nothing, so it asks nothing. The row stays where
-    // it is, struck through, because a removal that is invisible cannot be taken back.
+  it('removes a line at once, without asking, and Undo puts it back (owner, 11 Nov)', async () => {
+    // PROJECT-QUOTE-LINE-TOOLS owner hand test: "when remove line then is remove already, dont
+    // need to stage it cause now we always save, just need to have an undo / redo function".
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove SRT-WC-01' }));
 
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(await screen.findByText('Removed on save')).toBeInTheDocument();
-    expect(screen.getByText('Wall-hung WC')).toBeInTheDocument();
-    // Out of the money the moment it is marked: the footer states what will actually be charged.
+    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).toBeNull());
+    expect(screen.queryByText('Removed on save')).toBeNull();
     expect(footerText()).toContain('RM 0.00');
-    // And out of the body the write would carry.
     await waitFor(() => expect(stagedBody()).toEqual([]));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restore SRT-WC-01' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
 
     await waitFor(() => expect(stagedBody()).toHaveLength(1));
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     expect(footerText()).toContain('RM 9,000.00');
     expectNothingWritten();
   });
@@ -1393,6 +1411,19 @@ async function openNotes(label: string) {
   return screen.findByRole('textbox', { name: `Note text on ${label}` });
 }
 
+/** The Description cell: a button showing the text, opening the editor (QUOTE-DESC-RICHTEXT). */
+function descriptionCell(label: string) {
+  return screen.getByRole('button', { name: `Description on ${label}` });
+}
+
+async function typeDescription(label: string, text: string) {
+  openTrigger(`Description on ${label}`);
+  fireEvent.change(
+    await screen.findByRole('textbox', { name: `Description text on ${label}` }),
+    { target: { value: text } },
+  );
+}
+
 /** What a drop of dnd-kit would do: the table's own handler, fired with the two keys. */
 function dragLine(activeId: string, overId: string) {
   act(() => {
@@ -1407,8 +1438,8 @@ async function chooseMenuItem(label: string, item: string) {
 
 function descriptionOrder(): string[] {
   return screen
-    .getAllByRole('textbox', { name: /^Description on / })
-    .map((el) => (el as HTMLTextAreaElement).value);
+    .getAllByRole('button', { name: /^Description on / })
+    .map((el) => el.textContent ?? '');
 }
 
 const TWO_LINES = [
@@ -1424,6 +1455,24 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2);
   });
 
+  it('finds a styled description by its words, never by its markup (QUOTE-DESC-RICHTEXT)', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: '<p><strong>Ba</strong>sin mixer</p>', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Grab bar', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const search = screen.getByRole('textbox', { name: 'Search lines by product or description' });
+    fireEvent.change(search, { target: { value: 'basin' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Description on A-2' })).toBeNull(),
+    );
+    expect(screen.getByRole('button', { name: 'Description on A-1' })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'strong' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Description on A-1' })).toBeNull(),
+    );
+  });
+
   it('offers no drag handles and no grid editors in the read view', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     renderEditor();
@@ -1433,11 +1482,9 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(screen.queryByRole('button', { name: /^Line actions on / })).toBeNull();
   });
 
-  it('edits the description in a textarea and sends its line breaks in the save body', async () => {
+  it('edits the description in the shared editor and sends its line breaks in the save body', async () => {
     await renderEditing();
-    const description = screen.getByRole('textbox', { name: 'Description on SRT-WC-01' });
-    expect(description.tagName).toBe('TEXTAREA');
-    fireEvent.change(description, { target: { value: 'Wall-hung WC\nc/w soft-close seat' } });
+    await typeDescription('SRT-WC-01', 'Wall-hung WC\nc/w soft-close seat');
     await waitFor(() =>
       expect(stagedBody()[0].description_snapshot).toBe('Wall-hung WC\nc/w soft-close seat'),
     );
@@ -1483,19 +1530,21 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(stagedBody().map((l) => l.id)).toEqual(['l1', undefined, 'l2']);
 
     await chooseMenuItem('A-2', 'Insert a section above');
-    expect(await screen.findByRole('textbox', { name: 'Section heading on A-2' })).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Section heading above A-2' })).toBeInTheDocument();
 
     await chooseMenuItem('A-1', 'Remove line');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-1' })).toBeInTheDocument());
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual([undefined, 'l2']));
     expectNothingWritten();
   });
 
-  it('lists exactly the three row actions, with no Line details, Move up or Move down', async () => {
+  it('lists exactly the four row actions, with no Line details, Move up or Move down', async () => {
     await renderEditing();
     openTrigger('Line actions on SRT-WC-01');
     await screen.findByRole('menuitem', { name: 'Remove line' });
     expect(screen.getAllByRole('menuitem').map((el) => el.textContent?.trim())).toEqual([
       'Insert a line below',
+      // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov): Duplicate line joins the line menus.
+      'Duplicate line',
       'Insert a section above',
       'Remove line',
     ]);
@@ -1550,7 +1599,7 @@ describe('QuotationVersionEditor line without a product (QUOTE-NO-FREE-TEXT)', (
   it('flags a typed-into line with no product or set, and still counts it as unfinished', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.change(screen.getByRole('textbox', { name: 'Qty on line 2' }), { target: { value: '4' } });
     expect(await screen.findByText('Pick a catalogue product or set')).toBeInTheDocument();
     expect(unfinishedStagedLines(session?.scopes[QUOTATION.id]?.lines ?? [])).toBeGreaterThan(0);
@@ -1731,7 +1780,7 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
     line({ id: 'l3', product_code: 'A-3', description: 'Third', sort_order: 20, band_label: 'BILL NO 3' }),
   ];
 
-  it('AC-QLG01: a row drag moves line 3 above line 2, renumbers, and carries its section bar', async () => {
+  it('AC-QLG01: a row drag moves line 3 above line 2, renumbers, and leaves the heading where it was', async () => {
     listQuotationLines.mockResolvedValue(THREE);
     await renderEditing();
     expect(dnd.dragEnd).not.toBeNull();
@@ -1740,12 +1789,19 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
       dnd.dragEnd!({ active: { id: 'l3' }, over: { id: 'l2' } });
     });
 
-    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l3', 'l2']));
+    // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026: "a heading shouldnt be tied to line"): the
+    // heading line 3 used to carry is its own row now, so it stays put and line 3 moves alone.
+    await waitFor(() =>
+      expect(stagedBody().map((l) => l.id ?? (l.is_section ? 'heading' : 'new'))).toEqual([
+        'l1',
+        'l3',
+        'l2',
+        'heading',
+      ]),
+    );
     expect(itemNumbers()).toEqual(['1', '2', '3']);
-    // The heading that opened on line 3 travels with line 3: still directly above its row.
-    const heading = screen.getByRole('textbox', { name: 'Section heading on A-3' });
-    const lineRow = screen.getByRole('textbox', { name: 'Qty on A-3' }).closest('tr');
-    expect(heading.closest('tr')?.nextElementSibling).toBe(lineRow);
+    const heading = screen.getByRole('textbox', { name: 'Section heading at the end' });
+    expect(heading).toHaveValue('BILL NO 3');
     expectNothingWritten();
   });
 
@@ -1756,7 +1812,12 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
       dnd.dragEnd!({ active: { id: 'l3' }, over: { id: 'l3' } });
       dnd.dragEnd!({ active: { id: 'l3' }, over: null });
     });
-    expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l2', 'l3']);
+    expect(stagedBody().map((l) => l.id ?? (l.is_section ? 'heading' : 'new'))).toEqual([
+      'l1',
+      'l2',
+      'heading',
+      'l3',
+    ]);
   });
 
   it('shows no stale pick after the product goes A -> B -> A, and saves both picks null', async () => {
@@ -1856,9 +1917,7 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRTWC8356-RL/ }));
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-        'SORENTO ONE PIECE (RIMLESS) TOILET (S-TRAP 250MM)  SRTWC8356-RL',
-      ),
+      expect(descriptionCell('SRT-WC-01').textContent).toBe('SORENTO ONE PIECE (RIMLESS) TOILET (S-TRAP 250MM)  SRTWC8356-RL'),
     );
     expect(screen.getByRole('combobox', { name: 'Brand on SRT-WC-01' })).toHaveTextContent('SORENTO');
     expect(screen.getByRole('combobox', { name: 'UOM on SRT-WC-01' })).toHaveTextContent('PCS');
@@ -1956,16 +2015,16 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
   it('marks a new line with a description but no product or set as soon as the description is typed (defect 4)', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    const description = await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     expect(screen.queryByText('Pick a catalogue product or set')).toBeNull();
-    fireEvent.change(description, { target: { value: 'Bespoke top' } });
+    await typeDescription('line 2', 'Bespoke top');
     expect(await screen.findByText('Pick a catalogue product or set')).toBeInTheDocument();
   });
 
   it('carries a note typed on a never-saved line in the first save body (defect 5)', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.change(await openNotes('line 2'), { target: { value: 'Ex-works' } });
     await waitFor(() => expect(stagedBody()[1]).toMatchObject({ notes: 'Ex-works' }));
   });
@@ -1973,10 +2032,10 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
   it('labels a never-saved line by its picked product code, and the label survives a reorder', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on line 2' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
-    await screen.findByRole('textbox', { name: 'Description on SRT-BASIN-02' });
+    await screen.findByRole('button', { name: 'Description on SRT-BASIN-02' });
 
     fireEvent.change(await openNotes('SRT-BASIN-02'), { target: { value: 'c/w trap' } });
     const keys = (session?.scopes[QUOTATION.id]?.lines ?? []).map((l) => l.key);
@@ -2076,29 +2135,32 @@ describe('QuotationVersionEditor fix round 2 part B (QUOTATION-UX)', () => {
 describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
   const rightClick = (el: Element) => fireEvent.contextMenu(el);
 
-  it('row context menu: right-clicking a line row opens the same three items', async () => {
+  it('row context menu: right-clicking a line row opens the same four items', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     await renderEditing();
     rightClick(rowOf('A-1').querySelector('td') as HTMLElement);
     expect(await screen.findByRole('menuitem', { name: 'Insert a line below' })).toBeInTheDocument();
     expect(screen.getAllByRole('menuitem').map((el) => el.textContent?.trim())).toEqual([
       'Insert a line below',
+      // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov): Duplicate line joins the line menus.
+      'Duplicate line',
       'Insert a section above',
       'Remove line',
     ]);
   });
 
-  it('Remove line, from the row menu or the right-click menu, strikes through and restores as today', async () => {
+  it('Remove line, from the row menu or the right-click menu, removes at once; Undo restores in place', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     await renderEditing();
     await chooseMenuItem('A-1', 'Remove line');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-1' })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Restore A-1' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore A-1' })).toBeNull());
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l2']));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l2']));
 
     rightClick(rowOf('A-2').querySelector('td') as HTMLElement);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove line' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-2' })).toBeInTheDocument());
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1']));
+    expect(screen.queryByRole('button', { name: /^Restore / })).toBeNull();
   });
 
   it('F7: clicking a row opens no Line details region, however it is clicked', async () => {
@@ -2120,7 +2182,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
     ];
     const barOf = () =>
-      screen.getByRole('textbox', { name: 'Section heading on A-1' }).closest('td') as HTMLElement;
+      screen.getByRole('textbox', { name: 'Section heading above A-1' }).closest('td') as HTMLElement;
 
     it('Rename focuses the section heading', async () => {
       listQuotationLines.mockResolvedValue(BANDED);
@@ -2128,7 +2190,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       rightClick(barOf().firstElementChild as Element);
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
       await waitFor(() =>
-        expect(screen.getByRole('textbox', { name: 'Section heading on A-1' })).toHaveFocus(),
+        expect(screen.getByRole('textbox', { name: 'Section heading above A-1' })).toHaveFocus(),
       );
     });
 
@@ -2138,7 +2200,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       rightClick(barOf().firstElementChild as Element);
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove section' }));
       await waitFor(() =>
-        expect(screen.queryByRole('textbox', { name: 'Section heading on A-1' })).toBeNull(),
+        expect(screen.queryByRole('textbox', { name: 'Section heading above A-1' })).toBeNull(),
       );
       expect(screen.getByRole('textbox', { name: 'Qty on A-1' })).toBeInTheDocument();
       await waitFor(() => expect(stagedBody()[0].band_label ?? null).toBeNull());
@@ -2235,7 +2297,8 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
         line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
       ]);
       await renderEditing();
-      for (const name of ['Description on A-1', 'Qty on A-1', 'Section heading on A-1']) {
+      // The description is edited in a popover now (QUOTE-DESC-RICHTEXT), not in the row.
+      for (const name of ['Qty on A-1', 'Section heading above A-1']) {
         expect(fireEvent.contextMenu(screen.getByRole('textbox', { name }))).toBe(true);
       }
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -2243,12 +2306,12 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       expect(screen.queryByRole('menuitem')).toBeNull();
     });
 
-    it('a non-input part of the same row still opens the 3-item line menu, prevented', async () => {
+    it('a non-input part of the same row still opens the 4-item line menu, prevented', async () => {
       listQuotationLines.mockResolvedValue(TWO_LINES);
       await renderEditing();
       expect(fireEvent.contextMenu(rowOf('A-1').querySelector('td') as HTMLElement)).toBe(false);
       await screen.findByRole('menuitem', { name: 'Insert a line below' });
-      expect(screen.getAllByRole('menuitem')).toHaveLength(3);
+      expect(screen.getAllByRole('menuitem')).toHaveLength(4);
     });
 
     it('the row-actions column header carries the screen-reader text Row actions', async () => {
@@ -2596,68 +2659,77 @@ describe('QuotationVersionEditor product picker, code only (QUOTE-UI-POLISH AC-Q
   });
 });
 
-describe('QuotationVersionEditor review: suggested lines only (QUOTE-CUSTOMER-AMEND)', () => {
-  it('shows only the suggested lines and folds the rest into one row, until it is turned off', async () => {
-    listQuotationLines.mockResolvedValue([
-      line({ id: 'l1', product_code: 'SRT-WC-01', description: 'Wall-hung WC', sort_order: 0 }),
-      line({ id: 'l2', product_code: 'BM107', description: 'Basin tap body', sort_order: 1 }),
-      line({ id: 'l3', product_code: 'SH-9', description: 'Shower head', sort_order: 2 }),
-    ]);
-    const review = {
-      rows: [
-        {
-          id: 'r1',
-          line_id: 'l2',
-          field: 'quantity' as const,
-          value_from: '10.00',
-          value_to: '8.00',
-          decision: 'pending' as const,
-          decision_reason: null,
-        },
-      ],
-      onDecide: vi.fn(),
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const view = (suggestedOnly: boolean) => (
-      <QueryClientProvider client={client}>
-        <QuotationVersionEditor
-          project={project()}
-          quotation={QUOTATION}
-          review={review}
-          suggestedOnly={suggestedOnly}
-        />
-      </QueryClientProvider>
+describe('QuotationVersionEditor column headers (PS-QUOTE-MATRIX)', () => {
+  it('starts a grid from + Column header: written at once, and the staged quantity moves into it', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: [] });
+    // The server as it stands: the versions read answers whatever the last write left.
+    let stored = editable;
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '10.00' })]);
+    replaceQuotationColumns.mockImplementation(
+      async (_versionId: string, columns: { key: string; label: string; cols: [] }[]) => {
+        stored = { ...editable, matrix_columns: columns };
+        return {
+          version: stored,
+          lines: [line({ quantity: '10.00', qty_cells: { [columns[0].key]: '10.00' } })],
+        };
+      },
     );
-    const { rerender } = render(view(true));
+    await renderEditing();
 
-    expect(await screen.findByText('Basin tap body')).toBeInTheDocument();
-    expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument();
-    expect(screen.queryByText('Shower head')).not.toBeInTheDocument();
-    expect(screen.getByText('2 lines without suggestions')).toBeInTheDocument();
-    // Still line 2: hiding does not renumber.
-    expect(itemNumbers()).toEqual(['2']);
+    fireEvent.click(screen.getByRole('button', { name: 'Column header' }));
 
-    rerender(view(false));
-    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.queryByText(/lines without suggestions/)).not.toBeInTheDocument();
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    const [versionId, columns] = replaceQuotationColumns.mock.calls[0];
+    expect(versionId).toBe('v2');
+    expect(columns).toEqual([{ key: expect.any(String), label: 'Header 1', cols: [] }]);
+    // The header is on screen as an editable label, and Qty has made way for it.
+    expect(await screen.findByRole('textbox', { name: 'Column header Header 1' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Total qty' })).toBeInTheDocument();
+    // The staged line carries the quantity in the new column, so Save sends it there.
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({ qty_cells: { [columns[0].key]: '10.00' }, quantity: '10.00' }),
+    );
+    expectNothingWritten();
+  });
+
+  it('offers no column editing on a version that is not editable', async () => {
+    listQuotationVersions.mockResolvedValue(VERSIONS);
+    listQuotationLines.mockResolvedValue([line()]);
+    await renderEditing();
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
   });
 });
 
-describe('QuotationVersionEditor review on a scope with a hand-made draft (fix round 3, S3b)', () => {
-  it('opens on the ISSUED version the suggestions name, and they can be decided there', async () => {
-    // v1 went to the customer; somebody opened v2 by hand since. The rows name v1's lines.
+describe('QuotationVersionEditor feedback marks on the draft (PS-QUOTE-MATRIX fix round 1, E6)', () => {
+  it('carries a note on issued line L1 to its copy L1\' on the draft: amber corner and dot', async () => {
+    const columns = [{ key: 'a', label: 'Type A', cols: [{ key: 'a1', label: 'Kitchen' }, { key: 'a2', label: 'Yard' }] }];
     listQuotationVersions.mockResolvedValue([
-      version({ id: 'v1', version_no: 1, is_issued: true, total_amount: '9000.00' }),
-      version({ id: 'v2', version_no: 2, is_current: true, total_amount: '9000.00' }),
+      version({ id: 'v1', version_no: 1, is_issued: true, matrix_columns: columns }),
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
     ]);
     listQuotationLines.mockImplementation(async (versionId: string) =>
       versionId === 'v1'
-        ? [line({ id: 'l-issued', version_id: 'v1', product_id: 'p1' })]
-        : [line({ id: 'l-draft', version_id: 'v2', product_id: 'p1' })],
+        ? [line({ id: 'L1', version_id: 'v1', product_id: 'p-sink', qty_cells: { a1: '133.00' } })]
+        : [line({ id: 'L1-draft', version_id: 'v2', product_id: 'p-sink', qty_cells: { a1: '133.00' } })],
     );
-    const onDecide = vi.fn();
+    const note = (overrides: Record<string, unknown>) => ({
+      id: 'f1',
+      line_id: 'L1',
+      scope_id: QUOTATION.id,
+      scope_label: QUOTATION.scope_label,
+      line_description: 'Sink',
+      cell_key: null,
+      cell_label: null,
+      kind: 'note' as const,
+      value_from: null,
+      value_to: null,
+      model: null,
+      note: 'Check',
+      handled_at: null,
+      handled_by_name: null,
+      ...overrides,
+    });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -2666,31 +2738,907 @@ describe('QuotationVersionEditor review on a scope with a hand-made draft (fix r
         <QuotationVersionEditor
           project={project()}
           quotation={QUOTATION}
-          review={{
-            rows: [
-              {
-                id: 'r1',
-                line_id: 'l-issued',
-                field: 'quantity',
-                value_from: '10.00',
-                value_to: '8.00',
-                decision: 'pending',
-                decision_reason: null,
-              },
-            ],
-            onDecide,
-          }}
-          reviewVersionId="v1"
-          suggestedOnly
+          feedback={[
+            note({ id: 'f1', cell_key: 'a1', cell_label: 'Type A / Kitchen' }),
+            note({ id: 'f2' }),
+            // Another scope's note never lands here.
+            note({ id: 'f3', scope_id: 'other-scope', line_id: 'L1', cell_key: 'a2' }),
+          ]}
         />
       </QueryClientProvider>,
     );
 
-    const reject = await screen.findByRole('button', {
-      name: 'Reject suggested quantity on SRT-WC-01',
-    });
+    // The draft (v2) is what opens, and its line wears the marks the issued line's notes made.
+    expect(await screen.findByTestId('matrix-feedback-corner')).toBeInTheDocument();
+    expect(screen.getAllByTestId('matrix-feedback-corner')).toHaveLength(1);
+    expect(screen.getAllByTestId('line-feedback-dot')).toHaveLength(1);
     expect(listQuotationLines).toHaveBeenCalledWith('v1');
-    expect(reject).toBeEnabled();
-    expect(screen.queryByText('No suggestions on this scope.')).toBeNull();
+  });
+});
+
+describe('QuotationVersionEditor holds the page\'s Save while columns change (review nit)', () => {
+  it('reports busy while a removal counts down and while the column write is on its way', async () => {
+    const columns = [
+      { key: 'a', label: 'Type A', cols: [] },
+      { key: 'b', label: 'Type B', cols: [] },
+    ];
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '4.00', b: '6.00' } })]);
+    let finish: (value: unknown) => void = () => {};
+    replaceQuotationColumns.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderEditing();
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(false);
+
+    // Parked: Save waits. Undone: Save is back.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A' }));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Type A' }));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(false);
+
+    // A column write in flight holds it too, until the server answers.
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(true);
+    await act(async () => {
+      finish({ version: editable, lines: [line({ qty_cells: { a: '4.00', b: '6.00' } })] });
+    });
+    await waitFor(() => expect(setColumnsBusy).toHaveBeenLastCalledWith(false));
+  });
+});
+
+describe('QuotationVersionEditor B1: a header gains its first column (fix round 2)', () => {
+  it('keeps the header\'s quantity: Save sends 995 under the new column', async () => {
+    const before = [
+      { key: 'bt', label: 'Break tank', cols: [] as { key: string; label: string }[] },
+      { key: 'a', label: 'Type A', cols: [{ key: 'a1', label: 'Kitchen' }] },
+    ];
+    let stored = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: before });
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '995.00', qty_cells: { bt: '995.00' } })]);
+    replaceQuotationColumns.mockImplementation(
+      async (_versionId: string, columns: { key: string; cols: { key: string }[] }[]) => {
+        stored = { ...stored, matrix_columns: columns as typeof before };
+        const first = columns[0].cols[0].key;
+        // The server's own move-in (set_columns).
+        return { version: stored, lines: [line({ quantity: '995.00', qty_cells: { [first]: '995.00' } })] };
+      },
+    );
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    const first = replaceQuotationColumns.mock.calls[0][1][0].cols[0].key as string;
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({ qty_cells: { [first]: '995.00' }, quantity: '995.00' }),
+    );
+    expect(stagedBody()[0].qty_cells).not.toHaveProperty('bt');
+  });
+});
+
+describe('QuotationVersionEditor fix round 3 (M2a): a new header is typed into before the server answers', () => {
+  const columns = [{ key: 'a', label: 'Type A', cols: [] as { key: string; label: string }[] }];
+
+  it('shows the new header focused and selected while the column write is still on its way', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '10.00' } })]);
+    replaceQuotationColumns.mockImplementation(() => new Promise(() => {}));
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    const input = screen.getByRole('textbox', { name: 'Column header Header 2' }) as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Header 2'.length]);
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+  });
+
+  it('takes the new header back and toasts when the write is refused', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '10.00' } })]);
+    replaceQuotationColumns.mockRejectedValue(new Error('Column labels must be unique'));
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    expect(screen.getByRole('textbox', { name: 'Column header Header 2' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Column header Header 2' })).toBeNull(),
+    );
+    expect(toast.error).toHaveBeenCalledWith('Column labels must be unique');
+  });
+});
+
+/**
+ * Crew NO-GO on 36047efdad (round 4). A column write is a whole-matrix save; two in flight and
+ * the last ANSWER won, so a rename made while "+ Column" was saving reverted to "Column 1" on
+ * screen and in the DB. And Edit waited for the server to show a moved quantity.
+ */
+describe('QuotationVersionEditor round 4: column writes are serial, Edit is optimistic', () => {
+  type Columns = { key: string; label: string; cols: { key: string; label: string }[] }[];
+
+  /** A fake column API: every write waits until the test releases it, in any order. */
+  function deferredWrites(base: QuotationVersion) {
+    const calls: { columns: Columns; release: () => void }[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    replaceQuotationColumns.mockImplementation(
+      (_versionId: string, columns: Columns) =>
+        new Promise((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          calls.push({
+            columns,
+            release: () => {
+              inFlight -= 1;
+              resolve({ version: { ...base, matrix_columns: columns }, lines: [] });
+            },
+          });
+        }),
+    );
+    return { calls, maxInFlight: () => maxInFlight };
+  }
+
+  const TANK: Columns = [{ key: 'bt', label: 'Break tank', cols: [] }];
+
+  it('a rename made while "+ Column" is saving survives, on screen and in the last write', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    let stored = editable;
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    const name = await screen.findByRole('textbox', { name: 'Column Column 1' });
+    fireEvent.change(name, { target: { value: 'Kitchen' } });
+    fireEvent.blur(name);
+
+    // One write at a time: the rename waits for the add.
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    expect(api.calls[0].columns[0].cols[0].label).toBe('Column 1');
+    expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument();
+
+    await act(async () => {
+      stored = { ...editable, matrix_columns: api.calls[0].columns };
+      api.calls[0].release();
+    });
+    // The first answer ("Column 1") does not overwrite the rename made after it was sent.
+    expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument();
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    expect(api.calls[1].columns[0].cols[0].label).toBe('Kitchen');
+
+    await act(async () => {
+      stored = { ...editable, matrix_columns: api.calls[1].columns };
+      api.calls[1].release();
+    });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument());
+    expect(screen.queryByRole('textbox', { name: 'Column Column 1' })).toBeNull();
+    expect(api.maxInFlight()).toBe(1);
+  });
+
+  it('edits made during a write merge into ONE follow-up write of the latest matrix', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    expect(api.calls).toHaveLength(1);
+
+    await act(async () => api.calls[0].release());
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    expect(api.calls[1].columns.map((header) => header.label)).toEqual(['Break tank', 'Header 2', 'Header 3']);
+    await act(async () => api.calls[1].release());
+    expect(api.calls).toHaveLength(2);
+    expect(api.maxInFlight()).toBe(1);
+  });
+
+  it('Edit is optimistic: a header holding 5 that gets "+ Column" shows 5 and Total qty 5 at once', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    // Before the write answers: the moved quantity is in the new column, and the totals hold.
+    const cell = screen.getByRole('textbox', { name: /^Qty on SRT-WC-01, Break tank \/ Column 1/ });
+    expect(cell).toHaveValue('5.00');
+    const total = screen.getByRole('columnheader', { name: 'Total qty' });
+    expect(total).toBeInTheDocument();
+    const row = cell.closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('5').length).toBeGreaterThan(0);
+    expect(stagedBody()[0]).toMatchObject({ quantity: '5.00' });
+    expect(api.calls.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('QuotationVersionEditor: an unsaved line keeps its product code across a remount', () => {
+  it('still names the picked product after the editor unmounts and comes back (section switch)', async () => {
+    listQuotationLines.mockResolvedValue([line()]);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const view = (showEditor: boolean) => (
+      <QueryClientProvider client={client}>
+        <Harness projectOverrides={{}} editing showEditor={showEditor} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(true));
+    await screen.findByRole('button', { name: /Add a line/i });
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /Add a line/i }));
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Product on line 2' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    expect(
+      await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' }),
+    ).toHaveTextContent('SRT-BASIN-02');
+
+    // Another section, then back: the editor (and anything it held) is gone and rebuilt.
+    rerender(view(false));
+    rerender(view(true));
+
+    const picker = await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
+    expect(picker).toHaveTextContent('SRT-BASIN-02');
+    expect(screen.queryByText('Selected product')).toBeNull();
+  });
+});
+
+describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the closing menu', () => {
+  // vitest.setup skips every animation, so a menu would unmount the instant it closes. A browser
+  // plays the exit, and that window is where the bug lives: run the animations for real here.
+  beforeEach(() => {
+    MotionGlobalConfig.skipAnimations = false;
+  });
+  afterEach(() => {
+    MotionGlobalConfig.skipAnimations = true;
+  });
+
+  /**
+   * Click a menu item the way a real browser plays it out: the menu runs its exit animation (the
+   * content stays mounted until it ends), anything the click queued with a timer (a focus move,
+   * say) runs inside that window, and then the pointer leaving the clicked item makes Radix focus
+   * the menu itself (react-menu onItemLeave). React derives onPointerLeave from pointerout.
+   */
+  async function clickAndLeaveClosingMenu(item: HTMLElement) {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fireEvent.click(item);
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(item.isConnected).toBe(true);
+    fireEvent.pointerOut(item, { pointerType: 'mouse', relatedTarget: document.body });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  }
+
+  /** The session's rows in order, headings as `H:<label>`, lines as their id (the write body
+   *  leaves an unnamed heading out, so it is read from the session itself). */
+  function stagedOrder(): string[] {
+    return (session?.scopes[QUOTATION.id]?.lines ?? []).map((l) =>
+      l.draft.is_section ? `H:${l.draft.band_label ?? ''}` : String(l.id),
+    );
+  }
+
+  it('row "..." menu: Insert a section above keeps the heading above that line and gives it the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    openTrigger('Line actions on A-2');
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
+
+    fireEvent.change(heading, { target: { value: 'PAGE 2' } });
+    await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'H:PAGE 2', 'l2']));
+    expectNothingWritten();
+  });
+
+  it('right-click menu: Insert a section above keeps the heading above that line and gives it the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    fireEvent.contextMenu(rowOf('A-2').querySelector('td') as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
+  });
+
+  it('right-click Rename on a heading keeps the caret in it after the menu has closed', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', band_label: 'BILL NO 1' }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const heading = screen.getByRole('textbox', { name: 'Section heading above A-1' });
+    fireEvent.contextMenu(heading.closest('[data-section-key]') as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: 'Rename' });
+    await clickAndLeaveClosingMenu(item);
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('a heading left empty and blurred by the user still goes, and no line moves', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    openTrigger('Line actions on A-2');
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    fireEvent.blur(heading);
+    await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'l2']));
+    expect(screen.queryByRole('textbox', { name: 'Section heading above A-2' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026): Duplicate line, the Below default price pill and
+// the lines Flags filter. UAC: documentation/plans/project-sales/project-quote-line-tools-acceptance-criteria.md
+
+/** The Flags filter's trigger (it shows chips once chosen, so it is found by its slot). */
+function flagsTrigger(): HTMLElement {
+  return document.querySelector('[data-slot="searchable-multi-select-trigger"]') as HTMLElement;
+}
+
+async function chooseFlag(label: string) {
+  fireEvent.click(flagsTrigger());
+  fireEvent.click(await screen.findByRole('option', { name: new RegExp(label) }));
+}
+
+const FLAGGED_LINES = [
+  line({ id: 'l1', product_code: 'A-1', description: 'Discounted', sort_order: 0, is_discounted: true }),
+  line({ id: 'l2', product_code: 'A-2', description: 'Off series', sort_order: 10, is_non_standard: true }),
+  line({
+    id: 'l3',
+    product_code: 'A-3',
+    description: 'Under the floor',
+    sort_order: 20,
+    is_discounted: true,
+    is_below_floor: true,
+  }),
+  line({ id: 'l4', product_code: 'A-4', description: 'Clean', sort_order: 30 }),
+];
+
+/** The product codes of the line rows on screen, in order (view mode prints the code). */
+function shownCodes(): string[] {
+  return Array.from(screen.getByRole('table').querySelectorAll('tbody tr'))
+    .filter((tr) => !tr.querySelector('td[colspan]'))
+    .map((tr) => (tr.textContent ?? '').match(/A-\d/)?.[0] ?? '');
+}
+
+describe('PROJECT-QUOTE-LINE-TOOLS', () => {
+  it('the Rate column is wide enough for "Below minimum price" on one line (crew verify, 1280 px)', async () => {
+    // The one-line pill measured 131 px in the browser; the cell adds px-1.5 (6 px a side).
+    listQuotationLines.mockResolvedValue([line({ is_below_floor: true, is_discounted: true })]);
+    renderEditor();
+    await screen.findByText('Below minimum price');
+    const th = screen.getByRole('columnheader', { name: 'Rate (RM)' });
+    expect(parseFloat(th.style.width || '0')).toBeGreaterThanOrEqual(148);
+  });
+
+  it('AC-5: a saved line below its default price shows the pill under the product code, in view mode', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true })]);
+    renderEditor();
+    const pill = await screen.findByText('Below default price');
+    expect(pill.closest('td')).toBe(screen.getByText('SRT-WC-01').closest('td'));
+  });
+
+  it('AC-5: a line below the minimum price shows no second pill (the banner counts it once, there)', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_below_floor: true })]);
+    renderEditor();
+    await screen.findByText('SRT-WC-01');
+    expect(screen.queryByText('Below default price')).toBeNull();
+  });
+
+  it('AC-5: Non-standard and Below default price sit side by side when both are true', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_non_standard: true })]);
+    renderEditor();
+    expect(await screen.findByText('Below default price')).toBeInTheDocument();
+    expect(screen.getByText('Non-standard')).toBeInTheDocument();
+  });
+
+  it('AC-6: a rate typed below the default price shows the pill live, before any save', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: false,
+      is_below_floor: false,
+      is_discounted: true,
+      floor_value: null,
+      floor_level: null,
+    });
+    await renderEditing();
+    expect(screen.queryByText('Below default price')).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
+      target: { value: '850.00' },
+    });
+    expect(await screen.findByText('Below default price', {}, { timeout: 5000 })).toBeInTheDocument();
+    expectNothingWritten();
+  });
+
+  it('AC-1: Duplicate line is in the row menu and the right-click menu, and not in view mode', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    renderEditor();
+    await screen.findByText('A-1');
+    expect(screen.queryByRole('button', { name: /^Line actions on / })).toBeNull();
+    expect(screen.queryByText('Duplicate line')).toBeNull();
+  });
+
+  it('AC-2: Duplicate line puts a copy right below with the same product, rate, quantity and text', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', unit_price: '900.00', quantity: '3.00', notes: 'Kitchen side', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', product_id: 'p-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Duplicate line');
+
+    const body = stagedBody();
+    expect(body).toHaveLength(3);
+    // Source unchanged, copy second (new: no id), the other line still last.
+    expect(body[0]).toMatchObject({ id: 'l1' });
+    expect(body[1]).not.toHaveProperty('id');
+    expect(body[1]).toMatchObject({
+      product_id: 'p-wc',
+      unit_price: '900.00',
+      quantity: '3.00',
+      description_snapshot: 'First',
+      notes: 'Kitchen side',
+    });
+    expect(body[2]).toMatchObject({ id: 'l2' });
+    expect(itemNumbers()).toEqual(['1', '2', '3']);
+    expectNothingWritten();
+  });
+
+  it('AC-3: after Duplicate line the copy\'s product picker has the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Duplicate line');
+    await waitFor(() => {
+      const pickers = screen.getAllByRole('combobox', { name: /^Product on / });
+      expect(pickers).toHaveLength(3);
+      expect(document.activeElement).toBe(pickers[1]);
+    });
+  });
+
+  it('AC-3 (S9): typing straight after Duplicate line searches the copy\'s product picker', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    await chooseMenuItem('SRT-WC-01', 'Duplicate line');
+    const picker = await waitFor(() => {
+      const pickers = screen.getAllByRole('combobox', { name: /^Product on / });
+      expect(document.activeElement).toBe(pickers[1]);
+      return pickers[1];
+    });
+    fireEvent.keyDown(picker, { key: 'S' });
+    const search = (await screen.findByPlaceholderText('Search...')) as HTMLInputElement;
+    expect(search.value).toBe('S');
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+    await waitFor(() => expect(drafts()[1]).toMatchObject({ product_id: 'p9' }));
+    expect(drafts()[0]).toMatchObject({ product_id: 'p-wc' });
+  });
+
+  it('AC-1/2: the right-click Duplicate line copies the line it was opened on', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    fireEvent.contextMenu(rowOf('A-2').querySelector('td') as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Duplicate line' }));
+    const body = stagedBody();
+    expect(body.map((row) => ('id' in row ? row.id : 'new'))).toEqual(['l1', 'l2', 'new']);
+    expect(body[2].description).toBe(body[1].description);
+  });
+
+  it('AC-2: a grid scope\'s copy carries every area quantity, in every column group', async () => {
+    const columns = [
+      { key: 'a', label: 'Type A - 1 BH', cols: [{ key: 'a1', label: 'Kitchen' }, { key: 'a2', label: 'Yard' }] },
+      { key: 'b', label: 'Type B - 2 BH', cols: [{ key: 'b1', label: 'Kitchen' }, { key: 'b2', label: 'Balcony' }] },
+    ];
+    const cells = { a1: '2.00', a2: '5.00', b1: '1.00', b2: '3.00' };
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', quantity: '11.00', qty_cells: cells, sort_order: 0 }),
+    ]);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Duplicate line');
+
+    const body = stagedBody();
+    expect(body).toHaveLength(2);
+    expect(body[1]).not.toHaveProperty('id');
+    expect(body[1].qty_cells).toEqual(body[0].qty_cells);
+    expect(Object.keys(body[1].qty_cells ?? {}).sort()).toEqual(['a1', 'a2', 'b1', 'b2']);
+    expect(body[1].quantity).toBe(body[0].quantity);
+    // Everything else on the draft too, but the two keys the copy sets on purpose.
+    const staged = session?.scopes[QUOTATION.id]?.lines ?? [];
+    const without = (draft: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(draft).filter(([key]) => key !== 'picked_code' && key !== 'band_label'),
+      );
+    expect(without(staged[1].draft)).toEqual(without(staged[0].draft));
+  });
+
+  it('AC-4: the copy\'s first new product fills like a new line: its own text and a blank rate', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    await chooseMenuItem('SRT-WC-01', 'Duplicate line');
+    const pickers = screen.getAllByRole('combobox', { name: /^Product on / });
+    fireEvent.click(pickers[1]);
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+    await waitFor(() => expect(drafts()[1]).toMatchObject({ product_id: 'p9' }));
+    // No series names SRT-BASIN-02 here, so a new line would open with no rate: so does the copy.
+    expect(drafts()[1].unit_price ?? '').toBe('');
+    expect(drafts()[1].description).toBe('Vitreous china counter basin');
+    // The source keeps its rate.
+    expect(drafts()[0].unit_price).toBe('900.00');
+  });
+
+  it('AC-4: a copy\'s new product that the series names opens at the series price', async () => {
+    const service = await import('../../_shared/services/projectService');
+    const priced = vi
+      .spyOn(service, 'getSeriesPricedRows')
+      .mockResolvedValue([
+        { product_id: 'p9', selling_price: '480.00' } as unknown as Awaited<
+          ReturnType<typeof service.getSeriesPricedRows>
+        >[number],
+      ]);
+    try {
+      listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+      renderEditor({}, true, false, 's1');
+      await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+      await waitFor(() => expect(priced).toHaveBeenCalledWith('s1'));
+      await chooseMenuItem('SRT-WC-01', 'Duplicate line');
+      fireEvent.click(screen.getAllByRole('combobox', { name: /^Product on / })[1]);
+      fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+      const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+      await waitFor(() => expect(drafts()[1]).toMatchObject({ product_id: 'p9', unit_price: '480.00' }));
+    } finally {
+      priced.mockRestore();
+    }
+  });
+
+  it('AC-1: a section heading\'s right-click menu offers no Duplicate line', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', band_label: 'BILL NO 1' }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const heading = screen.getByRole('textbox', { name: 'Section heading above A-1' });
+    fireEvent.contextMenu(heading.closest('[data-section-key]') as HTMLElement);
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Duplicate line' })).toBeNull();
+  });
+
+  it('AC-8: a filtered row stays on screen while its rate is typed, even past the flag', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
+    ]);
+    // The typed rate turns out to be below the MINIMUM price, so the line no longer matches
+    // "Below default price". It must stay on screen all the same: it is being typed into.
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: false,
+      is_below_floor: true,
+      is_discounted: true,
+      floor_value: '800.00',
+      floor_level: 'series',
+    });
+    await renderEditing();
+    await chooseFlag('Below default price');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull());
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on A-1' }), {
+      target: { value: '850.00' },
+    });
+    expect(await screen.findByText('Below minimum price', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
+    // Changing the filter lets it go: it no longer matches.
+    await chooseFlag('Non-standard');
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Unit price on A-1' })).toBeNull());
+  });
+
+  it('AC-8: a row whose product is cleared no longer counts as Non-standard', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'Off series', is_non_standard: true }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    await chooseFlag('Non-standard');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull());
+    act(() => {
+      const held = session?.scopes[QUOTATION.id]?.lines ?? [];
+      session?.stageScope(
+        QUOTATION.id,
+        held.map((row) =>
+          row.key === 'l1' ? { ...row, draft: { ...row.draft, product_id: '' } } : row,
+        ),
+      );
+    });
+    // No product: never judged, so nothing to wait for; the stale stored flag no longer counts.
+    // (The row itself stays on screen: it was edited while the filter was on.)
+    fireEvent.click(flagsTrigger());
+    expect(await screen.findByRole('option', { name: /Non-standard.*0/ })).toBeInTheDocument();
+  });
+
+  it('AC-8: opening an edit session (drafts rebuilt, same values) pins nothing', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
+    ]);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const tree = (editing: boolean) => (
+      <QueryClientProvider client={client}>
+        <Harness projectOverrides={{}} editing={editing} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(false));
+    await screen.findByText('A-2');
+    await chooseFlag('Below default price');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByText('A-2')).toBeNull());
+    // Edit: the session seeds every row afresh from the saved lines.
+    rerender(tree(true));
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+    await screen.findByRole('textbox', { name: 'Qty on A-1' });
+    expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull();
+  });
+
+  it('AC-8: the Flags filter narrows the lines, keeps their numbers, and counts each option', async () => {
+    listQuotationLines.mockResolvedValue(FLAGGED_LINES);
+    renderEditor();
+    await screen.findByText('A-4');
+    fireEvent.click(flagsTrigger());
+    // One line each: A-1 below default, A-2 off series, A-3 below minimum.
+    for (const name of ['Non-standard', 'Below default price', 'Below minimum price']) {
+      expect(await screen.findByRole('option', { name: new RegExp(`${name}.*1`) })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole('option', { name: /Below default price/ }));
+    await waitFor(() => expect(shownCodes()).toEqual(['A-1']));
+    expect(itemNumbers()).toEqual(['1']);
+
+    fireEvent.click(screen.getByRole('option', { name: /Non-standard/ }));
+    await waitFor(() => expect(shownCodes()).toEqual(['A-1', 'A-2']));
+    expect(itemNumbers()).toEqual(['1', '2']);
+  });
+
+  it('AC-8: Below minimum price finds the lines under the floor', async () => {
+    listQuotationLines.mockResolvedValue(FLAGGED_LINES);
+    renderEditor();
+    await screen.findByText('A-4');
+    await chooseFlag('Below minimum price');
+    await waitFor(() => expect(shownCodes()).toEqual(['A-3']));
+    expect(itemNumbers()).toEqual(['3']);
+  });
+
+  it('AC-8: the filter and the search narrow together', async () => {
+    listQuotationLines.mockResolvedValue(FLAGGED_LINES);
+    renderEditor();
+    await screen.findByText('A-4');
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search lines by product or description' }),
+      { target: { value: 'off series' } },
+    );
+    await chooseFlag('Non-standard');
+    await chooseFlag('Below default price');
+    await waitFor(() => expect(shownCodes()).toEqual(['A-2']));
+  });
+});
+
+// PROJECT-QUOTE-LINE-TOOLS owner hand test (11 Nov): Undo / Redo on the lines editor, from the
+// price tag designer's shared history (hooks/useUndoHistory.ts).
+describe('QuotationVersionEditor Undo / Redo', () => {
+  const ids = () => stagedBody().map((l) => l.id ?? 'new');
+
+  it('offers no Undo or Redo in view mode', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    renderEditor();
+    await screen.findByText('A-1');
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Redo' })).toBeNull();
+  });
+
+  it('undoes and redoes Duplicate, Insert, Remove, in order', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Redo' })).toBeDisabled();
+
+    await chooseMenuItem('A-1', 'Duplicate line');
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new', 'l2']));
+    await chooseMenuItem('A-2', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new']));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new', 'l2']));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new', 'l2']));
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new']));
+    expect(screen.getByRole('button', { name: 'Redo' })).toBeDisabled();
+    expectNothingWritten();
+  });
+
+  it('Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z work on the grid outside a text field', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    const grid = screen.getByRole('table');
+    fireEvent.keyDown(grid, { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    fireEvent.keyDown(grid, { key: 'z', metaKey: true, shiftKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    fireEvent.keyDown(grid, { key: 'Z', metaKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+  });
+
+  it('inside a text field Cmd/Ctrl+Z is left to the field (its own text undo)', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Unit price on A-2' }), {
+      key: 'z',
+      ctrlKey: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ids()).toEqual(['l2']);
+  });
+
+  it('a change the grid did not make (a column reshape, a restored draft) starts the history afresh', async () => {
+    // A header change restages the reshaped cells from outside the grid (`stageForColumns`); an
+    // Undo across it would bring back cells under keys the server no longer holds.
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled();
+
+    act(() => {
+      const held = session?.scopes[QUOTATION.id]?.lines ?? [];
+      session?.stageScope(
+        QUOTATION.id,
+        held.map((row) => ({ ...row, draft: { ...row.draft, quantity: '4' } })),
+      );
+    });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled());
+    fireEvent.keyDown(screen.getByRole('table'), { key: 'z', ctrlKey: true });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ids()).toEqual(['l2']);
+    expect(stagedBody()[0]).toMatchObject({ quantity: '4' });
+  });
+
+  it('typing one field is one Undo step, not one per keystroke', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    const rate = screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' });
+    for (const value of ['8', '85', '850']) fireEvent.change(rate, { target: { value } });
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '850' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '900.00' }));
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+  });
+
+  it('two separate edits of one rate are two Undo steps (leaving the field ends a step)', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '175.00' })]);
+    await renderEditing();
+    const rate = screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' });
+    fireEvent.focus(rate);
+    fireEvent.change(rate, { target: { value: '199' } });
+    fireEvent.blur(rate);
+    fireEvent.focus(rate);
+    fireEvent.change(rate, { target: { value: '188' } });
+    fireEvent.blur(rate);
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '188' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '199' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '175.00' }));
+  });
+
+  it('Cmd/Ctrl+Z works after clicking an empty part of the grid (focus on the page body)', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    fireEvent.keyDown(document.body, { key: 'z', metaKey: true, shiftKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+  });
+
+  it('Cmd/Ctrl+Z works after a REAL click on the grid background, which focuses the page <main>', async () => {
+    // Crew re-pass: the app layout's <main id="main" tabIndex={-1}> takes focus on a mouse click
+    // on any non-control area, so focus is on a container AROUND the grid, not the body.
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    const main = document.createElement('main');
+    main.id = 'main';
+    main.tabIndex = -1;
+    document.body.appendChild(main);
+    try {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <Harness projectOverrides={{}} editing />
+        </QueryClientProvider>,
+        { container: main.appendChild(document.createElement('div')) },
+      );
+      await screen.findByRole('button', { name: /Add a line/i });
+      await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+      await chooseMenuItem('A-1', 'Remove line');
+      await waitFor(() => expect(ids()).toEqual(['l2']));
+
+      const user = userEvent.setup();
+      // A click on a plain cell area: focus moves to the nearest focusable ancestor, <main>.
+      await user.click(screen.getByRole('table').querySelector('tfoot') ?? screen.getByRole('table'));
+      expect(document.activeElement).toBe(main);
+      await user.keyboard('{Control>}z{/Control}');
+      await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    } finally {
+      main.remove();
+    }
+  });
+
+  it('Cmd/Ctrl+Z on a control outside the grid is not the grid\'s', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    try {
+      await renderEditing();
+      await chooseMenuItem('A-1', 'Remove line');
+      await waitFor(() => expect(ids()).toEqual(['l2']));
+      outside.focus();
+      fireEvent.keyDown(outside, { key: 'z', ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(ids()).toEqual(['l2']);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('a product pick is its own step after typing', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
+      target: { value: '850' },
+    });
+    fireEvent.click(screen.getByRole('combobox', { name: /^Product on / }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+    await waitFor(() => expect(drafts()[0]).toMatchObject({ product_id: 'p9' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(drafts()[0]).toMatchObject({ product_id: 'p-wc', unit_price: '850' }));
   });
 });

@@ -10,6 +10,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.accessory import AccessoryOut
+
 
 class ProductComboPartOut(BaseModel):
     id: str
@@ -26,11 +28,15 @@ class ProductComboPartOut(BaseModel):
     sell_price: Optional[Decimal] = None
     topup_amount: Optional[Decimal] = None
     is_upgrade: bool = False
+    #: COMBO-SETTINGS-UX: the part's editable label ("CABINET"), null = none.
+    label: Optional[str] = None
 
 
 class ProductComboImageOut(BaseModel):
     attachment_id: str
     url: str
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class ProductComboOut(BaseModel):
@@ -39,10 +45,14 @@ class ProductComboOut(BaseModel):
     name: str
     sort_order: int
     description: Optional[str] = None
-    free_items: Optional[str] = None
+    #: COMBO-SETTINGS-UX: the main product's label and the rich-text line repeated once per part.
+    main_label: Optional[str] = None
+    parts_line: Optional[str] = None
     list_price: Optional[Decimal] = None
     sell_price: Optional[Decimal] = None
     parts: List[ProductComboPartOut] = []
+    #: PRICETAG-ACCESSORIES: the combo's own "Free items" list, in order (replaces the free text).
+    accessories: List[AccessoryOut] = []
     #: The combo's own cover picture (S5), null with none uploaded yet.
     image: Optional[ProductComboImageOut] = None
     created_at: datetime
@@ -65,18 +75,36 @@ class ProductSoldWithListOut(BaseModel):
     data: List[ProductSoldWithOut] = []
 
 
+#: Raw input cap before sanitising (the 5000 limit applies to the stored value, in the service).
+RAW_DESCRIPTION_LIMIT = 20000
+
+#: `product_combos.name` is VARCHAR(100) (`app/models/product_combo.py`): a longer name is a 422 here,
+#: not a DB error at commit.
+COMBO_NAME_MAX = 100
+
+#: `product_combo_parts.label` and `product_combos.main_label` are VARCHAR(100).
+LABEL_MAX = 100
+#: Raw cap on `parts_line` before sanitising (the stored value is capped in the service).
+PARTS_LINE_RAW_LIMIT = 20000
+
+
 class ProductComboCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=COMBO_NAME_MAX)
+    #: Sanitised and length-checked in the service (the limit applies to the stored value).
+    description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
 
 
 class ProductComboUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=COMBO_NAME_MAX)
     sort_order: Optional[int] = None
     #: Omitted = left alone, explicit null = cleared (`model_fields_set`).
-    description: Optional[str] = Field(default=None, max_length=5000)
-    free_items: Optional[str] = Field(default=None, max_length=2000)
+    #: Sanitised and length-checked in the service (the limit applies to the stored value).
+    description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
     list_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    #: Omitted = left alone; blank or null clears.
+    main_label: Optional[str] = Field(default=None, max_length=LABEL_MAX)
+    parts_line: Optional[str] = Field(default=None, max_length=PARTS_LINE_RAW_LIMIT)
 
 
 class ProductComboPartCreate(BaseModel):
@@ -97,3 +125,36 @@ class ProductComboPartUpdate(BaseModel):
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     topup_amount: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     is_upgrade: Optional[bool] = None
+    #: Omitted = left alone; blank or null clears.
+    label: Optional[str] = Field(default=None, max_length=LABEL_MAX)
+
+
+class ProductComboCopyIn(BaseModel):
+    """COMBO-COPY-TO-PRODUCTS: the hand-picked products to receive this combo."""
+
+    target_product_ids: List[str] = Field(min_length=1, max_length=500)
+    #: Targets whose same-named combo is replaced; every other conflict is skipped.
+    overwrite_product_ids: List[str] = Field(default_factory=list, max_length=500)
+    #: True = answer the same summary and write nothing (the confirm step).
+    dry_run: bool = False
+
+
+class ProductComboCopyTarget(BaseModel):
+    product_id: str
+    code: str
+    name: str
+
+
+class ProductComboCopySkipped(ProductComboCopyTarget):
+    #: `exists`: has a combo of that name and was not picked to overwrite; `part`: is a part of it.
+    reason: str
+
+
+class ProductComboCopyOut(BaseModel):
+    targets: int
+    created: int
+    overwritten: int
+    skipped: List[ProductComboCopySkipped]
+    #: Every target that already has a combo of that name (overwritten or not).
+    conflicts: List[ProductComboCopyTarget]
+    template_links_copied: bool

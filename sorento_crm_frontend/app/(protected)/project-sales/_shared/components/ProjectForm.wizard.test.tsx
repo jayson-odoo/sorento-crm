@@ -87,6 +87,17 @@ const PARTIES = [
   { id: 'a1', party_type: 'architect', name: 'Arkitek CONTOH', is_active: true },
   { id: 'c1', party_type: 'main_contractor', name: 'Bina CONTOH', is_active: true },
 ];
+// PROJECT-PARTY-ROLES: the party roles are a lookup list (seed order).
+const ROLES = [
+  { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+  { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+  { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+  { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+  { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+  { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+  { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+  { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+];
 const CUSTOMERS = [
   { id: 'cust-1', customer_code: 'C-0001', customer_name: 'Aman Hartanah CONTOH' },
   { id: 'cust-2', customer_code: 'C-0002', customer_name: 'Bestari Dealer CONTOH' },
@@ -149,6 +160,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         );
         return json({ data, pagination: { total: data.length, page: 1, limit: 20 } });
       }
+      if (path.endsWith('/lookup/project_party_role/options')) return json(ROLES);
       if (path.endsWith('/project-sales/parties/') && method === 'GET') {
         const type = url.searchParams.get('party_type');
         const q = (url.searchParams.get('query') ?? '').toLowerCase();
@@ -447,14 +459,67 @@ describe('AC-W2 / AC-W3 no blocking clash', () => {
     expect(screen.queryByRole('button', { name: 'Check' })).toBeNull();
   });
 
-  it('AC-W3 only non-blocking rows also show just "No clash" and Next, with no similar rows', async () => {
+  it('AC-W3 non-blocking rows are listed with code, stage, outcome and owner, and the action is Next', async () => {
     clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
     renderForm();
     await runCheck('Setia Alam Phase 3C CONTOH');
-    expect(await screen.findByText('No clash')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(linesWithText('Existing: PRJ-000010 Setia Alam Phase 3C CONTOH')).toHaveLength(1),
+    );
+    expect(screen.queryByText('No clash')).toBeNull();
+    expect(screen.getByText('Open')).toBeInTheDocument();
+    expect(screen.getByText('Sales B')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
-    expect(screen.queryByText(/Similar project/)).toBeNull();
-    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
+  });
+
+  it('PROJECT-CLASH-LOST a Won and a Lost match follow the clash path: Clash lines, secondary lead, no Next', async () => {
+    // The server blocks on any strong match whatever its outcome (owner hand test, 5 Nov).
+    clashAnswer = () => ({
+      candidates: [
+        { ...SIMILAR, project_id: 'w1', project_code: 'PPF2611001', title: 'test', outcome: 'won',
+          status_label: 'Sponsorship Form', owner_name: 'Teh Jayson', similarity: 1, blocks: true },
+        { ...SIMILAR, project_id: 'l1', project_code: 'PPF2611002', title: 'test', outcome: 'lost',
+          status_label: 'Lost', owner_name: 'Sales B', similarity: 1, blocks: true },
+      ],
+      would_block: true,
+    });
+    renderForm();
+    await runCheck('test');
+    await waitFor(() => expect(linesWithText('Clash: PPF2611001 test')).toHaveLength(1));
+    expect(linesWithText('Clash: PPF2611002 test')).toHaveLength(1);
+    expect(screen.queryByText(/^Existing:/)).toBeNull();
+    expect(screen.queryByText('No clash')).toBeNull();
+    // Stage, outcome and owner as separate items, never joined with a middle dot.
+    for (const fact of ['Sponsorship Form', 'Won', 'Teh Jayson', 'Sales B']) {
+      expect(screen.getByText(fact)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('Lost')).toHaveLength(1); // stage Lost, outcome Lost said once
+    expect(document.body.textContent).not.toContain('\u00b7');
+    expect(
+      await screen.findByRole('button', { name: 'Register as secondary lead on PPF2611001' }),
+    ).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'PPF2611001' })).toHaveAttribute(
+      'href',
+      '/project-sales/w1',
+    );
+  });
+});
+
+describe('PROJECT-CLASH-LOST the secondary-lead request goes to the live pursuit', () => {
+  it('prefers an Open blocker over a Lost one listed before it', async () => {
+    clashAnswer = () => ({
+      candidates: [
+        { ...BLOCKING, project_id: 'l1', project_code: 'PPF2611002', outcome: 'lost', similarity: 1 },
+        { ...BLOCKING, project_id: 'o1', project_code: 'PPF2611003', outcome: 'open', similarity: 0.9 },
+      ],
+      would_block: true,
+    });
+    renderForm();
+    await runCheck('Setia Alam Phase 3B CONTOH');
+    expect(
+      await screen.findByRole('button', { name: 'Register as secondary lead on PPF2611003' }),
+    ).toBeEnabled();
   });
 });
 
@@ -603,7 +668,7 @@ describe('AC-W8 AI extract on step 1', () => {
     await waitFor(() => expect(registerBody()).toBeTruthy());
     expect(registerBody()).toMatchObject({
       developer_party_id: 'd1',
-      architect_party_id: 'a1',
+      party_links: [{ role: 'architect', party_id: 'a1' }],
       state: 'Selangor',
       mukim: 'Petaling',
     });
@@ -622,13 +687,28 @@ describe('AC-W9 edit mode is not a wizard', () => {
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
   });
 
-  it('AC-W9 Check shows the same No clash result and no similar rows', async () => {
-    clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
+  it('AC-W9 Check shows the same result as create: a similar row is listed, its own record is not', async () => {
+    clashAnswer = () => ({
+      candidates: [SIMILAR, { ...SIMILAR, project_id: 'p1', project_code: 'PRJ-000001' }],
+      would_block: false,
+    });
+    renderForm({ mode: 'edit', project: editProject() });
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    await waitFor(() =>
+      expect(linesWithText('Existing: PRJ-000010 Setia Alam Phase 3C CONTOH')).toHaveLength(1),
+    );
+    expect(screen.queryByText('PRJ-000001')).toBeNull();
+    expect(screen.queryByText('No clash')).toBeNull();
+  });
+
+  it('AC-W9 Check in edit mode with only its own record says No clash', async () => {
+    clashAnswer = () => ({
+      candidates: [{ ...SIMILAR, project_id: 'p1', project_code: 'PRJ-000001' }],
+      would_block: false,
+    });
     renderForm({ mode: 'edit', project: editProject() });
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     expect(await screen.findByText('No clash')).toBeInTheDocument();
-    expect(screen.queryByText(/Similar project/)).toBeNull();
-    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
   });
 
   it('AC-W9 Check on a clashing rename shows "Clash: <code> <title>"', async () => {

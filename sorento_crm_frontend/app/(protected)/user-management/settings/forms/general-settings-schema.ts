@@ -35,6 +35,7 @@ export const GeneralSettingsSchema = z.object({
     .optional(),
   supportEmail: z.string().email('Must be a valid email'),
   supportPhone: z.string().nullable().optional(),
+  fax: z.string().nullable().optional(),
   language: z.string(),
   timezone: z.string(),
   currency: z.string(),
@@ -77,12 +78,16 @@ export const GeneralSettingsSchema = z.object({
   borrowFromOrderEnabled: z.boolean(),
   /** Sample requests (SR-CORE): need a registered project / a quotation to submit. Off by default. */
   sampleRequestRequireProject: z.boolean(),
+  /** AC-LINK-CRM-UI: "AutoCount links from Stock Debt", off until tested end to end. */
+  stockDebtPoLinkEnabled: z.boolean(),
   /** Price tag packages (D2): the product classes a line is warned about when it
    *  reaches marketing without its catalogue package. Empty warns nobody, which
    *  is a legitimate answer, so there is no minimum. */
   priceTagGuardedClasses: z.array(z.string()),
   purchaseRequestDefaultApproverUserId: z.string(),
   sponsorshipFormDefaultApproverUserId: z.string(),
+  offSeriesApproverUserId: z.string(),
+  defaultQuotationApproverUserId: z.string(),
 });
 
 export type GeneralSettingsSchemaType = z.infer<typeof GeneralSettingsSchema>;

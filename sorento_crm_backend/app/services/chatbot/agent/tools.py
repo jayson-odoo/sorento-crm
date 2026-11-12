@@ -56,6 +56,8 @@ def _defs(*rows: tuple) -> dict[str, ToolDef]:
 
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
+#: AGENT-QUOTE-COMPARE: local, in process as the user; a project's quotation documents with their lines.
+QUOTATION_LINES = "crm_project_quotation_lines"
 NON_RENDER_TOOLS = frozenset(
     {
         "crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read",
@@ -64,6 +66,7 @@ NON_RENDER_TOOLS = frozenset(
         "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
         "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
         "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
+        QUOTATION_LINES,
     }
 )
 RESOLVE = "crm_resolve"
@@ -79,6 +82,7 @@ PORTED_READS = frozenset(
         "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
         "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
         "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
+        QUOTATION_LINES,
     }
 )
 #: AGENTIC-KNOWLEDGE W1 S4: local, contact principal only. Not in REGISTRY or CONTACT_TOOLS (those
@@ -113,7 +117,8 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_incoming_stock_by_product", "procurement.packing_lists.view", None),
     ("crm_incoming_stock_shipments", "procurement.packing_lists.view", None),
     ("crm_procurement_grn_summary", "procurement.grn.view", "purchase_orders.placed"),
-    ("crm_procurement_po_last_cost_list", "scm.purchase_orders.view", "purchase_orders.cost"),
+    # SUPPLIER-COST-ACCESS: PO cost is for purchasing and management.
+    ("crm_procurement_po_last_cost_list", "products.cost.view", "purchase_orders.cost"),
     ("crm_procurement_po_placed_list", "scm.purchase_orders.view", "purchase_orders.placed"),
     ("crm_procurement_spo_allocations_last_receipt_list", "procurement.spo_allocations.view", "purchase_orders.placed"),
     ("crm_order_management_orders_by_product_list", "order_management.orders.view", None),
@@ -135,6 +140,7 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_projects_list", "projects.projects.view", None, "projects.projects.view_own"),
     ("crm_project_detail", "projects.projects.view", None, "projects.projects.view_own"),
     ("crm_project_quotations_list", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_quotation_lines", "projects.projects.view", None, "projects.projects.view_own"),
     ("crm_project_forecast", "projects.projects.view", None),
     # The sales reveal as well, as `crm_report_ask` asks: the totals are the same figures.
     ("crm_order_analytics", "order_management.orders.view", "sales_orders.sales_report"),
@@ -184,6 +190,13 @@ ENVELOPE_KEYS = ("has_result", "result_type", "items", "answers", "response")
 ROW_KEYS = ("items", "answers", "response", "groups", "summary_items", "drill_rows", "attachments", "action_links")
 FIXED_ERROR = "The tool failed."
 FIXED_NO_ACCESS = "You do not have access to this information."
+#: A panel read the ROUTE refused (crew pass, 5 Nov): specific, and not "do not get this another way", because
+#: `crm_query` reads the records in process as the user under the same rules (the sales report reveal included,
+#: `assistant_registry.query._slugs`), so it is the legitimate way to the user's own figures, not a side door.
+PANEL_ROUTE_REFUSED = (
+    "This tool's route refused the request. Try crm_query, which reads the records as this user under the same "
+    "access rules; if it refuses too, tell the user it is outside their access."
+)
 FIXED_TIMEOUT = "The tool did not answer in time."
 #: What `crm_resolve` may search, the slug the user needs for each kind, and the contact reveal
 #: a kind also needs.
@@ -232,6 +245,7 @@ TOOL_LABELS: dict[str, str] = {
     "crm_projects_list": "the projects list",
     "crm_project_detail": "one project's details",
     "crm_project_quotations_list": "a project's quotations",
+    "crm_project_quotation_lines": "the lines of a project's quotations",
     "crm_project_forecast": "the project pipeline forecast",
     "crm_order_analytics": "order totals and trends",
     "crm_find": "finding the products that fit another product",
@@ -248,6 +262,10 @@ TOOL_LABELS: dict[str, str] = {
     "crm_opportunity_update": "change an opportunity",
     "crm_contacts_find": "finding dealer contacts",
     "crm_contact_access_update": "change a dealer contact",
+    "crm_contact_grant": "grant a dealer contact access",
+    "crm_contact_tags": "add or remove contact tags",
+    "crm_customer_agent": "assign sales agents to customers",
+    "crm_batch_propose": "change many records from a pasted table",
     "crm_purchase_requests_list": "purchase requests and sponsorship forms",
     "crm_purchase_request_decide": "approve or reject a purchase request",
     "crm_purchase_request_action_undo": "take back a purchase request action",
@@ -272,6 +290,9 @@ class ToolResult:
     data: Any = None
     more: int = 0
     message: str = ""
+    #: A block rendered by code for the user (a `crm_query` table), put in the reply verbatim by
+    #: `query_tools.shape_reply`. Never sent to the model: `to_json` leaves it out.
+    display: str | None = None
 
     def to_json(self, call_id: str | None = None) -> str:
         body: dict[str, Any] = {"status": self.status, "data": _round_computed_floats(self.data), "more": self.more, "message": self.message}
@@ -292,6 +313,9 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
             continue
         if tool.name == KNOWLEDGE:
             out.append(copy.deepcopy(KNOWLEDGE_SCHEMA))
+            continue
+        if tool.name == QUOTATION_LINES:
+            out.append(copy.deepcopy(QUOTATION_LINES_SCHEMA))
             continue
         meta = catalog.get(tool.name)
         if not isinstance(meta, dict):
@@ -316,7 +340,9 @@ RESOLVE_SCHEMA: dict[str, Any] = {
         "description": (
             "Turn names and codes (product codes, suppliers, brands, customers, categories, sales "
             "agents) into ids. Call this before any tool that takes an id, and pass only the ids it "
-            "returns. A term comes back found, ambiguous (ask which one) or not_found."
+            "returns. A term comes back found, ambiguous (ask which one) or not_found. It resolves product, "
+            "supplier, brand, customer, category and sales_agent only: find a project with crm_projects_find "
+            "and a complaint with crm_complaints_find."
         ),
         "parameters": {
             "type": "object",
@@ -346,6 +372,33 @@ FIND_SCHEMA: dict[str, Any] = {
                 "query": {"type": "string"},
                 "active_only": {"type": "boolean"},
             },
+        },
+    },
+}
+
+QUOTATION_LINES_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": QUOTATION_LINES,
+        "description": (
+            "A project's quotation documents with their lines. Alone enough to compare them: do not call the "
+            "quotations list first. Per document and scope: version, total, lines (code, description, qty, uom, "
+            "list price, unit price, vs_list, line total, rate_only). vs_list is the unit price against the list "
+            "price in words (\"74.52% below list\", \"12% above list\", \"at list\"). A rate_only line is priced per unit and "
+            "is not in the scope total. refs narrows to a document number or an issued revision (document number, "
+            "a dash, its revision label: PRJQ-2026-0007-B, QT-2026-0003-R1); no match goes in not_found. "
+            "project_id is the open page's project or from crm_projects_find. Show a comparison as one compact "
+            "markdown table: a row per item code, a column per document with qty x unit price (vs_list as given) = line "
+            "total, a totals row, then one sentence on the differences. Never write a bare percent: always with its "
+            "words (below list / above list), and never compute a percent the tool did not give."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "refs": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_TERMS},
+            },
+            "required": ["project_id"],
         },
     },
 }
@@ -427,6 +480,25 @@ ANSWER_SCHEMA: dict[str, Any] = {
                 },
                 "not_checked": {"type": "array", "items": {"type": "string"}},
                 "answered": {"type": "array", "items": {"type": "string"}},
+                "no_tool": {
+                    "type": "array",
+                    "description": (
+                        "Only for a part of the ask you could not do because no tool exists for it: what the "
+                        "user asked, in a few words, and the area of the CRM it belongs to (orders, stock, "
+                        "purchasing, ...). Not for a search that found nothing. Set reason to no_access, not "
+                        "no_tool, when the ask is outside this user's access."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "ask": {"type": "string"},
+                            "area": {"type": "string"},
+                            "reason": {"type": "string", "enum": ["no_tool", "no_access"]},
+                        },
+                        "required": ["ask", "reason"],
+                    },
+                    "maxItems": 5,
+                },
                 "asked_back": {
                     "type": "boolean",
                     "description": (
@@ -661,15 +733,51 @@ def _collect_uuids(data: Any, seen: set[str]) -> None:
         seen.add(data.strip().lower())
 
 
+#: The finder that supplies an id argument that `crm_resolve` cannot search.
+_ID_FINDERS: dict[str, str] = {"project_id": "crm_projects_find", "complaint_id": "crm_complaints_find"}
+
+
+def _id_source(key: str) -> str:
+    return _ID_FINDERS.get(key, "crm_resolve")
+
+
+def _clean_ids(args: dict) -> tuple[dict, ToolResult | None]:
+    """`args` with every id value stripped, or the refusal of a list sent to a single `*_id` argument."""
+    out = dict(args)
+    for key, value in args.items():
+        if key in GUARD_PARAMS:
+            continue
+        if key.endswith("_id"):
+            if isinstance(value, str) and value.strip().startswith("["):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    pass
+            if isinstance(value, (list, tuple)):
+                return out, ToolResult("invalid", message=f"`{key}` takes one id, not a list; call once per id.")
+            if isinstance(value, str):
+                out[key] = value.strip()
+        elif key.endswith("_ids") and isinstance(value, list):
+            out[key] = [v.strip() if isinstance(v, str) else v for v in value]
+    return out, None
+
+
 def _check_ids(args: dict, seen: set[str]) -> ToolResult | None:
     for key, values in _id_args(args).items():
+        source = _id_source(key)
         for value in values:
             if not (isinstance(value, str) and _UUID.match(value.strip())):
                 return ToolResult(
-                    "invalid", message=f"`{key}` takes ids from crm_resolve, not codes or names (`{value}`)."
+                    "invalid", message=f"`{key}` takes ids from {source}, not codes or names (`{value}`)."
                 )
             if value.strip().lower() not in seen:
-                return ToolResult("invalid", message=f"Unknown id in `{key}`; get ids from crm_resolve first.")
+                return ToolResult(
+                    "invalid",
+                    message=(
+                        f"Unknown id in `{key}`; get ids from {source} first (an id shown on the page the user has "
+                        "open also works)."
+                    ),
+                )
     return None
 
 
@@ -687,7 +795,7 @@ def _http_failure(status: int, detail: Any, who: str = "") -> ToolResult:
             # A panel user can be refused although they hold the slug (the shared key's role lacks it): the
             # model gets a plain line, never the route's slug, path or status. The detail goes to the log.
             logger.warning("agent: a route refused a panel read (403) %s: %s", who, clean_detail(detail))
-            return ToolResult("denied", message=FIXED_NO_ACCESS)
+            return ToolResult("denied", message=PANEL_ROUTE_REFUSED)
         # The route refused this contact or user: a denial, not a bad request.
         return ToolResult("denied", message=clean_detail(detail) or "The route refused this request.")
     if 400 <= status < 500:
@@ -808,7 +916,13 @@ def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
 
     unknown = sorted(k for k in args if k not in ("terms", "kinds") and k not in GUARD_PARAMS and k != VIEW_PARAM)
     if unknown:
-        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+        return ToolResult(
+            "invalid",
+            message=(
+                f"Unknown argument(s): {', '.join(map(str, unknown))}. crm_resolve takes `terms` (a list of text) "
+                f"and optionally `kinds` (a list of: {', '.join(KIND_SLUGS)})."
+            ),
+        )
     terms = args.get("terms")
     if not (isinstance(terms, list) and 1 <= len(terms) <= MAX_TERMS and all(isinstance(t, str) and t.strip() for t in terms)):
         return ToolResult("invalid", message=f"terms must be 1 to {MAX_TERMS} non-empty strings.")
@@ -1061,6 +1175,65 @@ def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
     return ToolResult("ok", data={"armed": False, "say": knowledge_service.KNOWLEDGE_MISS_LINE, "refer": True})
 
 
+def _quotation_lines(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
+    """`crm_project_quotation_lines`: the project route's own read, in process as the user."""
+    from app.services.chatbot.agent.quotation_lines import project_quotation_lines
+    from app.services.error_handler import AppException
+
+    unknown = sorted(k for k in args if k not in ("project_id", "refs") and k not in GUARD_PARAMS and k != VIEW_PARAM)
+    if unknown:
+        return ToolResult(
+            "invalid",
+            message=f"Unknown argument(s): {', '.join(map(str, unknown))}. This tool accepts: project_id, refs.",
+        )
+    args, bad_shape = _clean_ids(args)
+    if bad_shape is not None:
+        return bad_shape
+    if not (isinstance(args.get("project_id"), str) and args["project_id"]):
+        return ToolResult("invalid", message="project_id is required: the open page's project or one from crm_projects_find.")
+    refs = args.get("refs")
+    if refs is not None and not (isinstance(refs, list) and len(refs) <= MAX_TERMS and all(isinstance(r, str) for r in refs)):
+        return ToolResult("invalid", message=f"refs must be a list of up to {MAX_TERMS} document or revision numbers.")
+    bad_id = _check_ids({"project_id": args["project_id"]}, seen)
+    if bad_id is not None:
+        return bad_id
+    from fastapi import HTTPException
+
+    from app.api.v1.projects._own_scope import PREFIX, check
+    from app.dependencies import _load_user_dict_from_db
+    from app.services.chatbot.agent.writes import _module_open
+
+    project_id = args["project_id"].lower()
+    try:
+        user = _load_user_dict_from_db(db, str(ctx.user_id))
+        if user is None:
+            return ToolResult("denied", message=f"{QUOTATION_LINES} is outside this user's access.")
+        try:
+            _module_open(user, db, "projects")
+        except HTTPException:
+            return ToolResult("denied", message=f"{QUOTATION_LINES} is outside this user's access.")
+        try:  # the project router's "only theirs" guard, which a direct call skips
+            check(db, str(user["id"]), "GET", PREFIX + "/projects/{project_id}/quotations", {"project_id": project_id})
+        except HTTPException:
+            return ToolResult("invalid", message="Project not found.")
+        data, more = project_quotation_lines(db, project_id, refs or [], RESULT_CHAR_CAP)
+    except AppException as exc:  # the route's own refusal (404 for another company's project)
+        message = exc.detail.get("message") if isinstance(exc.detail, dict) else None
+        return ToolResult("invalid", message=str(message or "Project not found."))
+    except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
+        logger.warning("agent: %s failed", QUOTATION_LINES, exc_info=True)
+        try:
+            db.rollback()  # a failed statement leaves the transaction unusable
+        except Exception:  # noqa: BLE001
+            pass
+        return ToolResult("error", message=FIXED_ERROR)
+    message = (
+        f"{more} lines or documents did not fit and are left out (lines_not_shown per scope, documents_not_shown); "
+        "ask for one document with refs." if more else ""
+    )
+    return ToolResult("ok", data=data, more=more, message=message)
+
+
 def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
     """`crm_knowledge_search`: passages of uploaded documents for the turn's linked user, in process."""
     from app.services import knowledge_service
@@ -1091,8 +1264,8 @@ def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
 
 DENIED_TAIL = "Do not get this information another way."
 SALES_BASIS_MESSAGE = (
-    "Say which sales basis: ask the user (invoiced is the usual one) or call once per basis "
-    "(invoiced, delivered, ordered) and label each."
+    "Say which sales basis. No basis named by the user: sales are invoiced (owner rule), so call again with "
+    "basis=invoiced; delivered or ordered only when the user names it. One basis per answer."
 )
 #: Bases that are not sales figures: they need no sales basis, and are their own data domain.
 OUTSTANDING_BASES = frozenset({"outstanding", "pending_delivery", "unpaid"})
@@ -1136,7 +1309,7 @@ def dispatch(
     if out.status == "denied":
         if domain is not None:
             domains.add(domain)
-        if DENIED_TAIL not in out.message:
+        if DENIED_TAIL not in out.message and out.message != PANEL_ROUTE_REFUSED:
             out.message = f"{out.message.rstrip()} {DENIED_TAIL}".strip()
     return out
 
@@ -1211,6 +1384,8 @@ def _dispatch_inner(
         return _find_products(db, args, seen)
     if tool.name == KNOWLEDGE:
         return _knowledge_search(db, ctx, args)
+    if tool.name == QUOTATION_LINES:
+        return _quotation_lines(db, ctx, args, seen)
     meta = catalog.get(name)
     if not isinstance(meta, dict):
         return ToolResult("error", message=f"{name} is not available right now.")
@@ -1225,7 +1400,14 @@ def _dispatch_inner(
             return ToolResult("invalid", message="query must be the guide's name or a question, as text.")
     unknown = sorted(k for k in args if k not in allowed)
     if unknown:
-        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+        accepted = ", ".join(sorted(allowed - set(GUARD_PARAMS) - {VIEW_PARAM}))
+        return ToolResult(
+            "invalid",
+            message=f"Unknown argument(s): {', '.join(map(str, unknown))}. This tool accepts: {accepted or 'no arguments'}.",
+        )
+    args, bad_shape = _clean_ids(args)
+    if bad_shape is not None:
+        return bad_shape
 
     if name == "crm_report_ask":
         args = {k: v for k, v in args.items() if not (k in _gated_keys() and v is None)}

@@ -33,6 +33,7 @@ from typing import Iterable, Optional, Sequence
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.tag_rich_text import plain_text
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
 from app.utils.product_display import distinct_name
@@ -40,10 +41,16 @@ from app.services.dealer_kit.pricing import (
     DEFAULT_CURRENCY,
     combo_for_host,
     combo_prices,
-    free_part_ids,
     resolve_prices,
 )
 from app.services.dealer_kit.product_images import gallery_images
+from app.services.accessory_service import (
+    combo_tag_accessories,
+    entry_text,
+    names_text,
+    box_style_for,
+    product_tag_accessories,
+)
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.product_spec_registry import display_spec_value
 
@@ -117,12 +124,27 @@ def format_dimensions_mm(length, width, height) -> Optional[str]:
     parts = [length, width, height]
     if not any(part is not None for part in parts):
         return None
+    return " x ".join(_dimension_number(part) for part in parts) + " mm"
+
+
+def _dimension_number(part) -> str:
+    """One measurement as printed (``-`` when missing); the number rule `format_dimensions_mm`
+    documents, shared with `format_dimensions_lwh`."""
+    return "-" if part is None else f"{Decimal(str(part)).normalize():f}"
+
+
+def format_dimensions_lwh(length, width, height) -> str:
+    """The flyer's ``L780xW480xH400mm`` form, or ``""`` when no dimension is recorded.
+
+    Same numbers, trailing-zero rule and ``-`` for a single missing dimension as
+    `format_dimensions_mm` (``L800xW-xH700mm``).
+    """
+    if length is None and width is None and height is None:
+        return ""
     return (
-        " x ".join(
-            "-" if part is None else f"{Decimal(str(part)).normalize():f}"
-            for part in parts
-        )
-        + " mm"
+        f"L{_dimension_number(length)}x"
+        f"W{_dimension_number(width)}x"
+        f"H{_dimension_number(height)}mm"
     )
 
 
@@ -256,7 +278,7 @@ def _spec_display_value(raw, value_labels: Optional[dict] = None) -> str:
     return display_spec_value(raw, value_labels, title_case=True)
 
 
-def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
+def product_specs(db: Session, product: Product, spec_row=None, registry=None) -> list[dict]:
     """The product's reviewed specs, key by key, for `{{spec.<key>}}` (D58).
 
     `spec_lines` has always carried the rendered spec SENTENCE, which is one
@@ -279,7 +301,8 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
         return []
 
     specs: list[dict] = []
-    for key in active_registry(db):
+    # `registry`: the active keys, read once by a caller building many products' specs.
+    for key in registry if registry is not None else active_registry(db):
         if key.spec_key not in values:
             continue
         stored = values[key.spec_key]
@@ -294,13 +317,36 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
                 "label": key.label,
                 "value": _spec_display_value(raw, key.value_labels),
                 "unit": key.unit,
+                # Feature icons match on the STORED value, never the label (contract B4). A
+                # numeric key reads through the same normaliser its icon values are keyed on, so a
+                # legacy "150.0" string still matches "150".
+                "raw": _numeric_raw(raw) if key.data_type == "numeric" else _spec_raw_text(raw),
             }
         )
     return specs
 
 
-def dimensions_text(product: Product, spec_row=None) -> str:
-    """Dimensions from the reviewed spec values, else from the product master.
+def _numeric_raw(raw) -> str:
+    """A numeric key's raw text: normalised when it reads as a number, else as stored."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    return numeric_value_text(raw) or _spec_raw_text(raw)
+
+
+def _spec_raw_text(raw) -> str:
+    """A stored spec value as text: a bool reads `true` / `false`, a whole number with no ".0"
+    (150.0 -> "150", so it matches the value an icon is set on), anything else `str()`."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    if isinstance(raw, bool):
+        return "true" if raw else "false"
+    if isinstance(raw, (int, float)):
+        return numeric_value_text(raw) or str(raw)
+    return str(raw)
+
+
+def _measured_dimensions(product: Product, spec_row=None) -> tuple:
+    """(length, width, height) from the reviewed spec values, else from the product master.
 
     The spec values win because they are what somebody checked against the
     printed flyer; the master columns are an import and are wrong often enough
@@ -314,16 +360,23 @@ def dimensions_text(product: Product, spec_row=None) -> str:
             for key in _SPEC_DIMENSION_KEYS
         ]
         if any(value is not None for value in measured):
-            return format_dimensions_mm(*measured) or ""
+            return tuple(measured)
 
     return (
-        format_dimensions_mm(
-            product.dimensions_length,
-            product.dimensions_width,
-            product.dimensions_height,
-        )
-        or ""
+        product.dimensions_length,
+        product.dimensions_width,
+        product.dimensions_height,
     )
+
+
+def dimensions_text(product: Product, spec_row=None) -> str:
+    """Dimensions from the reviewed spec values, else from the product master."""
+    return format_dimensions_mm(*_measured_dimensions(product, spec_row)) or ""
+
+
+def dimensions_lwh_text(product: Product, spec_row=None) -> str:
+    """`dimensions_text`'s measurements in the flyer's ``L780xW480xH400mm`` form."""
+    return format_dimensions_lwh(*_measured_dimensions(product, spec_row))
 
 
 # ---------------------------------------------------------------------------
@@ -338,8 +391,12 @@ def product_tag_data(
     promotion_id: Optional[str] = None,
     *,
     with_images: bool = True,
+    with_variants: bool = True,
+    excluded_variant_ids: Optional[list] = None,
 ) -> dict:
     """Everything a product block draws, for THIS viewer, right now."""
+    from app.services.dealer_kit.variant_service import tag_variants
+
     spec_row = _spec_row(db, product)
     prices = resolve_prices(db, [product], viewer, promotion_id).get(product.id)
 
@@ -348,6 +405,7 @@ def product_tag_data(
         "code": product.product_code or "",
         "name": product.product_name or "",
         "dimensions": dimensions_text(product, spec_row),
+        "dimensions_lwh": dimensions_lwh_text(product, spec_row),
         "spec_lines": spec_lines(db, product, spec_row),
         # Key by key, beside the rendered sentence: `{{spec.material}}` asks a
         # question `spec_lines` cannot answer (D58).
@@ -355,6 +413,8 @@ def product_tag_data(
         # S4: staff-authored tag copy. Absent (None) renders nothing (Q5) -
         # no fallback to spec_lines/description.
         "price_tag_description": product.price_tag_description or None,
+        # SPEC-SHEET-DESIGNER-PARITY: the plain catalogue description, for {{product.description}}.
+        "description": product.description or None,
         "images": gallery_images(db, product, viewer) if with_images else [],
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,
@@ -367,6 +427,13 @@ def product_tag_data(
         # `resolve_prices` already defaults it - a text layer prints the bare
         # figure now (Slice A), so the currency has to travel as its own field.
         "currency": prices.currency if prices else DEFAULT_CURRENCY,
+        # PRICETAG-ACCESSORIES: the product's OWN list, in order (an Ala Carte tag prints it).
+        "accessories": product_tag_accessories(db, product.id, viewer),
+        # PRICETAG-ACCESSORY-DESIGNER S6: this product's own box style, or None.
+        "accessory_box_style": box_style_for(db, product_id=product.id),
+        # PRICETAG-UPGRADE-VARIANTS S3: the live members of its variant tree, for a feature icons
+        # layer on "All variants"; a line leaves out the members it unticked.
+        "variants": tag_variants(db, product.id, excluded_variant_ids) if with_variants else [],
     }
 
 
@@ -698,7 +765,8 @@ def _part_row(
     prints.
     """
     if product.id not in cache:
-        cache[product.id] = product_tag_data(db, product, viewer, promotion_id)
+        # A part row never carries `variants` (only the line's own product reads "All variants").
+        cache[product.id] = product_tag_data(db, product, viewer, promotion_id, with_variants=False)
     data = cache[product.id]
     return {
         # The id rides along so a caller can match a part back to the choice that
@@ -708,6 +776,7 @@ def _part_row(
         "code": data["code"],
         "name": data["name"],
         "dimensions": data["dimensions"],
+        "dimensions_lwh": data["dimensions_lwh"],
         "spec_lines": data["spec_lines"],
         "specs": data["specs"],
         "images": data["images"],
@@ -718,6 +787,11 @@ def _part_row(
         "currency": data["currency"],
         # AC-S4-4: this part's OWN product's tag copy, not the host's.
         "price_tag_description": data["price_tag_description"],
+        # {{product.description}} on a part: this part's OWN product's catalogue description.
+        "description": data.get("description"),
+        # PRICETAG-ACCESSORIES: a layer pointed at this position reads this product's own list.
+        "accessories": data.get("accessories") or [],
+        "accessory_box_style": data.get("accessory_box_style"),
     }
 
 
@@ -803,6 +877,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
 
         # D1/S9: the promotion is a LINE fact now, not the request's.
         promotion_id = line.promotion_id
+        # PRICETAG-LPSP: LP or SP is the line's own fact; none stored = the header's mode.
+        line_mode = line.price_type or request.price_mode
 
         if line.id not in line_data:
             line_data[line.id] = _line_product_data(db, line, viewer, promotion_id)
@@ -825,7 +901,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         part_rows = [
             _part_row(
                 db, product, viewer, promotion_id, parts_cache,
-                price_mode=request.price_mode,
+                price_mode=line_mode,
             )
             for product in part_products
         ]
@@ -835,7 +911,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # `set_members` below still reads.
         combo_rows = _combo_products(
             db, line, tag, viewer, promotion_id, parts_cache,
-            price_mode=request.price_mode,
+            price_mode=line_mode,
         )
 
         # D4. A tag with no parts is exactly today's product tag: the sums below
@@ -864,22 +940,9 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             # The selling side takes the engine's offer where it HAS one and the
             # list price where it does not: an offer the engine cannot answer for
             # is not a discount, it is simply the price.
-            # AC-2.7: on a combo line a part the promotion lists at RM 0 is free.
-            free_ids = (
-                free_part_ids(
-                    db, [product.id for product in part_products], viewer, promotion_id
-                )
-                if line.combo_id
-                else set()
-            )
             sell_price = _sum_prices(
                 [sell_price if sell_price is not None else data["list_price"]]
-                + [
-                    Decimal("0")
-                    if product.id in free_ids
-                    else _offer_or_list(part_prices.get(product.id))
-                    for product in part_products
-                ]
+                + [_offer_or_list(part_prices.get(product.id)) for product in part_products]
             )
             package_text = _package_text(part_rows, open_groups)
             if package_text:
@@ -887,18 +950,22 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         elif open_groups:
             set_members = _package_text([], open_groups)
 
-        # PRICETAG-COMBO AC-2.4: the combo's own price replaces the sum, below a
-        # hand-typed line price and the tag override.
+        # PRICETAG-COMBO-RENDER K8: a combo line prints the combo's stored price or
+        # nothing, never the sum of its parts (a typed price and the override still win).
         combo_row = _line_combo(db, line, combo_cache)
         combo_obj = None
+        slots = None
         if combo_row is not None:
             picked_ids = {product.id for product in part_products}
             combo_obj = _combo_object(db, combo_row, picked_ids, viewer)
             combo_list, combo_sell, sell_decided = combo_prices(combo_row, picked_ids)
-            if combo_list is not None:
-                list_price = combo_list
-            if sell_decided:
-                sell_price = combo_sell
+            list_price = combo_list
+            sell_price = combo_sell if sell_decided else None
+        if not line.product_set_id:
+            slots = _line_slots(
+                db, line, tag, combo_row, viewer, promotion_id, parts_cache,
+                price_mode=line_mode,
+            )
 
         # D3/AC-S9-3: a hand-typed line price wins over the engine's sum, the
         # same as it does at save time (S7's `line_pricing`).
@@ -932,13 +999,17 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # ONE covered candidate would otherwise read the answer for a
         # sibling that resolved the uncovered one, and a promotion that
         # expires between save and read would keep printing SP forever.
-        show_promo_price = request.price_mode == "selling" and sell_price_basis != "list"
+        show_promo_price = line_mode == "selling" and sell_price_basis != "list"
 
         # The override is a SELLING price and wins over the engine's sum. It
         # never rewrites what the package LISTS at - the tag still shows what the
         # customer is saving against.
         if tag.marketing_price_override is not None:
             sell_price = Decimal(str(tag.marketing_price_override))
+
+        accessories = combo_obj["accessories"] if combo_obj is not None else data["accessories"]
+        # S6: the style follows the list: a combo line the combo's own, an Ala Carte line the product's.
+        box_style = combo_obj["accessory_box_style"] if combo_obj is not None else data.get("accessory_box_style")
 
         rows.append(
             {
@@ -967,21 +1038,160 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "parent_sell_price": parent_sell_price,
                 "sell_price_basis": sell_price_basis,
                 "show_promo_price": show_promo_price,
-                # AC-2.3: the line's own text wins; blank reads the combo's free items.
-                "included_accessories": line.included_accessories
-                or (combo_obj or {}).get("free_items")
-                or "",
+                # PRICETAG-ACCESSORIES (owner Q1/Q5): a combo line prints the COMBO's list,
+                # an Ala Carte line its product's; the old free text is never read.
+                "accessories": accessories,
+                "accessory_box_style": box_style,
+                # PRICETAG-UPGRADE-VARIANTS S3: the line product's live, ticked variant members.
+                "variants": data.get("variants") or [],
+                "included_accessories": names_text(accessories),
                 "combo": combo_obj,
+                "slots": slots,
                 # The TAG's own quantity, seeded from the line's at submit and
                 # marketing's to change afterwards.
                 "quantity": tag.quantity,
                 "barcode": barcode,
                 "currency": data["currency"],
                 "price_tag_description": price_tag_description,
+                # {{product.description}}: the line product's catalogue description (None on a set).
+                "description": data.get("description"),
             }
         )
 
     return rows
+
+
+def _slots_dict(main: Optional[dict], fixed: list, groups: list, upgrades: list) -> dict:
+    return {"main": main, "fixed": fixed, "groups": groups, "upgrades": upgrades}
+
+
+def _combo_choice_groups(combo) -> dict[str, int]:
+    """The combo's choice groups in part order: group name -> number of options."""
+    from app.services.dealer_kit.template_needs import combo_shape
+
+    return {group["role"]: group["size"] for group in combo_shape(combo)["groups"]}
+
+
+def _combo_upgrade_parts(combo) -> list:
+    return [
+        part
+        for part in (combo.parts or [])
+        if part.part_product is not None and part.is_upgrade
+    ]
+
+
+def _line_slots(
+    db: Session,
+    line,
+    tag,
+    combo_row,
+    viewer: ViewerContext,
+    promotion_id,
+    cache: dict,
+    *,
+    price_mode: str = "selling",
+) -> Optional[dict]:
+    """PRICETAG-COMBO-RENDER K2: where each product of this tag sits.
+
+    ``fixed`` = the line's resolved parts with no role, ``groups`` = one entry
+    per choice group with the picks in pick order, ``upgrades`` = the combo's
+    upgrades with ``chosen`` set on the one the line picked. None when the
+    line has neither parts nor a combo.
+    """
+    from app.models.product import Product
+
+    chosen_by_role = dict(tag.choices or {})
+    placed: list[tuple[str, str]] = []  # (role, product id) in line part order
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        role = part.role or ""
+        if part.product_id:
+            placed.append((role, str(part.product_id)))
+        elif role in chosen_by_role:
+            placed.append((role, str(chosen_by_role[role])))
+    if not placed and combo_row is None:
+        return None
+
+    upgrade_parts = _combo_upgrade_parts(combo_row) if combo_row is not None else []
+    upgrade_ids = {part.part_product_id for part in upgrade_parts}
+    wanted = {product_id for _, product_id in placed}
+    host = db.query(Product).filter(Product.id == line.product_id).first()
+    products = (
+        {p.id: p for p in db.query(Product).filter(Product.id.in_(wanted)).all()}
+        if wanted
+        else {}
+    )
+
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
+    pick_roles = pick_one_groups(combo_row.parts) if combo_row is not None else None
+
+    def row(product) -> dict:
+        return dict(_part_row(db, product, viewer, promotion_id, cache, price_mode=price_mode))
+
+    fixed: list[dict] = []
+    picks_by_role: dict[str, list[dict]] = {}
+    picked_upgrade_ids: set[str] = set()
+    for role, product_id in placed:
+        product = products.get(product_id)
+        if product is None:
+            continue
+        if role == "Upgrade" or product_id in upgrade_ids:
+            picked_upgrade_ids.add(product_id)
+        elif not role or (pick_roles is not None and role not in pick_roles):
+            # A one-part group is a fixed part (COMBO-SETTINGS-UX owner round 1).
+            fixed.append(row(product))
+        else:
+            picks_by_role.setdefault(role, []).append(row(product))
+
+    if combo_row is not None:
+        group_sizes = _combo_choice_groups(combo_row)
+    else:
+        group_sizes = {role: len(picks) for role, picks in picks_by_role.items()}
+    groups = [
+        {"role": role, "size": size, "picks": picks_by_role.get(role, [])}
+        for role, size in group_sizes.items()
+    ]
+    # PRICETAG-UPGRADE-VARIANTS S1: an upgrade row carries its part's top-up.
+    upgrades = [
+        {
+            **row(part.part_product),
+            "chosen": part.part_product_id in picked_upgrade_ids,
+            "topup_amount": part.topup_amount,
+        }
+        for part in upgrade_parts
+    ]
+    return _slots_dict(row(host) if host is not None else None, fixed, groups, upgrades)
+
+
+def _preview_slots(db: Session, combo, host) -> dict:
+    """The template editor's preview of a combo: fixed parts, every option of each
+    group in combo order, every upgrade (AC-A6)."""
+    viewer = staff_viewer()
+    cache: dict = {}
+
+    def row(product) -> dict:
+        return dict(_part_row(db, product, viewer, None, cache))
+
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
+    choices = pick_one_groups(combo.parts)
+    fixed: list[dict] = []
+    picks: dict[str, list[dict]] = {}
+    upgrades: list[dict] = []
+    for part in combo.parts or []:
+        product = part.part_product
+        if product is None:
+            continue
+        if part.is_upgrade:
+            upgrades.append({**row(product), "chosen": False, "topup_amount": part.topup_amount})
+        elif part.choice_group in choices:
+            picks.setdefault(part.choice_group, []).append(row(product))
+        else:
+            fixed.append(row(product))
+    groups = [
+        {"role": role, "size": len(items), "picks": items} for role, items in picks.items()
+    ]
+    return _slots_dict(row(host), fixed, groups, upgrades)
 
 
 def _tag_sell_price_basis(
@@ -1057,6 +1267,9 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
     `picked` follows the dealer's line part or the tag's choices (`picked_ids`)."""
     parts = [part for part in (combo.parts or []) if part.part_product is not None]
     views = resolve_prices(db, [part.part_product for part in parts], viewer, None)
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
+    choices = pick_one_groups(parts)
     groups: dict[str, list[dict]] = {}
     upgrades: list[dict] = []
     for part in parts:
@@ -1072,7 +1285,7 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
                     "picked": picked,
                 }
             )
-        elif part.choice_group:
+        elif part.choice_group in choices:
             view = views.get(product.id)
             groups.setdefault(part.choice_group, []).append(
                 {
@@ -1084,11 +1297,22 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
                     "picked": picked,
                 }
             )
+    # PRICETAG-ACCESSORIES: the combo's own list (never the host's), and `free_items` is now
+    # built from it, so the `combo.free_items` merge field and the data-change diff keep working.
+    accessories = combo_tag_accessories(db, combo.id, viewer)
     return {
         "id": combo.id,
         "name": combo.name,
         "description": combo.description,
-        "free_items": combo.free_items,
+        "main_label": combo.main_label,
+        "parts_line": combo.parts_line,
+        # Every labelled part (fixed, option or upgrade), by product id.
+        "part_labels": {
+            part.part_product_id: part.label for part in parts if (part.label or "").strip()
+        },
+        "free_items": names_text(accessories),
+        "accessories": accessories,
+        "accessory_box_style": box_style_for(db, combo_id=combo.id),
         "choices": [{"role": role, "options": options} for role, options in groups.items()],
         "upgrades": upgrades,
     }
@@ -1133,19 +1357,21 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
     from app.services.uuid_path_param import validate_uuid_path
 
     if not combo_id:
-        return {**data, "combo": None}
+        return {**data, "combo": None, "slots": None}
     combo_id = validate_uuid_path(combo_id, resource="Combo")
     combo = combo_for_host(db, combo_id, product.id, {product.id: product})
     if combo is None:
         raise AppException(status_code=404, message="Combo not found.", code="NOT_FOUND")
-    # The price the combo would print with nothing picked (AC-5.3); blank stays the host's.
+    # The price the combo would print with nothing picked (AC-5.3).
     combo_list, combo_sell, sell_decided = combo_prices(combo, set())
     return {
         **data,
-        "list_price": combo_list if combo_list is not None else data.get("list_price"),
-        "offer_price": combo_sell if sell_decided else data.get("offer_price"),
+        # The tag prints the combo's stored price or nothing (K8); the preview shows the same.
+        "list_price": combo_list,
+        "offer_price": combo_sell if sell_decided else None,
         "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
         "combo": _combo_object(db, combo, set(), staff_viewer()),
+        "slots": _preview_slots(db, combo, product),
     }
 
 
@@ -1247,16 +1473,23 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             # A set has no price_tag_description of its own - same rule as
             # barcode above (S7).
             "price_tag_description": None,
+            "description": None,
             "set_members": _set_member_text(data["members"]),
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
             "currency": data["currency"],
+            "accessories": [],
+            "accessory_box_style": None,
+            "variants": [],
         }
     if line.product_id:
         product = get_product(db, line.product_id)
         if product is None:
             return None
-        data = product_tag_data(db, product, viewer, promotion_id)
+        data = product_tag_data(
+            db, product, viewer, promotion_id,
+            excluded_variant_ids=getattr(line, "excluded_variant_ids", None),
+        )
         return {
             "code": data["code"],
             "name": data["name"],
@@ -1266,10 +1499,14 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "images": _combo_lead_image(db, line, data["images"]),
             "barcode": data["barcode"],
             "price_tag_description": data["price_tag_description"],
+            "description": data.get("description"),
             "set_members": "",
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
             "currency": data["currency"],
+            "accessories": data["accessories"],
+            "accessory_box_style": data.get("accessory_box_style"),
+            "variants": data["variants"],
         }
     return None
 
@@ -1526,6 +1763,7 @@ def resolve_request_line_data(
             if not terminal:
                 live = live_rows.get(tag.id)
                 if live is not None:
+                    _fill_missing_spec_raw(row, live)
                     if line.promotion_id not in promotion_live_by_id:
                         promotion_live_by_id[line.promotion_id] = _promotion_is_live(
                             db, line.promotion_id
@@ -1560,6 +1798,51 @@ def resolve_request_line_data(
         apply_auto_data_updates(db, request, to_apply, user_id=user_id)
 
     return rows
+
+
+def _fill_missing_spec_raw(row: dict, live: dict) -> None:
+    """Give a pin taken before `raw` existed the raw spec values, from the live row by key.
+
+    Feature icons match on `raw`; a deploy-day pin carries only the display `value`. Filled in
+    place on the host, every part and every combo position, matched by product id. A spec the
+    pin carries with its own `raw` is left alone, and nothing else on the pin changes.
+    """
+
+    def raw_by_key(specs) -> dict:
+        return {s.get("key"): s["raw"] for s in specs or [] if isinstance(s, dict) and "raw" in s}
+
+    def fill(target: Optional[dict], raws: dict) -> None:
+        if not isinstance(target, dict) or not raws:
+            return
+        specs = target.get("specs")
+        if not specs:
+            return
+        target["specs"] = [
+            {**s, "raw": raws[s.get("key")]}
+            if isinstance(s, dict) and "raw" not in s and s.get("key") in raws
+            else s
+            for s in specs
+        ]
+
+    def positions(source: dict) -> list:
+        slots = source.get("slots") or {}
+        return [
+            *(source.get("parts") or []),
+            *(source.get("own_parts") or []),
+            *([slots["main"]] if slots.get("main") else []),
+            *(slots.get("fixed") or []),
+            *(pick for group in slots.get("groups") or [] for pick in group.get("picks") or []),
+            *(slots.get("upgrades") or []),
+        ]
+
+    fill(row, raw_by_key(live.get("specs")))
+    live_parts: dict = {}
+    for part in positions(live):
+        if isinstance(part, dict) and part.get("product_id"):
+            live_parts.setdefault(part["product_id"], raw_by_key(part.get("specs")))
+    for part in positions(row):
+        if isinstance(part, dict):
+            fill(part, live_parts.get(part.get("product_id"), {}))
 
 
 def resolve_version_line_data(db: Session, request, pinned_line_data: dict) -> list[dict]:
@@ -1614,12 +1897,28 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     # a design opened a day after the pin draws a dead link.
     if pinned.get("parts"):
         row["parts"] = [
-            {**part, "images": resign_images(db, part.get("images") or [])}
+            {
+                **part,
+                "images": resign_images(db, part.get("images") or []),
+                **(
+                    {"accessories": _resign_accessories(db, part.get("accessories") or [])}
+                    if "accessories" in part
+                    else {}
+                ),
+            }
             for part in pinned["parts"]
         ]
     if pinned.get("own_parts"):
         row["own_parts"] = [
-            {**part, "images": resign_images(db, part.get("images") or [])}
+            {
+                **part,
+                "images": resign_images(db, part.get("images") or []),
+                **(
+                    {"accessories": _resign_accessories(db, part.get("accessories") or [])}
+                    if "accessories" in part
+                    else {}
+                ),
+            }
             for part in pinned["own_parts"]
         ]
     elif "own_parts" not in pinned:
@@ -1628,7 +1927,13 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
         # kept as pinned rather than reprocessed, so `set_members`/Tag total
         # keep reading the right thing.
         row["own_parts"] = pinned.get("parts") or []
+    row["slots"] = _slots_from_pin(
+        tag, pinned.get("slots"), pinned.get("parts") or [], lambda images: resign_images(db, images)
+    )
+    row["slots"] = _resign_slot_accessories(db, row["slots"])
     row["quantity"] = tag.quantity
+    # S6: the pinned box style travels with the pinned list; a row pinned before it reads None.
+    row["accessory_box_style"] = pinned.get("accessory_box_style")
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
     # line can resolve two different candidates where only one is covered,
@@ -1639,12 +1944,120 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     # column that answers a different question.
     # PRICETAG-COMBO: a payload pinned before the combo fields has no `combo` key.
     row["combo"] = _combo_with_picks(pinned.get("combo"), line, tag)
-    row["included_accessories"] = (
-        line.included_accessories or (row["combo"] or {}).get("free_items") or ""
-    )
+    if isinstance(row["combo"], dict):
+        row["combo"].setdefault("accessory_box_style", None)
+        row["combo"].setdefault("main_label", None)
+        row["combo"].setdefault("parts_line", None)
+        row["combo"].setdefault("part_labels", {})
+    # PRICETAG-ACCESSORIES (A9): the pinned list, pictures re-signed. A row pinned before the
+    # list existed carries none and keeps the text it was pinned with.
+    if "accessories" in pinned:
+        row["accessories"] = _resign_accessories(db, pinned.get("accessories") or [])
+        row["included_accessories"] = names_text(row["accessories"])
+        if row["combo"] and "accessories" in row["combo"]:
+            row["combo"] = {
+                **row["combo"],
+                "accessories": _resign_accessories(db, row["combo"].get("accessories") or []),
+            }
+    else:
+        row["accessories"] = []
+        row["included_accessories"] = pinned.get("included_accessories") or ""
     if tag.marketing_price_override is not None:
         row["sell_price"] = Decimal(str(tag.marketing_price_override))
     return row
+
+
+def _resign_accessories(db: Session, accessories: list) -> list:
+    """Pinned accessories with a fresh signed picture link (a signed URL dies within the hour);
+    a picture whose attachment has gone is dropped, the accessory stays."""
+    from app.services.accessory_service import image_of
+
+    out = []
+    for item in accessories:
+        image = item.get("image") or None
+        fresh = image_of(db, image.get("attachment_id")) if image else None
+        images = []
+        for picture in item.get("images") or []:
+            signed = image_of(db, picture.get("attachment_id"))
+            if signed is not None:
+                images.append(
+                    {
+                        **signed,
+                        "colour_name": picture.get("colour_name"),
+                        "colour_hex": picture.get("colour_hex"),
+                    }
+                )
+        out.append(
+            {
+                **item,
+                "remark": item.get("remark"),
+                "image": fresh,
+                "images": images,
+                "colours": item.get("colours") or [],
+            }
+        )
+    return out
+
+
+def _resign_slot_accessories(db: Session, slots: Optional[dict]) -> Optional[dict]:
+    """Every position's own accessory pictures re-signed, like its photos."""
+    if not slots:
+        return slots
+
+    def fresh(part):
+        if not part or "accessories" not in part:
+            return part
+        return {**part, "accessories": _resign_accessories(db, part.get("accessories") or [])}
+
+    return {
+        **slots,
+        "main": fresh(slots.get("main")),
+        "fixed": [fresh(part) for part in slots.get("fixed") or []],
+        "groups": [
+            {**group, "picks": [fresh(part) for part in group.get("picks") or []]}
+            for group in slots.get("groups") or []
+        ],
+        "upgrades": [fresh(part) for part in slots.get("upgrades") or []],
+    }
+
+
+def _slots_from_pin(tag, pinned_slots: Optional[dict], pinned_parts: list, resign) -> Optional[dict]:
+    """The pinned `slots` with live photo links, and the tag's own pick of an open group read
+    fresh (like `combo.picked`, `_combo_with_picks`): it re-chooses among the candidates the pin
+    already holds in `parts`, so no position is re-read from master data."""
+    if pinned_slots is None:
+        return None
+    choices = dict(tag.choices or {})
+    candidates: dict[str, dict[str, dict]] = {}
+    for part in pinned_parts or []:
+        if part.get("role") and part.get("product_id"):
+            candidates.setdefault(part["role"], {})[part["product_id"]] = part
+
+    def fresh(parts: list) -> list:
+        return [{**part, "images": resign(part.get("images") or [])} for part in parts]
+
+    groups = []
+    for group in pinned_slots.get("groups") or []:
+        held = candidates.get(group.get("role") or "", {})
+        picks = group.get("picks") or []
+        chosen = held.get(str(choices.get(group.get("role"), "")))
+        if held and group.get("role") in choices:
+            # Picks that came from this open row are replaced by the tag's current choice.
+            picks = [p for p in picks if p.get("product_id") not in held]
+            if chosen is not None:
+                picks = [*picks, chosen]
+        groups.append({**group, "picks": fresh(picks)})
+    # An upgrade offered as an open row reflects the tag's CURRENT choice alone; a resolved one
+    # keeps its pinned flag.
+    open_upgrade = "Upgrade" in choices and bool(candidates.get("Upgrade"))
+    upgrades = [
+        {**up, "chosen": str(choices["Upgrade"]) == up.get("product_id") if open_upgrade else bool(up.get("chosen"))}
+        for up in pinned_slots.get("upgrades") or []
+    ]
+    main = pinned_slots.get("main")
+    return _slots_dict(
+        fresh([main])[0] if main else None, fresh(pinned_slots.get("fixed") or []), groups, fresh(upgrades)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1730,6 +2143,37 @@ def pin_payload(row: dict) -> dict:
     return _plain(row)
 
 
+def _accessory_fingerprint(accessories) -> list:
+    """What of an accessory list prints: name, spec and WHICH picture (never its signed URL); a
+    product entry also its code and list price ("LP: RM 68" is on the card). Library entries keep
+    exactly these three keys, so their hash does not move."""
+    out = []
+    for item in accessories or []:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "name": item.get("name"),
+            "spec": item.get("spec"),
+            "image": (item.get("image") or {}).get("attachment_id"),
+        }
+        if item.get("kind") == "product":
+            row["code"] = item.get("code")
+            row["list_price"] = _plain(item.get("list_price"))
+        out.append(row)
+    return out
+
+
+def _accessory_lines(accessories) -> str:
+    """The list as the change note shows it: each entry's text, plus "LP RM x" on a product."""
+    lines = []
+    for item in accessories or []:
+        text = entry_text(item)
+        if item.get("kind") == "product" and item.get("list_price") is not None:
+            text = f"{text} (LP {_money(item.get('list_price'))})"
+        lines.append(text)
+    return ", ".join(lines)
+
+
 def data_hash(row: dict) -> str:
     """A stable fingerprint of the fields the gate compares.
 
@@ -1746,7 +2190,6 @@ def data_hash(row: dict) -> str:
             "name",
             "dimensions",
             "spec_lines",
-            "specs",
             "set_members",
             "list_price",
             "sell_price",
@@ -1754,11 +2197,31 @@ def data_hash(row: dict) -> str:
             "price_tag_description",
         )
     }
+    # Specs hash WITHOUT `raw` (feature icons): a Keep acked before `raw` existed must still
+    # match, and `raw` moves only when `value` does.
+    specs = _plain(row.get("specs"))
+    subject["specs"] = (
+        [
+            {k: v for k, v in spec.items() if k != "raw"} if isinstance(spec, dict) else spec
+            for spec in specs
+        ]
+        if isinstance(specs, list)
+        else specs
+    )
     # PRICETAG-COMBO AC-2.8: the combo's text, options and picks move the hash.
     # Only a row that has a combo carries the key, so a no-combo row hashes exactly as it
     # did before this lane and a stored Keep still matches (AC-0.2).
     if row.get("combo"):
-        subject["combo"] = _plain(row["combo"])
+        combo = dict(_plain(row["combo"]))
+        # PRICETAG-ACCESSORIES: the combo's list hashes through `_accessory_fingerprint` below,
+        # never with its picture URLs, which are re-signed on every read.
+        combo.pop("accessories", None)
+        subject["combo"] = combo
+    # PRICETAG-ACCESSORIES: only a row that HAS a list carries the key, so a row with none
+    # hashes exactly as it did before this lane and a stored Keep still matches.
+    accessories = _accessory_fingerprint(row.get("accessories"))
+    if accessories:
+        subject["accessories"] = accessories
     # AC-S5-10: WHICH photo leads (`is_primary`) is part of what prints - a
     # combo's picture swapping the lead (the designer's product-image slot
     # draws `images[0]`) must move the hash even when the underlying set of
@@ -1851,8 +2314,8 @@ def diff_pin_against_live(
     add(
         "price_tag_description",
         "Price tag description",
-        pinned.get("price_tag_description"),
-        live.get("price_tag_description"),
+        plain_text(pinned.get("price_tag_description")),
+        plain_text(live.get("price_tag_description")),
     )
     add(
         "list_price",
@@ -1868,20 +2331,33 @@ def diff_pin_against_live(
         add(
             "combo:description",
             "Combo description",
-            old_combo.get("description"),
-            new_combo.get("description"),
+            plain_text(old_combo.get("description")),
+            plain_text(new_combo.get("description")),
         )
-        add(
-            "combo:free_items",
-            "Combo free items",
-            old_combo.get("free_items"),
-            new_combo.get("free_items"),
-        )
+        # PRICETAG-ACCESSORIES: compared list against list. A combo pinned before the lists
+        # existed holds the old free TEXT, which the move re-spelled ("A + B" -> "A, B"): not a
+        # change anyone made, so it is not reported (its text keeps printing until re-pinned).
+        if "accessories" in old_combo:
+            add(
+                "combo:free_items",
+                "Combo free items",
+                _accessory_lines(old_combo.get("accessories")),
+                _accessory_lines(new_combo.get("accessories")),
+            )
         add(
             "combo:options",
             "Combo options",
             _combo_options_text(old_combo),
             _combo_options_text(new_combo),
+        )
+
+    # PRICETAG-ACCESSORIES: an Ala Carte line's list (a combo line's is "Combo free items" above).
+    if not live.get("combo") and "accessories" in pinned:
+        add(
+            "accessories",
+            "Accessories",
+            _accessory_lines(pinned.get("accessories")),
+            _accessory_lines(live.get("accessories")),
         )
 
     pinned_offer = _money(pinned.get("sell_price"))
@@ -1975,8 +2451,8 @@ def diff_pin_against_live(
         add(
             f"part:{code}:price_tag_description",
             f"{code} price tag description",
-            before.get("price_tag_description"),
-            after.get("price_tag_description"),
+            plain_text(before.get("price_tag_description")),
+            plain_text(after.get("price_tag_description")),
         )
         before_images = {
             image.get("attachment_id") for image in before.get("images") or []

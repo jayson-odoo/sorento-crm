@@ -35,6 +35,8 @@ import {
   type ConsoleThreadTurn,
   type ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
+import { localStore } from '@/lib/storage';
+import { randomId } from '@/lib/id';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
 // One run id per contact, so a reload finds the same bot turns; "New conversation" replaces it.
@@ -49,11 +51,7 @@ interface StoredContact {
 }
 
 function newRunId(): string {
-  const rand =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `console-${rand}`;
+  return `console-${randomId()}`;
 }
 
 function uniqueId(prefix: string): string {
@@ -65,10 +63,10 @@ function runIdFor(contactId: string, fresh = false): string {
   const key = `${RUN_STORAGE_PREFIX}${contactId}`;
   if (typeof window === 'undefined') return newRunId();
   try {
-    const stored = window.localStorage.getItem(key);
+    const stored = localStore.getItem(key);
     if (stored && !fresh) return stored;
     const created = newRunId();
-    window.localStorage.setItem(key, created);
+    localStore.setItem(key, created);
     return created;
   } catch {
     return newRunId(); // Storage is off: the run lasts this visit.
@@ -80,7 +78,7 @@ const SESSION_STORAGE_PREFIX = 'chatbot-console:session:';
 /** The bot's session as this contact's run last left it, so a reload does not forget a pending question. */
 function readSession(contactId: string, runId: string): Record<string, unknown> {
   try {
-    const raw = window.localStorage.getItem(`${SESSION_STORAGE_PREFIX}${contactId}`);
+    const raw = localStore.getItem(`${SESSION_STORAGE_PREFIX}${contactId}`);
     const parsed = raw ? (JSON.parse(raw) as { run?: string; vars?: Record<string, unknown> }) : null;
     if (parsed && parsed.run === runId && parsed.vars && typeof parsed.vars === 'object') return parsed.vars;
   } catch {
@@ -91,7 +89,7 @@ function readSession(contactId: string, runId: string): Record<string, unknown> 
 
 function writeSession(contactId: string, runId: string, vars: Record<string, unknown>): void {
   try {
-    window.localStorage.setItem(`${SESSION_STORAGE_PREFIX}${contactId}`, JSON.stringify({ run: runId, vars }));
+    localStore.setItem(`${SESSION_STORAGE_PREFIX}${contactId}`, JSON.stringify({ run: runId, vars }));
   } catch {
     // Storage can be full or disabled; the session lasts this visit.
   }
@@ -108,7 +106,7 @@ function greetingMessages(): ChatbotConsoleMessage[] {
 function readStoredContact(): StoredContact | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(LAST_CONTACT_STORAGE_KEY);
+    const raw = localStore.getItem(LAST_CONTACT_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredContact>;
     if (typeof parsed.id === 'string' && typeof parsed.label === 'string') {
@@ -123,7 +121,7 @@ function readStoredContact(): StoredContact | null {
 function writeStoredContact(contact: StoredContact): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify(contact));
+    localStore.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify(contact));
   } catch {
     // Storage can be full or disabled; the console still works, it just forgets next visit.
   }
@@ -165,6 +163,9 @@ function agentMetaOf(
   return { rounds: count, tool_calls: tools, limit_hit: limitHit ?? null };
 }
 
+/** What a turn the contact's AI replies switch stopped shows: the bot sends nothing live. */
+export const AI_REPLIES_OFF_LINE = 'AI replies are OFF for this contact; live, the bot would not answer.';
+
 /** `reply_text` plus one bubble per `send_messages` entry, exactly the shape the plan
  * describes - shared between a plain text turn and the tail of a resolved media turn.
  * The turn's own `send_attachments` files (if any) ride the LAST bubble, the same
@@ -173,6 +174,8 @@ function agentMetaOf(
 function turnBubbles(result: BubbleSource, fallbackId: string, stored = false): ChatbotConsoleMessage[] {
   const sends = result.send_messages ?? [];
   const bodies = [...(result.reply_text ? [result.reply_text] : []), ...sends];
+  // The contact's AI replies switch is off: say so plainly rather than "(no reply)" (owner, 9 Nov).
+  if (bodies.length === 0 && result.branch_kind === 'ai_not_allowed') bodies.push(AI_REPLIES_OFF_LINE);
   // A stored turn without a reply is not "no reply": it is a turn with nothing to show.
   if (bodies.length === 0 && stored) return [];
   if (bodies.length === 0) bodies.push('(no reply)');
@@ -188,6 +191,7 @@ function turnBubbles(result: BubbleSource, fallbackId: string, stored = false): 
       branchKind: index === 0 ? result.branch_kind : undefined,
       promptVersion: result.prompt_version ?? null,
       routingLine: index === 0 ? (result.trace_summary?.routing_line ?? null) : undefined,
+      simulatedContact: index === 0 && result.trace_summary?.synthetic_envelope === true ? true : undefined,
       route: last ? (result.route ?? null) : undefined,
       quickReplies: last ? result.quick_replies : undefined,
       attachments: last && attachments.length > 0 ? attachments : undefined,

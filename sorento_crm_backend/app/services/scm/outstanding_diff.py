@@ -61,6 +61,12 @@ UNCHANGED = "unchanged"
 # unrelated `ADDED`. `CLOSED` keeps its value here - only the wire row kind is renamed
 # (`app/services/planning_change_service._map_kind`).
 PRODUCT_CHANGED = "product_changed"
+# A line-identity pair whose location (the AutoCount line warehouse) moved and nothing else
+# did (SPLIT-SHEET-LOCATION, owner 7 Nov 2026): detected like a qty or date change. A move
+# that rides with a qty / date change keeps that kind; the row carries the location in its
+# from/to (`planning_change_service._from_to`). Only on a `line_id` pair: the id-less
+# fallback keys on location, so a move there still reads `closed` plus `added`.
+LOCATION_CHANGED = "location_changed"
 
 # A quantity difference below this is treated as no change. Extracts round differently
 # between exports and a 0.0001 drift is noise, not a decision.
@@ -141,7 +147,7 @@ class Diff:
     @property
     def counts(self) -> dict[str, int]:
         out = {k: 0 for k in (ADDED, QTY_CHANGED, DATE_MOVED, DATE_AND_QTY_CHANGED,
-                              CLOSED, UNCHANGED, PRODUCT_CHANGED)}
+                              CLOSED, UNCHANGED, PRODUCT_CHANGED, LOCATION_CHANGED)}
         for c in self.changes:
             out[c.kind] = out.get(c.kind, 0) + 1
         return out
@@ -204,7 +210,10 @@ def _classify_identity(before: Line, after: Line) -> str:
         return CLOSED
     if before.item_code != after.item_code:
         return PRODUCT_CHANGED
-    return _classify(before, after)
+    kind = _classify(before, after)
+    if kind == UNCHANGED and before.location != after.location:
+        return LOCATION_CHANGED
+    return kind
 
 
 def _change_for_pair(before: Optional[Line], after: Optional[Line], kind: str) -> Change:

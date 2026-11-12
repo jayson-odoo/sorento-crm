@@ -55,6 +55,36 @@ REJECTED_LABEL = "Rejected"
 RESUBMITTED_LABEL = APPEALED_LABEL
 
 
+#: PROJECT-NAME: the short name's cap, the same as the column.
+PROJECT_NAME_MAX_LEN = 80
+
+
+def clean_project_name(value: Any) -> Optional[str]:
+    """A typed or extracted name as stored: whitespace collapsed, blank as null."""
+    # NUL is refused by Postgres (a 500), and split() keeps it.
+    text = " ".join(str(value or "").replace("\x00", "").split())
+    return text or None
+
+
+def checked_project_name(value: Any) -> Optional[str]:
+    """`clean_project_name`, refusing a name longer than the column with a 422 rather than
+    letting the database answer a 500 (a free-form `details` dict reaches here unvalidated)."""
+    name = clean_project_name(value)
+    if name and len(name) > PROJECT_NAME_MAX_LEN:
+        raise AppException(
+            status_code=422,
+            message=f"Project name is too long (at most {PROJECT_NAME_MAX_LEN} characters).",
+            code="project_name_too_long",
+        )
+    return name
+
+
+def project_display_name(project) -> str:
+    """What a person recognises the project by: its short name, else its title (PROJECT-NAME
+    rule 7). Notifications and labels use this; documents keep the full title."""
+    return clean_project_name(getattr(project, "name", None)) or (getattr(project, "title", None) or "")
+
+
 def project_label(project) -> str:
     """The project's code; while it has none, "Rejected" for a refused registration,
     "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
@@ -121,7 +151,7 @@ def check_company_refs(
         message="Pick the parties, type and template from this company.",
         code=code,
     )
-    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
+    for key in ("developer_party_id",):
         value = payload.get(key)
         if value and not (
             is_uuid(value)
@@ -179,8 +209,6 @@ def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dic
     }
     profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
     stored["customer_id"] = getattr(profile, "customer_id", None)
-    stored["architect_party_id"] = getattr(profile, "architect_party_id", None)
-    stored["main_contractor_party_id"] = getattr(profile, "main_contractor_party_id", None)
     out: Dict[str, Any] = {
         key: payload[key]
         for key in stored
@@ -263,7 +291,8 @@ def assert_no_blocking_clash(
     surface_threshold: Optional[float] = None,
     block_threshold: Optional[float] = None,
 ) -> None:
-    """409 when an open project under the developer is the same development."""
+    """409 when an existing project under the developer, in any outcome, is the same
+    development (PROJECT-CLASH-LOST: Won / Lost / Dormant block like Open)."""
     blockers = [
         candidate
         for candidate in find_clashes(
@@ -301,7 +330,7 @@ def register_project(
 ) -> Project:
     """Claim a development for ``actor_user_id``.
 
-    Raises 409 when an open project under the same developer is the same
+    Raises 409 when a project under the same developer, in any outcome, is the same
     development. There is no override flag: the recourse is request-to-join or a
     dispute (ADR-0004), both of which leave a record, whereas a force-create flag
     would leave none and would become the default click.
@@ -709,7 +738,11 @@ def serialize_projects(
     permissions = permissions or set()
     is_manager = MANAGE_PERMISSION in permissions
 
-    owner_names = _name_map(db, [p.owner_user_id for p in projects])
+    owner_names = _name_map(
+        db,
+        [p.owner_user_id for p in projects]
+        + [getattr(p, "discount_approver_user_id", None) for p in projects],
+    )
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
@@ -720,11 +753,6 @@ def serialize_projects(
         .filter(ProjectSalesProfile.project_id.in_([p.id for p in projects]))
         .all()
     }
-    profile_party_names = _party_name_map(
-        db,
-        [pr.architect_party_id for pr in profiles.values()]
-        + [pr.main_contractor_party_id for pr in profiles.values()],
-    )
     from app.services.project_party_contact_service import party_links_for
 
     party_links = party_links_for(db, [p.id for p in projects])
@@ -831,6 +859,7 @@ def serialize_projects(
                 "id": project.id,
                 "project_code": project.project_code,
                 "title": project.title,
+                "name": project.name,
                 "outcome": project.outcome,
                 "loss_reason": project.loss_reason,
                 "admin_ref": project.admin_ref,
@@ -876,6 +905,8 @@ def serialize_projects(
                 "critical_at": project.critical_at,
                 "management_support": project.management_support,
                 "management_notes": project.management_notes,
+                "discount_approver_user_id": project.discount_approver_user_id,
+                "discount_approver_name": owner_names.get(project.discount_approver_user_id),
                 "registered_company_name": (
                     profile.registered_company_name if profile else None
                 ),
@@ -883,21 +914,7 @@ def serialize_projects(
                 "address": profile.address if profile else None,
                 "state": profile.state if profile else None,
                 "mukim": profile.mukim if profile else None,
-                "architect_party_id": profile.architect_party_id if profile else None,
-                "architect_name": (
-                    profile_party_names.get(profile.architect_party_id)
-                    if profile
-                    else None
-                ),
                 "party_links": party_links.get(project.id, []),
-                "main_contractor_party_id": (
-                    profile.main_contractor_party_id if profile else None
-                ),
-                "main_contractor_name": (
-                    profile_party_names.get(profile.main_contractor_party_id)
-                    if profile
-                    else None
-                ),
                 "estimated_sales_value": (
                     profile.estimated_sales_value if profile else None
                 ),
@@ -1134,6 +1151,7 @@ def list_projects(
         query = query.filter(
             or_(
                 func.lower(Project.title).like(needle),
+                func.lower(Project.name).like(needle),
                 func.lower(Project.project_code).like(needle),
             )
         )
@@ -1154,25 +1172,123 @@ def list_projects(
 
     total = query.count()
 
-    sortable = {
-        "created_at": Project.created_at,
-        "updated_at": Project.updated_at,
-        "project_code": Project.project_code,
-        "title": Project.title,
-        "outcome": Project.outcome,
-        "last_meaningful_activity_at": Project.last_meaningful_activity_at,
-    }
-    column = sortable.get(sort, Project.created_at)
-    ordered = column.asc() if str(direction).lower() == "asc" else column.desc()
-    if column is Project.project_code:
-        # A project with no code yet sorts after every coded one, whichever the direction.
-        ordered = ordered.nulls_last()
-    query = query.order_by(ordered)
+    query = query.order_by(*_list_order_by(db, sort, direction))
 
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
     rows = query.offset((page - 1) * limit).limit(limit).all()
     return rows, total
+
+
+def _list_order_by(db: Session, sort: str, direction: str) -> list:
+    """ORDER BY for the projects list: one entry per grid column, whitelisted.
+
+    Every column the Projects grid shows sorts on the server (owner rule 27 Oct, "every
+    column must be sortable", PROJECTS-BOARD-VIEW-PREF), never on one page in the
+    browser. The derived columns sort on the same value the row displays, read through
+    a correlated subquery so the join cannot duplicate a project or change the count:
+
+    - ``developer_name`` / ``owner_name``: the name shown, case-insensitive.
+    - ``status_label`` (Stage): the stage's ``sort_order`` in the status graph, so
+      Identified < Registered < Quoted, not alphabetical.
+    - ``estimated_sales_value``: the amount.
+    - ``next_action``: the earliest open task's due date; a project whose open tasks
+      carry no date comes after every dated one, and "Nothing open" comes last, in
+      both directions.
+    - ``flags``: Critical. Descending puts Critical first.
+
+    A blank value (no developer, no stage, no amount, unassigned) sorts last in both
+    directions, like an uncoded project. Last activity keeps its older, pinned rule
+    (no activity first descending). Ties fall back to newest first, then id, so a
+    page boundary never shuffles rows between requests.
+    """
+    from app.models.projects import ProjectTask
+    from app.models.user import User
+    from app.services.project_task_service import open_task_status_ids
+
+    asc = str(direction).lower() == "asc"
+
+    def directed(expr):
+        return expr.asc() if asc else expr.desc()
+
+    plain = {
+        "created_at": Project.created_at,
+        "updated_at": Project.updated_at,
+        "title": Project.title,
+        "outcome": Project.outcome,
+        # No-activity rows keep Postgres's default (first descending), pinned by
+        # test_16_a_null_activity_date_sorts_first_descending_as_it_always_did.
+        "last_meaningful_activity_at": Project.last_meaningful_activity_at,
+        "flags": Project.is_critical,
+    }
+    tiebreak = [Project.created_at.desc(), Project.id.asc()]
+
+    if sort in plain:
+        return [directed(plain[sort])] + tiebreak
+    if sort == "project_code":
+        # A project with no code yet sorts after every coded one, whichever the direction.
+        return [directed(Project.project_code).nulls_last()] + tiebreak
+    if sort == "developer_name":
+        party = (
+            db.query(func.lower(ProjectParty.name))
+            .filter(ProjectParty.id == Project.developer_party_id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        # A portal registration with no party linked shows the developer as typed
+        # ("Typed: ..." in the grid), so it sorts on that name too.
+        typed = (
+            db.query(func.lower(func.nullif(func.trim(ProjectSalesProfile.developer_name), "")))
+            .filter(ProjectSalesProfile.project_id == Project.id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        expr = func.coalesce(party, typed)
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "owner_name":
+        expr = (
+            db.query(func.lower(func.coalesce(func.nullif(User.name, ""), User.email)))
+            .filter(User.id == Project.owner_user_id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "status_label":
+        expr = (
+            db.query(Status.sort_order)
+            .filter(Status.id == Project.status_id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "estimated_sales_value":
+        expr = (
+            db.query(ProjectSalesProfile.estimated_sales_value)
+            .filter(ProjectSalesProfile.project_id == Project.id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "next_action":
+        open_ids = open_task_status_ids(db)
+        if not open_ids:
+            return tiebreak
+        open_tasks = db.query(ProjectTask).filter(
+            ProjectTask.project_id == Project.id,
+            ProjectTask.status_id.in_(open_ids),
+            ProjectTask.completed_at.is_(None),
+        )
+        next_due = (
+            open_tasks.with_entities(func.min(ProjectTask.due_date))
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        has_open = open_tasks.correlate(Project).exists()
+        # Dated first (by date, in the asked direction), then open-but-undated, then
+        # nothing open: `has_open` desc is fixed, it does not follow the direction.
+        return [directed(next_due).nulls_last(), has_open.desc()] + tiebreak
+    # An unknown key orders by creation, as it always has.
+    return [directed(Project.created_at), Project.id.asc()]
 
 
 # ------------------------------------------------------------ profile + edit
@@ -1198,8 +1314,6 @@ _PROFILE_FIELDS = (
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "lead_source",
     "estimated_sales_value",
     "launch_date",
@@ -1208,6 +1322,7 @@ _PROFILE_FIELDS = (
 )
 
 _PROJECT_FIELDS = (
+    "name",
     "type_id",
     "template_id",
     "loss_reason",
@@ -1237,7 +1352,8 @@ def apply_sales_details(
 
     for key in _PROJECT_FIELDS:
         if key in payload:
-            setattr(project, key, payload[key])
+            value = checked_project_name(payload[key]) if key == "name" else payload[key]
+            setattr(project, key, value)
 
     db.flush()
 
@@ -1314,12 +1430,43 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
+    if "discount_approver_user_id" in payload:
+        # Routing an approval is a manager act (PS-QUOTE-RULES R4.2), like reassigning the owner:
+        # a salesperson must not pick who approves their own discount.
+        wanted = payload["discount_approver_user_id"] or None
+        if wanted != project.discount_approver_user_id:
+            if MANAGE_PERMISSION not in (permissions or set()):
+                raise AppException(
+                    status_code=403,
+                    message="Only a sales manager can choose who approves this project's discounts.",
+                    code="project_discount_approver_forbidden",
+                )
+            if wanted is not None:
+                from app.models.user import User, UserStatus
+
+                person = db.query(User).filter(User.id == str(wanted)).first()
+                if (
+                    person is None
+                    or person.is_integration
+                    or person.is_trashed
+                    or person.status != UserStatus.ACTIVE.value
+                ):
+                    # Routing would skip them silently, while the card named them.
+                    raise AppException(
+                        status_code=422,
+                        message="Pick an active person as the discount approver.",
+                        code="project_discount_approver_unknown",
+                    )
+            project.discount_approver_user_id = wanted
+
     from app.services import project_party_contact_service as party_contacts
 
     if payload.get("lead_source"):
         party_contacts.assert_lead_source(db, payload["lead_source"], required=False)
     if "party_links" in payload and payload["party_links"] is not None:
         party_contacts.set_party_links(db, project, payload["party_links"])
+    # After the links: a contact of a party linked in this same save is accepted (rule 13).
+    party_contacts.add_registered_contacts(db, project, payload.get("contact_ids") or [])
 
     apply_sales_details(db, project, payload)
     return project
@@ -1394,40 +1541,35 @@ def set_critical(project: Project, critical: bool) -> None:
     project.is_critical = critical
 
 
-def project_has_live_document(db: Session, project: Project) -> bool:
-    """True when the Documents tab would list at least one file: a non-deleted attachment
-    carrying entity_type 'project' and this project's id (any attachment type). The session's
-    company-scope listener applies to Attachment exactly as it does to the list."""
-    from app.models.resources import Attachment
-
-    return (
-        db.query(Attachment.id)
-        .filter(
-            Attachment.entity_type == "project",
-            Attachment.entity_id == str(project.id),
-            Attachment.is_deleted.is_(False),
-        )
-        .first()
-        is not None
-    )
+# A project on one of these rungs has been decided by a person, and that decision is its
+# outcome (PROJECT-CLASH-LOST): the list, board, forecast and clash check never read "Won" for
+# a project on the Lost stage. Keyed on the rung's stable key (project_seed_service.DEFAULT_FUNNEL).
+_OUTCOME_BY_STAGE_KEY = {"lost": "lost", "dormant": "dormant", "po_received": "won"}
 
 
-def _assert_requirements_uploaded(db: Session, project: Project, to_status_id: str) -> None:
-    """Registered -> Spec In needs a requirements document on the project."""
-    rows = {
-        str(s.id): s.key
-        for s in db.query(Status).filter(Status.id.in_([project.status_id, to_status_id])).all()
-    }
-    if (
-        rows.get(str(project.status_id)) == "registered"
-        and rows.get(str(to_status_id)) == "specified"
-        and not project_has_live_document(db, project)
-    ):
-        raise AppException(
-            status_code=422,
-            message="Upload the requirements document before moving this project to Spec In.",
-            code="project_requirements_missing",
-        )
+def outcome_follows_stage(db: Session, project: Project) -> None:
+    """Make the stored outcome agree with a decided stage, after any status write.
+
+    On Lost, Dormant or PO Received the outcome is lost / dormant / won (a Lost move through
+    `change_status` has already stored its reason; a bulk move has none to give). A project
+    that left Lost or Dormant (only possible on an admin graph with such an edge) is Open
+    again. Any other stage leaves the outcome alone: Mark won does not need a stage.
+    """
+    key = None
+    if project.status_id:
+        key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
+    decided = _OUTCOME_BY_STAGE_KEY.get(key)
+    if decided is not None:
+        target = decided
+    elif project.outcome in ("lost", "dormant"):
+        target = "open"
+    else:
+        return
+    if project.outcome != target:
+        project.outcome = target
+    if target != "lost":
+        project.loss_reason = None
+    db.flush()
 
 
 def change_status(
@@ -1437,8 +1579,12 @@ def change_status(
     to_status_id: str,
     actor_user_id: str,
     permissions: Set[str],
+    loss_reason: Optional[str] = None,
 ) -> Project:
     """Move a project along the funnel, through the engine's legality check.
+
+    Landing on Lost needs a configured loss reason and sets outcome Lost; landing on PO
+    Received sets outcome Won. Any other rung leaves outcome alone.
 
     Server-side (AC-B4): an illegal drag on the board is rejected here regardless of
     what the client sends.
@@ -1470,10 +1616,25 @@ def change_status(
         status_service.assert_transition_allowed(
             db, entity_type, project.status_id, to_status_id, scope_id=scope_id
         )
-        _assert_requirements_uploaded(db, project, to_status_id)
 
+    # Checked before anything is written, so a refused Lost move leaves the project as it was.
+    target_key = db.query(Status.key).filter(Status.id == to_status_id).scalar()
+    if target_key == "lost":
+        from app.services.project_quotation_service import _assert_loss_reason
+
+        reason = _assert_loss_reason(db, loss_reason)
+        project.outcome = "lost"
+        project.loss_reason = reason
+    elif target_key == "po_received":
+        project.outcome = "won"
+        project.loss_reason = None
+
+    from_status_id = project.status_id
     project.status_id = to_status_id
     db.flush()
+
+    # Outcome follows a decided stage (PROJECT-CLASH-LOST), also off an admin's own edge.
+    outcome_follows_stage(db, project)
 
     # A funnel move is real work (AC-H2), so it advances the staleness clock and writes the
     # feed row. Done here rather than in the route because the board, the detail page and
@@ -1484,7 +1645,134 @@ def change_status(
         db,
         project=project,
         template="stage_changed",
-        payload={"to_status_id": str(to_status_id)},
+        payload={
+            "to_status_id": str(to_status_id),
+            # Where it came from, so a re-open from Lost has an exact answer even when the
+            # earlier history is missing (a project placed on a rung without a recorded move).
+            "from_status_id": str(from_status_id) if from_status_id else None,
+        },
+        actor_id=actor_user_id,
+    )
+    db.flush()
+    return project
+
+
+def _rung_before_lost(db: Session, project: Project, scope_id) -> str:
+    """The rung a Lost project held before it was lost, from its own stage-changed history.
+
+    Newest first: the first row that landed on the current Lost status marks the loss, and
+    the row right after it (older) is where the project came from. No such row means the
+    graph's initial status.
+    """
+    from app.models.activities import ActivityEvent
+    from app.services import status_service
+
+    events = (
+        db.query(ActivityEvent)
+        .filter(
+            ActivityEvent.entity_type == "project",
+            ActivityEvent.entity_id == str(project.id),
+            ActivityEvent.system_template == "stage_changed",
+        )
+        .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
+        .all()
+    )
+    targets = [str((e.system_payload or {}).get("to_status_id") or "") for e in events]
+    current = str(project.status_id)
+    candidate = None
+    if current in targets:
+        index = targets.index(current)
+        candidate = (events[index].system_payload or {}).get("from_status_id")
+        if not candidate:
+            later = targets[index + 1 :]
+            candidate = later[0] if later and later[0] else None
+    if candidate:
+        # A rung an admin has since retired is not somewhere to put the project back.
+        usable = (
+            db.query(Status.id)
+            .filter(
+                Status.id == candidate,
+                Status.is_active.is_(True),
+                Status.is_archived.is_(False),
+            )
+            .first()
+        )
+        if usable:
+            return str(candidate)
+    return status_service.initial_status(db, "project", scope_id).id
+
+
+def set_project_outcome(
+    db: Session,
+    project: Project,
+    *,
+    outcome: str,
+    actor_user_id: str,
+    permissions: Set[str],
+) -> Project:
+    """Mark won, or re-open. Lost goes through the stage move, which asks for the reason."""
+    assert_can_write_project(db, project, actor_user_id, permissions)
+
+    if outcome not in ("won", "open"):
+        raise AppException(
+            status_code=422,
+            message="Outcome must be won or open. Mark a project lost by moving it to Lost.",
+            code="project_outcome_invalid",
+        )
+    if project.outcome == outcome:
+        return project
+    if project.outcome == "dormant":
+        # Dormant follows the Dormant stage (PROJECT-CLASH-LOST), a final rung: winning or
+        # re-opening here would leave the outcome disagreeing with the stage.
+        raise AppException(
+            status_code=409,
+            message="This project is dormant, so its outcome cannot change here.",
+            code="project_dormant",
+        )
+    if outcome == "won" and project.outcome == "lost":
+        raise AppException(
+            status_code=409,
+            message="Re-open the project first.",
+            code="project_lost",
+        )
+
+    from app.services import project_activity_service as activity
+
+    if outcome == "open" and project.status_id is not None:
+        if db.query(Status.key).filter(Status.id == project.status_id).scalar() == "po_received":
+            raise AppException(
+                status_code=409,
+                message="This project has its PO. It cannot be re-opened.",
+                code="project_po_received",
+            )
+
+    project.outcome = outcome
+    project.loss_reason = None
+
+    if outcome == "open" and project.status_id is not None:
+        current_key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
+        if current_key == "lost":
+            entity = get_status_entity("project")
+            scope_id = entity.scope_for(project) if entity is not None else None
+            target = _rung_before_lost(db, project, scope_id)
+            lost_id = project.status_id
+            project.status_id = target
+            db.flush()
+            # Terminal rungs have no outgoing edge, so this is a direct write, still recorded.
+            activity.record_project_event(
+                db,
+                project=project,
+                template="stage_changed",
+                payload={"to_status_id": str(target), "from_status_id": str(lost_id)},
+                actor_id=actor_user_id,
+            )
+
+    db.flush()
+    activity.record_project_event(
+        db,
+        project=project,
+        template="outcome_changed",
+        payload={"outcome": outcome},
         actor_id=actor_user_id,
     )
     db.flush()
@@ -1571,6 +1859,7 @@ def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
                 "project_id": candidate.project_id,
                 "project_code": candidate.project_code,
                 "title": candidate.title,
+                "name": row.get("name"),
                 "outcome": candidate.outcome,
                 "status_label": row.get("status_label"),
                 "owner_user_id": candidate.owner_user_id,

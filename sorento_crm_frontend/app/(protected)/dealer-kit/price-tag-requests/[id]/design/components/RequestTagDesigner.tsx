@@ -99,8 +99,19 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
+import {
+  applyLinkActions,
+  linkCorrectionPatches,
+  linkedPresetIds,
+  linkRefreshActions,
+  type LayerPropsPatch,
+  type LinkAction,
+} from '@/lib/dealer-kit/accessory-card';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { ArrangeSheetView } from './ArrangeSheetView';
+import { featureIconDrops } from '@/lib/dealer-kit/feature-icon-drops';
+import { accessoryDrops } from '@/lib/dealer-kit/accessory-drops';
+import { FeatureIconDropWarning } from '@/components/dealer-kit/FeatureIconDropWarning';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
 import { UpdateTemplateDialog } from './UpdateTemplateDialog';
@@ -202,6 +213,19 @@ function fallBackOutOfRangeSubjects(
     if (changed) next[tagId] = { ...tag, layers };
   }
   return { tags: next, affected };
+}
+
+/**
+ * Whether the server will take a design write for this request: mirrors
+ * `PriceTagRequestService.validate_designable` (a claimed `new`, `designing`,
+ * `changes_requested`, or a `proof_ready` marketing holds).
+ */
+export function isDesignableRequest(
+  request: Pick<PriceTagRequestDetail, 'status' | 'assigned_to_id'>,
+): boolean {
+  const status = (request.status ?? '').toLowerCase();
+  if (status === 'designing' || status === 'changes_requested') return true;
+  return (status === 'new' || status === 'proof_ready') && !!request.assigned_to_id;
 }
 
 interface Props {
@@ -947,6 +971,19 @@ export function RequestTagDesigner({
     [arranged, defaultTagSize],
   );
 
+  // Feature icons that will not print because their box is too narrow (crew pass, 5 Nov): named
+  // per tag above the canvas, the same check the request previews run.
+  const iconDrops = useMemo(
+    () =>
+      featureIconDrops(doc, (tagId) => resolved.get(tagId) ?? null, library.featureIcons, library.assetUrls),
+    [doc, resolved, library.featureIcons, library.assetUrls],
+  );
+  // PRICETAG-ACCESSORIES (A6): accessories whose box is too small, named the same way.
+  const accDrops = useMemo(
+    () => accessoryDrops(doc, (tagId) => resolved.get(tagId) ?? null),
+    [doc, resolved],
+  );
+
   /** Template name by id, for the Arrange view's per-sheet line (AC-S7-6) -
    *  `templates` is already loaded for the size presets above. */
   const templateNameById = useMemo(() => {
@@ -961,10 +998,78 @@ export function RequestTagDesigner({
   // the teardown request is sent `keepalive` (a keepalive body is capped at
   // 64KB, which a busy tag sheet exceeds - see the service).
   const teardownRef = useRef(false);
+  // The server takes a draft only while the request is in design (the same
+  // rule as `validate_designable`); once it is approved or handed over, a
+  // stray autosave answers 409 and the indicator read "Save failed" after a
+  // perfectly good Mark ready for collection. Read through a ref so a status
+  // change lands in the very next save, pending ones included.
+  // Linked accessories boxes: a request never edits a saved template, so its copies take the template's
+  // CURRENT design when the sheet loads and before each autosave (a deleted template detaches them,
+  // keeping the design). Corrections reach the live canvas as patches, the other tags through `tags`.
+  const linkPatchesRef = useRef<((patches: LayerPropsPatch[]) => void) | null>(null);
+  const tagsRef = useRef(tags);
+  tagsRef.current = tags;
+  const selectedIdRef = useRef(selectedRequestTagId);
+  selectedIdRef.current = selectedRequestTagId;
+  const refreshLinkedBoxes = useCallback(async (persist: boolean) => {
+    const current = tagsRef.current;
+    const linked = Object.entries(current).filter(([, tag]) => linkedPresetIds(tag.layers).length > 0);
+    if (linked.length === 0) return;
+    // Loaded on first use: most requests carry no linked box.
+    const { findAccessoryTemplate } = await import('../../../../services/accessoryTemplateService');
+    const fixes: Record<string, LinkAction[]> = {};
+    // Each template is read once per refresh, however many tags carry a box of it.
+    const reads = new Map<string, ReturnType<typeof findAccessoryTemplate>>();
+    const readOnce = (id: string) => {
+      if (!reads.has(id)) reads.set(id, findAccessoryTemplate(id));
+      return reads.get(id)!;
+    };
+    for (const [tagId, tag] of linked) {
+      const actions = await linkRefreshActions(tag.layers, readOnce);
+      if (actions.length > 0) fixes[tagId] = actions;
+    }
+    const ids = Object.keys(fixes);
+    if (ids.length === 0) return;
+    const selected = selectedIdRef.current;
+    const live = selected && fixes[selected] ? linkPatchesRef.current : null;
+    // Loading the sheet is the page's doing, not an edit: neither the live patch (which reaches `tags`
+    // through the canvas's own change stream) nor the state update below may schedule a save. The guard
+    // is consumed by the next `doc` change, and dropped shortly after in case nothing changed.
+    if (!persist) {
+      autoCloneRef.current = true;
+      setTimeout(() => {
+        autoCloneRef.current = false;
+      }, 100);
+    }
+    if (live && selected) live(linkCorrectionPatches(tagsRef.current[selected].layers, fixes[selected]));
+    setTags((prev) => {
+      const next = { ...prev };
+      for (const tagId of ids) {
+        if (tagId === selected && live) continue;
+        const tag = next[tagId];
+        if (tag) next[tagId] = { ...tag, layers: applyLinkActions(tag.layers, fixes[tagId]) };
+      }
+      return next;
+    });
+  }, []);
+  const loadRefreshedRef = useRef(false);
+  useEffect(() => {
+    if (templatesStatus !== 'loaded' || loadRefreshedRef.current) return;
+    loadRefreshedRef.current = true;
+    void refreshLinkedBoxes(false).catch(() => undefined);
+  }, [templatesStatus, refreshLinkedBoxes]);
+
+  const designableRef = useRef(isDesignableRequest(request));
+  designableRef.current = isDesignableRequest(request);
   const { status, savedAt, schedule, flush, retry } = useAutosave<TagSheetDoc>(
     useCallback(
-      (next: TagSheetDoc) => onAutosave(next, { keepalive: teardownRef.current }),
-      [onAutosave],
+      async (next: TagSheetDoc) => {
+        if (!designableRef.current) return;
+        // Not on the way out: a closing page only has time for the save itself.
+        if (!teardownRef.current) await refreshLinkedBoxes(true).catch(() => undefined);
+        await onAutosave(next, { keepalive: teardownRef.current });
+      },
+      [onAutosave, refreshLinkedBoxes],
     ),
   );
 
@@ -997,7 +1102,7 @@ export function RequestTagDesigner({
     const isAutoClone = autoCloneRef.current;
     autoCloneRef.current = false;
     lastSeenDocRef.current = doc;
-    if (isInitial || isAutoClone) return;
+    if (isInitial || isAutoClone || !designableRef.current) return;
     schedule(doc);
   }, [doc, schedule]);
 
@@ -1716,6 +1821,12 @@ export function RequestTagDesigner({
         )}
       </div>
 
+      {(iconDrops.length > 0 || accDrops.length > 0) && (
+        <div className="border-b px-3 py-2">
+          <FeatureIconDropWarning drops={iconDrops} accessoryDrops={accDrops} />
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
         {/* r10 S10 (cause: `<TagCanvasEditor key={selectedTag.id} leftRail=
             {rail}>` put the rail INSIDE the keyed subtree, so selecting a
@@ -1763,6 +1874,8 @@ export function RequestTagDesigner({
                   selectedRequestTagId && setPickerLineId(selectedRequestTagId)
                 }
                 hideSaveBar
+                linkedAccessoryBoxes="detach"
+                layerPatchesRef={linkPatchesRef}
                 docId={selectedTag.id}
                 toolbarTrailing={toolbarTrailing}
                 reviewPins={canvasPins}
@@ -1782,6 +1895,7 @@ export function RequestTagDesigner({
               onSelectTag={setSelectedTagId}
               resolved={resolved}
               assetUrls={library.assetUrls}
+              featureIcons={library.featureIcons}
               onPrintSheet={handlePrintSheet}
               printing={printing}
               placement={arranged.placement}

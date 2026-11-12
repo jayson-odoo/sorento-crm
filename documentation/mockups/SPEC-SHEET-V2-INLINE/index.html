@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spec sheet editing in place (mock v1)</title>
+<style>
+/* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/SPEC-SHEET-V2.
+   Pages are 338.7 x 190.5 mm (16:9), drawn the way TagSheetRenderer / the TagCanvasEditor canvas draw a sheet. */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--bad:#b91c1c;--green:#3f7d3a;--viewer:#e9e9ec;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1440px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:960px}
+.nav{position:sticky;top:0;z-index:20;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 36px}
+section>h2{font-size:15px;margin:0 0 4px}
+.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:960px}
+.newtag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;white-space:nowrap}
+.btn.pri{background:var(--foreground);color:#fff;border-color:var(--foreground)}
+.btn.sm{padding:3px 8px;font-size:12px;border-radius:6px}
+.btn.ic{padding:5px 8px}
+.crumb{font-size:12px;color:var(--muted-fg);padding:12px 18px 0}
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 18px 12px;flex-wrap:wrap}
+.hdr h3{margin:0;font-size:20px}
+.hdr .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tool{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);flex-wrap:wrap;background:#fff}
+.tool .sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+.tool .pn{font-size:12.5px;color:var(--muted-fg)}
+.tool .pn b{color:var(--foreground);font-weight:500;border:1px solid var(--border);border-radius:5px;padding:1px 7px;margin-right:3px}
+.tool .saved{margin-left:auto;font-size:12px;color:var(--muted-fg)}
+.tool .grp{display:flex;gap:4px;align-items:center}
+.tool .grp.dis{opacity:.4}
+.fmt{border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px;background:#fff}
+.work{display:grid;grid-template-columns:168px minmax(0,1fr) 248px;height:760px}
+/* thumbnail rail: real mini pages */
+.rail{border-right:1px solid var(--border);overflow-y:auto;padding:10px;background:#fafafa;display:flex;flex-direction:column;gap:12px}
+.th{display:flex;gap:6px;align-items:flex-start}
+.th .n{font-size:11px;color:var(--muted-fg);width:16px;text-align:right;padding-top:2px}
+.th .mini{flex:1;border-radius:3px;outline:1px solid var(--border)}
+.th.on .mini{outline:2px solid var(--primary)}
+.th.off .mini{opacity:.4}
+.th .ed{position:absolute;top:2px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--new)}
+.stack{background:var(--viewer);overflow-y:auto;padding:20px 22px 40px;display:flex;flex-direction:column;align-items:center;gap:22px}
+.pw{width:100%;max-width:880px;position:relative}
+.pbar{position:absolute;top:-1px;right:-1px;transform:translateY(-100%);display:flex;gap:6px;opacity:.0}
+.pw:hover .pbar,.pw.cur .pbar{opacity:1}
+.pnum{position:absolute;left:-18px;top:0;font-size:11px;color:var(--muted-fg)}
+/* page drawing */
+.pg{width:100%;aspect-ratio:16/9;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.14);position:relative;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;container-type:inline-size}
+.pg.off{opacity:.45}
+.pg .abs{position:absolute}
+.ph-img{background:repeating-linear-gradient(45deg,#f4f4f5,#f4f4f5 8px,#ececee 8px,#ececee 16px);border-radius:3px;display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.2cqw}
+.drw{background:#fff;border:1px dashed #a1a1aa;display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.2cqw}
+.logo{border:1px dashed #a1a1aa;color:#71717a;font-size:1.1cqw;display:flex;align-items:center;justify-content:center;font-weight:700;letter-spacing:.1em}
+.tb{border:1.5px solid var(--green);display:flex;flex-direction:column;font-size:.85cqw;line-height:1.35}
+.tb>div{border-bottom:1px solid var(--green);padding:.4cqw .6cqw}
+.tb>div:last-child{border-bottom:0;flex:1}
+.tb .desc{flex:none;height:50%;color:#333;overflow:hidden}
+.txt{font-size:1.25cqw;line-height:1.4}
+.txt .c{font-weight:700}.txt .n{font-weight:700;text-transform:uppercase}.txt .m{color:#d32f2f;font-weight:700}
+.acc{display:flex;gap:1cqw;align-items:flex-start;font-size:1.05cqw;line-height:1.35}
+.acc .t{width:5.5cqw;height:5.5cqw;flex:none}
+.cover-coll{display:grid;grid-template-columns:2fr 1fr 1fr;grid-template-rows:1fr 1fr;gap:.6cqw}
+.cover-coll div:first-child{grid-row:span 2}
+.offband{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3}
+.offband span{background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 12px;font:500 13px Inter,system-ui,sans-serif;color:var(--bad)}
+/* selection, as the designer canvas draws it (Konva Transformer) */
+.sel{outline:1.5px solid var(--primary);outline-offset:1px}
+.h{position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--primary);z-index:5}
+.hover{outline:1px dashed #93c5fd;outline-offset:1px}
+.typing{outline:2px solid var(--primary);background:#fff}
+.typing:after{content:"|";color:var(--primary);font-weight:400}
+.insp{border-left:1px solid var(--border);padding:12px;font-size:12.5px;overflow-y:auto;background:#fff}
+.insp h5{margin:0 0 8px;font-size:11.5px;color:var(--muted-fg);font-weight:500;text-transform:uppercase;letter-spacing:.05em}
+.insp .ip{border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12.5px;margin:3px 0 10px}
+.insp .row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.insp .scope{border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px}
+.insp .scope label{display:flex;gap:6px;align-items:center;margin:2px 0}
+.dot{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--muted-fg);display:inline-block}
+.dot.on{border:4px solid var(--primary)}
+.cap{font-size:11.5px;color:var(--muted-fg);padding:6px 0}
+.hint{color:var(--primary)}
+code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+.map td,.map th{white-space:normal;font-size:12px;vertical-align:top;text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+.map{border-collapse:collapse;width:100%;min-width:560px}
+.opt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.opt .o{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:12.5px}
+.opt .o h4{margin:0 0 6px;font-size:13px}
+.opt .o.rec{border-color:#a78bfa}
+.lst{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+.lst th{text-align:left;font-weight:500;color:var(--muted-fg);font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);background:#fafafa}
+.lst td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11px;background:var(--new-soft);color:var(--new)}
+@media (max-width:1100px){.work{grid-template-columns:120px minmax(0,1fr)}.insp{display:none}.opt{grid-template-columns:1fr}}
+@media (max-width:700px){.work{grid-template-columns:minmax(0,1fr);height:auto}.rail{flex-direction:row;overflow-x:auto;min-width:0}.th{flex:none;width:120px}.stack{max-height:640px;padding:14px}.pnum{display:none}}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Spec sheet: edit every page in place <span class="newtag">MOCK v1</span></h1>
+<p class="intro">SPEC-SHEET-V2, owner hand test 3 Nov 23:45 (item F4): "why I need to go into the page 1 by 1 to edit the page, why I cannot at one glance edit all the pages, why here cannot be like powerpoint or pdf where I can preview the page / slide?". This replaces the separate Edit page screen: the reader IS the editor. Case: PRJQ-2026-0032-A (40 lines, WC set SRTWC286-SH first), SS1. The header follows the system's detail-page order (F5, being fixed in the same round); F1-F3 are already being built.</p>
+<div class="nav"><a href="#edit">A. One view: thumbnails + every page editable</a><a href="#states">B. Page states</a><a href="#list">C. List row (F1)</a><a href="#perf">D. How it stays fast</a><a href="#map">E. Component map</a><a href="#ask">F. Questions</a></div>
+
+<section id="edit">
+<h2>A. One view: PowerPoint-style thumbnails on the left, every page editable where it sits <span class="newtag">NEW</span></h2>
+<p class="why">No "Edit page" button and no separate screen. Click anything on any page in the scroll (photo, drawing, text, AREA, COMMENT, a logo) and it is selected right there, with the designer's own handles; drag to move, corners to resize, double-click text to type. The right panel is the designer's Inspector for whatever is selected (empty when nothing is). The thumbnail rail shows the real pages, small, like slides: click to jump, drag to reorder. Changes save by themselves (no Save button); the template and the other spec sheets are not touched.</p>
+<div class="card">
+  <div class="crumb">Project Sales &rsaquo; Projects &rsaquo; Project &rsaquo; Spec sheets &rsaquo; SS1</div>
+  <div class="hdr"><h3>SS1 &middot; PRJQ-2026-0032-A</h3><div class="acts"><span class="btn">&larr; Back to spec sheets</span><span class="btn ic">&lsaquo;</span><span class="btn ic">&rsaquo;</span><span class="btn ic">&middot;&middot;&middot;</span><span class="btn pri">Export PDF</span></div></div>
+  <div class="tool">
+    <span class="pn"><b>3</b> of 41</span><span class="sep"></span>
+    <span class="btn ic">&minus;</span><span class="pn">100%</span><span class="btn ic">+</span><span class="btn sm">Fit width</span><span class="sep"></span>
+    <span class="grp"><span class="btn sm">Undo</span><span class="btn sm">Redo</span></span><span class="sep"></span>
+    <span class="grp"><span class="fmt">Inter</span><span class="fmt">9 pt</span><span class="fmt"><b>B</b></span><span class="fmt"><i>I</i></span><span class="fmt">&#8676; &#8596; &#8677;</span></span>
+    <span class="saved">Saved</span>
+  </div>
+  <div class="work">
+    <div class="rail">
+      <div class="th"><span class="n">1</span><div class="mini pg" style="position:relative"><div class="abs cover-coll" style="left:3%;top:5%;width:94%;height:78%"><div class="ph-img"></div><div class="ph-img"></div><div class="ph-img"></div><div class="ph-img"></div><div class="ph-img"></div></div></div></div>
+      <div class="th"><span class="n">2</span><div class="mini pg" style="position:relative"><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div></div></div></div></div>
+      <div class="th on"><span class="n">3</span><div class="mini pg" style="position:relative"><span class="ed"></span><div class="abs ph-img" style="left:3%;top:6%;width:42%;height:60%"></div><div class="abs drw" style="left:47%;top:2%;width:28%;height:52%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div></div></div></div></div>
+      <div class="th"><span class="n">4</span><div class="mini pg" style="position:relative"><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div></div></div></div></div>
+      <div class="th off"><span class="n">&nbsp;</span><div class="mini pg" style="position:relative"><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div></div></div>
+      <div class="th"><span class="n">5</span><div class="mini pg" style="position:relative"><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div></div></div></div></div>
+      <div class="th"><span class="n">6</span><div class="mini pg" style="position:relative"><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div></div></div></div></div>
+    </div>
+    <div class="stack">
+      <!-- page 2 -->
+      <div class="pw"><span class="pnum">2</span>
+        <div class="pbar"><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></div>
+        <div class="pg">
+          <div class="abs ph-img hover" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+          <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+          <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTWC286-SH <span class="m">*</span></div><div class="n">Close coupled WC</div><div>- RIMLESS, SOFT CLOSE SEAT</div></div>
+          <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTAV0102</b><br>ANGLE VALVE</div></div>
+          <div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTFH0040</b><br>FLEXIBLE HOSE 40CM</div></div>
+          <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> PRJQ-2026-0032-A</div><div><b>AREA :</b> UNIT &amp; PODIUM FACILITIES</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div><b>COMMENT :</b></div></div>
+          <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+        </div></div>
+      <!-- page 3: selected photo -->
+      <div class="pw cur"><span class="pnum">3</span>
+        <div class="pbar"><span class="btn sm">Reset page</span><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></div>
+        <div class="pg">
+          <div class="abs ph-img sel" style="left:3%;top:6%;width:42%;height:60%">photo (being resized)</div>
+          <span class="h" style="left:calc(3% - 4px);top:calc(6% - 4px)"></span><span class="h" style="left:calc(45% - 3px);top:calc(6% - 4px)"></span><span class="h" style="left:calc(3% - 4px);top:calc(66% - 3px)"></span><span class="h" style="left:calc(45% - 3px);top:calc(66% - 3px)"></span>
+          <div class="abs drw" style="left:47%;top:2%;width:28%;height:52%">drawing</div>
+          <div class="abs txt" style="left:7%;top:70%;width:36%"><div class="c">SORENTO SRTWB1413-GY</div><div class="n">Counter top basin, grey</div><div>- (L)410 X (W)410 X (H)130 MM</div></div>
+          <div class="abs acc" style="left:47%;top:72%;width:28%"><div class="ph-img t"></div><div><b>SORENTO SRTKSBT001</b><br>BOTTLE TRAP</div></div>
+          <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> PRJQ-2026-0032-A</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div class="typing"><b>COMMENT :</b> Grey to match vanity top</div></div>
+          <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+        </div></div>
+      <!-- page 4 -->
+      <div class="pw"><span class="pnum">4</span>
+        <div class="pbar"><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></div>
+        <div class="pg">
+          <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+          <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+          <div class="abs txt" style="left:7%;top:65%;width:60%"><div class="c">SORENTO SRTMR0601</div><div class="n">LED mirror 600</div></div>
+          <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> PRJQ-2026-0032-A</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div><b>COMMENT :</b></div></div>
+          <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+        </div></div>
+    </div>
+    <div class="insp">
+      <h5>Product photo &middot; page 3</h5>
+      <div>Position (mm)</div><div class="row2"><div class="ip">X 10.2</div><div class="ip">Y 11.4</div></div>
+      <div>Size (mm)</div><div class="row2"><div class="ip">W 142.3</div><div class="ip">H 114.3</div></div>
+      <div>Fit</div><div class="ip">Contain</div>
+      <div>Picture</div><div class="ip">Product photo &middot; Replace&hellip;</div>
+      <div>Apply this change to</div>
+      <div class="scope">
+        <label><span class="dot on"></span> This page</label>
+        <label><span class="dot"></span> Every page of SS1</label>
+      </div>
+      <div class="cap">Q2: "Every page" moves this layer the same way on all 40 item pages (the logo, the title block); the template is still not changed.</div>
+    </div>
+  </div>
+</div>
+<div class="cap"><span class="hint">Shown:</span> page 3 is the current page: its photo is selected and being resized, and its COMMENT is being typed in place. Page 2's photo shows the hover outline (what a click would select). The orange dot in the rail marks an edited page; the greyed thumbnail without a number is a left-out page. "Saved" in the toolbar confirms the autosave. Page actions (Leave out, Add accessory, Reset page) appear above a page on hover and on the current page, instead of a permanent bar on every page.</div>
+</section>
+
+<section id="states">
+<h2>B. Page states in the same view</h2>
+<p class="why">A left-out page stays in the scroll greyed, with "Put back"; it is not editable until put back. Reset page (on an edited page) uses the 5-second deferred countdown. Text fields (AREA, COMMENT, marker) type in place exactly as today; product fields bound to the quotation (code, name, spec lines) stay data, not typed text, so a later revision still fills them.</p>
+<div class="card" style="padding:16px;background:var(--viewer)">
+  <div class="pw" style="max-width:640px;margin:0 auto"><div class="pbar" style="opacity:1"><span class="btn sm">Put back</span></div>
+    <div class="pg off"><div class="offband"><span>Left out of the spec sheet</span></div><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div></div></div>
+</div>
+</section>
+
+<section id="list">
+<h2>C. The list, one line per row (F1, building now)</h2>
+<div class="card"><table class="lst"><colgroup><col style="width:8%"><col style="width:20%"><col style="width:22%"><col style="width:12%"><col style="width:13%"><col style="width:13%"><col style="width:12%"></colgroup>
+<thead><tr><th>No.</th><th>Revision</th><th>Templates</th><th>Pages</th><th>Created by</th><th>Created</th><th>Last edited</th></tr></thead>
+<tbody><tr><td><b>SS2</b></td><td>Draft after A</td><td title="Catalogue cover / Item with accessories / Single item">Catalogue cover</td><td>41</td><td>&lt;sales&gt;</td><td>03 Nov, 16:10</td><td>03 Nov, 16:12</td></tr>
+<tr><td><b>SS1</b></td><td>PRJQ-2026-0032-A</td><td title="Catalogue cover / Item with accessories / Single item">Catalogue cover</td><td>40 <span class="badge">1 edited</span></td><td>&lt;sales&gt;</td><td>03 Nov, 14:20</td><td>03 Nov, 14:41</td></tr></tbody></table></div>
+</section>
+
+<section id="perf">
+<h2>D. How it stays fast with 40 editable pages</h2>
+<p class="why">Every page looks editable, but only the pages near the screen are live: a page that scrolls into view swaps its picture for the designer canvas (one canvas per visible page, at most about 3), and a page that leaves the view goes back to a still picture. Pictures stay as now: thumbnails in the rail and on pages scrolled past, the 1024 px copy on the page being worked on, originals never. Each edit saves only that page (about 1 second after the last change, one request), and nothing refetches on focus. The rail thumbnails are small still pictures drawn from the same preview chunks the stack already loads, so the rail adds no requests.</p>
+</section>
+
+<section id="map">
+<h2>E. What each part reuses (FE = sorento_crm_frontend)</h2>
+<div style="overflow-x:auto" class="card"><table class="map">
+<thead><tr><th>Element</th><th>Reused component</th><th>New / changed</th></tr></thead>
+<tbody>
+<tr><td>Editable page in the scroll</td><td>The designer canvas <code>FE/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx</code> (Konva stage, <code>KonvaTagLayer.tsx</code> layers, selection / Transformer, <code>InlineTextEditor.tsx</code> for typing), bound per page with <code>boundData</code> + host <code>assetUrls</code> (round 5)</td><td>An "embedded" mode: no own panels or save bar; selection and change events reported to the host. One live canvas per visible page</td></tr>
+<tr><td>Still pages / pages scrolled past</td><td><code>components/dealer-kit/ScaledSheet.tsx</code> + <code>TagSheetRenderer</code> (current reader)</td><td>-</td></tr>
+<tr><td>Thumbnail rail</td><td><code>ScaledSheet</code> at rail width from the preview chunks; drag via <code>components/ui/sortable.tsx</code></td><td>Replaces the text rail (<code>PageRail.tsx</code>)</td></tr>
+<tr><td>Right panel</td><td><code>tag-templates/components/InspectorPanel.tsx</code></td><td>Plus the "Apply to: this page / every page" choice (Q2)</td></tr>
+<tr><td>Toolbar formatting / undo</td><td><code>tag-templates/components/CanvasToolbar.tsx</code></td><td>Merged into the reader toolbar</td></tr>
+<tr><td>Autosave</td><td>Existing <code>PUT .../spec-sheets/{id}/pages/{page_key}/edit</code></td><td>Debounced per page; "Saved" indicator</td></tr>
+<tr><td>Leave out / Put back / Add accessory / Reset page</td><td>Current <code>ReaderPage.tsx</code> controls, <code>DeferredActionButton</code></td><td>Shown on hover and on the current page only</td></tr>
+<tr><td>Removed</td><td>The separate Edit page route <code>.../pages/[key]/edit</code> and <code>SpecSheetPageEditor.tsx</code></td><td>Gone</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="ask">
+<h2>F. Questions</h2>
+<div class="opt">
+  <div class="o rec"><h4>Q1. Saving</h4>(a) Each change saves by itself a second later, with Undo / Redo and a "Saved" mark. (b) A Save button for the whole sheet.<br><b>Recommend (a)</b>: like PowerPoint; nothing to forget across 40 pages.</div>
+  <div class="o rec"><h4>Q2. "Edit all the pages at one glance"</h4>(a) Edit any page where it sits; each change is for that page. (b) Also offer "Apply to every page of this sheet" for a selected layer (move the logo once for all 40 pages).<br><b>Recommend (b)</b>: (a) plus the one choice in the right panel, default "This page".</div>
+  <div class="o rec"><h4>Q3. Phone</h4>(a) On a phone the pages are view-only (the rail becomes a strip). (b) Editable on a phone too.<br><b>Recommend (a)</b>: handles and the inspector need a desktop width, as in Tag Templates today.</div>
+</div>
+</section>
+</div>
+</body>
+</html>

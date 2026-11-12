@@ -27,6 +27,8 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_board import StockDetail
 from app.schemas.projects import (
     PriceFloorEffectiveResponse,
+    QuotationColumnsResponse,
+    QuotationColumnsWrite,
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
     DrawingEscalationResponse,
@@ -36,7 +38,6 @@ from app.schemas.projects import (
     ProjectQuotationLineCreate,
     ProjectQuotationLineResponse,
     ProjectQuotationLineUpdate,
-    ProjectQuotationOutcomeRequest,
     ProjectQuotationResponse,
     ProjectQuotationUpdate,
     ProjectQuotationVersionResponse,
@@ -140,7 +141,7 @@ def list_quotations(
     db: Session = Depends(get_db),
 ):
     try:
-        validate_uuid_path(project_id, resource="Project")
+        project_id = validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
         from app.models.projects import ProjectQuotation
 
@@ -199,35 +200,6 @@ def update_quotation(
         quotation = _quotation_for_edit(db, quotation_id, current_user)
         svc.update_quotation(
             db, quotation=quotation, payload=payload.model_dump(exclude_unset=True)
-        )
-        db.commit()
-        db.refresh(quotation)
-        return svc.serialize_quotations(db, [quotation])[0]
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post("/quotations/{quotation_id}/outcome", response_model=ProjectQuotationResponse)
-def set_quotation_outcome(
-    quotation_id: str,
-    payload: ProjectQuotationOutcomeRequest,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Win or lose ONE scope; the project's outcome is re-derived from all of them.
-
-    The project's STATUS is deliberately untouched (AC-E10a) -- a project at "PO
-    Received" with an open Common Area scope is still live on the board.
-    """
-    try:
-        validate_uuid_path(quotation_id, resource="Quotation")
-        quotation = _quotation_for_edit(db, quotation_id, current_user)
-        svc.set_outcome(
-            db,
-            quotation=quotation,
-            outcome=payload.outcome,
-            loss_reason=payload.loss_reason,
         )
         db.commit()
         db.refresh(quotation)
@@ -316,13 +288,29 @@ def _judge_line(
         )
         if product_set is None and not series_id:
             in_series = True
+        list_price = (
+            product_set_service.resolve_set_price(product_set).resolved
+            if product_set is not None
+            else None
+        )
         floor = (
             pricing.resolve_set_floor(
                 db,
                 company_id=acting_company_id(db),
                 product_set=product_set,
-                list_price=product_set_service.resolve_set_price(product_set).resolved,
+                list_price=list_price,
                 series_id=series_id,
+            )
+            if product_set is not None
+            else None
+        )
+        default = (
+            svc.default_price_for(
+                db,
+                series_id=series_id,
+                product_id=None,
+                product_set_id=product_set.id,
+                list_price=list_price,
             )
             if product_set is not None
             else None
@@ -337,10 +325,24 @@ def _judge_line(
         floor = pricing.resolve_floor(
             db, company_id=acting_company_id(db), product=product, series_id=series_id
         )
+        # The save snapshots the product's list price on every write (`_snapshot_product`), so
+        # the product's own list price is what a saved line is compared against too.
+        default = (
+            svc.default_price_for(
+                db,
+                series_id=series_id,
+                product_id=product.id,
+                product_set_id=None,
+                list_price=product.list_price,
+            )
+            if product is not None
+            else None
+        )
     below = bool(floor and price is not None and price < floor.value)
     return {
         "is_non_standard": not in_series,
         "is_below_floor": below,
+        "is_discounted": bool(default is not None and price is not None and price < default),
         "floor_value": floor.value if floor else None,
         "floor_level": floor.level if floor else None,
     }
@@ -643,6 +645,32 @@ def update_line(
         db.commit()
         db.refresh(line)
         return svc.serialize_lines(db, [line], viewer_id=current_user["id"])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/quotation-versions/{version_id}/columns",
+    response_model=QuotationColumnsResponse,
+)
+def set_version_columns(
+    version_id: str,
+    payload: QuotationColumnsWrite,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Set the scope's column headers; each line's cells move with them (PS-QUOTE-MATRIX)."""
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        version, _quotation = _version_for_edit(db, version_id, current_user)
+        lines = svc.set_columns(db, version=version, columns=payload.columns)
+        db.commit()
+        db.refresh(version)
+        return {
+            "version": svc.serialize_versions(db, [version])[0],
+            "lines": svc.serialize_lines(db, lines, viewer_id=current_user["id"]),
+        }
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -76,6 +76,7 @@ vi.mock('../services/projectService', async (importOriginal) => {
   return {
     ...actual,
     listParties: (...args: unknown[]) => listParties(...args),
+    listPartyRoles: async () => ROLES,
     listProjectTypes: (...args: unknown[]) => listProjectTypes(...args),
     listProjectTemplates: (...args: unknown[]) => listProjectTemplates(...args),
     previewClashes: (...args: unknown[]) => previewClashes(...args),
@@ -89,6 +90,18 @@ vi.mock('../services/projectService', async (importOriginal) => {
 });
 
 type Option = { value: string; label: string };
+
+// PROJECT-PARTY-ROLES: the party roles are a lookup list (seed order).
+const ROLES = [
+  { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+  { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+  { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+  { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+  { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+  { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+  { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+  { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+];
 
 vi.mock('@/components/common/SearchableSelect', () => {
   // Async mode (the party pickers and Customer, PROJECT-REGISTER-V2 B1): a text input that
@@ -198,10 +211,7 @@ function pendingProject(over: Record<string, unknown> = {}): Project {
     owner_name: 'Aina Linked',
     state: 'Johor',
     mukim: 'Kulai',
-    architect_party_id: null,
-    architect_name: null,
-    main_contractor_party_id: null,
-    main_contractor_name: null,
+    party_links: [],
     lead_id: null,
     lead_code: null,
     next_action_overdue: false,
@@ -246,13 +256,13 @@ async function pickDeveloper() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listParties.mockImplementation(async (params: { party_type?: string }) => {
-    const byType: Record<string, unknown[]> = {
-      developer: [DEVELOPER],
-      architect: [ARCHITECT],
-      main_contractor: [],
+  // Any party can fill any role: the picker sends no party_type, only the query.
+  listParties.mockImplementation(async (params: { query?: string }) => {
+    const q = (params.query ?? '').toLowerCase();
+    return {
+      data: [DEVELOPER, ARCHITECT].filter((p) => p.name.toLowerCase().includes(q)),
+      pagination: { total: 1, page: 1, limit: 20 },
     };
-    return { data: byType[params.party_type ?? ''] ?? [], pagination: { total: 1, page: 1, limit: 200 } };
   });
   listProjectTypes.mockResolvedValue([]);
   listProjectTemplates.mockResolvedValue([]);
@@ -286,7 +296,7 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
   it('shows the hint under Architect and Main contractor too', async () => {
     renderEdit(pendingProject());
     await waitFor(() => expect(field(/^Developer/).value).toBe(''));
-    expect(screen.getByText('Typed: Example Architects')).toBeInTheDocument();
+    expect(await screen.findByText('Typed: Example Architects')).toBeInTheDocument();
     expect(screen.getByText('Typed: Unmatched Builders')).toBeInTheDocument();
   });
 
@@ -300,7 +310,7 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
     renderEdit(pendingProject({ developer_party_id: 'd1', developer_name: 'Example Developer Sdn Bhd' }));
     await waitFor(() => expect(field(/^Developer/).value).toBe('Example Developer Sdn Bhd'));
     expect(screen.queryByText('Typed: Example Developer Sdn Bhd')).toBeNull();
-    expect(screen.getByText('Typed: Example Architects')).toBeInTheDocument();
+    expect(await screen.findByText('Typed: Example Architects')).toBeInTheDocument();
     expect(screen.getByText('Typed: Unmatched Builders')).toBeInTheDocument();
   });
 
@@ -309,13 +319,14 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
       pendingProject({
         developer_party_id: 'd1',
         developer_name: 'Example Developer Sdn Bhd',
-        architect_party_id: 'a1',
-        architect_name: 'Example Architects',
-        main_contractor_party_id: 'c1',
-        main_contractor_name: 'Unmatched Builders',
+        party_links: [
+          { role: 'architect', party_id: 'a1', name: 'Example Architects' },
+          { role: 'main_contractor', party_id: 'c1', name: 'Unmatched Builders' },
+        ],
       }),
     );
     await waitFor(() => expect(field(/^Developer/).value).toBe('Example Developer Sdn Bhd'));
+    await screen.findByLabelText('Architect');
     expect(screen.queryByText(/^Typed:/)).toBeNull();
   });
 

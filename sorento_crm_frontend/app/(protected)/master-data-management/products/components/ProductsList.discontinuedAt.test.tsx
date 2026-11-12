@@ -295,7 +295,7 @@ describe('ProductsList - Discontinued between filter (AC-TYPE-1, AC-FLT-5, AC-FL
     const chips = Array.isArray(rawSummary) ? rawSummary : rawSummary ? [rawSummary] : [];
     const chip = chips.find((c) => c.label?.startsWith('Discontinued:'));
     expect(chip).toBeTruthy();
-    expect(chip!.label).toBe('Discontinued: 1 Sep 26 - 26 Sep 26');
+    expect(chip!.label).toBe('Discontinued: 01/09/2026 - 26/09/2026');
 
     act(() => {
       chip!.onClear();
@@ -372,7 +372,7 @@ describe('ProductsList - Discontinued between filter (AC-TYPE-1, AC-FLT-5, AC-FL
         ? [fromOnlySummary]
         : [];
     const fromOnlyChip = fromOnlyChips.find((c) => c.label?.startsWith('Discontinued:'));
-    expect(fromOnlyChip?.label).toBe('Discontinued: from 1 Sep 26');
+    expect(fromOnlyChip?.label).toBe('Discontinued: from 01/09/2026');
     cleanup();
 
     nav.params = new URLSearchParams({ discontinued_to: '2026-09-26' });
@@ -386,7 +386,7 @@ describe('ProductsList - Discontinued between filter (AC-TYPE-1, AC-FLT-5, AC-FL
       | undefined;
     const toOnlyChips = Array.isArray(toOnlySummary) ? toOnlySummary : toOnlySummary ? [toOnlySummary] : [];
     const toOnlyChip = toOnlyChips.find((c) => c.label?.startsWith('Discontinued:'));
-    expect(toOnlyChip?.label).toBe('Discontinued: to 26 Sep 26');
+    expect(toOnlyChip?.label).toBe('Discontinued: to 26/09/2026');
 
     nav.params = new URLSearchParams();
   });

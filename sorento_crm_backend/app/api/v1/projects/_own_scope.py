@@ -146,6 +146,23 @@ _NESTED: Dict[str, frozenset] = {
             # fill_project_party_phone: project_party_contact_service.fill_party_phone 404s a
             # party that is not on this project (PS-REGISTRATION-V3).
             "party_id",
+            # SPEC-SHEET-V2: every spec sheet route loads the sheet under its document under this
+            # project (`_sheet(db, document, sheet_id)` 404s a sheet of another document), and
+            # `page_key` is a page key checked against that sheet's own pages (404 / 422 otherwise).
+            "sheet_id",
+            "page_key",
+            # apply-all: the layer id is looked up on the sheet's own pages (404 otherwise).
+            "layer_id",
+            # QUOTE-CERT-TAB: every certification route loads the document under this project
+            # (`qdocs.get_document_or_404(db, project_id, document_id)`) and then finds the
+            # certificate in that document's own list (`quotation_certificate_service._find_group`,
+            # 404 for a certificate the document does not carry).
+            "certificate_id",
+            # QUOTE-AUTOSAVE History (RELEASE-FIX-PORTAL): read and restore load the document
+            # under this project (`svc.get_document_or_404(db, project_id, document_id)`) and
+            # then the entry among that document's own snapshots
+            # (`quotation_form_draft_service._entry_or_404`, 404 for an entry of any other document).
+            "entry_id",
         }
     ),
     "quotation-versions": frozenset({"line_id"}),

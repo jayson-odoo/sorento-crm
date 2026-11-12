@@ -5,8 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { toast } from '@/lib/toast';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type {
   NewProductApplicationDetail,
   NewProductApplicationLine,
@@ -40,6 +39,8 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 vi.mock('../lib/new-product-application-service', () => ({
   listMyRespondedInquiries: vi.fn(),
   getNewProductApplicationPrefill: vi.fn(),
+  searchNewProductApplicationProducts: vi.fn(async () => []),
+  getNewProductApplicationReuseSuggestions: vi.fn(async () => []),
   lookupNewProductApplication: vi.fn(async () => []),
   lookupNewProductApplicationCustomers: vi.fn(async () => []),
   downloadNewProductApplicationExcel: vi.fn(),
@@ -58,7 +59,6 @@ import {
   listMyRespondedInquiries,
   reviseNewProductApplication,
   submitNewProductApplication,
-  updateNewProductApplication,
   downloadNewProductApplicationExcel,
 } from '../lib/new-product-application-service';
 vi.mock('../lib/portal-client', async (importOriginal) => {
@@ -157,9 +157,6 @@ function detail(
     customer_code: null,
     customer_name: 'EXAMPLE DEVELOPER SDN BHD',
     project_name: 'EXAMPLE RESIDENCE, TOWER B',
-    first_line: 'XY-1234-MB',
-    lines_total: 1,
-    lines_done: 0,
     opened_codes: [],
     needed_by: null,
     submitted_at: null,
@@ -190,7 +187,7 @@ beforeEach(() => {
 });
 
 describe('new application', () => {
-  it('starts from my stock inquiry: line 1 gets the code text, the customer stays typed text', async () => {
+  it('starts from my stock inquiry: the code text becomes the hint, no product rows, the customer stays typed text', async () => {
     asMock(getNewProductApplicationPrefill).mockResolvedValue({
       stock_inquiry_id: 'si-1',
       stock_inquiry_number: 'SI26-0412',
@@ -216,11 +213,9 @@ describe('new application', () => {
     fireEvent.mouseDown(hit);
     fireEvent.click(hit);
 
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText('Product code') as HTMLInputElement).value,
-      ).toBe('XY-1234-MB & XY-1234-BG'),
-    );
+    expect(
+      await screen.findByText('Inquiry asked: "XY-1234-MB & XY-1234-BG"'),
+    ).toBeInTheDocument();
     expect(getNewProductApplicationPrefill).toHaveBeenCalledWith('si-1');
     await waitFor(() =>
       expect(
@@ -235,20 +230,19 @@ describe('new application', () => {
     const body = asMock(createNewProductApplication).mock.calls[0][0];
     expect(body.customer_id).toBeNull();
     expect(body.stock_inquiry_id).toBe('si-1');
-    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
+    expect(body.current_product_ids).toEqual([]);
+    expect(body.lines).toEqual([]);
   });
 
   it('has no item group, base UOM or selling price, and no cost box to write', async () => {
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     expect(screen.queryByText(/item group/i)).toBeNull();
     expect(screen.queryByText(/base uom/i)).toBeNull();
     expect(screen.queryByText(/selling/i)).toBeNull();
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
-    expect(
-      screen.getByRole('columnheader', { name: /product code/i }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
   });
 
@@ -257,7 +251,7 @@ describe('new application', () => {
       new Error('Product 1: enter the product type.'),
     );
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(
       await screen.findByText('Product 1: enter the product type.'),
@@ -273,9 +267,7 @@ describe('an existing application', () => {
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
 
-    expect(
-      (await screen.findAllByText('Example kitchen sink')).length,
-    ).toBeGreaterThan(0);
+    expect((await screen.findAllByText('NPA-000001')).length).toBeGreaterThan(0);
     // S3: the read view is plain text, not disabled inputs
     expect(screen.queryByLabelText('Product type')).toBeNull();
     expect(screen.queryAllByRole('textbox')).toHaveLength(0);
@@ -283,11 +275,8 @@ describe('an existing application', () => {
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /save as draft/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
-    expect(
-      screen.getByText(
-        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
     expect(
       screen.getByRole('button', { name: /^revise$/i }),
     ).toBeInTheDocument();
@@ -319,23 +308,19 @@ describe('an existing application', () => {
     );
   });
 
-  it('hides Revise once a line is resolved and shows the result of each line', async () => {
+  it('hides Revise once the new code is linked, and shows no per-row Opened as column', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       detail({
         status: 'approved',
         status_label: 'Approved',
-        lines: [
-          line({ opened_product_id: 'p-1', opened_product_code: 'XY-1234-MB' }),
-          line({ id: 'l-2', line_no: 2, closed_reason: 'supplier dropped it' }),
-        ],
+        new_product_id: 'p-1',
+        new_product_code: 'XY-1234-MB-69',
+        new_product_active: true,
       }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    expect(
-      await screen.findByText('XY-1234-MB', { selector: 'span,p,a' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/not opening/i)).toBeInTheDocument();
-    expect(screen.getByText('supplier dropped it')).toBeInTheDocument();
+    expect(await screen.findByText('XY-1234-MB-69')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^revise$/i })).toBeNull();
   });
 
@@ -351,7 +336,7 @@ describe('an existing application', () => {
     expect(
       await screen.findByText(/Use the existing codes/),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Product type')).not.toBeDisabled();
+    expect(screen.getByLabelText('Remark')).not.toBeDisabled();
   });
 
   it('sends a rejected application back with Appeal, not Submit (owner, 28 Oct)', async () => {
@@ -366,25 +351,87 @@ describe('an existing application', () => {
   });
 });
 
+describe('portal: stock inquiry tab and earlier codes (NPA-FROM-SI)', () => {
+  const SI = {
+    id: 'si-1',
+    inquiry_number: 'SI26-0412',
+    product_code: 'XY-1234-MB',
+    status: 'responded',
+    item_description: 'Kitchen sink',
+    purchasing_response: 'Please apply for a new code.',
+    quantity: '55',
+  };
+
+  it('shows the inquiry as plain text (no link) on its own tab', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry: SI }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('NPA-000001');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    expect(await screen.findByText('SI26-0412')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'SI26-0412' })).toBeNull();
+    expect(screen.getByText('Please apply for a new code.')).toBeInTheDocument();
+  });
+
+  it('says there is no stock inquiry for an application without one', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry: null }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('NPA-000001');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    expect(await screen.findByText('No stock inquiry')).toBeInTheDocument();
+  });
+
+  it('shows the earlier code without an application number', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
+        suggestions: [
+          {
+            product_id: 'p-9',
+            product_code: 'XY-1234-MB-69',
+            product_name: null,
+            is_active: true,
+            description: 'no tap hole',
+            created_at: '2026-11-03T02:00:00',
+          },
+        ],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    const row = await screen.findByTestId('npa-suggestions');
+    expect(row.textContent).toContain(
+      'A code was already created from XY-1234-MB: XY-1234-MB-69 (03/11/2026, "no tap hole")',
+    );
+  });
+});
+
 describe('purchasing feedback on the portal (PQ1)', () => {
   const filled = () =>
     detail({
       status: 'approved',
       status_label: 'Approved',
       lead_time: '3 weeks',
-      lines: [
-        line({
-          cost_price: '12.50',
-          opened_supplier_name: 'Example Supplier Co',
-        }),
-      ],
+      new_product_id: 'p-9',
+      new_product_code: 'XY-1234-MB-69',
+      new_product_active: true,
+      new_product_facts: { opened_supplier_name: 'Example Supplier Co' },
+      cost_price: '12.50',
+      lines: [line({ cost_price: '12.50' })],
     });
 
-  it('shows COST, LEADTIME and the supplier read-only, with no Save feedback', async () => {
+  it('shows LEADTIME and the supplier read-only and never COST, with no Save feedback', async () => {
+    // SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost is never shown to a dealer, even if
+    // an older API still sent it.
     asMock(getNewProductApplication).mockResolvedValue(filled());
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
     expect(await screen.findByText('3 weeks')).toBeInTheDocument();
-    expect(screen.getByText(/12\.50/)).toBeInTheDocument();
+    expect(screen.queryByText(/12\.50/)).toBeNull();
+    expect(screen.queryByText('COST:')).toBeNull();
     expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
@@ -441,11 +488,18 @@ describe('portal: table form and attachments (v5)', () => {
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
     expect(screen.queryByLabelText(/add image/i)).toBeNull();
     expect(screen.queryByText(/copy from the inquiry/i)).toBeNull();
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: /add row/i }));
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(2);
-    fireEvent.click(screen.getByRole('button', { name: /^remove row 1$/i }));
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
+    // Owner hand test 9 Nov: no product table, on the portal form too (form parity).
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add row/i })).toBeNull();
+    expect(screen.queryByText('No debtor code')).toBeNull();
+  });
+
+  it('an existing application with rows draws no table either', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" applicationId="npa-1" />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 
   it('renders the shared dropzone for kind new_product_application; on create the files are pending and upload right after the first save', async () => {
@@ -495,14 +549,12 @@ describe('portal: table form and attachments (v5)', () => {
     expect(await screen.findByTestId('dropzone')).toHaveAttribute('data-readonly', 'yes');
   });
 
-  it('the payload has no per-row image keys', async () => {
+  it('a new application sends no product rows', async () => {
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
     await waitFor(() => expect(createNewProductApplication).toHaveBeenCalled());
-    const row = asMock(createNewProductApplication).mock.calls[0][0].lines[0];
-    for (const k of ['images', 'staged_images', 'removed_link_ids'])
-      expect(row).not.toHaveProperty(k);
+    expect(asMock(createNewProductApplication).mock.calls[0][0].lines).toEqual([]);
   });
 });
 
@@ -526,5 +578,220 @@ describe('an application that is not this contact\'s', () => {
     expect(screen.queryByLabelText('Product type')).toBeNull();
     expect(screen.queryByText('REFF:')).toBeNull();
     expect(screen.queryByText('PRODUCT TYPE:')).toBeNull();
+  });
+});
+
+describe('portal: PRODUCT CODES and NEW PRODUCT CODE rows', () => {
+  const submitted = (over: Partial<NewProductApplicationDetail> = {}) =>
+    detail({ status: 'submitted', status_label: 'Submitted', ...over });
+
+  it('shows the codes as comma text and the waiting line for the new code', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({
+        current_products: [
+          { id: 'p-1', product_code: 'A-1' },
+          { id: 'p-2', product_code: 'B-2' },
+        ],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('A-1, B-2')).toBeInTheDocument();
+    expect(
+      screen.getByText('Purchasing fills this in when the code is created.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the new code with an Inactive badge when it is inactive', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({ new_product_id: 'p-9', new_product_code: 'A-1-69', new_product_active: false }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('A-1-69')).toBeInTheDocument();
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+  });
+
+  it('shows the supplier of the linked code and nothing else of its facts', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({
+        new_product_id: 'p-9',
+        new_product_code: 'A-1-69',
+        new_product_active: true,
+        new_product_facts: { opened_supplier_name: 'Example Supplier Co' },
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('Supplier: Example Supplier Co')).toBeInTheDocument();
+    expect(screen.queryByText(/From AutoCount/)).toBeNull();
+  });
+
+  it('shows an older closed one as Rejected with the reason', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({ new_code_closed_reason: 'Customer walked away' }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('Rejected: Customer walked away')).toBeInTheDocument();
+  });
+});
+
+describe('portal: Brand column gone, per-row Opened as for older applications (NPA-FROM-SI v3)', () => {
+  it('draws no Brand header or picker on a new form', async () => {
+    render(<NewProductApplicationForm slug="acme" />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
+    expect(screen.queryByLabelText(/brand/i)).toBeNull();
+  });
+
+  it('draws no Brand header or text in the read-only view', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        lines: [line({ brand_name: 'Example Brand' })],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('NPA-000001');
+    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
+    expect(screen.queryByText('Example Brand')).toBeNull();
+  });
+
+  it('shows no Opened as column when no line is resolved', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'approved', status_label: 'Approved' }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('NPA-000001');
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
+  });
+});
+
+describe('portal: no product table from a stock inquiry, purchasing result read-only (owner 8 Nov)', () => {
+  it('a new form started from an inquiry has no table or add control and saves lines: []', async () => {
+    asMock(getNewProductApplicationPrefill).mockResolvedValue({
+      stock_inquiry_id: 'si-1',
+      stock_inquiry_number: 'SI26-0412',
+      customer_id: null,
+      customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+      project_name: 'EXAMPLE RESIDENCE, TOWER B',
+      needed_by: null,
+      remark: null,
+      lines: [{ proposed_code: 'XY-1234-MB', description: 'Example sinks' }],
+    });
+    render(<NewProductApplicationForm slug="acme" />);
+    const picker = await screen.findByRole('combobox', { name: /start from my stock inquiry/i });
+    fireEvent.focus(picker);
+    const hit = await screen.findByText('SI26-0412 - XY-1234-MB & XY-1234-BG');
+    fireEvent.mouseDown(hit);
+    fireEvent.click(hit);
+    await waitFor(() =>
+      expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe(
+        'EXAMPLE DEVELOPER SDN BHD',
+      ),
+    );
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add (row|product)/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() => expect(createNewProductApplication).toHaveBeenCalledTimes(1));
+    const body = asMock(createNewProductApplication).mock.calls[0][0];
+    expect(body.stock_inquiry_id).toBe('si-1');
+    expect(body.lines).toEqual([]);
+  });
+
+  it('the view of an SI application with no lines draws no table', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        stock_inquiry_id: 'si-1',
+        stock_inquiry_number: 'SI26-0412',
+        lines: [],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
+  });
+
+  it('the view of an older SI application with lines shows them read-only', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        stock_inquiry_id: 'si-1',
+        stock_inquiry_number: 'SI26-0412',
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect((await screen.findAllByText('NPA-000001')).length).toBeGreaterThan(0);
+    // Owner hand test 9 Nov: an older application's rows are not drawn.
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+  });
+
+  it('a standalone application draws no table either (owner hand test 9 Nov)', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry_id: null }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('NPA-000001');
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
+  });
+
+  it('shows a typed new code (no product yet) and LEADTIME read-only, never COST, with no purchasing controls', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'completed',
+        status_label: 'Completed',
+        stock_inquiry_id: 'si-1',
+        stock_inquiry_number: 'SI26-0412',
+        lines: [],
+        new_product_id: null,
+        new_product_code: 'XY-TYPED-7',
+        new_code_text: 'XY-TYPED-7',
+        lead_time: '3 weeks',
+        cost_price: '12.50',
+      } as Partial<NewProductApplicationDetail>),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('XY-TYPED-7')).toBeInTheDocument();
+    expect(screen.getByText('3 weeks')).toBeInTheDocument();
+    expect(screen.queryByText(/12\.50/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /edit purchasing response/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
+    expect(screen.queryByLabelText(/^lead ?time/i)).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
+  });
+});
+
+describe('a View link opened with no portal session (crew pass on c2705b8b)', () => {
+  it('goes to the OTP verify page for this application, like the stock inquiry link', async () => {
+    const { PortalUnauthorizedError } = await import('../lib/portal-client');
+    asMock(getNewProductApplication).mockRejectedValue(new PortalUnauthorizedError());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-9" />);
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        '/portal/c/acme/verify?reason=expired&type=new_product_application&id=a-9',
+      ),
+    );
+    expect(screen.queryByRole('heading', { name: 'Application not found' })).toBeNull();
+  });
+
+  // The portal answers another contact's application with the SI's 403 OWNER_MISMATCH (crew pass on
+  // f2b05777), which the service throws as PortalOwnerMismatchError.
+  it('a session of another contact goes to the owner\'s verify card, as the stock inquiry', async () => {
+    const { PortalOwnerMismatchError } = await import('../lib/portal-client');
+    asMock(getNewProductApplication).mockRejectedValue(new PortalOwnerMismatchError());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-9" />);
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        '/portal/c/acme/verify?reason=expired&type=new_product_application&id=a-9',
+      ),
+    );
   });
 });

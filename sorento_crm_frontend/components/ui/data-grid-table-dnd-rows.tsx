@@ -18,7 +18,9 @@ import {
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
   footerGroupsWithContent,
+  headerRowSpan,
   reorderColumnsOnDragEnd,
+  skipMergedLeafHeader,
   useBodySkeleton,
   skeletonRowCount,
   useReturnedRowId,
@@ -101,6 +103,19 @@ function DataGridTableDndRow<TData>({
     previousRow ? (previousRow.original as TData) : null,
   );
 
+  // A row drawn whole (a section heading row): one cell across every visible column, still a
+  // sortable item, so it drags like any other row.
+  const fullRow = props.renderFullRow?.(row.original as TData);
+  if (fullRow != null) {
+    return (
+      <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} dndRef={setNodeRef} dndStyle={style}>
+        <td colSpan={row.getVisibleCells().length} className="bg-muted/60 px-1 py-1">
+          {fullRow}
+        </td>
+      </DataGridTableBodyRow>
+    );
+  }
+
   return (
     <Fragment>
       {groupHeader != null && (
@@ -141,7 +156,16 @@ function DataGridTableDndRow<TData>({
  * the wrapper would replace the header's own name for a screen reader. Keyboard users move
  * columns from the header's own menu where a list offers one.
  */
-function DataGridTableDndRowsColumnHeader<TData>({ header }: { header: Header<TData, unknown> }) {
+function DataGridTableDndRowsColumnHeader<TData>({
+  header,
+  rowSpan,
+  merged = false,
+}: {
+  header: Header<TData, unknown>;
+  /** Column GROUPS: an ungrouped column spans both header rows, as the static header draws it. */
+  rowSpan?: number;
+  merged?: boolean;
+}) {
   const { props } = useDataGrid();
   const { column } = header;
   const noDrag = isFixedUtilityColumn(column.columnDef);
@@ -166,12 +190,15 @@ function DataGridTableDndRowsColumnHeader<TData>({ header }: { header: Header<TD
       dndStyle={style}
       dndDragging={isDragging}
       dndRef={setNodeRef}
+      rowSpan={rowSpan}
     >
       <div
         className={noDrag ? 'w-full select-none truncate' : 'w-full cursor-grab select-none truncate'}
         {...(noDrag ? {} : listeners)}
       >
-        {header.isPlaceholder ? null : flexRender(column.columnDef.header, header.getContext())}
+        {header.isPlaceholder && !merged
+          ? null
+          : flexRender(column.columnDef.header, header.getContext())}
       </div>
       {props.tableLayout?.columnsResizable && column.getCanResize() && (
         <DataGridTableHeadRowCellResize header={header} />
@@ -245,24 +272,48 @@ function DataGridTableDndRows<TData>({
 
   const headerRows = table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
     if (columnsDraggable) {
+      // Column GROUPS (the quotation grid's column headers): an ungrouped column spans both
+      // header rows from its placeholder, exactly as the static branch below draws them.
+      const groupRows = table.getHeaderGroups().length;
+      const mergedRows = groupRows > 1;
       return (
         <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
           <SortableContext items={orderedColumnIds} strategy={horizontalListSortingStrategy}>
-            {headerGroup.headers.map((header) => (
-              <DataGridTableDndRowsColumnHeader header={header} key={header.id} />
-            ))}
+            {headerGroup.headers
+              .filter((header) => !mergedRows || !skipMergedLeafHeader(header, groupRows))
+              .map((header) => (
+                <DataGridTableDndRowsColumnHeader
+                  header={header}
+                  key={header.id}
+                  merged={mergedRows}
+                  rowSpan={mergedRows ? headerRowSpan(header, groupRows) : undefined}
+                />
+              ))}
           </SortableContext>
         </DataGridTableHeadRow>
       );
     }
+    // Column GROUPS (the quotation grid's column headers over their columns): an ungrouped column
+    // spans both header rows from its placeholder, as `DataGridTable` draws them. On a flat grid
+    // (one header row) nothing is skipped and every span is 1, so this is the header it always was.
+    const rowCount = table.getHeaderGroups().length;
+    const merged = rowCount > 1;
     return (
       <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
-        {headerGroup.headers.map((header, index) => {
+        {headerGroup.headers
+          .filter((header) => !merged || !skipMergedLeafHeader(header, rowCount))
+          .map((header, index) => {
           const { column } = header;
 
           return (
-            <DataGridTableHeadRowCell header={header} key={index}>
-              {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+            <DataGridTableHeadRowCell
+              header={header}
+              key={index}
+              rowSpan={merged ? headerRowSpan(header, rowCount) : undefined}
+            >
+              {header.isPlaceholder && !merged
+                ? null
+                : flexRender(header.column.columnDef.header, header.getContext())}
               {props.tableLayout?.columnsResizable && column.getCanResize() && (
                 <DataGridTableHeadRowCellResize header={header} />
               )}
@@ -272,6 +323,10 @@ function DataGridTableDndRows<TData>({
       </DataGridTableHeadRow>
     );
   });
+
+  const overlayFullRow = activeRow
+    ? props.renderFullRow?.(activeRow.original as TData, { overlay: true })
+    : null;
 
   return (
     <DndContext
@@ -376,11 +431,19 @@ function DataGridTableDndRows<TData>({
                 {/* No `returnedFromId`: this floating clone follows the pointer, it is
                     never the settled row the reader returned to. */}
                 <DataGridTableBodyRow row={activeRow}>
-                  {activeRow.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => (
-                    <DataGridTableBodyRowCell cell={cell} key={colIndex}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </DataGridTableBodyRowCell>
-                  ))}
+                  {overlayFullRow != null ? (
+                    // A row drawn whole floats as itself (owner hand test, 10 Nov 2026: the
+                    // section heading's preview showed an empty line's cells).
+                    <td colSpan={activeRow.getVisibleCells().length} className="bg-muted/60 px-1 py-1">
+                      {overlayFullRow}
+                    </td>
+                  ) : (
+                    activeRow.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => (
+                      <DataGridTableBodyRowCell cell={cell} key={colIndex}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </DataGridTableBodyRowCell>
+                    ))
+                  )}
                 </DataGridTableBodyRow>
               </tbody>
             </table>

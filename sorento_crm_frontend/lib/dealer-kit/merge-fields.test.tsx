@@ -446,7 +446,7 @@ describe('mergeFieldCatalog', () => {
   it('offers the fixed groups plus one entry per registry key', () => {
     const groups = new Set(catalog.map((field) => field.group));
     // PS-SPEC-SHEET: the Spec sheet group joins; a price tag editor filters it out by `groups`.
-    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo', 'Spec sheet']));
+    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Spec sheet']));
 
     const specs = catalog.filter((field) => field.group === 'Specs');
     expect(specs.map((field) => field.token)).toEqual([
@@ -895,5 +895,41 @@ describe('renderMergeFields - spec.material pass-through (AC-S3-5)', () => {
     });
 
     expect(renderMergeFields('{{spec.material}}', data, 'print')).toBe('Stainless Steel');
+  });
+});
+
+describe('{{product.description}} (SPEC-SHEET-DESIGNER-PARITY A4)', () => {
+  it('is offered in the Product group of Insert field', () => {
+    const field = mergeFieldCatalog([]).find((f) => f.path === 'product.description');
+    expect(field).toMatchObject({ group: 'Product', label: 'Description' });
+  });
+
+  it('prints the product plain description', () => {
+    expect(
+      renderMergeFields('{{product.description}}', product({ description: 'Wall hung WC, rimless' }), 'print'),
+    ).toBe('Wall hung WC, rimless');
+  });
+
+  it('prints the line description on a spec sheet page', () => {
+    expect(
+      renderMergeFields('{{product.description}}', line({ description: 'Close coupled WC' }), 'print'),
+    ).toBe('Close coupled WC');
+  });
+
+  it('a layer pointed at a part (an accessory) prints that PART\'s description, not the line\'s', () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'AV-0120',
+      name: 'AV-0120',
+      dimensions: '',
+      description: 'Angle valve, chrome',
+    };
+    const data = line({ description: 'Wall hung WC', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+    expect(renderMergeFields('{{product.description}}', data, 'print', layer)).toBe('Angle valve, chrome');
+  });
+
+  it('prints empty, never the token, on a row frozen before the field existed', () => {
+    expect(renderMergeFields('{{product.description}}', line(), 'print')).toBe('');
   });
 });

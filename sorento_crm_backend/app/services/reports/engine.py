@@ -53,6 +53,7 @@ DETAIL_ROW_CAP = 5000
 PIVOT_CELL_CAP = 5000
 
 _MONTH_ABBR = (
+    # date-format-ok: month period labels (Sep'26), no day to show
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
@@ -219,7 +220,7 @@ def resolve_period(raw: Any) -> Period:
         end = last + timedelta(days=1)
         # DD/MM/YYYY, the way the CRM writes a date everywhere else. The ISO form leaked
         # into the title block and into the SUMMARY's own closing line.
-        label = f"{start.strftime('%d/%m/%Y')} to {last.strftime('%d/%m/%Y')}"
+        label = f"{start.strftime('%d/%m/%Y')} to {last.strftime('%d/%m/%Y')}"  # date-format-ok: separator is follow-up 3 (chatbot + report suites parse "to")
         return Period(
             kind, start, end, label, _months_between(start, end), label.upper()
         )
@@ -253,6 +254,8 @@ class QueryContext:
     def company_id(self) -> Optional[str]:
         key = self.dataset.company_param
         chosen = self.values.get(key) if key else None
+        if self.dataset.company_multi:
+            return chosen[0] if chosen and len(chosen) == 1 else None
         return chosen[0] if chosen else None
 
 
@@ -289,6 +292,12 @@ def _bind_company(db: Session, definition: reg.ReportDefinition, values: Dict[st
     if key is None:
         return
     chosen = [c for c in _as_list(given.get(key)) if c]
+    if definition.dataset.company_multi:
+        # Several companies, each inside the grant (403 outside it); none = every company the grant holds.
+        if grants is not None and any(not isinstance(grants, frozenset) or c not in grants for c in chosen):
+            raise _forbidden_company()
+        values[key] = chosen
+        return
     if len(chosen) > 1:
         raise _invalid(f"'{key}' takes one company")
     if chosen:
@@ -390,7 +399,7 @@ def _predicates(ctx: QueryContext) -> List[ColumnElement]:
             preds.append(dataset.company_column.in_(sorted(grants)))
         else:
             preds.append(false())
-        if dataset.company_param is not None and not ctx.company_id:
+        if dataset.company_param is not None and not dataset.company_multi and not ctx.company_id:
             preds.append(false())
     if dataset.product_id_column is not None:
         from app.services.contact_brand_scope import product_in_scope_clauses

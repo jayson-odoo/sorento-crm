@@ -238,7 +238,7 @@ describe('QuotationApprovalPanel: the block', () => {
     // Owner ruling 1 Nov: "minimum price", never "floor", on anything a user reads.
     expect(
       screen.getByText(
-        'A manager sent this back. Re-price the lines below the minimum price, then ask again.',
+        'A manager sent this back. Change the lines they asked about, then ask again.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/floor/i)).toBeNull();
@@ -265,6 +265,58 @@ describe('QuotationApprovalPanel: the block', () => {
   });
 });
 
+describe('QuotationApprovalPanel: PS-QUOTE-RULES reasons and routing', () => {
+  it('shows a discount-only or off-series-only block, worded by the server', () => {
+    granted = new Set();
+    renderPanel(
+      quotationDocument({
+        requires_approval: true,
+        off_series_line_count: 1,
+        approval_reasons: "One line is outside the project's series",
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "One line is outside the project's series, so this quotation needs a manager's approval before it can be sent to the customer.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/floor/i)).toBeNull();
+  });
+
+  it('names the routed approver while it waits, and after they approve', () => {
+    granted = new Set();
+    const { rerender } = renderPanel(
+      quotationDocument({
+        approval_status_id: 's-pending_approval',
+        approval_status_key: 'pending_approval',
+        requires_approval: true,
+        discounted_line_count: 2,
+        approval_reasons: '2 lines are priced below the default price',
+        approver_user_id: 'u-south',
+        approver_name: 'Aminah Rahman',
+      }),
+    );
+    expect(
+      screen.getByText(/2 lines are priced below the default price, so this quotation is with Aminah Rahman for approval/),
+    ).toBeInTheDocument();
+
+    rerender(
+      <QuotationApprovalPanel
+        document={quotationDocument({
+          approval_status_id: 's-rejected',
+          approval_status_key: 'rejected',
+          requires_approval: true,
+          discounted_line_count: 2,
+          approver_name: 'Aminah Rahman',
+        })}
+      />,
+    );
+    // The decider may be someone above the routed approver, so the decision credits no name.
+    expect(screen.getByText(/^A manager sent this back\./)).toBeInTheDocument();
+  });
+});
+
 describe('QuotationApprovalPanel: the manager', () => {
   const pending = () =>
     quotationDocument({
@@ -282,5 +334,59 @@ describe('QuotationApprovalPanel: the manager', () => {
     expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Reject/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+});
+
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026, Q1): each line count opens the lines it counts.
+describe('QuotationApprovalPanel line-count links', () => {
+  const pending = (overrides: Partial<QuotationDocument>) =>
+    quotationDocument({
+      approval_status_id: 's-draft',
+      approval_status_key: 'draft',
+      requires_approval: true,
+      ...overrides,
+    });
+
+  it("reads exactly the server's sentence, with each count a link to its filter", () => {
+    const onShowLines = vi.fn();
+    const document = pending({
+      off_series_line_count: 4,
+      below_floor_line_count: 1,
+      discounted_line_count: 12,
+      approval_reasons:
+        "4 lines are outside the project's series and one line is priced below the minimum price and 11 lines are priced below the default price",
+    });
+    const { container } = render(
+      <QuotationApprovalPanel document={document} onShowLines={onShowLines} />,
+    );
+    expect(container.textContent).toContain(
+      `${document.approval_reasons}, so this quotation needs a manager's approval`,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '4 lines are' }));
+    fireEvent.click(screen.getByRole('button', { name: 'one line is' }));
+    fireEvent.click(screen.getByRole('button', { name: '11 lines are' }));
+    expect(onShowLines.mock.calls.map((call) => call[0])).toEqual([
+      'non_standard',
+      'below_floor',
+      'below_default',
+    ]);
+  });
+
+  it('a below-proposal count stays text: there is no line filter for it', () => {
+    render(
+      <QuotationApprovalPanel
+        document={pending({ below_proposal_count: 2, approval_reasons: '2 lines are priced below the proposal' })}
+        onShowLines={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByText(/2 lines are priced below the proposal/)).toBeInTheDocument();
+  });
+
+  it('with no handler the sentence is the server text, no links', () => {
+    renderPanel(
+      pending({ discounted_line_count: 2, approval_reasons: '2 lines are priced below the default price' }),
+    );
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });

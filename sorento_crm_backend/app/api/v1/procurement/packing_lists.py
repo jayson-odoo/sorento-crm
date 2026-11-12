@@ -269,11 +269,16 @@ def get_packing_list(
         service = InboundShipmentService(db)
         shipment = service.get_shipment(shipment_id)
         from app.services.scm import spo_supply
+        from app.services.scm.packing_list_recalc import dispatch_recalc
 
-        # Refresh and persist line_status so n8n/API always have current value in DB
-        service.refresh_shipment_line_statuses(shipment_id)
-        # Reload shipment so line_status is in memory (refresh committed)
-        shipment = service.get_shipment(shipment_id)
+        # PACKING-LIST-RECALC: this GET reads, it never writes. The stored figures are
+        # kept current by the recompute every input change queues
+        # (`app/services/scm/packing_list_recalc.py`) and the hourly open-container
+        # sweep. Should the stored figures still disagree with what they would be now
+        # (a writer that went around the ORM), queue the same recompute rather than
+        # writing inside a read; the lines below are computed live either way.
+        if shipment is not None and service.stored_figures_stale(shipment):
+            dispatch_recalc([str(shipment.id)])
         # SPO allocated total per product on this shipment. Round 3 N1 (reviewer): this
         # and the related-SPO strip below are a listing, same as every grid
         # PLAN-hide-retired-spo-lines already hides a retired line from - a retired
@@ -400,11 +405,41 @@ def get_packing_list(
             )
             setattr(line, "related_spo_allocations", related_spo_by_product.get(product_key, []))
             setattr(line, "related_grns", related_grns_by_product.get(product_key, []))
+        # The header the same way, in memory only (PACKING-LIST-RECALC): the rollup of
+        # the live line statuses above, so the page never shows received lines under a
+        # stale header while the queued recompute catches the stored one up.
+        # `set_committed_value`: the instance is not marked dirty, so no later autoflush
+        # in this request can write the display value.
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        from app.services.procurement_service import line_status_counts, rollup_shipment_status
+
+        set_committed_value(
+            shipment,
+            "shipment_status",
+            rollup_shipment_status(
+                shipment.shipment_status,
+                *line_status_counts(line.line_status for line in shipment.shipment_lines),
+            ),
+        )
         return shipment
     except HTTPException:
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _strip_line_costs_for_non_holder(db: Session, current_user: dict, shipment_data) -> None:
+    """SUPPLIER-COST-ACCESS: a reader without `products.cost.view` was served each line's
+    `unit_cost` as null, so a save that sends it back must neither wipe nor set it: treated as
+    not sent (an existing line keeps its cost, a new one has none)."""
+    from app.services.cost_access import holds_cost_view
+
+    if holds_cost_view(db, current_user):
+        return
+    for line in getattr(shipment_data, "shipment_lines", None) or []:
+        line.unit_cost = None
+        line.model_fields_set.discard("unit_cost")
 
 
 @router.post("/", response_model=InboundShipmentResponse, status_code=status.HTTP_201_CREATED)
@@ -415,6 +450,7 @@ def create_packing_list(
 ):
     """Create a new packing list (inbound shipment) with lines."""
     try:
+        _strip_line_costs_for_non_holder(db, current_user, shipment_data)
         service = InboundShipmentService(db)
         shipment = service.create_shipment(shipment_data, current_user["id"])
         return shipment
@@ -438,6 +474,7 @@ def update_packing_list(
 ):
     """Update a packing list."""
     try:
+        _strip_line_costs_for_non_holder(db, current_user, shipment_data)
         service = InboundShipmentService(db)
         shipment = service.update_shipment(shipment_id, shipment_data, current_user["id"])
         return shipment

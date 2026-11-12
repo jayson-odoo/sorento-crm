@@ -76,6 +76,10 @@ CONSOLE_LABELS = [
     "take back a purchase request action",
     "record a suggestion or wish for what the system should have or do, an idea or a feature request",
     "change one of your ideas",
+    # AGENT-BULK-ACTIONS: a row write on both channels.
+    "grant a dealer contact access",
+    "add or remove contact tags",
+    "assign sales agents to customers",
     "your customer asks",
     "recent changes",
     "your sales opportunities",
@@ -83,6 +87,9 @@ CONSOLE_LABELS = [
     "finding dealer contacts",
     "purchase requests and sponsorship forms",
     "your ideas",
+    # AI-QUERY-CORE: the general read over the assistant registry, on both channels.
+    "reading CRM records, totals and groupings",
+    "listing the CRM records you can read",
 ]
 
 

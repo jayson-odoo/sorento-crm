@@ -689,7 +689,7 @@ class TestACLT39ExcelExportGetsASuggestedColumn:
         _filename, content = OrderInquiryWorklistService(db).export_xlsx()
         workbook = openpyxl.load_workbook(io.BytesIO(content))
         sheet = workbook[workbook.sheetnames[0]]
-        header_row = sheet[2]
+        header_row = sheet[1]
         headings = [str(cell.value).strip().upper() for cell in header_row if cell.value]
 
         assert "SUGGESTED" in headings, headings
@@ -704,7 +704,7 @@ class TestACLT39ExcelExportGetsASuggestedColumn:
             cell.column for cell in header_row
             if str(cell.value).strip().upper() == "SUGGESTED"
         )
-        data_row = sheet[3]
+        data_row = sheet[2]
         po_cell = str(data_row[po_col - 1].value or "")
         suggested_cell = str(data_row[suggested_col - 1].value or "")
 

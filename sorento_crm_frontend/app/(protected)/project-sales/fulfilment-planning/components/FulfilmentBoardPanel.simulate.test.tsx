@@ -59,7 +59,6 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
   listPlanningChangeBatches: vi.fn(),
   getPlanningChangeBatch: vi.fn(),
   updatePlanningChangeRow: vi.fn(),
-  applyPlanningChanges: vi.fn(),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -729,7 +728,7 @@ describe('BATCH-HELD-CANCEL U4: Simulate on a pending change with a saved Cancel
     // PLAN-BATCH-COUNT-DISPLAY D3: the order sentence is the decisions; the change is one note.
     expect(results).toHaveTextContent('SO403340: would transfer 1 line to Cancel SO');
     expect(results).toHaveTextContent(
-      'Would also apply the AutoCount change from 1 Sep: 1 old line (WESERP10B) would be retired',
+      'Would also apply the AutoCount change from 01/09/2026: 1 old line (WESERP10B) would be retired',
     );
     expect(results).not.toHaveTextContent(/commits after the pending change/);
   });

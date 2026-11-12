@@ -202,22 +202,38 @@ def test_ac_5_2_a_caller_without_the_permission_is_refused(api):
 # --------------------------------------------------------------------------- AC-5.3
 
 
+def _list_on_combo(db, combo, names):
+    import uuid
+
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    for index, name in enumerate(names):
+        item = Accessory(id=str(uuid.uuid4()), name=f"{name}", company_id=seed.SORENTO)
+        db.add(item)
+        db.flush()
+        db.add(ProductComboAccessory(combo_id=combo.id, accessory_id=item.id, sort_order=index))
+    db.flush()
+
+
 def test_ac_5_3_a_combo_id_adds_the_same_combo_object_as_the_tag_data(api):
     client, db, _ = api
     host, cb = _host_with_combo(
-        db, "ZZT Preview pack", description="Preview text", free_items="Tap, waste"
+        db, "ZZT Preview pack", description="Preview text"
     )
+    _list_on_combo(db, cb, ["ZZT TAP", "ZZT WASTE"])
     db.commit()
 
     response = client.get(PRODUCT_URL.format(id=host.id), params={"combo_id": cb.id})
     assert response.status_code == 200, response.text
     combo = response.json()["combo"]
     assert combo is not None
-    assert set(combo) == {"id", "name", "description", "free_items", "choices", "upgrades"}
+    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "accessory_box_style", "choices", "upgrades", "main_label", "parts_line", "part_labels"}
     assert combo["id"] == cb.id
     assert combo["name"] == "ZZT Preview pack"
     assert combo["description"] == "Preview text"
-    assert combo["free_items"] == "Tap, waste"
+    # PRICETAG-ACCESSORIES: free items are the combo's accessory list; the text is built from it.
+    assert combo["free_items"] == "ZZT TAP, ZZT WASTE"
+    assert [item["name"] for item in combo["accessories"]] == ["ZZT TAP", "ZZT WASTE"]
 
 
 def test_ac_5_3_the_preview_lists_options_with_nothing_picked(api):

@@ -205,6 +205,32 @@ export default function Page() {
     ],
   );
 
+  const approversForOffSeries = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.offSeriesApproverUserId,
+        settings?.offSeriesApproverName,
+        undefined,
+      ),
+    [approverUserOptions, settings?.offSeriesApproverUserId, settings?.offSeriesApproverName],
+  );
+
+  const approversForQuotation = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.defaultQuotationApproverUserId,
+        settings?.defaultQuotationApproverName,
+        undefined,
+      ),
+    [
+      approverUserOptions,
+      settings?.defaultQuotationApproverUserId,
+      settings?.defaultQuotationApproverName,
+    ],
+  );
+
   // While `savedSupplierFallbackFetching`, the saved supplier is deliberately left OUT
   // of the list rather than filled with a placeholder row (M5-02 review S7): a synthetic
   // `{ supplier_name: 'Loading supplier…' }` was a SELECTABLE option, not a loading
@@ -252,6 +278,7 @@ export default function Page() {
     language: settings?.language || 'en',
     supportEmail: settings?.supportEmail || '',
     supportPhone: settings?.supportPhone || '',
+    fax: settings?.fax || '',
     currency: settings?.currency || 'MYR',
     currencyFormat: settings?.currencyFormat || 'RM {value}',
     timezone: settings?.timezone || 'Europe/London',
@@ -286,6 +313,7 @@ export default function Page() {
     borrowFromOrderEnabled: Boolean(settings?.borrowFromOrderEnabled),
     // Off is the shipped state (SR-CORE).
     sampleRequestRequireProject: Boolean(settings?.sampleRequestRequireProject),
+    stockDebtPoLinkEnabled: Boolean(settings?.stockDebtPoLinkEnabled),
     priceTagGuardedClasses: settings?.priceTagGuardedClasses ?? [],
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
@@ -297,6 +325,9 @@ export default function Page() {
       settings.sponsorshipFormDefaultApproverUserId.length > 0
         ? settings.sponsorshipFormDefaultApproverUserId
         : NO_DEFAULT_APPROVER_VALUE,
+    offSeriesApproverUserId: settings?.offSeriesApproverUserId || NO_DEFAULT_APPROVER_VALUE,
+    defaultQuotationApproverUserId:
+      settings?.defaultQuotationApproverUserId || NO_DEFAULT_APPROVER_VALUE,
   };
 
   useEffect(() => {
@@ -327,6 +358,7 @@ export default function Page() {
       language: settings.language ?? 'en',
       supportEmail: settings.supportEmail ?? '',
       supportPhone: settings.supportPhone ?? '',
+      fax: settings.fax ?? '',
       currency: settings.currency ?? 'MYR',
       currencyFormat: settings.currencyFormat ?? 'RM {value}',
       timezone: settings.timezone ?? 'Europe/London',
@@ -357,6 +389,7 @@ export default function Page() {
       localBuyRoutingEnabled: Boolean(settings.localBuyRoutingEnabled),
       borrowFromOrderEnabled: Boolean(settings.borrowFromOrderEnabled),
       sampleRequestRequireProject: Boolean(settings.sampleRequestRequireProject),
+      stockDebtPoLinkEnabled: Boolean(settings.stockDebtPoLinkEnabled),
       priceTagGuardedClasses: settings.priceTagGuardedClasses ?? [],
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
@@ -368,6 +401,9 @@ export default function Page() {
         settings.sponsorshipFormDefaultApproverUserId.length > 0
           ? settings.sponsorshipFormDefaultApproverUserId
           : NO_DEFAULT_APPROVER_VALUE,
+      offSeriesApproverUserId: settings.offSeriesApproverUserId || NO_DEFAULT_APPROVER_VALUE,
+      defaultQuotationApproverUserId:
+        settings.defaultQuotationApproverUserId || NO_DEFAULT_APPROVER_VALUE,
     });
   }, [settings, form]);
 
@@ -381,6 +417,7 @@ export default function Page() {
         website_url: values.websiteURL ?? null,
         support_email: values.supportEmail,
         support_phone: values.supportPhone ?? null,
+        fax: values.fax ?? null,
         language: values.language,
         timezone: values.timezone,
         currency: values.currency,
@@ -410,6 +447,7 @@ export default function Page() {
         local_buy_routing_enabled: values.localBuyRoutingEnabled,
         borrow_from_order_enabled: values.borrowFromOrderEnabled,
         sample_request_require_project: values.sampleRequestRequireProject,
+        stock_debt_po_link_enabled: values.stockDebtPoLinkEnabled,
         price_tag_guarded_classes: values.priceTagGuardedClasses,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId ===
@@ -421,6 +459,14 @@ export default function Page() {
           NO_DEFAULT_APPROVER_VALUE
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
+        off_series_approver_user_id:
+          values.offSeriesApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.offSeriesApproverUserId,
+        default_quotation_approver_user_id:
+          values.defaultQuotationApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.defaultQuotationApproverUserId,
       };
 
       const response = await apiFetch('/api/user-management/settings/general', {
@@ -800,6 +846,27 @@ export default function Page() {
                         id="supportPhone"
                         type="tel"
                         placeholder="Enter support phone"
+                        value={field.value || ''}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Fax */}
+              <FormField
+                control={form.control}
+                name="fax"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Fax</FormLabel>
+                    <FormControl>
+                      <Input
+                        id="fax"
+                        type="tel"
+                        placeholder="Enter fax number"
                         value={field.value || ''}
                         onChange={field.onChange}
                       />
@@ -1214,6 +1281,28 @@ export default function Page() {
 
               <FormField
                 control={form.control}
+                name="stockDebtPoLinkEnabled"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="stock-debt-po-link-enabled"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="stock-debt-po-link-enabled">
+                          AutoCount links from Stock Debt
+                        </Label>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
                 name="priceTagGuardedClasses"
                 render={({ field }) => (
                   <FormItem>
@@ -1297,6 +1386,48 @@ export default function Page() {
                   </FormItem>
                 )}
               />
+
+              {(
+                [
+                  [
+                    'offSeriesApproverUserId',
+                    'Approver (project quotation lines outside the series)',
+                    approversForOffSeries,
+                  ],
+                  [
+                    'defaultQuotationApproverUserId',
+                    'Default approver (project quotation discounts)',
+                    approversForQuotation,
+                  ],
+                ] as const
+              ).map(([name, label, options]) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{label}</FormLabel>
+                      <FormControl>
+                        <SearchableSelect
+                          key={`${name}-${field.value}-${options.length}`}
+                          onChange={field.onChange}
+                          value={field.value}
+                          placeholder="None"
+                          options={[
+                            { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                            ...options.map((u) => ({
+                              value: u.id,
+                              label: (u.name?.trim() || u.email) + ` (${u.email})`,
+                            })),
+                          ]}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
 
               {/* Timezone */}
               <FormField

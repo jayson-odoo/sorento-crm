@@ -114,6 +114,12 @@ export function BoardChangeTable({
                 to exist; without one the attribute resolves to nothing and a screen reader is
                 handed a dangling id (and the console a warning). One sentence, which is also
                 what a first-time reader needs to know about this list. */}
+            {/* OI-UX-FILTER-SNAPSHOT: the order's customer / project. */}
+            {primary.party ? (
+              <p className="truncate text-sm text-muted-foreground" title={primary.party}>
+                {primary.party}
+              </p>
+            ) : null}
             <DialogDescription>
               Only the fields that moved, then the suggestion.
             </DialogDescription>
@@ -337,7 +343,15 @@ export function BoardChangeWasNowTable({
   const moved = onlyMovedFields
     ? new Set(changedFieldsOf(annotation).map((field) => field.key))
     : null;
-  const shows = (field: 'product' | 'qty' | 'date' | 'decision') => !moved || moved.has(field);
+  const shows = (field: 'product' | 'location' | 'qty' | 'date' | 'decision') =>
+    !moved || moved.has(field);
+  // SPLIT-SHEET-LOCATION: where AutoCount moved the line from and to, when it moved.
+  const locationFrom =
+    annotation.locationChangedFrom &&
+    annotation.locationChangedTo &&
+    annotation.locationChangedFrom !== annotation.locationChangedTo
+      ? annotation.locationChangedFrom
+      : null;
   // PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): a product swapped in place is the FIRST row,
   // the old code under Was and the line's own (new) code under Now.
   const productFrom =
@@ -359,8 +373,13 @@ export function BoardChangeWasNowTable({
           <span className="truncate font-medium text-amber-900" title={annotation.itemCode}>
             {annotation.lineNo ? `Line ${annotation.lineNo}` : annotation.itemCode}
           </span>
-          <span className="truncate text-amber-800" title={annotation.soNumber}>
+          <span
+            className="truncate text-amber-800"
+            title={annotation.party ? `${annotation.soNumber} ${annotation.party}` : annotation.soNumber}
+          >
             {annotation.soNumber}
+            {/* OI-UX-FILTER-SNAPSHOT: the order's customer / project beside its number. */}
+            {annotation.party ? ` · ${annotation.party}` : ''}
           </span>
         </div>
       )}
@@ -394,6 +413,23 @@ export function BoardChangeWasNowTable({
                   title={annotation.itemCode}
                 >
                   {annotation.itemCode}
+                </td>
+              </tr>
+            ) : null}
+            {locationFrom && shows('location') ? (
+              <tr data-testid="change-row-location">
+                <th scope="row" className="text-start font-normal text-amber-800">
+                  Location
+                </th>
+                <td className="truncate" data-testid="change-was-location" title={locationFrom}>
+                  {locationFrom}
+                </td>
+                <td
+                  className="truncate font-medium"
+                  data-testid="change-now-location"
+                  title={annotation.locationChangedTo ?? ''}
+                >
+                  {annotation.locationChangedTo}
                 </td>
               </tr>
             ) : null}

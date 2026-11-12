@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import case, desc, func, literal_column
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +30,7 @@ from app.schemas.ai_prompt import (
     DryRunResponse,
     DryRunToolCall,
     PromptKeySummary,
+    PromptListPage,
     PromptVersionDetail,
     PromptVersionsResponse,
     RegistryVariableRow,
@@ -40,7 +41,10 @@ from app.schemas.ai_prompt import (
     SetLabelResponse,
 )
 from app.schemas.chatbot_turn import AgentActionResponse
+from app.services import rate_limit
+from app.services.error_handler import AppException
 from app.api.v1.external.chat import (
+    panel_files,
     panel_service,
     CHATBOT_PROMPT_KEYS,
     DryRunTurnRefused,
@@ -55,6 +59,7 @@ from app.schemas.ai_assistant import (
     AIAssistantConversationResponse,
     AIAssistantMessageCreate,
     AIAssistantMessageResponse,
+    AttachmentUploadResponse,
     GreetingResponse,
     ModelPriceBody,
     ModelPriceCreate,
@@ -73,6 +78,7 @@ from app.schemas.ai_assistant import (
     TraceSpanItem,
     UsageByDayItem,
     UsageSummaryResponse,
+    NoToolAskItem,
     WishlistClusterItem,
 )
 from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService, MCPToolCallError
@@ -272,7 +278,7 @@ def ai_assistant_greeting(
 ):
     chat = AIAssistantChatService(db)
     data = chat.generate_greeting(current_user["id"])
-    return GreetingResponse(**data)
+    return GreetingResponse(**data, can_attach=panel_service.on_the_brain(db, str(current_user["id"])))
 
 
 @router.get("/ai-assistant/conversations", response_model=list[AIAssistantConversationResponse])
@@ -293,6 +299,34 @@ def list_ai_assistant_conversations(
         )
         for r in rows
     ]
+
+
+@router.post("/ai-assistant/attachments", response_model=AttachmentUploadResponse, status_code=status.HTTP_201_CREATED)
+def upload_ai_assistant_attachment(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    """One file for the next panel message, kept as the caller's draft until it is sent."""
+    uid = str(user["id"])
+    if not rate_limit.hit("panel_upload", uid, limit=panel_files.UPLOADS_PER_MINUTE, window_seconds=60).allowed:
+        raise AppException(429, "Too many uploads in a short time. Try again in a minute.", code="RATE_LIMITED")
+    atype = panel_files.ensure_attachment_type(db)
+    limit = panel_files.size_limit_bytes(atype)
+    data = file.file.read(limit + 1)  # never buffer more than the limit plus the byte that proves it
+    return panel_files.create_draft(db, user_id=uid, filename=file.filename or "", data=data, atype=atype)
+
+
+@router.delete("/ai-assistant/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ai_assistant_attachment(
+    attachment_id: str,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    """Remove the caller's own unsent file. Anyone else's, or one already sent, is the same 404."""
+    if not panel_files.delete_draft(db, user_id=str(user["id"]), attachment_id=attachment_id):
+        raise AppException(404, "File not found", code="file_not_found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/ai-assistant/conversations/{conversation_id}/messages", response_model=list[AIAssistantMessageResponse])
@@ -317,13 +351,25 @@ def send_ai_assistant_message(
     chat = AIAssistantChatService(db)
     # AGENTIC-UNIFY AC-1, AC-2: the rollout slug moves this user onto the chatbot's brain. A Confirm or
     # Cancel click answers a card the old path wrote, so the old path finishes it.
-    if payload.confirm_action is None and panel_service.on_the_brain(db, str(user["id"])):
+    on_brain = payload.confirm_action is None and panel_service.on_the_brain(db, str(user["id"]))
+    if payload.attachments and not on_brain:
+        raise AppException(422, "Files cannot be read here yet.", code="files_not_supported")
+    if on_brain:
         chat.ensure_enabled()
-        conv = chat.get_or_create_conversation(str(user["id"]), payload.conversation_id, payload.message)
-        chat.append_message(conv.id, "user", payload.message)
+        # Every file is checked before a conversation or a message is written (T1).
+        prepared = panel_service.prepare_files(db, str(user["id"]), payload.attachments) if payload.attachments else None
+        conv = chat.get_or_create_conversation(
+            str(user["id"]), payload.conversation_id, payload.message.strip() or (prepared.first_name if prepared else "")
+        )
+        chat.append_message(
+            conv.id, "user", payload.message.strip() if prepared else payload.message,
+            metadata_json={"files": prepared.meta} if prepared else None,
+        )
+        if prepared:
+            panel_files.move_to_conversation(db, prepared, str(conv.id))
         result = panel_service.run_panel_turn(
             db, user=user, conversation=conv, text=payload.message, page_snapshot=payload.page_snapshot,
-            real_user_id=_real_user_id(request, user),
+            real_user_id=_real_user_id(request, user), files=prepared,
         )
         chat.append_message(conv.id, "assistant", result.reply_text, metadata_json=panel_service.message_metadata(result))
     else:
@@ -416,6 +462,34 @@ def list_ai_assistant_prompts(
     db: Session = Depends(get_db),
 ):
     return [PromptKeySummary(**row) for row in AIPromptService(db).list_keys()]
+
+
+@router.get("/ai-assistant/prompts/list", response_model=PromptListPage)
+def list_ai_assistant_prompts_page(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    query: Optional[str] = Query(None),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
+    model: Optional[list[str]] = Query(None),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """The prompts list on the standard DataGrid contract: paged, every column sortable,
+    searchable by name and role, Status (active, dormant) and Runs on (model, or ``default``)
+    as multi-select filters."""
+    return PromptListPage(
+        **AIPromptService(db).list_keys_page(
+            page=page,
+            limit=limit,
+            sort=sort,
+            direction=dir,
+            query=query,
+            status_in=multi_values(status_filter, "status"),
+            model_in=multi_values(model, "model"),
+        )
+    )
 
 
 @router.get("/ai-assistant/prompts/{name}/versions", response_model=PromptVersionsResponse)
@@ -1128,6 +1202,15 @@ def list_wishlist_clusters(
         )
         for it in items
     ]
+
+
+@router.get("/ai-assistant/wishlist/no-tool", response_model=list[NoToolAskItem])
+def list_wishlist_no_tool(
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """The last 30 days of asks the agent flagged as `no_tool`, newest first (GAP-SIGNAL)."""
+    return [NoToolAskItem(**row) for row in AiWishlistService(db).list_no_tool(days=30)]
 
 
 # --- Model prices -----------------------------------------------------------

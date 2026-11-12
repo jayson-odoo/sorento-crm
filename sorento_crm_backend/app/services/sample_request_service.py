@@ -12,6 +12,7 @@ admin who edits the graph changes them; the permission rules are by status KEY.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 
 import uuid
@@ -29,8 +30,10 @@ from app.models.sample_request import SampleRequest, SampleRequestLine
 from app.models.status import Status, StatusTransition
 from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException, handle_not_found
+from app.services.scm.so_party import so_parties, with_party
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -634,7 +637,7 @@ def _apply_date_answer(
 def _answer_label(req: SampleRequest) -> str:
     if req.date_feasible:
         return "the sample team can meet the requested date"
-    return f"the sample team proposes {req.proposed_delivery_date:%d %b %Y}"
+    return f"the sample team proposes {fmt_date(req.proposed_delivery_date)}"
 
 
 def answer_date(
@@ -846,14 +849,20 @@ def search_consignments(
         .limit(limit)
         .all()
     )
+    # OI-UX-FILTER-SNAPSHOT: each consignment names its customer and project.
+    parties = so_parties(db, ids=[r.id for r in rows])
     return [
-        {
-            "id": r.id,
-            "so_number": r.so_number,
-            "debtor_code": r.debtor_code,
-            "debtor_name": r.debtor_name,
-            "order_date": r.order_date,
-        }
+        with_party(
+            {
+                "id": r.id,
+                "so_number": r.so_number,
+                "debtor_code": r.debtor_code,
+                "debtor_name": r.debtor_name,
+                "order_date": r.order_date,
+            },
+            parties,
+            r.id,
+        )
         for r in rows
     ]
 
@@ -993,15 +1002,21 @@ def _folded(column):
 
 
 def search_products(
-    db: Session, q: str, limit: int = 20, product_ids: Optional[set] = None
+    db: Session,
+    q: str,
+    limit: int = 20,
+    product_ids: Optional[set] = None,
+    list_when_empty: bool = False,
 ) -> List[Dict[str, Any]]:
     """Active products whose code (dashes, spaces, case ignored) or name matches. The
     search only LISTS products; a person always picks one (card rule 5).
 
     ``product_ids`` (a request's source quotation, SFQ-27) narrows the search to those products,
-    and an empty search then lists them all so a phone user can pick without typing."""
+    and an empty search then lists them all so a phone user can pick without typing.
+    ``list_when_empty`` (New Product Application pickers, owner 8 Nov) lists the first ``limit``
+    active products for an empty search; the sample request keeps listing nothing."""
     text = (q or "").strip()
-    if not text and product_ids is None:
+    if not text and product_ids is None and not list_when_empty:
         return []
     query = (
         db.query(Product, Brand.brand_name)
@@ -1094,13 +1109,16 @@ def _quotation_items(
     # (product id or None, what a person would recognise the line by)
     wanted: List[tuple] = []
     for line in quote_lines:
+        if line.is_section:
+            # A heading row is not an item to sample (PROPOSAL-FORM-COLLAPSE).
+            continue
         if line.product_id:
             wanted.append((str(line.product_id), line.product_code_snapshot))
         elif line.set_parts_snapshot:
             for part in line.set_parts_snapshot:
                 wanted.append((part.get("product_id"), part.get("product_code")))
         else:
-            text = line.description_snapshot or line.product_code_snapshot or ""
+            text = line_text(line) or line.product_code_snapshot or ""
             wanted.append((None, " ".join(text.split())))
     return wanted
 
@@ -1451,6 +1469,7 @@ def _consignment_block(db: Session, req: SampleRequest) -> Optional[Dict[str, An
     return {
         "id": cg.id,
         "so_number": cg.so_number,
+        **with_party({}, so_parties(db, ids=[cg.id]), cg.id),
         "order_date": cg.order_date,
         "status": cg.status,
         "delivered_on": delivery[0] if delivery else None,

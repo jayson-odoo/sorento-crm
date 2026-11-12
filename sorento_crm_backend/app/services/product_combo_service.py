@@ -19,6 +19,7 @@ The route contract (the frontend already mocks it, Phase 1, the header of
     GET    /api/v1/master-data/products/{id}/sold-with       -> {"data": [...]}
     POST   /api/v1/master-data/product-combos/{id}/image      multipart -> {attachment_id, url}
     DELETE /api/v1/master-data/product-combos/{id}/image      -> 204
+    POST   /api/v1/master-data/product-combos/{id}/copy       -> summary (COMBO-COPY-TO-PRODUCTS)
 
 The image pair (S5, PLAN-price-tag-r10.md) is the combo's OWN cover picture -
 stored as an `attachments` row of type ``Combo Image``, linked to the HOST
@@ -36,10 +37,15 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.accessory import ProductComboAccessory
+from app.models.dealer_kit import ComboTagTemplate
 from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
+from app.services.accessory_service import AccessoryService
+from app.services.dependent_probe import is_referenced, referrers_of
 from app.services.error_handler import AppException, handle_not_found
+from app.services.tag_description import clean_description
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -76,6 +82,9 @@ def _validated_image_ext(filename: str) -> str:
     return ext
 
 
+_clean_description = clean_description
+
+
 def _dimensions(product: Optional[Product]) -> Optional[str]:
     """`800 x 500 x 220 mm`, through the ONE formatter the tag and the catalogue
     tile already share - a second one would eventually print a part with different
@@ -106,6 +115,7 @@ def _serialize_part(part: ProductComboPart) -> Dict[str, Any]:
         "sell_price": part.sell_price,
         "topup_amount": part.topup_amount,
         "is_upgrade": bool(part.is_upgrade),
+        "label": part.label,
     }
 
 
@@ -127,7 +137,12 @@ def _serialize_image(db: Session, combo: ProductCombo) -> Optional[Dict[str, Any
     )
     if not url:
         return None
-    return {"attachment_id": attachment.id, "url": url}
+    return {
+        "attachment_id": attachment.id,
+        "url": url,
+        "file_name": attachment.original_filename,
+        "mime_type": attachment.mime_type,
+    }
 
 
 def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
@@ -137,11 +152,14 @@ def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
         "name": combo.name,
         "sort_order": combo.sort_order,
         "description": combo.description,
-        "free_items": combo.free_items,
+        "main_label": combo.main_label,
+        "parts_line": combo.parts_line,
         "list_price": combo.list_price,
         "sell_price": combo.sell_price,
         "parts": [_serialize_part(part) for part in combo.parts],
         "image": _serialize_image(db, combo),
+        # PRICETAG-ACCESSORIES: the combo's own list, the one source the old free text became.
+        "accessories": AccessoryService(db).combo_list_rows(combo.id),
         "created_at": combo.created_at,
         "updated_at": combo.updated_at,
     }
@@ -201,8 +219,16 @@ class ProductComboService:
 
     # ----------------------------------------------------------------- combos
 
-    def create(self, host_product_id: str, name: str, *, created_by: Optional[str]) -> Dict[str, Any]:
+    def create(
+        self,
+        host_product_id: str,
+        name: str,
+        *,
+        created_by: Optional[str],
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
         self._host_or_404(host_product_id)
+        cleaned_description = _clean_description(description)
         cleaned = (name or "").strip()
         if not cleaned:
             raise AppException(status_code=422, message="A combo needs a name")
@@ -234,6 +260,7 @@ class ProductComboService:
             host_product_id=host_product_id,
             name=cleaned,
             sort_order=next_order,
+            description=cleaned_description,
             created_by=created_by,
         )
         self.db.add(combo)
@@ -265,12 +292,16 @@ class ProductComboService:
         if payload.get("sort_order") is not None:
             combo.sort_order = int(payload["sort_order"])
         # Omitted = left alone; an explicit null clears (the payload is exclude_unset).
-        for field in ("description", "free_items"):
-            if field in payload:
-                setattr(combo, field, (payload[field] or "").strip() or None)
+        if "description" in payload:
+            combo.description = _clean_description(payload["description"])
         for field in ("list_price", "sell_price"):
             if field in payload:
                 setattr(combo, field, payload[field])
+        if "main_label" in payload:
+            combo.main_label = (payload["main_label"] or "").strip() or None
+        if "parts_line" in payload:
+            # Rich-text HTML from the shared editor: same sanitiser and cap as the description.
+            combo.parts_line = _clean_description(payload["parts_line"], "Parts line")
         self.db.commit()
         return _serialize(self._combo_or_404(combo.id), self.db)
 
@@ -279,8 +310,249 @@ class ProductComboService:
         products do not, and a request line pointing at it has its `combo_id`
         cleared by the FK's own SET NULL rather than being deleted (AC-S1-5)."""
         combo = self._combo_or_404(combo_id)
+        attachment_id = combo.image_attachment_id
         self.db.delete(combo)
+        self.db.flush()
+        sweep = self._unlink_combo_image(combo, attachment_id) if attachment_id else None
         self.db.commit()
+        if sweep:
+            delete_object_best_effort(*sweep)
+
+    # ------------------------------------------------------------------- copy
+
+    def copy_to_products(
+        self,
+        combo_id: str,
+        target_ids: List[str],
+        *,
+        overwrite_ids: List[str],
+        dry_run: bool,
+        copy_template_links: bool,
+        created_by: Optional[str],
+    ) -> Dict[str, Any]:
+        """COMBO-COPY-TO-PRODUCTS (owner answers 9 Nov): this combo, as it is, onto each picked
+        product, which becomes its host. Name, description, prices, legacy free-items text, box
+        style, picture, parts and free items copy; the template links copy only when
+        `copy_template_links` (the caller manages tag templates). A target with a combo of that
+        name is skipped unless picked in `overwrite_ids`, which replaces that combo's contents and
+        keeps its row. A target that is a part of the combo is skipped. All or nothing: a target
+        outside the source host's company reads as missing (404)."""
+        source = self._combo_or_404(combo_id)
+        host = self._host_or_404(source.host_product_id)
+        try:
+            wanted = list(
+                dict.fromkeys(
+                    value
+                    for value in (str(uuid.UUID(str(raw))) for raw in target_ids)
+                    if value != host.id
+                )
+            )
+            overwrite = {str(uuid.UUID(str(raw))) for raw in overwrite_ids}
+        except ValueError:
+            raise AppException(status_code=422, message="Each target must be a product id")
+        if not overwrite <= set(wanted):
+            raise AppException(status_code=422, message="Only a picked product can be overwritten")
+
+        query = self.db.query(Product).filter(Product.id.in_(wanted)).order_by(Product.id)
+        if not dry_run:
+            # Two copies onto one product wait for each other rather than racing into the unique
+            # name. NO KEY UPDATE, so the FK checks of the inserted rows never deadlock on it
+            # (same lock as AccessoryService.copy_product_list).
+            query = query.with_for_update(of=Product, key_share=True)
+        targets = {row.id: row for row in (query.all() if wanted else [])}
+        for value in wanted:
+            row = targets.get(value)
+            if row is None or (host.company_id is not None and row.company_id != host.company_id):
+                raise handle_not_found("Product", value)
+
+        clashes: Dict[str, ProductCombo] = {}
+        if wanted:
+            for row in (
+                self._query()
+                .filter(
+                    ProductCombo.host_product_id.in_(wanted),
+                    func.lower(ProductCombo.name) == source.name.lower(),
+                )
+                .all()
+            ):
+                clashes.setdefault(row.host_product_id, row)
+
+        part_ids = {part.part_product_id for part in source.parts}
+        summary: Dict[str, Any] = {
+            "targets": len(wanted),
+            "created": 0,
+            "overwritten": 0,
+            "skipped": [],
+            "conflicts": [],
+            # Nothing withheld counts as copied: False only when the source has links that
+            # this caller may not copy.
+            "template_links_copied": bool(copy_template_links)
+            or not self.db.query(ComboTagTemplate.id)
+            .filter(ComboTagTemplate.combo_id == source.id)
+            .first(),
+        }
+        plan: List[tuple] = []
+        for value in wanted:
+            target = targets[value]
+            who = {"product_id": target.id, "code": target.product_code, "name": target.product_name}
+            if value in part_ids:
+                summary["skipped"].append({**who, "reason": "part"})
+                continue
+            clash = clashes.get(value)
+            if clash is not None:
+                summary["conflicts"].append(who)
+                if value not in overwrite:
+                    summary["skipped"].append({**who, "reason": "exists"})
+                    continue
+                summary["overwritten"] += 1
+            else:
+                summary["created"] += 1
+            plan.append((target, clash))
+
+        if dry_run:
+            return summary
+
+        free_items = (
+            self.db.query(ProductComboAccessory)
+            .filter(ProductComboAccessory.combo_id == source.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+        links = (
+            self.db.query(ComboTagTemplate).filter(ComboTagTemplate.combo_id == source.id).all()
+            if copy_template_links
+            else []
+        )
+        sweeps: List[tuple] = []
+        referrers = referrers_of(self.db, "attachments")
+        for target, clash in plan:
+            sweep = self._copy_onto(
+                source, target, clash, free_items, links,
+                copy_template_links=copy_template_links, created_by=created_by,
+                referrers=referrers,
+            )
+            if sweep:
+                sweeps.append(sweep)
+        self.db.commit()
+        # Old pictures leave storage only after the commit that dropped their rows is durable.
+        for sweep in sweeps:
+            delete_object_best_effort(*sweep)
+        return summary
+
+    def _copy_onto(
+        self,
+        source: ProductCombo,
+        target: Product,
+        combo: Optional[ProductCombo],
+        free_items: List[ProductComboAccessory],
+        links: List[ComboTagTemplate],
+        *,
+        copy_template_links: bool,
+        created_by: Optional[str],
+        referrers: Optional[List[tuple]] = None,
+    ) -> Optional[tuple]:
+        """Write the source's contents into `combo` (an overwrite) or a new combo on `target`.
+        Returns the storage sweep of a picture the overwrite dropped, for after the commit."""
+        if combo is None:
+            combo = ProductCombo(
+                host_product_id=target.id,
+                name=source.name,
+                sort_order=self.db.query(ProductCombo)
+                .filter(ProductCombo.host_product_id == target.id)
+                .count(),
+                created_by=created_by,
+            )
+            self.db.add(combo)
+            self.db.flush()
+        else:
+            combo.name = source.name
+            self.db.query(ProductComboPart).filter(ProductComboPart.combo_id == combo.id).delete(
+                synchronize_session=False
+            )
+            self.db.query(ProductComboAccessory).filter(
+                ProductComboAccessory.combo_id == combo.id
+            ).delete(synchronize_session=False)
+            if copy_template_links:
+                self.db.query(ComboTagTemplate).filter(ComboTagTemplate.combo_id == combo.id).delete(
+                    synchronize_session=False
+                )
+            self.db.flush()
+            self.db.expire(combo, ["parts"])
+
+        for field in (
+            "description", "free_items", "list_price", "sell_price", "accessory_box_preset_id",
+            "main_label", "parts_line",
+        ):
+            setattr(combo, field, getattr(source, field))
+
+        previous_picture = combo.image_attachment_id
+        combo.image_attachment_id = source.image_attachment_id
+        if source.image_attachment_id:
+            shown = (
+                self.db.query(ProductAttachment.id)
+                .filter(
+                    ProductAttachment.product_id == target.id,
+                    ProductAttachment.attachment_id == source.image_attachment_id,
+                )
+                .first()
+            )
+            if shown is None:
+                # The same gallery link an upload makes (AC-S5-2), onto the shared picture.
+                self.db.add(
+                    ProductAttachment(
+                        id=str(uuid.uuid4()),
+                        product_id=target.id,
+                        attachment_id=source.image_attachment_id,
+                        is_primary=False,
+                        access_levels=["dealer", "end_user"],
+                        company_id=target.company_id,
+                    )
+                )
+        self.db.flush()
+
+        for part in source.parts:
+            self.db.add(
+                ProductComboPart(
+                    combo_id=combo.id,
+                    part_product_id=part.part_product_id,
+                    choice_group=part.choice_group,
+                    sort_order=part.sort_order,
+                    sell_price=part.sell_price,
+                    topup_amount=part.topup_amount,
+                    is_upgrade=part.is_upgrade,
+                    label=part.label,
+                )
+            )
+        # A product is never its own free item (AccessoryService.set_combo_list).
+        kept = [row for row in free_items if row.item_product_id != target.id]
+        for index, row in enumerate(kept):
+            self.db.add(
+                ProductComboAccessory(
+                    combo_id=combo.id,
+                    accessory_id=row.accessory_id,
+                    item_product_id=row.item_product_id,
+                    sort_order=index,
+                    image_id=row.image_id,
+                    name_override=row.name_override,
+                    spec_override=row.spec_override,
+                    remark_override=row.remark_override,
+                )
+            )
+        for link in links:
+            self.db.add(
+                ComboTagTemplate(
+                    combo_id=combo.id,
+                    template_id=link.template_id,
+                    default_list=link.default_list,
+                    default_selling=link.default_selling,
+                    created_by=created_by,
+                )
+            )
+        self.db.flush()
+
+        if previous_picture and previous_picture != combo.image_attachment_id:
+            return self._unlink_combo_image(combo, previous_picture, referrers)
+        return None
 
     # ------------------------------------------------------------------ image
 
@@ -432,7 +704,10 @@ class ProductComboService:
         return row
 
     def _unlink_combo_image(
-        self, combo: ProductCombo, attachment_id: str
+        self,
+        combo: ProductCombo,
+        attachment_id: str,
+        referrers: Optional[List[tuple]] = None,
     ) -> Optional[tuple]:
         """AC-S5-12: drop the combo's OWN link to `attachment_id` (its host
         product's `product_attachments` row) and, only when no OTHER
@@ -450,19 +725,31 @@ class ProductComboService:
         """
         from app.services.storage_router import extract_key
 
-        self.db.query(ProductAttachment).filter(
-            ProductAttachment.product_id == combo.host_product_id,
-            ProductAttachment.attachment_id == attachment_id,
-        ).delete(synchronize_session=False)
-        self.db.flush()
+        # COMBO-COPY-TO-PRODUCTS: a copied combo shares its source's picture, so another combo
+        # (on this host or any other) may still show it. The host's gallery link stays while a
+        # sibling combo on this host shows it, and the row stays while any combo points at it.
+        def other_combo_shows(*criteria) -> bool:
+            return (
+                self.db.query(ProductCombo.id)
+                .filter(
+                    ProductCombo.image_attachment_id == attachment_id,
+                    ProductCombo.id != combo.id,
+                    *criteria,
+                )
+                .first()
+                is not None
+            )
 
-        still_linked = (
-            self.db.query(ProductAttachment.id)
-            .filter(ProductAttachment.attachment_id == attachment_id)
-            .first()
-            is not None
-        )
-        if still_linked:
+        if not other_combo_shows(ProductCombo.host_product_id == combo.host_product_id):
+            self.db.query(ProductAttachment).filter(
+                ProductAttachment.product_id == combo.host_product_id,
+                ProductAttachment.attachment_id == attachment_id,
+            ).delete(synchronize_session=False)
+            self.db.flush()
+
+        # The combo's own pointer and the host's gallery link are already gone and flushed, so
+        # the probe sees only what else still shows the picture (any FK referrer of attachments).
+        if is_referenced(self.db, "attachments", attachment_id, referrers=referrers):
             return None
 
         attachment = self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
@@ -534,6 +821,8 @@ class ProductComboService:
                 setattr(part, field, payload.get(field))
         if payload.get("is_upgrade") is not None:
             part.is_upgrade = bool(payload["is_upgrade"])
+        if "label" in fields_set:
+            part.label = (payload.get("label") or "").strip() or None
         self.db.commit()
         return _serialize_part(self._part_or_404(part.id))
 

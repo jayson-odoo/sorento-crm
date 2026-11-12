@@ -82,6 +82,7 @@ from app.services.document_ingest_service import (
     DocumentIngestService,
     DocumentReadService,
 )
+from app.services.master_ref_resolver import WARN_LINE_PRODUCT_UNRESOLVED
 from app.services.master_ingest_service import (
     ENTITY_SPECS,
     IngestOutcome,
@@ -124,6 +125,8 @@ INGEST_PERMISSIONS = {
     "brands": "master_data.brands.edit",
     # ITEM-CLASS-MASTER (contract 2.11): the brands rule.
     "item_classes": "master_data.item_classes.edit",
+    # QUOTE-TERMS-SELECT (contract 2.14): the item classes rule.
+    "payment_terms": "master_data.payment_terms.edit",
     # Documents (group A3). Pushing an order through the ESB is the same act as
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
@@ -162,6 +165,7 @@ READ_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.view",
     "brands": "master_data.brands.view",
     "item_classes": "master_data.item_classes.view",
+    "payment_terms": "master_data.payment_terms.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
@@ -195,6 +199,7 @@ DELETE_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.delete",
     "brands": "master_data.brands.delete",
     "item_classes": "master_data.item_classes.delete",
+    "payment_terms": "master_data.payment_terms.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
@@ -229,14 +234,29 @@ MAX_RECORD_LOG_LINES = 50
 _ERROR_VALUE_LOG_LIMIT = 200
 
 
+# Dropped-line warnings per `ingest.record` line: one record dropping hundreds
+# of lines must not turn into one unbounded log line.
+_DROPPED_LINE_LOG_LIMIT = 20
+
+
+def _capped_warnings(warnings: list[str]) -> list[str]:
+    shown = [w[:_ERROR_VALUE_LOG_LIMIT] for w in warnings[:_DROPPED_LINE_LOG_LIMIT]]
+    if len(warnings) > _DROPPED_LINE_LOG_LIMIT:
+        shown.append(f"+{len(warnings) - _DROPPED_LINE_LOG_LIMIT} more")
+    return shown
+
+
 def _log_record_outcomes(
     entity: str, integration_name, company_id: str, result
 ) -> None:
-    """One INFO line per FAILED/RETRYABLE record, capped at `MAX_RECORD_LOG_LINES`.
+    """One INFO line per FAILED/RETRYABLE record, or landed record that dropped a
+    line, capped at `MAX_RECORD_LOG_LINES`.
 
-    Never logs a payload field beyond `source_ref` and the record's own
-    `errors` dict - no line bodies, no customer/agent/product names, nothing
-    that was actually sent. Skipped entirely for a dry run: a preview never
+    Never logs a payload field beyond `source_ref`, the record's own
+    `errors` dict and (INGEST-DROP-WARN-CRM) the `line_product_unresolved`
+    warnings naming a dropped line - no line bodies, no customer/agent/product
+    names, nothing else that was actually sent. A landed record that dropped a
+    line is logged too, under the same cap. Skipped entirely for a dry run: a preview never
     happened as far as the operational log is concerned, the same reason the
     batch summary line's own counts are for the real run only in spirit
     (dry-run callers read the response body, not the server log).
@@ -244,7 +264,15 @@ def _log_record_outcomes(
     logged = 0
     suppressed = 0
     for record in result.records:
-        if record.outcome.value not in ("failed", "retryable"):
+        # INGEST-DROP-WARN-CRM: a landed document that DROPPED a line is logged
+        # too, with the warnings naming each dropped line, so the server trail
+        # says which line and why, not only the reply.
+        dropped_line_warnings = [
+            w
+            for w in (getattr(record, "warnings", None) or [])
+            if w.startswith(WARN_LINE_PRODUCT_UNRESOLVED)
+        ]
+        if record.outcome.value not in ("failed", "retryable") and not dropped_line_warnings:
             continue
         if logged >= MAX_RECORD_LOG_LINES:
             suppressed += 1
@@ -255,13 +283,14 @@ def _log_record_outcomes(
         }
         logger.info(
             "ingest.record entity=%s integration=%s company=%s source_ref=%s "
-            "outcome=%s errors=%s",
+            "outcome=%s errors=%s warnings=%s",
             entity,
             integration_name,
             company_id,
             record.source_ref,
             record.outcome.value,
             json.dumps(errors),
+            json.dumps(_capped_warnings(dropped_line_warnings)),
         )
         logged += 1
     if suppressed:
@@ -341,7 +370,14 @@ SUPPORTED_ENTITIES = (
 # "2.11" (ITEM-CLASS-MASTER): `item_classes` joins ENTITY_SPECS as a master (AutoCount
 # ItemClass), the brands shape with its own INGEST/READ/DELETE slugs; its deletions only ever
 # deactivate. Additive: an ESB on 2.10 never sees `item_classes` in `entities`.
-CONTRACT_VERSION = "2.11"
+# "2.13" (SS-PACKAGE-LINES, ss PR #226; 2.12 left to the lane that took it): `billing_documents`
+# lines accept `parent_line_ref` (an item-package child names its parent line's source_ref) and
+# `line_type` (AutoCount's raw DtlType). Optional; a 2.11 payload ingests unchanged.
+# "2.14" (QUOTE-TERMS-SELECT, PR #2305): `payment_terms` joins ENTITY_SPECS as a master (AutoCount
+# Terms: code = DisplayTerm, rule = Terms), the item classes shape with its own
+# INGEST/READ/DELETE slugs; deletions only deactivate, and a non-dry push links quotations whose
+# legacy payment-terms text equals a term. Additive.
+CONTRACT_VERSION = "2.14"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -358,6 +394,22 @@ def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
     if not slug or not user_id:
         return False
     return UserPermissionService(db).check_user_has_permission(user_id, slug)
+
+
+def _run_payment_terms_link_hook(db: Session, company_id: str) -> None:
+    """QUOTE-TERMS-SELECT: after a committed `payment_terms` push, link the terms templates and
+    quotations whose legacy free text equals a term. Its own commit and its own failure, like
+    every hook here: the push already landed and the next push links again."""
+    from app.services import quote_terms_service
+
+    try:
+        linked = quote_terms_service.link_legacy_terms(db, company_id=company_id)
+        db.commit()
+        if linked:
+            logger.info("ingest.payment_terms_linked company=%s rows=%d", company_id, linked)
+    except Exception as exc:  # noqa: BLE001 - a reaction never fails the ingest
+        db.rollback()
+        logger.warning("ingest.payment_terms_link_failed company=%s error=%s", company_id, exc)
 
 
 def _run_document_hooks(
@@ -1146,6 +1198,8 @@ def ingest_masters(
             _run_consignment_order_hooks(db, service, actor=current_user.get("id"))
         if entity == GOODS_RECEIVE_NOTES_ENTITY:
             _run_grn_receipt_hook(db, service)
+        if entity == "payment_terms":
+            _run_payment_terms_link_hook(db, company_id)
         # DO-BACKFILL-CRM (plan section 0b.3, Q4 (a)): old DO quantities must not re-decide
         # key-less Cancel SO groups, so a backfill batch starts no relink and none of its
         # reactions (OI retirement, handover, purchasing email, planning change).

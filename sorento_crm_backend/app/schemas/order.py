@@ -388,6 +388,8 @@ class SalesOrderLinkRef(BaseModel):
     id: str
     so_number: str
     line_no: Optional[int] = None
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class OrderLineResponse(OrderLineBase):

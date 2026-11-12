@@ -7,6 +7,7 @@
  * existing portal landing page pattern).
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileText, Plus } from 'lucide-react';
@@ -19,6 +20,7 @@ import {
 } from '@/lib/price-tag-status';
 import { portalBase, portalNewPath, portalDetailPath } from '../lib/portal-paths';
 import { listRequests, type PriceTagRequestSummary } from '../lib/price-tag-request-service';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 interface Props {
   slug?: string;
@@ -119,9 +121,9 @@ export function PriceTagRequestList({ slug }: Props) {
                       rather than sitting blank. */}
                   <p
                     className="text-sm text-muted-foreground mt-0.5 truncate"
-                    title={req.debtor_name ?? 'No dealer yet'}
+                    title={requestCustomers(req).map((c) => c.name).join(', ') || 'No dealer yet'}
                   >
-                    {req.debtor_name ?? 'No dealer yet'}
+                    {customersLabel(requestCustomers(req)) ?? 'No dealer yet'}
                   </p>
                 </div>
               </div>
@@ -133,7 +135,7 @@ export function PriceTagRequestList({ slug }: Props) {
                 </span>
                 <span>
                   Created:{' '}
-                  {new Date(req.created_at).toLocaleDateString()}
+                  {formatDateInMalaysia(req.created_at)}
                 </span>
               </div>
             </CardContent>

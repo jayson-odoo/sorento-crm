@@ -264,8 +264,12 @@ def _delete_sales_opportunity(db: Session, payload: dict):
 
 
 def _delete_sales_target(db: Session, payload: dict):
+    from app.services import own_scope
     from app.services.sales import target_service
 
+    own_scope.assert_pending_action_allowed(
+        db, "sales_target.delete", _entity_id(payload), payload.get("requested_by_id")
+    )
     return target_service.delete_target_by_id(db, _entity_id(payload))
 
 
@@ -288,6 +292,25 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="sales.targets.delete",
         label="Delete target",
+    )
+)
+
+
+def _delete_point_ratio(db: Session, payload: dict):
+    from app.services.sales import target_service
+
+    return target_service.delete_point_ratio(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="point_ratio.delete",
+        entity_types=("point_ratio",),
+        execute=_delete_point_ratio,
+        window=WINDOW_DESTRUCTIVE,
+        # Ratio writes are `.edit` (add and edit too): who can set a ratio can remove one.
+        permission="sales.targets.edit",
+        label="Delete point ratio",
     )
 )
 
@@ -703,6 +726,12 @@ def _delete_brand(db: Session, payload: dict):
     return BrandService(db).delete_brand(_entity_id(payload))
 
 
+def _delete_accessory(db: Session, payload: dict):
+    from app.services.accessory_service import AccessoryService
+
+    return AccessoryService(db).delete(_entity_id(payload))
+
+
 def _delete_product_category(db: Session, payload: dict):
     from app.services.product_service import ProductCategoryService
 
@@ -719,6 +748,13 @@ def _delete_certificate(db: Session, payload: dict):
     from app.services.certificate_service import CertificateService
 
     return CertificateService(db).delete_certificate(_entity_id(payload))
+
+
+def _remove_certificate_link(db: Session, payload: dict):
+    # CERT-LINK-CLEANUP R5: the report's Remove (one per selected link, behind one countdown).
+    from app.services import certificate_link_report_service as report
+
+    return report.remove_link(db, _entity_id(payload), payload.get("requested_by_id"))
 
 
 def _delete_lookup_option(db: Session, payload: dict):
@@ -766,6 +802,18 @@ register(
     )
 )
 
+# PRICETAG-ACCESSORIES: the library is maintained by whoever may edit products (owner Q2 (a)).
+register(
+    FormAction(
+        key="accessory.delete",
+        entity_types=("accessory",),
+        execute=_delete_accessory,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete accessory",
+    )
+)
+
 register(
     FormAction(
         key="item_class.delete",
@@ -807,6 +855,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.certificates.delete",
         label="Delete certificate",
+    )
+)
+
+register(
+    FormAction(
+        key="certificate_link.remove",
+        entity_types=("certificate_link",),
+        execute=_remove_certificate_link,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.certificates.edit",
+        label="Remove certificate link",
     )
 )
 
@@ -1240,7 +1299,9 @@ def _delete_contact_tag(db: Session, payload: dict):
         (lambda slug: bool(actor) and perms.check_user_has_permission(str(actor), slug)),
         (lambda: bool(actor) and _is_superadmin(db, str(actor))),
     )
-    return ContactTagService(db).delete_tag(_entity_id(payload), gates=gates)
+    return ContactTagService(db).delete_tag(
+        _entity_id(payload), gates=gates, actor_id=str(actor) if actor else None
+    )
 
 
 def _delete_onboarding_request(db: Session, payload: dict):
@@ -1491,6 +1552,37 @@ register(
     )
 )
 
+def _unlink_dealer_access(db: Session, payload: dict):
+    from app.audit_context import AuditActor, actor_scope
+    from app.services import dealer_access_screen
+
+    # Runs from whichever request commits the window: the requester is the actor, and the link must still be one of
+    # their own accounts' links (it fails, and stays, when it is not).
+    requester = str(payload.get("requested_by_id") or "")
+    if not requester:
+        raise ValueError("dealer_access_link.unlink has no requester")
+    # `real_user_id` is the admin while one views as the requester (stamped at park time, `_REAL_USER_ACTIONS`).
+    with actor_scope(
+        AuditActor(
+            actor_type="user", user_id=requester, real_user_id=str(payload.get("real_user_id") or requester)
+        ),
+        db=db,
+    ):
+        return dealer_access_screen.unlink(db, requester, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="dealer_access_link.unlink",
+        # Parked on the LINK row (`respond_contact_customers`), one of the requester's own accounts'.
+        entity_types=("dealer_access_link",),
+        execute=_unlink_dealer_access,
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit_own",
+        label="Unlink dealer access",
+    )
+)
+
 register(
     FormAction(
         key="customer.unassign_sales_agent",
@@ -1710,7 +1802,8 @@ for _key, _fn, _label in (
 def _unassign_tag_template_products(db: Session, payload: dict):
     """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
     an unlink, so it parks (5s, reversible: Add puts the links back). The
-    filter is re-applied at commit, under the requester's own scope."""
+    filter is re-applied at commit, under the requester's own scope.
+    PRICETAG-TEMPLATE-PRODUCTS: the designer's Save parks its unticked ``product_ids`` here."""
     from app.services.dealer_kit import product_tag_template_service
 
     return product_tag_template_service.bulk_assign(
@@ -1718,7 +1811,10 @@ def _unassign_tag_template_products(db: Session, payload: dict):
         _entity_id(payload),
         {
             key: payload.get(key) or []
-            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+            for key in (
+                "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids",
+                "combo_ids",
+            )
         },
         "remove",
         user_id=payload.get("requested_by_id"),
@@ -1758,6 +1854,27 @@ register(
 )
 
 
+def _unlink_combo_tag_templates(db: Session, payload: dict):
+    """PRICETAG-LPSP: unticking templates on an existing combo."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.unlink_combo_templates(
+        db, _entity_id(payload), [str(t) for t in payload.get("template_ids") or []]
+    )
+
+
+register(
+    FormAction(
+        key="combo.unlink_tag_templates",
+        entity_types=("combo",),
+        execute=_unlink_combo_tag_templates,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Unlink tag templates from combo",
+    )
+)
+
+
 def _delete_tag_size_preset(db: Session, payload: dict):
     """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
     request designer's Tag Size control (the saved-size `x`) - park through
@@ -1776,6 +1893,45 @@ register(
         # D9: the tag template slugs, no new grant.
         permission="dealer_kit.tag_templates.manage",
         label="Delete tag size",
+    )
+)
+
+
+def _delete_accessory_box_preset(db: Session, payload: dict):
+    """A saved accessories box design: the same service call as the immediate DELETE, which first
+    detaches every box linked to it (each keeps its current design)."""
+    from app.services.dealer_kit import accessory_template_service
+
+    return accessory_template_service.delete_preset(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="accessory_box_preset.delete",
+        entity_types=("accessory_box_preset",),
+        execute=_delete_accessory_box_preset,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Delete accessories template",
+    )
+)
+
+
+def _delete_accessory_image(db: Session, payload: dict):
+    """One picture of a library accessory (and its attachment): the same removal as the route."""
+    from app.services.accessory_service import AccessoryService
+
+    return AccessoryService(db).delete_picture_by_id(_entity_id(payload))
+
+
+register(
+    FormAction(
+        key="accessory_image.delete",
+        entity_types=("accessory_image",),
+        execute=_delete_accessory_image,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Remove accessory picture",
     )
 )
 
@@ -2550,7 +2706,15 @@ def _delete_product_supplier_cost(db: Session, payload: dict):
     from app.models.cost_price import ProductSupplierCost
     from app.services.error_handler import handle_not_found
     from app.services.procurement.supplier_cost_service import delete_cost
+    from app.services.cost_access import COST_VIEW_PERM, can_view_cost
+    from app.services.error_handler import AppException
 
+    # SUPPLIER-COST-ACCESS: the cost routes also need `products.cost.view`, which the single
+    # parking slug below cannot say; checked here so this door is no wider than the router.
+    if not can_view_cost(db, payload.get("requested_by_id")):
+        raise AppException(
+            status_code=403, message=f"Permission required: {COST_VIEW_PERM}", code="cost_view_required"
+        )
     cost_id = _entity_id(payload)
     row = db.query(ProductSupplierCost).filter(ProductSupplierCost.id == cost_id).first()
     if row is None:
@@ -2761,6 +2925,190 @@ register(
 )
 
 
+def assert_form_draft_discardable(db: Session, draft_id: str, user_id):
+    """QUOTE-AUTOSAVE Discard draft (card Q5): the draft exists and is the caller's to discard -
+    edit rights on its project, and for a new proposal's private draft, the caller's own. Run at
+    park time and again when the window lapses. 404 for a draft the caller cannot see. Returns it.
+    """
+    from app.models.projects import Project, QuotationDocumentDraft
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    row = db.query(QuotationDocumentDraft).filter(QuotationDocumentDraft.id == draft_id).first()
+    if row is None or (row.document_id is None and str(row.owner_user_id) != str(user_id)):
+        raise handle_not_found("Draft", draft_id)
+    project = db.query(Project).filter(Project.id == row.project_id).first()
+    if project is None:
+        raise handle_not_found("Draft", draft_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return row
+
+
+def _discard_form_draft(db: Session, payload: dict):
+    from app.services import quotation_form_draft_service as drafts
+
+    user_id = payload.get("requested_by_id")
+    row = assert_form_draft_discardable(db, _entity_id(payload), user_id)
+    # Only the tab holding the draft when the window lapses may discard it: a newer tab opened
+    # during the countdown keeps what it typed (owner Q4). A click without a token (an older
+    # client) is checked the same way and refused.
+    drafts.assert_holder(db, row, payload.get("token"), str(user_id))
+    return drafts.discard_draft(db, row)
+
+
+register(
+    FormAction(
+        key="quotation_form_draft.discard",
+        entity_types=("quotation_form_draft",),
+        execute=_discard_form_draft,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Discard draft",
+    )
+)
+
+
+def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id, *, lock: bool = False):
+    """The spec sheet routes' write checks (edit right + write access to the project), run at park
+    time and again when the window lapses. 404 when the sheet is gone or not in the caller's
+    company, 403 without the right. Returns the sheet."""
+    from app.models.projects import Project, ProjectQuotationDocument, ProjectQuotationSpecSheet
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    query = db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.id == sheet_id)
+    if lock:
+        # Held until commit so a reset cannot interleave with a page save (both rewrite page_edits).
+        query = query.with_for_update().populate_existing()
+    sheet = query.first()
+    document = db.get(ProjectQuotationDocument, sheet.document_id) if sheet is not None else None
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if sheet is None or project is None:
+        raise handle_not_found("Spec sheet", sheet_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return sheet
+
+
+def assert_spec_sheet_page_resettable(db: Session, sheet_id: str, page_key, user_id) -> None:
+    """Park-time check for `quotation_spec_sheet.reset_page`: the sheet is editable and the page
+    key is `cover` or one of its pages (422 otherwise)."""
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    sheet = assert_spec_sheet_editable(db, sheet_id, user_id)
+    key = str(page_key or "")
+    if len(key) > 120 or key not in {spec.COVER_KEY} | {p["key"] for p in spec.pages(db, sheet)}:
+        raise AppException(
+            status_code=422, message="That page is not on this spec sheet.", code="spec_sheet_keys_invalid"
+        )
+
+
+def _delete_quotation_spec_sheet(db: Session, payload: dict):
+    sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
+    db.delete(sheet)
+    db.flush()
+    return {"deleted": True}
+
+
+def _reset_quotation_spec_sheet_page(db: Session, payload: dict):
+    from app.services import project_spec_sheet_service as spec
+
+    assert_spec_sheet_page_resettable(
+        db, _entity_id(payload), payload.get("page_key"), payload.get("requested_by_id")
+    )
+    sheet = assert_spec_sheet_editable(
+        db, _entity_id(payload), payload.get("requested_by_id"), lock=True
+    )
+    spec.reset_page_edit(
+        db, sheet, str(payload.get("page_key") or ""), user_id=payload.get("requested_by_id")
+    )
+    return {"reset": True}
+
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.delete",
+        entity_types=("quotation_spec_sheet",),
+        execute=_delete_quotation_spec_sheet,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.edit",
+        label="Delete spec sheet",
+    )
+)
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.reset_page",
+        entity_types=("quotation_spec_sheet",),
+        execute=_reset_quotation_spec_sheet_page,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Reset page to template",
+    )
+)
+
+
+def split_certificate_remove_id(entity_id) -> tuple[str, str]:
+    """`quotation_certificate.remove` is keyed `<document id>:<certificate id>`, so two removes on
+    one quote each get their own countdown. 404 for anything else."""
+    from app.services.error_handler import handle_not_found
+
+    document_id, sep, certificate_id = str(entity_id or "").partition(":")
+    if not sep or not document_id or not certificate_id:
+        raise handle_not_found("Certificate", entity_id)
+    return document_id, certificate_id
+
+
+def assert_quotation_certificate_removable(db: Session, entity_id, user_id):
+    """Park-time and commit-time check of `quotation_certificate.remove`: the edit right, write
+    access to the project, and the certificate currently on the document's list. 404 otherwise.
+    Returns `(document, certificate_id)`."""
+    from app.models.projects import Project, ProjectQuotationDocument
+    from app.services import project_service
+    from app.services import quotation_certificate_service as certs
+    from app.services.error_handler import handle_not_found
+    from app.services.uuid_path_param import validate_uuid_path
+    from app.services.user_service import UserPermissionService
+
+    document_id, certificate_id = split_certificate_remove_id(entity_id)
+    validate_uuid_path(document_id, resource="Quotation")
+    validate_uuid_path(certificate_id, resource="Certificate")
+    document = db.get(ProjectQuotationDocument, document_id)
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if document is None or project is None:
+        raise handle_not_found("Quotation", document_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    certs.assert_removable(db, document, certificate_id)
+    return document, certificate_id
+
+
+def _remove_quotation_certificate(db: Session, payload: dict):
+    from app.services import quotation_certificate_service as certs
+
+    document, certificate_id = assert_quotation_certificate_removable(
+        db, _entity_id(payload), payload.get("requested_by_id")
+    )
+    certs.remove(db, document, certificate_id, payload.get("requested_by_id"))
+    return {"removed": True}
+
+
+register(
+    FormAction(
+        key="quotation_certificate.remove",
+        entity_types=("quotation_certificate",),
+        execute=_remove_quotation_certificate,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Remove certificate",
+    )
+)
+
+
 def _delete_project_party_contact(db: Session, payload: dict):
     """The same hard delete `DELETE /project-sales/parties/{id}/contacts/{cid}` runs
     (PS-REGISTRATION-V3 rule 4). Stakeholders copied from it keep their copy."""
@@ -2782,5 +3130,44 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="projects.parties.edit",
         label="Delete party contact",
+    )
+)
+
+
+def _delete_exchange_rate(db: Session, payload: dict):
+    from app.services.costing import rates
+
+    return rates.delete_rate_by_id(db, _entity_id(payload))
+
+
+def _unlink_costing_party_product(db: Session, payload: dict):
+    from app.services.costing import party
+
+    return party.unlink_product_by_id(db, _entity_id(payload))
+
+
+# PRODUCT-COSTING (AC-ER-06): delete one dated exchange rate row from Costing > Settings.
+# Destructive; the row is gone for good, the audit row keeps the old value.
+register(
+    FormAction(
+        key="exchange_rate.delete",
+        entity_types=("exchange_rate",),
+        execute=_delete_exchange_rate,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.config.manage",
+        label="Delete exchange rate",
+    )
+)
+
+# PRODUCT-COSTING (AC-CG-12): remove one product from a party's costing list. Reversible: the
+# product stays and is one pick away on the Add products dialog.
+register(
+    FormAction(
+        key="costing_party_product.unlink",
+        entity_types=("costing_party_product",),
+        execute=_unlink_costing_party_product,
+        window=WINDOW_REVERSIBLE,
+        permission="products.party_costing.manage",
+        label="Remove from party",
     )
 )

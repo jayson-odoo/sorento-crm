@@ -276,6 +276,23 @@ describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for s
     expect(within(row).getByText('SO391853')).toBeInTheDocument();
   });
 
+  it('names the linked order\'s customer and project under its number (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({
+        book_so_number: 'SO391853',
+        book_so_unresolved: false,
+        book_so_customer_name: 'Maju Debtor',
+        book_so_project_label: 'Tuju Residences',
+      }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Maju Debtor / Tuju Residences')).toBeInTheDocument();
+  });
+
   it('reads a muted dash when the book names no sales order, never a guess', async () => {
     getOrderInquiryPoDetail.mockResolvedValue(
       detailWithLine({ book_so_number: null, book_so_unresolved: false }),
@@ -832,9 +849,9 @@ describe('SPO lightbox body (AC-D19)', () => {
 
     await screen.findByText('SRTWB242');
     expect(screen.queryByText('Linked')).not.toBeInTheDocument();
-    // R16: the header's "Go to linked line" button is shared by both lightboxes and
-    // always renders - it merely stays disabled when nothing is highlighted.
-    expect(screen.getByRole('button', { name: 'Go to linked line' })).toBeDisabled();
+    // SO-LINE-OI-STATUS-UNIFY crew fix (3): with nothing to go to, the button is not
+    // offered at all (it used to sit there disabled and read as broken).
+    expect(screen.queryByTestId('document-detail-go-to-line')).toBeNull();
   });
 
   it('Should fix 4 (review round 3): disables Go to when highlightLines names a line no row on the document carries', async () => {
@@ -870,7 +887,7 @@ describe('SPO lightbox body (AC-D19)', () => {
     await screen.findByText('SRTWB242');
     expect(screen.queryByText('Linked')).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Go to linked line' })).toBeDisabled();
+      expect(screen.queryByTestId('document-detail-go-to-line')).toBeNull();
     });
   });
 });
@@ -988,9 +1005,62 @@ describe('R16 (owner rulings, 25 Sep 2026): "1 button to quickly jump to the lin
     );
 
     await screen.findByText('SKU-1');
-    const button = screen.getByTestId('document-detail-go-to-line');
-    expect(button).toBeDisabled();
-    expect(button).toHaveTextContent('Go to linked line');
+    // Crew fix (3): hidden, not disabled, when nothing is highlighted.
+    expect(screen.queryByTestId('document-detail-go-to-line')).toBeNull();
+  });
+
+  it('SO-LINE-OI-STATUS-UNIFY crew fix (3): hides Go to when the linked SPO line is not among the document\'s lines', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0041',
+      supplier_name: 'CHAOSHENG',
+      lines: [
+        { id: 'alloc-1', sku: 'SKU-1', allocated: '10', received: '0', remaining: '10' },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/09-0041"
+        spoLineId="alloc-not-on-this-document"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+    await screen.findByText('SKU-1');
+    expect(screen.queryByTestId('document-detail-go-to-line')).toBeNull();
+  });
+
+  it('SO-LINE-OI-STATUS-UNIFY crew fix (3): shows Go to on the SPO lightbox once the linked line is loaded, and it lands on it', async () => {
+    const lines = Array.from({ length: 25 }, (_, index) => ({
+      id: `alloc-${index}`,
+      sku: `SPO-SKU-${index}`,
+      allocated: '10',
+      received: '0',
+      remaining: '10',
+      spo_line_number: index + 1,
+    }));
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0041',
+      supplier_name: 'CHAOSHENG',
+      lines,
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/09-0041"
+        spoLineId="alloc-21"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+    await screen.findByText('SPO-SKU-0');
+    expect(screen.queryByText('SPO-SKU-21')).not.toBeInTheDocument();
+    Element.prototype.scrollIntoView = vi.fn();
+    fireEvent.click(await screen.findByTestId('document-detail-go-to-line'));
+    await waitFor(() => expect(screen.getByText('SPO-SKU-21')).toBeInTheDocument());
+    expect(screen.getByText('SPO-SKU-21').closest('tr')).toHaveAttribute('data-linked-line', 'true');
   });
 
   it('reads "Go to linked line" and jumps the PO lines grid to the page holding it, scrolling it into view', async () => {
@@ -1183,5 +1253,47 @@ describe('PO lightbox lines - the SPO each line moved onto (SUPPLY-SPO-LINK, moc
 
     expect(await screen.findByText('ZZT SHIPPER')).toBeInTheDocument();
     expect(getOrderInquirySpoDetail).toHaveBeenCalledWith('SPO-2026/09-0107');
+  });
+});
+
+describe('SO-LINE-OI-STATUS-UNIFY crew pass 2: a reader without projects access', () => {
+  it('the PO lightbox shows the shared no-access message, never the raw permission slug', async () => {
+    getOrderInquiryPoDetail.mockRejectedValue(
+      new Error('Permission required: projects.projects.view'),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202611-P0042" poId="po-42" open onOpenChange={vi.fn()} />,
+    );
+    expect(await screen.findByText("You don't have access to this")).toBeInTheDocument();
+    expect(screen.queryByText(/Permission required/)).toBeNull();
+    expect(screen.queryByText(/projects\.projects\.view/)).toBeNull();
+  });
+
+  it('the SPO lightbox shows the same no-access message on a refusal, not "could not be found"', async () => {
+    getOrderInquirySpoDetail.mockRejectedValue(
+      Object.assign(new Error('Permission required: projects.projects.view'), { status: 403 }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/09-0041" open onOpenChange={vi.fn()} />,
+    );
+    expect(await screen.findByText("You don't have access to this")).toBeInTheDocument();
+    expect(screen.queryByText('This shipping order could not be found.')).toBeNull();
+    expect(screen.queryByText(/projects\.projects\.view/)).toBeNull();
+  });
+
+  it('the header keeps room for the close X, so it never sits on "Go to linked line"', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      lines: [{ id: 'line-1', sku: 'SKU-1', qty_ordered: '10', qty_received: '0', remaining: '10' }],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" poLineId="line-1" open onOpenChange={vi.fn()} />,
+    );
+    const button = await screen.findByTestId('document-detail-go-to-line');
+    expect(button.parentElement).toHaveClass('pe-8');
   });
 });

@@ -33,9 +33,10 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 /**
  * Hook for fetching products list with pagination, sorting, and filtering
  */
-export function useProducts(params: GetProductsParams) {
+export function useProducts(params: GetProductsParams, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
+    enabled,
     queryKey: [
       'products',
       params.pageIndex,
@@ -51,6 +52,9 @@ export function useProducts(params: GetProductsParams) {
       params.item_type,
       params.variant_filter,
       params.discontinued_batch_id,
+      params.list_price_batch_id,
+      // PRICETAG-TEMPLATE-PRODUCTS: the template designer picker's "Show: Uses this template".
+      params.tag_template_id,
     ],
     queryFn: () => getProducts(params),
     gcTime: 1000 * 60 * 60, // 60 minutes
@@ -103,14 +107,15 @@ export function useProductPurchaseHistory(id: string | null) {
 }
 
 /**
- * Hook for fetching product price history
+ * The product's list-price changes, newest first (the List Price cell's history lightbox)
  */
-export function useProductPriceHistory(id: string | null) {
+export function useProductPriceHistory(id: string | null, params: DataGridApiFetchParams) {
   return useQuery({
-    queryKey: ['product-price-history', id],
+    ...LIST_QUERY_OPTIONS,
+    queryKey: ['product-price-history', id, params.pageIndex, params.pageSize, params.sorting],
     queryFn: () => {
       if (!id) throw new Error('Product ID is required');
-      return getPriceHistory(id);
+      return getPriceHistory(id, params);
     },
     enabled: !!id,
     staleTime: 1000 * 60 * 5, // 5 minutes
@@ -152,6 +157,8 @@ export function useUpdateProduct() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['product', variables.id] });
+      // A saved price edit is a new row in the List Price lightbox (review N4).
+      queryClient.invalidateQueries({ queryKey: ['product-price-history', variables.id] });
       toast.success('Product updated successfully', {
         position: 'top-center',
       });

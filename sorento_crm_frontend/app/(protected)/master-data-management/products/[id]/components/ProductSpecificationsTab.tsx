@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+import type { Editor } from '@tiptap/react';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { RichTextView } from '@/components/dealer-kit/RichTextView';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -19,6 +21,8 @@ import {
 import { usePermissions } from '@/hooks/usePermissions';
 import { DETAIL_KEY, useProductSpecTable } from '../../hooks/useProductSpecTable';
 import { useProduct, useUpdateProduct } from '../../hooks/useProducts';
+import { useSpecValueIcons } from '../../hooks/useSpecValueIcons';
+import { SpecValueIcons } from './SpecValueIcons';
 import { useSpecSearchPreviewQuery } from '../../../product-specifications/hooks/useSpecSearchPreviewQuery';
 import { WORKLIST_KEY } from '../../../spec-verification/hooks/useSpecVerification';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
@@ -29,6 +33,8 @@ import {
   type MergeFieldGroup,
   type SpecKeyOption,
 } from '@/lib/dealer-kit/merge-fields';
+import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
+import { richBlocksWithFields } from '@/lib/dealer-kit/product-block';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
 
@@ -198,7 +204,7 @@ function PriceTagDescriptionBlock({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [insertOpen, setInsertOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<Editor | null>(null);
   const { mutateAsync, isPending } = useUpdateProduct();
 
   const specKeys: SpecKeyOption[] = useMemo(
@@ -235,6 +241,9 @@ function PriceTagDescriptionBlock({
   );
 
   const activeText = editing ? draft : storedTemplate ?? '';
+  // A formatted description resolves its fields on the text runs (never into the markup);
+  // legacy plain text keeps its line-by-line render.
+  const printsAsBlocks = richBlocksWithFields(activeText, previewBinding, 'print');
   const printsAs = renderPriceTagDescription(activeText, previewBinding, 'print');
 
   // AC-S4-18: "known" is the SAME restricted catalog Insert field offers -
@@ -266,29 +275,43 @@ function PriceTagDescriptionBlock({
     setEditing(false);
   };
 
+  // The dialog hands back the field text; it goes in at the editor's cursor.
   const insertAtCaret = (content: string) => {
-    setDraft(content);
+    if (content) editorRef.current?.chain().focus().insertContent(content).run();
     setInsertOpen(false);
   };
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+      <div
+        id={`${productId}-price-tag-description-label`}
+        className="text-xs uppercase tracking-wide text-muted-foreground"
+      >
         Price tag description
       </div>
 
       {editing ? (
-        <div className="flex flex-col gap-2">
-          <Textarea
-            ref={textareaRef}
-            aria-label="Price tag description"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') cancelEdit();
+        <div
+          className="flex flex-col gap-2"
+          onKeyDown={(e) => {
+            // R10: an Escape from a toolbar popover (a portal, so outside this element in the
+            // DOM though React bubbles it here) closes that popover only.
+            const inPopover = (e.target as HTMLElement).closest?.(
+              '[data-radix-popper-content-wrapper], [role="dialog"]',
+            );
+            if (e.key === 'Escape' && !inPopover && e.currentTarget.contains(e.target as Node)) {
+              cancelEdit();
+            }
+          }}
+        >
+          <RichTextEditor
+            aria-labelledby={`${productId}-price-tag-description-label`}
+            value={toEditorHtml(draft)}
+            onChange={setDraft}
+            onEditorReady={(editor) => {
+              editorRef.current = editor;
             }}
-            rows={3}
-            className="font-mono text-sm"
+            minHeight={120}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => setInsertOpen(true)}>
@@ -304,9 +327,13 @@ function PriceTagDescriptionBlock({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <p className="rounded-md border bg-muted/30 p-3 font-mono text-sm whitespace-pre-line break-words">
-            {storedTemplate || 'Not set, the price tag uses the product description'}
-          </p>
+          <div className="rounded-md border bg-muted/30 p-3">
+            {storedTemplate ? (
+              <RichTextView value={storedTemplate} />
+            ) : (
+              <p className="text-sm">Not set, the price tag uses the product description</p>
+            )}
+          </div>
           {canEdit && (
             <div>
               <Button size="sm" variant="outline" onClick={startEdit}>
@@ -320,7 +347,11 @@ function PriceTagDescriptionBlock({
       {hasMergeField(activeText) && (
         <div className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground">Prints as:</span>
-          <p className="text-sm whitespace-pre-line break-words">{printsAs}</p>
+          {printsAsBlocks ? (
+            <RichTextView blocks={printsAsBlocks} />
+          ) : (
+            <p className="text-sm whitespace-pre-line break-words">{printsAs}</p>
+          )}
           {unknownTokens.length > 0 && (
             <p className="text-destructive text-xs">Unknown field: {unknownTokens.join(', ')}</p>
           )}
@@ -329,7 +360,7 @@ function PriceTagDescriptionBlock({
 
       <InsertFieldDialog
         open={insertOpen}
-        value={draft}
+        value=""
         data={previewBinding}
         specKeys={specKeys}
         groups={PRICE_TAG_INSERT_GROUPS}
@@ -421,6 +452,40 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   // gets no affordance that would 403 at submit.
   const { permissionSet } = usePermissions();
   const canEdit = permissionSet.has('master_data.products.edit');
+  // The price-tag icons each saved value carries, by the tag's own rule (SPEC-VALUE-ICONS).
+  const { iconsFor, canManage: canManageIcons } = useSpecValueIcons();
+  // Null, not an element that renders nothing, when a value has no icon: the table keeps its
+  // full-width click-to-edit value for those rows (and for users who cannot see icons at all).
+  const valueAdornment = useCallback(
+    (row: SpecTableRow) => {
+      const icons = iconsFor(row, rows);
+      if (icons.length === 0) return null;
+      // A conditioned icon names the other rows that earned it.
+      const reasons: Record<string, string> = {};
+      for (const icon of icons) {
+        if (!icon.conditions?.length) continue;
+        reasons[icon.id] = icon.conditions
+          .map((c) => {
+            const partner = rows.find((r) => r.specKey === c.spec_key);
+            return partner
+              ? `${partner.label} = ${readableValue(partner.value, partner.unit ?? undefined, partner.valueLabels)}`
+              : '';
+          })
+          .filter(Boolean)
+          .join(', ');
+      }
+      return (
+        <SpecValueIcons
+          specKey={row.specKey}
+          label={row.label}
+          icons={icons}
+          reasons={reasons}
+          canManage={canManageIcons}
+        />
+      );
+    },
+    [iconsFor, canManageIcons, rows],
+  );
 
   if (isLoading) {
     return (
@@ -472,6 +537,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             canEdit={canEdit}
             openEditorFor={pendingKey}
             onEditorOpened={() => setPendingKey(null)}
+            valueAdornment={valueAdornment}
             callbacks={{
               onSetValue: spec.setValue,
               onTombstone: spec.tombstone,

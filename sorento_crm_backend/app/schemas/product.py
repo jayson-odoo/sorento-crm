@@ -1,5 +1,5 @@
 """Product schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -232,7 +232,9 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    pass
+    # Raw cap before sanitising; the stored value is capped at 5000 in the service. Not on the
+    # base: a response must never fail on a stored value's length.
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
 
 class ProductUpdate(BaseModel):
@@ -268,7 +270,7 @@ class ProductUpdate(BaseModel):
     # S5: None means "not sent", same convention as the other planning flags on this schema.
     exclude_from_planning: Optional[bool] = None
     # PLAN-price-tag-r10.md S4: None = untouched by this PUT (AC-S4-2/S4-9).
-    price_tag_description: Optional[str] = None
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -411,10 +413,23 @@ class ProductVariantRef(BaseModel):
 
 class ProductResponse(ProductBase):
     id: str
+
+    @field_serializer("cost_price")
+    def _cost_for_reader(self, value: Optional[Decimal]) -> Optional[Decimal]:
+        """Null unless the request's user holds `products.cost.view` (SUPPLIER-COST-ACCESS,
+        `app/services/cost_access.py`). Every staff route that returns this schema, nested
+        or not, goes through here. Integration-only doors (`get_external_api_user`) are not
+        stamped and keep cost: the MCP server strips it before chat."""
+        from app.services.cost_access import cost_hidden
+
+        return None if cost_hidden() else value
     is_discontinued: bool = False
     # When the discontinue-notify scheduler last noticed this product (issue #1287).
     # Null while available or before the first tick after discontinuing.
     discontinued_at: Optional[datetime] = Field(default=None, validation_alias="discontinued_notified_at")
+    # When the list-price checker last reported a list price change (#2228's watermark,
+    # LIST-PRICE-CHANGE-UI). Null while the price has never changed since it was baselined.
+    list_price_changed_at: Optional[datetime] = Field(default=None, validation_alias="list_price_notified_at")
     # --- Variant graph (see PLAN-suggest-on-miss-variant-graph.md §1) ---
     # `is_variant` is derived from the (always-loaded) `variant_of_id` column, so
     # it is cheap on LIST rows too (no extra query). `variant_of` / `variants`

@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { MyDownload } from '@/services/myDownloadsService';
+import type { RecordHistoryEvent } from '@/types/recordHistory.types';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import type {
   AcknowledgeResult,
@@ -674,6 +675,7 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       // LINKAGE-UNIFY U3 (Q5): the "Dead document" filter.
       dead_document: params.dead_document,
       inquiry_no: params.inquiry_no,
+      reserve_request: params.reserve_request,
       delivery_from: params.delivery_from,
       delivery_to: params.delivery_to,
       // S3: a Schedule cell's own drilldown. The pair is sent as the pair - the server
@@ -964,6 +966,24 @@ export async function getOrderInquiryHeaderLines(
     page += 1;
   }
   return rows;
+}
+
+/**
+ * STANDARD-HISTORY wave 1 (AC-SH-B1): the OI detail page's History tab.
+ *   GET /api/v1/project-sales/order-inquiry-headers/{id}/history
+ *     -> { events: RecordHistoryEvent[] }, newest first. A batch press is ONE event whose
+ *     `lines` name every row of this OI it touched. Permission `projects.projects.view`;
+ *     404 for an unknown id or another company's header.
+ */
+export interface OrderInquiryHistory {
+  events: RecordHistoryEvent[];
+}
+
+export async function getOrderInquiryHistory(id: string): Promise<OrderInquiryHistory> {
+  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}/history`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the history'));
+  return response.json();
 }
 
 export async function getOrderInquiryHeaderRelatedDocuments(

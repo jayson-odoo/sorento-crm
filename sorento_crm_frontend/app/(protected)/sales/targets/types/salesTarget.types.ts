@@ -4,7 +4,7 @@
  */
 export type TargetSubjectKind = 'agent' | 'team' | 'dealer';
 export type TargetMetric = 'amount' | 'quantity';
-export type TargetBasis = 'ordered' | 'delivered';
+export type TargetBasis = 'invoiced' | 'ordered' | 'delivered';
 export type TargetProductScope = 'all' | 'categories' | 'products' | 'brands';
 export type TargetScopeKind = 'category' | 'product' | 'brand';
 export type TargetSplitUnit = 'day' | 'week' | 'month';
@@ -18,6 +18,16 @@ export type Rounding = 'sen' | 'ringgit';
 export interface TierAccountRate {
   customer_id: string;
   rate: number;
+  /** This account's own fixed RM Additional when the tier is reached; null: none. */
+  bonus_amount?: number | null;
+}
+
+/** A tier's Additional: `pct` on top of its rate, or a fixed `amount` in RM. */
+export interface TierAdditional {
+  kind: 'pct' | 'amount';
+  value: number;
+  /** An RM Additional set per account: each account's own amount (`rate` holds the RM). */
+  accounts?: TierRateEntry[] | null;
 }
 
 export interface CommissionTier {
@@ -27,13 +37,18 @@ export interface CommissionTier {
   threshold?: number | null;
   /** Amount target: % of the achieved amount. Quantity target: RM per unit. Null with rates per account. */
   rate: number | null;
-  /** RM paid once per period when the tier is reached. */
+  /** The tier's RM Additional, paid when this is the tier reached: once on an agent or team
+   * target, to each counted account on a dealer target (unless set per account). */
   bonus_amount: number | null;
-  /** A "+ Additional" line, paid on top of the main tier (they stack). */
+  /** The tier's % Additional (RM per unit on a quantity target), on top of the rate when this is
+   * the tier reached, on the same accounts. A tier has a % or an RM Additional, not both. */
+  additional_rate?: number | null;
+  /** A legacy "+ Additional" line, paid on top of the main tier (they stack) until folded. */
   is_additional?: boolean;
   /** Tiers per period: the start of the period this tier belongs to. */
   period_start?: string | null;
-  /** Dealer targets: only these accounts earn on the tier, each at its rate. */
+  /** Dealer targets: only these accounts earn on the tier, each at its rate (and its own RM
+   * Additional when set). */
   account_rates?: TierAccountRate[] | null;
 }
 
@@ -44,6 +59,10 @@ export interface TargetAccount {
   /** "A/C I" for a numbered account, else the customer's name. */
   label: string;
   achieved_value?: number | null;
+  /** In a period: this account's own commission + bonus (each account is its own payee). */
+  commission_earned?: number | null;
+  /** In a period of a points target: its sales in points at the period's ratio. */
+  achieved_points?: number | null;
 }
 
 export interface TargetMemberRef {
@@ -82,10 +101,9 @@ export interface SalesTargetRow {
   achieved_value: number | null;
   achieved_pct: number | null;
   parent_target_id: string | null;
-  /** Dealer rows: the counted accounts' labels and codes, and the paid account's label. */
+  /** Dealer rows: the counted accounts' labels and codes. */
   account_labels?: string[] | null;
   account_codes?: string[] | null;
-  payout_label?: string | null;
   threshold_unit?: ThresholdUnit | null;
   /** The current period's commission; null with no tiers. */
   commission_earned?: number | null;
@@ -111,6 +129,12 @@ export interface SalesTargetListParams {
   query?: string;
 }
 
+export interface TierRateEntry {
+  /** "A/C I" on a per-account rate, else null. */
+  label: string | null;
+  rate: number | null;
+}
+
 export interface SalesTargetPeriod {
   id: string;
   period_start: string;
@@ -118,19 +142,23 @@ export interface SalesTargetPeriod {
   target_value: number;
   achieved_value: number | null;
   achieved_pct: number | null;
+  /** Points targets: the achievement in points at the period's ratio; null without one. */
+  achieved_points?: number | null;
   is_current: boolean;
   /** Null when the target has no tiers. */
   commission_earned?: number | null;
   bonus_earned?: number | null;
   commission_lines?: { kind: 'main' | 'additional'; threshold_rm: number | null; amount: number }[];
   tier_reached?: number | null;
+  /** The reached main tier's rate(s): one label-less entry, or one per account. */
+  tier_rates?: TierRateEntry[];
+  /** The reached tier's Additional; null when it has none. */
+  tier_additional?: TierAdditional | null;
   /** Points targets: RM per point in force on the period's last day. */
   point_ratio?: number | null;
   ratio_missing?: boolean;
-  /** Dealer targets: each counted account's achievement in the period. */
+  /** Dealer targets: each counted account's achievement and own commission in the period. */
   accounts?: TargetAccount[];
-  /** The dealer target in `replaced_by` reached a tier in this period: this one pays nothing. */
-  replaced?: boolean;
 }
 
 export interface SalesTargetChild {
@@ -159,11 +187,15 @@ export interface SalesTargetDetail {
   end_date: string;
   split_every: number | null;
   split_unit: TargetSplitUnit | null;
-  /** "Ordered", "Delivered", or "Delivered (by DO date)". */
+  /** "Invoiced", "Ordered", "Delivered", or "Delivered (by DO date)". */
   counts_label: string;
   /** The categories, products or brands counted: their id, kind and "CODE - Name" label. */
   scope: { id: string; kind: TargetScopeKind; label: string }[];
   periods: SalesTargetPeriod[];
+  /** Commission + bonus of the periods that have ended; null with no commission. */
+  commission_to_date?: number | null;
+  /** Commission + bonus of the current period so far (not final). */
+  commission_current?: number | null;
   children: SalesTargetChild[];
   members_without_figure: TargetMemberRef[];
   child_count: number;
@@ -172,11 +204,8 @@ export interface SalesTargetDetail {
   rounding?: Rounding;
   tiers_per_period?: boolean;
   tiers: CommissionTier[];
-  /** Dealer targets: the counted accounts and the paid one. */
+  /** Dealer targets: the counted accounts, each its own payee. */
   accounts?: TargetAccount[];
-  payout_account?: TargetAccount | null;
-  /** Dealer targets: the dealer target that replaces this one once it reaches a tier. */
-  replaced_by?: { target_id: string; target_no: string; name: string } | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -223,7 +252,6 @@ export interface AgentTargetCreatePayload extends TargetCreateBase {
 export interface DealerTargetCreatePayload extends TargetCreateBase {
   subject_kind: 'dealer';
   customer_ids: string[];
-  payout_customer_id?: string;
   target_value?: number;
 }
 
@@ -258,8 +286,6 @@ export interface SalesTargetUpdatePayload {
   tiers_per_period?: boolean;
   /** Dealer targets: replaces the counted accounts. */
   customer_ids?: string[];
-  /** Dealer targets: null pays the first counted account. */
-  payout_customer_id?: string | null;
   /** Replaces every tier; `[]` removes them. */
   tiers?: CommissionTier[];
   /** Every changed figure, in one request: this target's periods, or a team target's agents'. */

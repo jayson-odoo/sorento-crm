@@ -186,6 +186,7 @@ from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import is_uuid, resolve_identifier
+from app.services.tag_description import clean_description
 
 
 # Lifted out of `bulk_import_products` (PLAN-autocount-pull-review.md, P11) so the
@@ -227,6 +228,20 @@ def malaysia_day_start_utc(day: date) -> datetime:
     are stored in. Used to turn a `discontinued_from`/`discontinued_to` calendar
     day into a bound comparable against that column."""
     return datetime.combine(day, time.min, tzinfo=MALAYSIA_TZ).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def malaysia_day_range_filters(column, day_from: Optional[date], day_to: Optional[date]) -> list:
+    """Inclusive Malaysia-calendar-day range on a naive-UTC column, as filter clauses.
+
+    Either bound set also excludes NULL rows (a comparison with NULL is never true). One
+    helper for every date-range filter of the products list ("Discontinued between",
+    "List price changed between") and its list-query search and export."""
+    clauses = []
+    if day_from is not None:
+        clauses.append(column >= malaysia_day_start_utc(day_from))
+    if day_to is not None:
+        clauses.append(column < malaysia_day_start_utc(day_to + timedelta(days=1)))
+    return clauses
 
 
 class ProductService:
@@ -349,9 +364,13 @@ class ProductService:
         entity_buckets: Optional[Any] = None,
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
+        list_price_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
         discontinued_from: Optional[date] = None,
         discontinued_to: Optional[date] = None,
+        list_price_changed_from: Optional[date] = None,
+        list_price_changed_to: Optional[date] = None,
+        tag_template_id: Optional[str] = None,
     ):
         """Build the filtered + sorted products query shared by ``list_products``
         and ``neighbours`` so the two can never drift.
@@ -369,6 +388,25 @@ class ProductService:
         filters = []
         if product_ids:
             filters.append(Product.id.in_(product_ids))
+        if tag_template_id:
+            # PRICETAG-TEMPLATE-PRODUCTS: "Show: Uses this template" in the designer's picker.
+            # The template must be in the caller's scope too, so the filter cannot confirm
+            # another company's template id.
+            from app.models.dealer_kit import ProductTagTemplate, TagTemplate
+            from app.services.company_scope import build_company_predicate, get_company_scope
+
+            link = (
+                self.db.query(ProductTagTemplate.id)
+                .join(TagTemplate, TagTemplate.id == ProductTagTemplate.template_id)
+                .filter(
+                    ProductTagTemplate.product_id == Product.id,
+                    ProductTagTemplate.template_id == tag_template_id,
+                )
+            )
+            template_scope = build_company_predicate(TagTemplate, get_company_scope(self.db))
+            if template_scope is not None:
+                link = link.filter(template_scope)
+            filters.append(link.exists())
         if entity_buckets is not None:
             if not getattr(entity_buckets, "product_codes", None):
                 return self._EMPTY_RESULT
@@ -408,18 +446,21 @@ class ProductService:
         # products reported in that batch (see product_discontinued_notify_service).
         if discontinued_batch_id:
             filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
+        # Same, for a "list price changed" notification (product_watched_field_notify_service).
+        if list_price_batch_id:
+            filters.append(Product.list_price_notify_batch_id == list_price_batch_id)
 
-        # "Discontinued at" date-range filter (issue #1287): inclusive by Malaysia
-        # calendar day, either bound set also excludes null (never-discontinued) rows.
-        if discontinued_from is not None:
-            filters.append(
-                Product.discontinued_notified_at >= malaysia_day_start_utc(discontinued_from)
+        # "Discontinued between" (issue #1287) and "List price changed between"
+        # (LIST-PRICE-CHANGE-UI): inclusive by Malaysia calendar day; either bound set also
+        # excludes null (never discontinued / never changed) rows.
+        filters.extend(
+            malaysia_day_range_filters(Product.discontinued_notified_at, discontinued_from, discontinued_to)
+        )
+        filters.extend(
+            malaysia_day_range_filters(
+                Product.list_price_notified_at, list_price_changed_from, list_price_changed_to
             )
-        if discontinued_to is not None:
-            filters.append(
-                Product.discontinued_notified_at
-                < malaysia_day_start_utc(discontinued_to + timedelta(days=1))
-            )
+        )
 
         if price_min or price_max:
             price_filters = []
@@ -513,9 +554,19 @@ class ProductService:
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
             "discontinued_at": Product.discontinued_notified_at,
+            "list_price_changed_at": Product.list_price_notified_at,
             # ITEM-CLASS: by class name, products with no class last (nulls_last below).
             "item_class": select(ItemClass.item_class_name)
             .where(ItemClass.id == Product.item_class_id)
+            .correlate(Product)
+            .scalar_subquery(),
+            # ACC-COPY-TO-PRODUCTS review: the grids offer these headers as sortable.
+            "category_name": select(ProductCategory.category_name)
+            .where(ProductCategory.id == Product.category_id)
+            .correlate(Product)
+            .scalar_subquery(),
+            "brand_name": select(Brand.brand_name)
+            .where(Brand.id == Product.brand_id)
             .correlate(Product)
             .scalar_subquery(),
         }
@@ -552,9 +603,13 @@ class ProductService:
         entities: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
+        list_price_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
         discontinued_from: Optional[date] = None,
         discontinued_to: Optional[date] = None,
+        list_price_changed_from: Optional[date] = None,
+        list_price_changed_to: Optional[date] = None,
+        tag_template_id: Optional[str] = None,
     ):
         """List products with filtering and pagination.
 
@@ -611,9 +666,13 @@ class ProductService:
             entity_buckets=entity_buckets,
             product_ids=product_ids,
             discontinued_batch_id=discontinued_batch_id,
+            list_price_batch_id=list_price_batch_id,
             variant_filter=variant_filter,
             discontinued_from=discontinued_from,
             discontinued_to=discontinued_to,
+            list_price_changed_from=list_price_changed_from,
+            list_price_changed_to=list_price_changed_to,
+            tag_template_id=tag_template_id,
         )
         if q is self._EMPTY_RESULT:
             payload = {
@@ -1162,6 +1221,10 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
+        if data.get("price_tag_description") is not None:
+            data["price_tag_description"] = clean_description(
+                data["price_tag_description"], "Price tag description"
+            )
         if data.get("item_class_id"):
             from app.models.base import get_company_scope
             from app.services.company_scope import resolve_write_company_id
@@ -1213,6 +1276,10 @@ class ProductService:
         product = self.get_product(product_id)
         
         update_data = product_data.model_dump(exclude_unset=True)
+        if update_data.get("price_tag_description") is not None:
+            update_data["price_tag_description"] = clean_description(
+                update_data["price_tag_description"], "Price tag description"
+            )
         if update_data.get("item_class_id"):
             self._assert_item_class(update_data["item_class_id"], product.company_id)
         if update_data:
@@ -1290,6 +1357,7 @@ class ProductService:
         self._reject_if_companion_rule_dependency(product_id)
         self._reject_if_new_product_application_link(product_id)
         self._reject_if_on_quotation(product_id)
+        self._reject_if_listed_as_free_item(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1321,6 +1389,35 @@ class ProductService:
             raise handle_conflict(
                 f"This product was opened for new product application {row[0]}. "
                 "Undo that line first."
+            )
+
+    def _reject_if_listed_as_free_item(self, product_id: str) -> None:
+        """PRICETAG-ACCESSORIES: a product listed as another product's or a combo's free item holds
+        it (RESTRICT). Answer with a 409 naming the holder by code instead of the bare
+        IntegrityError's 500."""
+        from app.models.accessory import ProductAccessory, ProductComboAccessory
+        from app.models.product_combo import ProductCombo
+
+        holder = (
+            self.db.query(Product.product_code)
+            .join(ProductAccessory, ProductAccessory.product_id == Product.id)
+            .filter(ProductAccessory.item_product_id == product_id)
+            .first()
+        )
+        if holder is not None:
+            raise handle_conflict(
+                f"This product is listed as an accessory of {holder[0]}. Remove it there first."
+            )
+        combo = (
+            self.db.query(Product.product_code, ProductCombo.name)
+            .join(ProductCombo, ProductCombo.host_product_id == Product.id)
+            .join(ProductComboAccessory, ProductComboAccessory.combo_id == ProductCombo.id)
+            .filter(ProductComboAccessory.item_product_id == product_id)
+            .first()
+        )
+        if combo is not None:
+            raise handle_conflict(
+                f'This product is a free item of combo "{combo[1]}" on {combo[0]}. Remove it there first.'
             )
 
     def _reject_if_on_quotation(self, product_id) -> None:
@@ -3347,8 +3444,13 @@ class ProductAttachmentService:
         product_attachment_data: ProductAttachmentCreate,
         created_by: Optional[str] = None,
         company_id: Optional[str] = None,
+        before_commit=None,
     ):
         """Create or refresh a product attachment relationship.
+
+        `before_commit(row)` runs on a NEW link only, after the flush and before the commit, so
+        a caller's audit row lands in the same transaction as the link (HOTFIX-ATTACH-AUDIT: a
+        failed audit insert must not leave a committed link behind a 500).
 
         TCK-2026-000020: external n8n intake re-posts the same (product_id,
         attachment_id) when an attachment is replaced. Switch from hard
@@ -3415,6 +3517,8 @@ class ProductAttachmentService:
         # back, and a refused choice (a PDF) must leave no link behind.
         self.db.flush()
         self._apply_brochure_choice(product_attachment, chosen)
+        if before_commit is not None:
+            before_commit(product_attachment)
         self.db.commit()
         self.db.refresh(product_attachment)
         self._notify_if_drawing(product_attachment)

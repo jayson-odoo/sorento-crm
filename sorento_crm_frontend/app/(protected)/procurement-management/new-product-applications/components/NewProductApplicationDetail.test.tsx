@@ -17,6 +17,12 @@ const state = vi.hoisted(() => ({
   userId: 'u-owner',
   data: undefined as unknown,
   link: vi.fn(),
+  purchasing: vi.fn(),
+  purchasingReject: vi.fn(),
+  purchasingReply: vi.fn(),
+  closeCode: vi.fn(),
+  undoCode: vi.fn(),
+  undoLine: vi.fn(),
   search: vi.fn(),
   feedback: vi.fn(),
   download: vi.fn(),
@@ -103,9 +109,29 @@ vi.mock('../hooks/useNewProductApplications', () => ({
       reject: idle(),
       revise: idle(),
       cancel: idle(),
-      link: { mutate: state.link, mutateAsync: state.link, isPending: false },
-      close: idle(),
-      undo: idle(),
+      linkNewCode: { mutate: state.link, mutateAsync: state.link, isPending: false },
+      closeNewCode: {
+        mutate: state.closeCode,
+        mutateAsync: state.closeCode,
+        isPending: false,
+      },
+      undo: { mutate: state.undoLine, mutateAsync: state.undoLine, isPending: false },
+      undoNewCode: { mutate: state.undoCode, mutateAsync: state.undoCode, isPending: false },
+      purchasingReply: {
+        mutate: state.purchasingReply,
+        mutateAsync: state.purchasingReply,
+        isPending: false,
+      },
+      purchasingReject: {
+        mutate: state.purchasingReject,
+        mutateAsync: state.purchasingReject,
+        isPending: false,
+      },
+      purchasingResponse: {
+        mutate: state.purchasing,
+        mutateAsync: state.purchasing,
+        isPending: false,
+      },
       feedback: {
         mutate: state.feedback,
         mutateAsync: state.feedback,
@@ -116,7 +142,7 @@ vi.mock('../hooks/useNewProductApplications', () => ({
 }));
 vi.mock('../services/newProductApplicationService', () => ({
   searchNewProductApplicationProducts: (q: string) => state.search(q),
-  downloadNewProductApplicationExcel: (...a: unknown[]) => state.download(...a),
+  exportNewProductApplicationXlsx: (...a: unknown[]) => state.download(...a),
   linkNewProductApplicationAttachment: (...a: unknown[]) => state.linkAtt(...a),
 }));
 
@@ -140,6 +166,39 @@ vi.mock('@/hooks/useDeferredRowAction', () => ({
     state.unlinkInputs.push(input);
     return { run: state.unlinkRun, targetId: null, isPending: false, countdown: null };
   },
+}));
+
+// NPA-FORM-SLA: the SI's handling lock and SLA tab, mocked so each test sets the lock state.
+const lock = vi.hoisted(() => ({
+  enabled: true,
+  input: null as null | Record<string, unknown>,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/useHandlingLock', () => ({
+  useHandlingLock: (input: Record<string, unknown>) => {
+    lock.input = input;
+    return {
+      state: lock.enabled ? 'not_escalated' : 'other_holds',
+      businessCtasEnabled: lock.enabled,
+      tracker: lock.enabled ? null : { handled_by_name: 'Purchasing Manager' },
+      banner: null,
+      claim: vi.fn(),
+      takeOver: vi.fn(),
+      release: vi.fn(),
+      refresh: vi.fn(),
+      isMutating: false,
+    };
+  },
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockBanner', () => ({
+  HandlingLockBanner: () => null,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockActions', () => ({
+  HandlingLockReleaseMenuItem: () => null,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/FormSLATrackingTab', () => ({
+  default: (p: { sourceEntityType: string; sourceEntityId: string }) => (
+    <div data-testid="sla-tab">{`${p.sourceEntityType}:${p.sourceEntityId}`}</div>
+  ),
 }));
 
 import NewProductApplicationDetail from './NewProductApplicationDetail';
@@ -203,9 +262,6 @@ function detail(over: Partial<Detail> = {}): Detail {
     customer_code: null,
     customer_name: 'EXAMPLE DEVELOPER SDN BHD',
     project_name: 'EXAMPLE RESIDENCE, TOWER B',
-    first_line: 'XY-1234-MB',
-    lines_total: 2,
-    lines_done: 0,
     opened_codes: [],
     needed_by: null,
     submitted_at: null,
@@ -262,11 +318,8 @@ describe('who sees which next action', () => {
     expect(button(/^approve$/i)).toBeInTheDocument();
     expect(button(/^reject$/i)).toBeInTheDocument();
     expect(button(/^submit$/i)).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
   });
 
   it('treats a resubmitted application like a submitted one (RESUBMITTED-STATUS)', () => {
@@ -276,11 +329,8 @@ describe('who sees which next action', () => {
     render(<Page />);
     expect(button(/^approve$/i)).toBeInTheDocument();
     expect(button(/^reject$/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
   });
 
   it('labels the applicant\'s send button Appeal on a rejected application', () => {
@@ -315,7 +365,6 @@ describe('who sees which next action', () => {
     state.data = detail({
       status: 'approved',
       status_label: 'Approved',
-      lines_done: 1,
       lines: [
         line({
           opened_product_id: 'p-1',
@@ -348,33 +397,35 @@ describe('a portal-sourced application on the staff side', () => {
   });
 });
 
-describe('Link product', () => {
+const openPurchasingDialog = async () => {
+  fireEvent.click(
+    await screen.findByRole('button', { name: /^edit purchasing response$/i }),
+  );
+  return screen.findByRole('dialog');
+};
+
+describe('Edit purchasing response: Link an existing product code', () => {
   beforeEach(() => {
     state.data = detail({ status: 'approved', status_label: 'Approved' });
     state.userId = 'u-buyer';
     state.perms = new Set(['procurement.new_product_applications.open_code']);
   });
 
-  it('says the code is not in the product list yet, and picks nothing', async () => {
+  it('says there is no match for a code that is not in the product list, and picks nothing', async () => {
     render(<Page />);
+    const dialog = await openPurchasingDialog();
     fireEvent.click(
-      screen.getAllByRole('button', { name: /^link product$/i })[1],
+      within(dialog).getByRole('radio', { name: /link an existing product code/i }),
     );
-    const box = await screen.findByRole('combobox', {
-      name: /product for line 2/i,
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: /product code/i }));
+    fireEvent.change(await screen.findByPlaceholderText('Search...'), {
+      target: { value: 'srtks2406' },
     });
-    fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: 'srtks2406' } });
-
-    expect(
-      await screen.findByText(
-        'srtks2406 is not in the product list yet. It appears after AutoCount sends it.',
-      ),
-    ).toBeInTheDocument();
-    expect(state.link).not.toHaveBeenCalled();
+    expect(await screen.findByText('No product matches that.')).toBeInTheDocument();
+    expect(state.purchasing).not.toHaveBeenCalled();
   });
 
-  it('lists a match without choosing it; only a click links the product', async () => {
+  it('lists a match without choosing it; only Save sends the picked product', async () => {
     state.search.mockResolvedValue([
       {
         id: 'p-9',
@@ -384,27 +435,22 @@ describe('Link product', () => {
       },
     ]);
     render(<Page />);
+    const dialog = await openPurchasingDialog();
     fireEvent.click(
-      screen.getAllByRole('button', { name: /^link product$/i })[1],
+      within(dialog).getByRole('radio', { name: /link an existing product code/i }),
     );
-    const box = await screen.findByRole('combobox', {
-      name: /product for line 2/i,
-    });
-    fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: 'srtks2406' } });
-
-    const hit = await screen.findByText(/XY-1234-BG - Example steel sink/);
-    expect(state.link).not.toHaveBeenCalled();
-
-    fireEvent.mouseDown(hit);
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: /product code/i }));
+    const hit = await screen.findByRole('option', { name: /XY-1234-BG/ });
+    expect(state.purchasing).not.toHaveBeenCalled();
     fireEvent.click(hit);
-    await waitFor(() =>
-      expect(state.link).toHaveBeenCalledWith({
-        id: 'a-1',
-        lineId: 'l-2',
-        productId: 'p-9',
-      }),
-    );
+    expect(state.purchasing).not.toHaveBeenCalled();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
+    await waitFor(() => expect(state.purchasing).toHaveBeenCalledTimes(1));
+    expect(state.purchasing.mock.calls[0][0].data).toMatchObject({
+      outcome: 'link',
+      product_id: 'p-9',
+    });
   });
 });
 
@@ -424,10 +470,12 @@ describe('the table form', () => {
       'DATE:',
       'SALES PERSON:',
       'STOCK INQUIRY:',
+      'PRODUCT CODES:',
       'CUSTOMER:',
       'PROJECT:',
       'TARGET DELIVERY:',
       'REMARK:',
+      'NEW PRODUCT CODE:',
       'LEADTIME:',
     ]) {
       const i = text.indexOf(l, at + 1);
@@ -436,33 +484,35 @@ describe('the table form', () => {
     }
     expect(screen.getByText('NPA-000001')).toBeInTheDocument();
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
-    for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i, /opened as/i])
-      expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
-    expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(3);
+    // Owner hand test 9 Nov: no product table under the header.
+    for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i])
+      expect(screen.queryByRole('columnheader', { name: h })).toBeNull();
   });
 });
 
-describe('PURCHASING FEEDBACK', () => {
+describe('PURCHASING FEEDBACK (Edit purchasing response)', () => {
   const editor = () => {
     state.userId = 'u-buyer';
     state.perms = new Set([OPEN]);
   };
 
   it.each([['approved'], ['completed']])(
-    'is editable for open_code on %s and Save feedback sends lead time and costs',
-    (status) => {
+    'is edited by open_code on %s and Save sends lead time and one cost per line',
+    async (status) => {
       editor();
       state.data = detail({ status: status as Detail['status'], status_label: status });
       render(<Page />);
-      fireEvent.change(screen.getByLabelText('Lead time'), {
+      const dialog = await openPurchasingDialog();
+      fireEvent.change(within(dialog).getByRole('textbox', { name: /lead ?time/i }), {
         target: { value: '3 weeks' },
       });
-      fireEvent.change(screen.getByLabelText('Cost for product 1'), {
+      fireEvent.change(within(dialog).getByLabelText('Cost for product 1'), {
         target: { value: '12.50' },
       });
-      fireEvent.click(screen.getByRole('button', { name: /save feedback/i }));
-      expect(state.feedback).toHaveBeenCalledTimes(1);
-      const arg = state.feedback.mock.calls[0][0];
+      fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
+      await waitFor(() => expect(state.purchasing).toHaveBeenCalledTimes(1));
+      const arg = state.purchasing.mock.calls[0][0];
       expect(arg.id).toBe('a-1');
       expect(arg.data.lead_time).toBe('3 weeks');
       expect(arg.data.lines).toHaveLength(2);
@@ -472,12 +522,12 @@ describe('PURCHASING FEEDBACK', () => {
     },
   );
 
-  it('is read-only on a draft even for open_code', () => {
+  it('has no Edit purchasing response button on a draft, even for open_code', () => {
     editor();
     state.data = detail();
     render(<Page />);
+    expect(button(/edit purchasing response/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
-    expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
   });
 
   it('is read-only on an approved record without open_code, with the waiting line', () => {
@@ -487,53 +537,55 @@ describe('PURCHASING FEEDBACK', () => {
     render(<Page />);
     expect(screen.queryByLabelText('Lead time')).toBeNull();
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
-    expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
-    expect(
-      screen.getByText('Purchasing fills this after approval.'),
-    ).toBeInTheDocument();
-  });
-});
-
-describe('From AutoCount', () => {
-  it('shows the linked product item group, base UOM, list price and supplier read-only', () => {
-    state.userId = 'u-buyer';
-    state.perms = new Set([OPEN]);
-    state.data = approved({
-      lines: [
-        line({
-          opened_product_id: 'p-1',
-          opened_product_code: 'XY-1234-MB',
-          opened_product_name: 'Example kitchen sink',
-          opened_product_active: true,
-          opened_category_name: 'Example Group',
-          opened_base_uom_name: 'Example UOM',
-          opened_list_price: '185.00',
-          opened_supplier_name: 'Example Supplier Co',
-        } as never),
-      ],
-    });
-    render(<Page />);
-    expect(screen.getByText(/From AutoCount/)).toBeInTheDocument();
-    expect(screen.getByText(/Example Group/)).toBeInTheDocument();
-    expect(screen.getByText(/Example UOM/)).toBeInTheDocument();
-    expect(screen.getByText(/185\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
-  });
-
-  it('shows no From AutoCount block before a product is linked', () => {
-    state.data = approved();
-    render(<Page />);
-    expect(screen.queryByText(/From AutoCount/)).toBeNull();
+    expect(button(/edit purchasing response/i)).toBeNull();
+    expect(screen.getByText('Purchasing fills this after approval.')).toBeInTheDocument();
   });
 });
 
 describe('Download Excel', () => {
-  it('is in the gear menu and calls the download service with the application id', async () => {
+  it('is in the gear menu and queues the workbook in My Downloads, the stock inquiry PDF\'s way', async () => {
+    const { toast } = await import('@/lib/toast');
+    state.download.mockResolvedValue({ id: 'd-1', kind: 'new_product_application_xlsx', status: 'pending' });
     state.data = approved();
     render(<Page />);
     fireEvent.click(screen.getByRole('button', { name: /download excel/i }));
     await waitFor(() => expect(state.download).toHaveBeenCalledTimes(1));
     expect(state.download.mock.calls[0][0]).toBe('a-1');
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('My Downloads')),
+    );
+  });
+});
+
+describe('owner hand test 9 Nov: no product rows, no repeated status', () => {
+  it('shows no product table and no "line done" count', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({
+      status: 'submitted',
+      status_label: 'Submitted',
+      submitted_at: '2026-11-08T01:00:00',
+    } as Partial<Detail>);
+    render(<Page />);
+    expect(screen.queryByText(/line done|lines done/)).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /product type/i })).toBeNull();
+    expect(screen.queryByText('XY-1234-BG')).toBeNull();
+  });
+
+  it('shows no "No debtor code" chip next to the customer', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({ customer_code: null, customer_name: '300-1001 - EXAMPLE DEPOT SDN BHD' });
+    render(<Page />);
+    expect(screen.getByText(/300-1001 - EXAMPLE DEPOT SDN BHD/)).toBeInTheDocument();
+    expect(screen.queryByText('No debtor code')).toBeNull();
+  });
+
+  it('shows no "Approved by" banner: the status pill and the SLA tab say it', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = { ...approved(), decided_by_name: 'Example Manager', decided_at: '2026-11-09T01:00:00' };
+    render(<Page />);
+    expect(screen.queryByText(/Approved by Example Manager/)).toBeNull();
+    expect(screen.queryByText(/^Approved\.$/)).toBeNull();
+    expect(screen.getAllByText('Approved').length).toBeGreaterThan(0);
   });
 });
 
@@ -550,8 +602,6 @@ describe('read view shows plain values (S3)', () => {
     expect(screen.queryAllByRole('textbox')).toHaveLength(0);
     expect(screen.queryAllByRole('combobox')).toHaveLength(0);
     expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(screen.getAllByText('Example kitchen sink').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Carton').length).toBeGreaterThan(0);
     expect(screen.getByText('17/01/2028')).toBeInTheDocument();
     expect(screen.getByText('17/10/2026')).toBeInTheDocument();
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
@@ -559,13 +609,14 @@ describe('read view shows plain values (S3)', () => {
 });
 
 describe('Cost inputs are uniquely named (S6)', () => {
-  it('Cost for product 1 and 2 for open_code on an approved record', () => {
+  it('Cost for product 1 and 2 in the dialog for open_code on an approved record', async () => {
     state.userId = 'u-buyer';
     state.perms = new Set([OPEN]);
     state.data = approved();
     render(<Page />);
-    expect(screen.getByLabelText('Cost for product 1')).toBeInTheDocument();
-    expect(screen.getByLabelText('Cost for product 2')).toBeInTheDocument();
+    const dialog = await openPurchasingDialog();
+    expect(within(dialog).getByLabelText('Cost for product 1')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Cost for product 2')).toBeInTheDocument();
   });
 });
 
@@ -646,5 +697,260 @@ describe('attachments list is the shared PanelDataGrid', () => {
     expect(
       within(panel as HTMLElement).getByRole('button', { name: /link attachment/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('From AutoCount (header)', () => {
+  it('shows the linked product item group, base UOM, list price and supplier read-only', () => {
+    state.userId = 'u-buyer';
+    state.perms = new Set([OPEN]);
+    state.data = approved({
+      new_product_id: 'p-1',
+      new_product_code: 'XY-1234-MB',
+      new_product_name: 'Example kitchen sink',
+      new_product_active: true,
+      new_product_facts: {
+        opened_category_name: 'Example Group',
+        opened_base_uom_name: 'Example UOM',
+        opened_list_price: '185.00',
+        opened_supplier_name: 'Example Supplier Co',
+      },
+    });
+    render(<Page />);
+    expect(screen.getByText(/From AutoCount/)).toBeInTheDocument();
+    expect(screen.getByText(/Example Group/)).toBeInTheDocument();
+    expect(screen.getByText(/Example UOM/)).toBeInTheDocument();
+    expect(screen.getByText(/185\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
+  });
+
+  it('shows no From AutoCount block before a product is linked', () => {
+    state.data = approved();
+    render(<Page />);
+    expect(screen.queryByText(/From AutoCount/)).toBeNull();
+  });
+});
+
+describe('NEW PRODUCT CODE (header)', () => {
+  const earlier = {
+    product_id: 'p-69',
+    product_code: 'XY-1234-MB-69',
+    product_name: 'Example sink 69',
+    is_active: true,
+    description: 'no tap hole',
+    created_at: '2026-11-03T02:00:00',
+    application_id: 'a-0',
+    application_no: 'NPA-000123',
+  };
+
+  beforeEach(() => {
+    state.data = approved({
+      current_products: [
+        { id: 'p-1', product_code: 'XY-1234-MB', product_name: 'Sink' },
+      ],
+      suggestions: [earlier],
+    });
+    state.userId = 'u-buyer';
+    state.perms = new Set([OPEN]);
+  });
+
+  it('has no product table at all (owner hand test 9 Nov)', () => {
+    render(<Page />);
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /cost \(myr\)/i })).toBeNull();
+  });
+
+  it('keeps the suggestion out of the page; Use <code> in the dialog pre-selects Link and saves nothing', async () => {
+    render(<Page />);
+    expect(screen.queryByText(/Created before:/)).toBeNull();
+    const dialog = await openPurchasingDialog();
+    expect(within(dialog).getByText(/Created before:/).textContent).toContain(
+      'XY-1234-MB-69 (NPA-000123)',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Use XY-1234-MB-69' }));
+    expect(
+      within(dialog).getByRole('radio', { name: /link an existing product code/i }),
+    ).toBeChecked();
+    expect(state.purchasing).not.toHaveBeenCalled();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
+    await waitFor(() => expect(state.purchasing).toHaveBeenCalledTimes(1));
+    expect(state.purchasing.mock.calls[0][0].data).toMatchObject({
+      outcome: 'link',
+      product_id: 'p-69',
+    });
+  });
+
+  it('Reject (header) needs a reason, then rejects through purchasingReject', async () => {
+    render(<Page />);
+    fireEvent.click(await screen.findByRole('button', { name: /^reject$/i }));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = within(dialog).getByRole('button', { name: /^reject$/i });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /rejection reason/i }), {
+      target: { value: 'Supplier cannot make it' },
+    });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(state.purchasingReject).toHaveBeenCalledWith({
+        id: 'a-1',
+        reason: 'Supplier cannot make it',
+      }),
+    );
+  });
+
+  it('shows the linked code read-only, with no Undo or Link controls', () => {
+    state.data = approved({
+      new_product_id: 'p-69',
+      new_product_code: 'XY-1234-MB-69',
+      new_product_name: 'Example sink 69',
+      new_product_active: false,
+      new_code_by_name: 'Buyer',
+      new_code_at: '2026-11-03T02:00:00',
+    });
+    render(<Page />);
+    expect(screen.getByRole('link', { name: /XY-1234-MB-69/ })).toHaveAttribute(
+      'href',
+      '/master-data-management/products/p-69',
+    );
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    expect(button(/^undo$/i)).toBeNull();
+    expect(button(/^link/i)).toBeNull();
+  });
+
+  it('shows an older closed one as Rejected with the reason, and no Edit button to a viewer without open_code', () => {
+    state.perms = new Set();
+    state.data = approved({ new_code_closed_reason: 'Customer walked away' });
+    render(<Page />);
+    expect(screen.getByText('Rejected: Customer walked away')).toBeInTheDocument();
+    expect(button(/edit purchasing response/i)).toBeNull();
+    expect(button(/^undo$/i)).toBeNull();
+  });
+});
+
+describe('Stock inquiry tab', () => {
+  it('shows the inquiry with a link to it, its status, response and qty', () => {
+    state.data = detail({
+      stock_inquiry: {
+        id: 'si-1',
+        inquiry_number: 'SI26-0412',
+        product_code: 'XY-1234-MB',
+        status: 'responded',
+        item_description: 'Kitchen sink',
+        purchasing_response: 'Supplier can do it',
+        quantity: '55',
+      },
+    });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    const link = screen.getByRole('link', { name: 'SI26-0412' });
+    expect(link).toHaveAttribute(
+      'href',
+      '/procurement-management/stock-inquiries/si-1',
+    );
+    expect(screen.getByText('Responded')).toBeInTheDocument();
+    expect(screen.getByText('Supplier can do it')).toBeInTheDocument();
+    expect(screen.getByText('Kitchen sink')).toBeInTheDocument();
+  });
+
+  it('says there is none for an application raised from the list', () => {
+    state.data = detail({ stock_inquiry: null });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    expect(screen.getByText('No stock inquiry')).toBeInTheDocument();
+    expect(
+      screen.getByText('Applications raised from a stock inquiry show it here.'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('Stock inquiry tab status is a Badge (NPA-FROM-SI)', () => {
+  it('draws the inquiry status through the Badge component', () => {
+    state.data = detail({
+      stock_inquiry: {
+        id: 'si-1',
+        inquiry_number: 'SI26-0412',
+        product_code: 'XY-1234-MB',
+        status: 'responded',
+        item_description: 'Kitchen sink',
+        purchasing_response: 'ok',
+        quantity: '55',
+      },
+    });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    const pill = screen.getByText('Responded');
+    const badge = pill.closest('[data-slot="badge"]');
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toContain('Responded');
+  });
+});
+
+
+describe('NPA-FORM-SLA: the SI\'s SLA tab and handling lock', () => {
+  beforeEach(() => {
+    lock.enabled = true;
+    lock.input = null;
+  });
+
+  it('offers SLA Tracking to a view-all holder and renders the SI tracker tab for this NPA', () => {
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    state.data = detail({ status: 'submitted', status_label: 'Submitted', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'SLA Tracking' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'SLA Tracking' }));
+    expect(screen.getByTestId('sla-tab')).toHaveTextContent('new_product_application:a-1');
+    expect(lock.input).toMatchObject({ sourceEntityType: 'new_product_application', enabled: true });
+  });
+
+  it('hides SLA Tracking from an applicant without a view-all slug, and reads no tracker', () => {
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = detail();
+    render(<Page />);
+    expect(screen.queryByRole('tab', { name: 'SLA Tracking' })).not.toBeInTheDocument();
+    expect(lock.input).toMatchObject({ enabled: false, sourceEntityId: null });
+  });
+
+  it('disables Approve and Reject while another person holds the escalated stage', () => {
+    lock.enabled = false;
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    state.data = detail({ status: 'submitted', status_label: 'Submitted', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    const approve = screen.getByRole('button', { name: 'Approve' });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAttribute('title', 'Being handled by Purchasing Manager - take over to act');
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
+  });
+
+  it('disables Edit purchasing response while the purchasing stage is held by someone else', () => {
+    lock.enabled = false;
+    state.perms = new Set(['procurement.new_product_applications.open_code']);
+    state.data = detail({ status: 'approved', status_label: 'Approved', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeDisabled();
+  });
+});
+
+
+describe('Responded, like the stock inquiry (owner re-test 9 Nov ~12:35)', () => {
+  const responded = () =>
+    detail({ status: 'responded', status_label: 'Responded', submitted_at: '2026-11-08T01:00:00' });
+
+  it('shows the Responded pill and keeps purchasing on it: Edit purchasing response and Reject', () => {
+    state.perms = new Set(['procurement.new_product_applications.open_code']);
+    state.data = responded();
+    render(<Page />);
+    expect(screen.getAllByText('Responded').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument();
+  });
+
+  it('is locked for the applicant, who can still Revise', () => {
+    state.userId = 'u-owner';
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = responded();
+    render(<Page />);
+    expect(screen.getByRole('button', { name: 'Revise' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Edit' })).toBeNull();
   });
 });

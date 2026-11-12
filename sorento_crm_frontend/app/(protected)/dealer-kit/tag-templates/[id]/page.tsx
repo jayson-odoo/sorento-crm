@@ -39,8 +39,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { TemplateRecordPager } from '../components/TemplateRecordPager';
 import { toast } from '@/lib/toast';
-import { History, Loader2, Maximize2, Minimize2, Save as SaveIcon, Upload } from 'lucide-react';
+import {
+  History,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Package,
+  Save as SaveIcon,
+  Settings2,
+  Upload,
+} from 'lucide-react';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
@@ -72,15 +82,40 @@ import {
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
+  updateTemplateSettings,
 } from '../../services/tagTemplateService';
+import { layersOutside } from '@/lib/dealer-kit/layer-bounds';
+import {
+  TemplateSettingsDialog,
+  type TemplateSettingsValues,
+} from '../components/TemplateSettingsDialog';
 import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
+import { TemplateProductsDialog } from '../components/TemplateProductsDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useTemplateComboIds, useTemplateProductIds } from '../../hooks/useProductTagTemplates';
+import { isPriceTagFamily } from '../../services/productTagTemplateService';
 import { FocusShell } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
 import { TagSizeControl } from '../../components/TagSizeControl';
 import type { ToolbarTrailingAction } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
+import {
+  designKey,
+  detachLinked,
+  setLinkedDesign,
+  linkCorrectionPatches,
+  type LayerPropsPatch,
+  type LinkAction,
+} from '@/lib/dealer-kit/accessory-card';
+import { captureBaselines, syncLinkedBoxes, type LinkBaseline, type LinkSyncDeps } from '@/lib/dealer-kit/accessory-link-sync';
+import { StaleTemplateError } from '../../services/accessoryTemplateService';
+import {
+  useFetchAccessoryTemplate,
+  useRefreshAccessoryTemplates,
+  useUpdateAccessoryTemplate,
+} from '../../accessory-templates/hooks/useAccessoryTemplates';
 import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
 
 const TagCanvasEditor = dynamic(
@@ -92,7 +127,18 @@ const TagVersionViewer = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-[400px] w-full" /> },
 );
 
+/**
+ * One editor per template id. Prev/next (item 2) changes only the id, and keying on it unmounts
+ * the editor of the template being left, which is the editor's own unsaved-changes guard: the
+ * unmount cleanup below flushes any pending autosave before the next template loads, so a step
+ * never carries one template's state onto another.
+ */
 export default function TagTemplateEditorPage() {
+  const params = useParams<{ id: string }>();
+  return <TagTemplateEditor key={params.id} />;
+}
+
+function TagTemplateEditor() {
   const params = useParams<{ id: string }>();
 
   const [template, setTemplate] = useState<TagTemplate | null>(null);
@@ -115,12 +161,23 @@ export default function TagTemplateEditorPage() {
   const [publishing, setPublishing] = useState(false);
 
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // PRICETAG-TEMPLATE-PRODUCTS: which products print with this template, picked here.
+  const [productsOpen, setProductsOpen] = useState(false);
+  const canManageLinks = useHasPermission('dealer_kit.tag_templates.manage');
+  // Price tag templates only: a spec sheet page is never linked to products.
+  const showProducts = canManageLinks && !!template && isPriceTagFamily(template.family);
+  const linkedIds = useTemplateProductIds(params.id, showProducts);
+  // Owner hand test 11 Nov: combos count too, since the same view links them.
+  const linkedComboIds = useTemplateComboIds(params.id, showProducts);
   const [viewing, setViewing] = useState<TagTemplateVersionDetail | null>(null);
   const [viewingLoading, setViewingLoading] = useState(false);
   // Which version Restore is in flight for - the viewer banner's own button
   // needs to know so it can say "Restoring..." (the sheet tracks its own row
   // locally).
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+
+  /** Template settings (PRICETAG-DESIGNER-GAPS item 4): name, family, size. */
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses. */
   const [focus, setFocus] = useState(false);
@@ -145,6 +202,74 @@ export default function TagTemplateEditorPage() {
   const deleteSavedSize = useDeleteTagSizePreset();
   const [saveSizeOpen, setSaveSizeOpen] = useState(false);
 
+  // Live link (PRICETAG-ACCESSORY-DESIGNER): after a save lands, every linked accessories box whose
+  // design moved since it was loaded is written to its saved template, which rewrites the other
+  // tag templates that follow it. The baseline is each linked design as loaded (or last pushed).
+  const linkBaselineRef = useRef<Map<string, LinkBaseline>>(new Map());
+  // Set by an insert from the menu (its baseline is taken at once, so the sync alone would not notice that
+  // this tag template now uses one more template): the next sync refreshes the usage counts.
+  const usageDirtyRef = useRef(false);
+  const pushTemplate = useUpdateAccessoryTemplate();
+  const fetchTemplate = useFetchAccessoryTemplate();
+  const refreshTemplates = useRefreshAccessoryTemplates();
+  // The autosave callback is created once, so it reaches the latest hooks through this ref.
+  const layerPatchesRef = useRef<((patches: LayerPropsPatch[]) => void) | null>(null);
+  const syncLinksRef = useRef<(layers: TagLayer[]) => Promise<void>>(async () => {});
+  const linkDeps = (): LinkSyncDeps => ({
+    fetch: async (id) => {
+      const record = await fetchTemplate(id);
+      return record ? { design: record.design, updated_at: record.updated_at } : null;
+    },
+    push: async (id, design, baseUpdatedAt) => {
+      const saved = await pushTemplate.mutateAsync({ id, input: { design, base_updated_at: baseUpdatedAt } });
+      return { design: saved.design, updated_at: saved.updated_at };
+    },
+    isStale: (error) => error instanceof StaleTemplateError,
+  });
+  // The baseline a loaded (or restored) draft starts from: its linked boxes as saved, each template's
+  // version now. Read through a ref so the load effect below stays stable.
+  const rebaseLinksRef = useRef<(layers: TagLayer[]) => void>(() => {});
+  // Resolves once the baselines of the latest load / restore exist; the sync waits for it, so an edit
+  // is pushed on the first autosave AFTER the baselines are known, never before.
+  const baselinesReadyRef = useRef<Promise<void>>(Promise.resolve());
+  rebaseLinksRef.current = (layers: TagLayer[]) => {
+    linkBaselineRef.current = new Map();
+    baselinesReadyRef.current = captureBaselines(layers, linkDeps().fetch).then((captured) => {
+      linkBaselineRef.current = captured;
+    });
+  };
+  const rebaseLinks = useCallback((layers: TagLayer[]) => rebaseLinksRef.current(layers), []);
+  syncLinksRef.current = async (layers: TagLayer[]) => {
+    await baselinesReadyRef.current;
+    const result = await syncLinkedBoxes(layers, linkBaselineRef.current, linkDeps());
+    for (const message of result.messages) {
+      if (message === 'deleted') toast.warning('Saved accessories template was deleted; box detached');
+      else if (message === 'elsewhere')
+        toast.warning('Saved accessories template was changed elsewhere; this tag now shows the latest design');
+      else toast.error(message.error);
+    }
+    const { actions } = result;
+    if (actions.length > 0) {
+      const patches = linkCorrectionPatches(layers, actions);
+      if (layerPatchesRef.current) {
+        // Corrected on the live canvas with no undo step and no remount.
+        layerPatchesRef.current(patches);
+      } else {
+        // No canvas to patch (not mounted): correct the draft and reopen it.
+        setDraftLayers((prev) =>
+          actions.reduce(
+            (acc, action) =>
+              action.kind === 'detach' ? detachLinked(acc, action.id) : setLinkedDesign(acc, action.id, action.design),
+            prev,
+          ),
+        );
+        setEditorGeneration((n) => n + 1);
+      }
+    }
+    if (result.usageChanged || usageDirtyRef.current) void refreshTemplates();
+    usageDirtyRef.current = false;
+  };
+
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
@@ -154,6 +279,7 @@ export default function TagTemplateEditorPage() {
         if (!cancelled) {
           setTemplate(t);
           setDraftLayers(t.doc.layers);
+          rebaseLinks(t.doc.layers);
         }
       })
       .catch((err) => {
@@ -165,7 +291,7 @@ export default function TagTemplateEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, rebaseLinks]);
 
   // -- Autosave (D22, S8) -----------------------------------------------------
 
@@ -198,6 +324,7 @@ export default function TagTemplateEditorPage() {
         { keepalive: teardownRef.current },
       );
       setTemplate(updated);
+      await syncLinksRef.current(layers);
     }, []),
   );
 
@@ -271,8 +398,53 @@ export default function TagTemplateEditorPage() {
           : prev,
       );
       scheduleAutosave(draftLayers);
+      // Layers keep their place on a resize (AC-S1-5), so say when the new
+      // size cuts some off (item 4). The settings dialog says it before Save.
+      const cutOff = layersOutside(draftLayers, width_mm, height_mm);
+      if (cutOff > 0) {
+        toast.warning(
+          `${cutOff === 1 ? '1 layer sits' : `${cutOff} layers sit`} outside ${width_mm} x ${height_mm} mm and may need moving`,
+        );
+      }
     },
     [draftLayers, scheduleAutosave],
+  );
+
+  /**
+   * Template settings (item 4). Name and family are template facts, not
+   * version facts: written straight to the row, no republish, the live
+   * pointer untouched. A size change goes through the SAME draft resize the
+   * left-rail control uses, so it reaches the live tag on the next publish.
+   */
+  const handleSaveSettings = useCallback(
+    async (values: TemplateSettingsValues) => {
+      const current = templateRef.current;
+      if (!current) return;
+      const priceType = current.price_type ?? null;
+      if (
+        values.name !== current.name ||
+        values.family !== current.family ||
+        values.price_type !== priceType
+      ) {
+        const updated = await updateTemplateSettings(current.id, {
+          name: values.name,
+          family: values.family,
+          price_type: values.price_type,
+        });
+        // Only the three settings: the response's doc is the server's draft,
+        // which an armed autosave may be about to overwrite.
+        setTemplate((prev) =>
+          prev
+            ? { ...prev, name: updated.name, family: updated.family, price_type: updated.price_type }
+            : prev,
+        );
+      }
+      if (values.width_mm !== current.doc.width_mm || values.height_mm !== current.doc.height_mm) {
+        handleResizeTemplate(values.width_mm, values.height_mm);
+      }
+      toast.success('Template settings saved');
+    },
+    [handleResizeTemplate],
   );
 
   /** Per-A4 grid (S7, AC-S7-14): typed cols/rows/turn, or `null` from Auto -
@@ -370,6 +542,7 @@ export default function TagTemplateEditorPage() {
         const updated = await restoreTemplateVersion(template.id, versionId);
         setTemplate(updated);
         setDraftLayers(updated.doc.layers);
+        rebaseLinks(updated.doc.layers);
         setEditorGeneration((n) => n + 1);
         setViewing(null);
         toast.success('Draft restored', {
@@ -380,6 +553,7 @@ export default function TagTemplateEditorPage() {
                 const reverted = await updateTemplate(template.id, priorDraft);
                 setTemplate(reverted);
                 setDraftLayers(reverted.doc.layers);
+                rebaseLinks(reverted.doc.layers);
                 setEditorGeneration((n) => n + 1);
                 toast.success('Restore undone');
               } catch (err) {
@@ -394,7 +568,7 @@ export default function TagTemplateEditorPage() {
         setRestoringVersionId(null);
       }
     },
-    [template, draftLayers],
+    [template, draftLayers, rebaseLinks],
   );
 
   if (isLoading) {
@@ -436,6 +610,19 @@ export default function TagTemplateEditorPage() {
       onClick: () => setVersionsOpen(true),
       disabled: viewingLoading,
     },
+    ...(showProducts
+      ? [
+          {
+            id: 'products',
+            icon: Package,
+            label:
+              linkedIds.data && linkedComboIds.data
+                ? `Products (${linkedIds.data.length + linkedComboIds.data.length})`
+                : 'Products',
+            onClick: () => setProductsOpen(true),
+          },
+        ]
+      : []),
     {
       id: 'save',
       icon: saving ? Loader2 : SaveIcon,
@@ -443,6 +630,13 @@ export default function TagTemplateEditorPage() {
       label: saving ? 'Saving...' : 'Save',
       onClick: handleSave,
       disabled: saving || Boolean(viewing),
+    },
+    {
+      id: 'settings',
+      icon: Settings2,
+      label: 'Settings',
+      onClick: () => setSettingsOpen(true),
+      disabled: Boolean(viewing),
     },
     {
       id: 'full-screen',
@@ -491,6 +685,7 @@ export default function TagTemplateEditorPage() {
               // indicator, Publish and Back to templates still do not
               // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
+                <TemplateRecordPager id={template.id} />
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}
@@ -526,6 +721,14 @@ export default function TagTemplateEditorPage() {
             doc={{ ...template.doc, layers: draftLayers }}
             onChange={(doc) => setDraftLayers(doc.layers)}
             onLayersChange={setDraftLayers}
+            layerPatchesRef={layerPatchesRef}
+            onAccessoryTemplateInserted={(id, design, updatedAt) =>
+              // The editor already made every older box of this template follow `design`.
+              {
+                linkBaselineRef.current.set(id, { key: designKey(design), updatedAt });
+                usageDirtyRef.current = true;
+              }
+            }
             hideSaveBar
             docId={template.id}
             specSheet={isSpecSheetFamily(template.family)}
@@ -556,6 +759,15 @@ export default function TagTemplateEditorPage() {
           />
         )}
       </div>
+
+      {productsOpen ? (
+        <TemplateProductsDialog
+          open
+          onOpenChange={setProductsOpen}
+          templateId={template.id}
+          templateName={template.name}
+        />
+      ) : null}
 
       <TemplateVersionsSheet
         templateId={template.id}
@@ -597,6 +809,21 @@ export default function TagTemplateEditorPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TemplateSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initial={{
+          name: template.name,
+          family: template.family,
+          price_type: template.price_type ?? null,
+          width_mm: template.doc.width_mm,
+          height_mm: template.doc.height_mm,
+        }}
+        layers={draftLayers}
+        isLive={isLive}
+        onSave={handleSaveSettings}
+      />
 
       <SaveAsSizeDialog
         open={saveSizeOpen}

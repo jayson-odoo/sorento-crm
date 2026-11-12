@@ -142,7 +142,8 @@ def test_per_account_quarter_tiers_beside_dealer_quarter_tiers_split():
         (keys[0], [(date(2026, 4, 1), D("200000"))]),
         (keys[1], [(date(2026, 4, 1), D("150000"))]),
     ]
-    assert all(s.replaced_by == dealer.key for s in owns)
+    # They stack with the dealer target (owner 8 Nov): nothing links them.
+    assert not any(hasattr(s, "replaced_by") for s in owns)
 
 
 def _yearly_dec_nov(ws):
@@ -171,7 +172,9 @@ def _pays_an_account_with_no_row(ws):
     ws["A3"], ws["B3"], ws["C3"] = "DELTA BUILDERS SDN BHD A/C III", 80000, "A/C I- 2%"
 
 
-def test_a_rate_naming_an_account_with_no_row_pays_it_by_name(api):
+def test_a_rate_naming_an_account_with_no_row_pays_the_counted_account(api):
+    """Owner 8 Nov: no single payee; the counted A/C III earns its own 2%, the row says the named
+    account is not used as a payee."""
     client, db, company_id = api
     a1 = _customer(db, company_id, "DELTA BUILDERS SDN BHD - [A/C I]", 1)
     a3 = _customer(db, company_id, "DELTA BUILDERS SDN BHD - [A/C III]", 3)
@@ -183,16 +186,21 @@ def test_a_rate_naming_an_account_with_no_row_pays_it_by_name(api):
     target = next(r for r in rows if r["target_no"] in row["target_nos"])
     detail = client.get(f"{BASE}/{target['target_id']}").json()
     assert [a["code"] for a in detail["accounts"]] == [a3.customer_code]
-    assert detail["payout_account"]["code"] == a1.customer_code
+    assert a1.customer_code not in {a["code"] for a in detail["accounts"]}
+    assert "payout_account" not in detail
+    assert [t["rate"] for t in detail["tiers"]] == [2.0]
+    from app.services.sales.dealer_target_import import PAY_TO_IGNORED
+
+    assert PAY_TO_IGNORED in row["warnings"]
 
 
-def test_a_rate_naming_an_account_with_no_row_and_no_customer_fails(api):
+def test_a_rate_naming_an_account_with_no_row_and_no_customer_is_still_read(api):
+    """Retired refusal (owner 8 Nov): the named account is no payee, so it need not exist."""
     client, db, company_id = api
     _customer(db, company_id, "DELTA BUILDERS SDN BHD - [A/C III]", 3)
     data, _ = _wb(_pays_an_account_with_no_row)
     row = _upload(client, db, data, dry_run=True)["rows"][0]
-    assert row["status"] == "not_representable"
-    assert "A/C I" in row["reason"]
+    assert row["status"] == "mapped", row
 
 
 def _repeated_threshold_per_account(ws):

@@ -4,31 +4,28 @@ import * as React from 'react';
 import Link from 'next/link';
 import { SquarePen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
-import {
-  useQuotationAmendmentMutations,
-  useQuotationAmendmentRequest,
-} from '../../../../_shared/hooks/useQuotationDocuments';
-import type { QuotationLinesReview } from '../../../components/QuotationLinesGrid';
-import { QuotationAmendmentSummary } from './QuotationAmendmentSummary';
-import { OutcomePill } from '../../../../_shared/components/OutcomePill';
-import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
+import { useQuotationFeedback } from '../../../../_shared/hooks/useQuotationDocuments';
 import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { isLockedForApproval } from '../../../../_shared/lib/quotationDecision';
 import { QuotationScopeTabs } from './QuotationScopeTabs';
 
 /**
- * The Lines tab (the owner renamed Scopes to Lines, #1341): the scope strip and the priced lines
- * under whichever scope is open.
+ * The lines, under the letterhead on the Header tab (PROPOSAL-HEADER-LAYOUT, owner 5 Nov 2026:
+ * "for quotation I think the lines better be same page with Header"): the area strip and the
+ * priced lines under whichever area is open.
  *
  * A READ (#1341). The owner: "editing of scope should be done by 'Edit Quotation', not a separate
  * button like this, Edit quotation means I edit the whole quotation". So there is no per-scope
  * Edit scope, no instant Add a scope and no "Press Edit" hint: a scope's name, series and lines
- * change in the form page opened from the gear. Record outcome, Recheck alerts and Revise stay,
- * because they are acts on the scope, not edits of it.
+ * change in the form page opened from the gear.
+ *
+ * No row above the lines either (owner, 5 Nov 2026): the area's name is already its open tab, the
+ * version is the chip in the record header, and Recheck alerts / Revise are gear items there.
+ * Record outcome is not on this page at all ("we only need per project outcome"; its own lane).
  *
  * The document itself is not fetched here - it comes from the layout, so the tabs cannot end up
  * with two answers about the same quotation.
@@ -42,45 +39,38 @@ export function QuotationScopesTab() {
     canEdit,
     activeScopeId,
     selectScope,
+    versionNo,
+    recheckResults,
+    dismissRecheck,
+    lineFlags,
+    setLineFlags,
+    linesScrollRequest,
+    consumeLinesScroll,
   } = useQuotationDocumentScreen();
+  // A banner count was pressed: the area strip and its lines come into view.
+  const linesRef = React.useRef<HTMLDivElement | null>(null);
+  // Consumed inside the frame, not before it: StrictMode's double effect cancels the first
+  // frame, and a request taken there would be lost.
+  React.useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (consumeLinesScroll?.()) {
+        linesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [consumeLinesScroll, linesScrollRequest]);
   const quotations = useQuotations(projectId);
 
-  const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(
-    null,
-  );
 
-  // The customer's suggestions on the latest issue, decided in the grid's own cells. Only an
-  // OPEN request is offered for deciding; an answered one is history on the sign link.
-  const amendment = useQuotationAmendmentRequest(
-    projectId,
-    documentId,
-    canEdit,
-  );
-  const amendments = useQuotationAmendmentMutations(projectId, documentId);
-  const openRequest = amendment.data?.status === 'open' ? amendment.data : null;
-  // On by default while a request with line suggestions is open, so the lines to decide are the
-  // lines on screen; a note-only request has none to narrow to. Null until the reader chooses.
-  const [suggestedChoice, setSuggestedOnly] = React.useState<boolean | null>(
-    null,
-  );
-  const suggestedOnly = suggestedChoice ?? (openRequest?.rows.length ?? 0) > 0;
-  const decideRow = amendments.decide.mutate;
-  const review = React.useMemo<QuotationLinesReview | undefined>(
+  // Open customer feedback, marked on the lines it names (PS-QUOTE-MATRIX, mock frame 5). The
+  // same query as the Customer feedback tab and its badge.
+  const feedback = useQuotationFeedback(projectId, documentId);
+  const openFeedback = React.useMemo(
     () =>
-      openRequest
-        ? {
-            rows: openRequest.rows,
-            disabled: amendments.decide.isPending || amendments.apply.isPending,
-            onDecide: (rowId, decision, reason) =>
-              decideRow({ requestId: openRequest.id, rowId, decision, reason }),
-          }
-        : undefined,
-    [
-      amendments.apply.isPending,
-      amendments.decide.isPending,
-      decideRow,
-      openRequest,
-    ],
+      (feedback.data?.requests ?? []).flatMap((request) =>
+        request.rows.filter((row) => !row.handled_at),
+      ),
+    [feedback.data],
   );
 
   const scopes = record.scopes ?? [];
@@ -114,18 +104,12 @@ export function QuotationScopesTab() {
   }
 
   return (
-    <div className="space-y-5">
-      {openRequest && (
-        <QuotationAmendmentSummary
-          request={openRequest}
-          canApply={canEdit && !isLockedForApproval(record)}
-          applying={amendments.apply.isPending}
-          onApply={() => amendments.apply.mutate(openRequest.id)}
-          suggestedOnly={suggestedOnly}
-          onSuggestedOnly={setSuggestedOnly}
-        />
-      )}
-
+    // Scrolled to sit just below the fixed top bar (70 px, 60 px on a phone) and the
+    // impersonation banner when it shows, not under them (crew re-pass at 375 px).
+    <div
+      ref={linesRef}
+      className="scroll-mt-[calc(var(--header-height,70px)+var(--impersonation-banner-height,0px)+0.75rem)] space-y-5"
+    >
       <QuotationScopeTabs
         scopes={scopes}
         activeScopeId={activeScope?.id ?? ''}
@@ -135,36 +119,6 @@ export function QuotationScopesTab() {
 
       {activeQuotation ? (
         <Card>
-          {/* The scope's own commercial result, beside the lines it applies to. Outcome is per
-              SCOPE and the project's outcome is derived from it. */}
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <CardTitle className="min-w-0 break-words text-sm">
-                {activeQuotation.scope_label}
-              </CardTitle>
-              <OutcomePill outcome={activeQuotation.outcome} />
-              {/* Which series this scope is quoted from, stated rather than assumed: a scope
-                  naming no series checks nothing, and its lines look identically clean. */}
-              <span className="text-xs text-muted-foreground">
-                {activeQuotation.series_name || 'No series'}
-              </span>
-              {activeQuotation.loss_reason_label && (
-                <span className="text-xs text-muted-foreground">
-                  {activeQuotation.loss_reason_label}
-                </span>
-              )}
-            </div>
-            {canEdit && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setDecidingScopeId(activeQuotation.id)}
-              >
-                Record outcome
-              </Button>
-            )}
-          </CardHeader>
           {/* min-w-0 is load-bearing: CardContent is a flex item, and without it the line grid
               stretches the Card and the whole PAGE scrolls sideways at phone width. */}
           <CardContent className="min-w-0 py-5">
@@ -177,15 +131,15 @@ export function QuotationScopesTab() {
               // Pending or approved: the whole quotation is locked, and the way out is the
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
-              review={review}
-              suggestedOnly={suggestedOnly}
-              // A scope with a hand-made draft: the suggestions name the ISSUED version's lines,
-              // so the review is decided there.
-              reviewVersionId={
-                openRequest?.blocked_scopes?.find(
-                  (scope) => scope.quotation_id === activeQuotation.id,
-                )?.version_id ?? null
-              }
+              feedback={openFeedback}
+              flagFilter={{ value: lineFlags, onChange: setLineFlags }}
+              headerVersion={{
+                versionNo,
+                // Keyed by the version id each recheck ran on; the editor shows the one for the
+                // version it is reading, so a frozen version never shows the current one's answer.
+                recheckResults,
+                onDismissRecheck: dismissRecheck,
+              }}
             />
           </CardContent>
         </Card>
@@ -205,13 +159,6 @@ export function QuotationScopesTab() {
         </Card>
       )}
 
-      {decidingScopeId && activeQuotation && (
-        <QuotationOutcomeDialog
-          project={project}
-          quotation={activeQuotation}
-          onDone={() => setDecidingScopeId(null)}
-        />
-      )}
     </div>
   );
 }

@@ -103,6 +103,40 @@ def _force_layout_1(db, record):
     db.expire_all()
 
 
+def _force_layout_2(db, record):
+    """guards #2088 revisions (UAC D1): issue() now stamps layout 3, so the layout-2 rendering is
+    reached by forcing the stored layout, by SQL, like layout 1 above."""
+    from app.models.projects import ProjectQuotationIssue
+
+    table = ProjectQuotationIssue.__tablename__
+    db.flush()
+    db.execute(
+        text(f"update {table} set layout_version = 2, cover_design = null where id = :i"),
+        {"i": str(record.id)},
+    )
+    db.expire_all()
+
+
+def _force_layout_3(db, record, design=None):
+    """guards sent layout 3 revisions (QUOTE-COVER-FIELDS): issue() now stamps layout 4, so the
+    layout-3 rendering is reached by forcing the stored layout and the legacy 12-row design."""
+    import json
+
+    from app.models.projects import ProjectQuotationIssue
+    from app.services.quotation_cover_service import DEFAULT_DESIGN
+
+    table = ProjectQuotationIssue.__tablename__
+    db.flush()
+    db.execute(
+        text(
+            f"update {table} set layout_version = 3, "
+            "cover_design = cast(:d as jsonb) where id = :i"
+        ),
+        {"i": str(record.id), "d": json.dumps(design or DEFAULT_DESIGN)},
+    )
+    db.expire_all()
+
+
 # ------------------------------------------------------------------ 1. clean_terms_html
 
 
@@ -192,7 +226,9 @@ def test_clean_terms_none_and_blank_are_empty():
 # ------------------------------------------------------------------ 2. layout_version
 
 
-def test_an_issue_built_directly_is_layout_1_and_issue_stamps_layout_2():
+def test_an_issue_built_directly_is_layout_1_and_issue_stamps_layout_4():
+    from app.services.quotation_cover_service import COVER_LAYOUT_SECTIONS
+
     from datetime import datetime
 
     from app.models.projects import ProjectQuotationIssue
@@ -215,7 +251,7 @@ def test_an_issue_built_directly_is_layout_1_and_issue_stamps_layout_2():
 
         record = _issue(db, document, env["owner"])
         db.refresh(record)
-        assert record.layout_version == 2
+        assert record.layout_version == COVER_LAYOUT_SECTIONS
 
 
 def test_cover_layout_constant_is_2():
@@ -234,6 +270,7 @@ def test_cover_rows_in_uac_order_with_reference_and_cleaned_terms():
         env = _setup(db)
         document = _full_document(db, env)
         record = _issue(db, document, env["owner"])
+        _force_layout_3(db, record)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         rows = cover_rows(db, document, record)
 
         assert [r["key"] for r in rows] == KEYS
@@ -278,6 +315,7 @@ def _html_of(db, env, **doc_kwargs):
 
     document = _full_document(db, env, **doc_kwargs)
     record = _issue(db, document, env["owner"])
+    _force_layout_2(db, record)  # guards #2088 revisions (UAC D1)
     return document, record, qpdf.build_issue_html(db, record)
 
 
@@ -405,6 +443,8 @@ def _sign_page(db, env, *, layout=2, **doc_kwargs):
     record = _issue(db, document, env["owner"])
     if layout == 1:
         _force_layout_1(db, record)
+    else:
+        _force_layout_2(db, record)  # guards #2088 revisions (UAC D1)
     token = qdocs.issue_sign_link(db, record=record)
     db.commit()
     client, app = _public_client(db)
@@ -523,6 +563,7 @@ def test_pdf_cover_prepared_by_falls_back_to_the_creator_when_the_project_has_no
         db.flush()
         document = _full_document(db, env)
         record = _issue(db, document, env["owner"])
+        _force_layout_3(db, record)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         html = qpdf.build_issue_html(db, record)
         cover = html[: html.index(f"{MARKER} Townhouse")]
         assert re.search(r"PREPARED BY:.*?Baser Ramli", cover, re.S)

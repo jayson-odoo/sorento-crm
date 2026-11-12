@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useProjectQuotationVersions,
@@ -20,8 +21,8 @@ import type {
 
 /**
  * The letterhead, laid out the way the customer reads it on the printed quotation: the refs
- * that get quoted back on the right, who it is to on the left. The line naming the job is not
- * repeated here as a read: the record header above the card already shows it (#1335).
+ * that get quoted back on the right, who it is to on the left. The line naming the job is the
+ * Project row: the record card above shows only the project's short name (QUOTE-HEADER-TIDY).
  *
  * Every field here ARRIVES derived - recipient from the project's party, subject from the project
  * title, ref from the numbering rule. The screen shows them rather than asking for them, which
@@ -61,15 +62,21 @@ function Field({
 function EditField({
   id,
   label,
+  action,
   children,
 }: {
   id: string;
   label: string;
+  /** A small link beside the label (Attn's "Choose contacts"). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="min-w-0 space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -77,17 +84,52 @@ function EditField({
 
 /**
  * Who issued and when each scope's current version was opened, for the Header details (#1341,
- * owner: "this one should be in header details"). The values are per scope version and genuinely
- * differ (each scope's version is opened on its own, by whoever opened it), so a quotation with
- * more than one scope lists them grouped by scope; one scope reads as a plain pair of fields.
+ * owner: "this one should be in header details"). The values are per scope version, but the
+ * Header shows ONE pair for the document (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "don't need to
+ * be by unit here"): see `documentHeaderDetail`.
  */
 export type QuotationHeaderDetail = {
   scopeId: string;
   scopeLabel: string;
   versionNo: number;
+  isIssued: boolean;
   issuedByName: string | null;
   openedAt: string | null;
 };
+
+/**
+ * The one pair the Header shows: an issued area version wins over one that never went out, and
+ * among those the most recently opened. Null when no scope has a current version yet.
+ */
+export function documentHeaderDetail(
+  details: QuotationHeaderDetail[],
+): QuotationHeaderDetail | null {
+  const issued = details.filter((detail) => detail.isIssued);
+  const pool = issued.length > 0 ? issued : details;
+  let latest: QuotationHeaderDetail | null = null;
+  for (const detail of pool) {
+    // ISO timestamps from the same API compare correctly as strings; an unknown date loses.
+    if (!latest || (detail.openedAt ?? '') > (latest.openedAt ?? '')) latest = detail;
+  }
+  return latest;
+}
+
+/** The folded Header's one line: To, project title, Date, Total; blanks are left out. */
+export function headerSummary(document: QuotationDocument, total: string | null): string {
+  return [
+    document.recipient_name_snapshot,
+    document.subject_title,
+    document.doc_date ? formatDateInMalaysia(document.doc_date) : null,
+    formatMyrExact(total),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** The folded Lines' one line: how many scopes, and their total. */
+export function linesSummary(count: number, total: string | null): string {
+  return `${count} ${count === 1 ? 'scope' : 'scopes'} · ${formatMyrExact(total)}`;
+}
 
 /** The current version of each of this document's scopes, off the queries the page already runs. */
 export function useQuotationHeaderDetails(
@@ -111,6 +153,7 @@ export function useQuotationHeaderDetails(
         scopeId: scope.id,
         scopeLabel: scope.scope_label,
         versionNo: current.version_no,
+        isIssued: Boolean(current.is_issued),
         issuedByName: current.issued_by_name ?? null,
         openedAt: current.created_at ?? null,
       },
@@ -131,23 +174,8 @@ function DetailPair({ detail }: { detail: QuotationHeaderDetail }) {
 }
 
 function HeaderDetails({ details }: { details: QuotationHeaderDetail[] }) {
-  if (details.length === 0) return null;
-  if (details.length === 1) return <DetailPair detail={details[0]} />;
-  return (
-    <div className="space-y-2">
-      {details.map((detail) => {
-        const name = `${detail.scopeLabel} v${detail.versionNo}`;
-        return (
-          <div key={detail.scopeId} role="group" aria-label={name} className="space-y-1">
-            <p className="min-w-0 break-words text-xs font-semibold text-muted-foreground">
-              {name}
-            </p>
-            <DetailPair detail={detail} />
-          </div>
-        );
-      })}
-    </div>
-  );
+  const detail = documentHeaderDetail(details);
+  return detail ? <DetailPair detail={detail} /> : null;
 }
 
 function addressLines(address: string | null): string[] {
@@ -164,6 +192,8 @@ export function QuotationDocumentHeader({
   details = [],
   preparedBy = null,
   onChange,
+  recipientPicker,
+  attnAction,
 }: {
   /**
    * The document as the screen currently stands: the shell hands down the server's row with the
@@ -178,7 +208,7 @@ export function QuotationDocumentHeader({
    * changes - the number the user is watching disagrees with the number they are editing.
    */
   liveGrandTotal?: string | null;
-  /** Issued by and Opened, per scope version, for the details beside the refs. */
+  /** Issued by and Opened per scope version; the Header shows the document's one pair. */
   details?: QuotationHeaderDetail[];
   /** Fallback when the document carries no prepared_by yet (the create form). */
   preparedBy?: string | null;
@@ -188,6 +218,10 @@ export function QuotationDocumentHeader({
    * screen's one Save sends it with the lines.
    */
   onChange?: (patch: QuotationDocumentBody) => void;
+  /** PROJECT-PARTY-ROLES PR 2: the Party picker that heads the TO block in an edit session. */
+  recipientPicker?: React.ReactNode;
+  /** Beside the Attn label in an edit session: "Choose contacts". */
+  attnAction?: React.ReactNode;
 }) {
   const lines = addressLines(document.recipient_address_snapshot);
   // `formatDateInMalaysia` answers '' on anything it cannot read, and a blank where a date
@@ -203,6 +237,7 @@ export function QuotationDocumentHeader({
           </p>
           {onChange ? (
             <div className="space-y-3 pt-1">
+              {recipientPicker}
               <EditField id="quotation-recipient-name" label="Name">
                 <Input
                   id="quotation-recipient-name"
@@ -238,6 +273,16 @@ export function QuotationDocumentHeader({
                   placeholder="Their contact number"
                 />
               </EditField>
+              <EditField id="quotation-recipient-fax" label="Fax">
+                <Input
+                  id="quotation-recipient-fax"
+                  value={document.recipient_fax_snapshot ?? ''}
+                  onChange={(event) =>
+                    onChange({ recipient_fax_snapshot: event.target.value || null })
+                  }
+                  placeholder="Their fax number"
+                />
+              </EditField>
               <EditField id="quotation-recipient-email" label="Email">
                 <Input
                   id="quotation-recipient-email"
@@ -248,7 +293,7 @@ export function QuotationDocumentHeader({
                   placeholder="Their email address"
                 />
               </EditField>
-              <EditField id="quotation-attn-name" label="Attn">
+              <EditField id="quotation-attn-name" label="Attn" action={attnAction}>
                 <Input
                   id="quotation-attn-name"
                   value={document.attn_name ?? ''}
@@ -274,6 +319,12 @@ export function QuotationDocumentHeader({
               <p className="min-w-0 break-words text-sm text-muted-foreground">
                 {document.recipient_phone_snapshot ?? '-'}
               </p>
+              {document.recipient_fax_snapshot ? (
+                <p className="min-w-0 break-words text-sm">
+                  <span className="text-muted-foreground">Fax: </span>
+                  <span className="font-medium">{document.recipient_fax_snapshot}</span>
+                </p>
+              ) : null}
               {document.recipient_email_snapshot ? (
                 <p className="min-w-0 break-words text-sm">
                   <span className="text-muted-foreground">Email: </span>
@@ -362,35 +413,46 @@ export function QuotationDocumentHeader({
           </div>
         </div>
 
-        {/* The subject is only an input here. As a read it would repeat the project title the
-            record header already shows right above this card (#1335). */}
+        {/* The full project title (QUOTE-HEADER-TIDY, owner 11 Nov 2026: "can show the project
+            title in the Header section"): the record card above shows only the short name now,
+            so the read lives here, clamped with an expand for the long legal titles. In an edit
+            session it is the input. */}
         {onChange ? (
           <div className="border-t border-border pt-4 md:col-span-2">
-            <EditField id="quotation-subject-title" label="Subject">
-              <Input
+            {/* A wrapping textarea named for what it holds (PROPOSAL-FORM-COLLAPSE, owner
+                10 Nov): a long title such as a Malay development name overflowed a one-line
+                input. Still one value, prefilled from the project title. */}
+            <EditField id="quotation-subject-title" label="Project title">
+              <Textarea
                 id="quotation-subject-title"
+                rows={2}
                 value={document.subject_title ?? ''}
                 onChange={(event) => onChange({ subject_title: event.target.value || null })}
-                placeholder="The one line naming the job"
+                placeholder="e.g. CADANGAN MEMBINA PANGSAPURI RUMAH IDAMAN"
               />
             </EditField>
           </div>
-        ) : null}
-        {onChange ? (
+        ) : (
           <div className="min-w-0 md:col-span-2">
-            <EditField id="quotation-purpose" label="Quotation Purpose">
-              <Input
-                id="quotation-purpose"
-                value={document.quotation_purpose ?? ''}
-                onChange={(event) => onChange({ quotation_purpose: event.target.value || null })}
-              />
-            </EditField>
+            <Field
+              label="Project"
+              value={
+                document.subject_title ? (
+                  <TruncatedTextCell
+                    text={document.subject_title}
+                    lines={2}
+                    dialogTitle="Project title"
+                  />
+                ) : (
+                  '-'
+                )
+              }
+            />
           </div>
-        ) : document.quotation_purpose ? (
-          <div className="min-w-0 md:col-span-2">
-            <Field label="Quotation Purpose" wide value={document.quotation_purpose} />
-          </div>
-        ) : null}
+        )}
+        {/* No Quotation Purpose: removed from the form and from every new revision (owner, 10 Nov
+            2026). The column stays, so a stored value is kept but no longer shown or sent; a
+            revision that already went out still reprints it as sent. */}
         {document.prepared_by ?? preparedBy ? (
           <div className="min-w-0 md:col-span-2">
             <Field label="Prepared By" wide value={document.prepared_by ?? preparedBy} />

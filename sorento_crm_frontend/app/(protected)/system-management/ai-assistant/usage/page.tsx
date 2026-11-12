@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useMemo, useState, type ComponentProps } from 'react';
-import Link from 'next/link';
+import { useTraceDrawer } from '../../chat-history/components/TraceDrawer';
 import { format } from 'date-fns';
 import { CalendarIcon, ChevronDown, ChevronRight, GitBranch, Loader2 } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
@@ -24,7 +24,7 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateRange, formatDateTimeInMalaysia, formatMaybeDate } from '@/lib/helpers';
 import { formatUsd } from '../lib/formatUsd';
 import {
   useQueryDetail,
@@ -113,6 +113,7 @@ export default function AIUsagePage() {
   const recentQueriesQuery = useRecentQueries(from, to, 50, featureForApi);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { openMessageTrace, traceDrawer } = useTraceDrawer();
   const queryDetail = useQueryDetail(expandedId);
 
   const chartData = useMemo(() => {
@@ -181,11 +182,9 @@ export default function AIUsagePage() {
                 <CalendarIcon className="h-4 w-4" />
                 {dateRange?.from ? (
                   dateRange.to ? (
-                    <>
-                      {format(dateRange.from, 'LLL dd, y')} - {format(dateRange.to, 'LLL dd, y')}
-                    </>
+                    formatDateRange(format(dateRange.from, 'yyyy-MM-dd'), format(dateRange.to, 'yyyy-MM-dd'))
                   ) : (
-                    format(dateRange.from, 'LLL dd, y')
+                    formatDateInMalaysia(format(dateRange.from, 'yyyy-MM-dd'))
                   )
                 ) : (
                   <span>Filter by date range</span>
@@ -281,7 +280,7 @@ export default function AIUsagePage() {
               <ChartContainer config={chartConfig} className="h-64 w-full">
                 <LineChart data={chartData} margin={{ left: 8, right: 8, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatMaybeDate} />
                   <YAxis tick={{ fontSize: 11 }} />
                   <ChartTooltip
                     content={(props) => {
@@ -295,7 +294,10 @@ export default function AIUsagePage() {
                         | undefined;
                       return (
                         <div>
-                          <ChartTooltipContent {...(props as ComponentProps<typeof ChartTooltipContent>)} />
+                          <ChartTooltipContent
+                            {...(props as ComponentProps<typeof ChartTooltipContent>)}
+                            labelFormatter={formatMaybeDate}
+                          />
                           {day ? (
                             <div className="mt-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
                               Cost{' '}
@@ -537,14 +539,15 @@ export default function AIUsagePage() {
                                     <>
                                       {q.feature !== 'ai_extract' && q.message_id ? (
                                         <div>
-                                          <Link
-                                            href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(q.message_id)}`}
+                                          <button
+                                            type="button"
+                                            onClick={() => openMessageTrace(q.message_id as string)}
                                             className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
                                             data-testid="view-trace-link"
                                           >
                                             <GitBranch className="size-3" />
                                             View full trace
-                                          </Link>
+                                          </button>
                                         </div>
                                       ) : null}
                                       <div>
@@ -599,6 +602,7 @@ export default function AIUsagePage() {
           </Card>
         </div>
       </Container>
+      {traceDrawer}
     </>
   );
 }

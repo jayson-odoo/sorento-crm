@@ -34,7 +34,7 @@ import {
   verifyOtp,
   writePortalToken,
 } from '../lib/portal-client';
-import { isSubmissionKind } from '../lib/portal-client';
+import { hasPortalDetailPage } from '@/lib/portal-form-kinds';
 import {
   clearPortalSlug,
   crmPathForPortalPath,
@@ -43,6 +43,7 @@ import {
   waMeUrl,
   writePortalSlug,
 } from '../lib/portal-paths';
+import { sessionStore } from '@/lib/storage';
 
 /** The CRM home the fresh session names when it is a salesperson's (`/my-requests`), else null. */
 async function salespersonHomePath(): Promise<string | null> {
@@ -152,14 +153,14 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
       if (reasonNow === 'logout' || !autoSend) return;
       const sentKey = SENT_KEY_PREFIX + guardKey;
       const alreadyFired =
-        typeof window !== 'undefined' && window.sessionStorage.getItem(sentKey) === '1';
+        typeof window !== 'undefined' && sessionStore.getItem(sentKey) === '1';
       if (!otpFiredRef.current && !alreadyFired) {
         otpFiredRef.current = true;
         const sent = await sendCode(cid, sid, { silent: true });
         // Persist the guard ONLY after a successful dispatch - a failed send
         // must not advertise a phantom "code sent" on the next reload.
         if (sent && typeof window !== 'undefined') {
-          window.sessionStorage.setItem(sentKey, '1');
+          sessionStore.setItem(sentKey, '1');
         }
       } else if (alreadyFired) {
         setSentTo((prev) => prev ?? 'your registered contact');
@@ -237,7 +238,7 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
     setState('otp');
     const sent = await sendCode(contactId, spaceId);
     if (sent && slug && typeof window !== 'undefined') {
-      window.sessionStorage.setItem(SENT_KEY_PREFIX + slug, '1');
+      sessionStore.setItem(SENT_KEY_PREFIX + slug, '1');
     }
   }, [contactId, spaceId, sendCode, slug]);
 
@@ -270,10 +271,10 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
         crmHome = await salespersonHomePath();
       }
       if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
-        Object.keys(window.sessionStorage)
+        sessionStore.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
+        sessionStore.keys()
           .filter((k) => k.startsWith(SENT_KEY_PREFIX))
-          .forEach((k) => window.sessionStorage.removeItem(k));
+          .forEach((k) => sessionStore.removeItem(k));
       }
       toast.success('Verified.');
       const desiredType = searchParams?.get('type');
@@ -283,7 +284,7 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
       // slug and redirects, keeping the address bar bookmarkable.
       // A salesperson lands in the CRM shell instead (PORTAL-P3-ROLE-MENU).
       const portalTarget =
-        desiredId && desiredType && isSubmissionKind(desiredType)
+        desiredId && desiredType && hasPortalDetailPage(desiredType)
           ? portalDetailPath(desiredType, desiredId, slug ?? null)
           : portalHomePath({ slug: slug ?? null, type: desiredType });
       // Already under /my-requests when this card runs inside the CRM verify page.

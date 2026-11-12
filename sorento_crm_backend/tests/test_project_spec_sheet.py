@@ -1,8 +1,11 @@
-"""PS-SPEC-SHEET red tests: the project spec sheet built from an issued quotation revision.
+"""PS-SPEC-SHEET tests: the page rules and the print payload of a project spec sheet.
 
-Written BEFORE the implementation, from the behaviour card
-(`documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md` v2) and the UAC. The new module is
-imported inside each test so every test fails on its own, not as one collection error.
+Written from the behaviour card (`documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md` v2)
+and the UAC. SPEC-SHEET-V2 turned the document-level settings into saved sheets
+(`projects.quotation_spec_sheets`), so these tests drive the same #2103 rules through a sheet:
+`create_sheet` / `update_sheet` / `pages(db, sheet)` / `build_print_payload(db, sheet)`. The
+saved-sheet behaviour itself (snapshots, pinned versions, page edits, routes, rights) is in
+`test_project_spec_sheets_v2.py`, which imports the seed helpers from this file.
 
 Postgres only via ``blank_session``; every row carries the ``zzt-spec`` marker and the chain is
 seeded here (CI's database is empty).
@@ -18,6 +21,7 @@ from app.models.product import Brand
 from app.models.product_set import ProductSet, ProductSetMember
 
 from ._pg_fixture import blank_session
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 from .test_project_quotation_pdf import (  # noqa: F401  (helpers, not tests)
     _issue,
     _product,
@@ -184,6 +188,25 @@ def _codes(pages):
     return [p["code"] for p in pages]
 
 
+def _sheet(db, c, *, templates=None, rows=None, source=None, single=True, issue=None):
+    """A saved spec sheet through the service, optionally with page rows applied."""
+    from app.services import project_spec_sheet_service as spec
+
+    t = templates or _templates(db, c)
+    sheet = spec.create_sheet(
+        db,
+        c["document"],
+        source=source or (issue or c["issue"]).id,
+        cover_template_id=t["cover"].id,
+        page_template_id=t["page"].id,
+        single_page_template_id=t["single"].id if single else None,
+        user_id=c["owner"],
+    )
+    if rows is not None:
+        spec.update_sheet(db, sheet, {"rows": rows})
+    return sheet
+
+
 # ------------------------------------------------------------------ pages (rules 3-5)
 
 
@@ -192,7 +215,7 @@ def test_one_page_per_item_in_quotation_order_and_a_set_prints_its_driver_with_p
 
     with blank_session() as db:
         c = _chain(db)
-        pages = spec.pages(db, c["document"], c["issue"])
+        pages = spec.pages(db, _sheet(db, c))
 
         assert _codes(pages) == [c["basin"].product_code, c["pedestal"].product_code]
         assert pages[0]["key"] == c["basin"].id
@@ -215,7 +238,7 @@ def test_the_spec_sheet_prints_the_issued_revision_not_the_draft():
         later = _product(db, c["category"].id, c["uom"], description=f"{MARKER} added later")
         _line(db, c, c["scope"], {"product_id": later.id})
 
-        pages = spec.pages(db, c["document"], c["issue"])
+        pages = spec.pages(db, _sheet(db, c))
         assert later.product_code not in _codes(pages)
 
 
@@ -233,8 +256,9 @@ def test_the_same_product_in_two_scopes_prints_once_at_its_first_position():
         _line(db, env, second, {"product_id": tap.id})
         later_basin = _line(db, env, second, {"product_id": basin.id})
         issue = _issue(db, document, env["owner"])
+        c = {**env, "document": document, "issue": issue}
 
-        pages = spec.pages(db, document, issue)
+        pages = spec.pages(db, _sheet(db, c))
         assert _codes(pages) == [basin.product_code, tap.product_code]
         # The page is the FIRST line's, frozen media and all, not the repeat's.
         assert pages[0]["line_id"] != later_basin.id
@@ -255,19 +279,30 @@ def test_the_same_product_in_two_scopes_prints_once_at_its_first_position():
         assert first_basin is not None
 
 
-def test_latest_issue_is_the_default_and_no_issue_means_no_pages():
+def test_the_newest_issue_leads_the_sources_and_a_document_without_lines_refuses_a_sheet():
     from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
 
     with blank_session() as db:
         c = _chain(db)
-        assert spec.issue_for(db, c["document"]).id == c["issue"].id
+        assert spec.sources(db, c["document"])[0]["value"] == c["issue"].id
 
         unissued = _document(db, c)
-        assert spec.issue_for(db, unissued) is None
-        assert spec.pages(db, unissued, None) == []
+        _scope(db, c, unissued)
+        t = _templates(db, c)
+        with pytest.raises(AppException) as raised:
+            spec.create_sheet(
+                db,
+                unissued,
+                source="draft",
+                cover_template_id=t["cover"].id,
+                page_template_id=t["page"].id,
+                user_id=c["owner"],
+            )
+        assert raised.value.code == "spec_sheet_no_lines"
 
 
-# ------------------------------------------------------------------ settings (rules 4a, 12, 13)
+# ------------------------------------------------------------------ rows (rules 4a, 12, 13)
 
 
 def test_saved_order_area_comment_marker_and_hide_apply_and_new_items_append():
@@ -275,10 +310,11 @@ def test_saved_order_area_comment_marker_and_hide_apply_and_new_items_append():
 
     with blank_session() as db:
         c = _chain(db)
+        sheet = _sheet(db, c)
         set_key = f"set:{c['set'].id}"
-        spec.save_settings(
+        spec.update_sheet(
             db,
-            c["document"],
+            sheet,
             {
                 "rows": [
                     {"key": set_key, "area": "Unit & podium", "comment": "Soft close", "marker": "**"},
@@ -286,7 +322,7 @@ def test_saved_order_area_comment_marker_and_hide_apply_and_new_items_append():
                 ]
             },
         )
-        pages = spec.pages(db, c["document"], c["issue"])
+        pages = spec.pages(db, sheet)
 
         assert [p["key"] for p in pages] == [set_key, c["basin"].id]
         assert pages[0]["area"] == "Unit & podium"
@@ -294,8 +330,8 @@ def test_saved_order_area_comment_marker_and_hide_apply_and_new_items_append():
         assert pages[0]["marker"] == "**"
         assert pages[1]["area"] == "" and pages[1]["hidden"] is False
 
-        spec.save_settings(db, c["document"], {"rows": [{"key": c["basin"].id, "hidden": True}]})
-        pages = spec.pages(db, c["document"], c["issue"])
+        spec.update_sheet(db, sheet, {"rows": [{"key": c["basin"].id, "hidden": True}]})
+        pages = spec.pages(db, sheet)
         assert next(p for p in pages if p["key"] == c["basin"].id)["hidden"] is True
 
 
@@ -305,10 +341,8 @@ def test_a_hand_picked_accessory_leaves_its_own_page_and_prints_after_the_set_pa
     with blank_session() as db:
         c = _chain(db)
         set_key = f"set:{c['set'].id}"
-        spec.save_settings(
-            db, c["document"], {"rows": [{"key": set_key, "accessories": [c["basin"].id]}]}
-        )
-        pages = spec.pages(db, c["document"], c["issue"])
+        sheet = _sheet(db, c, rows=[{"key": set_key, "accessories": [c["basin"].id]}])
+        pages = spec.pages(db, sheet)
 
         assert [p["key"] for p in pages] == [set_key]
         assert [a["code"] for a in pages[0]["accessories"]] == [
@@ -325,6 +359,7 @@ def test_accessory_picks_that_cannot_print_are_refused(case):
 
     with blank_session() as db:
         c = _chain(db)
+        sheet = _sheet(db, c)
         set_key = f"set:{c['set'].id}"
         basin = c["basin"].id
         rows = {
@@ -337,7 +372,7 @@ def test_accessory_picks_that_cannot_print_are_refused(case):
             "duplicate": [{"key": set_key}, {"key": set_key}],
         }[case]
         with pytest.raises(AppException) as raised:
-            spec.save_settings(db, c["document"], {"rows": rows})
+            spec.update_sheet(db, sheet, {"rows": rows})
         assert raised.value.status_code == 422
         assert raised.value.code == "spec_sheet_rows_invalid"
 
@@ -352,17 +387,14 @@ def test_templates_must_be_published_spec_templates_of_the_right_family():
         price_tag = _template(db, c["company_id"], "wc")
         draft = _template(db, c["company_id"], "spec_cover", published=False)
 
-        saved = spec.save_settings(
-            db,
-            c["document"],
-            {
-                "cover_template_id": t["cover"].id,
-                "page_template_id": t["page"].id,
-                "single_page_template_id": t["single"].id,
-            },
-        )
-        assert saved["cover_template_id"] == t["cover"].id
+        saved = _sheet(db, c, templates=t)
+        assert saved.cover_template_id == t["cover"].id
 
+        good = {
+            "cover_template_id": t["cover"].id,
+            "page_template_id": t["page"].id,
+            "single_page_template_id": t["single"].id,
+        }
         for bad in (
             {"cover_template_id": t["page"].id},
             {"page_template_id": t["cover"].id},
@@ -370,21 +402,24 @@ def test_templates_must_be_published_spec_templates_of_the_right_family():
             {"cover_template_id": draft.id},
         ):
             with pytest.raises(AppException) as raised:
-                spec.save_settings(db, c["document"], bad)
+                spec.create_sheet(
+                    db, c["document"], source=c["issue"].id, user_id=c["owner"], **{**good, **bad}
+                )
             assert raised.value.status_code == 422
             assert raised.value.code == "spec_sheet_template_invalid"
 
 
-def test_settings_persist_on_the_document():
-    from app.models.projects import ProjectQuotationDocument
+def test_rows_persist_on_the_sheet():
+    from app.models.projects import ProjectQuotationSpecSheet
     from app.services import project_spec_sheet_service as spec
 
     with blank_session() as db:
         c = _chain(db)
-        spec.save_settings(db, c["document"], {"rows": [{"key": c["basin"].id, "area": "Pantry"}]})
+        sheet = _sheet(db, c)
+        spec.update_sheet(db, sheet, {"rows": [{"key": c["basin"].id, "area": "Pantry"}]})
         db.expire_all()
-        stored = db.get(ProjectQuotationDocument, c["document"].id).spec_sheet
-        assert stored["rows"][0] == {
+        stored = db.get(ProjectQuotationSpecSheet, sheet.id).rows
+        assert stored[0] == {
             "key": c["basin"].id,
             "area": "Pantry",
             "comment": "",
@@ -403,16 +438,7 @@ def test_the_payload_is_a_cover_sheet_then_one_full_page_sheet_per_visible_item(
     with blank_session() as db:
         c = _chain(db)
         t = _templates(db, c)
-        spec.save_settings(
-            db,
-            c["document"],
-            {
-                "cover_template_id": t["cover"].id,
-                "page_template_id": t["page"].id,
-                "single_page_template_id": t["single"].id,
-            },
-        )
-        payload = spec.build_print_payload(db, c["document"], c["issue"])
+        payload = spec.build_print_payload(db, _sheet(db, c, templates=t))
         doc = payload["doc"]
 
         assert doc["kind"] == "tag_sheet"
@@ -443,16 +469,8 @@ def test_without_a_single_item_template_every_page_uses_the_page_template_and_hi
     with blank_session() as db:
         c = _chain(db)
         t = _templates(db, c)
-        spec.save_settings(
-            db,
-            c["document"],
-            {
-                "cover_template_id": t["cover"].id,
-                "page_template_id": t["page"].id,
-                "rows": [{"key": c["basin"].id, "hidden": True}],
-            },
-        )
-        sheets = spec.build_print_payload(db, c["document"], c["issue"])["doc"]["sheets"]
+        sheet = _sheet(db, c, templates=t, single=False, rows=[{"key": c["basin"].id, "hidden": True}])
+        sheets = spec.build_print_payload(db, sheet)["doc"]["sheets"]
         assert [s["tags"][0]["template_id"] for s in sheets] == [t["cover"].id, t["page"].id]
 
 
@@ -465,18 +483,13 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_the_quot
         c["pedestal"].brand_id = brand.id
         c["pedestal"].product_name = f"{MARKER} Wall hung WC"
         db.flush()
-        t = _templates(db, c)
         set_key = f"set:{c['set'].id}"
-        spec.save_settings(
+        sheet = _sheet(
             db,
-            c["document"],
-            {
-                "cover_template_id": t["cover"].id,
-                "page_template_id": t["page"].id,
-                "rows": [{"key": set_key, "area": "unit & podium", "comment": "c1", "marker": "*"}],
-            },
+            c,
+            rows=[{"key": set_key, "area": "unit & podium", "comment": "c1", "marker": "*"}],
         )
-        data = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"]
+        data = spec.build_print_payload(db, sheet)["resolvedData"]
         row = data[set_key]
 
         assert row["tag_id"] == set_key
@@ -503,20 +516,25 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_the_quot
         assert doc["ref"] == f"{MARKER}/QS/2026/7"
         from app.services.project_quotation_document_service import quotation_no
 
-        assert doc["quotation_no"] == quotation_no(c["document"].document_no, c["issue"].issue_no)
-        assert doc["prepared_by"] == f"{MARKER} Signer"
-        assert doc["prepared_by_phone"] == "012-000 0000"
+        assert doc["quotation_no"] == quotation_no(
+            c["document"].document_no, c["issue"].issue_no, c["issue"].revision_label
+        )
+        # Prepared By is the document's creator, not the typed signatory (owner ruling 11 Nov 2026).
+        assert doc["prepared_by"] == "zzt-qpdf Baser Ramli"
+        assert doc["prepared_by_phone"] == ""
         # No doc date on this quotation: the issue date.
-        assert doc["date"] == c["issue"].issued_at.strftime("%d %b %Y").upper()
+        from app.services.pdf_render import in_malaysia
+
+        assert doc["date"] == in_malaysia(c["issue"].issued_at).strftime("%d/%m/%Y")
 
         import datetime
 
         # A date that cannot be the issue date, so the two sources are told apart.
         c["document"].doc_date = datetime.date(2020, 1, 15)
         db.flush()
-        dated = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"]["cover"]
+        dated = spec.build_print_payload(db, sheet)["resolvedData"]["cover"]
         # The quotation's own date wins, as on its PDF and cover page.
-        assert dated["doc"]["date"] == "15 JAN 2020"
+        assert dated["doc"]["date"] == "15/01/2020"
 
 
 def test_ref_falls_back_to_the_quotation_number_when_your_ref_is_blank():
@@ -525,13 +543,11 @@ def test_ref_falls_back_to_the_quotation_number_when_your_ref_is_blank():
 
     with blank_session() as db:
         c = _chain(db)
-        t = _templates(db, c)
-        spec.save_settings(
-            db, c["document"], {"cover_template_id": t["cover"].id, "page_template_id": t["page"].id}
-        )
-        doc = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"]["cover"]["doc"]
+        doc = spec.build_print_payload(db, _sheet(db, c))["resolvedData"]["cover"]["doc"]
         assert doc["your_ref"] == ""
-        assert doc["ref"] == quotation_no(c["document"].document_no, c["issue"].issue_no)
+        assert doc["ref"] == quotation_no(
+            c["document"].document_no, c["issue"].issue_no, c["issue"].revision_label
+        )
 
 
 def test_the_line_frozen_drawing_and_photo_reach_the_row_and_the_signed_image_map(monkeypatch):
@@ -553,13 +569,11 @@ def test_the_line_frozen_drawing_and_photo_reach_the_row_and_the_signed_image_ma
         line.drawing_attachment_id = drawing.id
         db.flush()
         monkeypatch.setattr(
-            spec, "_sign", lambda db, ids: {i: f"https://signed.zzt.test/{i}" for i in ids if i}
+            spec,
+            "_sign",
+            lambda db, ids, full=False: {i: f"https://signed.zzt.test/{i}" for i in ids if i},
         )
-        t = _templates(db, c)
-        spec.save_settings(
-            db, c["document"], {"cover_template_id": t["cover"].id, "page_template_id": t["page"].id}
-        )
-        payload = spec.build_print_payload(db, c["document"], c["issue"])
+        payload = spec.build_print_payload(db, _sheet(db, c))
         row = payload["resolvedData"][c["basin"].id]
 
         assert row["images"][0]["attachment_id"] == photo.id
@@ -568,24 +582,29 @@ def test_the_line_frozen_drawing_and_photo_reach_the_row_and_the_signed_image_ma
         assert payload["images"][drawing.id] == f"https://signed.zzt.test/{drawing.id}"
 
 
-def test_export_refuses_without_templates_and_with_a_page_template_of_another_size():
+def test_create_refuses_without_templates_and_with_a_page_template_of_another_size():
     from app.services import project_spec_sheet_service as spec
     from app.services.error_handler import AppException
 
     with blank_session() as db:
         c = _chain(db)
         with pytest.raises(AppException) as raised:
-            spec.build_print_payload(db, c["document"], c["issue"])
+            spec.create_sheet(
+                db, c["document"], source=c["issue"].id, cover_template_id=None, page_template_id=None
+            )
         assert raised.value.status_code == 422
         assert raised.value.code == "spec_sheet_templates_missing"
 
         cover = _template(db, c["company_id"], "spec_cover")
         a4 = _template(db, c["company_id"], "spec_page", width=297, height=210)
-        spec.save_settings(
-            db, c["document"], {"cover_template_id": cover.id, "page_template_id": a4.id}
-        )
         with pytest.raises(AppException) as raised:
-            spec.build_print_payload(db, c["document"], c["issue"])
+            spec.create_sheet(
+                db,
+                c["document"],
+                source=c["issue"].id,
+                cover_template_id=cover.id,
+                page_template_id=a4.id,
+            )
         assert raised.value.status_code == 422
         assert raised.value.code == "spec_sheet_size_mismatch"
 
@@ -604,18 +623,14 @@ def test_request_export_creates_a_download_and_queues_the_render(monkeypatch):
     )
     with blank_session() as db:
         c = _chain(db)
-        t = _templates(db, c)
-        spec.save_settings(
-            db, c["document"], {"cover_template_id": t["cover"].id, "page_template_id": t["page"].id}
-        )
-        download = spec.request_export(db, c["document"], c["issue"], user_id=c["owner"])
+        sheet = _sheet(db, c)
+        download = spec.request_export(db, sheet, user_id=c["owner"])
 
         assert download.kind == spec.KIND == "quotation_spec_sheet_pdf"
-        assert download.source_entity_type == "quotation_issue"
-        assert download.source_entity_id == c["issue"].id
+        assert download.source_entity_type == "quotation_spec_sheet"
+        assert download.source_entity_id == sheet.id
         assert download.status == DownloadStatus.PENDING.value
-        assert download.filename.startswith("spec-sheet-") and download.filename.endswith(".pdf")
-        assert "/" not in download.filename
+        assert download.filename.startswith("spec-sheet-") and download.filename.endswith("-SS1.pdf")
         assert len(calls) == 1
         args, kwargs = calls[0]
         assert args[1] == str(download.id)
@@ -623,22 +638,18 @@ def test_request_export_creates_a_download_and_queues_the_render(monkeypatch):
 
 
 def test_the_public_print_payload_answers_a_spec_sheet_download():
+    from app.models.download import UserDownload
     from app.services import project_spec_sheet_service as spec
     from app.services.dealer_kit.tag_sheet_export_service import resolve_tag_sheet_print_payload
 
     with blank_session() as db:
         c = _chain(db)
-        t = _templates(db, c)
-        spec.save_settings(
-            db, c["document"], {"cover_template_id": t["cover"].id, "page_template_id": t["page"].id}
-        )
-        from app.models.download import UserDownload
-
+        sheet = _sheet(db, c)
         download = UserDownload(
             user_id=c["owner"],
             kind=spec.KIND,
-            source_entity_type="quotation_issue",
-            source_entity_id=c["issue"].id,
+            source_entity_type="quotation_spec_sheet",
+            source_entity_id=sheet.id,
             status="pending",
             filename="spec-sheet-x.pdf",
         )
@@ -648,6 +659,7 @@ def test_the_public_print_payload_answers_a_spec_sheet_download():
         payload = resolve_tag_sheet_print_payload(db, str(download.id))
         assert len(payload["doc"]["sheets"]) == 3
         assert "cover" in payload["resolvedData"]
+
 
 
 def test_the_render_cli_takes_a_custom_page_size_and_tag_sheets_stay_a4(monkeypatch):
@@ -740,11 +752,15 @@ def _restore(originals):
 def _url(c, suffix=""):
     return (
         f"/api/v1/project-sales/projects/{c['project'].id}/quotation-documents/"
-        f"{c['document'].id}/spec-sheet{suffix}"
+        f"{c['document'].id}/spec-sheets{suffix}"
     )
 
 
-def test_routes_read_save_preview_and_export(monkeypatch):
+
+# ------------------------------------------------------------------ routes (rule 15)
+
+
+def test_routes_list_create_patch_preview_and_export(monkeypatch):
     queued = []
     monkeypatch.setattr(
         "app.services.queue_service.enqueue_job", lambda *a, **k: queued.append((a, k))
@@ -757,39 +773,51 @@ def test_routes_read_save_preview_and_export(monkeypatch):
             got = client.get(_url(c))
             assert got.status_code == 200, got.text
             body = got.json()
-            assert body["issue_id"] == c["issue"].id
-            assert [p["code"] for p in body["pages"]] == [
+            assert body["items"] == []
+            assert [s["value"] for s in body["sources"]] == [c["issue"].id]
+            assert {t["cover"].id} <= {row["id"] for row in body["templates"]["cover"]}
+            assert {t["page"].id, t["single"].id} <= {row["id"] for row in body["templates"]["page"]}
+
+            made = client.post(
+                _url(c),
+                json={
+                    "source": c["issue"].id,
+                    "cover_template_id": t["cover"].id,
+                    "page_template_id": t["page"].id,
+                },
+            )
+            assert made.status_code == 201, made.text
+            sheet_id = made.json()["id"]
+            assert [p["code"] for p in made.json()["pages"][1:]] == [
                 c["basin"].product_code,
                 c["pedestal"].product_code,
             ]
-            assert {t["cover"].id} <= {row["id"] for row in body["templates"]["cover"]}
-            assert {t["page"].id, t["single"].id} <= {row["id"] for row in body["templates"]["page"]}
-            assert body["issues"][0]["id"] == c["issue"].id
 
-            put = client.put(
-                _url(c),
-                json={
-                    "cover_template_id": t["cover"].id,
-                    "page_template_id": t["page"].id,
-                    "rows": [{"key": c["basin"].id, "area": "Pantry"}],
-                },
+            patched = client.patch(
+                _url(c, f"/{sheet_id}"), json={"rows": [{"key": c["basin"].id, "area": "Pantry"}]}
             )
-            assert put.status_code == 200, put.text
-            assert put.json()["settings"]["cover_template_id"] == t["cover"].id
-            assert put.json()["pages"][0]["area"] == "Pantry"
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["pages"][1]["area"] == "Pantry"
 
-            preview = client.get(_url(c, "/preview"))
+            preview = client.get(_url(c, f"/{sheet_id}/preview"), params={"key": "cover"})
             assert preview.status_code == 200, preview.text
-            assert len(preview.json()["doc"]["sheets"]) == 3
+            assert len(preview.json()["doc"]["sheets"]) == 1
 
-            exported = client.post(_url(c, "/export"))
+            exported = client.post(_url(c, f"/{sheet_id}/export"))
             assert exported.status_code == 200, exported.text
             assert exported.json()["kind"] == "quotation_spec_sheet_pdf"
             assert len(queued) == 1
 
-            bad = client.put(_url(c), json={"page_template_id": t["cover"].id})
+            bad = client.post(
+                _url(c),
+                json={
+                    "source": c["issue"].id,
+                    "cover_template_id": t["page"].id,
+                    "page_template_id": t["page"].id,
+                },
+            )
             assert bad.status_code == 422
-            assert bad.json().get("code") == "spec_sheet_template_invalid" or "template" in bad.text
+            assert bad.json().get("code") == "spec_sheet_template_invalid"
         finally:
             _restore(originals)
 
@@ -797,21 +825,32 @@ def test_routes_read_save_preview_and_export(monkeypatch):
 def test_saving_needs_the_edit_right_and_reading_does_not():
     with blank_session() as db:
         c = _chain(db)
+        sheet = _sheet(db, c)
         client, originals = _client(db, c["owner"], slugs=["projects.projects.view"])
         try:
             assert client.get(_url(c)).status_code == 200
-            assert client.put(_url(c), json={"rows": []}).status_code == 403
+            assert client.get(_url(c, f"/{sheet.id}")).status_code == 200
+            assert client.patch(_url(c, f"/{sheet.id}"), json={"rows": []}).status_code == 403
         finally:
             _restore(originals)
 
 
-def test_a_revision_of_another_document_is_not_found():
+def test_a_revision_of_another_document_is_refused():
     with blank_session() as db:
         c = _chain(db)
+        t = _templates(db, c)
         client, originals = _client(db, c["owner"])
         try:
-            other = client.get(_url(c), params={"issue_id": str(uuid.uuid4())})
-            assert other.status_code == 404
+            other = client.post(
+                _url(c),
+                json={
+                    "source": str(uuid.uuid4()),
+                    "cover_template_id": t["cover"].id,
+                    "page_template_id": t["page"].id,
+                },
+            )
+            assert other.status_code == 422
+            assert other.json().get("code") == "spec_sheet_issue_invalid"
         finally:
             _restore(originals)
 
@@ -826,23 +865,24 @@ def test_saving_rows_keeps_stored_rows_the_tab_does_not_show():
 
     with blank_session() as db:
         c = _chain(db)
+        sheet = _sheet(db, c)
         set_key = f"set:{c['set'].id}"
         basin = c["basin"].id
-        spec.save_settings(
+        spec.update_sheet(
             db,
-            c["document"],
+            sheet,
             {"rows": [{"key": basin, "area": "Pantry"}, {"key": "set:from-r2", "area": "Guard house"}]},
         )
         # The basin goes under the WC; the tab then shows (and saves) the WC row only.
-        spec.save_settings(db, c["document"], {"rows": [{"key": set_key, "accessories": [basin]}]})
-        spec.save_settings(db, c["document"], {"rows": [{"key": set_key, "area": "Unit"}]})
+        spec.update_sheet(db, sheet, {"rows": [{"key": set_key, "accessories": [basin]}]})
+        spec.update_sheet(db, sheet, {"rows": [{"key": set_key, "area": "Unit"}]})
 
-        stored = {r["key"]: r for r in spec.settings_of(c["document"])["rows"]}
+        stored = {r["key"]: r for r in sheet.rows}
         assert stored[basin]["area"] == "Pantry"
         assert stored["set:from-r2"]["area"] == "Guard house"
         assert stored[set_key]["area"] == "Unit"
         # Unpicked again: the basin's page comes back with its Area.
-        pages = {p["key"]: p for p in spec.pages(db, c["document"], c["issue"])}
+        pages = {p["key"]: p for p in spec.pages(db, sheet)}
         assert pages[basin]["area"] == "Pantry"
 
 
@@ -851,7 +891,7 @@ def test_saving_rows_keeps_stored_rows_the_tab_does_not_show():
     [
         ({"cover_template_id": "not-a-uuid"}, "spec_sheet_template_invalid"),
         ({"page_template_id": "1; drop"}, "spec_sheet_template_invalid"),
-        ({"issue_id": "nope"}, "spec_sheet_issue_invalid"),
+        ({"source": "nope"}, "spec_sheet_issue_invalid"),
     ],
 )
 def test_malformed_ids_are_a_422_not_a_500(body, code):
@@ -860,8 +900,15 @@ def test_malformed_ids_are_a_422_not_a_500(body, code):
 
     with blank_session() as db:
         c = _chain(db)
+        t = _templates(db, c)
+        args = {
+            "source": c["issue"].id,
+            "cover_template_id": t["cover"].id,
+            "page_template_id": t["page"].id,
+            "user_id": c["owner"],
+        }
         with pytest.raises(AppException) as raised:
-            spec.save_settings(db, c["document"], body)
+            spec.create_sheet(db, c["document"], **{**args, **body})
         assert raised.value.status_code == 422
         assert raised.value.code == code
 
@@ -875,11 +922,14 @@ def test_a_template_page_size_chromium_cannot_print_is_refused(size):
         c = _chain(db)
         cover = _template(db, c["company_id"], "spec_cover", width=size[0], height=size[1])
         page = _template(db, c["company_id"], "spec_page", width=size[0], height=size[1])
-        spec.save_settings(
-            db, c["document"], {"cover_template_id": cover.id, "page_template_id": page.id}
-        )
         with pytest.raises(AppException) as raised:
-            spec.build_print_payload(db, c["document"], c["issue"])
+            spec.create_sheet(
+                db,
+                c["document"],
+                source=c["issue"].id,
+                cover_template_id=cover.id,
+                page_template_id=page.id,
+            )
         assert raised.value.status_code == 422
         assert raised.value.code == "spec_sheet_size_invalid"
 
@@ -905,6 +955,7 @@ def test_the_layer_schema_accepts_the_drawing_slot_and_show_when():
     assert layer.show_when.part == 1 and layer.show_when.spec == "is_rimless"
 
 
+
 def test_a_spec_sheet_download_on_a_document_without_a_company_fails_closed(monkeypatch):
     """The public print route must never read a payload with no company filter."""
     from app.models.download import UserDownload
@@ -913,11 +964,12 @@ def test_a_spec_sheet_download_on_a_document_without_a_company_fails_closed(monk
 
     with blank_session() as db:
         c = _chain(db)
+        sheet = _sheet(db, c)
         download = UserDownload(
             user_id=c["owner"],
             kind=spec.KIND,
-            source_entity_type="quotation_issue",
-            source_entity_id=c["issue"].id,
+            source_entity_type="quotation_spec_sheet",
+            source_entity_id=sheet.id,
             status="pending",
             filename="spec-sheet-x.pdf",
         )
@@ -927,77 +979,57 @@ def test_a_spec_sheet_download_on_a_document_without_a_company_fails_closed(monk
         class _NoCompany:
             company_id = None
 
-        monkeypatch.setattr(
-            spec, "source_of_download", lambda db, dl: (_NoCompany(), c["issue"])
-        )
+        monkeypatch.setattr(spec, "source_of_download", lambda db, dl: (_NoCompany(), sheet))
         for call in (spec.print_payload_for_download, spec.page_size_for_download):
             with pytest.raises(AppException) as raised:
                 call(db, download)
             assert raised.value.status_code == 404
 
 
-def test_a_hand_picked_accessory_carries_its_own_quoted_price_and_the_tab_view_shows_none():
+def test_a_hand_picked_accessory_carries_its_own_quoted_price_and_the_page_view_shows_none():
     from app.services import project_spec_sheet_service as spec
 
     with blank_session() as db:
         c = _chain(db)
-        t = _templates(db, c)
         set_key = f"set:{c['set'].id}"
-        spec.save_settings(
-            db,
-            c["document"],
-            {
-                "cover_template_id": t["cover"].id,
-                "page_template_id": t["page"].id,
-                "rows": [{"key": set_key, "accessories": [c["basin"].id]}],
-            },
-        )
-        row = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"][set_key]
+        sheet = _sheet(db, c, rows=[{"key": set_key, "accessories": [c["basin"].id]}])
+        row = spec.build_print_payload(db, sheet)["resolvedData"][set_key]
         assert [p["list_price"] for p in row["parts"]] == [None, None, 100.0]
 
-        from app.api.v1.projects.spec_sheet import _public
-
-        for page in spec.pages(db, c["document"], c["issue"]):
-            shown = _public(page)
+        for page in spec.pages(db, sheet):
+            shown = spec._public(page)
             assert not any(k.startswith("_") for k in shown)
             assert all(not any(k.startswith("_") for k in a) for a in shown["accessories"])
 
 
-def test_a_zero_priced_line_carries_no_price_and_the_page_list_route_never_returns_one():
+def test_a_zero_priced_line_carries_no_price_and_the_detail_route_never_returns_one():
     """B3: zero = no separate charge, printed blank (as the quotation PDF). B4: the GET route's
     page list carries no price at any depth."""
     import json
 
+    from app.services import project_quotation_service as quotes
     from app.services import project_spec_sheet_service as spec
 
     with blank_session() as db:
         c = _chain(db)
         # A component quoted at zero after its parent, picked under the WC.
         hose = _product(db, c["category"].id, c["uom"], description=f"{MARKER} spare hose")
-        from app.services import project_quotation_document_service as qdocs
-        from app.services import project_quotation_service as quotes
-
+        # A no-charge component lists at nothing, so its zero is not a discount (PS-QUOTE-RULES).
+        hose.list_price = Decimal(UNDISCOUNTED_LIST_PRICE)
+        db.flush()
         quotes.revise(db, quotation=c["scope"], actor_user_id=c["owner"])
         _line(db, c, c["scope"], {"product_id": hose.id, "unit_price": "0"})
         issue = _issue(db, c["document"], c["owner"])
-        t = _templates(db, c)
         set_key = f"set:{c['set'].id}"
-        spec.save_settings(
-            db,
-            c["document"],
-            {
-                "cover_template_id": t["cover"].id,
-                "page_template_id": t["page"].id,
-                "rows": [{"key": set_key, "accessories": [hose.id, c["basin"].id]}],
-            },
+        sheet = _sheet(
+            db, c, issue=issue, rows=[{"key": set_key, "accessories": [hose.id, c["basin"].id]}]
         )
-        row = spec.build_print_payload(db, c["document"], issue)["resolvedData"][set_key]
+        row = spec.build_print_payload(db, sheet)["resolvedData"][set_key]
         assert [p["list_price"] for p in row["parts"]] == [None, None, None, 100.0]
-        assert qdocs is not None
 
         client, originals = _client(db, c["owner"])
         try:
-            got = client.get(_url(c), params={"issue_id": issue.id})
+            got = client.get(_url(c, f"/{sheet.id}"))
             assert got.status_code == 200, got.text
             pages = got.json()["pages"]
             assert pages, "the page list is not empty"
@@ -1036,15 +1068,16 @@ def test_area_defaults_to_the_section_heading_the_line_sits_under_and_a_typed_ar
         _line(db, env, first, {"product_id": tap.id, "band_label": "PANTRY (TYPE A)"})
         _line(db, env, second, {"product_id": trap.id})
         issue = _issue(db, document, env["owner"])
+        sheet = _sheet(db, {**env, "document": document, "issue": issue})
 
-        pages = {p["key"]: p for p in spec.pages(db, document, issue)}
+        pages = {p["key"]: p for p in spec.pages(db, sheet)}
         assert pages[wc.id]["area"] == "UNIT"
         assert pages[basin.id]["area"] == "UNIT"
         assert pages[tap.id]["area"] == "PANTRY (TYPE A)"
         assert pages[trap.id]["area"] == ""  # a new scope starts with no heading
         assert pages[basin.id]["area_default"] == "UNIT"
 
-        spec.save_settings(db, document, {"rows": [{"key": basin.id, "area": "Guard house"}]})
-        pages = {p["key"]: p for p in spec.pages(db, document, issue)}
+        spec.update_sheet(db, sheet, {"rows": [{"key": basin.id, "area": "Guard house"}]})
+        pages = {p["key"]: p for p in spec.pages(db, sheet)}
         assert pages[basin.id]["area"] == "Guard house"
         assert pages[basin.id]["area_default"] == "UNIT"

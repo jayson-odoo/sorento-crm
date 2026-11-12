@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -19,11 +19,12 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { waMeUrl } from '@/lib/wa-me';
 import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
 import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuotationDocuments';
+import { useQuotationCertificateMutations } from '../../../../_shared/hooks/useQuotationCertificates';
 import {
   useFillPartyPhone,
   usePartiesOnProject,
 } from '../../../../_shared/hooks/useProjects';
-import { TYPE_LABEL } from '../../../../parties/components/partyTypes';
+import { humanizeRole, usePartyRoleLabel } from '../../../../parties/components/partyTypes';
 import type { PartyOnProject } from '../../../../_shared/types/project.types';
 import {
   pickMobile,
@@ -31,10 +32,12 @@ import {
   toWaDigits,
   whatsAppMessage,
 } from '../../../../_shared/lib/quotationWhatsApp';
-import type {
-  QuotationDocument,
-  QuotationIssue,
+import {
+  sendRevisionLabel,
+  type QuotationDocument,
+  type QuotationIssue,
 } from '../../../../_shared/services/quotationDocumentService';
+import { formatPhone } from '../../../../_shared/lib/phoneDisplay';
 
 /**
  * The prompt that hands a sent quotation to the salesperson's own WhatsApp.
@@ -68,12 +71,22 @@ export function QuotationWhatsAppDialog({
   const lastIssue = React.useRef<QuotationIssue | null>(null);
   if (issue) lastIssue.current = issue;
   const shown = issue ?? lastIssue.current;
+  // The party of whoever is picked in "Send to"; null until a pick, when the document's To party
+  // stands in. Reported up by the body, which owns the pick, because the title has to stay a
+  // direct child of the content (`DialogContent` looks for it there).
+  const [pickedParty, setPickedParty] = React.useState<string | null>(null);
   return (
     <Dialog open={Boolean(issue)} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         {shown && (
           <DialogHeader>
-            <DialogTitle>{`Send ${revisionLabel(shown)} via WhatsApp`}</DialogTitle>
+            {/* The same words as the Send button that opened it (QUOTE-HEADER-TIDY). */}
+            <DialogTitle>
+              {`${sendRevisionLabel(
+                revisionLabel(shown),
+                pickedParty ?? document.recipient_name_snapshot,
+              )} via WhatsApp`}
+            </DialogTitle>
           </DialogHeader>
         )}
         {shown && (
@@ -82,6 +95,7 @@ export function QuotationWhatsAppDialog({
             document={document}
             key={shown.id}
             issue={shown}
+            onPickedParty={setPickedParty}
             onClose={() => onOpenChange(false)}
           />
         )}
@@ -106,9 +120,12 @@ type Recipient = {
 };
 
 /** One row per party (its own line) and per person registered at it. */
-export function recipientsOf(parties: PartyOnProject[]): Recipient[] {
+export function recipientsOf(
+  parties: PartyOnProject[],
+  roleLabel: (value: string) => string = humanizeRole,
+): Recipient[] {
   return parties.flatMap((party) => {
-    const role = TYPE_LABEL[party.role] ?? party.role;
+    const role = roleLabel(party.role);
     return [
       {
         key: `party:${party.role}:${party.party_id}`,
@@ -132,14 +149,23 @@ function WhatsAppBody({
   projectId,
   document,
   issue,
+  onPickedParty,
   onClose,
 }: {
   projectId: string;
   document: QuotationDocument;
   issue: QuotationIssue;
+  onPickedParty: (name: string | null) => void;
   onClose: () => void;
 }) {
   const mutations = useQuotationDocumentMutations(projectId, document.id);
+  const certificates = useQuotationCertificateMutations(projectId, document.id);
+  // null = issued before certificates were frozen: the live list is exported, so no count is known.
+  const certificateCount = issue.certificates_count;
+  const showCertificates = certificateCount === null || (certificateCount ?? 0) > 0;
+  const certificatesFile = `${document.document_no} ${revisionLabel(issue)} Certificates.pdf${
+    certificateCount ? ` (${certificateCount})` : ''
+  }`;
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const [link, setLink] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
@@ -150,7 +176,11 @@ function WhatsAppBody({
   const [edited, setEdited] = React.useState<string | null>(null);
   const parties = usePartiesOnProject(projectId);
   const fillPhone = useFillPartyPhone(projectId);
-  const recipients = React.useMemo(() => recipientsOf(parties.data ?? []), [parties.data]);
+  const roleLabel = usePartyRoleLabel();
+  const recipients = React.useMemo(
+    () => recipientsOf(parties.data ?? [], roleLabel),
+    [parties.data, roleLabel],
+  );
   const [recipientKey, setRecipientKey] = React.useState('');
   const recipient = recipients.find((r) => r.key === recipientKey) ?? null;
   const noNumberOnFile = Boolean(recipient && !recipient.phone?.trim());
@@ -182,6 +212,10 @@ function WhatsAppBody({
         })
       : '');
   const ready = link !== null;
+  const pickedParty = recipient
+    ? ((parties.data ?? []).find((party) => party.party_id === recipient.partyId)?.name ?? null)
+    : null;
+  React.useEffect(() => onPickedParty(pickedParty), [onPickedParty, pickedParty]);
 
   return (
     <>
@@ -205,7 +239,7 @@ function WhatsAppBody({
             options={recipients.map((r) => ({
               value: r.key,
               label: r.label,
-              description: r.phone ?? 'No number on file',
+              description: r.phone ? formatPhone(r.phone) : 'No number on file',
             }))}
             placeholder="Pick a party of this project"
             emptyMessage="No parties on this project yet"
@@ -241,6 +275,23 @@ function WhatsAppBody({
           <p role="alert" className="text-sm text-destructive">
             Could not create the counter-sign link.
           </p>
+        )}
+        {showCertificates && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+            <span className="truncate" title={certificatesFile}>
+              {certificatesFile}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={certificates.exportPdf.isPending}
+              onClick={() => certificates.exportPdf.mutate(issue.id)}
+            >
+              <FileDown className="size-4" aria-hidden />
+              Download
+            </Button>
+          </div>
         )}
       </div>
       <DialogFooter className="gap-2 sm:gap-0">

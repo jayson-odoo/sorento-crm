@@ -11,7 +11,7 @@
  * Edit in the gear opens the form page, and this page is a read. The claims here are that the gear
  * leads there (after the existing revise prompt when the customer holds a version), that no
  * Save/Cancel pair or letterhead input appears on this page, and that the per-scope Edit scope
- * button is gone while Record outcome stays.
+ * button is gone, and so is Record outcome (PROJECT-OUTCOME-SINGLE: one outcome per project).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -53,6 +53,19 @@ vi.mock('@/lib/toast', () => ({
   },
 }));
 
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
+
 const getQuotationDocument = vi.fn();
 const listQuotationIssues = vi.fn();
 const updateQuotationDocument = vi.fn();
@@ -68,6 +81,7 @@ const createQuotationLine = vi.fn();
 const updateQuotationLine = vi.fn();
 const deleteQuotationLine = vi.fn();
 const reviseQuotation = vi.fn();
+const recomputeQuotationVersion = vi.fn();
 const push = vi.fn();
 const reviseQuotationApproval = vi.fn();
 const moveQuotationApproval = vi.fn();
@@ -188,6 +202,7 @@ vi.mock('../../../../_shared/services/projectService', async (importOriginal) =>
     updateQuotationLine: (...args: unknown[]) => updateQuotationLine(...args),
     deleteQuotationLine: (...args: unknown[]) => deleteQuotationLine(...args),
     reviseQuotation: (...args: unknown[]) => reviseQuotation(...args),
+    recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
   };
 });
 
@@ -209,11 +224,11 @@ import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
 import {
-  QuotationHeaderTab,
   QuotationSignaturesTab,
   QuotationCoverLetterTab,
   QuotationTermsTab,
 } from './QuotationDocumentTabPanels';
+import { QuotationHeaderTab } from './QuotationHeaderTab';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -499,17 +514,32 @@ describe('QuotationDocumentClient header total', () => {
  */
 describe('QuotationDocumentClient header dedupe', () => {
   // The number and project title specs live on the Header tab below ("#1336 kept, AC-QF054").
-  it('leaves no subject read in the card, but keeps the Subject input in an edit session', () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the read is a Project row now, since the record
+  // card above shows only the short name; an edit session keeps the input.
+  it('reads the title as a Project row, and keeps the Project title input in an edit session', () => {
     const { rerender } = render(<QuotationDocumentHeader document={quotationDocument()} />);
-    expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
+    expect(screen.getByText('Project')).toBeInTheDocument();
+    expect(screen.getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
 
     rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
-    expect(screen.getByLabelText('Subject')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+    expect(screen.getByLabelText('Project title')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+  });
+
+  // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): a long Malay title overflowed the one-line input, so
+  // the field is a wrapping textarea named for what it holds.
+  it('edits the project title in a wrapping textarea, labelled Project title', () => {
+    const onChange = vi.fn();
+    render(<QuotationDocumentHeader document={quotationDocument()} onChange={onChange} />);
+    const field = screen.getByLabelText('Project title');
+    expect(field.tagName).toBe('TEXTAREA');
+    expect(screen.queryByLabelText('Subject')).toBeNull();
+    fireEvent.change(field, { target: { value: 'CADANGAN PEMBANGUNAN BERSTRATA 2 BLOK' } });
+    expect(onChange).toHaveBeenCalledWith({ subject_title: 'CADANGAN PEMBANGUNAN BERSTRATA 2 BLOK' });
   });
 });
 
 describe('QuotationDocumentClient signing gate', () => {
-  it('E4: offers Sign, not Send to Customer, until the quotation is signed', async () => {
+  it('E4: offers Sign, not the Send CTA, until the quotation is signed', async () => {
     // Replaces "a disabled Send to Customer with a Sign it first title": the one primary button
     // is now the NEXT action, so an unsigned quotation leads with Sign.
     getQuotationDocument.mockResolvedValue(quotationDocument());
@@ -517,7 +547,7 @@ describe('QuotationDocumentClient signing gate', () => {
 
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(sign).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('opens Issue once a signature is on the draft', async () => {
@@ -526,7 +556,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Send to Customer R1' });
+    const issue = await screen.findByRole('button', { name: 'Send' });
     expect(issue).toBeEnabled();
     expect(screen.queryByText('Sign it first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
@@ -542,10 +572,10 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send to Customer C' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
-  it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never Send to Customer', async () => {
+  it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never the Send CTA', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         signatory_signature: signature(),
@@ -557,7 +587,7 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     expect(await screen.findByRole('button', { name: 'Send for approval' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('leaves Issue alone once a manager has approved', async () => {
@@ -571,10 +601,10 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
-  it('E4: an issued document that carries no signature leads with Sign, not Send to Customer', async () => {
+  it('E4: an issued document that carries no signature leads with Sign, not the Send CTA', async () => {
     // "It is issued, so it must have been signed" is wrong on every document issued before the
     // signature gate existed. Signed-ness is read off the signature and nothing else.
     getQuotationDocument.mockResolvedValue(
@@ -601,7 +631,7 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     expect(await screen.findByRole('button', { name: 'Sign' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('shows the captured signature read-only in the signatures panel', async () => {
@@ -675,9 +705,9 @@ describe('QuotationDocumentClient Edit quotation (#1341)', () => {
     );
     renderScreen();
 
-    expect(
-      await screen.findByText(/The customer holds this version\. Edit opens the next one\./i),
-    ).toBeInTheDocument();
+    // The hint that used to say this is gone (owner, 5 Nov 2026); the prompt below says it.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/The customer holds/i)).toBeNull();
 
     await pressEdit();
 
@@ -1121,14 +1151,22 @@ describe('QuotationDocumentClient standing badge', () => {
  * user starts.
  */
 describe('QuotationDocumentClient scope series', () => {
-  it('AC-QF004: offers no per-scope Edit scope; Record outcome stays', async () => {
+  it('AC-QF004: offers no per-scope Edit scope, and no Record outcome (owner, 5 Nov 2026)', async () => {
     // The owner: "editing of scope should be done by 'Edit Quotation', not a separate button".
+    // Record outcome left the page too: "we only need per project outcome" (its own lane).
     seedOneScope();
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Record outcome' })).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Record outcome' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit scope' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
+    expect(
+      screen
+        .queryAllByText(/^(Won|Lost|Open|Still open)$/)
+        .filter((el) => el.className.includes('rounded-full')),
+    ).toHaveLength(0);
+    expect(screen.queryByRole('dialog', { name: /Outcome of/ })).toBeNull();
   });
 
   it('AC-QF036: an empty scope reads as an empty grid, with no Press Edit hint', async () => {
@@ -1148,7 +1186,9 @@ describe('QuotationDocumentClient scope series', () => {
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
   });
 
-  it('says which series the scope is quoted from', async () => {
+  // The area header row that named the series is gone in view (owner, 5 Nov 2026: "in view i
+  // don't even need this"); the series still shows on the form page.
+  it('names no series above the lines in view, even when one is bound', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ grand_total: '9000.00', scopes: [scope()] }),
     );
@@ -1159,31 +1199,62 @@ describe('QuotationDocumentClient scope series', () => {
     listQuotationLines.mockResolvedValue([line()]);
     renderScreen();
 
-    expect(await screen.findByText('Sanitaryware template')).toBeInTheDocument();
-  });
-
-  it('says NO series when none is bound, rather than looking identically clean', async () => {
-    // The state the whole database was in. A scope checking nothing and a scope whose lines
-    // are all standard render the same lines; only this tells them apart.
-    seedOneScope();
-    renderScreen();
-
-    expect(await screen.findByText('No series')).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText('Sanitaryware template')).toBeNull();
+    expect(screen.queryByText('No series')).toBeNull();
   });
 });
 
 /**
  * Fix round 2 (#1341, owner addenda 2 to 4 and the 11:33Z alignment notes).
  */
-describe('QuotationDocumentClient Send to Customer (AC-QF057)', () => {
-  it('names the primary CTA Send to Customer, with the revision it will send', async () => {
+describe('QuotationDocumentClient the Send CTA (AC-QF057)', () => {
+  it('names the primary CTA the Send CTA, with the revision it will send', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ signatory_signature: signature() }),
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: /^Issue/ })).toBeNull();
+  });
+
+  // QUOTE-HEADER-TIDY, owner hand test (11 Nov 2026): "here should just show Send then email or
+  // whatsapp, simple as that". No revision and no party on the CTA or its menu; the WhatsApp
+  // prompt keeps them in its title.
+  it('reads just Send, then Email or WhatsApp, with the revision and party only in the prompt', async () => {
+    const user = userEvent.setup();
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        next_revision_label: 'A',
+        recipient_name_snapshot: 'PGB Contoh Group',
+      }),
+    );
+    issueQuotationDocument.mockResolvedValue({
+      id: 'i1',
+      document_id: 'd1',
+      issue_no: 1,
+      revision_label: 'A',
+      our_ref_text: 'SRT/Q/2026/0141 (A)',
+      issued_at: '2026-10-30T02:00:00',
+      issued_by: 'u1',
+      issued_by_name: 'SALES REP A',
+      grand_total: '0.00',
+      scope_count: 0,
+    });
+    createQuotationSignLink.mockResolvedValue({ token: 'tok', path: '/quotation-sign/tok', expires_at: null });
+    renderScreen();
+
+    const cta = await screen.findByRole('button', { name: 'Send' });
+    expect(screen.queryByText(/PGB Contoh Group/)).toBeNull();
+    expect(screen.queryByText(/Send to Customer/)).toBeNull();
+    await user.click(cta);
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'WhatsApp' }));
+    expect(
+      await screen.findByText('Send rev A to PGB Contoh Group via WhatsApp'),
+    ).toBeInTheDocument();
   });
 
   it('says Send it to the customer first on the exports of a draft, never Issue it first', async () => {
@@ -1211,7 +1282,71 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
     expect(within(card).getAllByText('Issued by')).toHaveLength(1);
   });
 
-  it('groups them by scope when the scopes were opened by different people', async () => {
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026: "don't need to be by unit here"): one pair for the
+  // document, the most recently opened ISSUED area version's, never one group per area.
+  it('shows one Issued by and Opened for the document, not one per area', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        scopes: [
+          scope(),
+          scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+          scope({ id: 'q3', scope_label: 'Level 9', current_version_id: 'v10' }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation(),
+      quotation({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+      quotation({ id: 'q3', scope_label: 'Level 9', current_version_id: 'v10' }),
+    ]);
+    listQuotationVersions.mockImplementation((quotationId: string) =>
+      Promise.resolve(
+        quotationId === 'q2'
+          ? [
+              version({
+                id: 'v9',
+                quotation_id: 'q2',
+                version_no: 1,
+                is_issued: true,
+                issued_by_name: 'Kelly Tan',
+                created_at: '2026-11-03T02:00:00',
+              }),
+            ]
+          : quotationId === 'q3'
+            ? [
+                // Opened most recently, but never issued: an issued version wins over it.
+                version({
+                  id: 'v10',
+                  quotation_id: 'q3',
+                  version_no: 1,
+                  is_issued: false,
+                  issued_by_name: 'Siti Aminah',
+                  created_at: '2026-11-09T02:00:00',
+                }),
+              ]
+            : [
+                version({
+                  is_issued: true,
+                  issued_by_name: 'Baser Ramli',
+                  created_at: '2026-11-01T02:00:00',
+                }),
+              ],
+      ),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+    expect(within(card).getAllByText('Opened')).toHaveLength(1);
+    expect(card).not.toHaveTextContent('Baser Ramli');
+    expect(card).not.toHaveTextContent('Siti Aminah');
+    expect(within(card).queryByRole('group')).toBeNull();
+    expect(card).not.toHaveTextContent('Guard House v1');
+    expect(card).not.toHaveTextContent('Townhouse v2');
+  });
+
+  it('falls back to the most recently opened area when none is issued', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         scopes: [scope(), scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' })],
@@ -1224,18 +1359,24 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
     listQuotationVersions.mockImplementation((quotationId: string) =>
       Promise.resolve(
         quotationId === 'q2'
-          ? [version({ id: 'v9', quotation_id: 'q2', version_no: 1, issued_by_name: 'Kelly Tan' })]
-          : [version({ issued_by_name: 'Baser Ramli' })],
+          ? [
+              version({
+                id: 'v9',
+                quotation_id: 'q2',
+                version_no: 1,
+                issued_by_name: 'Kelly Tan',
+                created_at: '2026-11-05T02:00:00',
+              }),
+            ]
+          : [version({ issued_by_name: 'Baser Ramli', created_at: '2026-11-01T02:00:00' })],
       ),
     );
     renderScreen(<QuotationHeaderTab />);
 
     const card = await screen.findByTestId('quotation-header-card');
     await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
-    const townhouse = within(card).getByRole('group', { name: 'Townhouse v2' });
-    const guard = within(card).getByRole('group', { name: 'Guard House v1' });
-    expect(townhouse).toHaveTextContent('Baser Ramli');
-    expect(guard).toHaveTextContent('Kelly Tan');
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+    expect(card).not.toHaveTextContent('Baser Ramli');
   });
 
   it('leaves no Issued by / Opened strip above the lines table', async () => {
@@ -1252,26 +1393,74 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
 });
 
 describe('QuotationDocumentClient header dedupe (#1336 kept, AC-QF054)', () => {
-  it('does not repeat the document number under the breadcrumb', async () => {
+  // Superseded by PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026: "it should be like order
+  // inquiry"): the record card leads with the number, as Order Inquiry does, and the title is
+  // its subtitle line.
+  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026): the record card names the project by its short
+  // name (PROJECT-NAME, `projects.name`); the full title moves into the Header section.
+  it('leads the record card with the document number, the project name under it', async () => {
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
     getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
     renderScreen(<QuotationHeaderTab />);
 
     expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
-    expect(screen.queryByText('SRT/Q/2026/0141')).toBeNull();
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Draft')).toBeInTheDocument();
+    const card = screen.getByTestId('record-header-card');
+    expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
+    expect(within(card).getByText('Menara Ujian')).toBeInTheDocument();
+    expect(within(card).queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
+    expect(within(card).getByText('Draft')).toBeInTheDocument();
   });
 
-  it('says the project title once, in the record header, not again in the Header tab card', async () => {
+  it('falls back to the project title in the record card when the project has no name', async () => {
+    getProject.mockResolvedValue(project({ name: null }));
     getQuotationDocument.mockResolvedValue(quotationDocument());
     renderScreen(<QuotationHeaderTab />);
 
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
+    const card = await screen.findByTestId('record-header-card');
+    expect(within(card).getByText('Menara Test')).toBeInTheDocument();
+  });
+
+  it('shows the full project title as a Project row in the Header section', async () => {
+    getProject.mockResolvedValue(project({ name: 'Menara Ujian' }));
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    const header = await screen.findByTestId('quotation-header-card');
+    expect(within(header).getByText('Project')).toBeInTheDocument();
+    expect(within(header).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
     expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
+  });
+});
+
+// QUOTE-HEADER-TIDY (owner, 11 Nov 2026: "even in view the header and line should be
+// collapsible"): the same fold the edit form uses, open on arrival.
+describe('QuotationDocumentClient view folds (QUOTE-HEADER-TIDY)', () => {
+  it('folds and unfolds the Header and the Lines in view mode', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.getByTestId('quotation-header-card')).toBeInTheDocument();
+
+    const headerToggle = screen.getByRole('button', { name: /^Header/ });
+    const linesToggle = screen.getByRole('button', { name: /^Lines/ });
+    expect(headerToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(linesToggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(headerToggle);
+    await waitFor(() => expect(screen.queryByTestId('quotation-header-card')).toBeNull());
+    // Folded, the one-line summary stands in: To, title, date, total.
+    expect(headerToggle).toHaveTextContent('Nadi Cergas Sdn Bhd');
+    expect(headerToggle).toHaveTextContent('RM');
+
+    fireEvent.click(linesToggle);
+    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).toBeNull());
+    expect(linesToggle).toHaveTextContent('1 scope');
+
+    fireEvent.click(headerToggle);
+    fireEvent.click(linesToggle);
+    expect(await screen.findByTestId('quotation-header-card')).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
   });
 });
 
@@ -1367,7 +1556,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     ['no rung', null, false],
     ['draft', 'draft', false],
     ['issued', 'issued', true],
-  ])('E1: below floor on %s leads with Send for approval and renders no Send to Customer', async (_name, rung, issued) => {
+  ])('E1: below floor on %s leads with Send for approval and renders no the Send CTA', async (_name, rung, issued) => {
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(
       belowFloor(rung, {
@@ -1382,7 +1571,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const send = await screen.findByRole('button', { name: 'Send for approval' });
     expect(send).toBeEnabled();
     expect(primaryButtons()).toEqual([send]);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('E1: an UNSIGNED below-floor draft leads with Send for approval; Sign is not a primary button', async () => {
@@ -1475,6 +1664,19 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     await waitFor(() => expect(approveQuotationDocument).toHaveBeenCalledWith('p1', 'd1'));
   });
 
+  it('PS-QUOTE-RULES: a grant holder the request is NOT routed to is not offered Approve or Reject', async () => {
+    granted = new Set(['projects.quotations.approve']);
+    graphData = approvalGraph();
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { viewer_may_decide: false }),
+    );
+    renderScreen();
+
+    expect((await screen.findAllByText(/for approval/i)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+
   it('E2: Reject asks for a reason before it can be sent', async () => {
     granted = new Set(['projects.quotations.approve']);
     graphData = approvalGraph();
@@ -1499,7 +1701,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(primaryButtons()).toEqual([sign]);
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('E3: once signed there is no primary button, only "With a manager for approval"', async () => {
@@ -1511,19 +1713,19 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     await screenReady();
     expect(await screen.findByText('With a manager for approval')).toBeInTheDocument();
     expect(primaryButtons()).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it.each([
     ['nothing below the floor', () => quotationDocument()],
     ['approved', () => belowFloor('approved')],
-  ])('E4: %s and unsigned leads with Sign and renders no Send to Customer', async (_name, make) => {
+  ])('E4: %s and unsigned leads with Sign and renders no the Send CTA', async (_name, make) => {
     getQuotationDocument.mockResolvedValue(make());
     renderScreen();
 
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(primaryButtons()).toEqual([sign]);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it.each([
@@ -1540,11 +1742,11 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
         }),
       'R3',
     ],
-  ])('E5: %s and signed leads with an enabled Send to Customer %s', async (_name, make, revision) => {
+  ])('E5: %s and signed leads with an enabled Send (next revision %s)', async (_name, make) => {
     getQuotationDocument.mockResolvedValue(make());
     renderScreen();
 
-    const send = await screen.findByRole('button', { name: `Send to Customer ${revision}` });
+    const send = await screen.findByRole('button', { name: 'Send' });
     expect(send).toBeEnabled();
     expect(primaryButtons()).toEqual([send]);
   });
@@ -1592,16 +1794,21 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
-  it('E8: the approval banner states the situation and holds no buttons', async () => {
+  it('E8: the approval banner states the situation; its only buttons are the line-count links', async () => {
     granted = new Set(['projects.quotations.approve']);
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(belowFloor('pending_approval'));
     renderScreen();
 
-    const sentence = await screen.findByText(/2 lines are priced below minimum price/i);
-    const banner = sentence.closest('div.rounded-lg') as HTMLElement;
+    // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov): a count opens the lines it counts. No action
+    // button joins the banner; every action stays the header's one primary slot.
+    const link = await screen.findByRole('button', { name: '2 lines are' });
+    const banner = link.closest('div.rounded-lg') as HTMLElement;
     expect(banner).not.toBeNull();
-    expect(within(banner).queryByRole('button')).toBeNull();
+    expect(banner.textContent).toMatch(/2 lines are priced below the minimum price/);
+    expect(within(banner).getAllByRole('button').map((el) => el.textContent)).toEqual([
+      '2 lines are',
+    ]);
   });
 
   it.each([
@@ -1618,7 +1825,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
       await screen.findByText('You can read this quotation but not change it.'),
     ).toBeInTheDocument();
     expect(primaryButtons()).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send for approval' })).toBeNull();
   });
 });
@@ -1717,22 +1924,18 @@ describe('QuotationDocumentClient: locked while Pending or Approved, explicit Re
     expect(reviseQuotationApproval).not.toHaveBeenCalled();
   });
 
-  it('D6: the Lines tab offers a per-scope Revise to vN on a draft but not while locked', async () => {
+  // Revise to vN moved into the gear (PROPOSAL-HEADER-LAYOUT); the locked half is H10.
+  it('D6: the gear offers Revise to vN on a draft', async () => {
     seedOneScope();
     getQuotationDocument.mockResolvedValue(
       belowFloor('draft', { grand_total: '9000.00', scopes: [scope()] }),
     );
-    const { unmount } = renderScreen();
-    expect(await screen.findByRole('button', { name: /Revise to v3/i })).toBeInTheDocument();
-    unmount();
-
-    seedOneScope();
-    getQuotationDocument.mockResolvedValue(
-      belowFloor('pending_approval', { grand_total: '9000.00', scopes: [scope()] }),
-    );
     renderScreen();
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Revise to v/i })).toBeNull();
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
   });
 
   it('D7: after Revise the chip reads Draft and the primary button reads Send for approval', async () => {
@@ -1838,7 +2041,12 @@ describe('QuotationDocumentClient: fix round 2', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: /Recheck alerts/i })).toBeInTheDocument();
+    // A gear item now (PROPOSAL-HEADER-LAYOUT), no longer a button above the lines.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
   });
 
   it('6: gear Delete shows the countdown INLINE in the header, not only a toast', async () => {
@@ -1876,7 +2084,7 @@ describe('QuotationDocumentClient: fix round 2', () => {
 // QUOTE-SEND-WHATSAPP (UAC section E): Send to Customer offers Email or WhatsApp.
 // ---------------------------------------------------------------------------------------------
 
-describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHATSAPP)', () => {
+describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP)', () => {
   const sentIssue = {
     id: 'i1',
     document_id: 'd1',
@@ -1901,7 +2109,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
       expires_at: null,
     });
     renderScreen();
-    await user.click(await screen.findByRole('button', { name: 'Send to Customer R1' }));
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
     return user;
   }
 
@@ -1925,7 +2133,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     expect(issueQuotationDocument).toHaveBeenCalledWith('p1', 'd1');
-    expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
+    expect(screen.queryByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeNull();
   });
 
   it('E2: Email confirms with the sent-to-customer toast', async () => {
@@ -1940,7 +2148,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     const user = await openSendMenu();
     await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText('Send R1 via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeInTheDocument();
   });
 
   it('E4: a failed send opens no prompt', async () => {
@@ -1949,7 +2157,7 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
+    expect(screen.queryByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeNull();
   });
 });
 
@@ -1971,7 +2179,7 @@ describe('QuotationDocumentClient cover page fields', () => {
       } as unknown as Partial<QuotationDocument>),
     });
 
-  it('the Header tab shows Email, Quotation Purpose and Prepared By', async () => {
+  it('the Header tab shows Email and Prepared By, and no Quotation Purpose', async () => {
     getQuotationDocument.mockResolvedValue(coverDocument());
     getProject.mockResolvedValue(project({ owner_name: 'Wrong Project Owner' }));
     renderScreen(<QuotationHeaderTab />);
@@ -1979,8 +2187,9 @@ describe('QuotationDocumentClient cover page fields', () => {
     const card = await screen.findByTestId('quotation-header-card');
     await waitFor(() => expect(card).toHaveTextContent('kelly@example.test'));
     expect(card).toHaveTextContent('Email');
-    expect(card).toHaveTextContent('Quotation Purpose');
-    expect(card).toHaveTextContent('Supply of sanitary ware');
+    // Removed (owner, 10 Nov 2026): a stored value no longer shows.
+    expect(card).not.toHaveTextContent('Quotation Purpose');
+    expect(card).not.toHaveTextContent('Supply of sanitary ware');
     expect(card).toHaveTextContent('Prepared By');
     expect(card).toHaveTextContent('Ahmad Faizal');
     expect(card).not.toHaveTextContent('Wrong Project Owner');
@@ -2018,25 +2227,32 @@ describe('QuotationDocumentClient cover page fields', () => {
     await expectTermsClass(inner);
   });
 
-  it('polish 2: the Cover letter read panel keeps prose and not the terms class', async () => {
+  it('the Cover letter read tab shows the preview card with the intro and no separate letter panel', async () => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            cover_title: 'QUOTATION',
+            cover_show_letterhead: true,
+            cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+            cover_intro_html: '<p>LETTER ONE</p><p>LETTER TWO</p>',
+            cover_closing_html: '',
+            sender_name: 'Sorento Sdn Bhd',
+            sender_logo_url: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ cover_letter_html: '<p>LETTER ONE</p><p>LETTER TWO</p>' }),
     );
     renderScreen(<QuotationCoverLetterTab />);
 
-    const one = await screen.findByText('LETTER ONE');
-    const loaders = import.meta.glob('/lib/terms-html.ts') as Record<
-      string,
-      () => Promise<{ TERMS_HTML_CLASS: string }>
-    >;
-    const { TERMS_HTML_CLASS } = await loaders['/lib/terms-html.ts']();
-    const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
-    const chain: HTMLElement[] = [];
-    for (let el = one.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
-      chain.push(el);
-    }
-    expect(chain.some((el) => el.classList.contains('prose'))).toBe(true);
-    expect(chain.some((el) => tokens.every((t) => el.classList.contains(t)))).toBe(false);
+    expect(await screen.findByText('LETTER ONE')).toBeInTheDocument();
+    expect(screen.getByText('LETTER TWO')).toBeInTheDocument();
+    expect(screen.getAllByText('LETTER ONE')).toHaveLength(1);
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
   });
 
   it('polish 2: the Email line comes before the Attn line in the To block', async () => {
@@ -2077,3 +2293,419 @@ async function expectTermsClass(inner: HTMLElement) {
   ).toBe(true);
   expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
 }
+
+
+/** QUOTE-COVER-DESIGN (UAC B2, B3): the read Cover letter tab is the preview card, no editors. */
+describe('Cover letter tab preview (read)', () => {
+  it('renders the design title and rows from the preview endpoint and no editors', async () => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            cover_title: 'OFFER SHEET',
+            cover_show_letterhead: false,
+            cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+            cover_intro_html: '<p>LETTER AS INTRO</p>',
+            cover_closing_html: '',
+            sender_name: 'Sorento Sdn Bhd',
+            sender_logo_url: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>LETTER AS INTRO</p>' }),
+    );
+    renderScreen(<QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Offer Number')).toBeInTheDocument();
+    expect(screen.getByText('LETTER AS INTRO')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+    expect(screen.queryByLabelText('Intro text')).toBeNull();
+    expect(screen.queryByLabelText('Closing text')).toBeNull();
+    const body = JSON.parse(String((coverPreview.mock.calls[0][1] as RequestInit).body));
+    expect(body).toMatchObject({ document_id: 'd1' });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026; mock documentation/plans/project-sales/mockups/
+// proposal-header-layout-05nov.html v4): the record header is the Order Inquiry card, the lines
+// sit on the Header tab, and the per-area / per-version rows above the lines are gone.
+// ---------------------------------------------------------------------------------------------
+describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LAYOUT)', () => {
+  const issuedOneScope = () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([version({ is_issued: true, is_editable: false })]);
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '9000.00',
+        scopes: [scope()],
+        is_issued: true,
+        issue_count: 2,
+        current_issue_no: 2,
+        customer_decision: 'accepted',
+        signatory_signature: signature(),
+      }),
+    );
+    listQuotationIssues.mockResolvedValue([
+      {
+        id: 'i2',
+        document_id: 'd1',
+        issue_no: 2,
+        our_ref_text: 'SRT/Q/2026/0141-R2',
+        issued_at: '2026-11-05T02:00:00',
+        issued_by: 'u1',
+        issued_by_name: 'Ahmad',
+        grand_total: '9000.00',
+        scope_count: 1,
+      },
+    ]);
+  };
+
+  async function headerCard() {
+    return screen.findByTestId('record-header-card');
+  }
+
+  it('H1: the document number and the status pill share the card title row', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const row = within(await headerCard()).getByTestId('record-header-title-row');
+    expect(within(row).getByText('SRT/Q/2026/0141')).toBeInTheDocument();
+    expect(within(row).getByText('Accepted')).toBeInTheDocument();
+  });
+
+  it('H2: no customer line in the header card (the letterhead To says it)', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await headerCard();
+    // QUOTE-HEADER-TIDY: the record card names the project (its short name, or the title).
+    expect(within(card).getByText('Menara Test')).toBeInTheDocument();
+    expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
+  });
+
+  it('H3: neither copy of "the customer holds this version" hint is shown', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/The customer holds/i)).toBeNull();
+    expect(screen.queryByText(/Edit opens the next/i)).toBeNull();
+  });
+
+  it('H4: actions read gear, printer, primary, left to right', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const gear = await screen.findByRole('button', { name: 'Proposal actions' });
+    const printer = await screen.findByTitle('View downloads for SRT/Q/2026/0141-R2');
+    const send = await screen.findByRole('button', { name: 'Send' });
+    expect(gear.compareDocumentPosition(printer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(printer.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('H5: the Header tab carries the letterhead AND the lines; there is no Lines tab', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.getByText('Our Ref')).toBeInTheDocument();
+    const strip = screen.getByTestId('quotation-document-tab-strip');
+    expect(within(strip).getByRole('tab', { name: /Header/ })).toBeInTheDocument();
+    expect(within(strip).queryByRole('tab', { name: /^Lines$/ })).toBeNull();
+  });
+
+  it('H6: no area header row and no Record outcome anywhere on the page (owner 12:20, 12:28)', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Record outcome/ })).toBeNull();
+    expect(screen.queryByText('No series')).toBeNull();
+    const menu = await openGear();
+    expect(within(menu).queryByRole('menuitem', { name: /outcome/i })).toBeNull();
+  });
+
+  it('H7: the version is a chip in the header card, and the version row above the lines is gone', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const row = within(await headerCard()).getByTestId('record-header-title-row');
+    expect(await within(row).findByText('v2')).toBeInTheDocument();
+    // The old pills were buttons carrying aria-current; none remain below the card.
+    expect(screen.queryAllByRole('button', { name: /^v\d/ }).filter((b) => b.hasAttribute('aria-current'))).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revise to v/ })).toBeNull();
+  });
+
+  it('H8: with two versions the chip switches the lines to the frozen one', async () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([
+      version(),
+      version({ id: 'v1', version_no: 1, is_current: false, is_editable: false }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [line({ id: 'l0', version_id: 'v1', description: 'Old WC' })]
+        : [line()],
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const chip = await screen.findByRole('button', { name: /^Version v2/ });
+    fireEvent.pointerDown(chip, { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /v1 \(frozen\)/ }));
+
+    expect(await screen.findByText('Old WC')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Version v1 \(frozen\)/ })).toBeInTheDocument();
+  });
+
+  it('H9: Recheck alerts and Revise to vN are gear items; Revise asks first, then revises every area', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+
+    expect(await screen.findByRole('heading', { name: 'Revise to v3' })).toBeInTheDocument();
+    expect(reviseQuotation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze v2 and continue' }));
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
+  });
+
+  it('H10: while locked for approval the gear offers no Revise to vN and no Recheck alerts', async () => {
+    seedOneScope();
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { grand_total: '9000.00', scopes: [scope()] }),
+    );
+    renderScreen(<QuotationHeaderTab />);
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    const menu = await openGear();
+    expect(within(menu).queryByRole('menuitem', { name: /Revise to v/ })).toBeNull();
+    expect(within(menu).queryByRole('menuitem', { name: 'Recheck alerts' })).toBeNull();
+  });
+
+  it('H11: two hints are two lines in the card, never joined with a middle dot', async () => {
+    // A reader (no edit right) on a quotation waiting for a manager: both hints apply.
+    getProject.mockResolvedValue(project({ can_edit: false }));
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { signatory_signature: signature() }),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await headerCard();
+    await within(card).findByText('With a manager for approval');
+    const lines = within(card)
+      .getAllByTestId('record-header-subtitle')
+      .map((el) => el.textContent);
+    expect(lines).toContain('You can read this quotation but not change it.');
+    expect(lines).toContain('With a manager for approval');
+    expect(card.textContent).not.toContain('·');
+  });
+
+  /** Two areas, Townhouse (q1) and Semi-D (q2), each at the given current version. */
+  function seedTwoAreas(townhouseNo = 2, semiNo = 2) {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '18000.00',
+        scopes: [
+          scope({ current_version_id: 'v2', current_version_no: townhouseNo }),
+          scope({
+            id: 'q2',
+            scope_label: 'Semi-D',
+            sort_order: 2,
+            current_version_id: 'w2',
+            current_version_no: semiNo,
+          }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation({ current_version_no: townhouseNo }),
+      quotation({
+        id: 'q2',
+        scope_label: 'Semi-D',
+        current_version_id: 'w2',
+        current_version_no: semiNo,
+      }),
+    ]);
+    listQuotationVersions.mockImplementation(async (quotationId: string) =>
+      quotationId === 'q2'
+        ? [version({ id: 'w2', quotation_id: 'q2', version_no: semiNo })]
+        : [version({ version_no: townhouseNo })],
+    );
+    listQuotationLines.mockResolvedValue([line()]);
+  }
+
+  it('H12: Revise to vN revises EVERY area, one after the other', async () => {
+    seedTwoAreas();
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+    expect(await screen.findByText(/v2 of all 2 areas is frozen for good/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze v2 and continue' }));
+
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(2));
+    expect(reviseQuotation.mock.calls.map((call) => call[0])).toEqual(['q1', 'q2']);
+  });
+
+  it('H13: a retry after one area failed does not revise the area that already moved', async () => {
+    seedTwoAreas();
+    reviseQuotation
+      .mockResolvedValueOnce(version({ id: 'v3', version_no: 3 }))
+      .mockRejectedValueOnce(new Error('Conflict'))
+      .mockResolvedValueOnce(version({ id: 'w3', quotation_id: 'q2', version_no: 3 }));
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+    const freeze = await screen.findByRole('button', { name: /Freeze .*and continue/ });
+    fireEvent.click(freeze);
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(2));
+    // Still open after the failure; try again.
+    fireEvent.click(await screen.findByRole('button', { name: /Freeze .*and continue/ }));
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(3));
+    expect(reviseQuotation.mock.calls.map((call) => call[0])).toEqual(['q1', 'q2', 'q2']);
+  });
+
+  it('H14: areas on different versions: the dialog says what happens to each one', async () => {
+    seedTwoAreas(2, 1);
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise every area' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise every area' }));
+    expect(
+      await screen.findByText(/Townhouse v2 to v3, Semi-D v1 to v2/),
+    ).toBeInTheDocument();
+  });
+
+  it('H15: Recheck alerts rechecks every open area, once each', async () => {
+    seedTwoAreas();
+    recomputeQuotationVersion.mockImplementation(async (versionId: string) => ({
+      version_id: versionId,
+      version_no: 2,
+      quotation_id: versionId === 'w2' ? 'q2' : 'q1',
+      line_count: 1,
+      changed_count: 0,
+      now_non_standard: 0,
+      no_longer_non_standard: 0,
+      now_below_floor: 0,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 0,
+      changed_lines: [],
+    }));
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Recheck alerts' }));
+    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledTimes(2));
+    expect(recomputeQuotationVersion.mock.calls.map((call) => call[0]).sort()).toEqual(['v2', 'w2']);
+  });
+});
+
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026, Q1 + Q3): a banner count filters the lines to the
+// ones it counts and opens the first area holding one; the filter stays on across area tabs.
+describe('QuotationDocumentClient banner count opens the lines it counts', () => {
+  it('filters to Below default price and opens the first area with such a line', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        requires_approval: true,
+        approval_status_key: 'draft',
+        approval_status_id: 's-draft',
+        discounted_line_count: 1,
+        approval_reasons: 'One line is priced below the default price',
+        scopes: [
+          scope(),
+          scope({ id: 'q2', scope_label: 'Guard House', sort_order: 2, current_version_id: 'v9' }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation(),
+      quotation({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+    ]);
+    listQuotationVersions.mockImplementation((quotationId: string) =>
+      Promise.resolve(
+        quotationId === 'q2'
+          ? [version({ id: 'v9', quotation_id: 'q2', version_no: 1 })]
+          : [version()],
+      ),
+    );
+    listQuotationLines.mockImplementation((versionId: string) =>
+      Promise.resolve(
+        versionId === 'v9'
+          ? [
+              line({ id: 'g1', version_id: 'v9', product_id: 'p-a', product_code: 'GH-CLEAN', description: 'Clean one' }),
+              line({ id: 'g2', version_id: 'v9', product_id: 'p-b', product_code: 'GH-DISC', description: 'Discounted one', is_discounted: true, sort_order: 1 }),
+            ]
+          : [line({ product_id: 'p-wc' })],
+      ),
+    );
+    renderScreen();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    // jsdom has no layout; the call itself is the claim (crew pass: lines below the fold).
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    fireEvent.click(await screen.findByRole('button', { name: 'One line is' }));
+
+    // Guard House opens, filtered: only the discounted line shows, under its own number.
+    expect(await screen.findByText('Discounted one')).toBeInTheDocument();
+    // ...and the lines are brought into view, or a tap below the fold looks like nothing happened.
+    // Clear of the fixed top bar (60 px on a phone): scrolled to sit below the header's own
+    // height, not a fixed 1rem (crew re-pass at 375 px: the tabs landed under the bar).
+    const strip = screen.getByRole('tab', { name: /Guard House/ }).closest('[class*="scroll-mt"]');
+    expect(strip?.className).toContain('var(--header-height');
+    // The area strip AND the lines under it, not just the active tab inside its own strip.
+    await waitFor(() =>
+      expect(
+        scrolled.mock.instances.some((el) => {
+          const node = el as unknown as HTMLElement;
+          return (
+            node.contains(screen.getByRole('tab', { name: /Guard House/ })) &&
+            node.contains(screen.getByText('Discounted one'))
+          );
+        }),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByText('Clean one')).toBeNull());
+    expect(screen.getByRole('tab', { name: /Guard House/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByText('Below default price').length).toBeGreaterThan(0);
+
+    // Q3: back on Townhouse the filter is still on, so its clean line is hidden there too.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Townhouse/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /Townhouse/ })).toHaveAttribute('aria-selected', 'true'),
+    );
+    expect(await screen.findByText('No line matches these flags.')).toBeInTheDocument();
+  });
+});

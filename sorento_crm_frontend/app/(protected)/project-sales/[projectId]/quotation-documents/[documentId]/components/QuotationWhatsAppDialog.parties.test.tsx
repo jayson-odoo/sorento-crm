@@ -206,6 +206,17 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
     expect(fillPartyPhone).not.toHaveBeenCalled();
   });
 
+  // QUOTE-HEADER-TIDY review: the title names who it is going to, so a pick at another party
+  // retitles it rather than leaving the document's To party there.
+  it('titles the prompt with the party of the picked recipient', async () => {
+    renderDialog();
+    expect(await screen.findByText('Send R2 to the customer via WhatsApp')).toBeInTheDocument();
+    await waitFor(() => expect(sendTo().options.length).toBe(5));
+    fireEvent.change(sendTo(), { target: { value: 'person:st2' } });
+    expect(await screen.findByText('Send R2 to Binaan Sampel via WhatsApp')).toBeInTheDocument();
+    expect(screen.queryByText('Send R2 to the customer via WhatsApp')).toBeNull();
+  });
+
   it('titles a lettered proposal revision by its label, else R<n> (#2097)', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -218,6 +229,6 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
         />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText('Send B via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send rev B to the customer via WhatsApp')).toBeInTheDocument();
   });
 });

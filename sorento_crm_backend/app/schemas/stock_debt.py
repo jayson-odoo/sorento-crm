@@ -164,6 +164,9 @@ class StockDebtAssignedFromOnHand(BaseModel):
     #: ("On hand BRW-BB (from SO381065)"). `None` on free stock at the same bin, which is
     #: then a separate entry.
     lent_from_so_number: Optional[str] = None
+    #: OI-UX-FILTER-SNAPSHOT: the lender's customer and project (None on a free take).
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class StockDebtAssignedFromLent(BaseModel):
@@ -177,6 +180,9 @@ class StockDebtAssignedFromLent(BaseModel):
     qty: float
     so_number: str
     sales_order_id: Optional[str] = None
+    #: OI-UX-FILTER-SNAPSHOT: the receiver's customer and project.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class StockDebtAssignedFromDocument(BaseModel):
@@ -213,6 +219,9 @@ StockDebtAssignedFrom = Annotated[
 
 
 class StockDebtDemandLine(BaseModel):
+    #: The SO line's number as staff know it (`so_line_no` rule: AutoCount's own `Seq` off
+    #: the core line, else the planning mirror's). The snapshot drill's Line column.
+    line_no: Optional[int] = None
     so_number: str
     agent_code: Optional[str] = None
     #: The bin the line is booked in - the drill's Bin column (AC-S2-7).
@@ -240,6 +249,10 @@ class StockDebtDemandLine(BaseModel):
     #: STOCK-DEBT-LENDABLE: what nearer lines took of this line's lendable landed goods -
     #: the "order back N" the status pill prints. 0 on every line that lent nothing.
     lent_qty: float = 0.0
+    #: OI-UX-FILTER-SNAPSHOT: the order's customer and project, as the SO list names them
+    #: (`app.services.scm.so_party`). None when the order names neither.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class StockDebtAssignedTo(BaseModel):
@@ -248,6 +261,9 @@ class StockDebtAssignedTo(BaseModel):
     #: "SO382618 line 2". `None` when the core line has no project-line number of its own.
     line_no: Optional[int] = None
     qty: float
+    #: OI-UX-FILTER-SNAPSHOT: the receiving order's customer and project.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class StockDebtSupplyEvent(BaseModel):

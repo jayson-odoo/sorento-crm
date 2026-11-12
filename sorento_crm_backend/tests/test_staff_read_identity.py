@@ -1441,3 +1441,62 @@ def test_h3_a_staff_outstanding_summary_for_a_named_customer_or_product_counts_t
     summary = resp.json().get("summary") or {}
     assert summary.get("documents") == 1, summary
     assert float(summary.get("amount") or 0) == 1234.5, summary
+
+
+# =========================================================================== #
+# AI-TOOLS-WAVE2: the backend's own panel agent proves who it answers         #
+# =========================================================================== #
+def _proved(env, staff, proof):
+    return {**env.ident(staff), "X-Staff-Proof": proof}
+
+
+def test_wave2_a_valid_proof_gates_on_the_staff_member_alone(env, probe):
+    """The crew pass: the act-as user lacks the slug, the staff member holds it, the panel agent proves it answers
+    them: 200. Without the proof, AC-10 stands (403)."""
+    from app.services import staff_proof
+
+    env.use_actas(perms=[], roles=())
+    staff = mk_user(env.db, "staff", perms=["zzt.thing.view"])
+    assert probe.get("/api/v1/zzt/perm", headers=env.ident(staff)).status_code == 403
+    assert probe.get("/api/v1/zzt/perm", headers=_proved(env, staff, staff_proof.mint(staff))).status_code == 200
+
+
+def test_wave2_a_proof_never_grants_what_the_staff_member_lacks(env, probe):
+    from app.services import staff_proof
+
+    env.use_actas(perms=["zzt.thing.view"], roles=("superadmin",))
+    staff = mk_user(env.db, "staff")
+    assert probe.get("/api/v1/zzt/perm", headers=_proved(env, staff, staff_proof.mint(staff))).status_code == 403
+
+
+def test_wave2_a_bad_proof_changes_nothing(env, probe):
+    from app.services import staff_proof
+
+    env.use_actas(perms=[], roles=())
+    staff = mk_user(env.db, "staff", perms=["zzt.thing.view"])
+    other = mk_user(env.db, "other", perms=["zzt.thing.view"])
+    expired = staff_proof.mint(staff, now=0)
+    good = staff_proof.mint(staff)
+    tampered = good[:-1] + ("0" if good[-1] != "0" else "1")
+    for proof in (staff_proof.mint(other), expired, tampered, "v1.9999999999.abc", "garbage", ""):
+        assert probe.get("/api/v1/zzt/perm", headers=_proved(env, staff, proof)).status_code == 403, proof
+
+
+def test_wave2_proof_mint_and_verify():
+    from app.services import staff_proof
+
+    proof = staff_proof.mint("u-1", now=1000)
+    assert staff_proof.verify("u-1", proof, now=1000)
+    assert staff_proof.verify("u-1", proof, now=1000 + staff_proof.TTL_SECONDS)
+    assert not staff_proof.verify("u-1", proof, now=1001 + staff_proof.TTL_SECONDS)
+    assert not staff_proof.verify("u-2", proof, now=1000)
+    assert not staff_proof.verify("u-1", None) and not staff_proof.verify(None, proof)
+
+
+def test_wave2_the_panel_client_sends_the_proof_with_the_identity():
+    from app.services import staff_proof
+    from app.services.ai_assistant_service import staff_mcp_client
+
+    headers = staff_mcp_client("u-9", timeout_seconds=5)._headers()
+    assert headers["X-MCP-Staff-User"] == "u-9"
+    assert staff_proof.verify("u-9", headers["X-MCP-Staff-Proof"])

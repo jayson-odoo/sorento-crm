@@ -222,6 +222,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 # ITEM-CLASS: AutoCount Item Class reference data (migration item_class_0001 grants each slug
 # to every role holding the matching brands slug).
 PERMISSION_REGISTRY.extend(_crud("master_data", "item_classes", "Item Classes"))
+# QUOTE-TERMS-SELECT: AutoCount Terms, ingest-only reference data (migration
+# qts_0001_quote_terms_select grants each slug to every role holding the item classes one).
+PERMISSION_REGISTRY.extend(_crud("master_data", "payment_terms", "Payment Terms"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))
@@ -237,6 +240,10 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Compla
 PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))
 PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.export", "name": "Export Suppliers", "description": "Permission to export suppliers with dynamic fields."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "product_suppliers", "Product-Suppliers"))
+# SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost price, supplier unit costs, last purchase /
+# PO costs and the product Suppliers / Purchase History tabs. Granted by slug in
+# `sca_0001_products_cost_view` to purchasing and management roles only.
+PERMISSION_REGISTRY.append({"slug": "products.cost.view", "name": "View Product Cost", "description": "See cost price, supplier unit costs, last purchase / PO costs and the product Suppliers and Purchase History tabs; History shows cost values."})
 # Cost price from the supplier (#1288, Lane A, plan section 10). Verify is Sorento-staff
 # only - never an integration role, never reachable from a public route - and a migration
 # sweep grants all four to every "purchasing role" (whoever holds `scm.proforma_invoice.
@@ -602,12 +609,13 @@ PERMISSION_REGISTRY.extend([
     },
     {
         "slug": "projects.quotations.approve",
-        "name": "Approve Quotations Below Minimum Price",
+        "name": "Approve Quotation Discounts and Off-Series Lines",
         "description": (
-            "Sales-manager grant: approve or reject a quotation carrying a line priced "
-            "below its minimum price, which is what lets it be issued to the customer. The "
-            "whole access control on that decision - there is no team-tier resolution "
-            "behind it - so it is deliberately narrow."
+            "Sales-manager grant: approve or reject a quotation carrying a discounted line "
+            "or a line outside the project's series, which is what lets it be issued to the "
+            "customer. A request is routed to one approver (off-series approver, project "
+            "override, or the owner's superior); only that approver, someone above them, or "
+            "an admin may decide it."
         ),
     },
     {
@@ -692,6 +700,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.stock_debt.link_po",
+        "name": "Link PO lines from Stock Debt",
+        "description": (
+            "Link, unlink or move a purchase order line to a sales order line from a Stock "
+            "Debt snapshot. Writes to AutoCount."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",
@@ -703,6 +719,18 @@ PERMISSION_REGISTRY.extend([
             "Create and edit project types, templates and the stakeholder roles a "
             "template offers."
         ),
+    },
+])
+
+
+# Town (Dashboards > Town): admin-only by owner ruling, 10 Nov 2026 (TOWN-V2). Granted to `admin` and
+# `superadmin` (migration town_0001_view_perm + the admin grant seed); any other role only when an
+# admin grants it on the Roles screen.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dashboards.town.view",
+        "name": "View the Town",
+        "description": "See the Town: today's sales, dealers, stock, deliveries, approvals and incoming shipments, and its wallboard mode.",
     },
 ])
 
@@ -1011,6 +1039,16 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# SALES-LEADERBOARD: Sales > Leaderboard; granted to admin and superadmin by `slb_0001_leaderboard_perm`.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.leaderboard.view",
+        "name": "View the sales leaderboard",
+        "description": "Open Sales > Leaderboard: invoiced sales ranked by sales person. Shows no commission.",
+    },
+])
+
+
 # SALES-UNIFIED (#1916): the set-apart customers the sales reports pull out of Dealer and
 # Project team. Reading the list is `sales.reports.view`; granted to admin and superadmin by
 # `sales_unified_0001`.
@@ -1043,6 +1081,12 @@ PERMISSION_REGISTRY.extend([
         "slug": "projects.projects.view_own",
         "name": "View Own Projects",
         "description": "See only the projects you own, collaborate on or registered from the portal, and everything under them. Ignored when View Projects is also held.",
+    },
+    {
+        # Seeded by `sales_0007_targets_view_own` (AI-TOOLS-WAVE2, owner ruling 5 Nov), granted to no role.
+        "slug": "sales.targets.view_own",
+        "name": "View Own Sales Targets",
+        "description": "See only the agent targets of your own sales agents, with their commission. Ignored when View Sales Targets is also held.",
     },
     {
         "slug": "sales.opportunities.view_own",
@@ -1106,10 +1150,24 @@ PERMISSION_REGISTRY.extend([
 ])
 
 # AGENTIC-P3 W0: change a dealer contact's role or end its access, only for contacts linked to
-# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`, granted to NO
-# role there. Holding `user_management.contacts.edit` allows the same for any contact.
+# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`; granted to role
+# `salesperson` by `dap_0001_dealer_access` (DEALER-ACCESS-PORTAL, which also lets it grant access).
+# Holding `user_management.contacts.edit` allows the same for any contact.
 PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.edit_own",
     "name": "Edit Own Dealer Contacts' Access",
-    "description": "Change the role or end the access of dealer contacts linked to customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
+    "description": "Give, change or end the access of dealer contacts on customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
 })
+
+
+# PRODUCT-COSTING: edit the Costing page (mark-ups, transport, cost methods), party costing
+# profiles, SST and transport rules. Migration `pc_0001_product_costing` grants it by role slug
+# to admin and director. `products.cost.view` (the read gate) comes with SUPPLIER-COST-ACCESS.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "products.party_costing.manage",
+        "name": "Manage party costing",
+        "description": "Edit mark-ups, transport and cost methods on the Costing page, and manage party "
+                       "costing profiles, products, the SST factor and transport rules.",
+    },
+])

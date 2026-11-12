@@ -64,8 +64,9 @@ import {
   listSeries,
   recomputeQuotationVersion,
   reviseQuotation,
-  setQuotationOutcome,
+  setProjectOutcome,
   updateQuotation,
+  replaceQuotationColumns,
   replaceQuotationLines,
   updateQuotationLine,
   updateSeries,
@@ -108,6 +109,7 @@ import {
   getProject,
   listCollaborators,
   listParties,
+  listPartyRoles,
   listProjectTemplates,
   getQuotationLineImages,
   listProjectTypes,
@@ -140,8 +142,10 @@ import type {
   ProjectSeriesBody,
   QuotationLineBody,
   MediaKind,
+  QuotationLine,
   QuotationLineBulkItem,
-  QuotationOutcomeBody,
+  QuotationLineVerdict,
+  QuotationVersion,
   SeriesProductImportBody,
   LeadQualifyBody,
   ProjectLeadBody,
@@ -153,8 +157,9 @@ import type {
   TaskStatusChangeBody,
 } from '../types/project.types';
 import { importJobPhase } from '../types/project.types';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 // Keys only, and the document hooks import nothing from here, so the two files do not circle.
-import { AMENDMENT_KEY, quotationDocumentsKey } from './useQuotationDocuments';
+import { FEEDBACK_KEY, quotationDocumentsKey } from './useQuotationDocuments';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const PROJECTS_KEY = 'projects';
@@ -200,11 +205,12 @@ export const projectsPagerQuery = {
     listProjects(projectsListParamsFromUrl(params)),
 };
 
-export function useProjects(params: ProjectListParams) {
+export function useProjects(params: ProjectListParams, options?: { enabled?: boolean }) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: projectsListKey(params),
     queryFn: () => listProjects(params),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -369,11 +375,37 @@ export function useUpdateProject(projectId: string) {
 export function useChangeProjectStatus() {
   const invalidate = useInvalidateProjects();
   return useMutation({
-    mutationFn: ({ projectId, toStatusId }: { projectId: string; toStatusId: string }) =>
-      changeProjectStatus(projectId, toStatusId),
+    mutationFn: ({
+      projectId,
+      toStatusId,
+      lossReason,
+    }: {
+      projectId: string;
+      toStatusId: string;
+      lossReason?: string;
+    }) => changeProjectStatus(projectId, toStatusId, lossReason),
     onSuccess: (project) => {
       invalidate(project.id);
       toast.success(`${projectCodeLabel(project)} moved to ${project.status_label ?? 'a new stage'}`);
+    },
+    onError: (error: Error, variables) => {
+      invalidate(variables.projectId);
+      toast.error(error.message);
+    },
+  });
+}
+
+/** Mark won, or re-open. On a re-open from Lost the rung changes too. */
+export function useSetProjectOutcome() {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: ({ projectId, outcome }: { projectId: string; outcome: 'won' | 'open' }) =>
+      setProjectOutcome(projectId, outcome),
+    onSuccess: (project, variables) => {
+      invalidate(project.id);
+      toast.success(
+        `${projectCodeLabel(project)} ${variables.outcome === 'won' ? 'marked won' : 're-opened'}`,
+      );
     },
     onError: (error: Error, variables) => {
       invalidate(variables.projectId);
@@ -797,17 +829,45 @@ export function useLeads(params: LeadListParams) {
  * Async options for the Developer / Architect / Main contractor pickers: a server-side search
  * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
  */
-export function useFetchPartyOptions(partyType: PartyType) {
+/** The party roles (lookup set `project_party_role`), inactive ones included, in list order. */
+export function usePartyRoles() {
+  return useQuery({
+    queryKey: ['lookup-set-options', 'project_party_role', 'all'],
+    queryFn: listPartyRoles,
+    staleTime: 60_000,
+  });
+}
+
+/** `value -> label` for the party roles; an unknown key reads as itself, humanised. */
+export function usePartyRoleLabel() {
+  const roles = usePartyRoles();
+  return React.useCallback(
+    (value?: string | null) => {
+      if (!value) return '';
+      const row = (roles.data ?? []).find((role) => role.value === value);
+      return row?.label ?? value.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+    },
+    [roles.data],
+  );
+}
+
+/**
+ * Async options for a party picker. Any party can fill any role (PROJECT-PARTY-ROLES Q4 b), so the
+ * search covers every party; `preferredType` only orders the parties usually in that role first.
+ * One line per option (owner hand test 10 Nov): the name only, no role subtitle.
+ */
+export function useFetchPartyOptions(preferredType?: PartyType) {
   return React.useCallback(
     async (query: string) => {
-      const result = await listParties({ party_type: partyType, query: query || undefined, limit: 20 });
-      return result.data.map((party) => ({
-        value: party.id,
-        label: party.name,
-        description: party.registration_no ?? undefined,
-      }));
+      const result = await listParties({ query: query || undefined, limit: 20 });
+      const rows = preferredType
+        ? [...result.data].sort(
+            (a, b) => Number(b.party_type === preferredType) - Number(a.party_type === preferredType),
+          )
+        : result.data;
+      return rows.map((party) => ({ value: party.id, label: party.name }));
     },
-    [partyType],
+    [preferredType],
   );
 }
 
@@ -1052,6 +1112,51 @@ export function useQuotationLines(versionId: string | undefined) {
   });
 }
 
+/**
+ * The first scope, in order, whose lines hold one that `matches` (PROJECT-QUOTE-LINE-TOOLS: a
+ * banner count opens the first area tab with a line it counts). Reads each version's lines under
+ * the key `useQuotationLines` uses, so a scope already opened costs nothing. Null when none does.
+ */
+export function useFindScopeWithLine() {
+  const queryClient = useQueryClient();
+  return React.useCallback(
+    async (
+      scopes: { scopeId: string; versionId: string | null }[],
+      matches: (line: QuotationLine) => boolean,
+    ): Promise<string | null> => {
+      for (const scope of scopes) {
+        if (!scope.versionId) continue;
+        const versionId = scope.versionId;
+        const lines = await queryClient.fetchQuery({
+          queryKey: linesKey(versionId),
+          queryFn: () => listQuotationLines(versionId),
+          staleTime: 30_000,
+        });
+        if (lines.some(matches)) return scope.scopeId;
+      }
+      return null;
+    },
+    [queryClient],
+  );
+}
+
+/**
+ * The lines of several versions at once, each under the same key `useQuotationLines` uses, so a
+ * version already open costs nothing. One array per version that has loaded.
+ */
+export function useQuotationLinesOf(versionIds: string[]): QuotationLine[][] {
+  return useQueries({
+    queries: versionIds.map((versionId) => ({
+      queryKey: linesKey(versionId),
+      queryFn: () => listQuotationLines(versionId),
+      staleTime: 30_000,
+    })),
+    // Combined, so the answer keeps its identity until a version's lines actually change.
+    combine: (results) =>
+      results.flatMap((result) => (result.data ? [result.data] : [])),
+  });
+}
+
 export function useQuotationLossReasons() {
   return useQuery({
     queryKey: LOSS_REASONS_KEY,
@@ -1102,8 +1207,6 @@ export function useQuotationMutations(projectId: string) {
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
     queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
     if (quotationId) queryClient.invalidateQueries({ queryKey: versionsKey(quotationId) });
-    // A revise can open the draft that blocks a customer's suggestions (QUOTE-CUSTOMER-AMEND).
-    queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY] });
   };
 
   const create = useMutation({
@@ -1134,16 +1237,6 @@ export function useQuotationMutations(projectId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const decide = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: QuotationOutcomeBody }) =>
-      setQuotationOutcome(id, body),
-    onSuccess: (quotation) => {
-      invalidate(quotation.id);
-      toast.success(`"${quotation.scope_label}" marked ${quotation.outcome}`);
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   // No success toast here: the only caller is a ConfirmDeleteDialog, which raises its
   // own. Toasting in both places puts two notifications on screen for one delete.
   const remove = useMutation({
@@ -1151,7 +1244,7 @@ export function useQuotationMutations(projectId: string) {
     onSuccess: () => invalidate(),
   });
 
-  return { create, update, revise, decide, remove };
+  return { create, update, revise, remove };
 }
 
 /**
@@ -1258,6 +1351,35 @@ export function useQuotationBulkLineMutation(projectId: string) {
     },
     // No toast: the screen raises ONE for the whole Save, and a quotation with four scopes
     // would otherwise stack four notifications for a single button press.
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
+ * A version's column headers and columns (PS-QUOTE-MATRIX), written at once rather than staged:
+ * the server moves quantities in and out and answers the lines. Same invalidations as a line
+ * write, plus the customer feedback (its cell labels follow the columns).
+ */
+export function useQuotationColumnsMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ versionId, columns }: { versionId: string; columns: MatrixHeader[] }) =>
+      replaceQuotationColumns(versionId, columns),
+    onSuccess: (result, { versionId }) => {
+      // The new columns on screen at once, before the refetch lands: the header is what was
+      // just edited, and a beat of the old one reads as the edit not taking.
+      queryClient.setQueryData<QuotationVersion[]>(
+        versionsKey(result.version.quotation_id),
+        (old) => old?.map((version) => (version.id === versionId ? { ...version, ...result.version } : version)),
+      );
+      queryClient.setQueryData(linesKey(versionId), result.lines);
+      queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
+      queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: [FEEDBACK_KEY] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 }
@@ -1475,6 +1597,24 @@ export function useImportJobStatus(jobId: string | null) {
  * non-standard" is not something a disappearing notification should be the only record of.
  */
 /**
+ * The cache key of one draft's verdict. Exported so the lines filter reads the SAME cached answer
+ * the row's pills show (PROJECT-QUOTE-LINE-TOOLS): one question, one answer, two readers.
+ */
+export function lineVerdictKey(
+  target: { quotationId: string | null; seriesId?: string | null },
+  draft: { product_id?: string; product_set_id?: string; unit_price?: string },
+) {
+  return [
+    'quotation-line-verdict',
+    target.quotationId ?? '',
+    target.seriesId ?? '',
+    draft.product_id ?? '',
+    draft.product_set_id ?? '',
+    draft.unit_price ?? '',
+  ] as const;
+}
+
+/**
  * The verdict for one DRAFT line, kept current as it is typed.
  *
  * Debounced at 400ms: judging fires a request, and a keystroke-per-request would hammer
@@ -1512,14 +1652,7 @@ export function useLineVerdict(
 
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: [
-      'quotation-line-verdict',
-      target.quotationId ?? '',
-      target.seriesId ?? '',
-      settled.product_id ?? '',
-      settled.product_set_id ?? '',
-      settled.unit_price ?? '',
-    ],
+    queryKey: lineVerdictKey(target, settled),
     queryFn: () =>
       judgeQuotationLine(target, {
         product_id: settled.product_id,
@@ -1531,6 +1664,38 @@ export function useLineVerdict(
     // it, and retyping it should not be three requests.
     staleTime: 30_000,
   });
+}
+
+/**
+ * The verdicts the rows' own `useLineVerdict` calls hold, for many drafts at once (the lines
+ * filter, PROJECT-QUOTE-LINE-TOOLS). It never asks by itself (`enabled: false`), so filtering
+ * costs no request, yet it carries the REAL query function: an observer's options land on the
+ * shared query, so a global refetch of the key judges the draft rather than writing null over
+ * the answer. One observer per distinct draft; answers come back in `drafts` order, `undefined`
+ * where nothing has been answered yet.
+ */
+export function useCachedLineVerdicts(
+  target: { quotationId: string | null; seriesId?: string | null },
+  drafts: { product_id?: string; product_set_id?: string; unit_price?: string }[],
+): (QuotationLineVerdict | undefined)[] {
+  const ids = drafts.map((draft) => JSON.stringify(lineVerdictKey(target, draft)));
+  const distinct = Array.from(new Map(drafts.map((draft, index) => [ids[index], draft])));
+  const answers = useQueries({
+    queries: distinct.map(([, draft]) => ({
+      queryKey: lineVerdictKey(target, draft),
+      queryFn: () => judgeQuotationLine(target, draft),
+      enabled: false,
+      staleTime: 30_000,
+    })),
+    // Structurally shared, so the array keeps its identity until an answer actually changes.
+    combine: (results) => results.map((result) => result.data),
+  });
+  return React.useMemo(() => {
+    const byId = new Map(distinct.map(([id], index) => [id, answers[index]]));
+    return ids.map((id) => byId.get(id));
+    // `ids` is rebuilt every render; its joined text is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, ids.join('|')]);
 }
 
 /**

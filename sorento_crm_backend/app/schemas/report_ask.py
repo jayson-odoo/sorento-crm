@@ -58,6 +58,15 @@ class ReportAskTotal(BaseModel):
     change_pct: Optional[float] = None
 
 
+class ReportAskCompany(BaseModel):
+    """Owner O-R2 (3 Nov): one company's total of an ask that named no company, for a contact holding two or more."""
+
+    name: str
+    qty: int
+    amount: float
+    count: Optional[int] = None
+
+
 class ReportAskSummaryRow(BaseModel):
     name: str
     qty: int
@@ -118,6 +127,9 @@ class ReportAskResponse(BaseModel):
     # Eval hard guard: `documents` is one page; the whole list's count and the page's first row.
     documents_total: Optional[int] = None
     group_offset: Optional[int] = None
+    # Owner O-R2 (3 Nov): an ask naming no company, for a contact holding two or more companies with figures, carries each
+    # company's total (the same filters, no breakdown), in the contact's company order; absent otherwise.
+    companies: Optional[List[ReportAskCompany]] = None
 
 
 class ReportAskChatRow(BaseModel):

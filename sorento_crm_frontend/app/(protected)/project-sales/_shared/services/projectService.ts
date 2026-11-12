@@ -2,9 +2,11 @@ import { apiFetch } from '@/lib/api';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import { qtyOverAwareError } from '../lib/qtyOverQuote';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 import type {
   PartyContact,
   PartyContactBody,
+  PartyRole,
   PartyOnProject,
   ClashPreview,
   MediaKind,
@@ -50,7 +52,6 @@ import type {
   QuotationLine,
   QuotationLineBody,
   QuotationLineBulkItem,
-  QuotationOutcomeBody,
   QuotationRecomputeResult,
   QuotationVersion,
   ImportJobStatus,
@@ -70,6 +71,7 @@ import type {
   TaskStatusChangeBody,
 } from '../types/project.types';
 import { projectCodeLabel } from '../lib/projectCode';
+import { projectDisplayName } from '../lib/projectName';
 
 const BASE = '/api/v1/project-sales';
 
@@ -162,7 +164,7 @@ export async function listEditableProjectOptions(query: string) {
     .filter((project) => project.can_edit)
     .map((project) => ({
       value: project.id,
-      label: project.title,
+      label: projectDisplayName(project),
       description: [projectCodeLabel(project), project.developer_name].filter(Boolean).join(' · '),
     }));
 }
@@ -229,9 +231,10 @@ export type ProjectExtractFieldKey =
   | 'state'
   | 'mukim'
   | 'title'
+  | 'name'
   | 'customer';
 
-/** The backend sends title and mukim as plain strings, the rest as proposal objects. */
+/** The backend sends title, name and mukim as plain strings, the rest as proposal objects. */
 export type ProjectExtractResult = Partial<
   Record<ProjectExtractFieldKey, ProjectExtractProposal | string>
 >;
@@ -281,14 +284,33 @@ export async function updateProject(
 export async function changeProjectStatus(
   projectId: string,
   toStatusId: string,
+  lossReason?: string,
 ): Promise<Project> {
   const response = await apiFetch(`${BASE}/projects/${projectId}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to_status_id: toStatusId }),
+    body: JSON.stringify({
+      to_status_id: toStatusId,
+      ...(lossReason ? { loss_reason: lossReason } : {}),
+    }),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to move the project'));
+  return response.json();
+}
+
+/** Mark a project won, or re-open a won or lost one. Lost goes through the status move. */
+export async function setProjectOutcome(
+  projectId: string,
+  outcome: 'won' | 'open',
+): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/outcome`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outcome }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to update the outcome'));
   return response.json();
 }
 
@@ -432,6 +454,24 @@ export async function decideTakeoverRequest(
 }
 
 // ------------------------------------------------------------------ parties
+
+/** The editable lookup set the party roles come from (PROJECT-PARTY-ROLES). */
+export const PARTY_ROLE_SET_KEY = 'project_party_role';
+
+/** Every party role, inactive ones included: a project still shows a role switched off since. */
+export async function listPartyRoles(): Promise<PartyRole[]> {
+  const response = await apiFetch(
+    `/api/v1/lookup/${PARTY_ROLE_SET_KEY}/options?include_inactive=true`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the party roles'));
+  const rows = (await response.json()) as Partial<PartyRole>[];
+  return rows.map((row) => ({
+    value: String(row.value ?? ''),
+    label: String(row.label ?? row.value ?? ''),
+    is_active: row.is_active !== false,
+    allows_many: Boolean(row.allows_many),
+  }));
+}
 
 export async function listParties(
   params: {
@@ -919,19 +959,6 @@ export async function deleteQuotation(quotationId: string): Promise<void> {
     throw new Error(await extractApiError(response, 'Failed to delete the quotation'));
 }
 
-export async function setQuotationOutcome(
-  quotationId: string,
-  body: QuotationOutcomeBody,
-): Promise<ProjectQuotation> {
-  const response = await apiFetch(`${BASE}/quotations/${quotationId}/outcome`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to record the outcome'));
-  return response.json();
-}
-
 export async function listQuotationVersions(
   quotationId: string,
 ): Promise<QuotationVersion[]> {
@@ -991,6 +1018,24 @@ export async function replaceQuotationLines(
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the lines'));
   const body: ListEnvelope<QuotationLine> = await response.json();
   return body.data;
+}
+
+/**
+ * A version's column headers and columns, whole (PS-QUOTE-MATRIX). Editable version only, the
+ * same refusal as a line write. The server moves quantities in on the first column, sums them
+ * back on the last, drops cells under removed columns, and answers the version and its lines.
+ */
+export async function replaceQuotationColumns(
+  versionId: string,
+  columns: MatrixHeader[],
+): Promise<{ version: QuotationVersion; lines: QuotationLine[] }> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/columns`, {
+    method: 'PUT',
+    body: JSON.stringify({ columns }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the columns'));
+  return response.json();
 }
 
 export async function updateQuotationLine(

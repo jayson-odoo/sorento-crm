@@ -217,6 +217,22 @@ describe('AC-W12: the sheet', () => {
     }
   });
 
+  it('names the order\'s customer and project on each event tag (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getPlanningHistory.mockResolvedValue({
+      events: EVENTS.map((event) => ({
+        ...event,
+        customer_name: 'Maju Debtor',
+        project_label: 'Tuju Residences',
+      })),
+    });
+    renderSheet();
+    await screen.findByTestId('history-timeline');
+
+    expect(
+      within(eventRow('ev-refused')).getByText('SO422492 - Maju Debtor / Tuju Residences'),
+    ).toBeInTheDocument();
+  });
+
   it('names each kind and shows no UUID', async () => {
     renderSheet();
     await screen.findByTestId('history-timeline');

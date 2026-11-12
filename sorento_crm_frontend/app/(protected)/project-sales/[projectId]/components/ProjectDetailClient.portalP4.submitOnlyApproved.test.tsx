@@ -116,7 +116,11 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
   },
   useProject: () => ({ data: projectFixture, isLoading: false, isError: false }),
+  // PROJECT-PARTY-ROLES: the Parties section reads the editable role list.
+  usePartyRoles: () => ({ data: [] }),
   useChangeProjectStatus: () => ({ mutate: changeStatus, isPending: false }),
+  useSetProjectOutcome: () => ({ mutate: vi.fn(), isPending: false }),
+  useQuotationLossReasons: () => ({ data: [{ value: 'price', label: 'Price' }] }),
   useDeleteProject: () => ({ mutateAsync: vi.fn() }),
   useUpdateProject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useCollaborators: (...a: unknown[]) => {

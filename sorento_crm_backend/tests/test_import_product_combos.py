@@ -156,6 +156,32 @@ def test_ac_8_1_apply_writes_and_a_report_is_always_produced(db, catalogue, phot
     assert len(rows) == 4
 
 
+def _free_names(db, combo) -> list[str]:
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    with company_scope(db, None):
+        rows = (
+            db.query(Accessory.name)
+            .join(ProductComboAccessory, ProductComboAccessory.accessory_id == Accessory.id)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+    return [name for (name,) in rows]
+
+
+def _set_free_list(db, combo, names) -> None:
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo.id).delete()
+    for index, name in enumerate(names):
+        item = Accessory(name=name, company_id=combo.host_product.company_id)
+        db.add(item)
+        db.flush()
+        db.add(ProductComboAccessory(combo_id=combo.id, accessory_id=item.id, sort_order=index))
+    db.flush()
+
+
 # --------------------------------------------------------------------------- AC-8.2
 
 
@@ -167,14 +193,37 @@ def test_ac_8_2_apply_loads_the_combo_description_free_items_and_cover(
     assert combo is not None
     assert combo.description == "Cabinet, mirror and basin set"
 
-    items = combo.free_items.split(", ")
-    assert len(items) == 2, combo.free_items
+    # PRICETAG-ACCESSORIES: free items load as the combo's accessory list, not as text.
+    items = _free_names(db, combo)
+    assert len(items) == 2, items
+    assert combo.free_items is None
     assert "ZZTTAP1" in items[0] and "Tap" in items[0]
     assert items[0].index("ZZTTAP1") < items[0].index("Tap"), "the code prefixes the label"
     assert items[1] == "Waste", "no code, so the label alone"
 
     assert combo.image_attachment_id is not None
     assert len(storage.objects) == 1, "the cover went through the storage seam once"
+
+
+def test_a_free_item_whose_code_is_a_catalogue_product_loads_as_that_product(
+    db, catalogue, photos, tmp_path, storage
+):
+    """PRICETAG-ACCESSORIES (owner, 6 Nov ~10:45): a free item with a real code is the product."""
+    from app.models.accessory import ProductComboAccessory
+
+    tap = _prod(db, "ZZTTAP1")
+    db.commit()
+    _run(db, tmp_path, photos, apply=True)
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    with company_scope(db, None):
+        rows = (
+            db.query(ProductComboAccessory)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+        assert rows[0].item_product_id == tap.id and rows[0].accessory_id is None
+        assert rows[1].accessory_id is not None and rows[1].accessory.name == "Waste"
 
 
 def test_ac_8_2_components_become_fixed_parts_options_share_a_group_topups_are_upgrades(
@@ -195,14 +244,15 @@ def test_ac_8_2_components_become_fixed_parts_options_share_a_group_topups_are_u
 # --------------------------------------------------------------------------- AC-8.3
 
 
-def test_ac_8_3_no_price_is_loaded(db, catalogue, photos, tmp_path, storage):
+def test_ac_8_3_prices_are_loaded(db, catalogue, photos, tmp_path, storage):
+    # PRICETAG-COMBO-RENDER K9: the old rule (no price loaded) is retired; the seed's prices load.
     _run(db, tmp_path, photos, apply=True)
-    with company_scope(db, None):
-        combos = db.query(ProductCombo).all()
-        parts = db.query(ProductComboPart).all()
-    assert combos and parts
-    assert all(c.list_price is None and c.sell_price is None for c in combos)
-    assert all(p.sell_price is None and p.topup_amount is None for p in parts)
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    assert (combo.list_price, combo.sell_price) == (Decimal("1500.00"), Decimal("1200.00"))
+    parts = _parts(db, combo)
+    assert parts["ZZTBW"].sell_price == Decimal("250.00")
+    assert parts["ZZTU1"].topup_amount == Decimal("100.00")
+    assert parts["ZZTM1"].sell_price is None, "a component's own lp is not a price to load"
 
 
 # --------------------------------------------------------------------------- AC-8.4
@@ -277,7 +327,7 @@ def test_ac_8_6_what_marketing_filled_stays_and_missing_parts_are_added_back(
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     with company_scope(db, None):
         combo.description = "Marketing wrote this"
-        combo.free_items = "Marketing free items"
+        _set_free_list(db, combo, ["ZZT MARKETING ITEM"])
         combo.list_price = Decimal("2222.00")
         combo.sell_price = Decimal("1111.00")
         parts = _parts(db, combo)
@@ -289,7 +339,7 @@ def test_ac_8_6_what_marketing_filled_stays_and_missing_parts_are_added_back(
     _run(db, tmp_path, photos, apply=True)
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     assert combo.description == "Marketing wrote this"
-    assert combo.free_items == "Marketing free items"
+    assert _free_names(db, combo) == ["ZZT MARKETING ITEM"], "a list someone set is never overwritten"
     assert combo.list_price == Decimal("2222.00") and combo.sell_price == Decimal("1111.00")
     parts = _parts(db, combo)
     assert parts["ZZTBW"].sell_price == Decimal("222.00")
@@ -307,7 +357,7 @@ def test_ac_8_6_an_empty_description_free_items_or_cover_is_filled_but_set_ones_
     _run(db, tmp_path, photos, apply=True)
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     assert combo.description == "Already here", "a description already set stays"
-    assert combo.free_items, "the blank free items are filled"
+    assert _free_names(db, combo), "the empty free items list is filled"
     assert combo.image_attachment_id is not None, "the blank cover is filled"
     assert _count(db, ProductCombo) == 2
 
@@ -390,43 +440,24 @@ def _templates(db):
         return {t.name: t for t in db.query(TagTemplate).all()}
 
 
-def test_ac_8_9_templates_flag_creates_and_publishes_the_two_starters(
+def _starter_names():
+    return [shape[0] for shape in _script().STARTER_SHAPES]
+
+
+def test_ac_8_9_templates_flag_creates_and_publishes_one_starter_per_shape(
     db, catalogue, photos, tmp_path, storage
 ):
     _run(db, tmp_path, photos, apply=True, templates=True)
     found = _templates(db)
-    assert set(found) == {"Bathroom furniture combo", "Kitchen sink combo"}
-    assert found["Bathroom furniture combo"].family == "furniture_set"
-    assert found["Kitchen sink combo"].family == "sink_combo"
+    assert set(found) == set(_starter_names())
     for template in found.values():
         assert template.published_version_id is not None, "published, so the designer can pick it"
-        text = json.dumps(template.doc)
-        for slot in ("combo_image", "combo_name", "combo_description", "combo_choices", "combo_topups"):
-            assert slot in text, f"{template.name} does not use {slot}"
-        # The doc is a valid TagTemplateDoc (the combo slots are in SLOT_BINDINGS), and a
-        # combo with no price prints nothing, never a placeholder figure.
+        # The doc is a valid TagTemplateDoc, and every starter reads positions, never a part number.
         from app.schemas.price_tag import TagTemplateDocModel
 
         TagTemplateDocModel.model_validate(template.doc)
-        prices = [
-            layer for layer in template.doc["layers"] if layer["slot_binding"] in ("list_price", "sell_price")
-        ]
-        assert len(prices) == 2
-        assert all(layer["props"]["text"] == "" for layer in prices)
-        by_slot = {layer["slot_binding"]: layer for layer in template.doc["layers"]}
-        # The approved mock's type: the sell price is the biggest thing on the tag.
-        sell = by_slot["sell_price"]["props"]
-        assert (sell["fontSize"], sell["fontWeight"], sell["color"]) == (38, 700, "#8c7355")
-        assert by_slot["list_price"]["props"]["fontSize"] == 11
-        assert by_slot["combo_name"]["props"]["fontSize"] == 14
-        assert by_slot["combo_name"]["props"]["fontWeight"] == 700
-        assert by_slot["combo_description"]["props"]["fontSize"] == 10
-        assert by_slot["combo_choices"]["props"]["fontSize"] == 9.5
-        assert max(l["props"].get("fontSize", 0) for l in template.doc["layers"]) == 38
-        # Prices come from the text slots (a price_badge prints "Price TBC" when blank), and
-        # free items start empty, so nothing prints when there is nothing to print.
-        assert all(layer["type"] == "text" for layer in prices)
-        assert by_slot["included_accessories"]["props"]["text"] == ""
+        assert "subjectSlot" in json.dumps(template.doc)
+        assert "subjectPart" not in json.dumps(template.doc)
 
 
 def test_ac_8_9_no_templates_flag_means_no_templates(db, catalogue, photos, tmp_path, storage):
@@ -441,7 +472,7 @@ def test_ac_8_9_rerunning_does_not_duplicate_or_overwrite_the_templates(
     first = _templates(db)
     versions_before = _count(db, TagTemplateVersion)
     with company_scope(db, None):
-        edited = db.query(TagTemplate).filter(TagTemplate.name == "Kitchen sink combo").one()
+        edited = db.query(TagTemplate).filter(TagTemplate.name == _starter_names()[0]).one()
         edited.doc = {**edited.doc, "marketing_edit": "kept"}
         db.commit()
         published_before = {n: t.published_version_id for n, t in first.items()}
@@ -449,8 +480,8 @@ def test_ac_8_9_rerunning_does_not_duplicate_or_overwrite_the_templates(
     _run(db, tmp_path, photos, apply=True, templates=True)
 
     found = _templates(db)
-    assert len(found) == 2 and _count(db, TagTemplate) == 2
-    assert found["Kitchen sink combo"].doc.get("marketing_edit") == "kept"
+    assert len(found) == len(_starter_names()) and _count(db, TagTemplate) == len(_starter_names())
+    assert found[_starter_names()[0]].doc.get("marketing_edit") == "kept"
     assert {n: t.published_version_id for n, t in found.items()} == published_before
     assert _count(db, TagTemplateVersion) == versions_before
 
@@ -464,25 +495,31 @@ def test_ac_8_11_the_repo_holds_the_script_and_a_synthetic_fixture_only():
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
     ).stdout.splitlines()
+    # COMBO-SEED-FLYER (crew brief, 9 Nov): this one seed may live in the repo so it ships in the prod
+    # image. It holds product codes, prices, flyer text and accessory names only;
+    # test_import_product_combos_strict.py::test_ac_19_ac_20_the_seed_file checks it holds no
+    # email or phone number. Any other flyer/combos seed outside fixtures is still rejected.
+    allowed = {"sorento_crm_backend/scripts/data/combo_seed_flyer_2026.json"}
     real = [
         path
         for path in tracked
-        if "combos-seed" in path.lower() or "flyer" in path.lower() and path.lower().endswith(".json")
-        and "fixtures" not in path.lower()
+        if path not in allowed
+        and ("combos-seed" in path.lower() or "flyer" in path.lower() and path.lower().endswith(".json")
+             and "fixtures" not in path.lower())
     ]
     assert real == [], f"real flyer data must not be committed: {real}"
     data = json.loads(SEED.read_text())
     assert all(entry["host_code"].startswith("ZZT") for entry in data), "made-up codes only"
 
 
-def test_a_rerun_with_nothing_to_change_reports_unchanged_and_an_upgrade_is_one_write(
+def test_a_rerun_with_nothing_to_change_reports_matches_and_an_upgrade_is_one_write(
     db, catalogue, photos, tmp_path, storage
 ):
     _run(db, tmp_path, photos, apply=True)
     _code, _out, rows = _run(db, tmp_path, photos, apply=True)
-    assert _by_id(rows)["C1"]["status"] == "unchanged"
+    assert _by_id(rows)["C1"]["status"] == "matches"
     _code, _out, dry = _run(db, tmp_path, photos)
-    assert _by_id(dry)["C1"]["status"] == "unchanged"
+    assert _by_id(dry)["C1"]["status"] == "matches"
     assert _parts(db, _combo(db, "ZZT 3 in 1", "ZZTH1"))["ZZTU1"].is_upgrade is True
 
 
@@ -554,8 +591,8 @@ def test_templates_are_written_in_the_chosen_company_and_list_for_it(
     db, catalogue, photos, tmp_path, storage, _standalone
 ):
     _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
-    found = _templates_named(db, "Kitchen sink combo") + _templates_named(db, "Bathroom furniture combo")
-    assert len(found) == 2
+    found = [t for name in _starter_names() for t in _templates_named(db, name)]
+    assert len(found) == len(_starter_names())
     assert {t.company_id for t in found} == {DEFAULT_COMPANY_ID}, "NULL company hides them from staff"
     assert all(t.published_version_id for t in found)
 
@@ -563,7 +600,7 @@ def test_templates_are_written_in_the_chosen_company_and_list_for_it(
 
     with company_scope(db, frozenset({DEFAULT_COMPANY_ID})):
         listed = {t.name for t in tag_template_service._scoped(db).all()}
-    assert {"Kitchen sink combo", "Bathroom furniture combo"} <= listed
+    assert set(_starter_names()) <= listed
 
 
 def test_a_starter_left_with_no_company_is_claimed_not_duplicated(
@@ -571,39 +608,39 @@ def test_a_starter_left_with_no_company_is_claimed_not_duplicated(
 ):
     from app.models.dealer_kit import TagTemplateVersion as Version
 
-    row_id, version_id = _seed_template(db, "Kitchen sink combo", None)
+    row_id, version_id = _seed_template(db, _starter_names()[0], None)
 
     # A dry run reports it and writes nothing.
     _code, out, _rows = _run(db, tmp_path, photos, "--company", "SRT", templates=True)
-    assert "Kitchen sink combo" in out and "would" in out.lower()
-    assert _templates_named(db, "Kitchen sink combo")[0].company_id is None
+    assert _starter_names()[0] in out and "would" in out.lower()
+    assert _templates_named(db, _starter_names()[0])[0].company_id is None
 
     _code, out, _rows = _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
-    rows = _templates_named(db, "Kitchen sink combo")
+    rows = _templates_named(db, _starter_names()[0])
     assert [r.id for r in rows] == [row_id], "no duplicate"
     assert rows[0].company_id == DEFAULT_COMPANY_ID
-    assert rows[0].doc["marker"] == "seeded Kitchen sink combo", "its doc is left alone"
+    assert rows[0].doc["marker"] == f"seeded {_starter_names()[0]}", "its doc is left alone"
     assert rows[0].published_version_id == version_id
     with company_scope(db, None):
         assert db.query(Version).filter(Version.template_id == row_id).count() == 1
-    assert "Kitchen sink combo" in out
+    assert _starter_names()[0] in out
 
     # And a further rerun changes nothing.
     _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
-    assert [r.id for r in _templates_named(db, "Kitchen sink combo")] == [row_id]
+    assert [r.id for r in _templates_named(db, _starter_names()[0])] == [row_id]
 
 
 def test_another_companys_template_and_other_unowned_names_are_not_touched(
     db, catalogue, photos, tmp_path, storage, _standalone
 ):
-    theirs_id, _ = _seed_template(db, "Kitchen sink combo", MOCHA_ID)
+    theirs_id, _ = _seed_template(db, _starter_names()[0], MOCHA_ID)
     loose_id, _ = _seed_template(db, "ZZT Some other template", None)
 
     _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
 
-    theirs = [r for r in _templates_named(db, "Kitchen sink combo") if r.id == theirs_id]
-    assert theirs[0].company_id == MOCHA_ID and theirs[0].doc["marker"] == "seeded Kitchen sink combo"
-    mine = [r for r in _templates_named(db, "Kitchen sink combo") if r.id != theirs_id]
+    theirs = [r for r in _templates_named(db, _starter_names()[0]) if r.id == theirs_id]
+    assert theirs[0].company_id == MOCHA_ID and theirs[0].doc["marker"] == f"seeded {_starter_names()[0]}"
+    mine = [r for r in _templates_named(db, _starter_names()[0]) if r.id != theirs_id]
     assert len(mine) == 1 and mine[0].company_id == DEFAULT_COMPANY_ID, "ours is created, theirs not claimed"
     loose = _templates_named(db, "ZZT Some other template")[0]
     assert loose.id == loose_id and loose.company_id is None
@@ -624,3 +661,62 @@ def test_every_other_row_the_import_writes_is_in_the_hosts_company_or_has_none(
     assert cover and links
     assert {a.company_id for a in cover} == {DEFAULT_COMPANY_ID}
     assert {link.company_id for link in links} == {DEFAULT_COMPANY_ID}
+
+
+# --------------------------------------------------------------------------- PRICETAG-COMBO-FORMAT
+#
+# AC-9 (the importer stores the sanitised description) and AC-12 (the compare judges text, not
+# markup). Written test-FIRST: the importer does not call `sanitise_tag_html` / `plain_text` yet.
+
+
+def _run_with_seed(db, tmp_path, photos, entries, *, apply):
+    seed_path = tmp_path / f"fmt-seed-{len(list(tmp_path.glob('fmt-seed-*.json')))}.json"
+    seed_path.write_text(json.dumps(entries))
+    report = tmp_path / f"fmt-report-{len(list(tmp_path.glob('fmt-report-*.csv')))}.csv"
+    argv = ["--file", str(seed_path), "--photos", str(photos), "--report", str(report)]
+    if apply:
+        argv.append("--apply")
+    assert _script().main(argv, db=db, out=io.StringIO()) == 0
+    with open(report, newline="", encoding="utf-8-sig") as fh:
+        return [
+            {k.strip().lower().replace(" ", "_"): v for k, v in raw.items()}
+            for raw in csv.DictReader(fh)
+        ]
+
+
+def test_ac_9_the_importer_stores_the_sanitised_description(db, catalogue, photos, tmp_path, storage):
+    """AC-9: a seed description `<p onclick=x>a</p>` is stored as `<p>a</p>` on --apply."""
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "<p onclick=x>a</p>"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+    assert _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p>a</p>"
+
+
+def test_ac_9_a_seed_script_tag_is_not_stored(db, catalogue, photos, tmp_path, storage):
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "<p>a<img src=x onerror=alert(1)><script>x</script>b</p>"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+    assert _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p>ab</p>"
+
+
+def test_ac_12_a_combo_whose_only_difference_is_formatting_reports_matches(
+    db, catalogue, photos, tmp_path, storage
+):
+    """AC-12: stored `<p><strong>SRTBF11416</strong> (CABINET)</p>` against the seed text
+    "SRTBF11416 (CABINET)" is "matches", not "differs" (already true today because a set
+    description is never compared; the test pins that the new plain_text compare keeps it so)."""
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "SRTBF11416 (CABINET)"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    with company_scope(db, None):
+        combo.description = "<p><strong>SRTBF11416</strong> (CABINET)</p>"
+        db.commit()
+
+    for apply in (False, True):
+        rows = _run_with_seed(db, tmp_path, photos, entries, apply=apply)
+        assert _by_id(rows)["C1"]["status"] == "matches", (apply, _by_id(rows)["C1"])
+    assert (
+        _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p><strong>SRTBF11416</strong> (CABINET)</p>"
+    ), "formatting the owner added is never overwritten by the plain seed text"

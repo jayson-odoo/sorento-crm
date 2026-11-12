@@ -8,7 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api', () => ({ apiFetch }));
 
+const saveBlobAs = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/save-blob', () => ({ saveBlobAs }));
+
 import {
+  requestCommissionStatement,
   createSalesTarget,
   createTargetChild,
   deleteSalesTarget,
@@ -18,6 +22,7 @@ import {
   getSalesTargets,
   patchSalesTarget,
   patchSalesTargetPeriod,
+  updatePointRatio,
 } from './salesTargetService';
 
 function ok(body: unknown) {
@@ -50,6 +55,16 @@ describe('salesTargetService', () => {
     await getSalesTargets({ all: true, on: '2026-10-15', subject: 'agent', salesTeamId: 'none' });
     expect(apiFetch).toHaveBeenLastCalledWith(
       '/api/v1/sales/targets?all=true&subject=agent&sales_team_id=none',
+    );
+  });
+
+  it('passes the abort signal so a superseded search is cancelled', async () => {
+    apiFetch.mockResolvedValue(ok({ on: '2026-10-15', rows: [], unassigned_amount: 0, no_team_count: 0 }));
+    const controller = new AbortController();
+    await getSalesTargets({ all: true, subject: 'dealer', query: 'deluxe' }, controller.signal);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      '/api/v1/sales/targets?all=true&subject=dealer&query=deluxe',
+      { signal: controller.signal },
     );
   });
 
@@ -154,5 +169,27 @@ describe('salesTargetService', () => {
         product_scope: 'all', start_date: '2026-12-31', end_date: '2026-10-01', target_value: 1,
       }),
     ).rejects.toThrow(/before the start date/);
+  });
+
+  it('asks My Downloads for the commission statement: one POST, no browser download (owner, 4 Nov)', async () => {
+    const job = { id: 'd1', kind: 'commission_statement_xlsx', status: 'pending', filename: 'commission-statement-TGT-000008-20261104.xlsx' };
+    apiFetch.mockResolvedValue(ok(job));
+    await expect(requestCommissionStatement(['t1', 't2'])).resolves.toEqual(job);
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/v1/sales/targets/commission-statement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['t1', 't2'] }),
+    });
+    expect(saveBlobAs).not.toHaveBeenCalled();
+  });
+
+  it('edits a point ratio with PATCH on its id (POINT-RATIO-EDIT)', async () => {
+    apiFetch.mockResolvedValue(ok({ id: 'r1' }));
+    await updatePointRatio('r1', { effective_from: '2026-02-01', rm_per_point: 1.25 });
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/v1/sales/targets/point-ratios/r1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ effective_from: '2026-02-01', rm_per_point: 1.25 }),
+    });
   });
 });

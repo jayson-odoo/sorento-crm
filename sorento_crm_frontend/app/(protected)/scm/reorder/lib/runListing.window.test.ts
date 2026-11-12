@@ -4,7 +4,7 @@
  * never say it three different ways.
  *
  * `describeWindow(start, end)` - both ISO `YYYY-MM-DD` strings or null/undefined:
- *   both set   -> "01/01/2025 to 31/10/2026"
+ *   both set   -> "01/01/2025 - 31/10/2026"
  *   end only   -> "up to 31/10/2026"
  *   start only -> "from 01/01/2025"
  *   neither    -> "every open order"
@@ -14,7 +14,7 @@ import { describeWindow } from './runListing';
 
 describe('describeWindow (AC-S4.5)', () => {
   it('both dates set reads "X to Y"', () => {
-    expect(describeWindow('2025-01-01', '2026-10-31')).toBe('01/01/2025 to 31/10/2026');
+    expect(describeWindow('2025-01-01', '2026-10-31')).toBe('01/01/2025 - 31/10/2026');
   });
 
   it('end only reads "up to Y"', () => {

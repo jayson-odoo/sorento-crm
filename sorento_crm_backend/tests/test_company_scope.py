@@ -636,7 +636,28 @@ def test_every_company_id_table_is_registered():
     #   links = 176.
     # + 1 (PS-REGISTRATION-V3): `party_contacts`, the people at one company's parties; read by
     #   party within the company = 177.
-    expected_owned = 177
+    # + 1 (SPEC-SHEET-V2, #2124): `projects.quotation_spec_sheets`, one company's saved spec
+    #   sheets of its quotation documents = 178.
+    # + 1 (PRICETAG-ACCESSORIES, ed1c09c9): `accessories`, one company's accessory library; the
+    #   name is unique per company ignoring case. Its product / combo list rows are NOT owned: they
+    #   inherit the partition through the product, like `product_combos` = 179.
+    # + 1 (PRICETAG-ACCESSORY-DESIGNER, #2237): `dealer_kit.accessory_box_preset`, one company's
+    #   saved accessories box designs; the name is unique per company ignoring case = 180.
+    # + 1 (QUOTE-CERT-TAB, #2245): `projects.quotation_document_certificates`, one company's own
+    #   changes to the certificate list of its quotation document (removed, hand-added, re-boxed,
+    #   send flag); the certification routes and the export read it by document = 181.
+    # + 1 (SORENTO-TOWN): `town_days`, one company's frozen day snapshot and event log = 182.
+    # + 1 (QUOTE-TERMS-SELECT, #2305): `payment_terms`, AutoCount Terms reference data, owned per
+    #   company exactly as `item_classes` = 183.
+    # + 5 (PRODUCT-COSTING, #2321): `costing_settings` (one company's SST factor and default
+    #   cost method, one row per company), `costing_category_rules` (one company's transport
+    #   rule per category), `costing_product_overrides` (one company's transport rule and cost
+    #   method per product), `customer_costing_profiles` and `customer_costing_products` (one
+    #   company's mark-up profile and costing list per party). Settings are read by `.first()`,
+    #   category rules by `.all()` and a party product is unlinked by its own id, so the
+    #   mixin's filter is what picks this company's rows; `exchange_rates` has no company: a
+    #   rate is the same for every company = 188.
+    expected_owned = 188
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

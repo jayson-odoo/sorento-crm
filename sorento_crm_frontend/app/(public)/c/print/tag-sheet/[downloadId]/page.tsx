@@ -23,6 +23,7 @@ import {
   ensureSeedFontsLoaded,
   type TagFont,
 } from '@/lib/dealer-kit/fonts';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import TagSheetRenderer, {
   type ResolvedLineData,
 } from './components/TagSheetRenderer';
@@ -37,6 +38,8 @@ interface TagSheetPrintPayload {
   images: Record<string, string>;
   /** Brand fonts, loaded before this page reports itself ready. */
   fonts: TagFont[];
+  /** Rule-carrying library icons, for `feature_icons` layers (always a list from the backend). */
+  feature_icons?: FeatureIcon[];
   requestDocNumber: string;
   version: number;
 }
@@ -193,6 +196,7 @@ export default function TagSheetPrintPage({
           resolvedData={payload.resolvedData}
           assets={payload.assets}
           images={payload.images}
+          featureIcons={payload.feature_icons ?? []}
         />
       )}
     </main>

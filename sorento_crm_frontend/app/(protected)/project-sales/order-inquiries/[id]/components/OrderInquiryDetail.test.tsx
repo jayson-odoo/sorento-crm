@@ -26,10 +26,28 @@ import type {
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
 
+// STANDARD-HISTORY wave 1: a test may open the page on a tab (`?tab=history`).
+const searchState = vi.hoisted(() => ({ query: '' }));
+const getOrderInquiryHistorySpy = vi.hoisted(() =>
+  vi.fn(async () => ({
+    events: [
+      {
+        id: 'audit-unconfirm',
+        kind: 'unconfirmed',
+        at: '2026-11-09T09:15:53',
+        actor: 'J*** (Purchasing)',
+        title: 'Unconfirmed 9 lines',
+        lines: [
+          { row_id: 'r1', so_line_no: 1, item_code: 'SRTSP131', qty: 4, change: 'Confirmed -> To confirm' },
+        ],
+      },
+    ],
+  })),
+);
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/project-sales/order-inquiries/oi-1',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(searchState.query),
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -186,6 +204,7 @@ vi.mock(
         purchase_orders: [],
         spos: [],
       })),
+      getOrderInquiryHistory: (...args: unknown[]) => getOrderInquiryHistorySpy(...(args as [])),
       listOrderInquiryHeaders: vi.fn(async () => ({
         data: [],
         total: 0,
@@ -255,6 +274,8 @@ function renderDetail(id: string) {
 }
 
 beforeEach(() => {
+  searchState.query = '';
+  getOrderInquiryHistorySpy.mockClear();
   acknowledgeFilterSpy.mockClear();
   acknowledgeRowsSpy.mockClear();
   autoPlaceSpy.mockClear();
@@ -469,7 +490,7 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
     expect([...sent].sort()).toEqual(['row-live', 'row-used']);
   });
 
-  it('shape b: a line with only a used row - it ticks, and Confirm (1) sends that row', async () => {
+  it('shape b re-pinned (OI-RESERVE-USED-ROW, owner 4 Nov): a line with only a used row is not rendered, so nothing ticks', async () => {
     vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
       lineRow({
         id: 'row-used',
@@ -480,41 +501,7 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
     ]);
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
-
-    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
-
-    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
-    expect((acknowledgeRowsSpy.mock.calls[0] as unknown[])[0]).toEqual([
-      'row-used',
-    ]);
-    expect(acknowledgeFilterSpy).not.toHaveBeenCalled();
-  });
-
-  it('shape b: a ticked used-only line never widens Auto link to the whole OI', async () => {
-    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
-      lineRow({
-        id: 'row-used',
-        state: 'placed',
-        redirected_to_pool: true,
-        ack_state: 'changed',
-      }),
-    ]);
-    renderDetail('oi-1');
-    await screen.findByRole('button', { name: 'Confirm' });
-    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
-    await screen.findByRole('button', { name: 'Confirm (1)' });
-
-    fireEvent.pointerDown(
-      screen.getByRole('button', { name: 'Order inquiry options' }),
-      {
-        button: 0,
-      },
-    );
-    fireEvent.click(
-      await screen.findByRole('menuitem', { name: /auto link/i }),
-    );
-    expect(autoPlaceSpy).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Select ZZT-USED')).not.toBeInTheDocument();
   });
 });
 
@@ -767,5 +754,43 @@ describe('Send to purchasing from the detail page (OI-RESEND-PURCHASING)', () =>
     expect(
       await screen.findByRole('dialog', { name: 'Send to purchasing' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('owner hand test (5 Nov 2026): the sales order is named in the header card', () => {
+  it('shows the SO number beside "Raised by", linking to the sales order', async () => {
+    renderDetail('oi-1');
+    const link = await screen.findByTestId('oi-header-so-link');
+    expect(link).toHaveTextContent('SO123456');
+    expect(link).toHaveAttribute('href', '/scm/sales-orders/so-1');
+  });
+
+  it('prints the SO number as plain text when the sales order has no id to link to', async () => {
+    mockGetOrderInquiryHeader.mockResolvedValue({ ...HEADER, sales_order_id: undefined });
+    renderDetail('oi-1');
+    const plain = await screen.findByTestId('oi-header-so');
+    expect(plain).toHaveTextContent('SO123456');
+    expect(screen.queryByTestId('oi-header-so-link')).toBeNull();
+  });
+});
+
+describe('STANDARD-HISTORY: the History tab (AC-SH-B8, v2)', () => {
+  it('is the last tab, after Related SPO', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent);
+    expect(tabs.slice(-2)).toEqual(['Related SPO', 'History']);
+    // Not opened: nothing is read for it.
+    expect(getOrderInquiryHistorySpy).not.toHaveBeenCalled();
+  });
+
+  it("opened, reads this OI's history and shows a batch press as one event", async () => {
+    searchState.query = 'tab=history';
+    renderDetail('oi-1');
+    // STANDARD-HISTORY v2: the Audit Trail list - one sentence, then when and who.
+    const event = (await screen.findByText('Unconfirmed 9 lines')).closest('[data-audit-entry]');
+    expect(getOrderInquiryHistorySpy).toHaveBeenCalledWith('oi-1');
+    expect(event).toHaveTextContent('by J*** (Purchasing)');
+    expect(screen.queryByRole('combobox', { name: 'Product' })).not.toBeInTheDocument();
   });
 });

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price tag combo format v2</title>
+<!--
+  PRICETAG-COMBO-FORMAT mock v2 (CARD-pricetag-combo-format-05nov.md v2). Applies the owner's answers of 5 Nov
+  ~10:00 MYT: the app's rich text editor made complete (colour included), formatting by hand (no script),
+  price type hand-picked LP / SP / LP & SP, combo photo opens full size. Designer changes from v1 dropped.
+  Open: Q1 (font face/size stay the template's), recommendation (a). Static, no data fetch.
+  Real case: combo SRTBF11416 (LP 730 / SP 459) and "SRTBF11829 + SRTMCB8083-BL" (LP 2,715 / SP 2,099).
+
+  Element -> component map (reuse first; NEW only where named):
+  A1. Description editor = the shared engine, completed for every screen that uses it
+        components/ui/rich-text-editor.tsx (RichTextEditor; toolbar :185-300; emits HTML via getHTML :558)
+          + Text colour and Highlight buttons: components/common/ColorPicker.tsx (MOVED from
+            app/(protected)/dealer-kit/tag-templates/components/ColorPicker.tsx; the designer imports it from there)
+          + Underline button, Align left / centre / right (components/ui/toggle, lucide icons, aria-labels)
+          tiptap: @tiptap/extension-text-style (TextStyle, Color, BackgroundColor), @tiptap/extension-text-align
+        used in app/(protected)/master-data-management/products/[id]/components/ProductCombosSection.tsx (:537-544,
+        replaces the Description TextField) and .../ProductSpecificationsTab.tsx PriceTagDescriptionBlock (:179)
+  A2. Live tag preview beside it: components/dealer-kit/DesignViewer.tsx fed
+        GET /dealer-kit/products/{host}/tag-data?combo_id= (app/api/v1/dealer_kit/tag_data.py:72-91), default template
+  A3. Storage + render (no visible control):
+        BE NEW app/utils/tag_rich_text.py sanitise_tag_html() (allow-list, stdlib html.parser) on every write path;
+        plain_text() for non-tag readers (project_spec_sheet_service.py, chatbot/MCP, importer report, exports)
+        FE NEW lib/dealer-kit/rich-text.ts (HTML -> blocks of runs, the ONE parser), drawn by
+        app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer.tsx TextContent (:567), DesignViewer, and
+        app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx (spans, never innerHTML);
+        textLayerLines becomes run-aware
+  B1. Template "Price type" (LP / SP / LP & SP), hand-picked
+        app/(protected)/dealer-kit/tag-templates/components/TagTemplateDialog.tsx beside Family (:118-125);
+        components/ui/toggle-group, same control as components/dealer-kit/PriceModeToggle.tsx
+        BE: dealer_kit.tag_template.price_type nullable (app/models/dealer_kit.py:705)
+  B2. Template list: "Set price type" badge + "Price type" filter
+        the tag template list page (DataGrid, existing filter bar); badge = components/ui/badge (status pill)
+  B3. Product / combo templates with a default LP and a default SP
+        .../products/[id]/components/ComboTemplatesField.tsx + ComboTemplatesPicker.tsx, ProductTagTemplatesSection.tsx
+        (components/common/SearchableMultiSelect, clearable); BE link column default_for replaces the is_default
+        unique index (dealer_kit.py:799-877), product_tag_template_service.py _replace_links (:271)
+  B4. Request line: template list filtered by the line's LP/SP; "No SP template linked"
+        components/dealer-kit/PriceTagLinesTable.tsx (template select :184-185, components/common/SearchableSelect;
+        LP/SP toggle from PRICETAG-LPSP); BE product_tag_template_service.py pick_template (:104), line_links (:184)
+  C.  Combo photo thumbnail -> full size
+        ProductCombosSection.tsx ComboImageControl (:304-390): the <img> (:366) becomes a button opening
+        components/common/AttachmentPreviewModal.tsx with items=[{id: image.attachment_id, name, url: image.url}]
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --danger:#dc2626; --dangerbg:#fef2f2; --warn:#b45309; --warnbg:#fffbeb; --sel:#eef4ff; --ok:#047857; --okbg:#ecfdf5; --scrim:rgba(0,0,0,.72); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2a1414; --sel:#1b2540; --okbg:#0f2a20; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2a1414; --sel:#1b2540; --okbg:#0f2a20; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:28px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:980px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; }
+  .row > .grow { flex:1 1 320px; min-width:0; }
+  label.lbl, .lbl { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+  .field { margin-bottom:12px; }
+  .input { border:1px solid var(--line); border-radius:8px; padding:6px 10px; background:var(--card); color:var(--fg); font-size:13px; min-height:32px; }
+  .tb { display:flex; flex-wrap:wrap; gap:2px; border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0; padding:4px; background:var(--bg); }
+  .tb .sep { width:1px; background:var(--line); margin:4px 2px; }
+  .tbtn { min-width:28px; height:28px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--fg); font:700 13px system-ui, sans-serif; padding:0 4px; position:relative; }
+  .tbtn.on { background:var(--sel); border-color:var(--primary); }
+  .tbtn.new::after { content:"new"; position:absolute; top:-7px; right:-6px; font:600 8px system-ui; background:var(--primary); color:#fff; border-radius:4px; padding:0 3px; }
+  .tbtn .bar { position:absolute; left:6px; right:6px; bottom:3px; height:3px; border-radius:2px; }
+  .rte { border:1px solid var(--line); border-radius:0 0 8px 8px; padding:8px 10px; min-height:220px; background:var(--card); font-size:13px; line-height:1.5; }
+  .rte p { margin:0; } .rte .g { color:#6b7280; }
+  .pop { border:1px solid var(--line); border-radius:8px; background:var(--card); padding:8px; width:220px; box-shadow:0 4px 12px rgba(0,0,0,.12); margin-top:6px; }
+  .sw { display:grid; grid-template-columns:repeat(6, 1fr); gap:6px; margin:6px 0; }
+  .sw span { aspect-ratio:1; border-radius:4px; border:1px solid var(--line); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:4px 10px; font-size:12px; } .seg .on { background:var(--primary); color:#fff; } .seg .off { color:var(--muted); }
+  .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:12px; margin:2px 4px 2px 0; }
+  .t { font-size:10px; font-weight:700; border-radius:4px; padding:0 4px; }
+  .t.lp { background:#e0f2fe; color:#075985; } .t.sp { background:#fde68a; color:#78350f; } .t.ei { background:#e5e7eb; color:#374151; }
+  .star { color:#d97706; font-size:11px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .tablewrap { overflow-x:auto; }
+  .code { font-weight:600; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; white-space:nowrap; }
+  .pill.err { background:var(--dangerbg); color:var(--danger); } .pill.warn { background:var(--warnbg); color:var(--warn); } .pill.info { background:var(--sel); color:var(--primary); }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .btn[disabled] { opacity:.5; }
+
+  /* The printed tag (always on white paper, so fixed colours) */
+  .tag { width:260px; max-width:100%; background:#1f4d36; padding:10px; border-radius:4px; color:#111; font-family: Arial, Helvetica, sans-serif; flex:none; }
+  .tag .logo { color:#fff; font:italic 700 16px Georgia, serif; text-align:center; margin-bottom:6px; }
+  .tag .paper { background:#fff; border-radius:2px; padding:8px 10px 10px; }
+  .tag .photo { height:110px; display:flex; align-items:center; justify-content:center; background:#f3f4f6; border-radius:2px; margin-bottom:6px; }
+  .tag .title { color:#1f4d36; font-weight:800; font-size:15px; margin-bottom:4px; }
+  .tag .desc { font-size:10.5px; line-height:1.35; color:#111; }
+  .tag .desc .g { color:#6b7280; }
+  .tag .lp { color:#1f7a4d; font-weight:600; font-size:13px; margin-top:8px; }
+  .tag .sp { color:#8b4513; display:flex; align-items:flex-end; gap:4px; margin-top:2px; }
+  .tag .sp .st { display:flex; flex-direction:column; font-weight:800; font-size:11px; line-height:1; padding-bottom:5px; }
+  .tag .sp .amt { font-weight:900; font-size:40px; line-height:1; }
+  .tag .lponly { color:#111; font-weight:800; font-size:30px; margin-top:8px; }
+  .tag .lponly small { font-size:12px; font-weight:700; margin-right:2px; }
+  .thumb { width:56px; height:56px; border:1px solid var(--line); border-radius:6px; background:#f3f4f6; padding:0; cursor:zoom-in; outline-offset:2px; }
+  .thumb:focus-visible { outline:2px solid var(--primary); }
+  .modal { background:var(--scrim); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px; max-width:640px; }
+  .modal .bar { display:flex; justify-content:space-between; align-items:center; color:#fff; font-size:13px; gap:8px; flex-wrap:wrap; }
+  .modal .bar .icons { display:flex; gap:6px; }
+  .modal .bar .icons span { border:1px solid rgba(255,255,255,.35); border-radius:6px; padding:2px 8px; font-size:12px; }
+  .modal .stage { background:#fff; border-radius:6px; display:flex; align-items:center; justify-content:center; padding:12px; }
+</style>
+</head>
+<body>
+<h1>Price tag combo format (v2)</h1>
+<p class="muted">Mock v2, 5 Nov 2026. Static. Applies the owner's answers: complete rich text editor with colour, formatting by hand, price type picked by hand, combo photo full size. Real case: combo SRTBF11416.</p>
+
+<!-- ============================================================ A1 -->
+<h2>A1. Combo description: the app's rich text editor, now with colour</h2>
+<div class="card">
+  <div class="muted" style="margin-bottom:10px">Product SRTBF11416 &rsaquo; Combos &rsaquo; Bathroom Furniture</div>
+  <div class="row">
+    <div class="grow">
+      <div class="row" style="gap:12px">
+        <div class="field" style="flex:1 1 140px"><span class="lbl">List price (RM)</span><div class="input">730.00</div></div>
+        <div class="field" style="flex:1 1 140px"><span class="lbl">Sell price (RM)</span><div class="input">459.00</div></div>
+      </div>
+      <div class="field">
+        <span class="lbl" id="d1l">Description</span>
+        <div class="tb" role="toolbar" aria-label="Formatting">
+          <button class="tbtn on" aria-label="Bold" title="Bold">B</button>
+          <button class="tbtn" aria-label="Italic" title="Italic"><i>I</i></button>
+          <button class="tbtn new" aria-label="Underline" title="Underline"><u>U</u></button>
+          <button class="tbtn" aria-label="Strikethrough" title="Strikethrough"><s>S</s></button>
+          <button class="tbtn" aria-label="Inline code" title="Inline code" style="font:600 11px ui-monospace, monospace">&lt;/&gt;</button>
+          <span class="sep"></span>
+          <button class="tbtn new on" aria-label="Text colour" title="Text colour">A<span class="bar" style="background:#6b7280"></span></button>
+          <button class="tbtn new" aria-label="Highlight" title="Highlight">&#9998;<span class="bar" style="background:#fde68a"></span></button>
+          <span class="sep"></span>
+          <button class="tbtn" aria-label="Heading 1" title="Heading 1" style="font-size:11px">H1</button>
+          <button class="tbtn" aria-label="Heading 2" title="Heading 2" style="font-size:11px">H2</button>
+          <button class="tbtn" aria-label="Heading 3" title="Heading 3" style="font-size:11px">H3</button>
+          <span class="sep"></span>
+          <button class="tbtn new" aria-label="Align left" title="Align left">&#8676;</button>
+          <button class="tbtn new" aria-label="Align centre" title="Align centre">&#8596;</button>
+          <button class="tbtn new" aria-label="Align right" title="Align right">&#8677;</button>
+          <span class="sep"></span>
+          <button class="tbtn" aria-label="Bullet list" title="Bullet list">&bull;</button>
+          <button class="tbtn" aria-label="Ordered list" title="Ordered list" style="font-size:11px">1.</button>
+          <button class="tbtn" aria-label="Blockquote" title="Blockquote">&ldquo;</button>
+          <button class="tbtn" aria-label="Add link" title="Add link">&#128279;</button>
+          <span class="sep"></span>
+          <button class="tbtn" aria-label="Undo" title="Undo">&#8630;</button>
+          <button class="tbtn" aria-label="Redo" title="Redo">&#8631;</button>
+        </div>
+        <div class="rte" role="textbox" aria-multiline="true" aria-labelledby="d1l">
+          <p><strong>SRTBF11416</strong> <span class="g">(CABINET)</span></p><p class="g">L400xW345xH390mm</p>
+          <p><strong>SRTWB248</strong> <span class="g">(BASIN)</span></p><p class="g">L430xW360xH150mm</p>
+          <p><strong>MIRROR</strong></p><p class="g">L400xH500mm</p>
+          <p><strong>SHELF</strong></p><p class="g">L400xH120mm</p>
+          <p><strong>SRTWT5837</strong></p><p class="g">(BASIN COLD TAP)</p>
+          <p><strong>SRTW2600</strong></p><p class="g">(POP UP WASTE)</p>
+        </div>
+        <div class="pop" role="dialog" aria-label="Text colour">
+          <div class="muted">Text colour</div>
+          <div class="sw">
+            <span style="background:#111111"></span><span style="background:#6b7280"></span><span style="background:#1f4d36"></span><span style="background:#1f7a4d"></span><span style="background:#8b4513"></span><span style="background:#dc2626"></span>
+          </div>
+          <div class="input" style="font-size:12px">#6B7280</div>
+          <div class="muted" style="margin-top:6px">Remove colour</div>
+        </div>
+      </div>
+      <div class="field"><span class="lbl">Free items</span><div class="input"></div></div>
+    </div>
+    <div>
+      <div class="muted" style="margin-bottom:6px">Bathroom Furniture SP (default SP)</div>
+      <div class="tag" aria-label="Tag preview">
+        <div class="logo">Sorento</div>
+        <div class="paper">
+          <div class="photo"><svg width="120" height="96" viewBox="0 0 120 96" role="img" aria-label="combo photo"><rect x="30" y="4" width="60" height="40" fill="#e5e7eb" stroke="#9ca3af"/><rect x="22" y="50" width="76" height="40" fill="#fff" stroke="#6b7280"/><rect x="26" y="58" width="68" height="6" fill="#d1d5db"/><rect x="40" y="70" width="40" height="14" fill="#f9fafb" stroke="#9ca3af"/></svg></div>
+          <div class="title">SRTBF11416</div>
+          <div class="desc">
+            <div><b>SRTBF11416</b> <span class="g">(CABINET)</span></div><div class="g">L400xW345xH390mm</div>
+            <div><b>SRTWB248</b> <span class="g">(BASIN)</span></div><div class="g">L430xW360xH150mm</div>
+            <div><b>MIRROR</b></div><div class="g">L400xH500mm</div>
+            <div><b>SHELF</b></div><div class="g">L400xH120mm</div>
+            <div><b>SRTWT5837</b></div><div class="g">(BASIN COLD TAP)</div>
+            <div><b>SRTW2600</b></div><div class="g">(POP UP WASTE)</div>
+          </div>
+          <div class="lp">LP: RM 730</div>
+          <div class="sp"><span class="st"><span>SP</span><span>RM</span></span><span class="amt">459</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="muted">The same editor as tickets, email templates and quotations; the buttons marked "new" appear on those screens too. Saved as cleaned HTML (formatting only). Canvas, request preview and PDF draw the same lines. Font and size come from the template.</p>
+</div>
+
+<!-- ============================================================ A5 -->
+<h2>A5. Every editor item, on the tag and in plain text</h2>
+<div class="card">
+  <div class="tablewrap"><table>
+    <thead><tr><th>Editor</th><th>On the tag (canvas, preview, PDF)</th><th>Plain-text readers (spec sheet, chatbot, exports)</th></tr></thead>
+    <tbody>
+      <tr><td><b>Bold</b>, <i>Italic</i>, <u>Underline</u>, <s>Strike</s></td><td>As marked</td><td>Text only</td></tr>
+      <tr><td><span style="color:#dc2626">Colour</span>, <span style="background:#fde68a;color:#111">Highlight</span></td><td>As marked</td><td>Text only</td></tr>
+      <tr><td><code>Inline code</code></td><td>Monospace</td><td>Text only</td></tr>
+      <tr><td>Heading 1 / 2 / 3</td><td>Bold, 1.4x / 1.2x / 1.1x the layer size</td><td>Own line</td></tr>
+      <tr><td>Align left / centre / right</td><td>Per paragraph (unset = layer)</td><td>Ignored</td></tr>
+      <tr><td>Bullet / numbered list</td><td>&bull; or 1. with hanging indent</td><td>"&bull; " / "1. " per item</td></tr>
+      <tr><td>Blockquote</td><td>Indented</td><td>Own line</td></tr>
+      <tr><td>Link</td><td>Its text</td><td>Text only</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<!-- ============================================================ B1 -->
+<h2>B1. Template settings: Price type, picked by hand</h2>
+<div class="card" style="max-width:480px">
+  <div class="field"><span class="lbl">Name</span><div class="input">Bathroom Furniture SP</div></div>
+  <div class="field"><span class="lbl">Family</span><div class="input">Combo</div></div>
+  <div class="field"><span class="lbl">Price type</span>
+    <div class="seg" role="group" aria-label="Price type"><span class="off">LP</span><span class="on">SP</span><span class="off">LP &amp; SP</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ B2 -->
+<h2>B2. Template list on release day: existing templates start unset</h2>
+<div class="card">
+  <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap"><div class="input" style="flex:1 1 200px">Search templates</div><div class="input">Price type: Not set &times;</div></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Name</th><th>Family</th><th>Price type</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Bathroom Furniture SP</td><td>Combo</td><td><span class="pill warn">Set price type</span></td><td>Published</td></tr>
+      <tr><td>Small Price Tag LP</td><td>A la carte</td><td><span class="pill warn">Set price type</span></td><td>Published</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">An unset template is offered on LP and SP lines, as today, until its price type is set.</p>
+</div>
+
+<!-- ============================================================ B3 -->
+<h2>B3. Combo: price tag templates, one default LP and one default SP</h2>
+<div class="card">
+  <span class="lbl">Price tag templates</span>
+  <div class="input" style="display:flex;flex-wrap:wrap;align-items:center">
+    <span class="chip"><span class="t sp">SP</span>Bathroom Furniture SP <span class="star">&#9733; default SP</span></span>
+    <span class="chip"><span class="t lp">LP</span>Small Price Tag LP <span class="star">&#9733; default LP</span></span>
+    <span class="chip"><span class="t lp">LP</span>Bathroom Furniture LP</span>
+    <span class="muted" style="margin-left:4px">Search templates</span>
+  </div>
+</div>
+
+<!-- ============================================================ B4 -->
+<h2>B4. Request lines: template list follows LP / SP</h2>
+<div class="card">
+  <div class="tablewrap"><table>
+    <thead><tr><th>Item</th><th>Price</th><th>Template</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="pill info">Combo</span><div class="code">SRTBF11416</div><div class="muted">Bathroom Furniture</div></td>
+        <td><div class="seg"><span class="off">LP</span><span class="on">SP</span></div><div class="muted">SP RM 459</div></td>
+        <td><div class="input">Bathroom Furniture SP</div><div class="muted">Offered: SP, LP &amp; SP, not set</div></td>
+        <td><button class="btn" aria-label="Preview tag">&#128065;</button></td>
+      </tr>
+      <tr>
+        <td><span class="pill info">Combo</span><div class="code">SRTBF11416</div><div class="muted">Bathroom Furniture</div></td>
+        <td><div class="seg"><span class="on">LP</span><span class="off">SP</span></div><div class="muted">LP RM 730</div></td>
+        <td><div class="input">Small Price Tag LP</div><div class="muted">Offered: LP, LP &amp; SP, not set</div></td>
+        <td><button class="btn" aria-label="Preview tag">&#128065;</button></td>
+      </tr>
+      <tr>
+        <td><span class="pill info">Combo</span><div class="code">SRTBF11829 + SRTMCB8083-BL</div></td>
+        <td><div class="seg"><span class="off">LP</span><span class="on">SP</span></div><div class="muted">SP RM 2,099</div></td>
+        <td><span class="pill err">No SP template linked</span></td>
+        <td><button class="btn" aria-label="Preview tag" disabled>&#128065;</button></td>
+      </tr>
+    </tbody>
+  </table></div>
+  <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+    <button class="btn primary" disabled>Submit</button>
+    <span class="muted">SRTBF11829 + SRTMCB8083-BL: No SP template linked</span>
+  </div>
+  <div style="margin-top:16px">
+    <div class="muted" style="margin-bottom:6px">Line 2 tag (LP template): no SP block, no LP/SP word</div>
+    <div class="tag">
+      <div class="logo">Sorento</div>
+      <div class="paper">
+        <div class="title">SRTBF11416</div>
+        <div class="desc"><div><b>SRTBF11416</b> <span class="g">(CABINET)</span></div><div class="g">L400xW345xH390mm</div><div><b>SRTWB248</b> <span class="g">(BASIN) ...</span></div></div>
+        <div class="lponly"><small>RM</small>730</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ C -->
+<h2>C. Combo photo: click to see it full size</h2>
+<div class="card">
+  <div class="muted" style="margin-bottom:10px">Product SRTBF11829 &rsaquo; Combos &rsaquo; SRTBF11829 + SRTMCB8083-BL</div>
+  <div class="row" style="align-items:center;gap:10px">
+    <button class="thumb" aria-label="Preview photo of SRTBF11829 + SRTMCB8083-BL" title="Preview photo"><svg width="54" height="54" viewBox="0 0 120 96" aria-hidden="true"><rect x="10" y="8" width="44" height="56" fill="#e5e7eb" stroke="#6b7280"/><rect x="60" y="40" width="54" height="44" fill="#fff" stroke="#6b7280"/></svg></button>
+    <button class="btn">Replace</button>
+    <button class="btn">Clear</button>
+  </div>
+  <div style="margin-top:16px" class="modal" role="dialog" aria-label="SRTBF11829 + SRTMCB8083-BL photo">
+    <div class="bar"><span>SRTBF11829 + SRTMCB8083-BL</span><span class="icons"><span>&minus;</span><span>100%</span><span>+</span><span>Download</span><span aria-label="Close">&times;</span></span></div>
+    <div class="stage"><svg width="100%" style="max-width:520px" viewBox="0 0 120 96" role="img" aria-label="combo photo, full size"><rect x="10" y="8" width="44" height="56" fill="#e5e7eb" stroke="#6b7280"/><rect x="14" y="12" width="36" height="48" fill="#f9fafb" stroke="#9ca3af"/><rect x="60" y="40" width="54" height="44" fill="#fff" stroke="#6b7280"/><rect x="64" y="48" width="46" height="6" fill="#d1d5db"/><rect x="74" y="60" width="26" height="14" fill="#f9fafb" stroke="#9ca3af"/></svg></div>
+  </div>
+  <p class="muted">The app's existing image preview (zoom, download), the same one used for photos on price tag requests. Escape closes it. The tag designer is unchanged.</p>
+</div>
+</body>
+</html>

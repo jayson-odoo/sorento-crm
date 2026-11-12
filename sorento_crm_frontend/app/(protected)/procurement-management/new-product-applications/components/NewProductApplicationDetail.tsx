@@ -1,12 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Download, Link2, Trash2, XCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RejectOutlineButton } from '@/components/common/RejectOutlineButton';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
@@ -25,10 +27,19 @@ import AuditTrail from '@/components/audit/AuditTrail';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
+import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLATrackingTab';
+import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
+import NewProductApplicationPurchasingDialog from './NewProductApplicationPurchasingDialog';
+import { InquiryReadValue } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
-import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -36,7 +47,6 @@ import { useRequestScope } from '@/hooks/useRequestScope';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { numberFieldError } from '@/lib/number-field';
 import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
 import { stateFromDetail } from '@/lib/new-product-application-form';
 import { codeWithName } from '@/lib/product-display';
@@ -44,25 +54,20 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import type {
   NewProductApplicationDetail as Detail,
   NewProductApplicationLine as Line,
-  NewProductApplicationProductHit,
 } from '@/types/newProductApplication';
 import {
   newProductApplicationsPagerQuery,
   useNewProductApplicationMutations,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import {
-  downloadNewProductApplicationExcel,
-  searchNewProductApplicationProducts,
-} from '../services/newProductApplicationService';
+import { exportNewProductApplicationXlsx } from '../services/newProductApplicationService';
 
-// The sheet is read-only here, so no brand is ever searched.
-const NO_BRANDS = async () => [];
+// The sheet is read-only here, so no brand or product is ever searched.
+const NO_PRODUCTS = async () => [];
+
+const DETAIL_TABS = ['details', 'stock_inquiry', 'sla'] as const;
 
 const BASE_PATH = '/procurement-management/new-product-applications';
-
-const LOCK_SENTENCE =
-  'Locked: Revise to change it; it goes back to Draft and needs approval again.';
 
 const day = (value: string | null | undefined) =>
   value ? formatDateInMalaysia(value) : '';
@@ -73,6 +78,7 @@ function ReasonDialog({
   label,
   description,
   confirmLabel,
+  destructive,
   required,
   busy,
   onCancel,
@@ -82,6 +88,8 @@ function ReasonDialog({
   label: string;
   description?: string;
   confirmLabel: string;
+  /** A destructive confirm (a reject), red like the stock inquiry's. */
+  destructive?: boolean;
   required: boolean;
   busy: boolean;
   onCancel: () => void;
@@ -112,6 +120,7 @@ function ReasonDialog({
             Back
           </Button>
           <Button
+            variant={destructive ? 'destructive' : undefined}
             disabled={!ready || busy}
             onClick={() => onConfirm(value.trim())}
           >
@@ -127,53 +136,25 @@ type Asking =
   | { kind: 'reject' }
   | { kind: 'revise' }
   | { kind: 'cancel' }
-  | { kind: 'close'; lineId: string };
+  | { kind: 'purchasingReject' };
 
-/** The "Opened as" cell: the outcome of a line, or the two purchasing buttons. */
-function OpenedAs({
-  line,
-  applicationStatus,
-  canOpen,
-  busy,
-  onLink,
-  onClose,
-  onUndo,
-}: {
-  line: Line;
-  applicationStatus: Detail['status'];
-  canOpen: boolean;
-  busy: boolean;
-  onLink: (lineId: string, productId: string) => void;
-  onClose: (lineId: string) => void;
-  onUndo: (lineId: string) => void;
-}) {
-  const [searching, setSearching] = useState(false);
-  // The search text the server last answered with nothing for; the empty message names it.
-  const [missed, setMissed] = useState('');
+/** The NEW PRODUCT CODE row, read-only: the product (with what AutoCount knows), the typed code, the reason, or the waiting line. */
+function NewCodeResult({ application: r }: { application: Detail }) {
+  const facts = r.new_product_facts;
+  const fromAutoCount = [
+    facts?.opened_category_name,
+    facts?.opened_base_uom_name,
+    facts?.opened_list_price == null ? null : `MYR ${facts.opened_list_price}`,
+    facts?.opened_supplier_name,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  const who = [r.new_code_by_name, day(r.new_code_at)]
+    .filter(Boolean)
+    .join(', ');
 
-  const fetchProducts = async (q: string) => {
-    if (!q.trim()) return [];
-    const hits = await searchNewProductApplicationProducts(q);
-    setMissed(hits.length === 0 ? q.trim() : '');
-    return hits;
-  };
-
-  const undo = canOpen &&
-    ['approved', 'completed'].includes(applicationStatus) && (
-      <button
-        type="button"
-        className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
-        disabled={busy}
-        onClick={() => onUndo(line.id)}
-      >
-        Undo
-      </button>
-    );
-
-  if (line.opened_product_id) {
-    const who = [line.resolved_by_name, day(line.resolved_at)]
-      .filter(Boolean)
-      .join(', ');
+  if (r.new_product_id) {
+    const label = codeWithName(r.new_product_code, r.new_product_name);
     return (
       <div className="min-w-0 space-y-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -183,100 +164,28 @@ function OpenedAs({
             Opened
           </span>
           <Link
-            href={`/master-data-management/products/${line.opened_product_id}`}
+            href={`/master-data-management/products/${r.new_product_id}`}
             className="truncate font-medium text-primary hover:underline"
-            title={codeWithName(
-              line.opened_product_code,
-              line.opened_product_name,
-            )}
+            title={label}
           >
-            {codeWithName(line.opened_product_code, line.opened_product_name)}
+            {label}
           </Link>
-          {line.opened_product_active === false && (
+          {r.new_product_active === false && (
             <Badge variant="secondary">Inactive</Badge>
           )}
         </div>
+        {who && <p className="text-xs text-muted-foreground">{who}</p>}
         <p className="text-xs text-muted-foreground">
-          {who} {undo}
+          From AutoCount: {fromAutoCount || '-'}
         </p>
       </div>
     );
   }
-
-  if (line.closed_reason) {
-    const who = [line.resolved_by_name, day(line.resolved_at)]
-      .filter(Boolean)
-      .join(', ');
-    return (
-      <div className="min-w-0 space-y-0.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span
-            className={`${STATUS_PILL_BASE} ${statusPillClass('cancelled')}`}
-          >
-            Not opening
-          </span>
-          <span className="truncate" title={line.closed_reason}>
-            {line.closed_reason}
-          </span>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {who} {undo}
-        </p>
-      </div>
-    );
-  }
-
-  if (!canOpen || applicationStatus !== 'approved') {
-    return <span className="text-muted-foreground">-</span>;
-  }
-
   return (
-    <div className="min-w-0 space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        <Button
-          size="sm"
-          variant={searching ? 'outline' : 'primary'}
-          disabled={busy}
-          onClick={() => setSearching((on) => !on)}
-        >
-          Link product
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onClick={() => onClose(line.id)}
-        >
-          Not opening
-        </Button>
-      </div>
-      {searching && (
-        <>
-          <AsyncCombobox<NewProductApplicationProductHit>
-            ariaLabel={`Product for line ${line.line_no}`}
-            value=""
-            allowFreeText={false}
-            fetchOptions={fetchProducts}
-            optionValue={(o) => o.id}
-            optionLabel={(o) => codeWithName(o.product_code, o.product_name)}
-            optionMeta={(o) => o.brand_name ?? ''}
-            placeholder="Search product code"
-            onChange={(v, item) => {
-              if (!item) return;
-              setMissed('');
-              setSearching(false);
-              onLink(line.id, v);
-            }}
-          />
-          {missed && (
-            <p className="text-sm text-muted-foreground">
-              {missed} is not in the product list yet. It appears after
-              AutoCount sends it.
-            </p>
-          )}
-        </>
-      )}
-    </div>
+    <NewProductApplicationNewCodeValue
+      code={r.new_code_text ?? r.new_product_code}
+      closedReason={r.new_code_closed_reason}
+    />
   );
 }
 
@@ -313,17 +222,9 @@ function StaffNewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
-  const {
-    submit,
-    approve,
-    reject,
-    revise,
-    cancel,
-    link,
-    close,
-    undo,
-    feedback,
-  } = useNewProductApplicationMutations();
+  const queryClient = useQueryClient();
+  const { submit, approve, reject, revise, cancel, undo, purchasingReject } =
+    useNewProductApplicationMutations();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
   );
@@ -337,13 +238,19 @@ function StaffNewProductApplicationDetail({
   const canViewRecord = useHasPermission(
     'procurement.new_product_applications.view',
   );
+  // NPA-FORM-SLA: the SLA tab and the handling lock read the form SLA trackers, which the NPA's
+  // view-all slugs admit (api/v1/sla/sla_tracking.py SOURCE_TYPE_READERS), as on the SI.
+  const canSeeSla = canViewRecord || canApprove || canOpen;
+  const handlingLock = useHandlingLock({
+    sourceEntityType: 'new_product_application',
+    sourceEntityId: canSeeSla ? applicationId : null,
+    entityKey: application?.updated_at,
+    enabled: canSeeSla,
+  });
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
-  // Purchasing's edits to LEADTIME and COST before Save feedback; null shows the saved values.
-  const [draft, setDraft] = useState<{
-    lead_time: string;
-    costs: Record<string, string>;
-  } | null>(null);
+  const [tab, setTab] = useUrlTab({ tabs: DETAIL_TABS, defaultTab: 'details' });
+  const [purchasingOpen, setPurchasingOpen] = useState(false);
   const savedState = useMemo(
     () => (application ? stateFromDetail(application) : null),
     [application],
@@ -369,9 +276,14 @@ function StaffNewProductApplicationDetail({
     reject.isPending ||
     revise.isPending ||
     cancel.isPending ||
-    link.isPending ||
-    close.isPending ||
-    undo.isPending;
+    undo.isPending ||
+    purchasingReject.isPending;
+  // The approver's and purchasing's buttons, gated by the handling lock like the SI's.
+  const stageLocked = !handlingLock.businessCtasEnabled;
+  const workBusy = busy || stageLocked;
+  const lockedTitle = stageLocked
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
+    : undefined;
 
   if (isLoading) {
     return (
@@ -395,71 +307,36 @@ function StaffNewProductApplicationDetail({
   const isOwner = Boolean(userId) && r.applicant_id === userId;
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
-  const locked = isAwaitingReview(r.status) || r.status === 'approved';
-  const anyResolved = r.lines.some(isResolved);
+  // Purchasing works it while Approved, and after Update & Reply, Responded (as the SI).
+  const withPurchasing = r.status === 'approved' || r.status === 'responded';
+  const locked = isAwaitingReview(r.status) || withPurchasing;
+  const anyResolved =
+    Boolean(r.new_product_id || r.new_code_closed_reason) ||
+    r.lines.some(isResolved);
   const canRevise = locked && !anyResolved && (ownerActs || canApprove);
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
+  // An older application closed as Not opening reads Rejected, pill included (backend flag).
+  const pillStatus = r.display_status ?? r.status;
   const stamp = r.submitted_at ?? r.created_at;
-  const canFeedback =
-    canOpen && (r.status === 'approved' || r.status === 'completed');
-  const sheetState = savedState && {
-    ...savedState,
-    ...(draft
-      ? {
-          lead_time: draft.lead_time,
-          lines: savedState.lines.map((l) => ({
-            ...l,
-            cost_price: draft.costs[l.id ?? ''] ?? l.cost_price,
-          })),
-        }
-      : {}),
-  };
+  const canAnswer =
+    canOpen && (withPurchasing || r.status === 'completed');
+  const sheetState = savedState;
 
-  const saveFeedback = async () => {
-    if (!sheetState) return;
-    if (
-      sheetState.lines.some((l) =>
-        numberFieldError(l.cost_price, { min: 0, optional: true }),
-      )
-    ) {
-      toast.error('Cost must be 0 or more.');
-      return;
-    }
-    try {
-      await feedback.mutateAsync({
-        id: r.id,
-        data: {
-          lead_time: sheetState.lead_time.trim() || null,
-          lines: sheetState.lines.map((l) => ({
-            id: l.id as string,
-            cost_price: l.cost_price.trim() || null,
-          })),
-        },
-      });
-      setDraft(null);
-    } catch {
-      // the mutation's own onError toast names the refusal
-    }
-  };
-
+  // Through My Downloads, the stock inquiry PDF's way (owner 9 Nov): the list's Print Count counts it.
   const downloadExcel = async () => {
     try {
-      await downloadNewProductApplicationExcel(r.id);
+      await exportNewProductApplicationXlsx(r.id);
+      void queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      void queryClient.invalidateQueries({
+        queryKey: ['entity-downloads', 'new_product_application', r.id],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['new-product-applications'] });
+      toast.success('Preparing the workbook… it will appear in My Downloads.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to download');
+      toast.error(e instanceof Error ? e.message : 'Failed to start the download');
     }
   };
-
-  const fromAutoCount = (l: Line) =>
-    [
-      l.opened_category_name,
-      l.opened_base_uom_name,
-      l.opened_list_price == null ? null : `MYR ${l.opened_list_price}`,
-      l.opened_supplier_name,
-    ]
-      .filter(Boolean)
-      .join(', ');
 
   const confirmAsk = async (value: string) => {
     if (!asking) return;
@@ -468,14 +345,9 @@ function StaffNewProductApplicationDetail({
         await reject.mutateAsync({ id: r.id, reason: value });
       else if (asking.kind === 'revise')
         await revise.mutateAsync({ id: r.id, reason: value });
-      else if (asking.kind === 'cancel')
-        await cancel.mutateAsync({ id: r.id, reason: value || undefined });
-      else
-        await close.mutateAsync({
-          id: r.id,
-          lineId: asking.lineId,
-          reason: value,
-        });
+      else if (asking.kind === 'purchasingReject')
+        await purchasingReject.mutateAsync({ id: r.id, reason: value });
+      else await cancel.mutateAsync({ id: r.id, reason: value || undefined });
       setAsking(null);
     } catch {
       // the mutation's own onError toast names the refusal
@@ -511,7 +383,18 @@ function StaffNewProductApplicationDetail({
             required
           />
         );
-      case 'cancel':
+      case 'purchasingReject':
+        return (
+          <ReasonDialog
+            {...common}
+            title="Reject new product application"
+            label="Rejection reason"
+            confirmLabel="Reject"
+            destructive
+            required
+          />
+        );
+      default:
         return (
           <ReasonDialog
             {...common}
@@ -519,16 +402,6 @@ function StaffNewProductApplicationDetail({
             label="Reason (optional)"
             confirmLabel="Cancel application"
             required={false}
-          />
-        );
-      default:
-        return (
-          <ReasonDialog
-            {...common}
-            title="Not opening"
-            label="Reason"
-            confirmLabel="Not opening"
-            required
           />
         );
     }
@@ -546,13 +419,10 @@ function StaffNewProductApplicationDetail({
             {stamp ? formatDateInMalaysia(stamp) : '-'}
             {' · '}
             <span
-              className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}
+              className={`${STATUS_PILL_BASE} ${statusPillClass(pillStatus)}`}
             >
               {r.status_label}
             </span>
-            {' · '}
-            {r.lines_done} of {r.lines_total}{' '}
-            {r.lines_total === 1 ? 'line' : 'lines'} done
           </p>
         </div>
         <DetailActions
@@ -600,6 +470,10 @@ function StaffNewProductApplicationDetail({
                   Delete draft
                 </DropdownMenuItem>
               )}
+              <HandlingLockReleaseMenuItem
+                state={handlingLock.state}
+                onRelease={handlingLock.release}
+              />
             </DetailActionsMenu>
           }
           primary={
@@ -611,13 +485,18 @@ function StaffNewProductApplicationDetail({
               )}
               {isAwaitingReview(r.status) && canApprove && (
                 <>
-                  <Button disabled={busy} onClick={() => approve.mutate(r.id)}>
+                  <Button
+                    disabled={workBusy}
+                    title={lockedTitle}
+                    onClick={() => approve.mutate(r.id)}
+                  >
                     Approve
                   </Button>
                   <Button
                     variant="outline"
                     className="border-destructive text-destructive hover:bg-destructive/10"
-                    disabled={busy}
+                    disabled={workBusy}
+                    title={lockedTitle}
                     onClick={() => setAsking({ kind: 'reject' })}
                   >
                     Reject
@@ -638,19 +517,27 @@ function StaffNewProductApplicationDetail({
                   <Link href={`${BASE_PATH}/${r.id}/edit`}>Edit</Link>
                 </Button>
               )}
+              {canAnswer && (
+                <Button
+                  disabled={workBusy}
+                  title={lockedTitle}
+                  onClick={() => setPurchasingOpen(true)}
+                >
+                  Edit purchasing response
+                </Button>
+              )}
+              {canAnswer && withPurchasing && (
+                <RejectOutlineButton
+                  disabled={workBusy}
+                  title={lockedTitle}
+                  onClick={() => setAsking({ kind: 'purchasingReject' })}
+                />
+              )}
             </div>
           }
         />
       </div>
 
-      {locked && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {r.status === 'approved'
-            ? `Approved${r.decided_by_name ? ` by ${r.decided_by_name}` : ''}${r.decided_at ? ` on ${day(r.decided_at)}` : ''}. `
-            : 'Waiting for approval. '}
-          {LOCK_SENTENCE}
-        </div>
-      )}
       {r.status === 'rejected' && (
         <RejectionReasonBanner
           reason={r.reject_reason}
@@ -659,139 +546,145 @@ function StaffNewProductApplicationDetail({
         />
       )}
 
-      <Card className="border-2 shadow-sm">
-        <CardContent className="px-5 pb-8 pt-6 sm:px-10">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">New Product Application</Badge>
-            <span
-              className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}
-            >
-              {r.status_label}
-            </span>
-          </div>
-          {(r.revise_reason || r.cancel_reason) && (
-            <div className="mb-4 space-y-1 text-sm [&_p]:break-words">
-              {r.revise_reason && (
-                <p>
-                  <span className="text-muted-foreground">
-                    Revised because:{' '}
-                  </span>
-                  {r.revise_reason}
-                </p>
-              )}
-              {r.cancel_reason && (
-                <p>
-                  <span className="text-muted-foreground">Cancel reason: </span>
-                  {r.cancel_reason}
-                </p>
-              )}
-            </div>
-          )}
-          {sheetState && (
-            <>
-              <NewProductApplicationHeader
-                value={sheetState}
-                onChange={(next) =>
-                  setDraft((prev) => ({
-                    lead_time: next.lead_time,
-                    costs: prev?.costs ?? {},
-                  }))
-                }
-                readOnly
-                applicationNo={r.application_no}
-                createdAt={r.created_at}
-                salesPerson={r.applicant_name}
-                feedback={{
-                  editable: canFeedback,
-                  onSave: () => void saveFeedback(),
-                  saving: feedback.isPending,
-                }}
-                stockInquiryField={
-                  r.stock_inquiry_id && r.stock_inquiry_number ? (
-                    <Link
-                      href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
-                      className="text-primary hover:underline"
-                    >
-                      {r.stock_inquiry_number}
-                    </Link>
-                  ) : (
-                    'None'
-                  )
-                }
-                customerField={
-                  <span className="flex flex-wrap items-center gap-2">
-                    {[r.customer_code, r.customer_name]
-                      .filter(Boolean)
-                      .join(' - ') || 'None'}
-                    {!r.customer_code && r.customer_name && (
-                      <Badge variant="secondary">No debtor code</Badge>
-                    )}
-                  </span>
-                }
-              />
-              <div className="mt-6">
-                <NewProductApplicationLines
-                  lines={sheetState.lines}
-                  onChange={(next) =>
-                    setDraft((prev) => ({
-                      lead_time: prev?.lead_time ?? sheetState.lead_time,
-                      costs: Object.fromEntries(
-                        next.map((l) => [l.id ?? '', l.cost_price]),
-                      ),
-                    }))
-                  }
-                  brands={NO_BRANDS}
-                  readOnly
-                  showCost
-                  costEditable={canFeedback}
-                  renderOpenedAs={(draftLine) => {
-                    const l = r.lines.find((x) => x.id === draftLine.id);
-                    if (!l) return null;
-                    return (
-                      <div className="min-w-0 space-y-1.5">
-                        <OpenedAs
-                          line={l}
-                          applicationStatus={r.status}
-                          canOpen={canOpen}
-                          busy={busy}
-                          onLink={(lineId, productId) =>
-                            link.mutate({ id: r.id, lineId, productId })
-                          }
-                          onClose={(lineId) =>
-                            setAsking({ kind: 'close', lineId })
-                          }
-                          onUndo={(lineId) => undo.mutate({ id: r.id, lineId })}
-                        />
-                        {l.opened_product_id && (
-                          <p className="text-xs text-muted-foreground">
-                            From AutoCount: {fromAutoCount(l) || '-'}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  }}
-                />
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <NewProductApplicationAttachments
-        applicationId={r.id}
-        attachments={r.attachments ?? []}
-        editable={ownerActs && editable && r.source !== 'portal'}
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
       />
 
-      {canViewRecord && (
-        <AuditTrail
-          entityType="new_product_application"
-          entityId={applicationId}
-          title="Audit Trail"
-        />
-      )}
+      {/* The SI's way (FormDetailWithSLATabs): every tab body lives in its TabsContent INSIDE the
+          Tabs, so the SLA tab mounts in its own panel (crew pass 9 Nov: a body rendered outside the
+          Tabs froze the page when the SLA tab was clicked). */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
+          {canSeeSla && <TabsTrigger value="sla">SLA Tracking</TabsTrigger>}
+        </TabsList>
+        <TabsContent value="details" className="mt-6 space-y-6">
+          <Card className="border-2 shadow-sm">
+            <CardContent className="px-5 pb-8 pt-6 sm:px-10">
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">New Product Application</Badge>
+                <span
+                  className={`${STATUS_PILL_BASE} ${statusPillClass(pillStatus)}`}
+                >
+                  {r.status_label}
+                </span>
+              </div>
+              {(r.revise_reason || r.cancel_reason) && (
+                <div className="mb-4 space-y-1 text-sm [&_p]:break-words">
+                  {r.revise_reason && (
+                    <p>
+                      <span className="text-muted-foreground">
+                        Revised because:{' '}
+                      </span>
+                      {r.revise_reason}
+                    </p>
+                  )}
+                  {r.cancel_reason && (
+                    <p>
+                      <span className="text-muted-foreground">
+                        Cancel reason:{' '}
+                      </span>
+                      {r.cancel_reason}
+                    </p>
+                  )}
+                </div>
+              )}
+              {sheetState && (
+                <>
+                  <NewProductApplicationHeader
+                    value={sheetState}
+                    onChange={() => {}}
+                    readOnly
+                    applicationNo={r.application_no}
+                    createdAt={r.created_at}
+                    salesPerson={r.applicant_name}
+                    stockInquiryField={
+                      r.stock_inquiry_id && r.stock_inquiry_number ? (
+                        <Link
+                          href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {r.stock_inquiry_number}
+                        </Link>
+                      ) : (
+                        'None'
+                      )
+                    }
+                    productCodesField={
+                      <NewProductApplicationProductCodes
+                        value={sheetState}
+                        onChange={() => {}}
+                        products={NO_PRODUCTS}
+                        readOnly
+                      />
+                    }
+                    newCodeField={<NewCodeResult application={r} />}
+                    purchasingResponseField={
+                      <InquiryReadValue>
+                        {r.purchasing_response}
+                      </InquiryReadValue>
+                    }
+                    costField={
+                      <InquiryReadValue>
+                        {r.cost_price == null || r.cost_price === ''
+                          ? ''
+                          : `MYR ${r.cost_price}`}
+                      </InquiryReadValue>
+                    }
+                    customerField={
+                      <span className="flex flex-wrap items-center gap-2">
+                        {[r.customer_code, r.customer_name]
+                          .filter(Boolean)
+                          .join(' - ') || 'None'}
+                      </span>
+                    }
+                  />
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <NewProductApplicationAttachments
+            applicationId={r.id}
+            attachments={r.attachments ?? []}
+            editable={ownerActs && editable && r.source !== 'portal'}
+          />
+
+          {canViewRecord && (
+            <AuditTrail
+              entityType="new_product_application"
+              entityId={applicationId}
+              title="Audit Trail"
+            />
+          )}
+        </TabsContent>
+        <TabsContent value="stock_inquiry" className="mt-6">
+          <NewProductApplicationStockInquiry
+            inquiry={r.stock_inquiry}
+            href={(id) => `/procurement-management/stock-inquiries/${id}`}
+          />
+        </TabsContent>
+        {canSeeSla && (
+          <TabsContent value="sla" className="mt-6">
+            <FormSLATrackingTab
+              sourceEntityType="new_product_application"
+              sourceEntityId={r.id}
+            />
+          </TabsContent>
+        )}
+      </Tabs>
 
       {dialog}
+      {purchasingOpen && (
+        <NewProductApplicationPurchasingDialog
+          application={r}
+          onClose={() => setPurchasingOpen(false)}
+        />
+      )}
     </div>
   );
 }

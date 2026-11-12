@@ -20,6 +20,7 @@ The response shape matches exactly what the Activity Timeline UI consumes
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_maybe_date
 from dataclasses import dataclass
 from datetime import datetime, timedelta, date
 from typing import Any, Optional
@@ -195,7 +196,8 @@ def _summary(action: str, description: Optional[str], changes: list[dict]) -> Op
     if changes:
         c = changes[0]
         extra = f" (+{len(changes) - 1} more)" if len(changes) > 1 else ""
-        return f"{c['field']}: {c['from'] or '-'} → {c['to'] or '-'}{extra}"
+        before, after = fmt_maybe_date(c["from"]) or "-", fmt_maybe_date(c["to"]) or "-"
+        return f"{c['field']}: {before} → {after}{extra}"
     return None
 
 
@@ -444,6 +446,10 @@ def get_activity_feed(
         .all()
     )
 
+    from app.services.dealer_kit.asset_service import redact_foreign_icon_ids
+
+    # Same as the History read: another company's icon ids never reach the feed.
+    redact_foreign_icon_ids(db, rows)
     labels = _resolve_labels(db, rows)
     actor_ids = list(
         {str(r.user_id) for r in rows if r.user_id}

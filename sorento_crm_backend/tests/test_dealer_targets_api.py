@@ -2,7 +2,7 @@
 UAC D2). Plan: documentation/plans/sales/PLAN-dealer-sales-targets-15oct.md.
 
 A dealer is a third subject on `sales.targets`: it counts a list of accounts (`customer_ids`,
-any agent) and pays to `payout_customer_id`. Every subject can use thresholds in % / RM /
+any agent) and pays each account its own share (lane TARGET-PER-ACCOUNT-PAYOUT). Every subject can use thresholds in % / RM /
 points, tiers per period, stacking "+ Additional" lines and rounding to sen or ringgit.
 
 Seeds and fixtures are the S1 file's (`test_sales_targets_s1.py`); today is 20 Oct 2026.
@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+
+import pytest
 
 from .test_sales_targets_s1 import (  # noqa: F401  (fixtures)
     BASE,
@@ -96,7 +98,7 @@ def test_create_dealer_target(api):
     group = _group(db, company_id)
     a1 = _customer(db, company_id, "ZZT DEALER A", level=1, group_id=group.id)
     a3 = _customer(db, company_id, "ZZT DEALER A III", level=3, group_id=group.id)
-    res = client.post(BASE, json=_dealer_body([a1, a3], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
         {"period_start": "2026-04-01", "threshold": 200000, "account_rates": [{"customer_id": a1.id, "rate": 2}]},
         {"period_start": "2026-04-01", "threshold": 250000, "account_rates": [{"customer_id": a1.id, "rate": 3}]},
     ]))
@@ -107,26 +109,25 @@ def test_create_dealer_target(api):
     assert body["subject_label"] == "ZZT Dealer A Sdn Bhd"
     assert [a["label"] for a in body["accounts"]] == ["A/C I", "A/C III"]
     assert [a["code"] for a in body["accounts"]] == [a1.customer_code, a3.customer_code]
-    assert body["payout_account"]["code"] == a1.customer_code
+    assert "payout_account" not in body
     assert body["threshold_unit"] == "amount"
     assert body["rounding"] == "sen"
     assert body["tiers_per_period"] is True
     assert len(body["periods"]) == 4
     q2 = [t for t in body["tiers"] if t["period_start"] == "2026-04-01"]
     assert [t["threshold"] for t in q2] == [200000, 250000]
-    assert q2[1]["account_rates"] == [{"customer_id": a1.id, "rate": 3}]
+    assert q2[1]["account_rates"] == [{"customer_id": a1.id, "rate": 3, "bonus_amount": None}]
     # A period's figure, when no target figure is typed: its lowest main threshold.
     assert _period(body, "2026-04-01")["target_value"] == 200000
 
 
-def test_dealer_payout_defaults_to_first_account_and_label_falls_back_to_name(api):
+def test_dealer_label_falls_back_to_name(api):
     client, db, company_id = api
     c = _customer(db, company_id, "ZZT CERAMIC")
     d = _customer(db, company_id, "ZZT IBORN")
     res = client.post(BASE, json=_dealer_body([c, d]))
     assert res.status_code == 201, res.text
     body = res.json()
-    assert body["payout_account"]["code"] == c.customer_code
     assert body["subject_label"] == "ZZT CERAMIC"
     assert [a["label"] for a in body["accounts"]] == ["ZZT CERAMIC", "ZZT IBORN"]
 
@@ -149,7 +150,7 @@ def test_dealer_achievement_counts_listed_accounts_only_any_agent(api):
     _sale(db, company_id, other, 999999, date(2026, 5, 3), product_id=pid)               # not counted
     _sale(db, company_id, a3, 55555, date(2026, 5, 3), product_id=pid, status="cancelled")  # cancelled
     _sale(db, company_id, a1, 44444, date(2026, 7, 1), product_id=pid)                   # Q3
-    res = client.post(BASE, json=_dealer_body([a1, a3], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
         {"period_start": "2026-04-01", "threshold": 200000, "account_rates": [{"customer_id": a1.id, "rate": 2}]},
         {"period_start": "2026-04-01", "threshold": 250000, "account_rates": [{"customer_id": a1.id, "rate": 3}]},
     ]))
@@ -165,23 +166,23 @@ def test_dealer_achievement_counts_listed_accounts_only_any_agent(api):
     assert _period(body, "2026-07-01")["achieved_value"] == 44444
 
 
-def test_pay_to_account_sales_do_not_count_unless_counted(api):
+def test_an_uncounted_account_s_sales_do_not_count(api):
     client, db, company_id = api
     pid = _product_id(db, company_id)
     a1 = _customer(db, company_id, "ZZT A1", level=1)
     a3 = _customer(db, company_id, "ZZT A3", level=3)
     _sale(db, company_id, a3, 90000, date(2026, 5, 1), product_id=pid)
     _sale(db, company_id, a1, 50000, date(2026, 5, 1), product_id=pid)
-    res = client.post(BASE, json=_dealer_body([a3], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json=_dealer_body([a3], tiers=[
         {"period_start": "2026-04-01", "threshold": 80000, "rate": 2},
     ]))
     assert res.status_code == 201, res.text
     body = res.json()
     q2 = _period(body, "2026-04-01")
-    # E6: 2% x 90,000 on A/C III, paid to A/C I; A/C I's own 50,000 is not counted.
+    # E6: 2% x 90,000 on A/C III, its own share; A/C I's 50,000 is not counted.
     assert q2["achieved_value"] == 90000
     assert q2["commission_earned"] == 1800
-    assert body["payout_account"]["code"] == a1.customer_code
+    assert [(a["code"], a["commission_earned"]) for a in q2["accounts"]] == [(a3.customer_code, 1800)]
 
 
 def test_additional_lines_stack_via_api_and_round_per_target(api):
@@ -359,8 +360,10 @@ def test_tier_validation_refuses_in_plain_words(api):
     refused(tiers=[{"threshold": 1, "rate": 2}])  # per period without a period
     refused(threshold_unit="points", metric="quantity", tiers=[
         {"period_start": "2026-01-01", "threshold": 1, "rate": 2}])
-    refused(commission_method="marginal", tiers=[{"period_start": "2026-01-01", "threshold": 1,
-                                                  "account_rates": [{"customer_id": a1.id, "rate": 2}]}])
+    # Marginal takes a rate per account since lane TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov, Q3).
+    res = client.post(BASE, json=_dealer_body([a1], commission_method="marginal", tiers=[
+        {"period_start": "2026-01-01", "threshold": 1, "account_rates": [{"customer_id": a1.id, "rate": 2}]}]))
+    assert res.status_code == 201, res.text
     refused(tiers=[{"period_start": "2026-01-01", "rate": 2}])  # no threshold
     res = client.post(BASE, json=_dealer_body([]))
     assert res.status_code == 422
@@ -379,7 +382,6 @@ def test_dealer_accounts_company_scoped(api):
     with company_scope(db, frozenset({other_company})):
         theirs = _customer(db, other_company, "ZZT THEIRS")
     assert client.post(BASE, json=_dealer_body([mine, theirs])).status_code == 422
-    assert client.post(BASE, json=_dealer_body([mine], payout_customer_id=theirs.id)).status_code == 422
 
 
 # --------------------------------------------------------------------------------------- #
@@ -406,9 +408,10 @@ def test_existing_agent_target_reads_as_before(api):
     assert body["rounding"] == "sen"
     assert body["tiers_per_period"] is False
     period = body["periods"][0]
-    # Marginal: 2% x 1,000 + 4% x 500 = 40; bonuses 50 + 100.
+    # Marginal: 2% x 1,000 + 4% x 500 = 40. Bonus is the reached tier's RM Additional only
+    # (lane TARGET-TIER-ADDITIONAL, owner 5 Nov): 100, no longer 50 + 100.
     assert period["commission_earned"] == 40
-    assert period["bonus_earned"] == 150
+    assert period["bonus_earned"] == 100
     assert [t["from_pct"] for t in body["tiers"]] == [0, 100]
 
 
@@ -424,14 +427,14 @@ def test_list_dealer_targets(api):
     a3 = _customer(db, company_id, "ZZT A3", level=3)
     _sale(db, company_id, a1, 180000, date(2026, 10, 3), product_id=pid)
     _sale(db, company_id, a3, 70000, date(2026, 10, 3), product_id=pid)
-    created = client.post(BASE, json=_dealer_body([a1, a3], payout_customer_id=a1.id, tiers=[
+    created = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
         {"period_start": "2026-10-01", "threshold": 250000, "account_rates": [{"customer_id": a1.id, "rate": 3}]},
     ])).json()
     rows = client.get(BASE, params={"subject": "dealer", "all": "true"}).json()["rows"]
     row = next(r for r in rows if r["target_id"] == created["id"])
     assert row["subject_kind"] == "dealer"
     assert row["account_labels"] == ["A/C I", "A/C III"]
-    assert row["payout_label"] == "A/C I"
+    assert "payout_label" not in row
     # Today is 20 Oct 2026: the current period is Q4.
     assert row["commission_earned"] == 5400
     # Agent and team tabs do not list dealer targets.
@@ -447,14 +450,13 @@ def test_edit_dealer_accounts_and_tiers(api):
     a3 = _customer(db, company_id, "ZZT A3", level=3)
     created = client.post(BASE, json=_dealer_body([a1])).json()
     res = client.patch(f"{BASE}/{created['id']}", json={
-        "customer_ids": [a1.id, a3.id], "payout_customer_id": a3.id, "rounding": "ringgit",
+        "customer_ids": [a1.id, a3.id], "rounding": "ringgit",
         "commission_method": "retroactive",
         "tiers": [{"period_start": "2026-01-01", "threshold": 10, "rate": 1}],
     })
     assert res.status_code == 200, res.text
     body = res.json()
     assert [a["code"] for a in body["accounts"]] == [a1.customer_code, a3.customer_code]
-    assert body["payout_account"]["code"] == a3.customer_code
     assert body["rounding"] == "ringgit"
     assert [t["threshold"] for t in body["tiers"]] == [10]
 
@@ -511,16 +513,15 @@ def test_removing_an_account_drops_its_tier_rates(api):
     ])).json()
     res = client.patch(f"{BASE}/{created['id']}", json={"customer_ids": [a1.id]})
     assert res.status_code == 200, res.text
-    assert res.json()["tiers"][0]["account_rates"] == [{"customer_id": a1.id, "rate": 2}]
+    assert res.json()["tiers"][0]["account_rates"] == [{"customer_id": a1.id, "rate": 2, "bonus_amount": None}]
     from app.models.sales import SalesTargetTierRate
 
     assert db.query(SalesTargetTierRate).filter(SalesTargetTierRate.customer_id == a3.id).count() == 0
 
 
 # --------------------------------------------------------------------------------------- #
-# Crew ruling 16 Oct (from owner ruling 4, "highest tier reached pays"): Tier 1-5 are one scale;
-# an account's own Tier 1-3 target is REPLACED by its dealer's Tier 4-5 target once the
-# dealer's combined sales reach it in the same year.
+# Yearly dealer targets. Since lane TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov) separate targets
+# stack: tests/test_target_per_account_payout_api.py holds that no target zeroes another.
 # --------------------------------------------------------------------------------------- #
 
 
@@ -531,10 +532,12 @@ def _yearly(accounts, tiers, **extra):
     )
 
 
-def _replacing_pair(client, db, company_id, a3_sales):
+def _stacking_pair(client, db, company_id, a3_sales):
+    """A combined dealer target (A/C I + A/C III, 2M at 2% / 2.5%) and A/C I's own ladder
+    (300k at 0.5%, 700k at 1%); A/C I sells 800k. They stack (owner 8 Nov)."""
     pid = _product_id(db, company_id)
-    a1 = _customer(db, company_id, "ZZT REPL A/C I", level=1)
-    a3 = _customer(db, company_id, "ZZT REPL A/C III", level=3)
+    a1 = _customer(db, company_id, "ZZT STACK A/C I", level=1)
+    a3 = _customer(db, company_id, "ZZT STACK A/C III", level=3)
     _sale(db, company_id, a1, 800000, date(2026, 3, 1), product_id=pid)
     _sale(db, company_id, a3, a3_sales, date(2026, 3, 1), product_id=pid)
     dealer = client.post(BASE, json=_yearly([a1, a3], [
@@ -543,92 +546,192 @@ def _replacing_pair(client, db, company_id, a3_sales):
         ]},
     ]))
     assert dealer.status_code == 201, dealer.text
-    own = client.post(BASE, json=_yearly([a1], [
-        {"threshold": 300000, "rate": 0.5}, {"threshold": 700000, "rate": 1},
-    ], replaced_by_target_id=dealer.json()["id"]))
+    own = client.post(BASE, json=_yearly([a1], [{"threshold": 300000, "rate": 0.5}, {"threshold": 700000, "rate": 1}]))
     assert own.status_code == 201, own.text
     return dealer.json(), own.json()
 
 
-def test_a_reached_dealer_tier_replaces_the_account_s_own_tier(api):
-    """A/C I sells 800k (its own Tier 2 at 1% = 8,000); the dealer sells 2.1M combined, past
-    its 2M tier: A/C I gets the dealer's 2% = 16,000, never 24,000."""
+def test_a_reached_dealer_tier_and_the_account_s_own_tier_both_pay(api):
+    """Owner 8 Nov: A/C I sells 800k (its own Tier 2 at 1% = 8,000); the dealer sells 2.1M
+    combined, past its 2M tier (A/C I 2% = 16,000, A/C III 2.5% = 32,500). Both pay."""
     client, db, company_id = api
-    dealer, own = _replacing_pair(client, db, company_id, 1300000)
+    dealer, own = _stacking_pair(client, db, company_id, 1300000)
     assert dealer["periods"][0]["commission_earned"] == 16000 + 32500
-    assert own["periods"][0]["commission_earned"] == 0
-    assert own["periods"][0]["replaced"] is True
-    assert own["replaced_by"]["target_no"] == dealer["target_no"]
-
-
-def test_below_the_dealer_tier_the_account_pays_its_own_tier(api):
-    client, db, company_id = api
-    dealer, own = _replacing_pair(client, db, company_id, 1000000)   # 1.8M combined
-    assert dealer["periods"][0]["commission_earned"] == 0
+    assert [a["commission_earned"] for a in dealer["periods"][0]["accounts"]] == [16000, 32500]
     assert own["periods"][0]["commission_earned"] == 8000
-    assert own["periods"][0]["replaced"] is False
 
 
-def test_replaced_by_must_name_another_dealer_target(api):
-    client, db, company_id = api
-    a1 = _customer(db, company_id, "ZZT REPL X", level=1)
-    team_or_none = client.post(BASE, json=_yearly([a1], [{"threshold": 1, "rate": 1}],
-                                                   replaced_by_target_id=_uid()))
-    assert team_or_none.status_code in (404, 422), team_or_none.text
-    agent = _agent(db, company_id)
-    res = client.post(BASE, json={
-        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT", "metric": "amount",
-        "start_date": "2026-01-01", "end_date": "2026-12-31", "target_value": 1,
-        "replaced_by_target_id": _uid(),
-    })
-    assert res.status_code == 422, res.text
 
-
-def test_replaced_by_refuses_an_agent_target_itself_and_a_chain(api):
-    client, db, company_id = api
-    agent = _agent(db, company_id)
-    agent_target = client.post(BASE, json={
-        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT A", "metric": "amount",
-        "start_date": "2026-01-01", "end_date": "2026-12-31", "target_value": 1,
-    })
-    assert agent_target.status_code == 201, agent_target.text
-    a1 = _customer(db, company_id, "ZZT CHAIN 1", level=1)
-    tiers = [{"threshold": 1, "rate": 1}]
-    res = client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=agent_target.json()["id"]))
-    assert res.status_code == 422, res.text
-    top = client.post(BASE, json=_yearly([a1], tiers)).json()
-    mid = client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=top["id"])).json()
-    assert client.patch(f"{BASE}/{top['id']}", json={"replaced_by_target_id": top["id"]}).status_code == 422
-    chained = client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=mid["id"]))
-    assert chained.status_code == 422, chained.text
-
-
-def test_a_target_others_point_at_cannot_itself_be_replaced(api):
-    """Security review (gate 2) S2: no chain from either end."""
-    client, db, company_id = api
-    a1 = _customer(db, company_id, "ZZT CHAIN 2", level=1)
-    tiers = [{"threshold": 1, "rate": 1}]
-    b = client.post(BASE, json=_yearly([a1], tiers)).json()
-    c = client.post(BASE, json=_yearly([a1], tiers)).json()
-    assert client.post(BASE, json=_yearly([a1], tiers, replaced_by_target_id=b["id"])).status_code == 201
-    res = client.patch(f"{BASE}/{b['id']}", json={"replaced_by_target_id": c["id"]})
-    assert res.status_code == 422, res.text
-
-
-def test_the_dealer_list_reads_each_replacing_target_once(api, monkeypatch):
-    """Security review (gate 2) S1: accounts sharing one dealer target do not recompute it."""
+def test_the_dealer_list_search_computes_achievement_for_matches_only(api, monkeypatch):
+    """Lane TARGET-SEARCH-FAST: the search filters targets before any achievement is computed,
+    so a search hitting 3 of N targets reads achievement for those 3 targets' periods only."""
     from app.services.sales import target_service
 
     client, db, company_id = api
-    dealer, _own = _replacing_pair(client, db, company_id, 1300000)
-    a = _customer(db, company_id, "ZZT REPL MORE", level=4)
-    for _ in range(3):
-        res = client.post(BASE, json=_yearly([a], [{"threshold": 1, "rate": 1}], replaced_by_target_id=dealer["id"]))
+    needle = f"ZZTFAST{_code()}"
+    hits = []
+    for i in range(3):
+        acc = _customer(db, company_id, f"ZZT fast hit {i}", level=1)
+        res = client.post(BASE, json=_dealer_body([acc], name=f"{needle} {i}"))
         assert res.status_code == 201, res.text
-    calls = []
+        hits.append(res.json()["id"])
+    for i in range(3):
+        acc = _customer(db, company_id, f"ZZT fast miss {i}", level=1)
+        assert client.post(BASE, json=_dealer_body([acc], name=f"ZZT other {i}")).status_code == 201
+    seen: list = []
     real = target_service._achieved_by_account
-    monkeypatch.setattr(target_service, "_achieved_by_account", lambda *a, **k: calls.append(1) or real(*a, **k))
-    rows = client.get(BASE, params={"subject": "dealer", "all": "true", "on": "2026-06-01"}).json()["rows"]
-    replaced = [r for r in rows if r["name"] == "ZZT yearly" and r["commission_earned"] == 0]
-    assert len(replaced) >= 4
-    assert len(calls) <= 2
+    monkeypatch.setattr(
+        target_service, "_achieved_by_account",
+        lambda db_, cid, pairs, *a, **k: seen.extend(t.id for t, _ in pairs) or real(db_, cid, pairs, *a, **k),
+    )
+    rows = client.get(BASE, params={"subject": "dealer", "all": "true", "query": needle.lower()}).json()["rows"]
+    assert sorted(r["target_id"] for r in rows) == sorted(hits)
+    assert set(seen) == set(hits)
+
+
+# --------------------------------------------------------------------------------------- #
+# POINT-RATIO-EDIT: a ratio row can be edited and deleted (owner, 8 Nov)
+# --------------------------------------------------------------------------------------- #
+
+
+def _ratio_audits(db, ratio_id):
+    from sqlalchemy import text
+
+    return db.execute(
+        text("SELECT action FROM audit_logs WHERE entity_type = 'sales_point_ratios' AND entity_id = :i "
+             "ORDER BY changed_at"),
+        {"i": str(ratio_id)},
+    ).scalars().all()
+
+
+def test_point_ratio_edit_changes_value_and_date(api):
+    client, db, company_id = api
+    rid = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+    res = client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-02-01", "rm_per_point": 1.25})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": rid, "effective_from": "2026-02-01", "rm_per_point": 1.25}
+    rows = client.get(RATIOS).json()["rows"]
+    assert [(r["id"], r["effective_from"], r["rm_per_point"]) for r in rows] == [(rid, "2026-02-01", 1.25)]
+    assert _ratio_audits(db, rid) == ["CREATE", "UPDATE"]
+
+
+def test_point_ratio_edit_onto_another_rows_date_is_refused(api):
+    client, db, company_id = api
+    client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2})
+    rid = client.post(RATIOS, json={"effective_from": "2026-10-01", "rm_per_point": 1.3}).json()["id"]
+    res = client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-01-01", "rm_per_point": 1.3})
+    assert res.status_code == 409, res.text
+    assert "01/01/2026" in res.text
+    # Its own date again is fine (only the value changes).
+    assert client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-10-01", "rm_per_point": 1.4}).status_code == 200
+    assert [r["rm_per_point"] for r in client.get(RATIOS).json()["rows"]] == [1.4, 1.2]
+
+
+def test_point_ratio_edit_refusals(api):
+    client, db, company_id = api
+    rid = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+    assert client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-01-01", "rm_per_point": 0}).status_code == 422
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert client.patch(f"{RATIOS}/{missing}", json={"effective_from": "2026-01-01", "rm_per_point": 1}).status_code == 404
+
+
+def test_point_ratio_edit_needs_edit_permission(world):
+    db, company_id = world
+    from .test_sales_targets_s1 import _client as make_client
+
+    client, originals = make_client(db, ["sales.targets.view"])
+    try:
+        from app.services.sales import target_service
+
+        row = target_service.save_point_ratio(db, date(2026, 1, 1), 1.2)
+        res = client.patch(f"{RATIOS}/{row.id}", json={"effective_from": "2026-01-01", "rm_per_point": 2})
+        assert res.status_code == 403
+    finally:
+        _restore(originals)
+
+
+def test_point_ratio_delete_is_a_deferred_record_action():
+    import app.services.record_actions  # noqa: F401
+    from app.api.v1.system import pending_actions
+    from app.models.sales import SalesPointRatio
+    from app.services.form_action_grace import WINDOW_DESTRUCTIVE
+    from app.services.form_action_registry import get_action
+
+    action = get_action("point_ratio.delete")
+    assert action is not None
+    assert action.entity_types == ("point_ratio",)
+    assert action.permission == "sales.targets.edit"
+    assert action.window == WINDOW_DESTRUCTIVE
+    # Parked under the caller's company scope, like every company-owned record.
+    assert pending_actions._PARK_SCOPED_MODELS["point_ratio.delete"] is SalesPointRatio
+
+
+def test_point_ratio_delete_then_the_older_ratio_applies(api):
+    import app.services.record_actions  # noqa: F401
+    from app.services.form_action_registry import get_action
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2})
+    rid = client.post(RATIOS, json={"effective_from": "2026-10-01", "rm_per_point": 1.3}).json()["id"]
+    assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) == Decimal("1.3")
+
+    get_action("point_ratio.delete").execute(db, {"entity_id": rid})
+    db.flush()
+    assert [r["effective_from"] for r in client.get(RATIOS).json()["rows"]] == ["2026-01-01"]
+    assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) == Decimal("1.2")
+    assert _ratio_audits(db, rid) == ["CREATE", "DELETE"]
+
+
+def test_point_ratio_delete_last_row_leaves_no_ratio(api):
+    import app.services.record_actions  # noqa: F401
+    from app.services.form_action_registry import get_action
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    rid = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+    get_action("point_ratio.delete").execute(db, {"entity_id": rid})
+    db.flush()
+    assert client.get(RATIOS).json()["rows"] == []
+    # Points targets then read as "ratio missing", the state before the first ratio was added.
+    assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) is None
+    # Already gone at commit time (a second Delete on the same row) is not an error.
+    get_action("point_ratio.delete").execute(db, {"entity_id": rid})
+    get_action("point_ratio.delete").execute(db, {"entity_id": "00000000-0000-0000-0000-000000000000"})
+
+
+def test_point_ratio_edit_and_delete_are_company_scoped(api):
+    import app.services.record_actions  # noqa: F401
+    from sqlalchemy import text
+
+    from app.models.base import company_scope
+    from app.services.form_action_registry import get_action
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    other_company = db.execute(
+        text("select id from companies where id <> :c order by code limit 1"), {"c": company_id}
+    ).scalar()
+    if other_company is None:
+        from app.models.company import Company
+
+        other_company = Company(code="ZZT2", name="ZZT Other Sdn Bhd")
+        db.add(other_company)
+        db.flush()
+        other_company = other_company.id
+    with company_scope(db, frozenset({other_company})):
+        theirs = target_service.save_point_ratio(db, date(2026, 3, 1), 9.9)
+        theirs_id = theirs.id
+    db.expire_all()
+    mine = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+
+    # Another company's ratio is not found, to an edit or to a delete.
+    res = client.patch(f"{RATIOS}/{theirs_id}", json={"effective_from": "2026-03-01", "rm_per_point": 1})
+    assert res.status_code == 404, res.text
+    get_action("point_ratio.delete").execute(db, {"entity_id": theirs_id})
+    # Their date is no clash for my ratio.
+    res = client.patch(f"{RATIOS}/{mine}", json={"effective_from": "2026-03-01", "rm_per_point": 1.3})
+    assert res.status_code == 200, res.text
+    with company_scope(db, frozenset({other_company})):
+        db.expire_all()
+        assert [float(r.rm_per_point) for r in target_service.point_ratios(db)] == [9.9]

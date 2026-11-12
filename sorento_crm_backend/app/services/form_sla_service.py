@@ -10,6 +10,7 @@ A single emit_event() call is dropped at every form-service state transition;
 the orchestrator decides whether to start/respond/resolve based on the
 configured event names. Multi-stage chains spawn the next stage on resolve.
 """
+from app.utils.date_format import fmt_datetime
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -47,6 +48,8 @@ FORM_SLA_TYPES = (
     # Escalate on the general-enquiries route (no form_sla_configs row).
     "product_drawing",
     "product_photo",
+    # NPA-FORM-SLA: approval + purchasing stages, the SI's teams (PLAN-npa-form-sla-08nov).
+    "new_product_application",
 )
 
 #: The quotation line media requests among FORM_SLA_TYPES.
@@ -149,6 +152,7 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "sample_request": ("projects.sample_requests", "request_no", False),
     "product_drawing": ("products", "product_code", False),
     "product_photo": ("products", "product_code", False),
+    "new_product_application": ("new_product_applications", "application_no", False),
 }
 
 
@@ -201,7 +205,7 @@ def _ticket_deep_link(base_url: Optional[str], tracking_id) -> str:
 
 
 def _fmt_due(due_at) -> Optional[str]:
-    """Format a naive-UTC due_at as readable KL wall time, e.g. '22 May 2026, 10:00 AM'."""
+    """Format a naive-UTC due_at as readable KL wall time, e.g. '22/05/2026, 10:00 am'."""
     if due_at is None:
         return None
     try:
@@ -211,7 +215,7 @@ def _fmt_due(due_at) -> Optional[str]:
         dt = due_at
         aware = dt.replace(tzinfo=_tz.utc) if dt.tzinfo is None else dt
         local = aware.astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
-        return local.strftime("%d %b %Y, %I:%M %p")
+        return fmt_datetime(local)
     except Exception:  # pragma: no cover
         return str(due_at)
 
@@ -243,6 +247,12 @@ _STAGE_ACTION_LABELS: dict[tuple[str, str], dict[str, str]] = {
     ("sponsorship_form", "project_sales"): {"resolution": "send the form for approval"},
     ("sponsorship_form", "project_sales_manager"): {"resolution": "approve or reject"},
     ("sponsorship_form", "customer_service"): {"resolution": "process the form (CS)"},
+    # NPA-FORM-SLA: the NPA rows ride the SI's team sets.
+    ("new_product_application", "project_sales"): {"resolution": "approve or reject"},
+    ("new_product_application", "purchasing"): {
+        "response": "send the purchasing response",
+        "resolution": "complete or reject the application",
+    },
     ("ticket", "it_admin"): {
         "response": "respond to the ticket",
         "resolution": "resolve the ticket",
@@ -278,6 +288,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/dealer-kit/price-tag-requests/{source_entity_id}"
     if source_entity_type == "sample_request":
         return f"/project-sales/sample-requests/{source_entity_id}"
+    if source_entity_type == "new_product_application":
+        return f"/procurement-management/new-product-applications/{source_entity_id}"
     if source_entity_type in ("product_drawing", "product_photo"):
         return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
@@ -371,11 +383,16 @@ class FormSLAOrchestrator:
         *,
         contact_id: Optional[str] = None,
         actor_user_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> None:
         """Evaluate every active config for this form type and dispatch matching action.
 
         Errors are logged but never propagated - SLA orchestration must not block
         the underlying state transition.
+
+        ``company_id``: a form that carries its own company (the New Product Application)
+        names it, and its stages route in that company. Without it the company comes from
+        the contact (AC-E4), which is the only signal a stock inquiry has.
         """
         if not source_entity_type or not source_entity_id or not event_name:
             return
@@ -418,7 +435,7 @@ class FormSLAOrchestrator:
             try:
                 if _matches(config.start_event):
                     self._start_for_config(
-                        config, source_entity_id, contact_id=contact_id
+                        config, source_entity_id, contact_id=contact_id, company_id=company_id
                     )
                 if _matches(config.respond_event):
                     self._respond_for_active(
@@ -431,6 +448,7 @@ class FormSLAOrchestrator:
                         actor_user_id=actor_user_id,
                         contact_id=contact_id,
                         resolve_event=event_name,
+                        company_id=company_id,
                     )
             except Exception as e:
                 logger.warning(
@@ -920,6 +938,7 @@ class FormSLAOrchestrator:
         source_entity_id: str,
         *,
         contact_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Optional[ConversationSLATracking]:
         """Idempotent: skip if active tracker for this stage already exists."""
         from app.services.user_service import AccessAgentService
@@ -955,7 +974,8 @@ class FormSLAOrchestrator:
         # arbitrarily" rule as conversation routing.
         from app.services.company_routing_service import company_for_contact
 
-        company_id = company_for_contact(self.db, contact_id=contact_id)
+        # A form with its own company column names it (see emit_event).
+        company_id = company_id or company_for_contact(self.db, contact_id=contact_id)
 
         # Default-approver override: for the PR/SF APPROVAL stage (resolves on
         # 'approved'), if the form's configured default approver is a member of the
@@ -1384,6 +1404,7 @@ class FormSLAOrchestrator:
         actor_user_id: Optional[str] = None,
         contact_id: Optional[str] = None,
         resolve_event: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> None:
         from app.schemas.sla import ConversationSLATrackingUpdate
         from app.services.sla_service import ConversationSLATrackingService
@@ -1428,7 +1449,7 @@ class FormSLAOrchestrator:
             )
             if next_cfg:
                 self._start_for_config(
-                    next_cfg, source_entity_id, contact_id=carry_contact_id
+                    next_cfg, source_entity_id, contact_id=carry_contact_id, company_id=company_id
                 )
 
     def _notify_assignee(
@@ -1468,7 +1489,7 @@ class FormSLAOrchestrator:
         # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
         _FE_RECORD_ROUTES = {
             "stock_inquiry", "complaint", "purchase_request", "sponsorship_form",
-            "product_drawing", "product_photo",
+            "product_drawing", "product_photo", "new_product_application",
         }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link
@@ -1626,6 +1647,7 @@ def emit_form_event(
     *,
     contact_id: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    company_id: Optional[str] = None,
 ) -> None:
     """Module-level helper: thin wrapper for callers that don't hold an orchestrator."""
     FormSLAOrchestrator(db).emit_event(
@@ -1634,4 +1656,5 @@ def emit_form_event(
         event_name,
         contact_id=contact_id,
         actor_user_id=actor_user_id,
+        company_id=company_id,
     )

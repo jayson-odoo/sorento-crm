@@ -64,7 +64,7 @@ _PARAMS = frozenset(
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
         "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec", "company",
-        "group_offset", "account_types",
+        "group_offset", "account_types", "sales_person",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -80,7 +80,7 @@ _CHAT_DEFAULT_MEASURE = "asks"
 #: The filter params: present but resolving to nothing is 422 `empty_filter`, never "no filter".
 _FILTER_PARAMS = (
     "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids",
-    "warehouse_codes", "channel", "customer_agent_ids", "account_types",
+    "warehouse_codes", "channel", "customer_agent_ids", "account_types", "sales_person",
 )
 #: The echo's name for the "(no agent)" key in an agent filter (REPORT-DRILLDOWN).
 _NO_AGENT_NAME = "(no agent)"
@@ -163,6 +163,7 @@ def _echo(
     channel: Optional[str],
     card_agents: Optional[list[str]] = None,
     account_types: Optional[list[str]] = None,
+    sales_people: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     """The filters the caller named, by name, in the catalogue's word order. Looks every id
     up, so an id naming no row is 404 here."""
@@ -186,6 +187,8 @@ def _echo(
             ids = [v for v in values if v != ask.NO_AGENT_KEY]
             names = _lookup(db, SalesAgent, SalesAgent.sales_agent, ids, grants, "Sales agent", shared=True) if ids else []
             out.append((key, sorted(names + ([_NO_AGENT_NAME] if ask.NO_AGENT_KEY in values else []))))
+    if sales_people:
+        out.append(("sales_person", list(sales_people)))
     if warehouse_codes:
         out.append(("location", list(warehouse_codes)))
     if channel:
@@ -197,7 +200,10 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary", "documents")
+_OPTIONAL_KEYS = (
+    "count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary",
+    "documents", "companies",
+)
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
@@ -213,7 +219,7 @@ def _response(data: dict) -> JSONResponse:
     compared = content.get("compare_to") is not None
     _drop_unset(content, compared)
     _drop_unset(content["total"], compared)
-    for row in content["rows"]:
+    for row in [*content["rows"], *(content.get("companies") or [])]:
         _drop_unset(row, compared)
     for group in (content.get("summary") or {}).get("groups", []):
         for row in group["rows"]:
@@ -246,7 +252,7 @@ def report_ask(
     ),
     group_by: Optional[str] = Query(
         None,
-        description="customer | product | brand | category | sales_agent | location | channel | account_type | month | spec:<key>. "
+        description="customer | product | brand | category | sales_agent | sales_person (invoiced, delivered, ordered, outstanding) | location | channel | account_type | month | spec:<key>. "
         "Absent = one total.",
     ),
     top_n: Optional[int] = Query(None, description=f"1 to {TOP_SELLING_N_CEILING}. Required with group_by."),
@@ -256,6 +262,9 @@ def report_ask(
     brand_ids: Optional[list[str]] = Query(None),
     category_ids: Optional[list[str]] = Query(None),
     sales_agent_ids: Optional[list[str]] = Query(None),
+    sales_person: Optional[list[str]] = Query(
+        None, description="Person labels (invoiced, delivered, ordered, outstanding); repeat for several."
+    ),
     customer_ids: Optional[list[str]] = Query(None),
     customer_agent_ids: Optional[list[str]] = Query(
         None,
@@ -382,14 +391,21 @@ def report_ask(
     categories = parse_uuid_list(category_ids, param_name="category_ids")
     agents = _agent_values(sales_agent_ids, "sales_agent_ids")
     card_agents = _agent_values(customer_agent_ids, "customer_agent_ids")
+    people = [p.strip() for p in (sales_person or []) if p and p.strip()] or None
+    if people and "sales_person" not in ask.CATALOGUE["sales"][basis_norm]["filters"]:
+        raise _unprocessable(
+            f"'sales_person' does not apply to the {basis_norm} basis", "unknown_filter", "sales_person"
+        )
     codes = _normalize_entities(warehouse_codes) or []
     account_values = [v.strip().upper() for v in (_normalize_entities(account_types) or []) if v and v.strip()]
     if basis_norm == "invoiced":
-        # Finance data: the reports' own slug on the act-as principal, not only orders.view
-        # (SALES-UNIFIED security review M1).
+        # Finance data (SALES-UNIFIED security review M1): the contact's Sales report tick on a
+        # contact's call, else the reports' own slug (CHATBOT-SALES-REPORT-TICK).
         from app.services.sales.invoiced_sales import require_invoiced_access
 
-        require_invoiced_access(db, current_user)
+        require_invoiced_access(
+            db, current_user, api_key=request.headers.get("X-API-Key"), contact_id=contact_id, space_id=space_id
+        )
     if basis_norm == "invoiced" and (codes or group_norm == "location"):
         # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
         raise _unprocessable(
@@ -407,6 +423,7 @@ def report_ask(
         "channel": channel_norm,
         "customer_agent_ids": card_agents,
         "account_types": account_values,
+        "sales_person": people,
     }
     for name in _FILTER_PARAMS:
         if name in request.query_params.keys() and not resolved_filters[name]:
@@ -415,7 +432,7 @@ def report_ask(
         raise _unprocessable("An account type value is at most 50 characters", "value_too_long", "account_types")
     for name in (
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "customer_agent_ids", "account_types",
+        "customer_agent_ids", "account_types", "sales_person",
     ):
         if len(resolved_filters[name] or []) > _MAX_VALUES:
             raise _unprocessable(f"Too many values for '{name}' (max {_MAX_VALUES})", "too_many_values", name)
@@ -466,7 +483,7 @@ def report_ask(
 
         require_unpaid_access(db, current_user)
     own_book_only = outstanding_kind and not granted
-    if own_book_only and (group_norm == "sales_agent" or agents or card_agents):
+    if own_book_only and (group_norm in ("sales_agent", "sales_person") or agents or card_agents or people):
         raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
     narrowed = book is not None and (mine or own_book_only)
 
@@ -534,6 +551,7 @@ def report_ask(
             (group_norm is not None and group_norm not in dealer_keys)
             or bool(agents)
             or bool(card_agents)
+            or bool(people)
             or (bool(codes) and "location" not in dealer_keys)
             or bool(account_values)
             or channel_norm is not None
@@ -633,6 +651,7 @@ def report_ask(
         channel=channel_norm,
         card_agents=card_agents,
         account_types=account_values,
+        sales_people=people,
     )
     if company_name:
         echo.insert(0, {"key": "company", "label": ask.FILTER_LABELS["company"], "values": [company_name]})
@@ -672,6 +691,8 @@ def report_ask(
         filters["sales_agent"] = agents
     if card_agents:
         filters["customer_agent"] = card_agents
+    if people:
+        filters["sales_person"] = people
     if channel_norm and not per_document:
         filters["channel"] = [channel_norm]
     if account_values:
@@ -686,6 +707,25 @@ def report_ask(
         capped_by_policy=not staff_read,  # a staff read has no contact, so no location policy to be capped by
     )
     data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
+    if company_name is None and len(grants) > 1 and compare_norm is None and data.get("status") == "ok":
+        # Owner O-R2 (3 Nov): an ask naming no company runs over every company the contact holds (above), and the reply
+        # shows each company's total before the combined one: the same filters, no breakdown, one company at a time, in
+        # the contact's company order (the default first). A company with no figure is left out; under two, no split.
+        from app.services.company_scope import DEFAULT_COMPANY_ID
+
+        per_company = []
+        for cid, cname in sorted(
+            ((str(i), str(n or "")) for i, n in db.query(Company.id, Company.name).filter(Company.id.in_(sorted(grants))).all()),
+            key=lambda row: (row[0] != DEFAULT_COMPANY_ID, row[1]),
+        ):
+            one = ask.run_ask(
+                db, date_from=date_from, date_to=date_to, top_n=None, **{**run, "group_by": None, "company_grants": {cid}}
+            )
+            total = one.get("total") or {}
+            if one.get("status") == "ok" and (total.get("qty") or total.get("amount") or total.get("count")):
+                per_company.append({"name": cname, **{k: total[k] for k in ("qty", "amount", "count") if k in total}})
+        if len(per_company) > 1:
+            data = {**data, "companies": per_company}
     product_subject = bool(code or named_products)
     customer_subject = bool(named_customers) or scoped is not None
     if (

@@ -318,14 +318,9 @@ export function formatPromotionBoundaryInMalaysia(input: Date | string | number)
 }
 
 /**
- * Format a UTC datetime (from API/DB) as date only in Malaysia timezone.
- * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
- */
-/**
- * `04/09/2026` in Malaysia. For the `4 Sep` shape a SENTENCE needs, use `shortDay` in
- * `app/(protected)/project-sales/_shared/lib/boardChangeAnnotations.ts`: it names the months
- * itself, because `Intl`'s `en-GB` short form spells September "Sept" while the planning
- * engine composes its own labels with "Sep", and the two sat two lines apart in one lightbox.
+ * `04/09/2026` in Malaysia: THE date shape (DATE-FORMAT-UNIFY, owner 4 Nov 2026), in a column
+ * and in a sentence alike. Pass naive UTC strings from the backend (parsed as UTC, shown in
+ * Malaysia) or a bare `YYYY-MM-DD` calendar day.
  */
 export function formatDateInMalaysia(input: Date | string | number): string {
   const date = toUTCDate(input);
@@ -448,7 +443,10 @@ export function promotionFormDateToApiYyyyMmDd(value: Date | string | undefined)
  * Format a UTC datetime (from API/DB) as date and time in Malaysia timezone.
  * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
  */
-export function formatDateTimeInMalaysia(input: Date | string | number): string {
+export function formatDateTimeInMalaysia(
+  input: Date | string | number,
+  { seconds = false }: { seconds?: boolean } = {},
+): string {
   const date = toUTCDate(input);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('en-GB', {
@@ -457,11 +455,47 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    // STANDARD-HISTORY v2: a history shows seconds only where two entries share a minute.
+    ...(seconds ? { second: '2-digit' as const } : {}),
     hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);
 }
 
+/**
+ * `01/01/2026 - 31/03/2026`: the one range shape, the same text the range picker shows
+ * (`components/ui/date-range-picker.tsx`). One end alone shows that end; neither shows `fallback`.
+ */
+export function formatDateRange(
+  start: Date | string | number | null | undefined,
+  end: Date | string | number | null | undefined,
+  fallback = '',
+): string {
+  const from = start == null || start === '' ? '' : formatDateInMalaysia(start);
+  const to = end == null || end === '' ? '' : formatDateInMalaysia(end);
+  if (from && to) return `${from} - ${to}`;
+  return from || to || fallback;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
+/**
+ * A raw API value that MAY be a date, shown in the one shape: a bare `YYYY-MM-DD` as
+ * `20/06/2027`, an ISO timestamp (naive UTC or zoned) as `03/11/2026, 4:49 pm` in Malaysia,
+ * anything else unchanged. For audit change chips, chart ticks and free-typed cells where the
+ * value's type is not known up front.
+ */
+export function formatMaybeDate(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  if (ISO_DAY.test(text)) return formatDateInMalaysia(text) || text;
+  if (ISO_INSTANT.test(text)) return formatDateTimeInMalaysia(text.replace(' ', 'T')) || text;
+  return text;
+}
+
+/** `30/09/2026, 12:23 pm`. Reads a naive string as wall clock (no zone shift); for an API
+ *  timestamp in UTC use {@link formatDateTimeInMalaysia}. */
 export function formatDateTime(input: Date | string | number): string {
   // Always use parseNaiveDateTimeAsLocal to handle naive and UTC dates correctly
   const date = typeof input === 'string'
@@ -474,7 +508,7 @@ export function formatDateTime(input: Date | string | number): string {
   const year = date.getFullYear();
   const hours = date.getHours();
   const minutes = date.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const ampm = hours >= 12 ? 'pm' : 'am';
   const hour12 = hours % 12 || 12;
   const time = `${hour12}:${padTwo(minutes)} ${ampm}`;
   return `${day}/${month}/${year}, ${time}`;

@@ -109,6 +109,9 @@ export interface CoverageUndatedDemand {
   item_code: string;
   qty: number;
   location: string;
+  /** The order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 /**

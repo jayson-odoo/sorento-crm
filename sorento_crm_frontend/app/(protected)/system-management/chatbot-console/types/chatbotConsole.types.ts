@@ -49,6 +49,9 @@ export interface ConsoleTraceSummary {
   /** An escalation turn's draw in one line (team, brand, source, assignee); null on
    * every other turn. Optional: an older backend does not send it. */
   routing_line?: string | null;
+  /** CONSOLE-SYNTH-ENVELOPE: the turn ran on a synthetic envelope, because the contact has
+   * no real WhatsApp turn to borrow one from. Optional: an older backend does not send it. */
+  synthetic_envelope?: boolean;
 }
 
 /** AGENTIC-P2-ROUTE: which side answered a text turn and why; absent on a media turn or an older response. */
@@ -168,6 +171,8 @@ export interface ChatbotConsoleMessage {
   promptVersion?: number | null;
   /** Only the FIRST bot bubble of an escalation turn carries this: where it went. */
   routingLine?: string | null;
+  /** Only the FIRST bot bubble of a turn run on a synthetic envelope carries this. */
+  simulatedContact?: boolean;
   /** Only the LAST bot bubble of a turn carries the route pill's data. */
   route?: ConsoleRoute | null;
   /** Agent turn only (the bubble that holds the reply): its steps, the changes it proposed and the chips. */

@@ -6,6 +6,7 @@
 # pyright: reportArgumentType=false
 # pyright: reportCallIssue=false
 # pyright: reportReturnType=false
+from app.utils.date_format import fmt_date
 import json
 import logging
 import re
@@ -443,7 +444,7 @@ def _format_duplicate_packing_list_message(existing: "InboundShipment", shipment
     recorded_on = ""
     created_at = getattr(existing, "created_at", None)
     if created_at:
-        recorded_on = f" on {created_at.date().isoformat()}"
+        recorded_on = f" on {fmt_date(created_at)}"
     return (
         f"Container {container} (shipment date {sail_text}, ETA {eta_text}) was already "
         f"recorded{as_number}{recorded_on} and is fully received. This looks like the same "
@@ -1301,8 +1302,15 @@ class InboundShipmentService:
             query = query.filter(InboundShipment.company_id == company_id)
         return [str(row[0]) for row in query.order_by(InboundShipment.created_at, InboundShipment.id).all()]
 
-    def refresh_shipment_line_statuses(self, shipment_id: str) -> None:
+    def refresh_shipment_line_statuses(self, shipment_id: str, *, trigger: Optional[str] = None) -> None:
         """Recompute and persist line_status for all lines of this shipment (for n8n/API).
+
+        The ONE recompute of a packing list's stored figures. Called by writers
+        directly and, since PACKING-LIST-RECALC, by the `scm_recalc` job every input
+        change queues (`app/services/scm/packing_list_recalc.py`), so it must stay
+        idempotent: a second run over unchanged inputs writes nothing new. When the
+        header status moves, an audit EVENT `packing_list.status_recalculated` records
+        old and new status and what triggered it (`trigger`, default `writer`).
 
         The lines are read off the RELATIONSHIP, never with a direct query on
         `InboundShipmentLine`. The company-scope filter is applied to a statement's
@@ -1339,10 +1347,51 @@ class InboundShipmentService:
             line.spo_allocated_quantity = alloc
             line.quantity_received = recv
             line.line_status = status
+        previous_status = shipment.shipment_status
         shipment.shipment_status = rollup_shipment_status(
             shipment.shipment_status, *line_status_counts(line.line_status for line in lines)
         )
+        if shipment.shipment_status != previous_status:
+            from app.services import audit_service
+
+            audit_service.record(
+                self.db,
+                event="packing_list.status_recalculated",
+                entity_type="inbound_shipments",
+                entity_id=str(shipment.id),
+                old_values={"shipment_status": previous_status},
+                new_values={"shipment_status": shipment.shipment_status},
+                reason=trigger or "writer",
+                description=(
+                    f"Packing list status recalculated automatically: "
+                    f"{previous_status or '-'} to {shipment.shipment_status or '-'}"
+                ),
+                company_id=str(shipment.company_id) if shipment.company_id else None,
+            )
         self.db.commit()
+
+    def stored_figures_stale(self, shipment: InboundShipment) -> bool:
+        """Whether a recompute would change anything stored on this shipment (its lines'
+        figures or its header status). Read-only: the packing list GET asks this and
+        queues the recompute instead of writing inside a read."""
+        lines = list(shipment.shipment_lines)
+        if not lines:
+            return False
+        figures = self.compute_shipment_line_figures(shipment)
+        statuses = []
+        for line in lines:
+            alloc, recv, status = figures[str(line.id)]
+            statuses.append(status)
+            if shipment.company_id and line.company_id != shipment.company_id:
+                return True  # the refresh's company self-heal has work to do
+            if (
+                int(line.spo_allocated_quantity or 0) != alloc
+                or int(line.quantity_received or 0) != recv
+                or (line.line_status or None) != status
+            ):
+                return True
+        rolled = rollup_shipment_status(shipment.shipment_status, *line_status_counts(statuses))
+        return rolled != shipment.shipment_status
 
     def compute_shipment_line_figures(self, shipment: InboundShipment) -> dict[str, tuple[int, int, str]]:
         """`line id -> (spo_allocated_quantity, quantity_received, line_status)` as
@@ -3103,6 +3152,10 @@ class SPOAllocationService:
                     {
                         "document": doc_no or provisional,
                         "customer": project_title,
+                        # OI-UX-FILTER-SNAPSHOT: the inquiry's own project until its sales
+                        # order is read below; a row with no sales order yet keeps it.
+                        "customer_name": None,
+                        "project_label": project_title,
                         "demand_class": "project",
                         "qty": float(link_qty or 0),
                     }
@@ -3144,6 +3197,8 @@ class SPOAllocationService:
                         {
                             "document": document,
                             "customer": customer,
+                            "customer_name": None,
+                            "project_label": customer,
                             "demand_class": "project",
                             "qty": float(placement.qty),
                             "via_po": placement.via_po,
@@ -3190,6 +3245,19 @@ class SPOAllocationService:
                         "qty": float(cover_qty or 0),
                     }
                 )
+            # OI-UX-FILTER-SNAPSHOT: every sales order named here also names its customer
+            # (the debtor it was issued under) and its project.
+            from app.services.scm.so_party import fill_party, so_parties, with_party
+
+            covered_entries = [e for entries in so_covered_by_alloc.values() for e in entries]
+            parties = so_parties(
+                self.db, numbers=[e["document"] for e in covered_entries]
+            )
+            for e in covered_entries:
+                if e["demand_class"] == "project":
+                    fill_party(e, parties, e["document"])
+                else:
+                    with_party(e, parties, e["document"])
 
         supplier_counts: Dict[Optional[str], int] = {}
         for allocation, shipment, supplier_name, is_open in rows:
@@ -5393,14 +5461,22 @@ class StockInquiryService:
         event_type: str,
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
+        source_entity_type: str = "stock_inquiry",
+        company_id: Optional[str] = None,
+        view_url: Optional[str] = None,
+        button_label: str = "Open stock inquiry",
     ) -> None:
-        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue."""
+        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue.
+
+        The New Product Application sends the SAME team notice (NPA-FORM-SLA, owner 8 Nov "like
+        SI"): it names its own ``source_entity_type``, ``company_id``, ``view_url`` and button,
+        and ``inquiry_id`` is then that record's id. A stock inquiry passes none of them."""
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        company_id = self._company_for_stock_inquiry(inquiry_id)
+        company_id = company_id or self._company_for_stock_inquiry(inquiry_id)
 
         if team_assignment_code:
             if team_assignment_code == "project_sales":
@@ -5429,13 +5505,15 @@ class StockInquiryService:
 
         # Staff team notification → in-system detail link (login-required), not the
         # public /view token page. Recipients are internal team members.
-        view_url = self._build_stock_inquiry_internal_url(inquiry_id, base_url_override=base_url_override)
+        view_url = view_url or self._build_stock_inquiry_internal_url(
+            inquiry_id, base_url_override=base_url_override
+        )
 
         from app.services.email_template_service import EmailTemplateService
 
         rendered = EmailTemplateService(self.db).render_code(
             "stock_inquiry_created",
-            {"heading": title, "intro": intro_plain, "view_url": view_url},
+            {"heading": title, "intro": intro_plain, "view_url": view_url, "button_label": button_label},
         )
         title = rendered["subject"]
         body_plain = rendered["body_text"]
@@ -5469,7 +5547,7 @@ class StockInquiryService:
                 self.db.query(Notification)
                 .filter(
                     Notification.user_id == first_uid,
-                    Notification.source_entity_type == "stock_inquiry",
+                    Notification.source_entity_type == source_entity_type,
                     Notification.source_entity_id == inquiry_id,
                     Notification.event_type == event_type,
                 )
@@ -5499,7 +5577,7 @@ class StockInquiryService:
                     title=title,
                     body=body_plain,
                     data=email_data,
-                    source_entity_type="stock_inquiry",
+                    source_entity_type=source_entity_type,
                     source_entity_id=inquiry_id,
                     event_type=event_type,
                 )
@@ -5526,7 +5604,7 @@ class StockInquiryService:
                     self.db.query(Notification)
                     .filter(
                         Notification.user_id == uid,
-                        Notification.source_entity_type == "stock_inquiry",
+                        Notification.source_entity_type == source_entity_type,
                         Notification.source_entity_id == inquiry_id,
                         Notification.event_type == event_type,
                     )
@@ -5543,7 +5621,7 @@ class StockInquiryService:
                         type="stock_inquiry_notification",
                         title=title,
                         body=body_plain,
-                        source_entity_type="stock_inquiry",
+                        source_entity_type=source_entity_type,
                         source_entity_id=inquiry_id,
                         event_type=event_type,
                     )
@@ -5680,22 +5758,26 @@ class StockInquiryService:
         }
 
     @staticmethod
-    def _sla_person_name_sort(user_column: str):
+    def _sla_person_name_sort(user_column: str, source_entity_type: str = "stock_inquiry", entity=None):
         """Name (or email) of the user in ``user_column`` on the inquiry's latest open
-        form-SLA tracker: the value ``_attach_sla_handlers`` shows, as a sort key."""
+        form-SLA tracker: the value ``_attach_sla_handlers`` shows, as a sort key.
+
+        The New Product Application's list shows the same columns (NPA-FORM-SLA, owner 9 Nov) and
+        passes its own type and model; a stock inquiry passes neither."""
         from app.models.sla import ConversationSLATracking
         from app.services.sla_scope import open_tracker_scope
 
+        entity = entity if entity is not None else StockInquiry
         latest = (
             select(getattr(ConversationSLATracking, user_column))
             .where(
-                ConversationSLATracking.source_entity_type == "stock_inquiry",
-                ConversationSLATracking.source_entity_id == StockInquiry.id,
+                ConversationSLATracking.source_entity_type == source_entity_type,
+                ConversationSLATracking.source_entity_id == entity.id,
                 *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .limit(1)
-            .correlate(StockInquiry)
+            .correlate(entity)
             .scalar_subquery()
         )
         return (
@@ -5705,25 +5787,28 @@ class StockInquiryService:
         )
 
     @staticmethod
-    def _print_count_sort(viewer_user_id: Optional[str]):
+    def _print_count_sort(viewer_user_id: Optional[str], source_entity_type: str = "stock_inquiry", entity=None):
         """How many PDFs the viewer took of the inquiry (``_attach_print_counts``); 0 for
-        everyone when there is no viewer."""
+        everyone when there is no viewer. The NPA passes its own type and model."""
         if not viewer_user_id:
             return literal(0)
         from app.models.download import UserDownload
 
+        entity = entity if entity is not None else StockInquiry
         return (
             select(func.count(UserDownload.id))
             .where(
                 UserDownload.user_id == str(viewer_user_id),
-                UserDownload.source_entity_type == "stock_inquiry",
-                UserDownload.source_entity_id == StockInquiry.id,
+                UserDownload.source_entity_type == source_entity_type,
+                UserDownload.source_entity_id == entity.id,
             )
-            .correlate(StockInquiry)
+            .correlate(entity)
             .scalar_subquery()
         )
 
-    def _attach_print_counts(self, items, viewer_user_id: Optional[str]) -> None:
+    def _attach_print_counts(
+        self, items, viewer_user_id: Optional[str], source_entity_type: str = "stock_inquiry"
+    ) -> None:
         """Set `print_count` on each inquiry: how many PDF exports the viewing user
         has taken of that record. One grouped query for the page. With no viewer
         (e.g. an API-key principal) every row reads 0 rather than another user's count.
@@ -5735,13 +5820,13 @@ class StockInquiryService:
             from app.services.download_service import DownloadService
             counts = DownloadService(self.db).count_map_for_user(
                 str(viewer_user_id),
-                "stock_inquiry",
+                source_entity_type,
                 [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)],
             )
         for it in items:
             setattr(it, "print_count", int(counts.get(str(it.id), 0)))
 
-    def _attach_sla_handlers(self, items) -> None:
+    def _attach_sla_handlers(self, items, source_entity_type: str = "stock_inquiry") -> None:
         """Set `assigned_to_id` / `assigned_to_name` (the SLA assignee - who the
         tracker is currently escalated/assigned to) and `handled_by_name` (the
         form-handling-lock holder, set only when someone clicks Claim) on each inquiry
@@ -5759,7 +5844,7 @@ class StockInquiryService:
         rows = (
             self.db.query(ConversationSLATracking)
             .filter(
-                ConversationSLATracking.source_entity_type == "stock_inquiry",
+                ConversationSLATracking.source_entity_type == source_entity_type,
                 ConversationSLATracking.source_entity_id.in_(ids),
                 *open_tracker_scope(),
             )
@@ -5864,6 +5949,9 @@ class StockInquiryService:
         # gates its response affordances on this rather than mirroring the status
         # list (UAC O1).
         data["response_write_allowed"] = inquiry.response_write_allowed
+        data["npa_requested_by_name"] = (
+            self._resolve_user_display_name(inquiry.npa_requested_by) if inquiry.npa_requested_by else None
+        )
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
@@ -6696,7 +6784,29 @@ class StockInquiryService:
 
         threading.Thread(target=send_async, daemon=True).start()
 
-    def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
+    def _apply_npa_request(self, inquiry, update_data: dict, actor_user_id: Optional[str]) -> None:
+        """NPA-FROM-SI rule 1: purchasing's "salesperson must create a New Product Application".
+
+        Popped from ``update_data`` so the plain setattr loop never writes it. A change is a
+        response write (UAC O1 gate, same as ``purchasing_response``); an echo of the current
+        value is not. Who / when come from the caller, never the payload. Non-blocking."""
+        if "npa_requested" not in update_data:
+            return
+        wanted = update_data.pop("npa_requested")
+        if wanted is None or bool(wanted) == bool(inquiry.npa_requested):
+            return
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        inquiry.npa_requested = bool(wanted)
+        if wanted:
+            inquiry.npa_requested_by = actor_user_id or None
+            inquiry.npa_requested_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            inquiry.npa_requested_by = None
+            inquiry.npa_requested_at = None
+
+    def update_inquiry(
+        self, inquiry_id: str, inquiry_data: StockInquiryUpdate, actor_user_id: Optional[str] = None
+    ):
         """Update a stock inquiry. Status is only changed via workflow actions (submit/approve/reject/reopen)."""
         inquiry = self.get_inquiry(inquiry_id)
 
@@ -6721,6 +6831,7 @@ class StockInquiryService:
             update_data.get("purchasing_response"),
         ):
             assert_response_write_allowed("stock_inquiry", inquiry.status)
+        self._apply_npa_request(inquiry, update_data, actor_user_id)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -6749,8 +6860,13 @@ class StockInquiryService:
 
     STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
 
+    #: The NPA's own preamble (owner 8 Nov 17:25: the NPA reply must not read "Stock Inquiry").
+    NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE = "There is a response to your new product application"
+
     @classmethod
-    def compose_stock_inquiry_reply_message(cls, bare_body: str, portal_url: str) -> str:
+    def compose_stock_inquiry_reply_message(
+        cls, bare_body: str, portal_url: str, preamble: Optional[str] = None
+    ) -> str:
         """The contact-facing WhatsApp text for a purchasing reply.
 
         Composed HERE, not in the frontend. The FE used to build
@@ -6769,7 +6885,7 @@ class StockInquiryService:
         """
         body = (bare_body or "").strip()
         url = (portal_url or "").strip()
-        text = f"{cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
+        text = f"{preamble or cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
         if body:
             text = f"{text}\n{body}"
         return f"{text}\n\n{url}" if url else text
@@ -6800,6 +6916,87 @@ class StockInquiryService:
             return s
         idx = s.rfind(": ")
         return s[idx + 2 :].strip() if idx != -1 else s
+
+    def enqueue_update_reply(
+        self,
+        inquiry: StockInquiry,
+        *,
+        identifier: str,
+        update_text: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Queue purchasing's "Update & Reply" message on the inquiry's conversation.
+
+        The SI's own reply; the New Product Application's sibling is
+        ``enqueue_application_update_reply`` (same queue, composer and worker send, its own
+        template use case). Call AFTER the business write commits.
+
+        Structured-template vars: the bare ``update`` text + links (mirrors complaint's bare
+        ``stored_body``). One portal URL resolution, shared by the in-window text and the
+        out-of-window template, so both carry the same interactive portal link.
+        """
+        inquiry_id = str(inquiry.id)
+        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, inquiry_id)
+        reply_extra_vars = {
+            "update": update_text,
+            "portal_url": portal_url,
+            "view_url": (self._build_stock_inquiry_view_url(inquiry_id) or "").strip(),
+        }
+        self._enqueue_stock_inquiry_respond_message(
+            inquiry_id=inquiry_id,
+            identifier=identifier,
+            message_text=self.compose_stock_inquiry_reply_message(update_text, portal_url),
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+            space_id=getattr(inquiry, "space_id", None),
+            verify_delivery=True,
+            extra_context_vars=reply_extra_vars,
+        )
+
+    def enqueue_application_update_reply(
+        self,
+        inquiry: StockInquiry,
+        application,
+        *,
+        identifier: str,
+        update_text: str,
+        message_body: str,
+        portal_url: str,
+        template_vars: dict,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Queue purchasing's "Update & Reply" on a New Product Application, through the stock
+        inquiry's conversation, with the NPA's own template use case (owner 8 Nov 17:35).
+
+        The same path as the SI's reply (``enqueue_update_reply``): the respond_io queue, the
+        same composer, and the same worker send (``_send_and_log``) on the SI's conversation.
+        The template maps ``template_vars`` (``new_product_application_service.template_vars``,
+        computed by the caller in its company scope), ``update`` (purchasing's text) and
+        ``portal_url`` (the NPA's portal page). ``message_body`` is the in-window text when no
+        template is mapped.
+        """
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_new_product_application_respond_message
+
+        application_id = str(application.id)
+        portal_url = (portal_url or "").strip()
+        job = enqueue_job(
+            send_new_product_application_respond_message,
+            str(inquiry.id),
+            identifier,
+            self.compose_stock_inquiry_reply_message(
+                message_body, portal_url, preamble=self.NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE
+            ),
+            respond_user_id,
+            crm_sender_user_id,
+            getattr(inquiry, "space_id", None),
+            {**template_vars, "update": update_text, "portal_url": portal_url},
+            queue_name="respond_io",
+            job_timeout=180,
+        )
+        logger.info("Enqueued respond.io send job %s for new_product_application %s", job.id, application_id)
 
     def update_inquiry_and_reply(
         self,
@@ -6877,6 +7074,7 @@ class StockInquiryService:
             raise handle_validation_error("purchasing_response is required to reply.")
         # Do not persist the reply payload (often includes view link) into purchasing_response
         update_data.pop("purchasing_response", None)
+        self._apply_npa_request(inquiry, update_data, crm_sender_user_id)
 
         for key, value in update_data.items():
             setattr(inquiry, key, value)
@@ -6913,6 +7111,11 @@ class StockInquiryService:
         # second preamble and re-sending the stale read-only view link.
         bare_reply = self._bare_stock_inquiry_reply(message_to_send)
         outgoing_bare = f"{bare_reply}\n{attachment_sentence}" if attachment_sentence else bare_reply
+        from app.services.new_product_application_service import npa_next_step_sentence
+
+        next_step = npa_next_step_sentence(self.db, inquiry)
+        if next_step:
+            outgoing_bare = f"{outgoing_bare}\n{next_step}"
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -6965,27 +7168,12 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
 
-        # Structured-template vars: bare purchasing_response text (+ attachment
-        # sentence, D10) as `update` core + links. Mirrors complaint's bare
-        # `stored_body`.
-        # One resolution, shared by the in-window text and the out-of-window
-        # template, so both carry the same interactive portal link.
-        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
-        reply_extra_vars = {
-            "update": outgoing_bare,
-            "portal_url": portal_url,
-            "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
-        }
-        outgoing_text = self.compose_stock_inquiry_reply_message(outgoing_bare, portal_url)
-        self._enqueue_stock_inquiry_respond_message(
-            inquiry_id=inquiry_id,
+        self.enqueue_update_reply(
+            inquiry,
             identifier=identifier,
-            message_text=outgoing_text,
+            update_text=outgoing_bare,
             respond_user_id=respond_user_id,
             crm_sender_user_id=crm_sender_user_id,
-            space_id=getattr(inquiry, "space_id", None),
-            verify_delivery=True,
-            extra_context_vars=reply_extra_vars,
         )
 
         if transition_to_responded_workflow:

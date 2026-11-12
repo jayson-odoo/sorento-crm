@@ -61,6 +61,9 @@ class ListSearchRequest(BaseModel):
     # Products "Discontinued at" range (issue #1287), Malaysia-day inclusive.
     discontinued_from: Optional[date] = None
     discontinued_to: Optional[date] = None
+    # Products "List price changed at" range (LIST-PRICE-CHANGE-UI), Malaysia-day inclusive.
+    list_price_changed_from: Optional[date] = None
+    list_price_changed_to: Optional[date] = None
     # Workflow forms (list-query + UI quick filters)
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
@@ -103,6 +106,9 @@ class ListExportRequest(BaseModel):
     # Products "Discontinued at" range (issue #1287), Malaysia-day inclusive.
     discontinued_from: Optional[date] = None
     discontinued_to: Optional[date] = None
+    # Products "List price changed at" range (LIST-PRICE-CHANGE-UI), Malaysia-day inclusive.
+    list_price_changed_from: Optional[date] = None
+    list_price_changed_to: Optional[date] = None
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
     workflow_submission_state_code: Optional[str] = None
@@ -213,6 +219,10 @@ class UserListColumnConfigPayload(BaseModel):
     # bound existed (or restored from a backup) can still hold an out-of-range value, and
     # GET returns it as-is - the FE apply gate drops it on read, same predicate as here.
     pageSize: Optional[int] = Field(default=None, ge=1, le=100)
+    # PROJECTS-BOARD-VIEW-PREF: which view a page with a board / grid / list toggle was
+    # left in (Pipeline today), owned by `useListingViewMode`. A closed set, so a stray
+    # value cannot be stored and then fail to apply on every open.
+    view: Optional[Literal["board", "grid", "list"]] = None
 
 
 class UserListColumnConfigResponse(BaseModel):

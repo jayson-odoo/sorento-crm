@@ -6,7 +6,10 @@ import type {
   QuotationIssue,
   QuotationSignatureRecord,
 } from '../../../../_shared/services/quotationDocumentService';
-import type { Project } from '../../../../_shared/types/project.types';
+import type {
+  Project,
+  QuotationRecomputeResult,
+} from '../../../../_shared/types/project.types';
 
 /**
  * Everything the tabs of one quotation document share.
@@ -33,6 +36,27 @@ export type QuotationDocumentScreen = {
   /** The scope the Scopes tab has open. Held here so leaving the tab does not lose it. */
   activeScopeId: string | null;
   selectScope: (scopeId: string) => void;
+  /**
+   * The lines filter's chosen flags (PROJECT-QUOTE-LINE-TOOLS). Held here so it stays on across
+   * area tabs, and so the approval banner's counts can set it.
+   */
+  lineFlags: string[];
+  setLineFlags: (next: string[]) => void;
+  /**
+   * A banner count asked for the lines to be shown: bumped per ask, and `consumeLinesScroll`
+   * answers true once per ask, so the area strip scrolls into view then and not on a later
+   * ordinary visit to the tab (crew pass: below the fold a tap looked like nothing happened).
+   */
+  linesScrollRequest?: number;
+  consumeLinesScroll?: () => boolean;
+  /**
+   * The version the header chip has picked (PROPOSAL-HEADER-LAYOUT: "version is per quotation /
+   * proposal"), applied to every area. Null reads each area's current version.
+   */
+  versionNo: number | null;
+  /** The last Recheck alerts answer per version id, shown above that version's lines. */
+  recheckResults: Record<string, QuotationRecomputeResult>;
+  dismissRecheck: (versionId: string) => void;
 };
 
 const QuotationDocumentContext = React.createContext<QuotationDocumentScreen | undefined>(

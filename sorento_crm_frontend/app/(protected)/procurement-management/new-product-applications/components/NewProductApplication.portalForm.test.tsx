@@ -13,7 +13,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EMPTY_FORM, blankLine, payloadFromState } from '@/lib/new-product-application-form';
+import { EMPTY_FORM, payloadFromState } from '@/lib/new-product-application-form';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -83,8 +83,7 @@ const detail = (over: Record<string, unknown> = {}) => ({
   id: 'npa-5', application_no: 'NPA-000005', status: 'draft', status_label: 'Draft', source: 'portal',
   applicant_id: 'u-owner', applicant_name: 'Ann Sales', stock_inquiry_id: null, stock_inquiry_number: null,
   customer_id: null, customer_code: null, customer_name: 'ZZT Typed Co', project_name: 'ZZT project', needed_by: null,
-  remark: null, lead_time: null, attachments: [], created_at: '2026-10-10T01:00:00', submitted_at: null,
-  first_line: 'ZZT-1', lines_total: 1, lines_done: 0, opened_codes: [], decided_at: null, reject_reason: null,
+  remark: null, lead_time: null, attachments: [], created_at: '2026-10-10T01:00:00', submitted_at: null, opened_codes: [], decided_at: null, reject_reason: null,
   revise_reason: null, cancel_reason: null, lines: [line()], ...over,
 });
 const PREFILL = {
@@ -160,7 +159,7 @@ describe('limited user, New Product Application create renders the portal form',
     expect(screen.getByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
   });
 
-  it('inquiries, customers and brands are searched on my-requests only', async () => {
+  it('inquiries and customers are searched on my-requests only (Brand column removed)', async () => {
     mountForm(LIMITED);
     const inquiry = await screen.findByLabelText(pickInquiryLabel);
     fireEvent.focus(inquiry);
@@ -169,9 +168,8 @@ describe('limited user, New Product Application create renders the portal form',
     const customer = screen.getByLabelText('Customer');
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'ZZ' } });
-    await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/customers`)).length).toBeGreaterThan(0), { timeout: 3000 });
-    fireEvent.click(screen.getByLabelText('Brand'));
-    await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/lookups/brands`)).length).toBeGreaterThan(0), { timeout: 3000 });
+    await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/debtors')).length).toBeGreaterThan(0), { timeout: 3000 });
+    expect(screen.queryByLabelText('Brand')).toBeNull();
     expect(portalCalls()).toHaveLength(0);
     expect(staffApi()).toHaveLength(0);
     expect(where((c) => c.url.startsWith('/api/v1/procurement/stock-inquiries'))).toHaveLength(0);
@@ -181,7 +179,7 @@ describe('limited user, New Product Application create renders the portal form',
     mountForm(LIMITED);
     fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
-    expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toEqual(payloadFromState({ ...EMPTY_FORM, lines: [blankLine()] }));
+    expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toEqual(payloadFromState(EMPTY_FORM));
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/procurement-management/new-product-applications/new-1'));
     expect(nav.replace.mock.calls.every((a) => !String(a[0]).startsWith('/portal'))).toBe(true);
     expect(staffApi()).toHaveLength(0);
@@ -261,7 +259,12 @@ describe('limited user, New Product Application edit loads from my-requests', ()
 describe('limited user, New Product Application view renders the portal form read-only', () => {
   it('a submitted application is read from my-requests, shows the portal lock sentence, never the staff API', async () => {
     mountDetail(LIMITED, { status: 'submitted', status_label: 'Submitted' });
-    expect(await screen.findByText(/Locked: Revise to change it/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(where((c) => c.method === 'GET' && c.url === `${MINE}/npa-5`).length).toBeGreaterThan(0),
+    );
+    await screen.findByText(/ZZT Typed Co/);
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
     expect(where((c) => c.method === 'GET' && c.url === `${MINE}/npa-5`).length).toBeGreaterThan(0);
     expect(staffApi()).toHaveLength(0);
@@ -331,7 +334,11 @@ describe('limited user, New Product Application shows exactly one Back (the CRM 
   });
   it('read-only view: no Back of its own', async () => {
     mountDetail(LIMITED, { status: 'submitted', status_label: 'Submitted' });
-    await screen.findByText(/Locked: Revise to change it/);
+    await waitFor(() =>
+      expect(where((c) => c.method === 'GET' && c.url === `${MINE}/npa-5`).length).toBeGreaterThan(0),
+    );
+    await screen.findByText(/ZZT Typed Co/);
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
     expectNoOwnBack();
   });
 });

@@ -29,6 +29,7 @@ from app.schemas.projects import (
     ProjectStakeholderCreate,
     ProjectStakeholderResponse,
     ProjectStakeholderUpdate,
+    ProjectOutcomeChangeRequest,
     ProjectStatusChangeRequest,
     ProjectUpdateRequest,
     TakeoverRequestCreate,
@@ -68,13 +69,12 @@ _APPROVAL_FILTERS = ("pending", "resubmitted", "rejected", "approved", "draft")
 _MACHINE_AUTH_METHODS = frozenset({"api_key", "integration_api_key", "connector"})
 
 _PROFILE_KEYS = (
+    "name",
     "registered_company_name",
     "location",
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "lead_source",
     "estimated_sales_value",
     "launch_date",
@@ -137,6 +137,7 @@ def preview_clashes(
         if VIEW not in permission_slugs(db, _user["id"]):
             # A salesperson with the submit grant only learns that a project exists (D8).
             rows = [
+                # Exactly D8's four keys: the short name is not added for this view.
                 {k: row.get(k) for k in ("project_id", "project_code", "title", "blocks")}
                 for row in rows
             ]
@@ -652,15 +653,49 @@ def change_project_status(
             to_status_id=payload.to_status_id,
             actor_user_id=current_user["id"],
             permissions=permissions,
+            loss_reason=payload.loss_reason,
         )
         db.commit()
         db.refresh(project)
         return svc.serialize_project(
             db, project, actor_user_id=current_user["id"], permissions=permissions
         )
+    except HTTPException:
+        raise  # a refusal writes nothing (reason or state checked first)
     except Exception as exc:
         db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        raise handle_internal_error(str(exc))
+
+
+@router.post("/{project_id}/outcome", response_model=ProjectResponse)
+def change_project_outcome(
+    project_id: str,
+    payload: ProjectOutcomeChangeRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Mark won, or re-open a won or lost project. Lost is the stage move."""
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        project = svc.get_project_or_404(db, project_id)
+        permissions = permission_slugs(db, current_user["id"])
+        svc.set_project_outcome(
+            db,
+            project,
+            outcome=payload.outcome,
+            actor_user_id=current_user["id"],
+            permissions=permissions,
+        )
+        db.commit()
+        db.refresh(project)
+        return svc.serialize_project(
+            db, project, actor_user_id=current_user["id"], permissions=permissions
+        )
+    except HTTPException:
+        raise  # a refusal writes nothing (reason or state checked first)
+    except Exception as exc:
+        db.rollback()
+        raise handle_internal_error(str(exc))
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_200_OK)

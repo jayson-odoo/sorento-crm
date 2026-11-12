@@ -159,6 +159,19 @@ class ProductSpecRegistry(Base):
     # AND user rows, like user_synonyms: staff-owned, never seed-repaired (nothing in
     # `_seed_values` names this column, so the repair loop cannot touch it).
     value_labels = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    # value -> [Dealer Kit icon asset id, ...], in the admin's order: the feature icons a tag
+    # shows for a product holding that value (PRICETAG-DESIGNER-GAPS item 3). Staff-owned like
+    # value_labels, never seed-repaired (`_seed_values` does not name it).
+    value_icons = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    # value -> {icon asset id: [{spec_key, value}, ...]}: the icon prints only when the product also
+    # holds EVERY listed value of the other specs (SPEC-ICON-COMBINED). Staff-owned like value_icons,
+    # never seed-repaired (`_seed_values` does not name it).
+    value_icon_conditions = Column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    # Where this spec's icons sit in the one sequence a tag shows (1 first, blank last; ties by
+    # label). Staff-owned, never seed-repaired (`_seed_values` does not name it).
+    icon_order = Column(Integer, nullable=True)
     # What this field means to the chatbot: one line (max 200) printed on its line in the
     # parser's `{{specs}}`. Staff-owned and never seed-repaired (`_seed_values` does not
     # name it).

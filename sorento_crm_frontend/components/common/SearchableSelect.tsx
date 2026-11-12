@@ -39,6 +39,11 @@ export type SearchableSelectOption = {
    * label back apart guesses at a separator the option was never promised to use.
    */
   code?: string;
+  /**
+   * The record's own name, where the label is not it (a picker whose label reads
+   * "CODE  RM 1,050"). Carried for the same reason as `code`.
+   */
+  name?: string;
   /** Optional grouping header (renders one CommandGroup per distinct group). */
   group?: string;
   /** Per-option disabled (Radix `SelectItem disabled` parity). */
@@ -113,7 +118,8 @@ export type SearchableSelectProps = {
   /** Forwarded to the trigger, for a caller that shows an error under it. */
   'aria-invalid'?: boolean;
   'aria-describedby'?: string;
-  placeholder?: string;
+  /** Shown while nothing is selected; text, or a node (a thumbnail beside the text, say). */
+  placeholder?: React.ReactNode;
   emptyMessage?: string;
   /**
    * The options query's `error` (NEVER-STUCK-UI S3, lever L5). Set, the menu says "no
@@ -377,6 +383,38 @@ export function SearchableSelect({
     onSearchChange?.(q);
   };
 
+  /**
+   * Typing on the focused, closed trigger opens it with that character already in the search,
+   * as a native select or any combobox does (PROJECT-QUOTE-LINE-TOOLS, crew browser pass: the
+   * duplicated line's picker held the caret and ignored the product code typed into it). Only
+   * a printable character with no modifier: Space and Enter keep opening it the button's way,
+   * and shortcuts, Tab and arrows keep theirs.
+   */
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const caretToEnd = React.useRef(false);
+  const handleTriggerKeyDown = (event: React.KeyboardEvent) => {
+    if (open || isDisabled) return;
+    if (event.key.length !== 1 || event.key === ' ') return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    handleQueryChange(event.key);
+    caretToEnd.current = true;
+    setOpen(true);
+  };
+  // The popover focuses its search box as it opens, which can leave the caret BEFORE the
+  // seeded character; the next key typed would then land in front of it.
+  React.useEffect(() => {
+    if (!open || !caretToEnd.current) return;
+    const frame = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      caretToEnd.current = false;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
   return (
     // See `needsDialogScrollLock` above for why `Popover` never gets `modal`.
     <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
@@ -397,6 +435,7 @@ export function SearchableSelect({
           // can find the trigger by role, and screen readers announce expanded state.
           role="combobox"
           aria-expanded={open}
+          onKeyDown={handleTriggerKeyDown}
           className={cn(selectTriggerVariants({ size }), triggerClassName)}
         >
           {/* Default: no truncation - the chosen option is the one thing the closed
@@ -476,7 +515,12 @@ export function SearchableSelect({
         align="start"
       >
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
-          <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
+          <CommandInput
+            ref={inputRef}
+            placeholder="Search..."
+            value={query}
+            onValueChange={handleQueryChange}
+          />
           <CommandList className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">

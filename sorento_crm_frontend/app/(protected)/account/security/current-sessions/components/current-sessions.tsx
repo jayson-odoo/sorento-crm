@@ -29,12 +29,11 @@ import {
   CardHeading,
   CardToolbar,
 } from '@/components/ui/card';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 function formatWhen(iso?: string | null): string {
   if (!iso) return '-';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '-';
-  return d.toLocaleString();
+  return formatDateTimeInMalaysia(iso) || '-';
 }
 
 function SessionRow({ session }: { session: SessionInfo }) {

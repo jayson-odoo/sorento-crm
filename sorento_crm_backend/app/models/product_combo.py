@@ -68,10 +68,21 @@ class ProductCombo(Base):
     image_attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
+    # PRICETAG-ACCESSORY-DESIGNER S6: this combo's own box style (a saved accessories template); NULL =
+    # the tag template's own box. A combo never inherits its host's.
+    accessory_box_preset_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.accessory_box_preset.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     # PRICETAG-COMBO: the combo's own text and prices. A blank price means the
-    # tag's summed price, so a combo with none set behaves as before.
+    # tag prints no price at all (never a sum of the parts).
     description = Column(Text, nullable=True)
     free_items = Column(Text, nullable=True)
+    # COMBO-SETTINGS-UX: the main (host) product's label on the tag, and the rich-text
+    # template repeated once per part to print "All parts as a list".
+    main_label = Column(String(100), nullable=True)
+    parts_line = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=True)
     sell_price = Column(Numeric(12, 2), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
@@ -131,6 +142,8 @@ class ProductComboPart(Base):
     sell_price = Column(Numeric(12, 2), nullable=True)
     topup_amount = Column(Numeric(12, 2), nullable=True)
     is_upgrade = Column(Boolean, nullable=False, server_default="false", default=False)
+    # COMBO-SETTINGS-UX: this part's label on the tag ("CABINET", "BASIN").
+    label = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

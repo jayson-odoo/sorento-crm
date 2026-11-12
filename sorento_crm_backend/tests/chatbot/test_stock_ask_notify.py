@@ -667,11 +667,12 @@ def test_ac_sa403_context_vars_and_the_default_wording(db, monkeypatch, respond)
     assert ctx["contact_name"] == "Ah Seng"
     assert ctx["product"] == "SRT5674 - Wiper Blade 24in"
     assert ctx["quantity"] == "50"
-    # 06:32 UTC is 14:32 on the Malaysia wall clock.
-    assert ctx["asked_at"] == "24/09/2026 14:32"
+    # 06:32 UTC is 2:32 pm on the Malaysia wall clock, in the house date-time shape
+    # (DATE-FORMAT-UNIFY, app/utils/date_format.fmt_datetime).
+    assert ctx["asked_at"] == "24/09/2026, 2:32 pm"
     assert seen["text"] == (
         "Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT5674 - Wiper Blade "
-        "24in, qty 50, outcome: in stock. Asked at 24/09/2026 14:32."
+        "24in, qty 50, outcome: in stock. Asked at 24/09/2026, 2:32 pm."
     )
     for key in ("outcome", "customer_name", "product", "quantity", "asked_at"):
         assert key in PARAM_VARIABLES, key

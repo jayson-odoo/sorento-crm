@@ -49,6 +49,7 @@ import {
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { useUrlTab } from '@/hooks/useUrlTab';
 import { useProject } from '../../../../_shared/hooks/useProjects';
+import { projectDisplayName } from '../../../../_shared/lib/projectName';
 import { useReviewOriginHref } from '../../../../_shared/hooks/useReviewOrigin';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
 import {
@@ -356,8 +357,8 @@ export function SalesOrderDetailClient({
                   title={project.data.title}
                 >
                   {project.data.project_code
-                    ? `${project.data.title} (${project.data.project_code})`
-                    : project.data.title}
+                    ? `${projectDisplayName(project.data)} (${project.data.project_code})`
+                    : projectDisplayName(project.data)}
                 </span>
                 {' · '}
               </>

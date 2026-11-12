@@ -1,0 +1,154 @@
+'use client';
+
+import * as React from 'react';
+
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { InspectorPanel } from '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel';
+import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
+import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
+import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
+import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
+import type {
+  TagLayer,
+  TagLayerProps,
+} from '@/lib/dealer-kit/tag-template-types';
+
+import type { ApplyAllChanges } from '../../../../../../_shared/services/specSheetService';
+import { applicableChanges } from './selectionTools';
+
+export type ApplyMode = 'page' | 'all';
+
+/**
+ * The designer's own Inspector for the selected layer of the page being edited, plus the one
+ * choice the reader adds: apply a change to this page only (the default) or to every page of the
+ * sheet. The change always lands on the page's canvas; "every page" also sends it to the server,
+ * which moves or restyles that layer on every page that has it.
+ */
+export function ReaderInspector({
+  pageKey,
+  layer,
+  layers,
+  controller,
+  mode,
+  onModeChange,
+  onApplyAll,
+}: {
+  pageKey: string | null;
+  layer: TagLayer | null;
+  layers: TagLayer[];
+  controller: EmbeddedController | null;
+  mode: ApplyMode;
+  onModeChange: (mode: ApplyMode) => void;
+  onApplyAll: (layerId: string, changes: ApplyAllChanges) => void;
+}) {
+  const library = useKitLibrary();
+  // Insert field (owner hand test #2331): the template designer's own dialog and registry, so a
+  // page offers every field a template can (product, line, doc).
+  const [insertOpen, setInsertOpen] = React.useState(false);
+  const textLayer = layer && layer.props.kind === 'text' ? layer : null;
+  // A layer bound to a slot, or already showing an override, draws `text_override`: the field
+  // goes there, as in the template designer, or it would land where it is never drawn.
+  const writesOverride = Boolean(
+    textLayer && (textLayer.slot_binding || textLayer.text_override != null),
+  );
+  // The Inspector's rich Content box (a formatted text), so Insert field lands at its caret,
+  // inside the formatting, exactly as in the template designer: the dialog then never shows the
+  // layer's markup, it hands back only the field (crew pass on #2331).
+  const contentEditorRef = React.useRef<Editor | null>(null);
+  const onContentEditorReady = React.useCallback((editor: Editor) => {
+    contentEditorRef.current = editor;
+  }, []);
+  const contentEditor = () => {
+    const editor = contentEditorRef.current;
+    return editor && !editor.isDestroyed ? editor : null;
+  };
+  const textValue =
+    textLayer && textLayer.props.kind === 'text'
+      ? (textLayer.text_override ?? textLayer.props.text ?? '')
+      : '';
+
+  const onUpdate = React.useCallback(
+    (id: string, changes: Partial<TagLayer>) => {
+      controller?.updateLayer(id, changes);
+      if (mode === 'all') {
+        const sent = applicableChanges(changes, null);
+        if (sent) onApplyAll(id, sent);
+      }
+    },
+    [controller, mode, onApplyAll],
+  );
+  const onUpdateProps = React.useCallback(
+    (id: string, changes: Partial<TagLayerProps>) => {
+      controller?.updateLayerProps(id, changes);
+      if (mode === 'all') {
+        const sent = applicableChanges(null, changes);
+        if (sent) onApplyAll(id, sent);
+      }
+    },
+    [controller, mode, onApplyAll],
+  );
+
+  const insert = (text: string) => {
+    setInsertOpen(false);
+    if (!textLayer) return;
+    const editor = contentEditor();
+    if (editor) {
+      insertMergeFieldText(editor, text);
+      return;
+    }
+    if (writesOverride) onUpdate(textLayer.id, { text_override: text });
+    else onUpdateProps(textLayer.id, { text } as Partial<TagLayerProps>);
+  };
+
+  return (
+    <div
+      className="flex min-h-0 flex-col gap-2"
+      data-testid="reader-inspector"
+      data-page-key={pageKey ?? ''}
+    >
+      {layer && (
+        // A segmented control (the toggle group the designer's own Inspector uses for B/I/U):
+        // one row, two short options. Radix lets a single group be emptied by clicking the
+        // picked option again; an empty value is ignored so one option is always picked.
+        <div className="flex items-center gap-2 px-2 pt-2">
+          <span className="text-xs text-muted-foreground">Apply to</span>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            aria-label="Apply to"
+            value={mode}
+            onValueChange={(next: string) => {
+              if (next === 'page' || next === 'all') onModeChange(next);
+            }}
+          >
+            <ToggleGroupItem value="page">This page</ToggleGroupItem>
+            <ToggleGroupItem value="all">Every page</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <InspectorPanel
+          layer={layer}
+          onUpdate={onUpdate}
+          onUpdateProps={onUpdateProps}
+          layers={layers}
+          fontOptions={library.fontOptions}
+          specSheet
+          specKeys={library.specKeys}
+          onInsertField={textLayer ? () => setInsertOpen(true) : undefined}
+          onContentEditorReady={onContentEditorReady}
+        />
+      </div>
+      <InsertFieldDialog
+        open={insertOpen && textLayer !== null}
+        value={insertOpen && contentEditor() ? '' : textValue}
+        data={null}
+        specKeys={library.specKeys}
+        onCancel={() => setInsertOpen(false)}
+        onDone={insert}
+      />
+    </div>
+  );
+}

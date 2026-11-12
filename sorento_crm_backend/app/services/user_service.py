@@ -1135,17 +1135,35 @@ class UserService:
         return out
 
     def set_user_roles(self, user_id: str, role_ids: list[str]) -> dict:
-        """Replace user's role assignments with the given role_ids."""
+        """Make the user's role assignments equal ``role_ids`` (unknown ids skipped).
+
+        Diffs against the existing rows rather than delete-all + re-add: a kept role keeps
+        its row (id and ``assigned_at``), so saving Edit user with the same roles cannot
+        move the primary role (USER-ROLES-STABLE). Only added roles are inserted and only
+        removed ones deleted.
+        """
         self.get_user(user_id)
-        self.db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user_id).delete(
-            synchronize_session=False
-        )
-        self.db.flush()
-        for role_id in role_ids or []:
-            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
-            if role:
+        wanted = list(dict.fromkeys(str(r) for r in (role_ids or []) if r))
+        if wanted:
+            known = {
+                str(r[0]) for r in self.db.query(UserRole.id).filter(UserRole.id.in_(wanted)).all()
+            }
+            wanted = [r for r in wanted if r in known]
+        existing = {
+            str(a.role_id): a
+            for a in self.db.query(UserRoleAssignment)
+            .filter(UserRoleAssignment.user_id == user_id)
+            .all()
+        }
+        for role_id, row in existing.items():
+            if role_id not in wanted:
+                self.db.delete(row)
+        for role_id in wanted:
+            if role_id not in existing:
                 self.db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
         self.db.commit()
+        # A removed role must stop granting at once, not after the cache TTL (this process).
+        invalidate_rbac_cache(user_id)
         return {"message": "User roles updated successfully"}
 
     def list_user_companies(self, user_id: str) -> list[dict]:
@@ -1162,24 +1180,41 @@ class UserService:
         return [{"id": str(c.id), "name": c.name, "code": c.code} for c in rows]
 
     def set_user_companies(self, user_id: str, company_ids: list[str]) -> dict:
-        """Replace a user's company grants with the given ids (unknown ids skipped).
+        """Make a user's company grants equal the given ids (unknown ids skipped).
 
         If the user's ``last_active_company_id`` is no longer in the resulting set,
         repoint it to the first remaining grant (deterministic) or null it.
         """
         from app.models.company import Company, UserCompany
         user = self.get_user(user_id)
-        self.db.query(UserCompany).filter(UserCompany.user_id == user_id).delete(
-            synchronize_session=False
-        )
-        self.db.flush()
+        import uuid as _uuid
+
+        def _canonical(c) -> str | None:
+            # Postgres returns uuids lower-case; compare in that form or a valid
+            # upper-case id would be dropped (and an existing grant revoked).
+            try:
+                return str(_uuid.UUID(str(c)))
+            except ValueError:
+                return None
+
+        wanted = list(dict.fromkeys(c for c in (_canonical(c) for c in (company_ids or []) if c) if c))
         granted: list[str] = []
-        for cid in company_ids or []:
-            if cid in granted:
-                continue
-            if self.db.query(Company).filter(Company.id == cid).first():
+        if wanted:
+            known = {
+                str(r[0]) for r in self.db.query(Company.id).filter(Company.id.in_(wanted)).all()
+            }
+            granted = [c for c in wanted if c in known]
+        # Diff, not delete-all + re-add: kept grants keep their row (USER-ROLES-STABLE).
+        existing = {
+            str(g.company_id): g
+            for g in self.db.query(UserCompany).filter(UserCompany.user_id == user_id).all()
+        }
+        for cid, row in existing.items():
+            if cid not in granted:
+                self.db.delete(row)
+        for cid in granted:
+            if cid not in existing:
                 self.db.add(UserCompany(company_id=cid, user_id=user_id))
-                granted.append(cid)
         if str(user.last_active_company_id or "") not in granted:
             user.last_active_company_id = granted[0] if granted else None
         self.db.commit()
@@ -1969,7 +2004,10 @@ class AccessAgentService:
         from sqlalchemy.orm import selectinload
 
         from app.models.base import company_scope
-        from app.services.market_segment_service import segment_key_for
+        from app.services.market_segment_service import (
+            member_serves_segments,
+            segment_key_for,
+        )
         # Check agent is linked to this team. Read scope-free: `team_id` is passed in
         # already resolved for the work item's company (by get_team_id_by_tier), so
         # the ambient company must not veto it - otherwise a caller switched to
@@ -2021,8 +2059,9 @@ class AccessAgentService:
             segment_pool = [
                 m
                 for m in pool
-                if not m.market_segments
-                or {str(s.code) for s in m.market_segments} & contact_segments
+                if member_serves_segments(
+                    {str(s.code) for s in m.market_segments}, contact_segments
+                )
             ]
             # Nobody serves this segment -> the whole team on the legacy '' cursor.
             if segment_pool:
@@ -3546,6 +3585,10 @@ def gate_user_ids(current_user: Mapping[str, Any]) -> list[str]:
     nothing the key lacks."""
     uid = str(current_user.get("id") or "")
     key_user_id = current_user.get("key_user_id")
+    if current_user.get("staff_proven"):
+        # The backend's own panel agent, with its proof (`staff_proof`, AI-TOOLS-WAVE2): the asking staff member
+        # alone, as on their own screens.
+        return [uid]
     return [uid, str(key_user_id)] if key_user_id else [uid]
 
 

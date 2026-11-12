@@ -708,6 +708,10 @@ def _po_extractor_fallback() -> str:
     two-line-wrapped stock code is the one that mattered most: the customer's column
     is narrow, so `SRTWC86` and `08-RL` are one code printed on two rows, and reading
     them as two codes produces a PO that reconciles to nothing.
+
+    The JSON block below is also enforced as a structured-output schema
+    (``project_po_reading.PO_PAGE_SCHEMA``). A published prompt version that asks for a
+    NEW key gets nothing back for it until that schema carries the key too.
     """
     return (
         "You are reading ONE PAGE of a scanned customer PURCHASE ORDER sent to Sorento "
@@ -1173,7 +1177,9 @@ def _ai_extract_base_fallback() -> str:
 
 def _ai_extract_price_tag_fallback() -> str:
     """The price tag request form's own system prompt: the shared base plus
-    rule (8), which forces `products` on any bare list of product codes.
+    rule (8), which forces `products` on any bare list of product codes, rule (9),
+    quantities never read, and rule (10), LP/SP price types, typed prices and "+" sets
+    (PRICETAG-LPSP, shipped as a new prompt version by `ptag_0014_lpsp`).
 
     Owner ruling 16 Sep, second: the portal AI extract on
     `portal.price_tag_request` returned an empty `products` array on 1 of 3
@@ -1189,7 +1195,19 @@ def _ai_extract_price_tag_fallback() -> str:
         "empty `products` array only when no product code appears anywhere. "
         "(9) `quantity` is how many tags the salesperson wants, which the "
         "document never says. Omit `quantity` from every entry; never copy a "
-        "quantity, pack size or order quantity from the document."
+        "quantity, pack size or order quantity from the document. "
+        "(10) Prices and sets. An entry may carry `price_type` (\"list\" or "
+        "\"selling\"), `typed_list_price`, `typed_sell_price` (plain numbers, "
+        "no currency symbol) and `set_codes`. A line under a section header "
+        "\"LP\" (list price) or \"SP\" (selling price), or carrying \"LP rm..\" "
+        "or \"SP rm..\" itself, takes that `price_type`; a price written on the "
+        "line wins over the header. Put an LP figure in `typed_list_price` and "
+        "an SP figure in `typed_sell_price`. When product codes are joined by "
+        "\"+\", the first is `product_code` and the others, in the order "
+        "written, are `set_codes` (an array of strings). When one line shows a "
+        "second price of the same kind, keep the first in the typed field and "
+        "put the other in `notes`. Omit `price_type` and any price the "
+        "document does not state; never guess either."
     )
 
 

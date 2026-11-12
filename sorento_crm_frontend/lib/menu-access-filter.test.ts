@@ -58,16 +58,26 @@ const LOADED = {
 } as const;
 
 describe('applyMenuAccess on the real MENU_SIDEBAR', () => {
-  it('a user holding only ideation.board.view sees exactly the Ideas group (All ideas + Roadmap), under OVERVIEW alone', () => {
+  it('a user holding only ideation.board.view sees the Ideas group (All ideas + Roadmap) under OVERVIEW alone, not Town', () => {
     const menu = applyMenuAccess(MENU_SIDEBAR, {
       ...LOADED,
       isSuperadmin: false,
       permissionSet: new Set(['ideation.board.view']),
     });
+    // Town is admin-only since TOWN-V2 (dashboards.town.view), so it is not there without that slug.
     expect(collectPaths(menu)).toEqual(['/ideas', '/ideas/portal']);
     expect(menu.filter((i) => i.heading).map((i) => i.heading)).toEqual([
       'OVERVIEW',
     ]);
+  });
+
+  it('a user holding dashboards.town.view sees Town', () => {
+    const menu = applyMenuAccess(MENU_SIDEBAR, {
+      ...LOADED,
+      isSuperadmin: false,
+      permissionSet: new Set(['dashboards.town.view']),
+    });
+    expect(collectPaths(menu)).toEqual(['/town']);
   });
 
   it('a non-superadmin holding every slug never sees a superadminOnly entry', () => {

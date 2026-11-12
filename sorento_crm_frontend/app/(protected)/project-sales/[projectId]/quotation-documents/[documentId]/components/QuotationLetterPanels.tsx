@@ -2,11 +2,16 @@
 
 import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { TERMS_HTML_CLASS } from '@/lib/terms-html';
+import { CoverPagePreview } from '@/components/quotation/CoverPagePreview';
+import type { CoverPageData } from '@/lib/quotation-cover';
+import {
+  QuoteTermsFields,
+  type QuoteTermsPatch,
+} from '../../../../_shared/components/QuoteTermsFields';
 
 /**
  * The prose half of the quotation: the letter the customer reads before the prices, and the
@@ -68,21 +73,74 @@ function LetterPanel({
   );
 }
 
+/**
+ * The Cover letter tab: page 1 as it will print (the active design with this quotation's values),
+ * and, in an edit session, the Intro text and Closing text printed above and below its rows.
+ */
 export function QuotationCoverLetterPanel({
+  cover,
+  isLoading = false,
+  noun,
+  error,
   html,
+  closingHtml,
   onChange,
+  onClosingChange,
 }: {
-  html: string | null;
+  cover: CoverPageData | undefined;
+  isLoading?: boolean;
+  /** "Proposal" or "Quotation", printed in the cover's "... from" line. */
+  noun?: string;
+  /** The preview call's failure message, shown as one line in place of the card. */
+  error?: string | null;
+  html?: string | null;
+  closingHtml?: string | null;
+  /** Set only in an edit session. Absent means this is a read: the preview alone. */
   onChange?: (html: string) => void;
+  onClosingChange?: (html: string) => void;
 }) {
   return (
-    <LetterPanel
-      title="Cover letter"
-      html={html}
-      onChange={onChange}
-      placeholder="The letter the customer reads before the prices"
-      emptyHint="No cover letter on this quotation yet."
-    />
+    <div className="space-y-4">
+      {error && !cover ? (
+        <EmptyLine>{`Could not show the cover page. ${error}`}</EmptyLine>
+      ) : (
+        <Card>
+          <CardContent className="min-w-0 py-5">
+            <CoverPagePreview cover={cover} isLoading={isLoading} noun={noun} />
+          </CardContent>
+        </Card>
+      )}
+      {onChange && onClosingChange && (
+        <Card>
+          <CardContent className="min-w-0 space-y-4 py-5">
+            <div className="min-w-0 space-y-1.5">
+              <Label id="cover-intro-label" htmlFor="cover-intro">
+                Intro text
+              </Label>
+              <RichTextEditor
+                id="cover-intro"
+                aria-labelledby="cover-intro-label"
+                value={html ?? ''}
+                onChange={onChange}
+                minHeight={140}
+              />
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label id="cover-closing-label" htmlFor="cover-closing">
+                Closing text
+              </Label>
+              <RichTextEditor
+                id="cover-closing"
+                aria-labelledby="cover-closing-label"
+                value={closingHtml ?? ''}
+                onChange={onClosingChange}
+                minHeight={140}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -91,44 +149,65 @@ export function QuotationTermsPanel({
   onChange,
   paymentTerms = null,
   validity = null,
+  paymentTermId = null,
+  validityValue = null,
+  validityUnit = null,
+  projectId,
   onFieldChange,
+  onValidityChange,
 }: {
   html: string | null;
   onChange?: (html: string) => void;
+  /** The printed texts (a pick's label, or a legacy free text nobody has picked over yet). */
   paymentTerms?: string | null;
   validity?: string | null;
+  /** QUOTE-TERMS-SELECT: the picks behind the texts. */
+  paymentTermId?: string | null;
+  validityValue?: number | null;
+  validityUnit?: string | null;
+  projectId?: string;
   /** Set only in an edit session, with `onChange`. */
-  onFieldChange?: (patch: { payment_terms?: string | null; validity?: string | null }) => void;
+  onFieldChange?: (patch: QuoteTermsPatch) => void;
+  onValidityChange?: (valid: boolean) => void;
 }) {
   const fields = [
-    { id: 'quotation-payment-terms', label: 'Payment Terms', key: 'payment_terms', value: paymentTerms },
-    { id: 'quotation-validity', label: 'Validity', key: 'validity', value: validity },
+    { key: 'payment_terms', label: 'Payment Terms', value: paymentTerms },
+    { key: 'validity', label: 'Validity', value: validity },
   ] as const;
-  const shown = onFieldChange ? fields : fields.filter((field) => (field.value ?? '').trim());
+  const shown = fields.filter((field) => (field.value ?? '').trim());
   return (
     <div className="space-y-4">
-      {shown.length > 0 && (
+      {onFieldChange ? (
         <Card>
-          <CardContent className="grid gap-4 py-5 sm:grid-cols-2">
-            {shown.map((field) =>
-              onFieldChange ? (
-                <div key={field.key} className="min-w-0 space-y-1.5">
-                  <Label htmlFor={field.id}>{field.label}</Label>
-                  <Input
-                    id={field.id}
-                    value={field.value ?? ''}
-                    onChange={(event) => onFieldChange({ [field.key]: event.target.value || null })}
-                  />
-                </div>
-              ) : (
+          <CardContent className="py-5">
+            <QuoteTermsFields
+              idPrefix="quotation"
+              projectId={projectId}
+              values={{
+                payment_term_id: paymentTermId,
+                payment_terms: paymentTerms,
+                validity_value: validityValue,
+                validity_unit: validityUnit,
+                validity,
+              }}
+              onChange={onFieldChange}
+              onValidityChange={onValidityChange}
+            />
+          </CardContent>
+        </Card>
+      ) : (
+        shown.length > 0 && (
+          <Card>
+            <CardContent className="grid gap-4 py-5 sm:grid-cols-2">
+              {shown.map((field) => (
                 <div key={field.key} className="min-w-0 space-y-1">
                   <p className="text-sm text-muted-foreground">{field.label}</p>
                   <p className="min-w-0 break-words text-sm font-medium">{field.value}</p>
                 </div>
-              ),
-            )}
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
+        )
       )}
       <LetterPanel
         title="Terms and conditions"

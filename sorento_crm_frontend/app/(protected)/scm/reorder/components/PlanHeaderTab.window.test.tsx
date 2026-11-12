@@ -70,7 +70,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 }));
 
 vi.mock('../../hooks/useScmOptions', () => ({
-  useWarehouseOptions: () => ({
+  useActiveWarehouseOptions: () => ({
     data: [
       { value: 'BRW', label: 'Butterworth' },
       { value: 'MWH', label: 'Main WH' },
@@ -141,7 +141,7 @@ describe('PlanHeaderTab - window wording (AC-S4.5)', () => {
       plan_horizon_start: '2025-01-01', plan_horizon_date: '2026-10-31',
     }));
     expect(screen.getByText(/Sales orders needed/)).toBeInTheDocument();
-    expect(screen.getByText('01/01/2025 to 31/10/2026')).toBeInTheDocument();
+    expect(screen.getByText('01/01/2025 - 31/10/2026')).toBeInTheDocument();
   });
 
   it('end only reads "up to Y"', () => {

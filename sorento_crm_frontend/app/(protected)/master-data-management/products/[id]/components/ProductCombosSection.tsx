@@ -1,14 +1,29 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircleIcon, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Braces, Copy, ImagePlus, LoaderCircleIcon, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import type { Editor } from '@tiptap/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
-import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor, insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import { unwrapMergeFieldTokens } from '@/components/ui/rich-text-merge-fields';
+import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
+import {
+  ALL_PARTS_PATH,
+  allPartsHtml,
+  partChipLabel,
+  partFieldCatalog,
+} from '@/lib/dealer-kit/combo-part-fields';
+import { pickOneGroups } from '@/lib/dealer-kit/combo-slots';
+import type { MergeFieldGroup } from '@/lib/dealer-kit/merge-fields';
+import type { TagBindingData, TagPartData } from '@/lib/dealer-kit/tag-template-types';
+import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
+import { RichTextView } from '@/components/dealer-kit/RichTextView';
+import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { numberFieldError } from '@/lib/number-field';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
@@ -32,7 +47,12 @@ import type {
   ProductComboRow,
   ProductComboUpdate,
 } from '../../types/productCombo.types';
+import { COMBO_LABEL_MAX, COMBO_NAME_MAX } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
+import { CopyComboDialog } from './CopyComboDialog';
+import { ComboTagPreview } from './ComboTagPreview';
+import { ComboTemplatesField } from './ComboTemplatesField';
+import { AccessoryListField } from './AccessoryListField';
 import { codeWithName, distinctName } from '@/lib/product-display';
 
 /** Server-searched and PAGED, never one cached page: the catalogue is 22,000 rows. */
@@ -122,36 +142,310 @@ function MoneyField({
   );
 }
 
-/** A text box that saves on blur, and only when the text changed. Empty saves null. */
-function TextField({
-  id,
-  label,
+/** The fields the combo Description offers: the combo's own, and its positions (rule 3). */
+const DESCRIPTION_FIELD_GROUPS: MergeFieldGroup[] = ['Combo', 'Parts'];
+/** A description cannot hold itself; the old one-line list is superseded by "All parts" (it still
+ *  prints wherever a description already uses it). */
+const DESCRIPTION_OMITS = ['combo.description', 'combo.parts'];
+/** Readable chips for the combo's own fields; the old one-line list keeps printing as it did. */
+const COMBO_CHIP_LABELS: Record<string, string> = {
+  'combo.parts': 'All parts (old list)',
+  'combo.name': 'Combo name',
+  'combo.free_items': 'Combo accessories included',
+  'combo.description': 'Combo description',
+};
+
+/**
+ * The combo's positions as the Insert field picker names them ("Fixed 1 code: SRTWB2380"): the main
+ * product, the fixed parts, every option of each group, the upgrades, in part order.
+ */
+function positionsBinding(combo: ProductComboRow, productCode: string | undefined): TagBindingData {
+  const row = (code: string, productId: string): TagPartData => ({
+    product_id: productId,
+    code,
+    name: code,
+    dimensions: '',
+  });
+  const groups: { role: string; size: number; picks: TagPartData[] }[] = [];
+  for (const part of combo.parts) {
+    if (part.is_upgrade || !part.choice_group) continue;
+    const group = groups.find((g) => g.role === part.choice_group);
+    if (group) {
+      group.picks.push(row(part.code, part.product_id));
+      group.size += 1;
+    } else groups.push({ role: part.choice_group, size: 1, picks: [row(part.code, part.product_id)] });
+  }
+  return {
+    kind: 'product',
+    product: {
+      code: productCode ?? '',
+      slots: {
+        main: row(productCode ?? '', combo.host_product_id),
+        fixed: combo.parts
+          .filter((part) => !part.is_upgrade && !part.choice_group)
+          .map((part) => row(part.code, part.product_id)),
+        groups,
+        upgrades: combo.parts.filter((part) => part.is_upgrade).map((part) => row(part.code, part.product_id)),
+      },
+    },
+  } as unknown as TagBindingData;
+}
+
+/**
+ * The combo description: the ONE text box (owner ruling 10 Nov 20:1x), with the tag it prints on
+ * drawn beside it. Saves on blur (when focus leaves the editor, toolbar included) and only when the
+ * text changed; a refused save puts the saved text back. Empty saves null. The preview follows the
+ * draft. "Insert field" puts a combo field, or a part's field (tied to the part, shown as a chip
+ * named by the part), in at the caret; "All parts (one line each)" drops one editable line per part.
+ */
+function DescriptionField({
+  combo,
+  productCode,
+  onSave,
+}: {
+  combo: ProductComboRow;
+  productCode?: string;
+  onSave: (next: string | null, revert: () => void) => void;
+}) {
+  const saved = combo.description ?? '';
+  const [draft, setDraft] = useState(saved);
+  const [insertOpen, setInsertOpen] = useState(false);
+  const editorRef = useRef<Editor | null>(null);
+  const labelId = `${combo.id}-description-label`;
+  const main = useMemo(
+    () => ({ code: productCode ?? '', label: combo.main_label }),
+    [productCode, combo.main_label],
+  );
+  const partFields = useMemo(() => partFieldCatalog(combo.parts, main), [combo.parts, main]);
+  // The editor draws a chip once; a renamed or removed part must re-draw it, so the editor is
+  // keyed on what the chip names depend on (review S7). The draft is its value, so nothing is lost.
+  const chipKey = [
+    productCode ?? '',
+    combo.main_label ?? '',
+    ...combo.parts.map((p) => `${p.product_id}:${p.label ?? ''}:${p.choice_group ?? ''}:${p.is_upgrade ? 1 : 0}`),
+  ].join('|');
+  const chipLabel = useCallback(
+    (path: string) => partChipLabel(path, combo.parts, main) ?? COMBO_CHIP_LABELS[path] ?? null,
+    [combo.parts, main],
+  );
+  const commit = (event: React.FocusEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
+  };
+  // Saved at once: closing the dialog hands focus back to its button, so the editor's own blur
+  // (the usual save) may never come.
+  const insertAtCaret = (content: string) => {
+    setInsertOpen(false);
+    const editor = editorRef.current;
+    if (!content || !editor) return;
+    // "All parts" becomes one line per part where it stands; text around it goes in as it is.
+    const pieces = content.split(`{{${ALL_PARTS_PATH}}}`);
+    pieces.forEach((piece, index) => {
+      if (index > 0) editor.chain().focus().insertContent(allPartsHtml(combo.parts, main)).run();
+      if (piece) insertMergeFieldText(editor, piece);
+    });
+    const html = unwrapMergeFieldTokens(editor.getHTML());
+    setDraft(html);
+    if (html !== saved) onSave(html, () => setDraft(saved));
+  };
+  const positions = useMemo(() => positionsBinding(combo, productCode), [combo, productCode]);
+  // This combo's real tag data once the preview has read it, so Insert field previews real values.
+  const [real, setReal] = useState<TagBindingData | null>(null);
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <div className="min-w-0 space-y-1.5">
+        <Label id={labelId}>Description</Label>
+        <div onBlur={commit}>
+          <RichTextEditor
+            key={chipKey}
+            aria-labelledby={labelId}
+            value={toEditorHtml(draft)}
+            onChange={setDraft}
+            onEditorReady={(editor) => {
+              editorRef.current = editor;
+            }}
+            mergeFields
+            mergeFieldLabel={chipLabel}
+            minHeight={140}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setInsertOpen(true)}>
+            <Braces className="size-4" />
+            Insert field
+          </Button>
+        </div>
+        <InsertFieldDialog
+          open={insertOpen}
+          value=""
+          data={real ?? positions}
+          specKeys={[]}
+          groups={DESCRIPTION_FIELD_GROUPS}
+          omitPaths={DESCRIPTION_OMITS}
+          extraFields={partFields}
+          tokenLabel={chipLabel}
+          onCancel={() => setInsertOpen(false)}
+          onDone={insertAtCaret}
+        />
+      </div>
+      <div className="min-w-0">
+        <ComboTagPreview
+          combo={combo}
+          description={draft.trim() === '' ? null : draft}
+          onBinding={setReal}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A combo part's label, or the main product's (COMBO-SETTINGS-UX): what the combo calls it,
+ * printed by `{{part.label}}`. Saves on blur when changed; blank saves null.
+ */
+function LabelField({
+  ariaLabel,
   value,
   onSave,
-  multiline,
-  maxLength,
 }: {
-  id: string;
-  label: string;
+  ariaLabel: string;
   value: string | null | undefined;
   onSave: (next: string | null, revert: () => void) => void;
-  multiline?: boolean;
-  /** The server refuses longer text, so the box stops it instead of reverting a long paste. */
-  maxLength?: number;
 }) {
   const saved = value ?? '';
   const [draft, setDraft] = useState(saved);
-  const commit = () => {
-    if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
-  };
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {multiline ? (
-        <Textarea id={id} rows={3} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
-      ) : (
-        <Input id={id} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
-      )}
+    <Input
+      aria-label={ariaLabel}
+      placeholder="Label"
+      className="h-8 w-full sm:w-56"
+      maxLength={COMBO_LABEL_MAX}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next === saved.trim()) return;
+        onSave(next === '' ? null : next, () => setDraft(saved));
+      }}
+    />
+  );
+}
+
+/**
+ * The combo's name, renamed in place (COMBO-RENAME): a pencil swaps the title for an input
+ * with Save and Cancel, the same shape as the Family code edit on the Variants tab
+ * (`ProductVariantsTab.tsx`). Enter saves, Escape cancels. The refusals are answered under the
+ * input, where the name that has to change is.
+ */
+function ComboNameField({
+  name,
+  canEdit,
+  onRename,
+}: {
+  name: string;
+  canEdit: boolean;
+  /** Resolves once saved, rejects with the refusal (`status` set when the server answered). */
+  onRename: (next: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const start = () => {
+    setDraft(name);
+    setError(null);
+    setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setError(null);
+  };
+  const save = async () => {
+    const next = draft.trim();
+    if (!next) {
+      setError('A combo needs a name');
+      return;
+    }
+    if (next === name) {
+      cancel();
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    // Awaited rather than per-call callbacks: the section shares one update mutation with the
+    // price and description edits, and a later `mutate` drops an earlier call's callbacks.
+    try {
+      await onRename(next);
+      setEditing(false);
+    } catch (caught) {
+      const failure = caught as Error & { status?: number };
+      setError(
+        failure.status === 409
+          ? 'Another combo on this product already has this name'
+          : failure.message || 'Failed to rename the combo',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <p className="min-w-0 truncate font-medium" title={name}>
+          {name}
+        </p>
+        {canEdit ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            onClick={start}
+            aria-label={`Rename combo ${name}`}
+          >
+            <Pencil className="size-4" />
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          aria-label="Combo name"
+          // Its own full row on a phone, so the name is readable while it is typed (375px).
+          className="min-w-0 basis-full sm:max-w-md sm:flex-1 sm:basis-auto"
+          value={draft}
+          maxLength={COMBO_NAME_MAX}
+          autoFocus
+          disabled={saving}
+          aria-invalid={error ? true : undefined}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (error) setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void save();
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              cancel();
+            }
+          }}
+        />
+        <Button type="button" size="sm" onClick={() => void save()} disabled={saving}>
+          Save
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={saving}>
+          Cancel
+        </Button>
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -171,6 +465,8 @@ interface PartRowProps {
   groupOptions: SearchableSelectOption[];
   canEdit: boolean;
   isRemoving: boolean;
+  /** Its group is a real choice (2+ parts); a part alone in its group is a fixed part. */
+  isChoice: boolean;
   onChoiceGroup: (label: string | null) => void;
   onWrite: (write: ProductComboPartUpdate, revert?: () => void) => void;
   onRemove: () => void;
@@ -181,13 +477,16 @@ function PartRow({
   groupOptions,
   canEdit,
   isRemoving,
+  isChoice,
   onChoiceGroup,
   onWrite,
   onRemove,
 }: PartRowProps) {
-  const isOption = !!part.choice_group && !part.is_upgrade;
+  // A part alone in its group resolves on the spot: a fixed part, with no "if picked" price.
+  const isOption = !!part.choice_group && !part.is_upgrade && isChoice;
+  const alone = !!part.choice_group && !part.is_upgrade && !isChoice;
   return (
-    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
+    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] lg:grid-cols-[minmax(0,1fr)_20rem_auto] sm:items-center">
       <div className="min-w-0">
         <p className="truncate font-medium" title={part.code}>
           {part.code}
@@ -198,15 +497,35 @@ function PartRow({
           </p>
         ) : null}
         <p className="truncate text-xs text-muted-foreground">{part.dimensions || '-'}</p>
+        {canEdit ? (
+          <div className="pt-1">
+            <LabelField
+              ariaLabel={`Label for ${part.code}`}
+              value={part.label}
+              onSave={(next, revert) => onWrite({ label: next }, revert)}
+            />
+          </div>
+        ) : part.label ? (
+          <p className="truncate text-xs" title={part.label}>
+            {part.label}
+          </p>
+        ) : null}
+        {alone ? (
+          <p className="text-xs text-muted-foreground">
+            Only part in &quot;{part.choice_group}&quot;, so it prints as a fixed part.
+          </p>
+        ) : null}
       </div>
       {canEdit ? (
+        // 20rem from lg up fits "Choice group (only for pick-one parts)" (254px of text) whole;
+        // narrower, the trigger wraps it rather than cutting it (crew pass D2).
         <SearchableSelect
           clearable
-          truncateTriggerLabel
+          aria-label={`Choice group for ${part.code}`}
           value={part.choice_group ?? ''}
           onChange={(value) => onChoiceGroup(value || null)}
           options={groupOptions}
-          placeholder="Fixed part"
+          placeholder="Choice group (only for pick-one parts)"
           emptyMessage="No choice groups yet."
           // The vocabulary is whatever marketing already called a group on THIS
           // combo, plus whatever they type now - a basin group is a word off the
@@ -230,7 +549,9 @@ function PartRow({
           disabled={isRemoving}
         />
       ) : (
-        <p className="text-sm text-muted-foreground">{part.choice_group || 'Fixed part'}</p>
+        <p className="text-sm text-muted-foreground">
+          {part.choice_group && !alone ? part.choice_group : 'Fixed part'}
+        </p>
       )}
       {canEdit ? (
         <Button
@@ -317,6 +638,7 @@ function ComboImageControl({
   const busy = isUploading || isDeleting;
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const handleFile = useCallback(
     async (file: File | undefined) => {
@@ -362,10 +684,28 @@ function ComboImageControl({
         <>
           {/* A signed CDN URL, not a local/static asset next/image can
               optimise. */}
-          <img
-            src={combo.image.url}
-            alt={combo.name}
-            className="size-14 shrink-0 rounded-md border object-cover"
+          <button
+            type="button"
+            aria-label={`Preview photo of ${combo.name}`}
+            className="shrink-0 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setPreviewOpen(true)}
+          >
+            <img
+              src={combo.image.url}
+              alt=""
+              className="size-14 rounded-md border object-cover"
+            />
+          </button>
+          <AttachmentPreviewModal
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+            items={[
+              {
+                id: combo.image.attachment_id,
+                name: combo.image.file_name ?? combo.name,
+                url: combo.image.url,
+              },
+            ]}
           />
           {canEdit ? (
             <div className="flex gap-2">
@@ -417,10 +757,13 @@ function ComboImageControl({
 
 interface ComboBlockProps {
   combo: ProductComboRow;
+  /** The host's own code, for the main product's label row. */
+  productCode?: string;
   canEdit: boolean;
   isDeleting: boolean;
   removingPartId: string | null;
   onDelete: () => void;
+  onCopy: () => void;
   onRemovePart: (part: ProductComboPartRow) => void;
   onChoiceGroup: (part: ProductComboPartRow, label: string | null) => void;
   onPartWrite: (
@@ -429,6 +772,7 @@ interface ComboBlockProps {
     revert?: () => void,
   ) => void;
   onComboWrite: (write: ProductComboUpdate, revert?: () => void) => void;
+  onRename: (name: string) => Promise<unknown>;
   onAddPart: (comboId: string, productId: string) => void;
   addPartError: string | null;
   isAddingPart: boolean;
@@ -436,14 +780,17 @@ interface ComboBlockProps {
 
 function ComboBlock({
   combo,
+  productCode,
   canEdit,
   isDeleting,
   removingPartId,
   onDelete,
+  onCopy,
   onRemovePart,
   onChoiceGroup,
   onPartWrite,
   onComboWrite,
+  onRename,
   onAddPart,
   addPartError,
   isAddingPart,
@@ -466,10 +813,12 @@ function ComboBlock({
   // Upgrades are their own block after the groups, whatever group they were typed with.
   const upgradeParts = combo.parts.filter((part) => part.is_upgrade);
   const choiceParts = combo.parts.filter((part) => !part.is_upgrade);
-  const fixedParts = choiceParts.filter((part) => !part.choice_group);
+  // A group is a choice only with 2+ parts; a part alone in its group is listed with the fixed ones.
+  const choices = pickOneGroups(combo.parts);
+  const fixedParts = choiceParts.filter((part) => !part.choice_group || !choices.has(part.choice_group));
   const groups: { label: string; parts: ProductComboPartRow[] }[] = [];
   for (const part of choiceParts) {
-    if (!part.choice_group) continue;
+    if (!part.choice_group || !choices.has(part.choice_group)) continue;
     const existing = groups.find((group) => group.label === part.choice_group);
     if (existing) existing.parts.push(part);
     else groups.push({ label: part.choice_group, parts: [part] });
@@ -482,6 +831,7 @@ function ComboBlock({
       groupOptions={groupOptions}
       canEdit={canEdit}
       isRemoving={removingPartId === part.id}
+      isChoice={!!part.choice_group && choices.has(part.choice_group)}
       onChoiceGroup={(label) => onChoiceGroup(part, label)}
       onWrite={(write, revert) => onPartWrite(part, write, revert)}
       onRemove={() => onRemovePart(part)}
@@ -490,29 +840,42 @@ function ComboBlock({
 
   return (
     <div className="rounded-lg border" data-combo-id={combo.id} data-testid="combo-block">
-      <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="min-w-0 truncate font-medium" title={combo.name}>
-          {combo.name}
-        </p>
+      <div className="flex items-start justify-between gap-2 border-b p-3">
+        <ComboNameField name={combo.name} canEdit={canEdit} onRename={onRename} />
         {canEdit ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0 justify-self-start"
-            onClick={onDelete}
-            disabled={isDeleting}
-            aria-label={`Delete combo ${combo.name}`}
-          >
-            {isDeleting ? (
-              <LoaderCircleIcon className="size-4 animate-spin" />
-            ) : (
-              <Trash2 className="size-4 text-destructive" />
-            )}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {/* COMBO-COPY-TO-PRODUCTS: this combo, as it is, onto hand-picked products. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={onCopy}
+              aria-label={`Copy combo ${combo.name} to other products`}
+            >
+              <Copy className="size-4" />
+              <span className="hidden sm:inline">Copy to other products</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              disabled={isDeleting}
+              aria-label={`Delete combo ${combo.name}`}
+            >
+              {isDeleting ? (
+                <LoaderCircleIcon className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4 text-destructive" />
+              )}
+            </Button>
+          </div>
         ) : null}
       </div>
       <ComboImageControl combo={combo} canEdit={canEdit} />
+      {/* PRICETAG-LPSP: the combo's own price tag templates (manage permission only). */}
+      <ComboTemplatesField comboId={combo.id} parts={combo.parts} />
       {/* The combo's own text and prices, printed on the tag (PRICETAG-COMBO).
           Same fields read-only and editing; edits save on blur. */}
       {canEdit ? (
@@ -532,34 +895,26 @@ function ComboBlock({
             className="space-y-1.5"
           />
           <div className="sm:col-span-2">
-            <TextField
-              id={`${combo.id}-description`}
-              label="Description"
-              value={combo.description}
+            <DescriptionField
+              combo={combo}
+              productCode={productCode}
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
-              multiline
-              maxLength={5000}
             />
           </div>
-          <div className="sm:col-span-2">
-            <TextField
-              id={`${combo.id}-free-items`}
-              label="Free items"
-              value={combo.free_items}
-              onSave={(next, revert) => onComboWrite({ free_items: next }, revert)}
-              maxLength={2000}
-            />
+          <div className="min-w-0 sm:col-span-2">
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit />
           </div>
         </div>
       ) : (
         <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
           <ReadOnlyField label="List price (RM)" value={toNumber(combo.list_price) === null ? null : formatMoney(combo.list_price)} />
           <ReadOnlyField label="Sell price (RM)" value={toNumber(combo.sell_price) === null ? null : formatMoney(combo.sell_price)} />
-          <div className="sm:col-span-2">
-            <ReadOnlyField label="Description" value={combo.description} />
+          <div className="min-w-0 space-y-0.5 sm:col-span-2">
+            <p className="text-xs text-muted-foreground">Description</p>
+            <RichTextView value={combo.description} />
           </div>
-          <div className="sm:col-span-2">
-            <ReadOnlyField label="Free items" value={combo.free_items} />
+          <div className="min-w-0 sm:col-span-2">
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit={false} />
           </div>
         </div>
       )}
@@ -571,6 +926,30 @@ function ComboBlock({
             parts and the page must not have to grow by a screen to hold one
             card. The Add part picker below stays put outside it. */}
         <div className="max-h-[22rem] space-y-3 overflow-y-auto">
+          {/* The main product's own label (COMBO-SETTINGS-UX): it leads `{{combo.parts}}`. */}
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] lg:grid-cols-[minmax(0,1fr)_20rem_auto] sm:items-center">
+            <div className="min-w-0">
+              {productCode ? (
+                <p className="truncate font-medium" title={productCode}>
+                  {productCode}
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground">Main product</p>
+              {canEdit ? (
+                <div className="pt-1">
+                  <LabelField
+                    ariaLabel={`Label for ${productCode || 'the main product'} (main product)`}
+                    value={combo.main_label}
+                    onSave={(next, revert) => onComboWrite({ main_label: next }, revert)}
+                  />
+                </div>
+              ) : combo.main_label ? (
+                <p className="truncate text-xs" title={combo.main_label}>
+                  {combo.main_label}
+                </p>
+              ) : null}
+            </div>
+          </div>
           {fixedParts.length > 0 ? (
             <div className="space-y-3">{fixedParts.map(partRow)}</div>
           ) : null}
@@ -627,8 +1006,16 @@ function ComboBlock({
  * bundling rules). A part reads the mirror of this on its own page, read-only, as
  * "Sold with" (`ProductSoldWithSection`).
  */
-export function ProductCombosSection({ productId }: { productId: string }) {
+export function ProductCombosSection({
+  productId,
+  productCode,
+}: {
+  productId: string;
+  /** The host's own code, shown on each combo's main product row. */
+  productCode?: string;
+}) {
   const [addOpen, setAddOpen] = useState(false);
+  const [copying, setCopying] = useState<ProductComboRow | null>(null);
   const [addPartError, setAddPartError] = useState<{ comboId: string; message: string } | null>(
     null,
   );
@@ -702,10 +1089,12 @@ export function ProductCombosSection({ productId }: { productId: string }) {
               <ComboBlock
                 key={combo.id}
                 combo={combo}
+                productCode={productCode}
                 canEdit={canEdit}
                 isDeleting={comboDeletion.targetId === combo.id && comboDeletion.isPending}
                 removingPartId={partDeletion.isPending ? partDeletion.targetId : null}
                 onDelete={() => comboDeletion.run({ id: combo.id, subject: combo.name })}
+                onCopy={() => setCopying(combo)}
                 onRemovePart={(part) =>
                   partDeletion.run({ id: part.id, subject: `${part.code} from ${combo.name}` })
                 }
@@ -718,6 +1107,9 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 onComboWrite={(write, revert) =>
                   updateCombo.mutate({ comboId: combo.id, write }, { onError: revert })
                 }
+                onRename={(name) =>
+                  updateCombo.mutateAsync({ comboId: combo.id, write: { name } })
+                }
                 onAddPart={handleAddPart}
                 addPartError={
                   addPartError?.comboId === combo.id ? addPartError.message : null
@@ -728,6 +1120,16 @@ export function ProductCombosSection({ productId }: { productId: string }) {
           </div>
         )}
       </CardContent>
+      {/* Mounted only while open: its product grid queries nothing until the button is pressed. */}
+      {canEdit && copying ? (
+        <CopyComboDialog
+          open
+          onOpenChange={(next) => !next && setCopying(null)}
+          sourceProductId={productId}
+          comboId={copying.id}
+          comboName={copying.name}
+        />
+      ) : null}
       {canEdit ? (
         <AddComboModal
           open={addOpen}

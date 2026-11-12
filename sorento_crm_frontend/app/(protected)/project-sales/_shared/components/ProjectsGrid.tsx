@@ -26,7 +26,9 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import type { Project } from '../types/project.types';
 import { projectCodeLabel } from '../lib/projectCode';
+import { projectDisplayName } from '../lib/projectName';
 import { ApprovalStatePill, isAwaitingDecision } from './ApprovalStatePill';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * Every registered project as a row. ONE grid, two screens.
@@ -121,7 +123,7 @@ export function ProjectsGrid({
             className="block truncate"
             title={row.original.title}
           >
-            {row.original.title}
+            {projectDisplayName(row.original)}
           </Link>
         ),
       },
@@ -130,7 +132,6 @@ export function ProjectsGrid({
         accessorFn: (row) => row.developer_name ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Developer" column={column} />,
         size: 180,
-        enableSorting: false,
         meta: { headerTitle: 'Developer' },
         cell: ({ row }) => {
           const typed = row.original.developer_name
@@ -153,7 +154,6 @@ export function ProjectsGrid({
         accessorFn: (row) => row.status_label ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
         size: 140,
-        enableSorting: false,
         meta: { headerTitle: 'Stage' },
         cell: ({ row }) =>
           isAwaitingDecision(row.original.approval_state) ? (
@@ -179,7 +179,6 @@ export function ProjectsGrid({
         accessorFn: (row) => row.estimated_sales_value ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Estimated" column={column} />,
         size: 130,
-        enableSorting: false,
         meta: { headerTitle: 'Estimated' },
         cell: ({ row }) =>
           row.original.estimated_sales_value ? (
@@ -195,7 +194,6 @@ export function ProjectsGrid({
         accessorFn: (row) => row.owner_name ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Owner" column={column} />,
         size: 150,
-        enableSorting: false,
         meta: { headerTitle: 'Owner' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.owner_name ?? ''}>
@@ -205,12 +203,14 @@ export function ProjectsGrid({
       },
       {
         id: 'next_action',
-        // Derived server-side from the earliest open task. Not sortable: the backend
-        // sorts on real columns only, and a client-side sort of one page would order
-        // the visible rows while lying about the rest.
+        // An accessor only so TanStack lets the header sort (manualSorting: the server orders).
+        accessorFn: (row) => row.next_action_date ?? '',
+        // Derived server-side from the earliest open task, and sorted there too
+        // (`_list_order_by`, project_service.py): by that due date, open-but-undated
+        // after it, "Nothing open" last. Never sorted in the browser, which would order
+        // one page while lying about the rest.
         header: ({ column }) => <DataGridColumnHeader title="Next action" column={column} />,
         size: 150,
-        enableSorting: false,
         meta: { headerTitle: 'Next action' },
         cell: ({ row }) =>
           row.original.next_action_date ? (
@@ -253,9 +253,10 @@ export function ProjectsGrid({
       },
       {
         id: 'flags',
-        header: () => <span className="text-xs">Flags</span>,
+        accessorFn: (row) => row.is_critical,
+        // Sorted server-side on Critical; descending puts Critical first.
+        header: ({ column }) => <DataGridColumnHeader title="Flags" column={column} />,
         size: 110,
-        enableSorting: false,
         meta: { headerTitle: 'Flags' },
         cell: ({ row }) =>
           row.original.is_critical ? (
@@ -345,5 +346,5 @@ function formatMyr(value: string): string {
 function formatGridDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(date);
 }

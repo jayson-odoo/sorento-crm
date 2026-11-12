@@ -6,9 +6,9 @@ import {
   acceptQuotation,
   getQuotationSignPage,
   QuotationSignError,
-  submitAmendmentRequest,
+  submitQuotationFeedback,
+  type QuotationFeedbackBody,
   type QuotationSignAcceptBody,
-  type QuotationSignAmendmentBody,
   type QuotationSignPage,
 } from '../services/quotationSignService';
 
@@ -49,15 +49,15 @@ export function useQuotationSignMutations(token: string) {
   });
 
   /**
-   * The customer's suggested changes, answered with the page like the other two. A 409 means the
-   * page moved on under a stale tab (a newer revision, or a request already open), so the page is
-   * read again to show what it now is.
+   * The customer's feedback, answered with the page like the other two. A 409 means the page
+   * moved on under a stale tab (signed, or replaced by a newer revision), so the page is read again
+   * to show what it now is.
    */
-  const submitAmendment = useMutation({
-    mutationFn: (body: QuotationSignAmendmentBody) => submitAmendmentRequest(token, body),
+  const submitFeedback = useMutation({
+    mutationFn: (body: QuotationFeedbackBody) => submitQuotationFeedback(token, body),
     onSuccess: (page: QuotationSignPage) => {
       queryClient.setQueryData(quotationSignPageKey(token), page);
-      toast.success('Thank you. Your suggestions have been sent to Sorento.');
+      toast.success('Thank you. Your feedback has been sent to Sorento.');
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -67,5 +67,5 @@ export function useQuotationSignMutations(token: string) {
     },
   });
 
-  return { accept, submitAmendment };
+  return { accept, submitFeedback };
 }

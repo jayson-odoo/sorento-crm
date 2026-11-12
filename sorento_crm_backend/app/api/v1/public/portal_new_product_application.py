@@ -77,19 +77,44 @@ def _done(db: Session, app, event: Optional[str] = None):
     return svc.serialize_detail(db, app, portal=True)
 
 
-def _check_write(db: Session, token: PortalToken, data: dict, *, current_customer=None) -> None:
+def _check_write(db: Session, token: PortalToken, data: dict) -> None:
     svc.assert_portal_inquiry_allowed(
         db,
         contact_id=str(token.contact_id),
         space_id=token.space_id,
         stock_inquiry_id=data.get("stock_inquiry_id"),
     )
-    # Only a CHANGED debtor is re-checked (the Sample Request rule): a draft whose debtor later
-    # left the agent's book stays saveable with the customer it already has.
-    if data.get("customer_id") != current_customer:
-        sample_request_service.assert_portal_customer_allowed(
-            db, contact_id=token.contact_id, customer_id=data.get("customer_id")
+    # Owner 8 Nov: the customer is the stock inquiry's customer dropdown (every customer of every
+    # company of the contact). Another of the contact's companies is kept as text (below); an id
+    # outside them is refused by the service's company-filtered `_check_refs`.
+    _keep_other_company_customer_as_text(db, token, data)
+
+
+def _keep_other_company_customer_as_text(db: Session, token: PortalToken, data: dict) -> None:
+    """Owner 8 Nov 12:50, option (a): "just behave like how stock inquiry behaves now". The
+    customer list is the SI's (every company of the contact); the SI keeps any customer as text.
+    So a pick of the application's own company links by id, and a pick of the contact's OTHER
+    company is kept as text "<code> - <name>" with no id; the application stays in its company.
+    An id outside the contact's companies is left for `_check_refs` to refuse."""
+    from app.models.order import Customer
+    from app.services.company_scope_resolver import portal_contact_scope
+
+    customer_id = data.get("customer_id")
+    if not customer_id or svc._ref_exists(db, Customer, customer_id):
+        return
+    with company_scope(db, portal_contact_scope(db, str(token.contact_id))):
+        row = (
+            db.query(Customer.customer_code, Customer.customer_name)
+            .filter(Customer.id == customer_id, Customer.is_active.is_(True))  # what the SI list offers
+            .first()
+            if svc._is_uuid(customer_id)
+            else None
         )
+    if row is None:
+        return
+    code, name = row
+    data["customer_id"] = None
+    data["customer_name"] = f"{code} - {name}" if code else name
 
 
 def _move(db: Session, token: PortalToken, application_id: str, fn, **kw):
@@ -157,9 +182,11 @@ def register_new_product_application_routes(
         db: Session = Depends(get_db),
     ):
         _assert_visible(db, token.contact_id)
-        return svc.prefill(
-            db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
-        )
+        # Scoped: the exact current-code match (NPA-FROM-SI Q3) reads the company's products.
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.prefill(
+                db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
+            )
 
 
     @router.get(f"{OWN}/lookups/{{kind}}")
@@ -172,6 +199,33 @@ def register_new_product_application_routes(
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
             return svc.portal_lookup(db, kind, q)
+
+
+    @router.get(f"{OWN}/products")
+    def portal_products(
+        q: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """NPA-FROM-SI rule 4: pick the current product codes (code, name, brand only; lists,
+        never picks)."""
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.search_products(db, q)
+
+
+    @router.get(f"{OWN}/reuse-suggestions")
+    def portal_reuse_suggestions(
+        product_ids: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """NPA-FROM-SI rule 6, Q4 (a): the code created before from exactly these current codes,
+        without the earlier application (another salesperson's), customer, project or qty."""
+        _assert_visible(db, token.contact_id)
+        ids = [part.strip() for part in product_ids.split(",") if part.strip()][:20]
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.reuse_suggestions(db, ids, portal=True)
 
 
     @router.get(f"{OWN}/customers")
@@ -237,7 +291,34 @@ def register_new_product_application_routes(
     ):
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
-            return svc.serialize_detail(db, _own(db, token, application_id), portal=True)
+            try:
+                app_row = _own(db, token, application_id)
+            except AppException as exc:
+                if exc.status_code != 404:
+                    raise
+                # NPA-FROM-SI (owner "just like the SI"): another contact's application is the
+                # SI portal's 403 OWNER_MISMATCH, so a View link opened in the wrong session offers
+                # the owner's sign-in; a truly absent id stays 404. Only the open; writes stay 404.
+                from app.models.new_product_application import NewProductApplication
+                from app.services.portal_service import PortalService
+
+                # A malformed id never reaches the query (_own already refused it: 404).
+                if not svc._is_uuid(application_id):
+                    raise
+                with company_scope(db, None):
+                    owner = (
+                        db.query(NewProductApplication.contact_id)
+                        .filter(NewProductApplication.id == application_id)
+                        .first()
+                    )
+                    # Only ANOTHER contact's row is a mismatch; the contact's own row read
+                    # outside its resolved company stays the plain 404 (no verify-card loop).
+                    if owner is not None and str(owner[0] or "") != str(token.contact_id):
+                        PortalService(db)._raise_submission_missing(
+                            "New product application", NewProductApplication, application_id
+                        )
+                raise
+            return svc.serialize_detail(db, app_row, portal=True)
 
 
     @router.put(f"{BASE}/{{application_id}}")
@@ -254,7 +335,7 @@ def register_new_product_application_routes(
                 app = _own(db, token, application_id, for_update=True)
                 data = payload.model_dump(exclude_unset=True)
                 svc.assert_unlocked(app)
-                _check_write(db, token, data, current_customer=app.customer_id)
+                _check_write(db, token, data)
                 svc.update(db, app, actor=_actor(token), data=data)
                 return _done(db, app)
         except Exception:
@@ -301,7 +382,7 @@ def register_new_product_application_routes(
     ):
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
-            content, filename = npa_xlsx.to_xlsx(db, _own(db, token, application_id))
+            content, filename = npa_xlsx.to_xlsx(db, _own(db, token, application_id), portal=True)
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

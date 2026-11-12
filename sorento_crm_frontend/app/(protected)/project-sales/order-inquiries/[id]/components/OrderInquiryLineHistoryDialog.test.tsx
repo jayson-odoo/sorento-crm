@@ -85,10 +85,11 @@ const BEFORE_WHY = 'Was 182 on 01/06/2026, before OI-2609-0011 changed it';
 function renderDialog(
   rows: OrderInquiryWorklistRow[],
   props: Partial<React.ComponentProps<typeof OrderInquiryLineHistoryDialog>> = {},
+  { tab = 'Rows' }: { tab?: 'Rows' | 'History' } = {},
 ) {
   const [line] = foldInquiryLines(rows);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>
       <OrderInquiryLineHistoryDialog
         line={line}
@@ -97,20 +98,33 @@ function renderDialog(
       />
     </QueryClientProvider>,
   );
+  // STANDARD-HISTORY v2: "History" is the dialog's first tab now; the Rows,
+  // Decisions and Reserve tests below open Rows first, as a person would.
+  if (tab === 'Rows') {
+    const rowsTab = screen.getByRole('tab', { name: 'Rows' });
+    fireEvent.mouseDown(rowsTab);
+    fireEvent.click(rowsTab);
+  }
+  return result;
+}
+
+function historyResponse(events: unknown[]) {
+  return { ok: true, status: 200, json: async () => ({ events }) };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   getDecisionTrail.mockResolvedValue([]);
+  apiFetch.mockResolvedValue(historyResponse([]));
 });
 
 describe('AC-ND-14: title and tabs', () => {
-  it('is titled "History - <item> (<SO> L<n>)" with Rows | Decisions, Rows first', async () => {
-    renderDialog([USED, FRESH]);
+  it('is titled "History - <item> (<SO> L<n>)" with History | Rows | Decisions, History first (STANDARD-HISTORY v2)', async () => {
+    renderDialog([USED, FRESH], {}, { tab: 'History' });
     const dialog = await screen.findByRole('dialog', { name: 'History - CKS1050 (SO402757 L1)' });
     const tabs = within(dialog).getAllByRole('tab').map((tab) => tab.textContent);
-    expect(tabs).toEqual(['Rows', 'Decisions']);
-    expect(within(dialog).getByRole('tab', { name: 'Rows' })).toHaveAttribute('aria-selected', 'true');
+    expect(tabs).toEqual(['History', 'Rows', 'Decisions']);
+    expect(within(dialog).getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('adds a Reserve tab only when the line has reserve history, listing it', async () => {
@@ -202,7 +216,8 @@ describe('S2 (AC-ND-20): the Rows tab makes no read of its own', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Superseded')).toBeInTheDocument();
     expect(within(dialog).queryByRole('status', { name: 'Loading' })).not.toBeInTheDocument();
-    expect(apiFetch).not.toHaveBeenCalled();
+    // The only read is the OI's History (the "History" tab, open first); Rows makes none.
+    for (const [url] of apiFetch.mock.calls) expect(String(url)).toMatch(/\/history$/);
   });
 });
 
@@ -215,5 +230,54 @@ describe('Decisions tab', () => {
     fireEvent.click(decisions);
     expect(await within(dialog).findByText('No decisions recorded for this line.')).toBeInTheDocument();
     expect(getDecisionTrail).not.toHaveBeenCalled();
+  });
+});
+
+describe('OI-UX-FILTER-SNAPSHOT: History names the order customer / project', () => {
+  it('prints CUSTOMER / project under the title', () => {
+    renderDialog([row({ id: 'r1', customer_name: 'ACME SDN BHD', project_title: 'TAMAN JAYA' })]);
+    expect(screen.getByText('ACME SDN BHD / TAMAN JAYA')).toBeInTheDocument();
+  });
+});
+
+describe('STANDARD-HISTORY v2: the dialog History tab (the Audit Trail list for one line)', () => {
+  const LINE_ROW = row({ id: 'fresh', order_inquiry_id: 'oi-1' } as Partial<OrderInquiryWorklistRow>);
+  const EVENTS = [
+    {
+      id: 'audit-unconfirm',
+      kind: 'unconfirmed',
+      at: '2026-11-09T09:15:53',
+      actor: 'J*** (Purchasing)',
+      title: 'Unconfirmed 9 lines',
+      lines: [
+        { row_id: 'fresh', so_line_no: 1, item_code: 'CKS1050', qty: 4, change: 'Confirmed -> To confirm' },
+        { row_id: 'other-line', so_line_no: 2, item_code: 'CKSW015', qty: 4, change: 'Confirmed -> To confirm' },
+      ],
+    },
+    {
+      id: 'link-other',
+      kind: 'linked',
+      at: '2026-11-10T02:52:00',
+      actor: 'Automatic',
+      title: '202611-S0027 linked to 1 line',
+      lines: [{ row_id: 'other-line', so_line_no: 2, item_code: 'CKSW015', qty: 4, change: 'Linked 4' }],
+    },
+  ];
+
+  it("reads the OI's history once and shows only the events that touched this line's rows", async () => {
+    apiFetch.mockResolvedValue(historyResponse(EVENTS));
+    renderDialog([LINE_ROW], {}, { tab: 'History' });
+    const dialog = await screen.findByRole('dialog');
+    const unconfirm = (await within(dialog).findByText('Unconfirmed 9 lines')).closest('[data-audit-entry]') as HTMLElement;
+    expect(within(dialog).queryByText('202611-S0027 linked to 1 line')).not.toBeInTheDocument();
+    expect(String(apiFetch.mock.calls[0][0])).toMatch(/\/order-inquiry-headers\/oi-1\/history$/);
+    // One press stays one entry, its sentence still saying the whole press; this line's own
+    // change is its only line, shown at once (one line needs no toggle).
+    expect(within(unconfirm).getAllByTestId('audit-change-line').map((l) => l.textContent)).toEqual([
+      'CKS1050: Confirmed -> To confirm',
+    ]);
+    // The Audit Trail list: no filters, no badges, no grid.
+    expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument();
+    expect(within(unconfirm).queryByRole('table')).not.toBeInTheDocument();
   });
 });

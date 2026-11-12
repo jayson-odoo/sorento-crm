@@ -410,6 +410,7 @@ interface ReorderRunStatusDto {
   started_at?: string | null;
   warehouse_codes?: string[];
   is_all_warehouses?: boolean;
+  inactive_warehouse_codes?: string[];
   product_codes?: string[] | null;
   supersedes_run_id?: string | null;
   superseded_by_run_id?: string | null;
@@ -490,6 +491,8 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     started_at: dto.started_at ?? null,
     warehouse_codes: dto.warehouse_codes ?? [],
     is_all_warehouses: dto.is_all_warehouses ?? false,
+    // SCM-INACTIVE-LOCATIONS: the Re-plan prefill drops these and says which.
+    inactive_warehouse_codes: dto.inactive_warehouse_codes ?? [],
     product_codes: dto.product_codes ?? null,
     supersedes_run_id: dto.supersedes_run_id ?? null,
     superseded_by_run_id: dto.superseded_by_run_id ?? null,
@@ -1062,6 +1065,8 @@ export async function getRecommendationDemand(
 /** One sales order behind a customer's line in the trend popover. */
 export interface CustomerOrderLine {
   so_number: string;
+  customer_name?: string | null;
+  project_label?: string | null;
   order_date: string | null;
   qty: number;
   unit_price: number | null;

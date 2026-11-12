@@ -8,6 +8,7 @@ import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   DropdownMenu,
@@ -37,25 +38,35 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
+import { ProjectLossDialog } from '../../[projectId]/components/ProjectLossDialog';
 import { POIntakeUploadDialog } from '../../[projectId]/components/POIntakeUploadDialog';
 import { DeliveryScheduleUploadDialog } from '../../[projectId]/components/DeliveryScheduleUploadDialog';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { ListLoadFailure } from '@/components/common/ListLoadFailure';
+import { useListingViewMode } from '@/lib/listing-column-preferences/useListingViewMode';
 
 type StartAction = 'upload-po' | 'upload-schedule' | null;
 
-const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
+/** The browser key an older build kept the view in; read only when the server holds none. */
+const LEGACY_VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
+/**
+ * The view's own per-user column-config row. Not the grid's `::pipeline` row: the grid's
+ * "Reset columns" DELETEs that whole row, which would also forget the view.
+ */
+const PIPELINE_VIEW_LISTING_KEY = 'projects.projects.view::pipeline-view';
+const PIPELINE_VIEWS = ['board', 'grid'] as const;
 
-type PipelineView = 'board' | 'grid';
+type PipelineView = (typeof PIPELINE_VIEWS)[number];
 
 /**
  * Pipeline: Board and Grid over one dataset, one toggle (AC-G2).
  *
- * The choice is remembered per browser because it tracks the person's job rather than
- * the data: a salesperson works the board, a manager reads the grid, and re-picking
- * on every visit is friction with no upside.
+ * The choice is remembered PER USER, on the server, because it tracks the person's job
+ * rather than the data: a salesperson works the board, a manager reads the grid, and
+ * re-picking on every visit (or on every other device) is friction with no upside
+ * (PROJECTS-BOARD-VIEW-PREF). A user who never picked lands on the board.
  *
  * The board pulls a bigger page than the grid on purpose. A board that paginates is a
  * board that lies about its column counts, and the whole point of the view is seeing
@@ -67,7 +78,16 @@ export function PipelineClient() {
   const canStart = usePermissions().permissionSet.has('projects.projects.view');
   const canEdit = useHasPermission('projects.projects.edit');
   const canRegister = useHasAnyPermission(['projects.projects.edit', 'projects.registrations.submit']);
-  const [view, setView] = React.useState<PipelineView>('board');
+  const {
+    view,
+    setView: switchView,
+    isLoading: viewLoading,
+  } = useListingViewMode<PipelineView>({
+    listingKey: PIPELINE_VIEW_LISTING_KEY,
+    allowed: PIPELINE_VIEWS,
+    defaultView: 'board',
+    legacyStorageKey: LEGACY_VIEW_STORAGE_KEY,
+  });
   const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
     value: search,
@@ -104,11 +124,6 @@ export function PipelineClient() {
     setApprovalFilter(urlState.filters.approval_state ?? '');
   });
 
-  React.useEffect(() => {
-    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
-    if (stored === 'board' || stored === 'grid') setView(stored);
-  }, []);
-
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one. Now that the filters live in the grid toolbar, landing on a
   // blank page would read as "the filter found nothing". Only on a CHANGE - the mount run
@@ -126,6 +141,8 @@ export function PipelineClient() {
   const developers = useProjectParties({ party_type: 'developer', limit: 200 }, { enabled: canStart });
   const types = useProjectTypes({ enabled: canStart });
   const move = useChangeProjectStatus();
+  // A drop on the Lost column asks for the reason first; nothing moves until Save.
+  const [losingTo, setLosingTo] = React.useState<{ projectId: string; toStatusId: string } | null>(null);
 
   const listParams = React.useMemo(
     () => ({
@@ -153,7 +170,12 @@ export function PipelineClient() {
     ],
   );
 
-  const projects = useProjects(listParams);
+  // Held until the remembered view is known, so the list is fetched once, in that view.
+  const projects = useProjects(listParams, { enabled: !viewLoading });
+  const listLoading = viewLoading || projects.isLoading;
+  // Neither view is drawn or pressed until the remembered one is known: a Grid user
+  // must never see the board flash first (crew browser pass, 5 Nov 2026).
+  const shownView: PipelineView | null = viewLoading ? null : view;
 
   /**
    * Carried into the record URL so the project page's pager walks the SAME
@@ -204,17 +226,12 @@ export function PipelineClient() {
   const total = projects.data?.pagination.total ?? 0;
   const rows = projects.data?.data ?? [];
 
-  function switchView(next: PipelineView) {
-    setView(next);
-    window.localStorage.setItem(VIEW_STORAGE_KEY, next);
-  }
-
   const searchSlot = (
     <ListSearchInput
       value={search}
       onChange={setSearch}
       isSettling={isSearchInFlight(debouncedSearchSettling, projects.isFetching, debouncedSearch)}
-      placeholder="Search title or code…"
+      placeholder="Search name, title or code…"
       aria-label="Search projects"
       className="w-full"
     />
@@ -345,9 +362,9 @@ export function PipelineClient() {
               <Button
                 type="button"
                 size="sm"
-                variant={view === 'board' ? 'primary' : 'ghost'}
+                variant={shownView === 'board' ? 'primary' : 'ghost'}
                 onClick={() => switchView('board')}
-                aria-pressed={view === 'board'}
+                aria-pressed={shownView === 'board'}
                 aria-label="Board view"
                 title="Board view"
                 mode="icon"
@@ -357,9 +374,9 @@ export function PipelineClient() {
               <Button
                 type="button"
                 size="sm"
-                variant={view === 'grid' ? 'primary' : 'ghost'}
+                variant={shownView === 'grid' ? 'primary' : 'ghost'}
                 onClick={() => switchView('grid')}
-                aria-pressed={view === 'grid'}
+                aria-pressed={shownView === 'grid'}
                 aria-label="Grid view"
                 title="Grid view"
                 mode="icon"
@@ -399,7 +416,7 @@ export function PipelineClient() {
       {/* Board has no grid toolbar to host them, so it carries the same two controls in
           the same order the toolbar uses. Grid view feeds them into the toolbar instead,
           so the filters never sit in a second card above the table. */}
-      {view === 'board' && (
+      {shownView === 'board' && (
         <div className="flex flex-wrap items-center gap-2">
           {searchSlot}
           <DropdownMenu>
@@ -421,12 +438,17 @@ export function PipelineClient() {
         </div>
       )}
 
-      {view === 'board' && !projects.isLoading && projects.error && total === 0 ? (
+      {shownView === null ? (
+        <div data-testid="pipeline-view-loading" aria-busy="true" className="space-y-3">
+          <Skeleton className="h-9 w-full max-w-md" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : shownView === 'board' && !listLoading && projects.error && total === 0 ? (
         // A failed read is not "no projects registered yet" (lever L2).
         <div className="rounded-lg border px-4 py-6 text-sm">
           <ListLoadFailure error={projects.error} onRetry={() => void projects.refetch()} />
         </div>
-      ) : view === 'board' && !projects.isLoading && total === 0 ? (
+      ) : shownView === 'board' && !listLoading && total === 0 ? (
         hasFilters ? (
           <EmptyState
             title="No projects match these filters"
@@ -438,15 +460,19 @@ export function PipelineClient() {
             body={canStart ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
           />
         )
-      ) : view === 'board' ? (
+      ) : shownView === 'board' ? (
         <PipelineBoard
           statuses={statuses}
           projects={rows}
-          isLoading={projects.isLoading || graph.isLoading}
+          isLoading={listLoading || graph.isLoading}
           movingProjectId={move.isPending ? move.variables?.projectId : null}
           onMove={(projectId, toStatusId) => {
             const project = rows.find((row) => row.id === projectId);
             if (!project || project.status_id === toStatusId) return;
+            if (statuses.find((status) => status.id === toStatusId)?.key === 'lost') {
+              setLosingTo({ projectId, toStatusId });
+              return;
+            }
             move.mutate({ projectId, toStatusId });
           }}
         />
@@ -454,7 +480,7 @@ export function PipelineClient() {
         <ProjectsGrid
           projects={rows}
           total={total}
-          isLoading={projects.isLoading}
+          isLoading={listLoading}
           error={projects.error}
           isFetching={projects.isFetching}
           isPlaceholderData={projects.isPlaceholderData}
@@ -506,6 +532,13 @@ export function PipelineClient() {
         <DeliveryScheduleUploadDialog
           onDone={() => setStartAction(null)}
           pipelineListQuery={detailSearch}
+        />
+      )}
+      {losingTo && (
+        <ProjectLossDialog
+          projectId={losingTo.projectId}
+          toStatusId={losingTo.toStatusId}
+          onDone={() => setLosingTo(null)}
         />
       )}
     </div>

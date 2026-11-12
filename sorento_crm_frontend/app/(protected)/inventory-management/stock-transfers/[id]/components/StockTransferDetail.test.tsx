@@ -73,6 +73,7 @@ function transfer(overrides: Partial<StockTransfer> = {}): StockTransfer {
     so_line_no: 2,
     project_sales_order_id: 'pso-1',
     customer_name: 'YOTU BUILDER',
+    project_label: 'LOT 2752 TOWER',
     sales_agent_id: 'sa-1',
     agent_code: 'CYNDI',
     agent_name: 'Cyndi Lee',
@@ -173,6 +174,7 @@ describe('StockTransferDetail - tabs', () => {
     expect(screen.getByText('SO324132')).toBeInTheDocument();
     expect(screen.getByText('L2')).toBeInTheDocument();
     expect(screen.getByText('YOTU BUILDER')).toBeInTheDocument();
+    expect(screen.getByText('LOT 2752 TOWER')).toBeInTheDocument();
     expect(screen.getByText('Revision 1')).toBeInTheDocument();
     expect(screen.getByTestId('product-stock-tab')).toHaveTextContent('p-1');
   });

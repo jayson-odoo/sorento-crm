@@ -21,8 +21,47 @@ import type {
   ProductComboRow,
 } from '../../types/productCombo.types';
 
+const perms = vi.hoisted(() => ({ canEdit: true }));
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => true,
+  useHasPermission: () => perms.canEdit,
+}));
+
+// PRICETAG-COMBO-FORMAT AC-21: the description is the shared RichTextEditor (its own suite covers
+// tiptap) and the live tag preview has its own suite; both are stood in for here so these tests
+// keep pinning what they always did.
+vi.mock('@/components/ui/rich-text-editor', () => {
+  const Stand = (props: {
+    value?: string;
+    onChange: (v: string) => void;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      aria-labelledby={props['aria-labelledby']}
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange(e.target.value)}
+    />
+  );
+  return { RichTextEditor: Stand, default: Stand };
+});
+vi.mock('./ComboTagPreview', () => ({ ComboTagPreview: () => null }));
+
+vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+// The accessory list has its own suite; here it stands in as a labelled marker.
+vi.mock('./AccessoryListField', () => ({
+  AccessoryListField: (props: { label?: string; ownerId: string; canEdit: boolean }) => (
+    <div data-testid="accessory-list" data-owner={props.ownerId} data-can-edit={String(props.canEdit)}>
+      {props.label}
+    </div>
+  ),
+}));
+
+// COMBO-COPY-TO-PRODUCTS: the copy dialog has its own suite; here it stands in as a marker.
+vi.mock('./CopyComboDialog', () => ({
+  CopyComboDialog: (props: { comboId: string; comboName: string }) => (
+    <div data-testid="copy-combo-dialog" data-combo={props.comboId}>
+      {props.comboName}
+    </div>
+  ),
 }));
 
 vi.mock('./AddComboModal', () => ({
@@ -143,6 +182,7 @@ const COMBO_4_IN_1: ProductComboRow = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  perms.canEdit = true;
   combosQuery.value = { data: [], isLoading: false, isError: false };
 });
 
@@ -223,12 +263,9 @@ describe('ProductCombosSection', () => {
     };
     render(<ProductCombosSection productId={PRODUCT_ID} />);
 
-    // The heading is the label alone. `getAllByText` because "Basin" is also an
-    // option inside every choice-group control on the combo.
-    const headings = screen
-      .getAllByText('Basin')
-      .filter((node) => node.tagName === 'P');
-    expect(headings).toHaveLength(1);
+    // COMBO-SETTINGS-UX owner round 1: a part alone in its group is a fixed part, said plainly,
+    // with no group box and no "pick one".
+    expect(screen.getByText('Only part in "Basin", so it prints as a fixed part.')).toBeInTheDocument();
     expect(screen.queryByText(/pick one/)).toBeNull();
   });
 
@@ -236,12 +273,12 @@ describe('ProductCombosSection', () => {
     combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
     render(<ProductCombosSection productId={PRODUCT_ID} />);
 
-    const controls = screen.getAllByLabelText('Fixed part');
+    const controls = screen.getAllByLabelText('Choice group (only for pick-one parts)');
     expect(controls).toHaveLength(3);
     // Every row offers the vocabulary the combo already uses, deduped - a basin
     // group is a word off the catalogue page, not a list the system can know.
     expect(within(controls[0]).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Fixed part',
+      'Choice group (only for pick-one parts)',
       'Basin',
     ]);
 
@@ -253,7 +290,7 @@ describe('ProductCombosSection', () => {
 
     // Clearing it back to empty makes the part fixed again, sent as null rather
     // than as an empty string.
-    fireEvent.change(screen.getAllByLabelText('Fixed part')[1], { target: { value: '' } });
+    fireEvent.change(screen.getAllByLabelText('Choice group (only for pick-one parts)')[1], { target: { value: '' } });
     expect(updatePartMutate).toHaveBeenLastCalledWith({
       partId: BASIN_WHITE.id,
       write: { choice_group: null },
@@ -335,10 +372,9 @@ describe('ProductCombosSection', () => {
     const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]');
     expect(combo3).not.toBeNull();
     const scoped = within(combo3 as HTMLElement);
-    expect(scoped.getByRole('img', { name: /3 in 1/i })).toHaveAttribute(
-      'src',
-      'https://cdn.example.test/combo.jpg',
-    );
+    // The thumbnail is a button named for the combo (AC-40); its picture is decorative.
+    expect(scoped.getByRole('button', { name: 'Preview photo of 3 in 1' })).toBeInTheDocument();
+    expect(combo3!.querySelector('img')).toHaveAttribute('src', 'https://cdn.example.test/combo.jpg');
     expect(scoped.getByRole('button', { name: /replace/i })).toBeInTheDocument();
     expect(scoped.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
@@ -395,7 +431,7 @@ describe('ProductCombosSection', () => {
     render(<ProductCombosSection productId={PRODUCT_ID} />);
 
     const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]') as HTMLElement;
-    const img = within(combo3).getByRole('img', { name: /3 in 1/i });
+    const img = combo3.querySelector('img') as HTMLElement;
     let row: HTMLElement | null = img.parentElement;
     while (row && !row.className.split(' ').includes('flex-wrap')) {
       row = row.parentElement;
@@ -405,5 +441,42 @@ describe('ProductCombosSection', () => {
       }
     }
     expect(row).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COMBO-COPY-TO-PRODUCTS - the copy button on each combo
+// ---------------------------------------------------------------------------
+
+describe('ProductCombosSection copy to other products', () => {
+  it('each combo has its own copy button, which opens the dialog for that combo only', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1, COMBO_4_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+    const blocks = screen.getAllByTestId('combo-block');
+    expect(blocks).toHaveLength(2);
+    expect(screen.queryByTestId('copy-combo-dialog')).toBeNull();
+
+    fireEvent.click(within(blocks[1]).getByRole('button', { name: 'Copy combo 4 in 1 to other products' }));
+    const dialog = screen.getByTestId('copy-combo-dialog');
+    expect(dialog.getAttribute('data-combo')).toBe('combo-4');
+    expect(dialog.textContent).toBe('4 in 1');
+  });
+
+  it('keeps the copy button from eating the combo name at 375px: icon only below sm, full accessible name', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+    const button = screen.getByRole('button', { name: 'Copy combo 3 in 1 to other products' });
+    const label = within(button).getByText('Copy to other products');
+    expect(label.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(label.className).toMatch(/(^|\s)sm:inline(\s|$)/);
+    fireEvent.click(button);
+    expect(screen.getByTestId('copy-combo-dialog').getAttribute('data-combo')).toBe('combo-3');
+  });
+
+  it('is hidden from someone who cannot edit products', () => {
+    perms.canEdit = false;
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+    expect(screen.queryByRole('button', { name: /^Copy combo .* to other products$/ })).toBeNull();
   });
 });

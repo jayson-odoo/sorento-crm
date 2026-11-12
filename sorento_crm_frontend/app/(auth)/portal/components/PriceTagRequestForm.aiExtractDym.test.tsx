@@ -51,16 +51,28 @@ vi.mock('../lib/portal-client', () => ({
   fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
 }));
 
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
     value: string;
     onChange?: (v: string) => void;
+    onOptionChange?: (o: { value: string; label: string; description?: string } | null) => void;
     placeholder?: string;
-    options?: { value: string; label: string }[];
-    selectedOption?: { value: string; label: string };
+    options?: { value: string; label: string; description?: string }[];
+    fetchOptions?: (q: string, page: number) => Promise<{ value: string; label: string; description?: string }[]>;
+    selectedOption?: { value: string; label: string; description?: string };
   }) => {
-    const options = [...(props.options ?? [])];
+    const [fetched, setFetched] = React.useState<
+      { value: string; label: string; description?: string }[]
+    >([]);
+    React.useEffect(() => {
+      if (props.fetchOptions) void props.fetchOptions('', 0).then(setFetched);
+    }, [props.fetchOptions]);
+    const options = [...(props.options ?? fetched)];
     if (props.selectedOption && !options.some((o) => o.value === props.selectedOption?.value)) {
       options.push(props.selectedOption);
     }
@@ -68,11 +80,14 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       <select
         aria-label={props.id === 'debtor' ? 'Customer' : (props.placeholder ?? '')}
         value={props.value}
-        onChange={(e) => props.onChange?.(e.target.value)}
+        onChange={(e) => {
+          props.onChange?.(e.target.value);
+          props.onOptionChange?.(options.find((o) => o.value === e.target.value) ?? null);
+        }}
       >
         <option value="" />
         {options.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} data-description={o.description ?? ''}>
             {o.label}
           </option>
         ))}
@@ -100,6 +115,7 @@ vi.mock('./AIExtractDialog', () => ({
   },
 }));
 
+import { chooseUpload } from '@/test-utils';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const REAL = {
@@ -134,7 +150,7 @@ const BARE_MISS = {
   suggestions: [],
 };
 
-const PICKER = 'Did you mean?';
+const PICKER = 'Pick a combo or product...';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -142,7 +158,7 @@ beforeEach(() => {
 });
 
 function openSalesOrderSection() {
-  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+  chooseUpload();
 }
 
 async function mountAndExtract(products: Record<string, unknown>[]) {
@@ -158,23 +174,34 @@ function cell(p: Record<string, unknown>, i = 0) {
   return <div data-testid={`cell-${i}`}>{captured.renderRowStatus?.(p, i)}</div>;
 }
 
+/** The row's picker once its options (suggestions first, then the catalogue search) arrived. */
+async function loadedPicker(c: ReturnType<typeof within>) {
+  const picker = c.getByLabelText(PICKER) as HTMLSelectElement;
+  await waitFor(() => expect(picker.options.length).toBeGreaterThan(1));
+  return picker;
+}
+
 describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () => {
-  it('AC-F1: a not-found row with suggestions shows Not found and an empty picker of CODE - name', async () => {
+  // Owner, 4 Nov (PRICETAG-LPSP): one line per option, the code once; the name is the
+  // option's second line, never a repeat of the code.
+  it('AC-F1: a not-found row with suggestions shows Not found and an empty picker of codes, names below', async () => {
     await mountAndExtract([MISREAD]);
 
     const { getByTestId } = render(cell(MISREAD));
     const c = within(getByTestId('cell-0'));
 
     expect(c.getByText('Not found')).toBeTruthy();
-    const picker = c.getByLabelText(PICKER) as HTMLSelectElement;
+    const picker = await loadedPicker(c);
     expect(picker.value).toBe('');
     const labels = Array.from(picker.options).map((o) => o.textContent);
-    expect(labels).toContain(`${REAL.product_code} - ${REAL.product_name}`);
-    expect(labels).toContain(`${OTHER.product_code} - ${OTHER.product_name}`);
+    expect(labels).toContain(REAL.product_code);
+    expect(labels).toContain(OTHER.product_code);
+    const second = (code: string) =>
+      Array.from(picker.options).find((o) => o.textContent === code)?.getAttribute('data-description');
+    expect(second(REAL.product_code)).toBe(REAL.product_name);
+    expect(second(OTHER.product_code)).toBe(OTHER.product_name);
     // Best first, as the server ranked them.
-    expect(labels.indexOf(`${REAL.product_code} - ${REAL.product_name}`)).toBeLessThan(
-      labels.indexOf(`${OTHER.product_code} - ${OTHER.product_name}`),
-    );
+    expect(labels.indexOf(REAL.product_code)).toBeLessThan(labels.indexOf(OTHER.product_code));
   });
 
   it('AC-F2: Apply without a pick adds no line and names the code as not found', async () => {
@@ -197,6 +224,7 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     openSalesOrderSection();
 
     const { getByTestId } = render(cell(MISREAD));
+    await loadedPicker(within(getByTestId('cell-0')));
     await act(async () => {
       fireEvent.change(within(getByTestId('cell-0')).getByLabelText(PICKER), {
         target: { value: REAL.product_id },
@@ -219,6 +247,7 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     openSalesOrderSection();
 
     const { getByTestId, rerender } = render(cell(MISREAD));
+    await loadedPicker(within(getByTestId('cell-0')));
     await act(async () => {
       fireEvent.change(within(getByTestId('cell-0')).getByLabelText(PICKER), {
         target: { value: REAL.product_id },
@@ -246,18 +275,19 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     );
   });
 
-  it('AC-F5: a not-found row with no suggestions shows plain Not found and no picker', async () => {
+  it('AC-F5 (LPSP): a not-found row with no suggestions still gets the picker, over the catalogue search', async () => {
     await mountAndExtract([BARE_MISS]);
 
     const { getByTestId } = render(cell(BARE_MISS));
     const c = within(getByTestId('cell-0'));
     expect(c.getByText('Not found')).toBeTruthy();
-    expect(c.queryByLabelText(PICKER)).toBeNull();
+    expect(c.getByLabelText(PICKER)).toBeTruthy();
   });
 
   it('a fresh extraction forgets an earlier pick (nothing carries over unasked)', async () => {
     await mountAndExtract([MISREAD]);
     const { getByTestId, rerender } = render(cell(MISREAD));
+    await loadedPicker(within(getByTestId('cell-0')));
     await act(async () => {
       fireEvent.change(within(getByTestId('cell-0')).getByLabelText(PICKER), {
         target: { value: REAL.product_id },

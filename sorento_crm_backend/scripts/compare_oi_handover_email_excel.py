@@ -37,6 +37,7 @@ _EMAIL_TO_EXCEL = {
     "S/O NO": "S/O NO",
     "LOCATION": "LOCATION",
     "STOCK LOCATION": "LOCATION",
+    "NEW LOCATION": "NEW LOCATION",
     "ITEM CODE": "ITEM CODE",
     "NEW ITEM CODE": "NEW ITEM CODE",
     "QTY": "QTY",
@@ -112,10 +113,11 @@ def excel_rows(data: bytes, email_head: Sequence[str]) -> Tuple[List[str], List[
 
     sheet = openpyxl.load_workbook(io.BytesIO(data)).active
     rows = list(sheet.iter_rows(values_only=True))
-    head = [h for h in rows[1] if h is not None]
+    # Row 1 is the header row (OI-EXPORT-SHARED: no title row above it).
+    head = [h for h in rows[0] if h is not None] if rows else []
     index = {heading: position for position, heading in enumerate(head)}
     out = []
-    for row in rows[2:]:
+    for row in rows[1:]:
         if not any(v is not None for v in row):
             continue
         out.append(

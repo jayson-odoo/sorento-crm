@@ -9,10 +9,16 @@ import { toast } from '@/lib/toast';
 import { listTemplates } from '../services/tagTemplateService';
 import {
   assignTemplate,
+  assignTemplateToProducts,
   isPriceTagFamily,
+  listTemplateComboIds,
+  listTemplateProductIds,
+  listComboTagTemplates,
   listProductTagTemplates,
   previewTemplateAssignment,
+  setComboTagTemplates,
   setProductTagTemplates,
+  type TagTemplateLinks,
   type TemplateAssignAction,
   type TemplateAssignFilter,
 } from '../services/productTagTemplateService';
@@ -31,9 +37,35 @@ export function useProductTagTemplates(productId: string, enabled = true) {
 export function useSetProductTagTemplates(productId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (templateIds: string[]) => setProductTagTemplates(productId, templateIds),
+    mutationFn: (links: TagTemplateLinks) => setProductTagTemplates(productId, links),
     onSuccess: (rows) => {
       queryClient.setQueryData(productTagTemplatesKey(productId), rows);
+      toast.success('Price tag templates saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+export const comboTagTemplatesKey = (comboId: string) =>
+  ['combo-tag-templates', comboId] as const;
+
+export function useComboTagTemplates(comboId: string, enabled = true) {
+  return useQuery({
+    queryKey: comboTagTemplatesKey(comboId),
+    queryFn: () => listComboTagTemplates(comboId),
+    enabled: enabled && !!comboId,
+  });
+}
+
+/** A combo's template links: saved once a new combo exists (the combo modal) and from the
+ *  combo's own block on the product page. */
+export function useSetComboTagTemplates() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ combo_id, ...links }: TagTemplateLinks & { combo_id: string }) =>
+      setComboTagTemplates(combo_id, links),
+    onSuccess: (rows, { combo_id }) => {
+      queryClient.setQueryData(comboTagTemplatesKey(combo_id), rows);
       toast.success('Price tag templates saved');
     },
     onError: (error: Error) => toast.error(error.message),
@@ -71,7 +103,65 @@ export function useAssignTemplate(templateId: string | null) {
 export function usePriceTagTemplateOptions(enabled: boolean) {
   return useQuery({
     queryKey: ['tag-templates', 'price-tag-options'],
-    queryFn: async () => (await listTemplates()).filter((t) => isPriceTagFamily(t.family)),
+    // Family then name, the order this picker always had: with no sort the list endpoint now
+    // answers the Tag Templates list's manual (drag) order (TAG-TEMPLATE-DUPLICATE item 6).
+    queryFn: async () =>
+      (await listTemplates())
+        .filter((t) => isPriceTagFamily(t.family))
+        .sort((a, b) => a.family.localeCompare(b.family) || a.name.localeCompare(b.name)),
     enabled,
+  });
+}
+
+/** PRICETAG-TEMPLATE-PRODUCTS: the products that use a template (the designer's ticks). */
+export const templateProductIdsKey = (templateId: string) =>
+  ['tag-template-product-ids', templateId] as const;
+
+export function useTemplateProductIds(
+  templateId: string,
+  enabled = true,
+  { fresh = false }: { fresh?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: templateProductIdsKey(templateId),
+    queryFn: () => listTemplateProductIds(templateId),
+    enabled: enabled && !!templateId,
+    // The Products dialog diffs its Save against this list, so it always reads it fresh.
+    ...(fresh ? { refetchOnMount: 'always' as const } : {}),
+  });
+}
+
+/** The combos that use a template (owner hand test 11 Nov), read fresh like the products. */
+export const templateComboIdsKey = (templateId: string) =>
+  ['tag-template-combo-ids', templateId] as const;
+
+export function useTemplateComboIds(
+  templateId: string,
+  enabled = true,
+  { fresh = false }: { fresh?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: templateComboIdsKey(templateId),
+    queryFn: () => listTemplateComboIds(templateId),
+    enabled: enabled && !!templateId,
+    ...(fresh ? { refetchOnMount: 'always' as const } : {}),
+  });
+}
+
+/** Link the template to the picked products and combos; the toast is the caller's. */
+export function useLinkTemplateProducts(templateId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ productIds, comboIds }: { productIds: string[]; comboIds: string[] }) =>
+      comboIds.length
+        ? assignTemplateToProducts(templateId, productIds, comboIds)
+        : assignTemplateToProducts(templateId, productIds),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['product-tag-templates'] });
+      void queryClient.invalidateQueries({ queryKey: ['combo-tag-templates'] });
+      void queryClient.invalidateQueries({ queryKey: templateProductIdsKey(templateId) });
+      void queryClient.invalidateQueries({ queryKey: templateComboIdsKey(templateId) });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }

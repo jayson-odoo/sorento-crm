@@ -48,9 +48,10 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import run_turn
+from app.services.chatbot import trace as trace_mod
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
-from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
+from app.services.chatbot.contracts import BRANCH_KINDS, DIRECT_INGRESS, TurnRequest
 from app.services.chatbot.lanes.escalation import routing_line
 from app.services.chatbot.router import RouteDecision, decide_route, trace_record
 from app.services.error_handler import AppException
@@ -71,17 +72,13 @@ _TRACE_ARGS_DROPPED = ("view", "contact_id", "space_id", "_diagnostics")
 
 
 class ConsoleContactUnknown(AppException):
-    """No stored turn for this contact: there is no envelope shape to borrow."""
+    """No stored turn and no `respond_contacts` row: there is no contact to simulate."""
 
     def __init__(self, contact_respond_id: str) -> None:
         super().__init__(
             status_code=404,
-            message="This contact has no chatbot turn to borrow a session from.",
-            detail=(
-                f"no chatbot.turns envelope exists yet for contact {contact_respond_id!r}. "
-                "Send one real WhatsApp message from this contact first, or pick a "
-                "different contact."
-            ),
+            message="This contact was not found.",
+            detail=f"no respond contact {contact_respond_id!r} exists. Pick a different contact.",
             code="CHATBOT_CONSOLE_NO_ENVELOPE",
         )
 
@@ -126,15 +123,14 @@ class ConsoleTurnResult:
 def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     """The contact's most recent REAL INBOUND envelope, as the shape to borrow.
 
-    Raises rather than inventing one: a hand-built envelope missing a field the engine
-    reads at `received` fails there, and a console whose failures are its own bug is worse
-    than no console. The phone is filled in from `respond_contacts` when the borrowed
-    envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
+    A contact with no real turn but a `respond_contacts` row gets `_synthetic_envelope`
+    instead (CONSOLE-SYNTH-ENVELOPE); only a contact with no row at all raises. The phone
+    is filled in from `respond_contacts` when the borrowed envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
     does - the escalation lane's assignee read is a 400 without it.
 
-    **Only a `webhook` ingress row that is not a test.** A console turn stores its OWN
-    envelope back onto `chatbot.turns`, so borrowing "the newest row of any kind" makes
-    the console borrow from itself: one hand-built or in-process envelope with a thin
+    **Only a real delivery (`webhook` or `respond_webhook`) that is not a test.** A
+    console turn stores its OWN envelope back onto `chatbot.turns`, so borrowing "the
+    newest row of any kind" makes the console borrow from itself: one hand-built or in-process envelope with a thin
     `contact` block poisons every console turn for that contact afterwards, and the
     fields it is missing are read as ABSENT rather than as never-recorded. Measured on
     the hand-pass clone (16 Sep 2026): an in-process smoke turn wrote
@@ -156,23 +152,77 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
         .filter(
             ChatbotTurn.contact_respond_id == str(contact_respond_id),
             ChatbotTurn.envelope.isnot(None),
-            ChatbotTurn.ingress == "webhook",
+            # A real WhatsApp delivery, by n8n's webhook or the CRM's own (`DIRECT_INGRESS`).
+            ChatbotTurn.ingress.in_(("webhook", DIRECT_INGRESS)),
             ChatbotTurn.is_test.is_(False),
         )
         .order_by(ChatbotTurn.created_at.desc())
         .first()
     )
+    contact = _contact_row(db, contact_respond_id)
+    phone = contact[0] if contact is not None else None
     if row is None:
-        raise ConsoleContactUnknown(contact_respond_id)
-    phone = db.execute(
-        sa_text("SELECT phone_number FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": str(contact_respond_id)},
-    ).scalar()
+        if contact is None:
+            raise ConsoleContactUnknown(contact_respond_id)
+        return _synthetic_envelope(contact_respond_id, phone=phone, first_name=contact[1])
     envelope = dict(row.envelope)
     stored = envelope.get("contact") or {}
     if not stored.get("phone") and phone:
         envelope["contact"] = {**stored, "phone": phone}
     return envelope
+
+
+def _contact_row(db: Session, contact_respond_id: str) -> Any:
+    """`(phone_number, first_name)` of this respond id's `respond_contacts` row, or None.
+
+    One respond id can sit on several rows (one per workspace). The first two tiers are
+    `turn_runtime._profile_rows`'s (the default workspace's row, then a NULL-workspace
+    row); the third, any other workspace's row by id, is the console's own, so a contact
+    in another workspace can still be simulated (its profile then fails open there).
+    """
+    from app.services.chatbot.head.access import default_space_id
+
+    return db.execute(
+        sa_text(
+            "SELECT c.phone_number, c.first_name FROM respond_contacts c "
+            "LEFT JOIN respond_workspaces w ON w.id = c.workspace_id "
+            "WHERE c.respond_io_id = :c "
+            "ORDER BY (w.space_id IS NOT NULL AND w.space_id = :space) DESC, "
+            "(c.workspace_id IS NULL) DESC, c.id LIMIT 1"
+        ),
+        {"c": str(contact_respond_id), "space": default_space_id(db) or ""},
+    ).first()
+
+
+def _synthetic_envelope(
+    contact_respond_id: str, *, phone: str | None, first_name: str | None
+) -> dict[str, Any]:
+    """A base envelope for a contact that never sent a real message (CONSOLE-SYNTH-ENVELOPE).
+
+    The console media path's shape: contact id, phone, first name and
+    `is_human_intervened=false`, and no `message.channel` (nothing claims a source). The
+    WhatsApp phone link gate cannot fire: it only acts on a contact with no
+    `respond_contacts` row, and a synthetic base exists only when there is one. Company,
+    customer links and stock access come from the DB by contact id, not from the
+    envelope, so the answer matches a borrowed envelope's. Built fresh for every turn and
+    only ever passed through `_build_envelope`, which makes it a dry run.
+    """
+    contact: dict[str, Any] = {
+        "id": str(contact_respond_id),
+        "custom_fields": [{"name": "is_human_intervened", "value": "false"}],
+    }
+    if phone:
+        contact["phone"] = phone
+    if first_name:
+        contact["firstName"] = first_name
+    return {
+        "contact": contact,
+        "message": {
+            "contact": {"id": str(contact_respond_id)},
+            "message": {"channelId": "whatsapp", "traffic": "incoming"},
+        },
+        "synthetic_envelope": True,
+    }
 
 
 def _reply_to_block(reply_to: dict[str, Any]) -> dict[str, Any]:
@@ -330,27 +380,33 @@ def _trace_summary(db: Session, turn_id: str | None) -> dict[str, Any]:
         ),
         None,
     )
-    tool: str | None = None
-    args_short: dict[str, Any] | None = None
+    return {**_summarise_trace_events(events), "routing_line": routing_line(routing)}
+
+
+def _summarise_trace_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """The tool, its short args, the cross-domain rungs and the dropped reveals, off a turn's
+    trace events. TRACE-ENTITY-TOOL: the tool is the last NAMED tool event (one rule with the
+    drawer, `trace.named_tool_event`), read off the flat shape `TurnTrace.add` writes; the
+    old reader took the FIRST event's nested `payload`, which no live turn carries."""
+    tool_fields = trace_mod.named_tool_event(events)
     crossdomain_rungs: list[str] = []
     reveals_dropped: list[str] = []
     for event in events:
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-        if event["kind"] == "tool" and tool is None:
-            tool = payload.get("name")
-            args_short = {
-                k: v for k, v in (payload.get("args") or {}).items() if k not in _TRACE_ARGS_DROPPED
-            }
-        elif event["kind"] == "crossdomain":
-            crossdomain_rungs.append(str(payload.get("rung") or payload.get("tool") or ""))
-        elif event["kind"] == "reveals":
-            reveals_dropped.extend(str(d) for d in (payload.get("dropped") or []))
+        fields = trace_mod.event_fields(event)
+        if event.get("kind") == "crossdomain":
+            crossdomain_rungs.append(str(fields.get("rung") or fields.get("tool") or ""))
+        elif event.get("kind") == "reveals":
+            reveals_dropped.extend(str(d) for d in (fields.get("dropped") or []))
+    args = (tool_fields or {}).get("args")
     return {
-        "tool": tool,
-        "args_short": args_short,
+        "tool": tool_fields.get("name") if tool_fields else None,
+        "args_short": (
+            {k: v for k, v in (args if isinstance(args, dict) else {}).items() if k not in _TRACE_ARGS_DROPPED}
+            if tool_fields
+            else None
+        ),
         "crossdomain_rungs": [r for r in crossdomain_rungs if r],
         "reveals_dropped": reveals_dropped,
-        "routing_line": routing_line(routing),
     }
 
 
@@ -521,7 +577,10 @@ def run_console_turn(
         quick_replies=_quick_replies(body),
         send_messages=send_messages,
         session_vars=_next_state(body),
-        trace_summary=_trace_summary(db, body.get("turn_id")),
+        trace_summary={
+            **_trace_summary(db, body.get("turn_id")),
+            "synthetic_envelope": bool(envelope_dict.get("synthetic_envelope")),
+        },
         prompt_version=_turn_prompt_version(db, body.get("turn_id")),
         actions=body.get("actions"),
         message_id=envelope_dict["message"]["message"]["messageId"],

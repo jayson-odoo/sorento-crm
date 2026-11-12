@@ -1,0 +1,1232 @@
+/**
+ * PRICETAG-ACCESSORY-DESIGNER S2: the ONE rule that lays out an "Accessories" box that carries a
+ * designed `card` (editor canvas, request preview and print page all call it, card rule A10). A box
+ * with no `card` keeps the legacy path in `accessory-box.ts`, untouched.
+ *
+ * Plan: documentation/plans/dealer-kit/PLAN-pricetag-accessory-designer-07nov.md "S2 Frontend lib
+ * contract". Card rules V6-V9: one card layout per box, applied to every accessory; a slot whose
+ * field is empty does not print and the slot under it moves up; the box shrinks together to 70%,
+ * then whole cards only.
+ * Everything is in millimetres inside the layer's own box.
+ */
+import {
+  ACCESSORY_BOX_PAD_MM,
+  ACCESSORY_CARD_PAD_MM,
+  accessoryCardInner,
+  accessoryChrome,
+  accessoryHeaderHeight,
+  accessoryLineStyle,
+  cardSize,
+  type AccessoryBoxLayout,
+  type AccessoryRect,
+  type LayoutProps,
+} from './accessory-box';
+import { featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
+import { hasMergeField, renderMergeFields, renderPriceTagDescription } from './merge-fields';
+import { formatTagPrice } from './price-badge';
+import { isRich, parseRichText, richPlainText } from './rich-text';
+import { textLayerLines } from './text-layout';
+import type {
+  AccessoriesLayerProps,
+  CardElement,
+  CardField,
+  CardLayout,
+  FooterLayout,
+  TagAccessory,
+  TagBindingData,
+  TextLayerProps,
+} from './tag-template-types';
+import { defaultAccessoriesProps } from './tag-template-types';
+
+const EPS = 1e-9;
+/** The smallest the cards shrink to before whole cards are dropped (owner ruling Q2). */
+export const CARD_SHRINK_MIN = 0.7;
+/**
+ * TAG-ACC-CARD-RESIZE Q1: a box too small for one card at `shrinkMin` keeps shrinking that card
+ * down to this readable floor instead of drawing nothing; below the floor the card is drawn at the
+ * floor, clipped to the box (`clipped`).
+ */
+export const CARD_SHRINK_FLOOR = 0.35;
+
+export type CardBoxProps = LayoutProps &
+  Pick<AccessoriesLayerProps, 'card' | 'footer' | 'shrinkMin' | 'columns'>;
+
+export interface CardBoxLayout extends AccessoryBoxLayout {
+  /** The factor every card is drawn at (1 = its design size). */
+  scale: number;
+  /** The footer area, null when hidden. Not scaled. */
+  footer: AccessoryRect | null;
+  /** Columns actually drawn (a grid may draw fewer than asked when the card is too wide). 0 = nothing drawn. */
+  columns: number;
+  /** True when even the floor-sized card overflows the box: renderers clip the cards to the box. */
+  clipped: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Box layout
+// ---------------------------------------------------------------------------
+
+/**
+ * Where everything in the box goes for `count` accessories drawn with `props.card`.
+ *
+ * Vertical: cards stack at `card.width_mm * scale`, left aligned at the pad; horizontal: they run
+ * left to right. `scale` is the largest factor (at most 1) at which every card fits, but never
+ * below `shrinkMin` (default 70%); below that only the whole cards that fit are kept. The footer
+ * sits under the cards at its own height. The box closes up like the legacy one; nothing to show
+ * draws nothing.
+ */
+export function cardBoxLayout(
+  count: number,
+  props: CardBoxProps,
+  boxWidth_mm: number,
+  boxHeight_mm: number,
+): CardBoxLayout {
+  const total = Math.max(0, Math.floor(count));
+  const empty = (dropped: number): CardBoxLayout => ({
+    cards: [],
+    shown: 0,
+    dropped,
+    boxWidth_mm: 0,
+    boxHeight_mm: 0,
+    frame: null,
+    header: null,
+    badge: null,
+    scale: 1,
+    footer: null,
+    columns: 0,
+    clipped: false,
+  });
+  if (total === 0) return empty(0);
+  const card = props.card;
+  if (!card || !(card.width_mm > 0) || !(card.height_mm > 0)) return empty(total);
+
+  const pad = ACCESSORY_BOX_PAD_MM;
+  const gap = Math.max(0, props.gap_mm);
+  const headerH = accessoryHeaderHeight(props);
+  const onBorder = Boolean(props.headerOnBorder) && headerH > 0;
+  const top = onBorder ? headerH + pad * 0.5 : pad + headerH;
+  const footerH = props.footer?.show && props.footer.height_mm > 0 ? props.footer.height_mm : 0;
+  const min = Math.min(1, Math.max(0.1, props.shrinkMin ?? CARD_SHRINK_MIN));
+
+  const innerW = boxWidth_mm - 2 * pad;
+  const availH = boxHeight_mm - top - pad - footerH;
+
+  /**
+   * TAG-ACC-CARD-RESIZE Q1: not even one card fits at `min`. One column (or one row), every card at
+   * the largest factor at which one whole card fits, never above `min` nor below the floor; under
+   * the floor one card is drawn at the floor and clipped to the box. Only boxes that drew NOTHING
+   * before reach this, so every layout that already printed is unchanged.
+   */
+  const tooSmall = (): CardBoxLayout => {
+    // A saved design missing a number (e.g. no gap) lays out nothing rather than throwing.
+    if (!Number.isFinite(gap) || !Number.isFinite(innerW) || !Number.isFinite(availH)) return empty(total);
+    const vertical = props.columns !== undefined && props.columns !== null ? true : props.direction !== 'horizontal';
+    const floor = Math.min(CARD_SHRINK_FLOOR, min);
+    const oneFits = Math.min(innerW / card.width_mm, availH / card.height_mm);
+    const clipped = !(oneFits >= floor - EPS);
+    const scale = clipped ? floor : Math.min(min, oneFits);
+    const w = card.width_mm * scale;
+    const h = card.height_mm * scale;
+    const availMain = vertical ? availH : innerW;
+    const mainAt = vertical ? h : w;
+    const shown = clipped
+      ? 1
+      : Math.min(total, Math.max(1, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
+    const cards: AccessoryRect[] = [];
+    for (let i = 0; i < shown; i += 1) {
+      cards.push(
+        vertical
+          ? { x_mm: pad, y_mm: top + i * (h + gap), width_mm: w, height_mm: h }
+          : { x_mm: pad + i * (w + gap), y_mm: top, width_mm: w, height_mm: h },
+      );
+    }
+    const last = cards[shown - 1];
+    const cardsBottom = last.y_mm + last.height_mm;
+    const outW = clipped || vertical ? boxWidth_mm : last.x_mm + last.width_mm + pad;
+    const outH = clipped ? boxHeight_mm : vertical ? cardsBottom + footerH + pad : boxHeight_mm;
+    return {
+      cards,
+      shown,
+      dropped: total - shown,
+      boxWidth_mm: outW,
+      boxHeight_mm: outH,
+      ...accessoryChrome(props, outW, outH),
+      scale,
+      columns: vertical ? 1 : shown,
+      footer:
+        footerH > 0
+          ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }
+          : null,
+      clipped,
+    };
+  };
+
+  if (props.columns !== undefined && props.columns !== null) {
+    // S6 grid: cards fill left to right, wrap to the next row, every card the same size.
+    const wanted =
+      props.columns === 'auto'
+        ? Math.floor((innerW + gap + EPS) / (card.width_mm + gap))
+        : Math.floor(props.columns);
+    let cols = Math.max(1, Math.min(total, wanted));
+    const rowsFor = (n: number) => Math.ceil(total / n);
+    const fitFor = (n: number) =>
+      Math.min(
+        1,
+        (innerW - (n - 1) * gap) / (n * card.width_mm),
+        (availH - (rowsFor(n) - 1) * gap) / (rowsFor(n) * card.height_mm),
+      );
+    let scale = Math.max(fitFor(cols), min);
+    // Narrower than the grid at the smallest scale: fewer columns, never a card past the box.
+    while (cols > 1 && cols * card.width_mm * scale + (cols - 1) * gap > innerW + EPS) {
+      cols -= 1;
+      scale = Math.max(fitFor(cols), min);
+    }
+    const cw = card.width_mm * scale;
+    const ch = card.height_mm * scale;
+    if (!(ch > 0)) return empty(total);
+    if (cw > innerW + EPS) return tooSmall();
+    const maxRows = Math.floor((availH + gap + EPS) / (ch + gap));
+    const gridShown = Math.min(total, Math.max(0, maxRows) * cols);
+    if (gridShown === 0) return tooSmall();
+    const gridCards: AccessoryRect[] = [];
+    for (let i = 0; i < gridShown; i += 1) {
+      gridCards.push({
+        x_mm: pad + (i % cols) * (cw + gap),
+        y_mm: top + Math.floor(i / cols) * (ch + gap),
+        width_mm: cw,
+        height_mm: ch,
+      });
+    }
+    const gridBottom = gridCards[gridShown - 1].y_mm + ch;
+    const gridOutH = gridBottom + footerH + pad;
+    return {
+      cards: gridCards,
+      shown: gridShown,
+      dropped: total - gridShown,
+      boxWidth_mm: boxWidth_mm,
+      boxHeight_mm: gridOutH,
+      ...accessoryChrome(props, boxWidth_mm, gridOutH),
+      scale,
+      columns: cols,
+      clipped: false,
+      footer:
+        footerH > 0
+          ? { x_mm: pad, y_mm: gridBottom, width_mm: Math.max(0, boxWidth_mm - 2 * pad), height_mm: footerH }
+          : null,
+    };
+  }
+
+  const vertical = props.direction !== 'horizontal';
+  const availMain = vertical ? availH : innerW;
+  const availCross = vertical ? innerW : availH;
+  const cardMain = vertical ? card.height_mm : card.width_mm;
+  const cardCross = vertical ? card.width_mm : card.height_mm;
+
+  const fit = Math.min(1, (availMain - (total - 1) * gap) / (total * cardMain), availCross / cardCross);
+  const scale = fit >= min ? fit : min;
+
+  const mainAt = cardMain * scale;
+  if (!(mainAt > 0)) return empty(total);
+  if (cardCross * scale > availCross + EPS) return tooSmall();
+  const shown = Math.min(total, Math.max(0, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
+  // NaN-safe: a design missing a number (e.g. no gap) lays out nothing rather than throwing.
+  if (Number.isNaN(shown)) return empty(total);
+  if (!(shown > 0)) return tooSmall();
+
+  const w = card.width_mm * scale;
+  const h = card.height_mm * scale;
+  const cards: AccessoryRect[] = [];
+  for (let i = 0; i < shown; i += 1) {
+    cards.push(
+      vertical
+        ? { x_mm: pad, y_mm: top + i * (h + gap), width_mm: w, height_mm: h }
+        : { x_mm: pad + i * (w + gap), y_mm: top, width_mm: w, height_mm: h },
+    );
+  }
+  const last = cards[shown - 1];
+  const outW = vertical ? boxWidth_mm : last.x_mm + last.width_mm + pad;
+  const cardsBottom = last.y_mm + last.height_mm;
+  const outH = vertical ? cardsBottom + footerH + pad : boxHeight_mm;
+  return {
+    cards,
+    shown,
+    dropped: total - shown,
+    boxWidth_mm: outW,
+    boxHeight_mm: outH,
+    ...accessoryChrome(props, outW, outH),
+    scale,
+    columns: vertical ? 1 : shown,
+    clipped: false,
+    footer:
+      footerH > 0
+        ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }
+        : null,
+  };
+}
+
+/** Accessories a designed box does not print for lack of room; feeds the drop warning. */
+export function cardDropped(
+  count: number,
+  props: CardBoxProps,
+  boxWidth_mm: number,
+  boxHeight_mm: number,
+): number {
+  return cardBoxLayout(count, props, boxWidth_mm, boxHeight_mm).dropped;
+}
+
+// ---------------------------------------------------------------------------
+// Fields
+// ---------------------------------------------------------------------------
+
+/** The value of one field for an accessory: text, a list of hex colours, a picture URL, or null. */
+export function cardFieldValue(item: TagAccessory, field: CardField): string | string[] | null {
+  switch (field) {
+    case 'name':
+      return item.name ?? null;
+    case 'code':
+      return item.code ?? null;
+    case 'spec':
+      return item.spec ?? null;
+    case 'remark':
+      return item.remark ?? null;
+    case 'price':
+      return item.list_price != null ? `LP: ${formatTagPrice(item.list_price)}` : null;
+    case 'colours':
+      return (item.colours ?? []).map((colour) => colour.hex);
+    case 'picture':
+      return item.image?.url ?? item.images?.[0]?.url ?? null;
+    // PRICETAG-UPGRADE-VARIANTS S1: the same formatter the `upgrade_topup` text slot prints with.
+    case 'topup':
+      return item.topup_amount != null ? formatTagPrice(item.topup_amount) : null;
+    case 'price_with_upgrade':
+      return item.price_with_upgrade != null ? formatTagPrice(item.price_with_upgrade) : null;
+  }
+}
+
+/** Distinct hex colours across the shown accessories, in order of first appearance. */
+export function boxColours(items: readonly TagAccessory[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    for (const colour of item.colours ?? []) {
+      const key = colour.hex.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(colour.hex);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Elements
+// ---------------------------------------------------------------------------
+
+/** An element with its content resolved: `text` is the value to print, `colours` the hex dots,
+ *  `src` the picture URL. The rect is final, in card (or footer) millimetres, unscaled. */
+export type ResolvedCardElement = CardElement & {
+  src?: string | null;
+  /** feature_icons: the item's matched icons, in the library's one order. */
+  icons?: FeatureIcon[];
+  /** Designer only: a picture element drawn as a neutral placeholder (never printed). */
+  placeholder?: boolean;
+};
+
+function isBlank(value: string): boolean {
+  return (isRich(value) ? richPlainText(value) : value).trim() === '';
+}
+
+type Resolver = (element: CardElement) => ResolvedCardElement | null;
+
+/** Resolve every visible element, drop the empty ones, and close the gaps they leave (V7). */
+function resolveElements(elements: readonly CardElement[], resolve: Resolver): ResolvedCardElement[] {
+  const visible = elements.filter((element) => !element.hidden);
+  const resolved = visible.map(resolve);
+  const tops = visible.map((element) => element.y_mm);
+  const gone = resolved.map((value) => value === null);
+
+  const order = visible
+    .map((_, index) => index)
+    .filter((index) => gone[index])
+    .sort((a, b) => visible[a].y_mm - visible[b].y_mm);
+  const overlapsX = (a: CardElement, b: CardElement) =>
+    a.x_mm < b.x_mm + b.width_mm - EPS && b.x_mm < a.x_mm + a.width_mm - EPS;
+
+  const removed = new Set<number>();
+  for (const dropped of order) {
+    removed.add(dropped);
+    const bottom = tops[dropped] + visible[dropped].height_mm;
+    const below = visible
+      .map((_, index) => index)
+      .filter(
+        (index) =>
+          !removed.has(index) &&
+          tops[index] >= bottom - EPS &&
+          overlapsX(visible[dropped], visible[index]),
+      );
+    if (below.length === 0) continue;
+    // The freed space starts below every KEPT element that overlaps the dropped one's column and reaches
+    // into it from above (dots over the picture's lower part): the name never jumps into the picture.
+    const freeFrom = visible.reduce((from, other, index) => {
+      if (index === dropped || gone[index] || tops[index] >= bottom - EPS) return from;
+      if (!overlapsX(visible[dropped], other)) return from;
+      return Math.max(from, tops[index] + other.height_mm);
+    }, tops[dropped]);
+    const shift = Math.min(...below.map((index) => tops[index])) - freeFrom;
+    if (!(shift > 0)) continue;
+    for (const index of below) tops[index] -= shift;
+  }
+
+  const out: ResolvedCardElement[] = [];
+  resolved.forEach((value, index) => {
+    if (value) out.push({ ...value, y_mm: tops[index] });
+  });
+  return out;
+}
+
+/**
+ * TAG-ACC-CARD-RESIZE Q4: one accessory as the bound product, so a card's fixed text resolves
+ * `{{product.*}}` through the ONE merge-field resolver a normal text layer uses (no second
+ * resolver). A catalogue product carries its code, name, prices, spec lines and price tag
+ * description; a library accessory has a name and a spec (read as both its description and its
+ * spec lines), and every other field resolves to nothing.
+ */
+export function accessoryBinding(item: TagAccessory): TagBindingData {
+  const spec = item.spec ?? null;
+  const specPlain = spec ? (isRich(spec) ? richPlainText(spec) : spec) : '';
+  const ownLines = specPlain.split('\n').map((line) => line.trim()).filter(Boolean);
+  return {
+    kind: 'product',
+    product: {
+      id: item.id,
+      code: item.code ?? '',
+      name: item.name ?? '',
+      dimensions: '',
+      spec_lines: item.spec_lines ?? ownLines,
+      specs: item.specs ?? [],
+      images: [],
+      list_price: item.list_price ?? null,
+      offer_price: item.sell_price ?? null,
+      promotion_id: null,
+      barcode: null,
+      // A catalogue product's and an upgrade's own copy; a library accessory's (or an older pin's) spec.
+      price_tag_description: item.price_tag_description ?? spec,
+    },
+  };
+}
+
+const TOKEN = /\{\{\s*[A-Za-z0-9_.]+\s*\}\}/g;
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** A card's fixed text with its fields resolved for `item`; text with no field is returned as is. */
+function cardFixedText(item: TagAccessory, text: string): string {
+  if (!hasMergeField(text)) return text;
+  const binding = accessoryBinding(item);
+  const rich = (value: string) =>
+    value.replace(TOKEN, (token) => escapeHtml(renderMergeFields(token, binding, 'print')));
+  // The description alone keeps its formatting, as a normal text layer draws it (`layerRichBlocks`).
+  const description = binding.kind === 'product' ? binding.product.price_tag_description : null;
+  if (/^\s*\{\{\s*product\.price_tag_description\s*\}\}\s*$/.test(text) && description && isRich(description)) {
+    return rich(description);
+  }
+  // Rich: each field's value goes in escaped, so a value never becomes markup.
+  if (isRich(text)) return rich(text);
+  // Plain: a line whose fields all came back empty is dropped with no gap (the description rule).
+  return renderPriceTagDescription(text, binding, 'print');
+}
+
+function textOf(value: string | string[] | null): string | null {
+  return typeof value === 'string' && !isBlank(value) ? value : null;
+}
+
+/** A field's value with the element's own text before it ("TOPUP RM 150"); null stays null. */
+function withPrefix(element: CardElement, value: string | null): string | null {
+  return value && element.prefix ? `${element.prefix}${value}` : value;
+}
+
+/**
+ * The elements one accessory prints: the visible ones, an element whose field is empty for this
+ * accessory dropped and the elements under it moved up into its space. The card keeps its size.
+ * A feature_icons element shows the icons the item's own specs carry (`featureIcons` = the library
+ * rules the caller can draw); none matched, it is dropped like an empty field.
+ */
+export function cardElementsFor(
+  item: TagAccessory,
+  card: CardLayout,
+  featureIcons?: readonly FeatureIcon[],
+): ResolvedCardElement[] {
+  return resolveElements(card.elements ?? [], (element) => {
+    switch (element.kind) {
+      case 'shape':
+        return { ...element };
+      case 'picture': {
+        const src = cardFieldValue(item, 'picture');
+        return typeof src === 'string' && src ? { ...element, src } : null;
+      }
+      case 'colour_dots': {
+        const picked = element.colours && element.colours.length > 0 ? element.colours : null;
+        const colours = picked ?? (cardFieldValue(item, 'colours') as string[]);
+        return colours.length > 0 ? { ...element, colours } : null;
+      }
+      case 'text': {
+        const text = element.field
+          ? withPrefix(element, textOf(cardFieldValue(item, element.field)))
+          : textOf(element.text != null ? cardFixedText(item, element.text) : null);
+        return text ? { ...element, text } : null;
+      }
+      case 'feature_icons': {
+        const icons = featureIconsFor(item.specs, featureIcons);
+        return icons.length > 0 ? { ...element, icons } : null;
+      }
+    }
+  });
+}
+
+/**
+ * Card 1 while it is being edited: EVERY visible element at its own rect, none dropped for an empty
+ * field and none moved up, so what is drawn sits exactly where its frame is. A picture is a
+ * placeholder. The faded cards keep the real rule (`cardElementsFor`).
+ */
+export function cardElementsForDesign(
+  item: TagAccessory,
+  card: CardLayout,
+  featureIcons?: readonly FeatureIcon[],
+): ResolvedCardElement[] {
+  // A field this accessory has nothing for is drawn from the sample, so the element stays visible to place.
+  const [sample] = accessoryDesignSamples();
+  const [upgradeSample] = accessoryDesignSamples('upgrades');
+  return (card.elements ?? [])
+    .filter((element) => !element.hidden)
+    .map((element): ResolvedCardElement => {
+      switch (element.kind) {
+        case 'picture':
+          return { ...element, src: null, placeholder: true };
+        case 'colour_dots': {
+          const picked = element.colours && element.colours.length > 0 ? element.colours : null;
+          const own = cardFieldValue(item, 'colours') as string[];
+          const colours = picked ?? (own.length > 0 ? own : (cardFieldValue(sample, 'colours') as string[]));
+          return { ...element, colours };
+        }
+        case 'text': {
+          if (!element.field) {
+            // Fields resolve against this item; nothing to show, the typed text stays so it can be placed.
+            const typed = element.text ?? '';
+            return { ...element, text: textOf(cardFixedText(item, typed)) ?? typed };
+          }
+          const own = textOf(cardFieldValue(item, element.field));
+          const value = own ?? textOf(cardFieldValue(sample, element.field)) ?? cardFieldValue(upgradeSample, element.field);
+          return { ...element, text: withPrefix(element, typeof value === 'string' ? value : '') ?? '' };
+        }
+        case 'feature_icons': {
+          // The item's own icons, else the first few of the library as a sample; never dropped.
+          const own = featureIconsFor(item.specs, featureIcons);
+          return { ...element, icons: own.length > 0 ? own : (featureIcons ?? []).slice(0, 3) };
+        }
+        default:
+          return { ...element };
+      }
+    });
+}
+
+/**
+ * The footer's elements. Fixed text and shapes print as designed; colour dots default to the
+ * colours of the shown accessories (`colours`) unless hand-picked; fields that read one accessory
+ * have nothing to read here and are dropped.
+ */
+export function footerElementsFor(colours: readonly string[], footer: FooterLayout): ResolvedCardElement[] {
+  return resolveElements(footer.elements ?? [], (element) => {
+    switch (element.kind) {
+      case 'shape':
+        return { ...element };
+      case 'picture':
+        return null;
+      case 'colour_dots': {
+        const picked = element.colours && element.colours.length > 0 ? element.colours : null;
+        const list = picked ?? [...colours];
+        return list.length > 0 ? { ...element, colours: list } : null;
+      }
+      case 'text': {
+        if (element.field) return null;
+        const text = textOf(element.text ?? null);
+        return text ? { ...element, text } : null;
+      }
+      case 'feature_icons':
+        return null;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Drawing helpers shared by the canvas and the print page
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_DOT_GAP_MM = 0.8;
+export const DEFAULT_DOT_OUTLINE = '#9ca3af';
+const MIN_CARD_TEXT_PT = 2.5;
+const DEFAULT_CARD_TEXT_COLOR = '#111827';
+
+/** The dots of a colour-dots element: each circle's top-left and diameter, in the element's own
+ *  millimetres at `scale`. The size comes from the element (`dotSize_mm`) or its rect, and never
+ *  exceeds what fits, so resizing the element resizes the dots. */
+export function colourDotLayout(
+  element: Pick<CardElement, 'width_mm' | 'height_mm' | 'dotSize_mm' | 'dotGap_mm' | 'dotDirection'>,
+  count: number,
+  scale = 1,
+): { x_mm: number; y_mm: number; d_mm: number }[] {
+  if (count <= 0) return [];
+  const w = element.width_mm * scale;
+  const h = element.height_mm * scale;
+  const gap = (element.dotGap_mm ?? DEFAULT_DOT_GAP_MM) * scale;
+  const row = element.dotDirection !== 'column';
+  const fits = row
+    ? Math.min(h, (w - (count - 1) * gap) / count)
+    : Math.min(w, (h - (count - 1) * gap) / count);
+  const wanted = element.dotSize_mm != null ? element.dotSize_mm * scale : fits;
+  const d = Math.max(0, Math.min(wanted, fits));
+  return Array.from({ length: count }, (_, i) =>
+    row
+      ? { x_mm: i * (d + gap), y_mm: (h - d) / 2, d_mm: d }
+      : { x_mm: (w - d) / 2, y_mm: i * (d + gap), d_mm: d },
+  );
+}
+
+export const DEFAULT_CARD_ICON_SIZE_MM = 4.6;
+export const DEFAULT_CARD_ICON_GAP_MM = 0.8;
+
+/** The icons of a feature_icons element: each one's top-left and size, in the element's own
+ *  millimetres at `factor`, packed by the same `featureIconRow` the feature icons layer uses. */
+export function cardIconLayout(
+  element: Pick<CardElement, 'width_mm' | 'height_mm' | 'iconSize_mm' | 'gap_mm' | 'align'>,
+  count: number,
+  factor = 1,
+): { x_mm: number; y_mm: number; size_mm: number }[] {
+  const size = (element.iconSize_mm ?? DEFAULT_CARD_ICON_SIZE_MM) * factor;
+  const gap = (element.gap_mm ?? DEFAULT_CARD_ICON_GAP_MM) * factor;
+  const xs = featureIconRow(count, { iconSize_mm: size, gap_mm: gap, align: element.align ?? 'left' }, element.width_mm * factor);
+  const y = (element.height_mm * factor - size) / 2;
+  return xs.map((x) => ({ x_mm: x, y_mm: y, size_mm: size }));
+}
+
+/** The library rules a renderer can draw: those with a signed url, in their order. Canvas and
+ *  print both filter through this before `cardElementsFor`, so both drop the same elements. */
+export function drawableFeatureIcons(
+  featureIcons: readonly FeatureIcon[] | null | undefined,
+  urls: Record<string, string> | null | undefined,
+): FeatureIcon[] {
+  return (featureIcons ?? []).filter((icon) => Boolean(urls?.[icon.id]));
+}
+
+/** A card text element as the text-layer props the text layout and both renderers already use,
+ *  with the font drawn at `scale`. `boxFont` is the box's own family, used when the element has none. */
+/**
+ * Owner 9 Nov ~22:30: a card Text element styles like the box header: a background (`fill`, the
+ * Transparent swatch = none) with `cornerRadius_mm` behind the whole element, and `padding` around
+ * the text. All in card millimetres at the card's shrink `scale`. Canvas and print both call it; with
+ * none of the three stored the text box is the element itself, exactly as before.
+ */
+export function cardTextBox(
+  element: Pick<CardElement, 'width_mm' | 'height_mm' | 'fill' | 'cornerRadius_mm' | 'padding'>,
+  scale = 1,
+): {
+  background: { fill: string; radius_mm: number; width_mm: number; height_mm: number } | null;
+  text: AccessoryRect;
+} {
+  const w = element.width_mm * scale;
+  const h = element.height_mm * scale;
+  const fill = element.fill && element.fill !== 'transparent' ? element.fill : null;
+  const pad = element.padding;
+  const top = (pad?.top ?? 0) * scale;
+  const right = (pad?.right ?? 0) * scale;
+  const bottom = (pad?.bottom ?? 0) * scale;
+  const left = (pad?.left ?? 0) * scale;
+  return {
+    background: fill ? { fill, radius_mm: (element.cornerRadius_mm ?? 0) * scale, width_mm: w, height_mm: h } : null,
+    text: {
+      x_mm: left,
+      y_mm: top,
+      width_mm: Math.max(0, w - left - right),
+      height_mm: Math.max(0, h - top - bottom),
+    },
+  };
+}
+
+export function cardTextProps(element: CardElement, scale = 1, boxFont?: string): TextLayerProps {
+  return {
+    kind: 'text',
+    text: element.text ?? '',
+    fontFamily: element.fontFamily || boxFont || '',
+    fontSize: (element.fontSize ?? 6) * scale,
+    fontWeight: element.fontWeight ?? 400,
+    color: element.color || DEFAULT_CARD_TEXT_COLOR,
+    align: element.align ?? 'left',
+    lineHeight: element.lineHeight ?? 1.1,
+    letterSpacing: 0,
+    italic: element.italic,
+    underline: element.underline,
+  };
+}
+
+function printedChars(text: string, props: TextLayerProps, width_mm: number, height_mm: number): number {
+  const count = (value: string) => value.replace(/\s/g, '').length;
+  if (isRich(text)) {
+    const lines = textLayerLines(props, parseRichText(text), width_mm, height_mm);
+    return lines.reduce((sum, line) => sum + line.reduce((n, run) => n + count(run.text), 0), 0);
+  }
+  return count(textLayerLines(props, text, width_mm, height_mm).join(''));
+}
+
+/**
+ * The text props with the font shrunk until the whole text sits inside `width_mm` x `height_mm`
+ * (card rule F3: it never spills out of its element, and is never cut). Canvas and print both call
+ * it with the same inputs, so they pick the same size. Floors at a few points.
+ */
+export function fitCardTextProps(
+  props: TextLayerProps,
+  text: string,
+  width_mm: number,
+  height_mm: number,
+): TextLayerProps {
+  const total = (isRich(text) ? richPlainText(text) : text).replace(/\s/g, '').length;
+  if (printedChars(text, props, width_mm, height_mm) >= total) return props;
+  let size = props.fontSize;
+  for (let i = 0; i < 14 && size > MIN_CARD_TEXT_PT; i += 1) {
+    size = Math.max(MIN_CARD_TEXT_PT, size * 0.9);
+    const next = { ...props, fontSize: size };
+    if (printedChars(text, next, width_mm, height_mm) >= total) return next;
+  }
+  return { ...props, fontSize: Math.max(MIN_CARD_TEXT_PT, size) };
+}
+
+// ---------------------------------------------------------------------------
+// Legacy conversion and design
+// ---------------------------------------------------------------------------
+
+/**
+ * A card that reproduces the legacy card of a box: picture, then name / spec text (and the product
+ * code and LP price when `lines` is 3), sized by `cardSize`, with the box's own name and spec
+ * styles. Used when somebody first edits a box that has no `card`. `boxWidth_mm` sizes a vertical
+ * box's card to the box (the legacy card spans the box); absent, the set `cardWidth_mm` is used.
+ *
+ * Three lines: code, name (name style), price, spec. The card is one spec line taller than the
+ * legacy one, so the spec never overlaps the price.
+ */
+export function cardFromLegacy(
+  props: AccessoriesLayerProps,
+  lines = 2,
+  boxWidth_mm?: number,
+): CardLayout {
+  const { w, h } = cardSize(
+    props,
+    boxWidth_mm ?? Math.max(0, props.cardWidth_mm) + 2 * ACCESSORY_BOX_PAD_MM,
+    lines,
+  );
+  const inner = accessoryCardInner({ x_mm: 0, y_mm: 0, width_mm: w, height_mm: h }, props, true, lines);
+  const nameStyle = accessoryLineStyle(props, 0);
+  const specStyle = accessoryLineStyle(props, 1);
+  const text = (
+    id: string,
+    field: CardField,
+    row: AccessoryRect,
+    style: typeof nameStyle,
+    pt: number,
+    over: Partial<AccessoryRect> = {},
+  ): CardElement => ({
+    id,
+    kind: 'text',
+    field,
+    x_mm: row.x_mm,
+    y_mm: over.y_mm ?? row.y_mm,
+    width_mm: row.width_mm,
+    height_mm: over.height_mm ?? row.height_mm,
+    fontFamily: style.fontFamily,
+    fontSize: pt,
+    fontWeight: style.fontWeight,
+    italic: style.italic,
+    underline: style.underline,
+    color: style.color,
+    align: style.align,
+    lineHeight: 1,
+  });
+
+  const elements: CardElement[] = [];
+  if (inner.image) {
+    elements.push({
+      id: 'picture',
+      kind: 'picture',
+      field: 'picture',
+      x_mm: inner.image.x_mm,
+      y_mm: inner.image.y_mm,
+      width_mm: inner.image.width_mm,
+      height_mm: inner.image.height_mm,
+      fit: 'contain',
+    });
+  }
+  const rows = inner.lines;
+  let height = h;
+  if (lines >= 3 && rows.length >= 3) {
+    const first = rows[0];
+    const rest = rows[2];
+    // Rows: code, name (both name size), price, spec (spec size). A library accessory has no code
+    // or price, a product normally no description: the empty rows drop and the rest move up, so a
+    // library card prints name then spec, a product code, name, LP (and its description under it).
+    const nameTop = first.y_mm + first.height_mm;
+    const priceTop = nameTop + first.height_mm;
+    const specTop = priceTop + rest.height_mm;
+    elements.push(text('code', 'code', first, nameStyle, props.nameFontSize));
+    elements.push(text('name', 'name', first, nameStyle, props.nameFontSize, { y_mm: nameTop }));
+    elements.push(text('price', 'price', rest, specStyle, props.specFontSize, { y_mm: priceTop }));
+    elements.push(text('spec', 'spec', rest, specStyle, props.specFontSize, { y_mm: specTop }));
+    // One more spec line than the legacy card holds, so the description never overlaps the price.
+    height = h + rest.height_mm;
+  } else {
+    elements.push(text('name', 'name', rows[0], nameStyle, props.nameFontSize));
+    if (rows[1]) elements.push(text('spec', 'spec', rows[1], specStyle, props.specFontSize));
+  }
+  // Never shorter than the lowest row plus the card's inner margin, whatever the font sizes.
+  const lowest = Math.max(0, ...elements.map((element) => element.y_mm + element.height_mm));
+  return { width_mm: w, height_mm: Math.max(height, lowest + ACCESSORY_CARD_PAD_MM), elements };
+}
+
+/** The per-box keys: they live on the box in a tag template, never in a shared design. */
+const PER_BOX_KEYS = ['kind', 'subjectSlot', 'subjectPart', 'presetId', 'list'] as const;
+
+export type AccessoryDesign = Omit<AccessoriesLayerProps, (typeof PER_BOX_KEYS)[number]>;
+
+/** The box props without the per-box keys: what "Save as accessories template" stores. */
+export function accessoryDesign(props: AccessoriesLayerProps): AccessoryDesign {
+  const copy: Record<string, unknown> = { ...props };
+  for (const key of PER_BOX_KEYS) delete copy[key];
+  return copy as unknown as AccessoryDesign;
+}
+
+/** A design applied to a box: the design's props, the box's own per-box keys kept, `presetId` set
+ *  (null detaches). Per-box keys smuggled inside `design` are ignored. */
+export function applyAccessoryDesign(
+  props: AccessoriesLayerProps,
+  design: AccessoryDesign,
+  presetId: string | null,
+): AccessoriesLayerProps {
+  const next: Record<string, unknown> = { ...accessoryDesign(design as AccessoriesLayerProps), kind: 'accessories' };
+  if (props.subjectSlot !== undefined) next.subjectSlot = props.subjectSlot;
+  if (props.subjectPart !== undefined) next.subjectPart = props.subjectPart;
+  // What the box lists is its own, like where it reads from: a style never turns it into the other list.
+  if (props.list !== undefined) next.list = props.list;
+  if (presetId) next.presetId = presetId;
+  return next as unknown as AccessoriesLayerProps;
+}
+
+/** Two full sample accessories (every field filled) for styling a card in the designer, so every
+ *  element shows whatever the preview data holds. An Upgrades box gets two upgrade samples. */
+export function accessoryDesignSamples(list?: AccessoriesLayerProps['list']): TagAccessory[] {
+  if (list === 'upgrades') {
+    return [1, 2].map((n) => ({
+      kind: 'upgrade' as const,
+      id: `design-upgrade-${n}`,
+      name: 'Upgrade name',
+      spec: null,
+      code: 'CODE',
+      list_price: 440,
+      topup_amount: 150,
+      price_with_upgrade: 1099,
+      image: null,
+      images: [],
+      specs: [],
+    }));
+  }
+  const colours = [
+    { name: 'Black', hex: '#1f2937' },
+    { name: 'Grey', hex: '#9ca3af' },
+  ];
+  return [1, 2].map((n) => ({
+    kind: 'accessory' as const,
+    id: `design-sample-${n}`,
+    name: 'Accessory name',
+    spec: 'Spec line',
+    remark: 'Remark',
+    code: 'CODE',
+    list_price: 68,
+    sell_price: 59,
+    image: null,
+    images: [],
+    colours,
+  }));
+}
+
+/**
+ * What a box under card editing draws: the previewed list, so the faded cards show what will really
+ * print (CARD V1); the two samples only when there is no list to show (A7).
+ */
+export function accessoryEditItems(
+  previewed: TagAccessory[] | null | undefined,
+  list?: AccessoriesLayerProps['list'],
+): TagAccessory[] {
+  return previewed && previewed.length > 0 ? previewed : accessoryDesignSamples(list);
+}
+
+/**
+ * PRICETAG-UPGRADE-VARIANTS S1: the card an Upgrades box starts with (owner sample 1): picture at
+ * the left, then the red bold top-up, code, name, LP and the upgrade's own feature icons. "SP with
+ * upgrade" is a field the designer may place, off by default (Q2 a).
+ */
+export function defaultUpgradeCard(): CardLayout {
+  const text = (id: string, field: CardField, y_mm: number, extra: Partial<CardElement> = {}): CardElement => ({
+    id,
+    kind: 'text',
+    field,
+    x_mm: 17,
+    y_mm,
+    width_mm: 53,
+    height_mm: 3.4,
+    fontSize: 7,
+    fontWeight: 400,
+    align: 'left',
+    lineHeight: 1.1,
+    ...extra,
+  });
+  return {
+    width_mm: 71,
+    height_mm: 21.5,
+    elements: [
+      { id: 'picture', kind: 'picture', field: 'picture', x_mm: 1, y_mm: 1.5, width_mm: 14, height_mm: 19, fit: 'contain' },
+      text('topup', 'topup', 1, { prefix: 'TOPUP ', fontSize: 10.8, fontWeight: 700, color: '#B91C1C', height_mm: 4.6 }),
+      text('code', 'code', 5.6, { fontWeight: 700, fontSize: 8 }),
+      text('name', 'name', 9.2),
+      text('price', 'price', 12.2),
+      {
+        id: 'icons',
+        kind: 'feature_icons',
+        x_mm: 17,
+        y_mm: 15.2,
+        width_mm: 50,
+        height_mm: 5,
+        iconSize_mm: DEFAULT_CARD_ICON_SIZE_MM,
+        gap_mm: DEFAULT_CARD_ICON_GAP_MM,
+        align: 'left',
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Designer helpers
+// ---------------------------------------------------------------------------
+
+export type CardEditTarget = 'card' | 'footer';
+
+/** A new element of `kind`, centred in `area` (card or footer, millimetres). A card text reads the
+ *  name; a footer text is a fixed note (nothing per accessory to read there). */
+export function newCardElement(
+  kind: CardElement['kind'],
+  target: CardEditTarget,
+  area: { w: number; h: number },
+  id: string,
+): CardElement {
+  const size = (() => {
+    switch (kind) {
+      case 'picture':
+        return { w: 12, h: 12 };
+      case 'colour_dots':
+        return { w: 12, h: 3 };
+      case 'shape':
+        return { w: 10, h: 4 };
+      case 'feature_icons':
+        return { w: 20, h: 5 };
+      default:
+        return { w: 20, h: 4 };
+    }
+  })();
+  const w = Math.min(size.w, area.w);
+  const h = Math.min(size.h, area.h);
+  const base: CardElement = {
+    id,
+    kind,
+    x_mm: Math.round(((area.w - w) / 2) * 100) / 100,
+    y_mm: Math.round(((area.h - h) / 2) * 100) / 100,
+    width_mm: w,
+    height_mm: h,
+  };
+  switch (kind) {
+    case 'picture':
+      return { ...base, field: 'picture', fit: 'contain' };
+    case 'colour_dots':
+      return { ...base, field: 'colours', dotDirection: 'row' };
+    case 'shape':
+      return { ...base, shape: 'rounded_rect', fill: '#e5e7eb', stroke: '', cornerRadius_mm: 1 };
+    case 'feature_icons':
+      return { ...base, iconSize_mm: DEFAULT_CARD_ICON_SIZE_MM, gap_mm: DEFAULT_CARD_ICON_GAP_MM, align: 'left' };
+    default:
+      return target === 'footer'
+        ? { ...base, field: null, text: 'Note', fontSize: 5, fontWeight: 400, align: 'left' }
+        : { ...base, field: 'name', fontSize: 6, fontWeight: 400, align: 'left' };
+  }
+}
+
+/** Order-independent JSON, to compare two designs. */
+export function designKey(design: unknown): string {
+  const sort = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sort);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([key, item]) => [key, sort(item)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(sort(design));
+}
+
+/** The design each linked box carries, by preset id (first box wins), with its comparison key. */
+export function linkedBoxDesigns(
+  layers: readonly { props: { kind: string } }[] | null | undefined,
+): Map<string, { design: AccessoryDesign; key: string }> {
+  const out = new Map<string, { design: AccessoryDesign; key: string }>();
+  for (const layer of layers ?? []) {
+    const props = layer?.props as unknown as AccessoriesLayerProps | undefined;
+    if (!props || props.kind !== 'accessories' || !props.presetId || out.has(props.presetId)) continue;
+    const design = accessoryDesign(props);
+    out.set(props.presetId, { design, key: designKey(design) });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Snapping while an element is dragged in the card / footer editor
+// ---------------------------------------------------------------------------
+
+export const ELEMENT_SNAP_MM = 1;
+
+export interface ElementGuide {
+  orientation: 'horizontal' | 'vertical';
+  /** Millimetres inside the card (or footer). */
+  position_mm: number;
+}
+
+interface Box {
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  height_mm: number;
+}
+
+/** The nearest alignment of `[start, start + size]` (start, centre, end) to any target, within `limit`. */
+function snapAxis(start: number, size: number, targets: number[], limit: number) {
+  let best: { delta: number; guide: number } | null = null;
+  for (const edge of [start, start + size / 2, start + size]) {
+    for (const target of targets) {
+      const delta = target - edge;
+      if (Math.abs(delta) <= limit && (!best || Math.abs(delta) < Math.abs(best.delta))) {
+        best = { delta, guide: target };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Where a dragged element lands: its left / centre / right and top / middle / bottom pulled onto the
+ * card's edges and centre lines and onto the other elements' edges and centres, within
+ * `ELEMENT_SNAP_MM`, with a guide for each axis that snapped.
+ */
+export function snapElement(
+  moving: Box,
+  others: readonly Box[],
+  area: { width_mm: number; height_mm: number },
+  limit = ELEMENT_SNAP_MM,
+): { x_mm: number; y_mm: number; guides: ElementGuide[] } {
+  const xs = [0, area.width_mm / 2, area.width_mm];
+  const ys = [0, area.height_mm / 2, area.height_mm];
+  for (const other of others) {
+    xs.push(other.x_mm, other.x_mm + other.width_mm / 2, other.x_mm + other.width_mm);
+    ys.push(other.y_mm, other.y_mm + other.height_mm / 2, other.y_mm + other.height_mm);
+  }
+  const sx = snapAxis(moving.x_mm, moving.width_mm, xs, limit);
+  const sy = snapAxis(moving.y_mm, moving.height_mm, ys, limit);
+  const guides: ElementGuide[] = [];
+  if (sx) guides.push({ orientation: 'vertical', position_mm: sx.guide });
+  if (sy) guides.push({ orientation: 'horizontal', position_mm: sy.guide });
+  return { x_mm: moving.x_mm + (sx?.delta ?? 0), y_mm: moving.y_mm + (sy?.delta ?? 0), guides };
+}
+
+/**
+ * PRICETAG-HEADER-DRAG round 2: "Reset header" puts the header back to the default look: today's
+ * spot and size, no background / corners / padding, and the default box's header style. The header
+ * text and whether it shows are the user's content, so they stay. Undefined keys drop on save.
+ */
+export function headerResetPatch(): Partial<AccessoriesLayerProps> {
+  const d = defaultAccessoriesProps();
+  return {
+    headerPos: undefined,
+    headerSize: undefined,
+    headerFill: undefined,
+    headerRadius_mm: undefined,
+    headerPadding: undefined,
+    headerStyle: d.headerStyle,
+    headerFontSize: d.headerFontSize,
+    headerColor: d.headerColor,
+    headerOnBorder: d.headerOnBorder,
+    headerBackground: d.headerBackground,
+  };
+}
+
+/**
+ * PRICETAG-HEADER-DRAG: where a dragged box header lands, in mm from the box's top-left. It snaps
+ * (left / centre / right, top / middle / bottom) onto the box's edges and centre lines and onto the
+ * frame's edges (so its middle can sit on the top border), then is kept inside the box.
+ */
+export function snapHeader(
+  header: Box,
+  frame: Box | null,
+  box: { width_mm: number; height_mm: number },
+): { x_mm: number; y_mm: number; guides: ElementGuide[] } {
+  const snapped = snapElement(header, frame ? [frame] : [], box);
+  const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
+  return {
+    x_mm: clamp(snapped.x_mm, box.width_mm - header.width_mm),
+    y_mm: clamp(snapped.y_mm, box.height_mm - header.height_mm),
+    guides: snapped.guides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Live link between boxes and a saved template
+// ---------------------------------------------------------------------------
+
+type LinkLayer = { id: string; props: { kind: string } };
+
+function boxProps(layer: LinkLayer | undefined): AccessoriesLayerProps | null {
+  const props = layer?.props as unknown as AccessoriesLayerProps | undefined;
+  return props && props.kind === 'accessories' ? props : null;
+}
+
+/** Preset ids linked by at least one box. */
+export function linkedPresetIds(layers: readonly LinkLayer[] | null | undefined): string[] {
+  const ids = new Set<string>();
+  for (const layer of layers ?? []) {
+    const props = boxProps(layer);
+    if (props?.presetId) ids.add(props.presetId);
+  }
+  return [...ids];
+}
+
+/**
+ * The design of the LAST box linked to `presetId` whose design differs from `baselineKey`, else null.
+ * With no baseline (a box inserted from a stale menu, pasted from another tab) nothing is "changed":
+ * that box follows the server instead of being pushed.
+ */
+export function changedLinkedDesign(
+  layers: readonly LinkLayer[] | null | undefined,
+  presetId: string,
+  baselineKey: string | undefined,
+): AccessoryDesign | null {
+  let changed: AccessoryDesign | null = null;
+  for (const layer of layers ?? []) {
+    const props = boxProps(layer);
+    if (!props || props.presetId !== presetId) continue;
+    const design = accessoryDesign(props);
+    if (baselineKey !== undefined && designKey(design) !== baselineKey) changed = design;
+  }
+  return changed;
+}
+
+/** Every box linked to `presetId` takes `design` (its own position, size and "Reads from" kept). */
+export function setLinkedDesign<T extends LinkLayer>(layers: readonly T[], presetId: string, design: AccessoryDesign): T[] {
+  return layers.map((layer) => {
+    const props = boxProps(layer);
+    return props?.presetId === presetId
+      ? ({ ...layer, props: applyAccessoryDesign(props, design, presetId) } as unknown as T)
+      : layer;
+  });
+}
+
+/** Every box linked to `presetId` loses the link and keeps its design. */
+export function detachLinked<T extends LinkLayer>(layers: readonly T[], presetId: string): T[] {
+  return layers.map((layer) => {
+    const props = boxProps(layer);
+    return props?.presetId === presetId
+      ? ({ ...layer, props: { ...props, presetId: null } } as unknown as T)
+      : layer;
+  });
+}
+
+/** A correction to apply to a live box: only when its design still equals `expectedKey`. */
+export interface LayerPropsPatch {
+  layerId: string;
+  /** `designKey(accessoryDesign(props))` of the box when the correction was worked out. */
+  expectedKey: string;
+  props: AccessoriesLayerProps;
+}
+
+export type LinkAction =
+  | { kind: 'detach'; id: string }
+  | { kind: 'set'; id: string; design: AccessoryDesign };
+
+/** The live-box patches that carry out `actions`, worked out from the layers as they were saved. */
+export function linkCorrectionPatches(
+  layers: readonly LinkLayer[] | null | undefined,
+  actions: readonly LinkAction[],
+): LayerPropsPatch[] {
+  const patches: LayerPropsPatch[] = [];
+  for (const layer of layers ?? []) {
+    const props = boxProps(layer);
+    if (!props?.presetId) continue;
+    const action = actions.find((candidate) => candidate.id === props.presetId);
+    if (!action) continue;
+    patches.push({
+      layerId: layer.id,
+      expectedKey: designKey(accessoryDesign(props)),
+      props:
+        action.kind === 'detach'
+          ? ({ ...props, presetId: null } as AccessoriesLayerProps)
+          : applyAccessoryDesign(props, action.design, action.id),
+    });
+  }
+  return patches;
+}
+
+/**
+ * What a copy of linked boxes (a request's tag) must do to follow the saved templates: detach where the
+ * template is gone, take the template's design where the box differs from it. `find` answers null for a
+ * deleted template; one that cannot be read is left alone.
+ */
+export async function linkRefreshActions(
+  layers: readonly LinkLayer[] | null | undefined,
+  find: (presetId: string) => Promise<{ design: AccessoryDesign } | null>,
+): Promise<LinkAction[]> {
+  const actions: LinkAction[] = [];
+  for (const id of linkedPresetIds(layers)) {
+    let record: { design: AccessoryDesign } | null;
+    try {
+      record = await find(id);
+    } catch {
+      continue;
+    }
+    if (!record) {
+      actions.push({ kind: 'detach', id });
+      continue;
+    }
+    const key = designKey(record.design);
+    const stale = (layers ?? []).some((layer) => {
+      const props = boxProps(layer);
+      return props?.presetId === id && designKey(accessoryDesign(props)) !== key;
+    });
+    if (stale) actions.push({ kind: 'set', id, design: record.design });
+  }
+  return actions;
+}
+
+/** `layers` with `actions` carried out (the patches applied to a plain array). */
+export function applyLinkActions<T extends LinkLayer>(layers: readonly T[], actions: readonly LinkAction[]): T[] {
+  const patches = new Map(linkCorrectionPatches(layers, actions).map((patch) => [patch.layerId, patch]));
+  return layers.map((layer) =>
+    patches.has(layer.id) ? ({ ...layer, props: patches.get(layer.id)!.props } as unknown as T) : layer,
+  );
+}
+
+/** Whether `changes` alter the box's DESIGN (not its per-box "Reads from" or its link). */
+export function accessoryDesignChanged(props: AccessoriesLayerProps, changes: Partial<AccessoriesLayerProps>): boolean {
+  return designKey(accessoryDesign({ ...props, ...changes })) !== designKey(accessoryDesign(props));
+}
+

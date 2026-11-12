@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from 'react';
+import { localStore, sessionStore } from '@/lib/storage';
 
 export type ImpersonationTargetUser = {
   id: string;
@@ -20,10 +21,15 @@ type Listener = () => void;
 
 const STORAGE_KEY = 'impersonation-session-v1';
 
+// The view-as belongs to the tab that started it (PORTAL-IMPERSONATION-ISOLATE): sessionStorage
+// is per tab and survives that tab's reload. It used to live in localStorage, which every tab of
+// the browser shares, so one view-as turned the admin's whole account into the target. A leftover
+// entry there is dropped, never adopted.
 function _readPersisted(): ImpersonationSession | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    localStore.removeItem(STORAGE_KEY);
+    const raw = sessionStore.getItem(STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as ImpersonationSession;
   } catch {
@@ -35,9 +41,9 @@ function _writePersisted(session: ImpersonationSession | null): void {
   if (typeof window === 'undefined') return;
   try {
     if (session) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+      sessionStore.setItem(STORAGE_KEY, JSON.stringify(session));
     } else {
-      window.localStorage.removeItem(STORAGE_KEY);
+      sessionStore.removeItem(STORAGE_KEY);
     }
   } catch {
     // ignore

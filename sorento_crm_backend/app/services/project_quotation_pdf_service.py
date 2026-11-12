@@ -47,22 +47,32 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
+    ProjectQuotationVersion,
     QuotationSignature,
 )
 from app.models.user import SystemSetting
 from app.services import geo_places
 from app.services import product_image_service as product_images
 from app.services import quotation_columns
+from app.services import quotation_matrix as matrix
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
 from app.services.project_quotation_document_service import document_noun, quotation_no
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
+    COVER_LAYOUT_DESIGNED,
+    COVER_LAYOUT_SECTIONS,
+    clean_terms_html,
     cover_reference,
     cover_rows,
+    cover_sections,
+    flat_rows,
+    cover_title,
+    design_of,
     layout_of,
 )
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
+from app.utils.tag_rich_text import is_rich, sanitise_tag_html
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +155,11 @@ def _qty(value: Any) -> str:
     return f"{amount.normalize():,}"
 
 
+def _qty_or_blank(value: Any) -> str:
+    """A quantity, or nothing at all for zero: an empty column's footer stays blank."""
+    return "" if not value else _qty(value)
+
+
 def _cell(value: Any) -> str:
     """Escaped text, or nothing at all.
 
@@ -161,6 +176,20 @@ def _multiline(value: Any) -> str:
     """Escaped text with its line breaks kept: a description is typed as several lines (the
     size on its own line, "c/w seat cover" on the next) and has to print that way."""
     return "<br/>".join(_cell(value).splitlines())
+
+
+def _description_html(value: Any) -> str:
+    """A line description as it prints (QUOTE-DESC-RICHTEXT).
+
+    Plain text prints exactly as before (`_multiline`). Styled text is the shared editor's HTML;
+    it was sanitised on save and is sanitised AGAIN here, so a value that reached the row any
+    other way can still place nothing but the allow-list (no attribute but colour / alignment
+    styles, so nothing can fetch or run) into the page WeasyPrint renders.
+    """
+    if not isinstance(value, str) or not is_rich(value):
+        return _multiline(value)
+    clean = sanitise_tag_html(value)
+    return f'<div class="rt">{clean}</div>' if clean else ""
 
 
 def _date(value: Any) -> str:
@@ -276,10 +305,17 @@ def _load_scopes(db: Session, issue: ProjectQuotationIssue) -> List[Dict[str, An
             )
             .all()
         )
+        version = (
+            db.query(ProjectQuotationVersion)
+            .filter(ProjectQuotationVersion.id == row.version_id)
+            .first()
+        )
         scopes.append(
             {
                 "label": quotation.scope_label if quotation is not None else None,
                 "lines": lines,
+                # Frozen with the version the issue recorded; empty = the plain scope table.
+                "matrix_columns": (version.matrix_columns if version is not None else None) or [],
                 # The frozen number, not a re-sum: the PDF must not be able to disagree with the
                 # record behind it.
                 "total": Decimal(row.scope_total or 0),
@@ -482,6 +518,179 @@ def _header_html(
 """
 
 
+# More leaves than this and the leaf headings turn vertical, so the quantity columns can shrink.
+_VERTICAL_LEAVES = 12
+
+# Only emitted with a grid scope, so a plain scope's page stays byte for byte what it was.
+# WeasyPrint ignores writing-mode, so a vertical heading is a fixed-size box rotated -90deg about
+# its top-left corner; the margin pulls the rotated box back down into the cell.
+_VERT_BOX = 90
+_GRID_STYLE = (
+    "<style>table.grid th.q { padding: 3px 1px; }"
+    f" table.grid th.vert {{ height: {_VERT_BOX + 8}px; padding: 0; vertical-align: bottom;"
+    " overflow: hidden; }"
+    f" table.grid th.vert div {{ width: {_VERT_BOX}px; height: 10px; line-height: 10px;"
+    f" margin-top: {_VERT_BOX}px; margin-left: 1px; white-space: nowrap; overflow: hidden;"
+    " transform: rotate(-90deg); transform-origin: 0 0; }"
+    " table.grid thead { display: table-header-group; }</style>"
+)
+
+
+def _grid_scope_html(
+    scope: Dict[str, Any],
+    lines: Sequence[ProjectQuotationLine],
+    columns: List[str],
+    images: Dict[str, Optional[str]],
+    drawings: Dict[str, Optional[str]],
+    show_image: bool,
+) -> str:
+    """A scope with column headers: the QTY column becomes one column per leaf under a 2-row
+    header, then a QTY / AMOUNT pair per pair header, then TOTAL QTY (PS-QUOTE-MATRIX)."""
+    headers = scope["matrix_columns"]
+    summary = matrix.matrix_summary(headers, lines)
+    leaves = summary["leaf_keys"]
+    pairs = summary["pair_headers"]
+    vertical = " vert" if len(leaves) > _VERTICAL_LEAVES else ""
+
+    def leaf_th(label: str, rowspan: str = "") -> str:
+        text = escape(label)
+        inner = f"<div>{text}</div>" if vertical else text
+        return f'<th class="q{vertical}"{rowspan}>{inner}</th>'
+
+    qty_at = columns.index("QTY")
+    before, after = columns[:qty_at], columns[qty_at + 1 :]
+    span = len(before) + len(leaves) + 2 * len(pairs) + 1 + len(after)
+
+    top = [f'<th rowspan="2">{escape(c)}</th>' for c in before]
+    bottom: List[str] = []
+    for header in headers:
+        cols = header.get("cols") or []
+        if cols:
+            top.append(f'<th colspan="{len(cols)}">{escape(header["label"])}</th>')
+            bottom += [leaf_th(c["label"]) for c in cols]
+        else:
+            top.append(leaf_th(header["label"], ' rowspan="2"'))
+    for header in headers:
+        if header["key"] in pairs:
+            top.append(f'<th colspan="2">{escape(header["label"])}</th>')
+            bottom += ["<th>QTY</th>", "<th>AMOUNT (RM)</th>"]
+    top.append('<th rowspan="2">TOTAL QTY</th>')
+    top += [f'<th rowspan="2">{escape(c)}</th>' for c in after]
+    head = f"<tr>{''.join(top)}</tr><tr>{''.join(bottom)}</tr>"
+    # Fixed layout takes widths from <col>, not from second-row cells: the leaf columns are
+    # narrow (the counts are short) and the rest share what is left.
+    leaf_width = 16 if vertical else 28
+    colgroup = (
+        "<colgroup>"
+        + "<col/>" * len(before)
+        + f'<col style="width:{leaf_width}px"/>' * len(leaves)
+        + "<col/>" * (2 * len(pairs) + 1 + len(after))
+        + "</colgroup>"
+    )
+
+    body: List[str] = []
+    current_band: Optional[str] = None
+    position = 0
+    for line, row in zip(lines, summary["rows"]):
+        band = (line.band_label or "").strip()
+        if line.is_section:
+            # A heading row is the band and nothing else, and takes no item number
+            # (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
+            continue
+        position += 1
+        if band and band != current_band:
+            current_band = band
+            body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
+        cells = line.qty_cells or {}
+        leaf_cells = "".join(
+            f'<td class="num q">{_qty(cells[k]) if k in cells else ""}</td>' for k in leaves
+        )
+        pair_cells = ""
+        for key in pairs:
+            pair = row["pairs"][key]
+            if not pair["qty"]:
+                pair_cells += '<td class="num">-</td><td class="num">-</td>'
+            else:
+                amount = "-" if line.is_rate_only else _line_money(pair["amount"])
+                pair_cells += f'<td class="num">{_qty(pair["qty"])}</td><td class="num">{amount}</td>'
+        # No UOM suffix here, unlike the plain QTY cell: the grid's totals are bare counts.
+        total_qty = _qty(row["total_qty"])
+        money = (
+            f'<span class="rate-only">{RATE_ONLY_TEXT}</span>'
+            if line.is_rate_only
+            else _line_money(line.line_total)
+        )
+        drawing = drawings.get(line.id)
+        spec_cell = f'<img src="{escape(drawing)}"/>' if drawing else ""
+        legacy = (
+            f'<div class="legacy-spec">{_multiline(line.technical_spec)}</div>'
+            if _cell(line.technical_spec)
+            else ""
+        )
+        plain = {
+            "ITEM": f'<td class="item">{_cell(item_number(line, position))}</td>',
+            dict(quotation_columns.COLUMNS)[quotation_columns.IMAGE]: (
+                '<td class="img">'
+                + (f'<img src="{escape(images[line.id])}"/>' if images.get(line.id) else "")
+                + "</td>"
+            ),
+            "TECHNICAL SPEC": f'<td class="spec">{spec_cell}</td>',
+            "DESCRIPTION": f'<td class="desc">{_description_html(line.description_snapshot)}{legacy}</td>',
+            "BRAND": f"<td>{_cell(line.brand_snapshot)}</td>",
+            "PRODUCT CODE": f"<td>{_cell(line.product_code_snapshot)}</td>",
+            "UNIT RATE (RM)": f'<td class="num">{_line_money(line.unit_price)}</td>',
+            "COMPLETE SET": f"<td>{_cell(line.complete_set)}</td>",
+            "GRAND TOTAL": f'<td class="num">{money}</td>',
+        }
+        body.append(
+            "<tr>"
+            + "".join(plain[c] for c in before)
+            + leaf_cells
+            + pair_cells
+            + f'<td class="num">{total_qty}</td>'
+            + "".join(plain[c] for c in after)
+            + "</tr>"
+        )
+    if not position:
+        # Only headings (or nothing) in the scope: still says so (PROPOSAL-FORM-COLLAPSE).
+        body.append(
+            f'<tr><td class="empty" colspan="{span}">No items priced in this scope.</td></tr>'
+        )
+
+    footer = summary["footer"]
+    blanks_after = "<td></td>" * len(after)
+    qty_row = (
+        f'<tr><td class="total-label" colspan="{len(before)}">TOTAL QTY</td>'
+        + "".join(f'<td class="num q">{_qty_or_blank(footer["leaf_qty"][k])}</td>' for k in leaves)
+        + "".join(f'<td class="num">{_qty_or_blank(footer["pair_qty"][k])}</td><td></td>' for k in pairs)
+        + f'<td class="num">{_qty_or_blank(footer["total_qty"])}</td>{blanks_after}</tr>'
+    )
+    rm_row = (
+        f'<tr><td class="total-label" colspan="{len(before)}">TOTAL (RM)</td>'
+        + '<td class="q"></td>' * len(leaves)
+        + "".join(f'<td></td><td class="num">{_money(footer["pair_amount"][k])}</td>' for k in pairs)
+        + f"<td></td>{blanks_after}</tr>"
+    )
+    total_row = (
+        f'<tr><td class="total-label" colspan="{span - 1}">TOTAL</td>'
+        f'<td class="num total">{_money(scope["total"])}</td></tr>'
+    )
+    return f"""
+  <div class="scope">
+    <div class="scope-label">{_cell(scope["label"])}</div>
+    {_GRID_STYLE}
+    <table class="grid">
+      {colgroup}
+      <thead>{head}</thead>
+      <tbody>{"".join(body)}</tbody>
+      <tfoot>{qty_row}{rm_row}{total_row}</tfoot>
+    </table>
+  </div>
+"""
+
+
 def _scope_html(
     db: Session, scope: Dict[str, Any], image_cache: Dict[str, Optional[str]]
 ) -> str:
@@ -508,10 +717,25 @@ def _scope_html(
         if line.drawing_attachment_id
     }
 
+    if scope.get("matrix_columns"):
+        return _grid_scope_html(
+            scope, lines, [label for _key, label in columns], images, drawings, show_image
+        )
+
     body: List[str] = []
     current_band: Optional[str] = None
-    for position, line in enumerate(lines, start=1):
+    position = 0
+    for line in lines:
         band = (line.band_label or "").strip()
+        if line.is_section:
+            # A heading row is the band and nothing else, and takes no item number
+            # (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            body.append(
+                f'<tr class="band"><td colspan="{len(columns)}">{_cell(band)}</td></tr>'
+            )
+            continue
+        position += 1
         # Printed once, above the line that opens the band. Repeating the same label on the next
         # line is a data quirk rather than a new section, and printing it twice would leave a QS
         # unable to tell where the section starts.
@@ -546,7 +770,7 @@ def _scope_html(
             quotation_columns.IMAGE: f'<td class="img">{picture}</td>',
             "spec": f'<td class="spec">{spec_cell}</td>',
             "description": (
-                f'<td class="desc">{_multiline(line.description_snapshot)}{legacy}</td>'
+                f'<td class="desc">{_description_html(line.description_snapshot)}{legacy}</td>'
             ),
             "brand": f"<td>{_cell(line.brand_snapshot)}</td>",
             "product_code": f"<td>{_cell(line.product_code_snapshot)}</td>",
@@ -557,7 +781,8 @@ def _scope_html(
         }
         body.append("<tr>" + "".join(cells[key] for key, _label in columns) + "</tr>")
 
-    if not body:
+    if not position:
+        # Only headings (or nothing) in the scope: still says so (PROPOSAL-FORM-COLLAPSE).
         body.append(
             f'<tr><td class="empty" colspan="{len(columns)}">No items priced in this '
             "scope.</td></tr>"
@@ -579,8 +804,8 @@ def _scope_html(
 """
 
 
-def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotation") -> str:
-    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+def _cover_row_html(rows: List[Dict[str, Any]]) -> List[str]:
+    """The label/value table rows of ``cover_rows``, shared by the layout 2 and layout 3 covers."""
     body: List[str] = []
     for row in rows:
         if row["key"] == "terms":
@@ -589,6 +814,12 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotat
             value = "<br/>".join(_cell(row["text"]).splitlines())
         label = escape(f'{row["label"].upper()}:')
         body.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
+    return body
+
+
+def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotation") -> str:
+    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+    body = _cover_row_html(rows)
     return f"""
   <section class="cover">
     <div class="cover-top">{letterhead}</div>
@@ -596,6 +827,151 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotat
     <table class="cover-rows">{"".join(body)}</table>
   </section>
 """
+
+
+def _designed_cover_html(
+    rows: List[Dict[str, Any]],
+    design: Dict[str, Any],
+    letterhead: str,
+    issue: ProjectQuotationIssue,
+    noun: str = "Quotation",
+) -> str:
+    """Page 1 (layout 3): the design copied at send. Letterhead per the switch, the title, the
+    intro above the rows and the closing below, both through the terms cleaning."""
+    body = _cover_row_html(rows)
+    top = f'<div class="cover-top">{letterhead}</div>' if design.get("show_letterhead", True) else ""
+    title = cover_title(design, noun)
+    title_html = f'<div class="cover-title">{escape(title)}</div>' if title else ""
+    intro = clean_terms_html(issue.cover_letter_rendered)
+    closing = clean_terms_html(issue.cover_closing_rendered)
+    intro_html = f'<div class="cover-text cover-intro">{intro}</div>' if intro else ""
+    closing_html = f'<div class="cover-text cover-closing">{closing}</div>' if closing else ""
+    return f"""
+  <section class="cover">
+    {top}
+    {title_html}
+    {intro_html}
+    <table class="cover-rows">{"".join(body)}</table>
+    {closing_html}
+  </section>
+"""
+
+
+def _cover_value(cell: Dict[str, Any]) -> str:
+    if "html" in cell:
+        return cell["html"]
+    return "<br/>".join(_cell(cell["text"]).splitlines())
+
+
+def _numbered_label(cell: Dict[str, Any]) -> str:
+    """The bold label of a numbered item. Block html (the terms) starts on its own line under
+    the label, so the colon stays with the label rather than alone above the text."""
+    label = escape(cell["label"].upper())
+    return f"<strong>{label}:</strong>" if "html" in cell else f"<strong>{label}</strong>: "
+
+
+def _cover_column_html(style: str, cells: List[Dict[str, Any]], start: int) -> str:
+    """One column of one section, in the section's style. ``start`` numbers a numbered section
+    on from the previous column."""
+    if style == "title":
+        return "".join(f'<div class="cover-ptitle">{_cover_value(c)}</div>' for c in cells)
+    if style == "numbered":
+        items = "".join(
+            "<li>"
+            + (_numbered_label(c) if c["label"] else "")
+            + f"{_cover_value(c)}</li>"
+            for c in cells
+        )
+        return f'<ol class="cover-numbered" start="{start}">{items}</ol>' if items else ""
+    if style == "footer":
+        return "".join(
+            '<div class="cover-foot-line">'
+            + (f"{escape(c['label'])}: " if c["label"] else "")
+            + f"{_cover_value(c)}</div>"
+            for c in cells
+        )
+    rows = "".join(
+        (
+            (
+                f"<tr><th>{escape(c['label'])}:</th><td>{_cover_value(c)}</td></tr>"
+                if "html" in c
+                else f"<tr><th>{escape(c['label'])}</th><td>: {_cover_value(c)}</td></tr>"
+            )
+            if c["label"]
+            else f'<tr><td colspan="2">{_cover_value(c)}</td></tr>'
+        )
+        for c in cells
+    )
+    line = '<div class="cover-sig-line"></div>' if style == "signature" else ""
+    return f'{line}<table class="cover-fields">{rows}</table>' if rows else line
+
+
+def _cover_section_html(section: Dict[str, Any]) -> str:
+    style = section["style"]
+    label = escape(section["label"]) if section["label"] else ""
+    head = ""
+    if label:
+        head = (
+            f'<div class="cover-sig-label">{label}</div>'
+            if style == "signature"
+            else f'<div class="cover-band">{label}</div>'
+        )
+    # Short percentages ("50", "33.3"): a bare "0.00" anywhere reads as a printed zero price.
+    width = round(100 / max(section["columns"], 1), 1)
+    columns: List[str] = []
+    start = 1
+    for cells in section["cells"]:
+        columns.append(
+            f'<td class="cover-col" style="width:{width:g}%">'
+            f"{_cover_column_html(style, cells, start)}</td>"
+        )
+        start += len(cells)
+    return (
+        # "cover-sec-<style>", never "cover-<style>": .cover-title is the page title's rule.
+        f'<div class="cover-sec cover-sec-{style}">{head}'
+        f'<table class="cover-cols"><tr>{"".join(columns)}</tr></table></div>'
+    )
+
+
+def _sections_cover_html(
+    sections: List[Dict[str, Any]],
+    design: Dict[str, Any],
+    letterhead: str,
+    issue: ProjectQuotationIssue,
+    noun: str = "Quotation",
+) -> str:
+    """Page 1 (layout 4, QUOTE-COVER-FIELDS): letterhead, title, intro, then each section as a
+    band heading over its columns (fields, a centred title, numbered terms, a signature block or
+    the footer), then the closing."""
+    top = f'<div class="cover-top">{letterhead}</div>' if design.get("show_letterhead", True) else ""
+    title = cover_title(design, noun)
+    title_html = f'<div class="cover-title cover-title-centre">{escape(title)}</div>' if title else ""
+    intro = clean_terms_html(issue.cover_letter_rendered)
+    closing = clean_terms_html(issue.cover_closing_rendered)
+    intro_html = f'<div class="cover-text cover-intro">{intro}</div>' if intro else ""
+    closing_html = f'<div class="cover-text cover-closing">{closing}</div>' if closing else ""
+    body = "".join(_cover_section_html(section) for section in sections)
+    return f"""
+  <section class="cover cover-sheet">
+    {top}
+    {title_html}
+    {intro_html}
+    {body}
+    {closing_html}
+  </section>
+"""
+
+
+def _plain_terms_html(issue: ProjectQuotationIssue) -> str:
+    """Layout 3 with the Terms row hidden: the terms after the total, exactly as the cleaning
+    leaves them (a list the author typed stays a list, nothing is numbered for them)."""
+    terms = clean_terms_html(issue.terms_rendered)
+    if not terms:
+        return ""
+    return (
+        '<div class="terms terms-plain"><div class="terms-title">TERMS &amp; CONDITIONS</div>'
+        f"{terms}</div>"
+    )
 
 
 def _terms_html(issue: ProjectQuotationIssue) -> str:
@@ -735,6 +1111,14 @@ _STYLE = """
   table.grid td.img img { width: 100%; }
   table.grid td.spec img { width: 100%; }
   .legacy-spec { margin-top: 3px; }
+  /* A styled description (QUOTE-DESC-RICHTEXT): paragraphs sit as line breaks do on a plain
+     one, headings stay close to the cell size, as in the grid's view. */
+  .rt p, .rt h1, .rt h2, .rt h3, .rt blockquote { margin: 0; }
+  .rt h1 { font-size: 1.4em; } .rt h2 { font-size: 1.2em; } .rt h3 { font-size: 1.1em; }
+  .rt ul, .rt ol { margin: 0; padding-left: 1.2em; }
+  .rt blockquote { padding-left: 4px; border-left: 2px solid #999; color: #555; }
+  .rt mark { background: transparent; color: inherit; }
+  .rt code { font-family: monospace; }
   tr.band td { background: #f4f4f4; font-weight: 700; }
   .rate-only { font-style: italic; }
   td.total-label { text-align: right; font-weight: 700; }
@@ -779,18 +1163,66 @@ _COVER_STYLE = """
   table.cover-rows td ol { margin: 0; padding-left: 18px; list-style: decimal; }
 """
 
+# Added only for layout 3 (the designed cover), so layout 2 renders from exactly #2088's stylesheet.
+_DESIGNED_COVER_STYLE = """
+  .cover-text { margin: 0 0 18px; line-height: 1.45; }
+  .cover-text p { margin: 0 0 6px; }
+  .cover-text ul { margin: 0; padding-left: 18px; list-style: disc; }
+  .cover-text ol { margin: 0; padding-left: 18px; list-style: decimal; }
+  .cover-closing { margin: 18px 0 0; }
+  .terms-plain p { margin: 0 0 4px; }
+  .terms-plain ul { margin: 0; padding-left: 18px; list-style: disc; }
+  .terms-plain ol { margin: 0; padding-left: 18px; list-style: decimal; }
+"""
 
-def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
+
+# Added only for layout 4 (sections), so layouts 2 and 3 render from their own stylesheets.
+_SECTIONS_COVER_STYLE = """
+  .cover-title-centre { text-align: center; }
+  .cover-sec { margin: 0 0 10px; }
+  .cover-band { background: #1f2937; color: #fff; font-weight: 700; padding: 3px 8px;
+                margin: 0 0 6px; }
+  table.cover-cols { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  td.cover-col { vertical-align: top; padding: 0 10px 0 0; }
+  table.cover-fields { width: 100%; border-collapse: collapse; }
+  table.cover-fields th { width: 34%; text-align: left; vertical-align: top; font-weight: 700;
+                          padding: 2px 6px 2px 0; }
+  table.cover-fields td { vertical-align: top; padding: 2px 0; line-height: 1.4; }
+  table.cover-fields td p { margin: 0; }
+  .cover-ptitle { text-align: center; font-weight: 700; font-size: 14px; line-height: 1.35;
+                  padding: 6px 16px; }
+  ol.cover-numbered { margin: 0; padding-left: 18px; list-style: decimal; }
+  ol.cover-numbered li { margin: 0 0 4px; line-height: 1.4; }
+  ol.cover-numbered p { margin: 0; }
+  ol.cover-numbered ul { margin: 0; padding-left: 16px; list-style: disc; }
+  ol.cover-numbered ol { margin: 0; padding-left: 16px; list-style: lower-alpha; }
+  .cover-sec-signature { margin-top: 18px; width: 50%; }
+  .cover-sig-line { border-bottom: 1px solid #111; height: 36px; margin: 0 0 4px; }
+  .cover-sec-footer { margin-top: 24px; border-top: 1px solid #999; padding-top: 6px;
+                  font-size: 9.5px; color: #333; }
+"""
+
+
+def build_issue_html(
+    db: Session, issue: ProjectQuotationIssue, total_pages: Optional[str] = None
+) -> str:
     """The whole document as HTML, straight off the issue snapshot.
 
     Exposed separately from ``render_issue_pdf`` so the layout can be asserted as a readable
     string, and so a host without WeasyPrint's native libraries can still be tested.
+    ``total_pages`` fills a layout 4 Total Pages row ("1+N"); ``render_issue_pdf`` counts it.
     """
     document = _document_of(db, issue)
     sender = _sender(db, document)
     scopes = _load_scopes(db, issue)
 
-    letter = "".join(f"<p>{block}</p>" for block in _text_blocks(issue.cover_letter_rendered))
+    designed = layout_of(issue) >= COVER_LAYOUT_DESIGNED
+    # Layout 3 prints the letter as the cover's intro, not again on the price pages.
+    letter = (
+        ""
+        if designed
+        else "".join(f"<p>{block}</p>" for block in _text_blocks(issue.cover_letter_rendered))
+    )
     letter_html = f'<div class="letter">{letter}</div>' if letter else ""
     # One cache for the whole document: the same product often appears in more than one scope.
     image_cache: Dict[str, Optional[str]] = {}
@@ -807,11 +1239,27 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             else None
         )
         reference = cover_reference(document, issue, project)
-        cover = _cover_html(
-            cover_rows(db, document, issue, project), letterhead, document_noun(document)
-        )
-        style = _STYLE + _COVER_STYLE
-        terms = ""
+        if layout_of(issue) >= COVER_LAYOUT_SECTIONS:
+            design = design_of(issue)
+            sections = cover_sections(db, document, issue, project, design, total_pages)
+            cover = _sections_cover_html(sections, design, letterhead, issue, document_noun(document))
+            shown = any(r["key"] == "terms" for r in flat_rows(sections))
+            terms = "" if shown else _plain_terms_html(issue)
+        elif designed:
+            design = design_of(issue)
+            rows = cover_rows(db, document, issue, project, design)
+            cover = _designed_cover_html(rows, design, letterhead, issue, document_noun(document))
+            # The terms print on the cover only while their row is shown.
+            shown = any(r["key"] == "terms" for r in rows)
+            terms = "" if shown else _plain_terms_html(issue)
+        else:
+            cover = _cover_html(
+                cover_rows(db, document, issue, project), letterhead, document_noun(document)
+            )
+            terms = ""
+        style = _STYLE + _COVER_STYLE + (_DESIGNED_COVER_STYLE if designed else "")
+        if layout_of(issue) >= COVER_LAYOUT_SECTIONS:
+            style += _SECTIONS_COVER_STYLE
     else:
         terms = _terms_html(issue)
 
@@ -843,13 +1291,36 @@ def build_filename(issue: ProjectQuotationIssue) -> str:
     return f"{stem}-{safe}.pdf"
 
 
+#: Stands in for the Total Pages value while the pages are counted. Digits only, so escaping
+#: leaves it as is, and no real value prints it.
+TOTAL_PAGES_MARK = "1+0000"
+
+
+def _fill_total_pages(html: str, pages: int) -> str:
+    return html.replace(TOTAL_PAGES_MARK, f"1+{max(pages - 1, 0)}")
+
+
+def _prints_total_pages(issue: ProjectQuotationIssue) -> bool:
+    """A layout 4 design with a shown Total Pages row."""
+    if layout_of(issue) < COVER_LAYOUT_SECTIONS:
+        return False
+    return any(
+        row.get("source") == "total_pages" and row.get("shown", True)
+        for section in (design_of(issue).get("sections") or [])
+        for row in section.get("rows") or []
+    )
+
+
 def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, str]:
     """Return ``(pdf_bytes, filename)`` for one issue.
 
     Raises ``PDFRenderingUnavailable`` when WeasyPrint cannot render, so a host without
     cairo/pango returns a clear message instead of a 500 nobody can diagnose.
     """
-    html = build_issue_html(db, issue)
+    # A Total Pages row is built with a placeholder the width of a real count, so the counting
+    # pass below lays the row out exactly as the printed one.
+    counted = _prints_total_pages(issue)
+    html = build_issue_html(db, issue, total_pages=TOTAL_PAGES_MARK if counted else None)
     try:
         from weasyprint import HTML  # noqa: WPS433 (guarded optional dep)
         from weasyprint.urls import URLFetcher  # noqa: WPS433
@@ -861,9 +1332,14 @@ def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, 
         # Every picture is inlined as a data: URI before it gets here, so the renderer has no
         # reason to fetch anything else, and must not: a file:// or an internal http:// address
         # reached from a customer document would read the server's own disk or network.
-        pdf_bytes = HTML(
-            string=html, url_fetcher=URLFetcher(allowed_protocols=("data",))
-        ).write_pdf()
+        def _html(source: str) -> Any:
+            return HTML(string=source, url_fetcher=URLFetcher(allowed_protocols=("data",)))
+
+        if counted:
+            # One build, two renders: count the pages, then print "1+N" (the cover and the rest).
+            pages = len(_html(html).render().pages)
+            html = _fill_total_pages(html, pages)
+        pdf_bytes = _html(html).write_pdf()
     except Exception as e:
         raise PDFRenderingUnavailable(
             f"PDF rendering failed (WeasyPrint native libraries missing or broken: {e})."

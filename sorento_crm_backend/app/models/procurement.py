@@ -979,6 +979,10 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     from_po_line_ref = Column(String(255), nullable=True)
     #: The source purchase order's own document number, alongside the ref.
     from_po_number = Column(String(100), nullable=True)
+    #: AC-LINK-CRM-UI: AutoCount's own line number (`Seq`, the canonical `line_number`), the
+    #: number staff read on the PO in AutoCount. Null until the line is next synced; readers
+    #: fall back to the line's position in the document.
+    line_no = Column(Integer, nullable=True)
     # The cross-book case of a sales-order line reference - the sales order
     # lives in ANOTHER AutoCount database, so its key cannot resolve here.
     # Recorded raw, verbatim from the payload's `from_so_external` object -
@@ -1063,6 +1067,11 @@ class StockInquiry(Base):
     remark = Column(Text, nullable=True)
     additional_remark = Column(Text, nullable=True)
     purchasing_response = Column(Text, nullable=True)
+    #: NPA-FROM-SI: purchasing asks the salesperson to create a New Product Application on its
+    #: reply. Non-blocking; "code created" is read from the linked NPA, not stored here.
+    npa_requested = Column(Boolean, nullable=False, default=False, server_default="false")
+    npa_requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    npa_requested_at = Column(DateTime(timezone=False), nullable=True)
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)

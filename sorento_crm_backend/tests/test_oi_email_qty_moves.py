@@ -36,6 +36,12 @@ from .test_order_inquiry_handover_automation import (
     world,
 )
 
+import pytest
+
+# FP-EMAIL-ONE-TRIGGER: this suite pins the email's content; its writes stand in for the
+# board Confirm, the one trigger of the purchasing email (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("as_board_confirm")
+
 __all__ = ["api", "world"]  # re-exported fixtures
 
 

@@ -43,6 +43,7 @@ from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
 from app.services.scm import demand
 from app.services.scm import reorder_engine as eng
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm import reorder_level_service as rl_service
 from app.services.scm.money import (
     BASE_CURRENCY,
@@ -149,6 +150,11 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     advisory read costs nothing and blocks nobody.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
+    # SCM-INACTIVE-LOCATIONS (owner option (a), 10 Nov 2026): an inactive location cannot
+    # be named in a run. Refused before anything is created, naming every inactive code,
+    # the same shape as the excluded-product refusal below; covers chat, API and old
+    # configs that still carry a code the picker no longer offers.
+    _reject_inactive_named_warehouses(db, warehouse_codes)
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
     # S5, AC-S5.2: G10's named-product bypass does not extend to an excluded product - a
     # buyer who types one into Start Plan is refused outright, before anything is created.
@@ -273,6 +279,48 @@ def _reject_excluded_named_products(db: Session, product_codes: Optional[list[st
         )
 
 
+def inactive_warehouse_codes(db: Session, warehouse_codes: Optional[list[str]]) -> list[str]:
+    """The given location codes that name an INACTIVE warehouse, sorted.
+
+    A code counts as inactive only when it matches a warehouse and none of its matches is
+    active. An unknown code is not reported: it resolves to nothing and plans nothing,
+    exactly as before (see ``_resolve_warehouse_ids``). ORM, so the session's company
+    filter applies.
+    """
+    if not warehouse_codes:
+        return []
+    codes = [str(c) for c in warehouse_codes]
+    rows = (
+        db.query(Warehouse.warehouse_code, Warehouse.is_active)
+        .filter(Warehouse.warehouse_code.in_(codes))
+        .all()
+    )
+    active = {code for code, is_active in rows if is_active}
+    return sorted({code for code, is_active in rows if not is_active} - active)
+
+
+def _reject_inactive_named_warehouses(db: Session, warehouse_codes: Optional[list[str]]) -> None:
+    """Refuse a run that names an inactive location, listing every one (422)."""
+    inactive = inactive_warehouse_codes(db, warehouse_codes)
+    if inactive:
+        raise AppException(
+            status_code=422,
+            message="Inactive location, cannot be named in a run: " + ", ".join(inactive),
+        )
+
+
+def skipped_inactive_message(skipped: list[str], *, fell_back: bool) -> Optional[str]:
+    """The one line a saved scope shows when it dropped inactive locations: the Re-plan
+    header notice and the daily job's run summary use the same words."""
+    if not skipped:
+        return None
+    noun = "location" if len(skipped) == 1 else "locations"
+    msg = f"Skipped inactive {noun} " + ", ".join(skipped)
+    if fell_back:
+        msg += ", planning every active location instead"
+    return msg
+
+
 def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) -> list[str]:
     """Location codes to ids, or every active warehouse when no scope was asked for.
 
@@ -286,6 +334,7 @@ def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) ->
         rows = (
             db.query(Warehouse.id)
             .filter(Warehouse.warehouse_code.in_([str(c) for c in warehouse_codes]))
+            .filter(Warehouse.is_active.is_(True))
             .all()
         )
         return [str(r[0]) for r in rows]
@@ -320,17 +369,25 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
     """
     wids = [str(w) for w in (warehouse_ids or [])]
     codes: list[str] = []
+    inactive_codes: list[str] = []
+    active_wids: list[str] = []
     if wids:
         wh_co, wh_co_params = company_sql_predicate(db, "w.company_id", param_prefix="cws",
                                                      shared=True)
         wh_co_sql = ("AND " + wh_co) if wh_co else ""
         rows = db.execute(text(
-            "SELECT warehouse_code FROM warehouses w "
+            "SELECT warehouse_code, is_active, id FROM warehouses w "
             "WHERE id = ANY(CAST(:ids AS uuid[])) "
             f"{wh_co_sql} "
             "ORDER BY warehouse_code"
         ), {"ids": wids, **wh_co_params}).all()
         codes = [r[0] for r in rows]
+        # SCM-INACTIVE-LOCATIONS: `warehouse_codes` stays the run's own history; the codes
+        # deactivated since are listed apart so a Re-plan prefill can drop them (create_run
+        # refuses an inactive code) and the header can say which.
+        active_codes = {r[0] for r in rows if r[1]}
+        inactive_codes = sorted({r[0] for r in rows if not r[1]} - active_codes)
+        active_wids = [str(r[2]) for r in rows if r[1]]
     wh_co2, wh_co2_params = company_sql_predicate(db, "w.company_id", param_prefix="cwt2",
                                                    shared=True)
     wh_co2_sql = ("AND " + wh_co2) if wh_co2 else ""
@@ -355,8 +412,14 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
             product_codes = [r[0] for r in rows]
     return {
         "warehouse_codes": codes,
-        "is_all_warehouses": _covers_every_warehouse(wids, warehouses_then),
+        # Only ACTIVE ticked ids count toward "nothing ticked": a location deactivated since
+        # would otherwise lift a ticked scope to the active estate's size and read it as
+        # "All", so a Re-plan would widen to every location. A ticked scope whose locations
+        # are ALL inactive is still a ticked scope (its Re-plan says it falls back).
+        "is_all_warehouses": (bool(active_wids) or not wids)
+        and _covers_every_warehouse(active_wids, warehouses_then),
         "product_codes": product_codes,
+        "inactive_warehouse_codes": inactive_codes,
     }
 
 
@@ -1020,7 +1083,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     #     level), else `products.reorder_level` with the same 0-is-not-a-level rule;
     #     compared against `stock` summed over ACTIVE SITE POOL warehouses that
     #     `counts_as_available`, which is `summary_order_service._pool_on_hand_map`'s own
-    #     predicate. `_product_level` additionally reads a mirrored `autocount` row as a
+    #     predicate (network-wide here; the sheet's own figure is narrowed to a run's
+    #     locations since LOWSTOCK-LASTIN-LOCATION, so on a location-scoped run the two
+    #     agree only for an all-locations run). `_product_level` additionally reads a mirrored `autocount` row as a
     #     master level; that row is a COPY of `products.reorder_level` by construction, so
     #     the SQL reads the master directly rather than carrying the mirror's precedence
     #     into the admission gate (captain's ruling, 14 Sep).
@@ -3959,6 +4024,7 @@ def net_breakdown(db: Session, product_id: str,
         ORDER BY so.order_date DESC NULLS LAST, so.so_number
     """), {**params, **co_sol_params}).mappings().all()
 
+    parties = so_parties(db, numbers=[r["so_number"] for r in sos])
     on_hand = _fnum(pos["on_hand"]) or 0.0
     on_order = _fnum(pos["on_order"]) or 0.0
     committed = _fnum(pos["committed"]) or 0.0
@@ -3969,12 +4035,12 @@ def net_breakdown(db: Session, product_id: str,
         "po_ordered": po_ordered_val,
         "committed": committed,
         "net": on_hand + on_order + po_ordered_val - committed,
-        "committed_sos": [{
+        "committed_sos": [with_party({
             "so_number": r["so_number"],
             "qty": _fnum(r["qty"]),
             "customer_name": r["customer_name"],
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
-        } for r in sos],
+        }, parties, r["so_number"]) for r in sos],
     }
 
 

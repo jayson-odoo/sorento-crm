@@ -204,9 +204,14 @@ def seed(db: Session) -> dict:
             title=PROJECT_TITLE,
             details={
                 "location": "No. 1, Jalan PJU 1A/41B, Ara Jaya, 47301 Petaling Jaya, Selangor",
-                "main_contractor_party_id": str(contractor.id),
             },
             owner_user_id=actor,
+        )
+        # Architect / main contractor are party links (PROJECT-PARTY-ROLES), not profile columns.
+        from app.services import project_party_contact_service
+
+        project_party_contact_service.set_party_links(
+            db, project, [{"role": "main_contractor", "party_id": str(contractor.id)}]
         )
         created_project = True
     if not project.admin_ref:

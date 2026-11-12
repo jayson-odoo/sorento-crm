@@ -18,8 +18,9 @@ import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { searchProductOptions } from '../../services/scmOptionsService';
-import { useWarehouseOptions } from '../../hooks/useScmOptions';
+import { useActiveWarehouseOptions } from '../../hooks/useScmOptions';
 import { getCandidateOrders } from '../services/reorderRunService';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /** Start Plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
  *  budget stays a backend/post-run capability only, tightened afterwards on the plan
@@ -138,7 +139,7 @@ export function RunPlanningModal({
     data: warehouseOptions,
     isLoading: warehousesLoading,
     isError: warehousesError,
-  } = useWarehouseOptions();
+  } = useActiveWarehouseOptions();
 
   /** Products are SEARCHED ON THE SERVER, never a static list: `products/select` answers with
    *  its own default of 100 rows against ~22,000 active products, so the list this field used
@@ -216,21 +217,19 @@ export function RunPlanningModal({
     setSoNumbers(next);
   };
 
-  /** `so_number - customer_name`, trimmed when neither is on file - the option's
+  /** `so_number - CUSTOMER / project`, trimmed when neither is on file - the option's
    *  accessible name, kept IDENTICAL to the menu row's own printed text (fix round 3:
-   *  the row and the label must agree, so `project_label` is dropped from the LABEL
-   *  too - a buyer searching for what the row shows must find it). `project_label`
-   *  still has to be FINDABLE, though (fix round 4 nit) - it rides `searchText`
-   *  instead, the fuzzy index `SearchableMultiSelect`'s static mode reads in
-   *  preference to `label`, so typing a project word still finds the order without
-   *  printing it anywhere. */
+   *  the row and the label must agree). OI-UX-FILTER-SNAPSHOT (owner, 3 Nov) puts
+   *  `project_label` back on the line; it also stays in `searchText`. */
   const orderOptions = useMemo(
     () =>
       (candidateOrders ?? []).map((o) => {
-        const customer = o.customer_name ?? '';
+        // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): every SO names its customer AND project, in
+        // the shared `CUSTOMER / project` format; still one line, label = printed row.
+        const party = soCustomerProjectLabel(o.customer_name, o.project_label);
         return {
           value: o.so_number,
-          label: customer ? `${o.so_number} - ${customer}` : o.so_number,
+          label: party ? `${o.so_number} - ${party}` : o.so_number,
           searchText: `${o.so_number} ${o.customer_name ?? ''} ${o.project_label ?? ''}`,
         };
       }),

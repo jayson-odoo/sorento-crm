@@ -90,6 +90,10 @@ class User(Base):
     # whatsapp each gated by its toggle). Both off => not a recipient, gets nothing.
     notify_email_on_product_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
     notify_whatsapp_on_product_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
+    # List-price change notification opt-in (PRODUCT-FIELD-CHANGE-NOTIFY). Same shape as the
+    # discontinued pair above and the same company/brand scope rows.
+    notify_email_on_product_list_price = Column(Boolean, default=False, nullable=False, server_default="false")
+    notify_whatsapp_on_product_list_price = Column(Boolean, default=False, nullable=False, server_default="false")
     # SLA extend-deadline notification opt-ins (PLAN-sla-extend-deadline). Recipient is
     # the NEXT escalation tier assignee. Email defaults on; WhatsApp off (mirrors the
     # assignment/escalation toggle defaults). In-app always fires.
@@ -231,6 +235,16 @@ class UserRoleAssignment(Base):
     user = relationship("User", back_populates="role_assignments")
     role = relationship("UserRole", back_populates="user_assignments")
 
+    @classmethod
+    def primary_order(cls):
+        """ORDER BY for "the user's primary role": oldest assignment first, ties by id.
+
+        Rows written in one transaction share ``assigned_at`` (``now()`` is the transaction
+        start), so the id tie-break is what keeps the primary role from flipping between
+        reads. Every primary-role lookup uses this (USER-ROLES-STABLE).
+        """
+        return (cls.assigned_at.asc(), cls.id.asc())
+
     __table_args__ = (
         Index("ix_user_role_assignments_user_id", "user_id"),
         Index("ix_user_role_assignments_role_id", "role_id"),
@@ -338,6 +352,7 @@ class SystemSetting(Base):
     website_url = Column(String, nullable=True)
     support_email = Column(String, nullable=True)
     support_phone = Column(String, nullable=True)
+    fax = Column(String, nullable=True)
     language = Column(String, default="en", nullable=False)
     timezone = Column(String, default="UTC", nullable=False)
     currency = Column(String, default="MYR", nullable=False)
@@ -459,6 +474,12 @@ class SystemSetting(Base):
     sample_request_require_project = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # AC-LINK-CRM-UI (owner, 5 Nov): "AutoCount links from Stock Debt". OFF on deploy; the
+    # owner turns it on only after the full AutoCount + Shared Service test. Off, the Stock
+    # Debt drill offers no PO actions and every po-link route answers 403.
+    stock_debt_po_link_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
     price_tag_auto_collect_days = Column(
@@ -551,6 +572,18 @@ class SystemSetting(Base):
         nullable=True,
     )
     sponsorship_form_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Who approves a project quotation carrying a line outside its series (PS-QUOTE-RULES R4.1).
+    off_series_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Who approves a project quotation discount when no override or superior resolves (R4.4).
+    default_quotation_approver_user_id = Column(
         String,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

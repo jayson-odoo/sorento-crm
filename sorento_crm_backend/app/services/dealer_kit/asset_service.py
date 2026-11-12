@@ -258,6 +258,39 @@ def urls_for(
     return urls
 
 
+def screen_urls_for(db: Session, asset_ids: Iterable[str]) -> dict[str, str]:
+    """``{asset_id: url}`` of a rendition fit for a SCREEN, never the original.
+
+    The attachment's thumbnail when it has one, else a stored medium rendition (made once from the
+    original, then reused). An asset with neither is left out. A font is not a picture and is
+    skipped. This is what the picker grid and the spec sheet payloads draw; ``urls_for`` keeps the
+    original for print.
+    """
+    from app.services import product_image_service as images
+
+    ids = {value for value in asset_ids if value}
+    if not ids:
+        return {}
+    rows = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id.in_(ids), Asset.kind != FONT)
+        .filter(Attachment.is_deleted.is_(False))
+        .all()
+    )
+    with_thumb = {a.id: att for a, att in rows if att.thumbnail_path}
+    thumbs = images.preview_urls(db, [att.id for att in with_thumb.values()], full=False)
+    without = [att.id for a, att in rows if a.id not in with_thumb]
+    renditions = images.medium_urls(db, without) if without else {}
+    out: dict[str, str] = {}
+    for asset, attachment in rows:
+        source = thumbs if asset.id in with_thumb else renditions
+        url = source.get(str(attachment.id))
+        if url:
+            out[asset.id] = url
+    return out
+
+
 def mime_for_upload(filename: str, kind: str) -> str:
     """The mime a library upload is stored under, or a refusal.
 
@@ -389,6 +422,532 @@ def _layer_asset_ids(layers) -> set[str]:
         elif props.get("assetId"):
             ids.add(props["assetId"])
     return ids
+
+
+# --------------------------------------------------------------------------- #
+# Feature icons (PRICETAG-DESIGNER-GAPS item 3)
+#
+# Owner ruling 5 Nov 20:35: the icon <-> spec link lives on the spec VALUE.
+# Each value of a registry key carries its own ordered icon list
+# (`product_spec_registry.value_icons`), set on Master Data > Product
+# Specifications. A tag's feature_icons layer shows the icons of its subject's
+# values; the matching itself is the frontend's one pure function
+# (`lib/dealer-kit/feature-icons.ts`), so canvas, preview and print agree.
+# --------------------------------------------------------------------------- #
+ICON = "icon"
+FEATURE_ICONS_LAYER = "feature_icons"
+
+
+def doc_has_feature_icons(doc: Optional[dict]) -> bool:
+    """Whether a tag template or tag sheet document has any feature_icons layer."""
+    if not doc:
+        return False
+    layers = list(doc.get("layers", []) or [])
+    for sheet in doc.get("sheets", []) or []:
+        for tag in (sheet or {}).get("tags", []) or []:
+            layers.extend((tag or {}).get("layers", []) or [])
+    return any(_layer_has_feature_icons(layer or {}) for layer in layers)
+
+
+def _layer_has_feature_icons(layer: dict) -> bool:
+    """A feature_icons layer, or (PRICETAG-UPGRADE-VARIANTS S1) an accessories box whose card
+    draws a feature_icons element: either needs the icon rules and their signed urls."""
+    if layer.get("type") == FEATURE_ICONS_LAYER:
+        return True
+    if layer.get("type") != "accessories":
+        return False
+    card = (layer.get("props") or {}).get("card") or {}
+    return any(
+        (element or {}).get("kind") == FEATURE_ICONS_LAYER
+        for element in card.get("elements") or []
+    )
+
+
+#: The most icons one spec value may carry.
+MAX_ICONS_PER_VALUE = 10
+MAX_CONDITIONS_PER_ICON = 5
+BOOLEAN_VALUES = ("true", "false")
+
+
+def spec_value_keys(row, numeric_values: Optional[list[str]] = None) -> list[str]:
+    """The values of a registry key an icon may be set on, in the key's own order.
+
+    A yes/no key reads ``true`` / ``false`` (what a tag's ``raw`` holds for a stored bool); any
+    other key its vocabulary (shipped + added - taken away).
+    """
+    from app.services.product_spec_registry import merged_allowed_values
+
+    if row.data_type == "boolean":
+        return list(BOOLEAN_VALUES)
+    if row.data_type == "numeric":
+        return numeric_value_keys(row, numeric_values)
+    return [str(v) for v in merged_allowed_values(row)]
+
+
+def _numeric_text(value) -> Optional[str]:
+    """The one numeric normaliser (`product_spec_registry.numeric_value_text`), shared with a tag's raw."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    return numeric_value_text(value)
+
+
+def _numeric_order(value: str):
+    text = _numeric_text(value)
+    return (0, float(text), "") if text is not None else (1, 0.0, value)
+
+
+def numeric_value_keys(row, product_values: Optional[list[str]] = None) -> list[str]:
+    """A numeric key's values that may carry icons: the ones products hold today (pass them in
+    when already read for several keys) plus every value it already carries icons on, so icons set
+    on a value no product holds any more (a discontinued 300 mm) are kept, not lost on the next
+    save. Numeric order."""
+    held = product_values if product_values is not None else numeric_spec_values(row)
+    stored = [str(value) for value in (row.value_icons or {})]
+    return sorted(set(held) | set(stored), key=_numeric_order)
+
+
+def numeric_spec_values(row) -> list[str]:
+    """PRICETAG-UPGRADE-VARIANTS S4: the distinct values products hold for a numeric key
+    (bare or wrapped ``{"value": ...}``), normalised, in numeric order, so one can carry icons."""
+    from sqlalchemy.orm import object_session
+
+    db = object_session(row)
+    if db is None:
+        return []
+    return numeric_spec_values_by_key(db, [row.spec_key]).get(row.spec_key, [])
+
+
+def numeric_spec_values_by_key(db: Session, keys: list[str]) -> dict[str, list[str]]:
+    """`numeric_spec_values` for several keys in one read (the registry list)."""
+    from sqlalchemy import text as sql_text
+
+    if not keys:
+        return {}
+    found = db.execute(
+        sql_text(
+            "SELECT DISTINCT k.key, CASE WHEN jsonb_typeof(k.value) = 'object' "
+            "THEN k.value ->> 'value' ELSE k.value #>> '{}' END "
+            "FROM product_specifications s, jsonb_each(s.values) k "
+            # `?|` first, so the GIN index on `values` narrows the rows before jsonb_each.
+            "WHERE s.values ?| CAST(:keys AS text[]) AND jsonb_typeof(s.values) = 'object' "
+            "AND k.key = ANY(:keys)"
+        ),
+        {"keys": list(keys)},
+    ).all()
+    out: dict[str, set[str]] = {}
+    for key, value in found:
+        text = _numeric_text(value)
+        if text is not None:
+            out.setdefault(key, set()).add(text)
+    return {key: sorted(values, key=float) for key, values in out.items()}
+
+
+def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:
+    """The icons every spec value carries, as ``[{id, name, spec_key, values: [value]}]``.
+
+    One entry per (key, value, icon), already in the ONE sequence a tag shows (owner, 5 Nov
+    21:0x): keys by their ``icon_order`` ascending (blank last; ties by label, then
+    ``spec_key``), each key's values in its own order, each value's icons in the order the admin
+    set. The frontend keeps this input order and shows an asset reached twice once, at its first
+    position.
+
+    Only an existing, non-deleted asset of kind icon counts, scoped like any asset query;
+    ``company_id`` narrows it to one company, for a render of a request (a staff session may
+    span several companies, the request belongs to one). Registry rows are shared.
+    """
+    from app.services.product_spec_registry import active_registry
+
+    rows = sorted(
+        (row for row in active_registry(db) if row.value_icons),
+        key=lambda row: (
+            row.icon_order is None,
+            row.icon_order or 0,
+            (row.label or "").lower(),
+            row.spec_key,
+        ),
+    )
+    wanted = {
+        str(asset_id)
+        for row in rows
+        for ids in (row.value_icons or {}).values()
+        for asset_id in ids or []
+    }
+    if not wanted:
+        return []
+    statement = (
+        db.query(Asset)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(
+            Asset.id.in_(wanted),
+            Asset.kind == ICON,
+            Attachment.is_deleted.is_(False),
+        )
+    )
+    if company_id:
+        statement = statement.filter(Asset.company_id == company_id)
+    names = {asset.id: asset.name for asset in statement.all()}
+
+    # One read for every numeric key, never one scan per key (security review S1).
+    numeric = numeric_spec_values_by_key(
+        db, [row.spec_key for row in rows if row.data_type == "numeric"]
+    )
+    out: list[dict] = []
+    for row in rows:
+        mapping = row.value_icons or {}
+        conditions = row.value_icon_conditions or {}
+        ordered = spec_value_keys(row, numeric.get(row.spec_key, []))
+        # A value the key no longer lists keeps its icons (a product may still hold it).
+        ordered += sorted(value for value in mapping if value not in ordered)
+        for value in ordered:
+            for asset_id in mapping.get(value) or []:
+                if asset_id in names:
+                    out.append(
+                        {
+                            "id": asset_id,
+                            "name": names[asset_id],
+                            "spec_key": row.spec_key,
+                            "values": [value],
+                            "conditions": [
+                                {"spec_key": c["spec_key"], "value": c["value"]}
+                                for c in (conditions.get(value) or {}).get(asset_id) or []
+                            ],
+                        }
+                    )
+    return out
+
+
+def _uuid_text(value) -> Optional[str]:
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _icon_status(db: Session, ids: set[str]) -> tuple[set[str], set[str]]:
+    """``(visible, hidden)`` live icons among ``ids``.
+
+    ``visible``: an existing, non-deleted icon the caller's company scope can see. ``hidden``: the
+    same, but owned by a company the caller cannot see. The registry is shared by every company
+    while assets are not, so a save must carry another company's icons forward rather than read
+    them as missing. Anything else (gone, deleted, not an icon) is in neither set.
+    """
+    from app.models.base import company_scope
+
+    wanted = {i for i in ids if i}
+    if not wanted:
+        return set(), set()
+
+    def live() -> set[str]:
+        return {
+            asset.id
+            for asset in db.query(Asset)
+            .join(Attachment, Attachment.id == Asset.attachment_id)
+            .filter(Asset.id.in_(wanted), Asset.kind == ICON, Attachment.is_deleted.is_(False))
+            .all()
+        }
+
+    visible = live()
+    with company_scope(db, None):
+        everyone = live()
+    return visible, everyone - visible
+
+
+def own_asset_ids(db: Session, ids: set[str]) -> Optional[set[str]]:
+    """The ids among ``ids`` whose asset belongs to a company in the caller's scope, deleted
+    or not; ``None`` for the all-companies principal (scope ``None``), meaning "all of them".
+
+    Fail-closed: an unset or empty scope owns nothing, and an id with no asset row is never
+    the caller's.
+    """
+    from app.models.base import company_scope, get_company_scope
+
+    scope = get_company_scope(db)
+    if scope is None:
+        return None
+    wanted = {i for i in (_uuid_text(x) for x in ids) if i}
+    if not wanted or not isinstance(scope, frozenset) or not scope:
+        return set()
+    allowed = {str(c) for c in scope}
+    with company_scope(db, None):
+        rows = db.query(Asset.id, Asset.company_id).filter(Asset.id.in_(wanted)).all()
+    return {str(r.id) for r in rows if r.company_id is not None and str(r.company_id) in allowed}
+
+
+# SPEC-REGISTRY-ICON-LEAK: the spec registry is shared by every company, its Dealer Kit icons
+# are not, so its audit rows carry no company and their icon columns name every company's ids.
+# `value_icons` is {value: [icon id, ...]}, `value_icon_conditions` (SPEC-ICON-COMBINED) is
+# {value: {icon id: [condition, ...]}}; a new icon column of either shape belongs here.
+SPEC_REGISTRY_ICON_COLUMNS = ("value_icons", "value_icon_conditions")
+
+
+def _icon_ids_in(entry) -> set[str]:
+    if isinstance(entry, dict):
+        return {i for i in (_uuid_text(k) for k in entry) if i}
+    if isinstance(entry, list):
+        return {i for i in (_uuid_text(x) for x in entry) if i}
+    return set()
+
+
+def _keep_icons(entry, own: set[str]):
+    if isinstance(entry, dict):
+        return {k: v for k, v in entry.items() if _uuid_text(k) in own}
+    if isinstance(entry, list):
+        return [i for i in entry if _uuid_text(i) in own]
+    return entry
+
+
+def redact_foreign_icon_ids(db: Session, rows) -> None:
+    """Leave only the caller's own company's icon ids in each spec-registry audit row's icon
+    columns. Used by every read of audit values (History, activity feed), admins included.
+
+    The rows are expunged before their values are replaced, so the redacted copy is never
+    flushed over the stored audit trail (the next query would autoflush it otherwise). A value
+    left with no icon is dropped, as the registry stores it.
+    """
+    rows = [r for r in rows if r.entity_type == "product_spec_registry"]
+    mappings = [
+        values[col]
+        for r in rows
+        for values in (r.old_values or {}, r.new_values or {})
+        if isinstance(values, dict)
+        for col in SPEC_REGISTRY_ICON_COLUMNS
+        if isinstance(values.get(col), dict)
+    ]
+    ids = {i for mapping in mappings for entry in mapping.values() for i in _icon_ids_in(entry)}
+    if not ids:
+        return
+    own = own_asset_ids(db, ids)
+    if own is None:
+        return
+    for r in rows:
+        if r in db:
+            db.expunge(r)
+        for attr in ("old_values", "new_values"):
+            values = getattr(r, attr)
+            if not isinstance(values, dict):
+                continue
+            redacted = dict(values)
+            for col in SPEC_REGISTRY_ICON_COLUMNS:
+                mapping = values.get(col)
+                if isinstance(mapping, dict):
+                    kept = {value: _keep_icons(entry, own) for value, entry in mapping.items()}
+                    redacted[col] = {value: entry for value, entry in kept.items() if entry}
+            setattr(r, attr, redacted)
+
+
+def visible_value_icons(db: Session, row) -> dict[str, list[str]]:
+    """The key's ``value_icons`` as the caller may see them: only live icons of its own company.
+
+    The registry read sends this, so another company's ids never reach the client (and the screen
+    never shows a chip for an icon it cannot name).
+    """
+    stored = row.value_icons or {}
+    ids = {i for listed in stored.values() for i in (_uuid_text(x) for x in listed or []) if i}
+    visible, _hidden = _icon_status(db, ids)
+    out: dict[str, list[str]] = {}
+    for value, listed in stored.items():
+        kept = [i for i in (_uuid_text(x) for x in listed or []) if i in visible]
+        if kept:
+            out[value] = kept
+    return out
+
+
+def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
+    """A ``value_icons`` save, validated (registry PATCH): ``{value: [icon id, ...]}``.
+
+    The payload replaces what the caller can SEE; what it cannot see is kept:
+
+    * a value the key no longer holds is dropped silently if the key ever named it (an open
+      draft may still name a choice taken away since), refused if it never did;
+    * an id the caller can see must be a live icon; a NEW one that is not is refused, a stored one
+      that has since been deleted is dropped;
+    * another company's live icon (the registry is shared, assets are not) is carried forward in
+      its stored position whether or not the payload named it; a payload naming one the key
+      does not already hold is refused like a missing icon (SPEC-REGISTRY-ICON-LEAK), and one
+      it names on a different value is ignored.
+
+    Ids are de-duplicated in order, an empty list drops the value's entry, and a value holds at
+    most ``MAX_ICONS_PER_VALUE``.
+    """
+    live_values = spec_value_keys(row)
+    stored = {
+        str(value): [i for i in (_uuid_text(x) for x in listed or []) if i]
+        for value, listed in (row.value_icons or {}).items()
+    }
+    stored_ids = {i for listed in stored.values() for i in listed}
+    # Every value the key has ever named: shipped (taken away or not), staff-added, stored.
+    known_values = {
+        str(v)
+        for v in [
+            *(row.allowed_values or []),
+            *(row.suppressed_values or []),
+            *(row.user_values or []),
+            *stored,
+        ]
+    }
+
+    sent: dict[str, list[str]] = {}
+    for value, ids in (value_icons or {}).items():
+        value = str(value).strip()
+        if value not in live_values:
+            if value in known_values:
+                continue  # a choice taken away since the draft was opened
+            raise AppException(
+                status_code=422,
+                message=f'"{value}" is not one of {row.label}\'s values.',
+                code="spec_registry_icon_unknown_value",
+            )
+        unique = list(dict.fromkeys(str(i).strip() for i in ids or [] if str(i).strip()))
+        if len(unique) > MAX_ICONS_PER_VALUE:
+            raise AppException(
+                status_code=422,
+                message=f"At most {MAX_ICONS_PER_VALUE} icons per value.",
+                code="spec_registry_icon_too_many",
+            )
+        sent[value] = unique
+
+    sent_ids = {i for ids in sent.values() for i in ids}
+    visible, hidden = _icon_status(
+        db, {i for i in (_uuid_text(x) for x in sent_ids) if i} | stored_ids
+    )
+    for ident in sent_ids:
+        canonical = _uuid_text(ident)
+        if canonical in visible:
+            continue
+        if canonical in stored_ids:
+            # Stored before and gone since (dropped below), or another company's (kept below
+            # in its stored place only, never moved by this payload).
+            continue
+        # SPEC-REGISTRY-ICON-LEAK: another company's icon the key does not already hold reads
+        # exactly like a missing one, so the caller cannot hang it on a value.
+        raise AppException(
+            status_code=422,
+            message="Choose Dealer Kit icons only. One of the chosen pictures is not an icon "
+            "or no longer exists.",
+            code="spec_registry_icon_not_an_icon",
+        )
+
+    cleaned: dict[str, list[str]] = {}
+    for value in live_values:
+        # Only the caller's own icons come from the payload; another company's come back from
+        # what was stored on this value, below.
+        mine = [i for i in (_uuid_text(x) for x in sent.get(value, [])) if i in visible]
+        mine = list(dict.fromkeys(mine))
+        # Another company's icons keep their stored places.
+        for index, ident in enumerate(stored.get(value, [])):
+            if ident in hidden and ident not in mine:
+                mine.insert(min(index, len(mine)), ident)
+        if len(mine) > MAX_ICONS_PER_VALUE:
+            raise AppException(
+                status_code=422,
+                message=f"At most {MAX_ICONS_PER_VALUE} icons per value.",
+                code="spec_registry_icon_too_many",
+            )
+        if mine:
+            cleaned[value] = mine
+    return cleaned
+
+
+def prune_value_icons(row) -> None:
+    """Drop the icons of values the key no longer holds (suppressed or removed)."""
+    live = set(spec_value_keys(row))
+    current = row.value_icons or {}
+    kept = {value: ids for value, ids in current.items() if value in live}
+    if kept != current:
+        row.value_icons = kept
+    drop_orphan_icon_conditions(row)
+
+
+def drop_orphan_icon_conditions(row) -> None:
+    """Conditions live and die with their (value, icon) pair: drop any whose pair is gone."""
+    current = row.value_icon_conditions or {}
+    icons = row.value_icons or {}
+    kept = {}
+    for value, by_icon in current.items():
+        survivors = {i: c for i, c in (by_icon or {}).items() if i in (icons.get(value) or [])}
+        if survivors:
+            kept[value] = survivors
+    if kept != current:
+        row.value_icon_conditions = kept
+
+
+def _refuse_condition(message: str) -> AppException:
+    return AppException(status_code=422, message=message, code="spec_registry_icon_condition")
+
+
+def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) -> dict:
+    """A ``value_icon_conditions`` save, validated, against ``row.value_icons`` (already cleaned).
+
+    The payload replaces the conditions of icons the caller can see; another company's hidden icon
+    keeps its stored conditions, and naming it is refused like a pair not in ``value_icons``
+    (SPEC-REGISTRY-ICON-LEAK). Refused (422): a pair not in ``value_icons``, a partner that is
+    not an active registry key other than this one, a repeated partner, a value outside the
+    partner's vocabulary (a number for a numeric partner, stored normalised), more than
+    ``MAX_CONDITIONS_PER_ICON``.
+    """
+    from app.services.product_spec_registry import active_registry
+
+    icons = row.value_icons or {}
+    partners = {r.spec_key: r for r in active_registry(db) if r.spec_key != row.spec_key}
+    stored = row.value_icon_conditions or {}
+    _visible, hidden = _icon_status(db, {i for ids in icons.values() for i in ids})
+    sent: dict[str, dict[str, list[dict]]] = {}
+    for value, by_icon in (conditions or {}).items():
+        value = str(value).strip()
+        for icon_id, listed in (by_icon or {}).items():
+            icon_id = _uuid_text(icon_id) or str(icon_id).strip()
+            # Another company's icon reads exactly like one not on the value
+            # (SPEC-REGISTRY-ICON-LEAK): the caller cannot condition it, or learn it is there.
+            if icon_id not in (icons.get(value) or []) or icon_id in hidden:
+                raise _refuse_condition("A condition belongs to an icon set on that value.")
+            if len(listed or []) > MAX_CONDITIONS_PER_ICON:
+                raise _refuse_condition(f"At most {MAX_CONDITIONS_PER_ICON} conditions per icon.")
+            seen: set[str] = set()
+            cleaned: list[dict] = []
+            already = {
+                (c.get("spec_key"), c.get("value")) for c in (stored.get(value) or {}).get(icon_id) or []
+            }
+            for item in listed or []:
+                key = str(item.get("spec_key") or "").strip()
+                raw = str(item.get("value") if item.get("value") is not None else "").strip()
+                partner = partners.get(key)
+                if partner is None:
+                    if (key, raw) in already:
+                        # A partner taken away since: the stored condition STAYS (dropping it
+                        # would widen the icon to every product holding the host value).
+                        if key in seen:
+                            raise _refuse_condition(f"{key} is used twice on one icon.")
+                        seen.add(key)
+                        cleaned.append({"spec_key": key, "value": raw})
+                        continue
+                    raise _refuse_condition(f'"{key}" is not another active spec.')
+                if key in seen:
+                    raise _refuse_condition(f"{partner.label} is used twice on one icon.")
+                seen.add(key)
+                if partner.data_type == "numeric":
+                    normal = _numeric_text(raw)
+                    if normal is None:
+                        raise _refuse_condition(f"{partner.label} needs a number.")
+                    raw = normal
+                elif raw not in spec_value_keys(partner):
+                    if (key, raw) in already:
+                        cleaned.append({"spec_key": key, "value": raw})  # kept, see above
+                        continue
+                    raise _refuse_condition(f'"{raw}" is not one of {partner.label}\'s values.')
+                cleaned.append({"spec_key": key, "value": raw})
+            if cleaned:
+                sent.setdefault(value, {})[icon_id] = cleaned
+
+    out: dict = {}
+    for value, ids in icons.items():
+        for icon_id in ids:
+            if icon_id in hidden:
+                picked = (stored.get(value) or {}).get(icon_id)
+            else:
+                picked = (sent.get(value) or {}).get(icon_id)
+            if picked:
+                out.setdefault(value, {})[icon_id] = picked
+    return out
 
 
 def background_asset_ids(doc: Optional[dict]) -> set[str]:
@@ -924,4 +1483,5 @@ __all__ = [
     "purge_objects",
     "referenced_asset_ids",
     "urls_for",
+    "screen_urls_for",
 ]

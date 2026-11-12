@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   Banknote,
   Factory,
+  GitBranch,
   Info,
   ListChecks,
   LoaderCircleIcon,
@@ -46,8 +47,10 @@ import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
+import ProductLineageTab from './ProductLineageTab';
 import ListPager from '@/components/common/ListPager';
 import { productsPagerQuery } from '../lib/listQuery';
+import { localStore } from '@/lib/storage';
 
 /** The tab values `?tab=` may name, so a stray query string cannot land on an empty panel. */
 const PRODUCT_FORM_TABS = [
@@ -56,6 +59,7 @@ const PRODUCT_FORM_TABS = [
   'specifications',
   'suppliers',
   'attachments',
+  'lineage',
 ];
 
 interface ProductFormProps {
@@ -92,7 +96,11 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const updateMutation = useUpdateProduct();
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
-  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
+  // SUPPLIER-COST-ACCESS: cost price and the supplier links (their unit costs) are for
+  // purchasing and management (`products.cost.view`).
+  const canViewCost = useHasPermission('products.cost.view');
+  const canViewSupplierLinks = useHasPermission('procurement.product_suppliers.view');
+  const canViewSuppliers = canViewCost && canViewSupplierLinks;
 
   const navigationBasePath = '/master-data-management/products';
 
@@ -209,7 +217,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
     const interval = setInterval(() => {
       if (form.formState.isDirty) {
         const formData = form.getValues();
-        localStorage.setItem('product-form-draft', JSON.stringify(formData));
+        localStore.setItem('product-form-draft', JSON.stringify(formData));
       }
     }, 30000);
 
@@ -238,7 +246,8 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         barcode: data.barcode ? data.barcode : isEditMode ? null : undefined,
         base_uom_id: data.base_uom_id,
         list_price: typeof data.list_price === 'number' ? data.list_price : Number(data.list_price),
-        cost_price: toOptionalNumber(data.cost_price, isEditMode),
+        // Not sent without the permission: the reader was served null, and the server ignores it anyway.
+        cost_price: canViewCost ? toOptionalNumber(data.cost_price, isEditMode) : undefined,
         invoice_price: toOptionalNumber(data.invoice_price, isEditMode),
         weight: toOptionalNumber(data.weight, isEditMode),
         dimensions_length: toOptionalNumber(data.dimensions_length, isEditMode),
@@ -263,7 +272,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       } else {
         await createMutation.mutateAsync(formData);
       }
-      localStorage.removeItem('product-form-draft');
+      localStore.removeItem('product-form-draft');
       if (onSuccess) {
         onSuccess();
       } else {
@@ -340,6 +349,12 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
               <Paperclip />
               <span>Attachments</span>
             </TabsTrigger>
+            {isEditMode ? (
+              <TabsTrigger value="lineage">
+                <GitBranch />
+                <span>Lineage</span>
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
           {/* Tab 1: Basic Information */}
@@ -668,30 +683,32 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="cost_price"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Cost Price</FormLabel>
-                      <FormControl>
-                        <NumberInput
-                          step="0.01"
-                          placeholder="0.00"
-                          name={field.name}
-                          ref={field.ref}
-                          onBlur={field.onBlur}
-                          value={field.value ?? null}
-                          onValueChange={field.onChange}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Internal cost price (hidden from viewers)
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {canViewCost ? (
+                  <FormField
+                    control={form.control}
+                    name="cost_price"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cost Price</FormLabel>
+                        <FormControl>
+                          <NumberInput
+                            step="0.01"
+                            placeholder="0.00"
+                            name={field.name}
+                            ref={field.ref}
+                            onBlur={field.onBlur}
+                            value={field.value ?? null}
+                            onValueChange={field.onChange}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Internal cost price (hidden from viewers)
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
 
                 <FormField
                   control={form.control}
@@ -1065,6 +1082,13 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
           <TabsContent value="attachments">
             <ProductAttachmentsTab productId={productId} isEditMode={isEditMode} />
           </TabsContent>
+
+          {/* Tab 6: Lineage (read-only, existing product only) */}
+          {isEditMode && productId ? (
+            <TabsContent value="lineage">
+              <ProductLineageTab productId={productId} />
+            </TabsContent>
+          ) : null}
         </Tabs>
 
         <div className="flex justify-end gap-2">

@@ -26,6 +26,8 @@ export interface AuditLogEntry {
   entity_label?: string | null;
   root_entity_type?: string | null;
   root_entity_id?: string | null;
+  /** SUPPLIER-COST-ACCESS: fields whose values the server hid from this reader ("hidden"). */
+  masked_fields?: string[] | null;
 }
 
 export interface AuditLogsResponse {

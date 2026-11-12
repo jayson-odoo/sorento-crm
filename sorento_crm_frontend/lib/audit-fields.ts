@@ -73,17 +73,27 @@ export type AuditFieldChange =
   | { kind: 'line'; key: string; text: string }
   | { kind: 'long'; key: string; label: string; before: string; after: string };
 
-/** Every real field change on an UPDATE, bookkeeping skipped, in the row's key order. */
+/**
+ * Every real field change on an UPDATE, bookkeeping skipped, in the row's key order.
+ * `maskedFields` (SUPPLIER-COST-ACCESS): fields the server hid from this reader (cost without
+ * `products.cost.view`); they read "<Label> changed (values hidden)", never a value.
+ */
 export function auditFieldChanges(
   oldValues: Record<string, unknown> | null,
   newValues: Record<string, unknown> | null,
+  maskedFields?: readonly string[] | null,
 ): AuditFieldChange[] {
   const oldV = oldValues || {};
   const newV = newValues || {};
   const keys = [...new Set([...Object.keys(newV), ...Object.keys(oldV)])];
+  const masked = new Set(maskedFields ?? []);
   const out: AuditFieldChange[] = [];
   for (const key of keys) {
     if (AUDIT_BOOKKEEPING_FIELDS.has(key)) continue;
+    if (masked.has(key)) {
+      out.push({ kind: 'line', key, text: `${auditFieldLabel(key)} changed (values hidden)` });
+      continue;
+    }
     const ov = oldV[key];
     const nv = newV[key];
     if (sameValue(ov, nv)) continue;

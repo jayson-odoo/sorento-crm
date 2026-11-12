@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
@@ -40,7 +41,14 @@ class LinePartIn(BaseModel):
 
     product_id: Optional[str] = None
     role: Optional[str] = None
-    candidates: list[str] = Field(default_factory=list)
+    # A choice group's options are a handful; the ceiling stops one part from forcing a full
+    # product resolution per id in a single preview (security review, PRICETAG-COMBO-FORMAT).
+    candidates: list[str] = Field(default_factory=list, max_length=50)
+
+
+#: PRICETAG-UPGRADE-VARIANTS: a product id as a line's unticked member (a UUID is 36 characters);
+#: anything longer is a 422 at the boundary, never a database error.
+_VariantId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
 
 
 class PriceTagRequestLineCreate(BaseModel):
@@ -48,6 +56,8 @@ class PriceTagRequestLineCreate(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
+    # PRICETAG-LPSP: this line's own LP/SP choice. None = the request's price_mode.
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int = Field(default=1, ge=1)
     # The catalogue package this line is asked for as, and the parts under it, in
     # display order (D2). `alternatives` is gone - the OR-choices field it carried
@@ -74,6 +84,9 @@ class PriceTagRequestLineCreate(BaseModel):
     # in the service against the product's published links; anything else is
     # dropped, never stored.
     tag_template_id: Optional[str] = None
+    # PRICETAG-UPGRADE-VARIANTS S3: the variant members UNTICKED for this tag. Each must sit in
+    # the line product's variant tree (422 NOT_A_VARIANT), checked in the service.
+    excluded_variant_ids: list[_VariantId] = Field(default_factory=list, max_length=500)
 
 
 class PriceTagReviseLineIn(BaseModel):
@@ -104,6 +117,9 @@ class PriceTagReviseLineIn(BaseModel):
     promotion_id: Optional[str] = None
     tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
+    price_type: Optional[Literal["list", "selling"]] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: None = not sent (the old line's list is carried over).
+    excluded_variant_ids: Optional[list[_VariantId]] = Field(default=None, max_length=500)
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -192,6 +208,7 @@ class PriceTagRequestLineResponse(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int
     combo_id: Optional[str] = None
     # What the package guard found at submit, for marketing to read (D2). NULL =
@@ -199,6 +216,8 @@ class PriceTagRequestLineResponse(BaseModel):
     package_warning: Optional[str] = None
     included_accessories: Optional[str] = None
     remarks: Optional[str] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the variant members unticked for this tag.
+    excluded_variant_ids: list[str] = []
     sort_order: int
     # What gets printed for this line: one tag by default, N after a split (D3).
     # The marketing override moved onto the TAG in S3 and its columns are dropped
@@ -256,6 +275,60 @@ class PriceTagRequestLineResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PriceTagRequestCustomer(BaseModel):
+    """One customer a request prints for (PRICETAG-REQUEST-LAYOUT). ``code`` is the debtor code
+    when the pick came from the debtor lookup."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: Optional[str] = Field(None, max_length=100)
+    name: str = Field(..., max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("A customer needs a name.")
+        return v
+
+
+def _distinct_customers(customers):
+    """Each customer once, first pick wins its place (by code, else by name)."""
+    if customers is None:
+        return None
+    seen: set[str] = set()
+    kept = []
+    for customer in customers:
+        key = (customer.code or "").strip().lower() or f"name:{customer.name.lower()}"
+        if key not in seen:
+            seen.add(key)
+            kept.append(customer)
+    return kept
+
+
+def _customers_or_debtor(customers, debtor_code, debtor_name):
+    """A request saved before ``customers`` existed reads as its one debtor."""
+    if customers is not None:
+        return customers
+    if (debtor_name or "").strip():
+        return [PriceTagRequestCustomer(code=debtor_code, name=debtor_name)]
+    return []
+
+
+def customers_from_payload(value) -> Optional[list[dict]]:
+    """``customers`` from a raw dict (the revise path, which never runs through a Pydantic body):
+    the same rules as the request schemas - a name each, each once, at most 50."""
+    from pydantic import TypeAdapter
+
+    if value is None:
+        return None
+    parsed = TypeAdapter(
+        Annotated[list[PriceTagRequestCustomer], Field(max_length=50)]
+    ).validate_python(value)
+    return [c.model_dump() for c in _distinct_customers(parsed)]
+
+
 class PriceTagRequestCreate(BaseModel):
     """What the portal posts when it saves a draft (D48a).
 
@@ -285,6 +358,15 @@ class PriceTagRequestCreate(BaseModel):
     debtor_name: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # PRICETAG-REQUEST-LAYOUT: every customer, in pick order; declared AFTER the debtor pair so
+    # the model's mirror (first customer -> debtor pair) is the last write when both are sent.
+    customers: Optional[list[PriceTagRequestCustomer]] = Field(None, max_length=50)
+
+    @field_validator("customers")
+    @classmethod
+    def _each_customer_once(cls, v):
+        return _distinct_customers(v)
+
     # Header price mode (D5, r7): 'selling' requires a promotion, enforced on
     # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
     # before it has a promotion, same as it may have no debtor yet).
@@ -318,6 +400,15 @@ class PriceTagRequestUpdate(BaseModel):
     debtor_name: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # PRICETAG-REQUEST-LAYOUT: every customer, in pick order; declared AFTER the debtor pair so
+    # the model's mirror (first customer -> debtor pair) is the last write when both are sent.
+    customers: Optional[list[PriceTagRequestCustomer]] = Field(None, max_length=50)
+
+    @field_validator("customers")
+    @classmethod
+    def _each_customer_once(cls, v):
+        return _distinct_customers(v)
+
     # NOT Optional: the column is NOT NULL, and `price_mode: null` used to
     # reach `setattr(req, "price_mode", None)` in the route (`exclude_unset`
     # only drops an OMITTED field, not one explicitly sent as null) and 500
@@ -398,6 +489,14 @@ class PriceTagRequestAttachment(BaseModel):
 
 class PriceTagRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    # PRICETAG-REQUEST-LAYOUT: never null on the wire; an older request reads as its one debtor.
+    customers: Optional[list[PriceTagRequestCustomer]] = None
+
+    @model_validator(mode="after")
+    def _customers_fallback(self):
+        self.customers = _customers_or_debtor(self.customers, self.debtor_code, self.debtor_name)
+        return self
 
     id: str
     contact_id: str
@@ -484,6 +583,14 @@ class PriceTagRequestResponse(BaseModel):
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    # PRICETAG-REQUEST-LAYOUT: never null on the wire; an older request reads as its one debtor.
+    customers: Optional[list[PriceTagRequestCustomer]] = None
+
+    @model_validator(mode="after")
+    def _customers_fallback(self):
+        self.customers = _customers_or_debtor(self.customers, self.debtor_code, self.debtor_name)
+        return self
+
     id: str
     contact_id: str
     debtor_code: Optional[str] = None
@@ -559,6 +666,9 @@ SLOT_BINDINGS = (
     "included_accessories",
     "list_price",
     "sell_price",
+    # PRICETAG-LPSP: the figure the line shows (SP else LP) and its label.
+    "price",
+    "price_label",
     "badges",
     "alternatives",
     "accessories",
@@ -570,6 +680,9 @@ SLOT_BINDINGS = (
     "combo_topups",
     # PS-SPEC-SHEET: the technical drawing of the subject.
     "drawing",
+    # PRICETAG-UPGRADE-VARIANTS S2: on an "Upgrade N" position, its top-up and the tag SP plus it.
+    "upgrade_topup",
+    "sell_price_with_upgrade",
 )
 
 
@@ -603,12 +716,47 @@ class CropRect(_StrictProps):
     height: float
 
 
+class SlotMain(_StrictProps):
+    kind: Literal["main"]
+
+
+class SlotFixed(_StrictProps):
+    kind: Literal["fixed"]
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotPick(_StrictProps):
+    kind: Literal["pick"]
+    group: int = Field(ge=0, lt=32)
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotUpgrade(_StrictProps):
+    kind: Literal["upgrade"]
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotVariants(_StrictProps):
+    """PRICETAG-UPGRADE-VARIANTS S3: a feature icons layer on "All variants" (the line product
+    and the live members of its variant tree). Never a combo position."""
+
+    kind: Literal["variants"]
+
+
+#: PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line (same bounds as `template_needs`).
+SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade, SlotVariants]
+
+
 class ImageLayerPropsDoc(_StrictProps):
     kind: Literal["image"]
     source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
     fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
+    #: PRICETAG-DESIGNER-GAPS item 1: mirror about the layer box. Absent = not flipped.
+    flipX: Optional[bool] = None
+    flipY: Optional[bool] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class LayerPaddingDoc(_StrictProps):
@@ -632,6 +780,10 @@ class TextLayerPropsDoc(_StrictProps):
     lineHeight: float
     letterSpacing: float
     padding: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+    showCurrency: Optional[bool] = None
+    #: PRICETAG-UPGRADE-VARIANTS S2: printed before the upgrade_topup / sell_price_with_upgrade figure.
+    prefix: Optional[str] = Field(default=None, max_length=60)
 
 
 class PolygonPointDoc(_StrictProps):
@@ -657,6 +809,7 @@ class ShapeLayerPropsDoc(_StrictProps):
 class ProductSlotLayerPropsDoc(_StrictProps):
     kind: Literal["product_slot"]
     fieldKey: str
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class PriceBadgeLayerPropsDoc(_StrictProps):
@@ -694,11 +847,33 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     # used to do both jobs at once - `priceBadgeInsets` in the frontend's
     # `price-badge.ts` is the one place that resolves the legacy rule.
     margin: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):
     kind: Literal["badge"]
     assetId: str
+
+
+class FeatureIconsLayerPropsDoc(_StrictProps):
+    """PRICETAG-DESIGNER-GAPS item 3: one packed row of the icons the subject's spec values
+    carry, in the spec registry's one icon sequence (no per-template order)."""
+
+    kind: Literal["feature_icons"]
+    iconSize_mm: float = Field(gt=0, le=200)
+    gap_mm: float = Field(ge=0, le=100)
+    align: Literal["left", "center", "right"] = "left"
+    subjectPart: Optional[int] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_order(cls, data):
+        """A draft saved while the layer still had its own ``order`` (owner 21:0x retired it)
+        opens and saves without it, rather than being refused as an unknown field."""
+        if isinstance(data, dict) and "order" in data:
+            data = {k: v for k, v in data.items() if k != "order"}
+        return data
 
 
 class GroupBindingDoc(_StrictProps):
@@ -721,6 +896,7 @@ TagLayerPropsDoc = Annotated[
         PriceBadgeLayerPropsDoc,
         BadgeLayerPropsDoc,
         GroupLayerPropsDoc,
+        FeatureIconsLayerPropsDoc,
     ],
     Field(discriminator="kind"),
 ]
@@ -732,7 +908,7 @@ class TagLayerDoc(BaseModel):
     id: str
     type: Literal[
         "image", "text", "shape", "product_slot", "price_badge",
-        "badge", "group",
+        "badge", "group", "feature_icons",
     ]
     x_mm: float
     y_mm: float
@@ -799,13 +975,39 @@ class TagTemplateCreate(BaseModel):
     family: str = Field(..., min_length=1, max_length=50)
     doc: dict = Field(default_factory=dict)
     print_size: dict = Field(default_factory=dict)
+    #: Hand-picked LP / SP / LP & SP; None = unset (offered on both kinds of line).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+
+
+#: A template setting that is trimmed and must not be blank (item 4).
+_SettingText255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+_SettingText50 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
 
 
 class TagTemplateUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=255)
-    family: Optional[str] = Field(default=None, max_length=50)
+    #: PRICETAG-DESIGNER-GAPS item 4: editable after create, never blank.
+    name: Optional[_SettingText255] = None
+    family: Optional[_SettingText50] = None
     doc: Optional[dict] = None
     print_size: Optional[dict] = None
+    #: Omitted = left alone; an explicit null clears it (`exclude_unset`).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+
+
+class TemplateNeeds(BaseModel):
+    """PRICETAG-COMBO-RENDER K4: what a template reads from a combo, from its PUBLISHED document."""
+
+    fixed: int = 0
+    groups: list[int] = []
+    upgrades: int = 0
+
+
+class TagTemplateUsage(BaseModel):
+    """What the tag template delete confirm names (TAG-TEMPLATE-DELETE-CONFIRM)."""
+
+    products: int
+    combos: int
+    requests: int
 
 
 class TagTemplateResponse(BaseModel):
@@ -816,6 +1018,7 @@ class TagTemplateResponse(BaseModel):
     family: str
     doc: dict
     print_size: dict
+    price_type: Optional[Literal["list", "selling", "both"]] = None
     company_id: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
@@ -827,6 +1030,7 @@ class TagTemplateResponse(BaseModel):
     # route substitutes a VERSION's doc/print_size for the draft above.
     published_version_id: Optional[str] = None
     published_version_no: Optional[int] = None
+    needs: Optional[TemplateNeeds] = None
 
 
 # ---------------------------------------------------------------------------
@@ -942,6 +1146,29 @@ class TagFont(BaseModel):
     url: str
 
 
+class FeatureIconCondition(BaseModel):
+    """One more spec value the product must hold for the icon to print (SPEC-ICON-COMBINED)."""
+
+    spec_key: str
+    value: str
+
+
+class FeatureIconOut(BaseModel):
+    """One library icon and its "show when" rule (feature icons, contract B5)."""
+
+    id: str
+    name: str
+    spec_key: str
+    values: list[str]
+    conditions: list[FeatureIconCondition] = []
+
+
+class FeatureIconItem(FeatureIconOut):
+    """`GET /dealer-kit/feature-icons`: one icon of one spec value, with its signed URL."""
+
+    url: Optional[str] = None
+
+
 class DesignMediaMixin(BaseModel):
     """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
 
@@ -957,6 +1184,8 @@ class DesignMediaMixin(BaseModel):
     images: dict[str, str] = {}
     #: Brand fonts, as same-origin paths (a signed CDN URL has no CORS header).
     fonts: list[TagFont] = []
+    #: Feature icons: every rule-carrying icon, when the document has a feature_icons layer.
+    feature_icons: list[FeatureIconOut] = []
 
 
 class TagSheetDocResponse(BaseModel):
@@ -1074,6 +1303,9 @@ class TagItemLookupItem(BaseModel):
     id: str
     code: str
     name: str
+    # The option reads "CODE  RM <list price>" (owner, 4 Nov). None when the row
+    # has no price or a zero one; a set answers its override only.
+    list_price: Optional[float] = None
 
 
 def _uuid_or_none(value: Optional[str]) -> Optional[str]:
@@ -1142,7 +1374,8 @@ class LinePricingRequest(BaseModel):
 class LinePricingPromotionOption(BaseModel):
     id: str
     description: str
-    sell_price: float
+    #: None on a combo line whose combo stores no selling price (never a part sum).
+    sell_price: Optional[float] = None
     # PRICE-TAG-A3-EXPIRED: the end date of an ended A3 flyer still pricing
     # tags inside its type's bound; null for a live promotion. The dropdown
     # labels the option "(expired <date>)" from it.
@@ -1168,7 +1401,7 @@ class LinePricingRow(BaseModel):
     """
 
     key: str
-    list_price: float
+    list_price: Optional[float] = None
     promotion_options: list[LinePricingPromotionOption] = []
     auto_promotion_id: Optional[str] = None
     sell_price: Optional[float] = None
@@ -1192,6 +1425,9 @@ class SpecValue(BaseModel):
     label: str
     value: str
     unit: Optional[str] = None
+    #: The stored value as a string (`mixer`, `true`), beside the display `value`. Feature
+    #: icons match on this, so renaming a label never silently drops an icon.
+    raw: Optional[str] = None
 
 
 class SpecKeyItem(BaseModel):
@@ -1200,6 +1436,58 @@ class SpecKeyItem(BaseModel):
     key: str
     label: str
     unit: Optional[str] = None
+
+
+class TagAccessoryImage(BaseModel):
+    attachment_id: str
+    url: str
+
+
+class TagAccessoryPicture(BaseModel):
+    """One of an accessory's pictures with its optional colour."""
+
+    attachment_id: str
+    url: str
+    colour_name: Optional[str] = None
+    colour_hex: Optional[str] = None
+
+
+class TagAccessoryColour(BaseModel):
+    name: Optional[str] = None
+    hex: str
+
+
+class TagAccessoryBoxStyle(BaseModel):
+    """PRICETAG-ACCESSORY-DESIGNER S6: the saved accessories template a product or combo names as its
+    own box style; the renderers draw it instead of the tag template's box."""
+
+    id: str
+    name: str
+    design: dict = {}
+
+
+class TagAccessory(BaseModel):
+    """PRICETAG-ACCESSORIES: one accessory as the tag's "Accessories" box draws it.
+    Declared on every tag shape below or `response_model` drops it without a word."""
+
+    #: `accessory` (library item) or `product` (a catalogue product listed as a free item, whose
+    #: `code`, description as `name`, photo and `list_price` are read live).
+    kind: str = "accessory"
+    id: str
+    name: str
+    spec: Optional[str] = None
+    remark: Optional[str] = None
+    image: Optional[TagAccessoryImage] = None
+    #: Every picture in order; `colours` = the distinct colours of those pictures.
+    images: list[TagAccessoryPicture] = []
+    colours: list[TagAccessoryColour] = []
+    code: Optional[str] = None
+    list_price: Optional[float] = None
+    #: TAG-ACC-CARD-RESIZE Q4, a catalogue product only: its offer for the viewer (null = none), its
+    #: spec lines and its own price tag description, which a card's `{{product.*}}` fields read.
+    sell_price: Optional[float] = None
+    spec_lines: Optional[list[str]] = None
+    price_tag_description: Optional[str] = None
 
 
 class TagComboOption(BaseModel):
@@ -1231,9 +1519,26 @@ class TagCombo(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    #: COMBO-SETTINGS-UX: the main product's label, the rich-text template repeated per part, and
+    #: `{part_product_id: label}` for every labelled part. Declared here or `response_model` drops them.
+    main_label: Optional[str] = None
+    parts_line: Optional[str] = None
+    part_labels: dict[str, str] = {}
     free_items: Optional[str] = None
+    #: PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined.
+    accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
     choices: list[TagComboChoice] = []
     upgrades: list[TagComboUpgrade] = []
+
+
+class TagVariant(BaseModel):
+    """PRICETAG-UPGRADE-VARIANTS S3: one live member of the tag product's variant tree, for a
+    feature icons layer on "All variants". Declared here or `response_model` drops it."""
+
+    product_id: str
+    code: str
+    specs: list[SpecValue] = []
 
 
 class ProductTagData(BaseModel):
@@ -1243,6 +1548,8 @@ class ProductTagData(BaseModel):
     code: str
     name: str
     dimensions: str
+    #: COMBO-SETTINGS-UX: the flyer's `L780xW480xH400mm` form, "" when none is recorded.
+    dimensions_lwh: str = ""
     spec_lines: list[str] = []
     specs: list[SpecValue] = []
     images: list[TagImage] = []
@@ -1259,12 +1566,20 @@ class ProductTagData(BaseModel):
     # spec_lines/description. Declared here or `response_model` drops it
     # without a word - see `ResolvedLineData.data_changes`'s own note.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
     currency: str = "MYR"
     #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
+    #: PRICETAG-ACCESSORIES: the product's own list (an Ala Carte tag prints it).
+    accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the live members of its variant tree.
+    variants: list[TagVariant] = []
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1377,6 +1692,8 @@ class TagPartData(BaseModel):
     code: str
     name: str
     dimensions: str = ""
+    #: COMBO-SETTINGS-UX: `L780xW480xH400mm`; "" when none is recorded or the part was pinned before it.
+    dimensions_lwh: str = ""
     spec_lines: list[str] = []
     specs: list[SpecValue] = []
     images: list[TagImage] = []
@@ -1391,11 +1708,35 @@ class TagPartData(BaseModel):
     #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
     #: subjectPart layer reads THIS, never the host's.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
+    #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
+    accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
     #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
     #: subject picker groups candidates under it. Absent on a fixed part.
     role: Optional[str] = None
     #: r10 S6: true on the candidate THIS tag's own choices name.
     chosen: Optional[bool] = None
+    #: PRICETAG-UPGRADE-VARIANTS S1: an upgrade position's top-up; None elsewhere.
+    topup_amount: Optional[float] = None
+
+
+class TagSlotGroup(BaseModel):
+    role: str
+    size: int
+    picks: list[TagPartData] = []
+
+
+class TagSlots(BaseModel):
+    """PRICETAG-COMBO-RENDER K2: where each product of a tag sits (fixed parts,
+    choice groups with their picks in pick order, upgrades with `chosen`)."""
+
+    #: The main product's own data (its picture and list price, never the combo's).
+    main: Optional[TagPartData] = None
+    fixed: list[TagPartData] = []
+    groups: list[TagSlotGroup] = []
+    upgrades: list[TagPartData] = []
 
 
 class ResolvedLineData(BaseModel):
@@ -1435,8 +1776,14 @@ class ResolvedLineData(BaseModel):
     sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
+    #: PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's.
+    accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the line product's live, ticked variant members.
+    variants: list[TagVariant] = []
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1449,6 +1796,8 @@ class ResolvedLineData(BaseModel):
     # below - measured, `test_dealer_kit_tag_data_routes.py::
     # test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts`.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did
@@ -1493,6 +1842,9 @@ class AssetResponse(BaseModel):
     kind: str
     tags: list[str] = []
     url: Optional[str] = None
+    #: A rendition for a screen (the attachment's thumbnail, else a medium copy), never the
+    #: original. The picker grid draws this; ``url`` stays the original.
+    thumb_url: Optional[str] = None
     mime_type: Optional[str] = None
 
 
@@ -1619,6 +1971,23 @@ class RequestVersionSummary(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class VariantMemberItem(BaseModel):
+    """PRICETAG-UPGRADE-VARIANTS S3: one member of a line product's variant tree."""
+
+    product_id: str
+    code: str
+    name: str = ""
+    list_price: Optional[float] = None
+    is_discontinued: bool = False
+
+
+class VariantMembersOut(BaseModel):
+    """The request line's "Variants on this tag" lookup (staff and portal)."""
+
+    members: list[VariantMemberItem] = []
+    own_list_price: Optional[float] = None
+
+
 class ProductTagTemplateItem(BaseModel):
     """One template linked to a product, as the product page and the request
     line read it. ``published`` False = linked but offered nowhere until it is
@@ -1630,10 +1999,25 @@ class ProductTagTemplateItem(BaseModel):
     published: bool
     width_mm: Optional[float] = None
     height_mm: Optional[float] = None
+    #: Compat: a default of either kind (``default_list or default_selling``).
+    is_default: bool = False
+    #: PRICETAG-COMBO-FORMAT: the template's price type (None = unset) and the link's defaults
+    #: per type (a lone fitting link counts).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+    default_list: bool = False
+    default_selling: bool = False
+    needs: Optional[TemplateNeeds] = None
+    #: PRICETAG-UPGRADE-VARIANTS: the published doc has a layer on "All variants".
+    reads_variants: bool = False
 
 
 class ProductTagTemplatesUpdate(BaseModel):
     template_ids: list[str] = Field(default_factory=list, max_length=100)
+    #: Each must be one of ``template_ids`` (422 otherwise) and fit its type; None = none.
+    default_list_template_id: Optional[str] = None
+    default_selling_template_id: Optional[str] = None
+    #: Legacy: with neither new key sent, sets BOTH defaults.
+    default_template_id: Optional[str] = None
 
 
 class TemplateAssignFilter(BaseModel):
@@ -1643,6 +2027,11 @@ class TemplateAssignFilter(BaseModel):
     category_ids: list[str] = Field(default_factory=list, max_length=500)
     item_class_ids: list[str] = Field(default_factory=list, max_length=500)
     family_codes: list[str] = Field(default_factory=list, max_length=500)
+    # PRICETAG-TEMPLATE-PRODUCTS: the designer's picked products; ANDed with the kinds above.
+    product_ids: list[str] = Field(default_factory=list, max_length=500)
+    # Owner hand test 11 Nov: the designer links combos too (combo_tag_template, the combo page's
+    # rows). Combos are picked by id only; the product filters above never reach them.
+    combo_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class TemplateAssignIn(TemplateAssignFilter):
@@ -1656,6 +2045,33 @@ class TemplateAssignPreviewOut(BaseModel):
 
 class TemplateAssignOut(BaseModel):
     changed: int
+    # Picked combos the template cannot print (`template_needs.fit_reason`); omitted when none.
+    skipped: Optional[int] = None
+
+
+class TemplateComboRow(BaseModel):
+    """One combo in the template designer's Products view (PRICETAG-TEMPLATE-PRODUCTS)."""
+
+    id: str
+    name: str
+    host_product_id: str
+    host_code: str
+    host_name: str
+    category_name: Optional[str] = None
+    brand_name: Optional[str] = None
+    # Why this template cannot print the combo, or None when it can.
+    fit_reason: Optional[str] = None
+
+
+class TemplateComboPage(BaseModel):
+    total: int
+    page: int
+    limit: int
+
+
+class TemplateComboListOut(BaseModel):
+    data: list[TemplateComboRow]
+    pagination: TemplateComboPage
 
 
 class TagPreviewLineIn(BaseModel):
@@ -1670,6 +2086,9 @@ class TagPreviewLineIn(BaseModel):
     promotion_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
     tag_template_id: Optional[str] = None
+    price_type: Optional[Literal["list", "selling"]] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the members unticked on the line (only ever narrows the list).
+    excluded_variant_ids: list[_VariantId] = Field(default_factory=list, max_length=500)
 
 
 class TagPreviewIn(BaseModel):

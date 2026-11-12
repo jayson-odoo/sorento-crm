@@ -98,7 +98,7 @@ READ_BACK = [
     "Customer: BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD [A/C I]",
     "Title: condo job Taman X",
     "Amount: RM 40,000.00",
-    "Close by: 15 Dec 2026",
+    "Close by: 15/12/2026",
     "Reply YES to save.",
 ]
 
@@ -504,7 +504,7 @@ class TestCustomerNumberedPick:
             "Customer: BKIN ELECTRICAL SDN BHD [A/C III]",
             "Title: condo job Taman X",
             "Amount: RM 40,000.00",
-            "Close by: 15 Dec 2026",
+            "Close by: 15/12/2026",
             "Reply YES to save.",
         ], picked.text
         assert seam.named(LOG_TOOL) == []
@@ -554,7 +554,7 @@ class TestBlockedAndProspectLines:
             "Prospect: Ahmad Renovation",
             "Title: kitchen job",
             "Amount: RM 15,000.00",
-            "Close by: 30 Nov 2026",
+            "Close by: 30/11/2026",
             "Reply YES to save.",
         ], prospect.text
 
@@ -574,7 +574,7 @@ class TestYesSavesOnce:
     @pytest.mark.parametrize(
         "pipeline,lines",
         [
-            (PIPELINE, ["Saved OPP-000123, stage New.", "Open opportunities closing by 31 Dec: RM 40,000.00."]),
+            (PIPELINE, ["Saved OPP-000123, stage New.", "Open opportunities closing by 31/12/2026: RM 40,000.00."]),
             (None, ["Saved OPP-000123, stage New."]),
         ],
         ids=["with-pipeline", "no-current-target"],
@@ -675,7 +675,7 @@ class TestCorrectionReadsBackAgain:
             "Customer: BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD [A/C I]",
             "Title: condo job Taman X",
             "Amount: RM 50,000.00",
-            "Close by: 15 Dec 2026",
+            "Close by: 15/12/2026",
             "Reply YES to save.",
         ], corrected.text
         assert seam.named(LOG_TOOL) == [], seam.calls
@@ -998,7 +998,7 @@ class TestOnlyAFreshExplicitYesSaves:
         _clock(monkeypatch, asked + timedelta(minutes=29))
         saved = _say(session_factory, monkeypatch, _yes(), "yes")
         assert saved.lines == [
-            "Saved OPP-000123, stage New.", "Open opportunities closing by 31 Dec: RM 40,000.00.",
+            "Saved OPP-000123, stage New.", "Open opportunities closing by 31/12/2026: RM 40,000.00.",
         ], saved.text
         (args,) = seam.named(LOG_TOOL)
         _assert_payload(args, customer_id=BATH["customer_id"], title="condo job Taman X", amount=40000,

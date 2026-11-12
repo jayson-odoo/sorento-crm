@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.ai_assistant import AIAssistantConversation, AIAssistantMessage
 from app.models.chatbot_agent import AgentAction
+from app.services.chatbot import panel_files
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import loop as agent_loop
@@ -42,7 +44,7 @@ from app.services.chatbot.console_service import (
 )
 from app.services.chatbot.contracts import PANEL_INGRESS, Envelope
 from app.services.chatbot.engine import run_turn, split_marked_message, split_send_actions
-from app.services.chatbot.router import RouteDecision, decide_route
+from app.services.chatbot.router import RouteDecision, daily_cap_reached, decide_route, eligible_contact
 from app.services.chatbot_reply_copy import CHATBOT_REPLY_AI_DID_NOT_ANSWER
 from app.services import rate_limit
 from app.services.company_scope_resolver import resolve_user_active_company
@@ -63,6 +65,8 @@ PAGE_SEARCH_CHARS = 500
 #: Panel messages a user may send a minute, the old path's figure.
 PANEL_MESSAGES_PER_MINUTE = 20
 TOO_MANY_REPLY = "Too many messages in a short time. Try again in a minute."
+NOT_READABLE_HERE = "I can't read files for you here."
+DAILY_CAP_REPLY = "You have used today's assistant turns. Try again tomorrow."
 BUSY_REPLY = "I am still working on your earlier message in this chat. Try again in a moment."
 
 
@@ -110,8 +114,9 @@ def run_panel_turn(
     page_snapshot: Any = None,
     message_id: str | None = None,
     real_user_id: str | None = None,
+    files: panel_files.PreparedFiles | None = None,
 ) -> PanelTurnResult:
-    """Answer one panel message. `message_id` is the dedup key; left out, every call is its own
+    """Answer one panel message. `files` (prepared attachments) always go to the agent side. `message_id` is the dedup key; left out, every call is its own
     message. `page_snapshot` is read here and nowhere else (AC-19): a small summary rides the
     principal to the parser and Jev, the agent gets the full note."""
     if not rate_limit.hit("panel_message", str(user["id"]), limit=PANEL_MESSAGES_PER_MINUTE, window_seconds=60).allowed:
@@ -125,6 +130,16 @@ def run_panel_turn(
         real_user_id=real_user_id,
     )
     with staff_principal.acting_as(principal):
+        if files:
+            # A file turn skips the classifier: it only has to be allowed and under the day's cap (R4).
+            contact, _user, refusal = eligible_contact(db, principal.key)
+            if refusal is not None:
+                return PanelTurnResult(reply_text=NOT_READABLE_HERE, route="chat", status="refused")
+            if daily_cap_reached(db, principal.key, contact):
+                return PanelTurnResult(reply_text=DAILY_CAP_REPLY, route="chat", status="refused")
+            return _run_agent_side(
+                db, principal, text.strip(), RouteDecision("agent", "attachment"), page_note, files=files
+            )
         decision = decide_route(
             db,
             contact_respond_id=principal.key,
@@ -147,6 +162,17 @@ def run_panel_turn(
     if not result.duplicate:
         _stamp_route(db, result.turn_id, decision)
     return _rendered(result, route="chat", decision=decision)
+
+
+_UUID_IN_TEXT = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _page_ids(page_snapshot: Any) -> list[str]:
+    """The lower-case UUIDs in the open page's path (`/project-sales/<uuid>`); a dict, a payload or None."""
+    if page_snapshot is None:
+        return []
+    path = page_snapshot.get("path") if isinstance(page_snapshot, dict) else getattr(page_snapshot, "path", None)
+    return [m.lower() for m in _UUID_IN_TEXT.findall(path or "")]
 
 
 def _page_context(db: Session, user_id: str, snapshot: Any) -> tuple[dict[str, Any] | None, str]:
@@ -199,7 +225,12 @@ def _page_context(db: Session, user_id: str, snapshot: Any) -> tuple[dict[str, A
 
 
 def _run_agent_side(
-    db: Session, principal: staff_principal.StaffPrincipal, text: str, decision: RouteDecision, page_note: str = ""
+    db: Session,
+    principal: staff_principal.StaffPrincipal,
+    text: str,
+    decision: RouteDecision,
+    page_note: str = "",
+    files: panel_files.PreparedFiles | None = None,
 ) -> PanelTurnResult:
     """The router chose the agent: run it, and never fall back to the bot (card rule 6). A busy or
     failed agent says so in the reply."""
@@ -208,8 +239,14 @@ def _run_agent_side(
         agent_loop.enforce_agent_rate_limit(principal.user_id)
         before, after = _quoted_bot_replies(db, principal.conversation_id)
         after = "\n\n".join(part for part in (after, page_note) if part)
+        extra: dict[str, Any] = {}
+        if files:
+            extra = {"files": files.envelope_files, "file_text": files.file_text}
+            if files.images:
+                extra["images"] = files.images
         result = agent_loop.run_agent_turn(
-            db, contact_respond_id=principal.key, text=text, context_before=before, context_after=after
+            db, contact_respond_id=principal.key, text=text, context_before=before, context_after=after,
+            seed_ids=_page_ids(principal.page), **extra,
         )
     except AppException as exc:  # the rate limit: one plain line, not an error page (AC-24)
         return PanelTurnResult(reply_text=exc.detail["message"], route="agent", status="refused", route_decision=shown)
@@ -336,15 +373,45 @@ def withdraw(
     return _append_outcome(db, principal, outcome)
 
 
-TRACE_SLUG = "system.ai_assistant_settings.view"
+#: Who sees a reply's route, steps, usage and trace: the admin roles only (owner, 11 Nov, AGENT-PANEL-FIXES F).
+#: It was the `system.ai_assistant_settings.view` slug, which a role editor can hand to anyone.
+TRACE_ROLES = frozenset({"superadmin", "admin"})
+
+
+def sees_trace(db: Session, user_id: str) -> bool:
+    """Does this user hold an admin role? By role slug, not a permission check (that answers true for any slug)."""
+    from app.services.user_service import UserPermissionService
+
+    return bool(UserPermissionService(db).get_user_role_slugs(str(user_id)) & TRACE_ROLES)
+
+
+def prepare_files(db: Session, user_id: str, refs: list[Any]) -> panel_files.PreparedFiles:
+    """The caller's drafts named by `refs`, read for the agent. A ref that is not the caller's unsent
+    draft is a 404 before anything else happens (T1)."""
+    drafts = panel_files.claim_drafts(db, user_id, refs)
+    return panel_files.prepare(drafts, provider_name=agent_loop.agent_provider_name(db))
 
 
 def read_metadata(db: Session, rows: list[AIAssistantMessage], user_id: str) -> list[dict[str, Any]]:
     """What each row's `metadata_json` reads as, in the rows' order. A brain reply (it has a `route`)
     has its card read live, from the action store, one query for the thread (AC-22); and for a reader
-    without `TRACE_SLUG` only the card and the route stay, no steps, tool calls, usage, route score or
+    who is not an admin (`sees_trace`) only the card and the route stay, no steps, tool calls, usage, route score or
     turn id (AC-23). A row without a `route` is the old path's and comes back as stored (AC-26)."""
     metas = [row.metadata_json if isinstance(row.metadata_json, dict) else {} for row in rows]
+    return _with_file_urls(db, _read_cards(db, rows, metas, user_id))
+
+
+def _with_file_urls(db: Session, metas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A user row's `files` plus fresh links (T11). Rebuilt each read, never stored."""
+    out = list(metas)
+    for i, m in enumerate(metas):
+        files = m.get("files")
+        if isinstance(files, list) and files:
+            out[i] = {**m, "files": panel_files.with_urls(db, files)}
+    return out
+
+
+def _read_cards(db: Session, rows: list[AIAssistantMessage], metas: list[dict[str, Any]], user_id: str) -> list[dict[str, Any]]:
     brain = [i for i, m in enumerate(metas) if "route" in m and isinstance(m.get("agent"), dict)]
     if not brain:
         return _trace_strip(db, metas, user_id)
@@ -364,9 +431,7 @@ def read_metadata(db: Session, rows: list[AIAssistantMessage], user_id: str) -> 
 
 
 def _trace_strip(db: Session, metas: list[dict[str, Any]], user_id: str) -> list[dict[str, Any]]:
-    from app.services.user_service import UserPermissionService
-
-    if not any("route" in m for m in metas) or UserPermissionService(db).check_user_has_permission(user_id, TRACE_SLUG):
+    if not any("route" in m for m in metas) or sees_trace(db, user_id):
         return metas
     out = []
     for m in metas:

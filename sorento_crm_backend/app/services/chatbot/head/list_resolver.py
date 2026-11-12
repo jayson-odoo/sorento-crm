@@ -81,6 +81,15 @@ def _meaning_floor(embed: Any, list_name: str) -> float:
     return table.get(list_name, 1.01)
 #: Rows whose scores differ by no more than this are the same answer to the span.
 AMBIGUITY_MARGIN = 0.03
+#: Follow-up to #2066 (crew, 金百川 read "Kim Pak Chuan" -> KIM HOH HARDWARE at exactly 0.65): a LONE row of these lists
+#: placed only by meaning, under its meaning floor plus this, is not the answer (`_weak_alone`). Supplier only: its
+#: gemini floor sits 0.022 over the closest measured negative; the true JINBAICHUAN hits scored 0.687-0.692. Another
+#: list joins when a lone near-floor meaning match is measured binding a wrong row there.
+WEAK_MEANING_LISTS = frozenset({"supplier"})
+WEAK_MEANING_MARGIN = 0.02
+#: How far under the floor a weak lone row's neighbours are still offered beside it, and how many.
+WEAK_WIDEN = 0.05
+WEAK_SHOWN = 5
 #: A word is common in a list when it is in two or more of its texts and its IDF is below this share of the IDF
 #: of a word the list never saw; a span of only common words ("trading sdn bhd") names no single row of it.
 DISTINCTIVE_IDF = 0.5
@@ -391,7 +400,8 @@ def _supplier_codes(rows: Sequence[LookupRow]) -> dict[str, LookupRow]:
 def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embedder | None) -> list[Resolution]:
     """One `Resolution` per span by its text. Never raises on an embedder failure (spelling and partial
     names still resolve); a `product_code` span is `skipped` (unless it is exactly a supplier's own code, fix round
-    5) and a span naming nothing is `unresolved`."""
+    5) and a span naming nothing is `unresolved`. `skipped` means "sent to the code lookup"
+    (the resolver's `resolve` trace event, TRACE-ENTITY-TOOL), and the drawer says so."""
     indexes = _prepare(rows) if rows else {}
     supplier_codes = _supplier_codes(rows) if any(s.type == "product_code" for s in spans) else {}
     live = [s.text for s in spans if s.type != "product_code" and _fold(s.text) and s.text]
@@ -412,8 +422,10 @@ def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embe
             continue
         grams = candidates.trigrams(folded)
         pool: list[tuple[float, float, int, Candidate]] = []
+        floors_by_list: dict[str, dict[str, float]] = {}
         for name, index in indexes.items():
             floors = {**FLOORS.get(name, _FLOORS_OTHER), "meaning": _meaning_floor(embed, name)}
+            floors_by_list[name] = floors
             scored = _score_list(index, folded, grams)
             for i in set(scored) | {i for (n, i) in meaning if n == name and span.text in meaning[(n, i)]}:
                 row = scored.get(i) or _RowScore(index.rows[i])
@@ -442,5 +454,40 @@ def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embe
         # a row whose whole text the span equals is not tied with rows that merely contain its words
         near = [c for c in near if c.signal == "exact"] or near
         distinct = list(dict.fromkeys((c.row.list_name, c.row.key) for c in near))
+        if len(distinct) == 1 and _weak_meaning(near[0], floors_by_list):
+            out.append(_weak_alone(span, near[0], floors_by_list, indexes, meaning))
+            continue
         out.append(Resolution(span, "resolved" if len(distinct) == 1 else "ambiguous", tuple(near[:1] if len(distinct) == 1 else near)))
     return out
+
+
+def _weak_meaning(c: Candidate, floors_by_list: dict[str, dict[str, float]]) -> bool:
+    """A lone row placed only by meaning, within `WEAK_MEANING_MARGIN` of its list's meaning floor."""
+    if c.signal != "meaning" or c.row.list_name not in WEAK_MEANING_LISTS:
+        return False
+    return c.score < floors_by_list[c.row.list_name]["meaning"] + WEAK_MEANING_MARGIN
+
+
+def _weak_alone(span: Span, c: Candidate, floors_by_list: dict[str, dict[str, float]], indexes: dict[str, Any],
+                meaning: dict[tuple[str, int], dict[str, float]]) -> Resolution:
+    """Follow-up to #2066 (crew re-check at 8b759db7, turns ed977e5f / c5ffe95e): 金百川 read as "Kim Pak Chuan" placed
+    KIM HOH HARDWARE alone at exactly the 0.65 supplier floor, and the turn listed that supplier's POs. A lone row that
+    only just reaches the floor is not the answer: the same list's rows the span scored down to `WEAK_WIDEN` under the
+    floor are offered (`ambiguous`, so the turn asks which one), and with nothing beside it the span is `unresolved`
+    (so `resolve` falls back to the span's own text)."""
+    name = c.row.list_name
+    floor = floors_by_list[name]["meaning"]
+    index = indexes[name]
+    ranked = sorted(
+        (
+            Candidate(index.rows[i], cell[span.text], "meaning")
+            for (n, i), cell in meaning.items()
+            if n == name and cell.get(span.text, 0.0) >= floor - WEAK_WIDEN
+        ),
+        key=lambda x: -x.score,
+    )
+    # One option per row: a supplier with several texts near the span is offered once, at its best score.
+    close = list({x.row.key: x for x in reversed(ranked)}.values())[::-1][:WEAK_SHOWN]
+    if len(close) < 2:
+        return Resolution(span, "unresolved")
+    return Resolution(span, "ambiguous", tuple(close))

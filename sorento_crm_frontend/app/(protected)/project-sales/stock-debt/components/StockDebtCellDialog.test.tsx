@@ -212,8 +212,9 @@ describe('StockDebtCellDialog', () => {
 
     const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers).toEqual([
-      'Sales order', 'Agent', 'Bin', 'Due', 'Ordered', 'Delivered', 'Outstanding',
-      'Assigned', 'Covered by', 'Status',
+      // OI-UX-FILTER-SNAPSHOT: the SO list's Customer and Project right after Sales order.
+      'Sales order', 'Customer', 'Project', 'Agent', 'Location', 'Delivery date', 'Ordered', 'Delivered',
+      'Outstanding', 'Assigned', 'Covered by', 'Status',
     ]);
     expect(screen.queryByRole('link', { name: 'Plan' })).not.toBeInTheDocument();
     expect(screen.queryByText(/via/)).not.toBeInTheDocument();
@@ -246,10 +247,10 @@ describe('StockDebtCellDialog', () => {
     // Unsorted (service order): the later-due row is fed first and stays first.
     expect(firstRowSo()).toBe('SO-LATE');
 
-    fireEvent.click(screen.getByText('Due'));
+    fireEvent.click(screen.getByText('Delivery date'));
     await waitFor(() => expect(firstRowSo()).toBe('SO-EARLY'));
 
-    fireEvent.click(screen.getByText('Due'));
+    fireEvent.click(screen.getByText('Delivery date'));
     await waitFor(() => expect(firstRowSo()).toBe('SO-LATE'));
   });
 
@@ -676,6 +677,9 @@ describe('StockDebtCellDialog', () => {
         } as StockDebtDemandLine,
         {
           so_number: 'SO-NONE',
+          // Named, so the only dash on this row is Covered by's.
+          customer_name: 'ZZT CUSTOMER',
+          project_label: 'ZZT PROJECT',
           agent_code: 'KIM',
           warehouse_code: 'BRW-BB',
           required_date: '2026-10-18',

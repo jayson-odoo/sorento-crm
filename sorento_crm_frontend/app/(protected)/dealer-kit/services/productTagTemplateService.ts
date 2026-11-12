@@ -2,7 +2,8 @@
  * Which tag templates a product may print with (PRICETAG-TEMPLATE-PER-PRODUCT).
  *
  *   GET  /api/v1/dealer-kit/products/{id}/tag-templates            -> ProductTagTemplateItem[]
- *   PUT  /api/v1/dealer-kit/products/{id}/tag-templates            { template_ids } -> same
+ *   PUT  /api/v1/dealer-kit/products/{id}/tag-templates            { template_ids, default_list_template_id, default_selling_template_id } -> same
+ *   GET|PUT /api/v1/dealer-kit/combos/{id}/tag-templates           same shapes, for a combo (PRICETAG-LPSP)
  *   POST /api/v1/dealer-kit/tag-templates/{id}/assign/preview      filter -> { matched, already_linked }
  *   POST /api/v1/dealer-kit/tag-templates/{id}/assign              filter + { action } -> { changed }
  *
@@ -22,6 +23,51 @@ export interface ProductTagTemplateItem {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
+  /** Compat: a default of either kind. */
+  is_default?: boolean;
+  /** The template's hand-picked price type; null = not set (offered on LP and SP lines). */
+  price_type?: 'list' | 'selling' | 'both' | null;
+  /** The link preselected on an LP / SP request line; a lone fitting link counts. */
+  default_list?: boolean;
+  default_selling?: boolean;
+}
+
+/**
+ * The wire body of a links save. Each default must be one of `template_ids` and fit its type
+ * (an LP-only template cannot be the SP default).
+ */
+export interface TagTemplateLinks {
+  template_ids: string[];
+  default_list_template_id: string | null;
+  default_selling_template_id: string | null;
+}
+
+/** The default LP and SP the user chose, as ids ('' = none). */
+export interface LinkDefaults {
+  list: string;
+  selling: string;
+}
+
+/**
+ * The defaults to send back on a save: only ones the user chose. The server reports a lone fitting
+ * link as the default for display, so with fewer than two links nothing was chosen and nothing is
+ * sent.
+ */
+export function explicitDefaults(rows: ProductTagTemplateItem[]): LinkDefaults {
+  if (rows.length < 2) return { list: '', selling: '' };
+  return {
+    list: rows.find((row) => row.default_list)?.id ?? '',
+    selling: rows.find((row) => row.default_selling)?.id ?? '',
+  };
+}
+
+/** The wire body for `ids` with `defaults` (a default no longer linked is dropped). */
+export function linksBody(ids: string[], defaults: LinkDefaults): TagTemplateLinks {
+  return {
+    template_ids: ids,
+    default_list_template_id: ids.includes(defaults.list) ? defaults.list : null,
+    default_selling_template_id: ids.includes(defaults.selling) ? defaults.selling : null,
+  };
 }
 
 export interface TemplateAssignFilter {
@@ -61,13 +107,34 @@ export async function listProductTagTemplates(productId: string): Promise<Produc
 
 export async function setProductTagTemplates(
   productId: string,
-  templateIds: string[],
+  links: TagTemplateLinks,
 ): Promise<ProductTagTemplateItem[]> {
   return unwrap(
     await apiFetch(`${DK}/products/${encodeURIComponent(productId)}/tag-templates`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_ids: templateIds }),
+      body: JSON.stringify(links),
+    }),
+    'Failed to save the price tag templates',
+  );
+}
+
+export async function listComboTagTemplates(comboId: string): Promise<ProductTagTemplateItem[]> {
+  return unwrap(
+    await apiFetch(`${DK}/combos/${encodeURIComponent(comboId)}/tag-templates`),
+    'Failed to load the price tag templates',
+  );
+}
+
+export async function setComboTagTemplates(
+  comboId: string,
+  links: TagTemplateLinks,
+): Promise<ProductTagTemplateItem[]> {
+  return unwrap(
+    await apiFetch(`${DK}/combos/${encodeURIComponent(comboId)}/tag-templates`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(links),
     }),
     'Failed to save the price tag templates',
   );
@@ -99,6 +166,88 @@ export async function assignTemplate(
       body: JSON.stringify({ ...filter, action }),
     }),
     'Failed to assign the template',
+  );
+}
+
+/** PRICETAG-TEMPLATE-PRODUCTS: the products that use the template (the designer's ticks). */
+export async function listTemplateProductIds(templateId: string): Promise<string[]> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/product-ids`),
+    'Failed to load the products that use this template',
+  );
+}
+
+/**
+ * PRICETAG-TEMPLATE-PRODUCTS: link the template to these products and combos (at most 500 of
+ * each). `skipped` counts picked combos the template cannot print; absent when none.
+ */
+export async function assignTemplateToProducts(
+  templateId: string,
+  productIds: string[],
+  comboIds: string[] = [],
+): Promise<{ changed: number; skipped?: number }> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(productIds.length ? { product_ids: productIds } : {}),
+        ...(comboIds.length ? { combo_ids: comboIds } : {}),
+        action: 'add',
+      }),
+    }),
+    'Failed to link the products',
+  );
+}
+
+/** Owner hand test 11 Nov: the combos that use the template (the designer's combo ticks). */
+export async function listTemplateComboIds(templateId: string): Promise<string[]> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/combo-ids`),
+    'Failed to load the combos that use this template',
+  );
+}
+
+export interface TemplateComboRow {
+  id: string;
+  name: string;
+  host_product_id: string;
+  host_code: string;
+  host_name: string;
+  category_name: string | null;
+  brand_name: string | null;
+  /** Why this template cannot print the combo, or null when it can. */
+  fit_reason: string | null;
+}
+
+export interface TemplateComboList {
+  data: TemplateComboRow[];
+  pagination: { total: number; page: number; limit: number };
+}
+
+/** Combos for the designer's Products view: search, the host's category / brand, linked only. */
+export async function listTemplateCombos(
+  templateId: string,
+  params: {
+    pageIndex: number;
+    pageSize: number;
+    searchQuery?: string;
+    category_id?: string;
+    brand_id?: string;
+    linkedOnly?: boolean;
+  },
+): Promise<TemplateComboList> {
+  const query = new URLSearchParams({
+    page: String(params.pageIndex + 1),
+    limit: String(params.pageSize),
+    ...(params.searchQuery ? { query: params.searchQuery } : {}),
+    ...(params.category_id ? { category_id: params.category_id } : {}),
+    ...(params.brand_id ? { brand_id: params.brand_id } : {}),
+    ...(params.linkedOnly ? { linked: 'true' } : {}),
+  });
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/combos?${query.toString()}`),
+    'Failed to load the combos',
   );
 }
 

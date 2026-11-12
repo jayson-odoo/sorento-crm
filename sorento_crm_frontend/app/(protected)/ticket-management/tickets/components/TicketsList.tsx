@@ -31,6 +31,7 @@ import {
 } from '../types/ticket.types';
 import { TicketPriorityBadge, TicketStatusBadge } from './TicketStatusBadge';
 import TicketsKanban from './TicketsKanban';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const PAGE_SIZE = 50;
 
@@ -232,7 +233,7 @@ export default function TicketsList() {
         header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
         cell: ({ row }) => (
           <span className="text-xs text-muted-foreground">
-            {new Date(row.original.updated_at).toLocaleString()}
+            {formatDateTimeInMalaysia(row.original.updated_at)}
           </span>
         ),
         size: 160,

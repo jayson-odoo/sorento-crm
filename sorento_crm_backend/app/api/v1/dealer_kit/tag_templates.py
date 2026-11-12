@@ -10,6 +10,11 @@ Permission gates:
 """
 from __future__ import annotations
 
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+from sqlalchemy import Float, asc, cast, desc, nulls_last, or_
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
 
@@ -25,16 +30,21 @@ from app.schemas.price_tag import (
     TemplateAssignIn,
     TemplateAssignOut,
     TemplateAssignPreviewOut,
+    TemplateComboListOut,
     TagTemplateCreate,
     TagTemplateFromTagCreate,
     TagTemplatePublishIn,
     TagTemplateResponse,
+    TemplateNeeds,
     TagTemplateUpdate,
+    TagTemplateUsage,
     TagTemplateVersionDetailResponse,
     TagTemplateVersionResponse,
 )
-from app.services.dealer_kit import tag_data_service, tag_template_service
+from app.services.dealer_kit import product_tag_template_service, tag_data_service, tag_template_service
+from app.services.dealer_kit.template_needs import template_needs
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 
 router = APIRouter(prefix="/tag-templates", tags=["tag-templates"])
 
@@ -59,6 +69,7 @@ def _response_for(t: TagTemplate, *, published: bool = False) -> TagTemplateResp
     resp = TagTemplateResponse.model_validate(t)
     if t.published_version is not None:
         resp.published_version_no = t.published_version.version_no
+        resp.needs = TemplateNeeds(**template_needs(t.published_version.doc))
         if published:
             resp.doc = t.published_version.doc
             resp.print_size = t.published_version.print_size
@@ -66,7 +77,12 @@ def _response_for(t: TagTemplate, *, published: bool = False) -> TagTemplateResp
 
 
 def _get_template_or_404(db: Session, template_id: str) -> TagTemplate:
-    t = db.query(TagTemplate).filter(TagTemplate.id == template_id).first()
+    # An archived template (TAG-TEMPLATE-DELETE-CONFIRM) answers exactly like a missing one.
+    t = (
+        db.query(TagTemplate)
+        .filter(TagTemplate.id == template_id, TagTemplate.archived_at.is_(None))
+        .first()
+    )
     if not t:
         raise AppException(
             status_code=404, message="Tag template not found.", code="NOT_FOUND"
@@ -83,14 +99,81 @@ def list_tag_templates(
             "pointer, and each one's PUBLISHED doc rather than its draft."
         ),
     ),
+    price_type: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by price type, multi-select (comma-joined or repeated): "
+            "list, selling, both, or `unset` = not set yet."
+        ),
+    ),
+    family: Optional[list[str]] = Query(None, description="Filter by family, multi-select."),
+    status_filter: Optional[list[str]] = Query(
+        None, alias="status", description="`live` and/or `draft`, multi-select."
+    ),
+    query_text: Optional[str] = Query(None, alias="query", max_length=200),
+    sort: Optional[str] = Query(None, description="Column to sort by; omitted = manual order."),
+    dir: Literal["asc", "desc"] = Query("asc"),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    query = db.query(TagTemplate).options(joinedload(TagTemplate.published_version))
+    query = (
+        db.query(TagTemplate)
+        .options(joinedload(TagTemplate.published_version))
+        .filter(TagTemplate.archived_at.is_(None))
+    )
+    price_types = multi_values(price_type, "price_type") or []
+    if price_types:
+        named = [p for p in price_types if p != "unset"]
+        clauses = []
+        if named:
+            clauses.append(TagTemplate.price_type.in_(named))
+        if "unset" in price_types:
+            clauses.append(TagTemplate.price_type.is_(None))
+        query = query.filter(or_(*clauses))
+    families = multi_values(family, "family")
+    if families:
+        query = query.filter(TagTemplate.family.in_(families))
+    statuses = set(multi_values(status_filter, "status") or [])
+    if statuses == {"live"}:
+        query = query.filter(TagTemplate.published_version_id.isnot(None))
+    elif statuses == {"draft"}:
+        query = query.filter(TagTemplate.published_version_id.is_(None))
+    if query_text and query_text.strip():
+        query = query.filter(TagTemplate.name.ilike(f"%{query_text.strip()}%"))
     if published:
         query = query.filter(TagTemplate.published_version_id.isnot(None))
-    templates = query.order_by(TagTemplate.family, TagTemplate.name).all()
+    templates = query.order_by(*_order_by(sort, dir, published=published)).all()
     return [_response_for(t, published=published) for t in templates]
+
+
+#: Every list column sorts on the server (owner rule 6 Nov: all columns sortable).
+_SORTABLE = {
+    "name": lambda: [TagTemplate.name],
+    "family": lambda: [TagTemplate.family],
+    "price_type": lambda: [TagTemplate.price_type],
+    "print_size": lambda: [
+        cast(TagTemplate.print_size["width_mm"].astext, Float),
+        cast(TagTemplate.print_size["height_mm"].astext, Float),
+    ],
+    "created_at": lambda: [TagTemplate.created_at],
+    # Draft before Live ascending (the live/draft flag only).
+    "published": lambda: [TagTemplate.published_version_id.isnot(None)],
+}
+
+
+def _order_by(sort: Optional[str], direction: str, *, published: bool) -> list:
+    """The list order: a named column (unknown names are ignored), else the request designer's
+    family/name order for `published=1`, else the shared manual order (item 6)."""
+    tie = [TagTemplate.created_at, TagTemplate.id]
+    if sort in _SORTABLE:
+        way = desc if direction == "desc" else asc
+        return [nulls_last(way(col)) for col in _SORTABLE[sort]()] + [
+            nulls_last(asc(TagTemplate.sort_order)),
+            *tie,
+        ]
+    if published:
+        return [TagTemplate.family, TagTemplate.name]
+    return [nulls_last(asc(TagTemplate.sort_order)), *tie]
 
 
 # PRICETAG-TEMPLATE-PER-PRODUCT: declared before ``/{template_id}`` for the
@@ -182,6 +265,24 @@ def create_tag_template_from_tag(
     return _response_for(t)
 
 
+class TagTemplateReorderIn(BaseModel):
+    """The rows the reader dragged, top to bottom (the rows on screen)."""
+
+    template_ids: list[str] = Field(..., min_length=1, max_length=1000)
+
+
+# DECLARED BEFORE ``/{template_id}``, same reason as ``/resolve-preview`` above.
+@router.post("/reorder", response_model=dict)
+def reorder_tag_templates(
+    payload: TagTemplateReorderIn,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Save the list's manual order (item 6). One order, shared by everyone in the company;
+    only a user who can edit templates may change it."""
+    return {"reordered": tag_template_service.reorder(db, payload.template_ids)}
+
+
 @router.get("/{template_id}", response_model=TagTemplateResponse)
 def get_tag_template(
     template_id: str,
@@ -190,6 +291,18 @@ def get_tag_template(
 ):
     t = _get_template_or_404(db, template_id)
     return _response_for(t)
+
+
+@router.get("/{template_id}/usage", response_model=TagTemplateUsage)
+def get_tag_template_usage(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """How many products, combos and price tag requests use the template - what the
+    delete confirm names (TAG-TEMPLATE-DELETE-CONFIRM)."""
+    t = _get_template_or_404(db, template_id)
+    return TagTemplateUsage(**tag_template_service.usage(db, t.id))
 
 
 @router.post("", response_model=TagTemplateResponse, status_code=status.HTTP_201_CREATED)
@@ -203,12 +316,34 @@ def create_tag_template(
         family=payload.family,
         doc=payload.doc,
         print_size=payload.print_size,
+        price_type=payload.price_type,
         created_by=_user_id(user),
     )
     db.add(t)
     db.flush()
+    # A new template goes to the END of the manual order (item 6).
+    t.sort_order = tag_template_service.next_sort_order(db, t.company_id)
     db.commit()
     return TagTemplateResponse.model_validate(t)
+
+
+@router.post(
+    "/{template_id}/duplicate",
+    response_model=TagTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_tag_template(
+    template_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """TAG-TEMPLATE-DUPLICATE: a new DRAFT "<name> (copy)" carrying the source's latest
+    document, family, price type and print size, placed right below the source. An archived
+    source answers 404 like a missing one."""
+    source = _get_template_or_404(db, template_id)
+    return _response_for(
+        tag_template_service.duplicate(db, source, created_by=_user_id(user))
+    )
 
 
 @router.put("/{template_id}", response_model=TagTemplateResponse)
@@ -225,6 +360,8 @@ def update_tag_template(
         setattr(t, key, value)
 
     db.flush()
+    if "price_type" in update_data:
+        product_tag_template_service.clear_unfit_defaults(db, t)
     db.commit()
     return _response_for(t)
 
@@ -235,8 +372,8 @@ def delete_tag_template(
     db: Session = Depends(get_db),
     _user: dict = Depends(_MANAGE),
 ):
-    """The immediate delete. The deferred one (`tag_template.delete`, the list's
-    countdown) calls the SAME service method, so the two cannot drift."""
+    """Archive the template (the list's row Delete, behind its confirm). The deferred
+    `tag_template.delete` calls the SAME service method, so the two cannot drift."""
     tag_template_service.delete_template(
         db, template_id, requested_by_id=_user_id(_user)
     )
@@ -387,6 +524,60 @@ def restore_tag_template_version(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/{template_id}/product-ids", response_model=list[str])
+def list_template_product_ids(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """PRICETAG-TEMPLATE-PRODUCTS: the products that use this template, which the designer's
+    Products dialog ticks on open. Manage only: it exists for that dialog."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.linked_product_ids(db, template_id)
+
+
+@router.get("/{template_id}/combo-ids", response_model=list[str])
+def list_template_combo_ids(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """The combos that use this template (owner hand test 11 Nov): the Products view ticks them."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.linked_combo_ids(db, template_id)
+
+
+# ai: not-for-assistant picker feed for the template designer's Products dialog; the assistant reads combos through the product's own combo data
+@router.get("/{template_id}/combos", response_model=TemplateComboListOut)
+def list_template_combos(
+    template_id: str,
+    query: str | None = Query(None, max_length=100),
+    category_id: list[str] | None = Query(None),
+    brand_id: list[str] | None = Query(None),
+    linked: bool = Query(False),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=501),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Combos for the designer's Products view, each with why this template cannot print it.
+    ``limit`` reaches 501 so "Select all" can tell a capped set (500) from an exact one."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.combo_rows(
+        db,
+        template_id,
+        query=query,
+        category_ids=[v for raw in category_id or [] for v in str(raw).split(",")],
+        brand_ids=[v for raw in brand_id or [] for v in str(raw).split(",")],
+        linked=linked,
+        page=page,
+        limit=limit,
+    )
+
+
 @router.post("/{template_id}/assign/preview", response_model=TemplateAssignPreviewOut)
 def preview_template_assignment(
     template_id: str,
@@ -403,7 +594,9 @@ def preview_template_assignment(
     )
 
 
-@router.post("/{template_id}/assign", response_model=TemplateAssignOut)
+@router.post(
+    "/{template_id}/assign", response_model=TemplateAssignOut, response_model_exclude_none=True
+)
 def assign_template_to_products(
     template_id: str,
     payload: TemplateAssignIn,

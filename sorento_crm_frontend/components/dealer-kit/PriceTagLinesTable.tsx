@@ -10,26 +10,40 @@
  * `app/(auth)/portal/components/PriceTagRequestForm.tsx` unchanged.
  */
 
-import { Fragment } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Fragment, useCallback, useMemo } from 'react';
+import { Eye, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { numberFieldError } from '@/lib/number-field';
-import { promotionOptionName, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { promotionOptionLabel, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
+import { defaultOptionFor, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
+  isOpenPart,
   itemValue,
+  linePriceType,
   lineTemplateState,
+  missingComboRows,
+  type LineTemplateState,
   packageWarningFor,
+  comboOfLine,
   partsAtListTitle,
+  picksNeeded,
+  templateAfterFlip,
+  unfittedPriceType,
+  variantPriceWarning,
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -43,9 +57,21 @@ interface PriceTagLinesTableProps {
   editor: PriceTagLineEditor;
   /** True once a Save / Submit found a bad number: rows then show their message. */
   showNumberErrors: boolean;
+  /** PRICETAG-LPSP: the row's eye icon; the caller owns the lightbox. */
+  onPreviewLine?: (key: string) => void;
 }
 
-export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNumberErrors }: PriceTagLinesTableProps) {
+export function PriceTagLinesTable({
+  lines,
+  priceMode,
+  isMobile,
+  editor,
+  showNumberErrors,
+  onPreviewLine,
+}: PriceTagLinesTableProps) {
+  // PRICETAG-LPSP: LP or SP is per line, so the Promotion / Selling price columns appear as
+  // soon as any line is SP, not only under a Selling header.
+  const anySelling = lines.some((l) => linePriceType(l, priceMode) === 'selling');
   return (
     <div className="overflow-x-auto">
       {/* `table-fixed` on purpose: a product name can run to sixty
@@ -54,17 +80,19 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
           Fixed columns let the picker's trigger truncate instead, and
           the min-width keeps every cell usable while the wrapper
           scrolls on a phone, which is the Purchase Request pattern. */}
-      <table className="w-full min-w-[560px] table-fixed text-sm">
+      {/* On a phone (crew pass 11 Nov) there is no width floor: the table keeps #, Item, Qty and
+          the icons as columns and stacks prices and remarks under the item, so Qty is never cut. */}
+      <table className={cn('w-full table-fixed text-sm', !isMobile && 'min-w-[560px]')}>
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th className="w-7 px-2 py-2 text-left">#</th>
             <th
               className={
                 isMobile
-                  ? 'w-[46%] px-2 py-2 text-left'
-                  : priceMode === 'selling'
-                    ? 'w-[31%] px-2 py-2 text-left'
-                    : 'w-[43%] px-2 py-2 text-left'
+                  ? 'px-2 py-2 text-left'
+                  : anySelling
+                    ? 'w-[24%] px-2 py-2 text-left'
+                    : 'w-[36%] px-2 py-2 text-left'
               }
             >
               Item
@@ -77,44 +105,37 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
                 // own Input is never honoured once the column is
                 // narrower than it.
                 isMobile
-                  ? 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
-                  : priceMode === 'selling'
-                    ? 'w-[9%] min-w-[3.5rem] px-2 py-2 text-left'
-                    : 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
+                  ? 'w-[4.5rem] px-2 py-2 text-left'
+                  : anySelling
+                    ? 'w-[8%] min-w-[3.5rem] px-2 py-2 text-left'
+                    : 'w-[10%] min-w-[3.5rem] px-2 py-2 text-left'
               }
             >
               Qty (tags)
             </th>
+            {!isMobile && <th className="w-[9%] min-w-[5rem] px-2 py-2 text-left">Price</th>}
             {!isMobile && (
               <th
-                className={
-                  priceMode === 'selling'
-                    ? 'w-[13%] px-2 py-2 text-left'
-                    : 'w-[14%] px-2 py-2 text-left'
-                }
+                className={anySelling ? 'w-[11%] px-2 py-2 text-left' : 'w-[14%] px-2 py-2 text-left'}
               >
                 List price
               </th>
             )}
-            {!isMobile && priceMode === 'selling' && (
+            {!isMobile && anySelling && (
               <>
-                <th className="w-[14%] px-2 py-2 text-left">Promotion</th>
-                <th className="w-[12%] px-2 py-2 text-left">Selling price</th>
+                <th className="w-[13%] px-2 py-2 text-left">Promotion</th>
+                <th className="w-[11%] px-2 py-2 text-left">Selling price</th>
               </>
             )}
-            <th
-              className={
-                isMobile
-                  ? 'w-[35%] px-2 py-2 text-left'
-                  : priceMode === 'selling'
-                    ? 'w-[14%] px-2 py-2 text-left'
-                    : 'w-[24%] px-2 py-2 text-left'
-              }
-            >
-              Remarks
-            </th>
-            {/* One 28px icon, not a fifth of the row. */}
-            <th className="w-[7%] px-2 py-2"></th>
+            {!isMobile && (
+              <th
+                className={anySelling ? 'w-[12%] px-2 py-2 text-left' : 'w-[20%] px-2 py-2 text-left'}
+              >
+                Remarks
+              </th>
+            )}
+            {/* The eye and the trash can: two 28px icons. */}
+            <th className="w-[72px] px-2 py-2"></th>
           </tr>
         </thead>
         <tbody>
@@ -125,6 +146,7 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
               index={index}
               priceMode={priceMode}
               isMobile={isMobile}
+              anySelling={anySelling}
               pricing={editor.linePricing[line.key] ?? null}
               fetchItemOptions={editor.fetchItemOptions}
               fetchPartOptions={editor.fetchPartOptions}
@@ -134,17 +156,92 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
               onChoosePackage={editor.choosePackage}
               onChooseTemplate={editor.chooseTemplate}
               onResolvePart={editor.resolvePart}
+              onResolvePicks={editor.resolvePicks}
               onRemovePart={editor.removePart}
               onAddPart={editor.addPart}
+              onRestorePart={editor.restorePart}
               onRestoreParts={editor.restoreParts}
               onChoosePromotion={editor.choosePromotion}
               onManualSellPriceChange={editor.setManualSellPrice}
               showNumberErrors={showNumberErrors}
+              onPreviewLine={onPreviewLine}
             />
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Variants on this tag (PRICETAG-UPGRADE-VARIANTS S3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which members of the line product's variant tree a feature icons layer on "All variants" reads:
+ * every member ticked by default, the line's own product locked on, a discontinued member listed
+ * with its hint but not counted. The line stores the UNTICKED ids. The Q5 warning sits under it.
+ */
+function VariantsRow({
+  line,
+  colSpan,
+  onUpdate,
+}: {
+  line: DraftLine;
+  colSpan: number;
+  onUpdate: (key: string, patch: Partial<DraftLine>) => void;
+}) {
+  const members = line.variant_members ?? [];
+  const own = line.product_id as string;
+  const unticked = new Set(line.excluded_variant_ids ?? []);
+  const live = members.filter((m) => !m.is_discontinued);
+  const tickedLive = live.filter((m) => !unticked.has(m.product_id)).length;
+  const value = [own, ...members.filter((m) => !unticked.has(m.product_id)).map((m) => m.product_id)];
+  const options = [
+    { value: own, label: line.code, disabled: true },
+    ...members.map((m) => ({
+      value: m.product_id,
+      label: m.code,
+      description: distinctName(m.code, m.name) ?? undefined,
+      badgeText: m.is_discontinued ? 'Discontinued' : undefined,
+    })),
+  ];
+  const count = `${tickedLive + 1} of ${live.length + 1} ticked`;
+  const tickedCodes = options.filter((option) => value.includes(option.value)).map((option) => option.label);
+  const warning = variantPriceWarning(line);
+  const id = `variants-${line.key}`;
+  return (
+    <tr className="align-top">
+      <td colSpan={colSpan} className="px-2 pb-2 pl-9">
+        <div className="sticky left-0 max-w-[calc(100vw-9rem)] space-y-1 border-l-2 border-border pl-3 sm:max-w-md">
+          <Label htmlFor={id} className="text-xs font-medium">
+            Variants on this tag
+            {/* Read out with the label; the trigger shows the same count. */}
+            <span className="sr-only">{count}</span>
+          </Label>
+          <SearchableMultiSelect
+            id={id}
+            value={value}
+            onChange={(ids) => {
+              const keep = new Set(ids);
+              onUpdate(line.key, {
+                excluded_variant_ids: members.filter((m) => !keep.has(m.product_id)).map((m) => m.product_id),
+              });
+            }}
+            options={options}
+            // The count, never the joined codes: eight codes overflow the box (browser pass, 1280px).
+            renderTriggerLabel={() => (
+              <span className="truncate" title={tickedCodes.join(', ')}>
+                {count}
+              </span>
+            )}
+            emptyMessage="No variants."
+            size="sm"
+          />
+          {warning && <p className="text-xs text-warning">{warning}</p>}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -171,13 +268,18 @@ interface LineRowProps {
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the Template select on a many-template line. */
   onChooseTemplate: (key: string, templateId: string) => void;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
+  onResolvePicks: (key: string, partKey: string, productIds: string[]) => void;
   onRemovePart: (key: string, partKey: string) => void;
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
+  onRestorePart: (key: string, rowId: string) => void;
   onRestoreParts: (key: string) => void;
   onChoosePromotion: (key: string, promotionId: string) => void;
   onManualSellPriceChange: (key: string, value: number | null) => void;
   /** True once a Save / Submit found a bad number: rows then show their message. */
   showNumberErrors: boolean;
+  onPreviewLine?: (key: string) => void;
+  /** Any line on the table is SP: the Promotion / Selling price columns exist. */
+  anySelling: boolean;
 }
 
 /** AC-S2-1: "CODE  RM x" - x is the candidate's LIST price in List mode, or
@@ -185,6 +287,12 @@ interface LineRowProps {
  *  (F1, browser finding) - `pricing.candidates[]` carries both, and reading
  *  `sell_price` unconditionally showed the offer price in List mode too.
  *  Falls back to the bare code while pricing has not answered yet. */
+/** Whether the line's chosen template reads any position (fixed part, pick or upgrade). */
+function templateUsesPositions(state: LineTemplateState): boolean {
+  const needs = (state.kind === 'single' ? state.template : state.kind === 'many' ? state.picked : null)?.needs;
+  return !!needs && (needs.fixed > 0 || needs.upgrades > 0 || needs.groups.some((n) => n > 0));
+}
+
 function candidateOptionLabel(
   candidate: LinePartCandidate,
   pricing: LinePricingResult | null,
@@ -224,7 +332,9 @@ function PartRow({
   priceMode,
   combos,
   colSpan,
+  picksK,
   onResolvePart,
+  onResolvePicks,
   onRemovePart,
 }: {
   lineKey: string;
@@ -236,7 +346,10 @@ function PartRow({
   /** Matches however many real columns the line's own row currently has
    *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
   colSpan: number;
+  /** How many picks the chosen template reads from this group (2 or more = a multi-select). */
+  picksK: number;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
+  onResolvePicks: (key: string, partKey: string, productIds: string[]) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
   // D17: a group with exactly one candidate resolves on the spot
@@ -247,12 +360,34 @@ function PartRow({
   const choosable =
     part.candidates.length > 1 || (part.role === 'Upgrade' && part.candidates.length > 0);
   const label = part.role || part.code || part.name;
+  const discontinued = (candidate: LinePartCandidate) =>
+    candidate.is_discontinued ??
+    combos.some((combo) =>
+      combo.parts.some((p) => p.product_id === candidate.product_id && p.is_discontinued),
+    );
+  const multi = choosable && picksK >= 2;
   return (
     <tr className="align-top">
       <td colSpan={colSpan} className="px-2 pb-2 pl-9">
         <div className="flex flex-col gap-1.5 border-l-2 border-border pl-3 sm:flex-row sm:items-start sm:gap-2">
           <div className="min-w-0 flex-1">
-            {choosable ? (
+            {multi ? (
+              <SearchableMultiSelect
+                value={part.product_ids ?? (part.product_id ? [part.product_id] : [])}
+                onChange={(ids) => onResolvePicks(lineKey, part.key, ids)}
+                max={picksK}
+                options={part.candidates.map((candidate) => ({
+                  value: candidate.product_id,
+                  label: candidateOptionLabel(candidate, pricing, priceMode),
+                  description: distinctName(candidate.code, candidate.name) ?? undefined,
+                  // Owner, 7 Nov: a discontinued option is still a choice; the badge only says so.
+                  badgeText: discontinued(candidate) ? 'Discontinued' : undefined,
+                }))}
+                placeholder={`Pick ${picksK}`}
+                emptyMessage="No options."
+                size="sm"
+              />
+            ) : choosable ? (
               <div className="space-y-1">
                 <SearchableSelect
                   clearable
@@ -269,7 +404,12 @@ function PartRow({
                         ? { topup: candidate.topup_amount ?? comboTopup(combos, candidate.product_id) }
                         : undefined,
                     ),
-                    description: candidate.code,
+                    // Owner, 4 Nov: the code is already the option's first line; a second
+                    // line only when the name says something the code does not.
+                    // Owner, 7 Nov: a discontinued option stays pickable, marked "Discontinued".
+                    description: discontinued(candidate)
+                      ? 'Discontinued'
+                      : (distinctName(candidate.code, candidate.name) ?? undefined),
                   }))}
                   placeholder={
                     part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`
@@ -280,8 +420,16 @@ function PartRow({
               </div>
             ) : (
               <div className="min-w-0">
-                <div className="truncate text-sm" title={part.name || part.code}>
-                  {part.name || part.code}
+                <div className="flex items-center gap-1.5">
+                  <div className="truncate text-sm" title={part.name || part.code}>
+                    {part.name || part.code}
+                  </div>
+                  {part.is_discontinued ||
+                  (part.product_id && discontinued({ product_id: part.product_id, code: part.code, name: part.name })) ? (
+                    <Badge variant="warning" appearance="light" size="sm">
+                      Discontinued
+                    </Badge>
+                  ) : null}
                 </div>
                 {!sameDisplayText(part.code, part.name) ? (
                   <div className="text-xs text-muted-foreground">{part.code || '-'}</div>
@@ -316,6 +464,8 @@ function PartRow({
  * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
  * a cell per field, a trash button, and horizontal scroll on a narrow screen.
  */
+const PACKAGE_ROW = 'package:';
+
 function LineRow({
   line,
   index,
@@ -330,16 +480,38 @@ function LineRow({
   onChoosePackage,
   onChooseTemplate,
   onResolvePart,
+  onResolvePicks,
   onRemovePart,
   onAddPart,
+  onRestorePart,
   onRestoreParts,
   onChoosePromotion,
   onManualSellPriceChange,
   showNumberErrors,
+  onPreviewLine,
+  anySelling,
 }: LineRowProps) {
-  const templateState = lineTemplateState(line);
+  const templateState = lineTemplateState(line, priceMode);
+  const unfitted = unfittedPriceType(line, priceMode);
+  // P2: Add part lists the combo's own rows the line lacks first, then the catalogue search.
+  const missingRows = useMemo(() => missingComboRows(line), [line]);
+  const fetchAddPartOptions = useCallback(
+    async (query: string, page: number): Promise<SearchableSelectOption[]> => {
+      const needle = query.trim().toLowerCase();
+      const own: SearchableSelectOption[] =
+        page === 0
+          ? missingRows
+              .filter((row) => !needle || row.label.toLowerCase().includes(needle))
+              .map((row) => ({ value: `${PACKAGE_ROW}${row.id}`, label: row.label, group: 'This package' }))
+          : [];
+      return [...own, ...(await fetchPartOptions(query))];
+    },
+    [missingRows, fetchPartOptions],
+  );
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
+  // What the chosen template reads from each group, once per part.
+  const picksByPart = new Map(line.parts.map((part) => [part.key, picksNeeded(line, part.role, priceMode)]));
   // Only when there is a choice to make: one combo is applied on pick, and none
   // leaves nothing to select.
   const showPackage = !isSet && line.combos.length > 1;
@@ -353,28 +525,32 @@ function LineRow({
     ? {
         value: picked,
         label: line.name || line.code,
-        description: distinctName(line.code, line.name)
-          ? `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`
-          : isSet
-            ? 'Set'
-            : 'Product',
       }
     : undefined;
 
   // ---- S1/S2: price cells (product lines only - a set is priced whole,
   // no combo/promotion concept applies to it). ----
   const showPricing = !isSet && !!line.product_id;
+  const isSelling = linePriceType(line, priceMode) === 'selling';
+  // A product with a finished lookup and no published template has nothing to draw.
+  const noTemplate =
+    !isSet &&
+    !!line.product_id &&
+    (templateState.kind === 'none' || templateState.kind === 'mismatch' || !!unfitted);
+  const canPreview = !!(isSet ? line.product_set_id : line.product_id) && !noTemplate;
+  // What the last click found wrong with this line, one message per line of text (set by the form).
+  const reasons = line.guard_error ? line.guard_error.split('\n') : [];
   const promotionOptions: SearchableSelectOption[] = (pricing?.promotion_options ?? []).map(
     (option) => ({
       value: option.id,
-      label: `${promotionOptionName(option)} - ${formatRM(option.sell_price)}`,
+      label: promotionOptionLabel(option),
     }),
   );
   // The last open (unresolved) part row - AC-S2-3's copy sits under it,
   // once per line.
   const lastOpenPartKey = [...line.parts]
     .reverse()
-    .find((part) => !part.product_id && (part.candidates.length > 1 || part.role === 'Upgrade'))?.key;
+    .find((part) => isOpenPart(part) && (part.candidates.length > 1 || part.role === 'Upgrade'))?.key;
 
   // Owner ruling after #948: List price / Promotion / Selling price are real
   // `<td>` columns on the line's own row (above the app's 992px mobile
@@ -385,7 +561,7 @@ function LineRow({
   // columns, since the price fields move into the stack nested under the
   // Item cell instead (AC-S1-11) - the two never render at once, so
   // nothing duplicates in the DOM.
-  const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
+  const subRowSpan = isMobile ? 4 : anySelling ? 9 : 7;
 
   // Owner polish after #948: the desktop `<td>` already sits under a
   // "List price"/"Promotion"/"Selling price" header, so its cell holds only
@@ -393,6 +569,16 @@ function LineRow({
   // no header to read it off. `withLabel` picks between the two; the amount
   // is `whitespace-nowrap` so "RM 1,350" never breaks mid-string, and the
   // "+ option" hint gets its own line rather than fighting it for room.
+  const renderTypeCell = () => (
+    <PriceModeToggle
+      compact
+      ariaLabel={`Price type for line ${index + 1}`}
+      value={linePriceType(line, priceMode)}
+      title={line.price_type ? undefined : 'Follows Preferred Default'}
+      onChange={(mode) => onUpdate(line.key, { price_type: mode, ...templateAfterFlip(line, mode) })}
+    />
+  );
+
   const renderListPriceCell = (withLabel: boolean) => (
     <div>
       {withLabel && (
@@ -443,11 +629,18 @@ function LineRow({
         </div>
       )}
       {line.promotion_id ? (
-        <div
-          className="text-sm font-medium whitespace-nowrap"
-          title={partsAtListTitle(line, pricing)}
-        >
-          {formatRM(pricing?.sell_price)}
+        <div>
+          <div
+            className="text-sm font-medium whitespace-nowrap"
+            title={partsAtListTitle(line, pricing)}
+          >
+            {formatRM(pricing?.sell_price)}
+          </div>
+          {pricing?.sell_price == null ? (
+            <div className="text-2xs font-normal text-muted-foreground">
+              Clear the promotion to type a price
+            </div>
+          ) : null}
         </div>
       ) : (
         <NumberInput
@@ -490,6 +683,9 @@ function LineRow({
             onOptionChange={(option) => onItemSelect(line.key, option)}
             fetchOptions={fetchItemOptions}
             selectedOption={selectedItem}
+            // The closed cell reads the line's own item, not a picker option's
+            // "CODE  RM <price>" text when the picked value is among the options.
+            renderTriggerLabel={() => selectedItem?.label}
             clearable
             wrapOptions
             placeholder="Search a set or product..."
@@ -499,13 +695,16 @@ function LineRow({
               the same fields stack here instead of living in their own
               columns - never both at once (isMobile picks exactly one), so
               nothing in the row duplicates. */}
-          {isMobile && showPricing && (
+          {isMobile && (
             <div
               data-testid="line-pricing-stack"
               className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
             >
+              {showPricing && (
+                <>
+              <div className="min-w-[90px]">{renderTypeCell()}</div>
               <div className="min-w-[110px]">{renderListPriceCell(true)}</div>
-              {priceMode === 'selling' && (
+              {isSelling && (
                 <>
                   <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
                     {renderPromotionCell(true)}
@@ -513,6 +712,14 @@ function LineRow({
                   <div className="min-w-[110px]">{renderSellingPriceCell(true)}</div>
                 </>
               )}
+                </>
+              )}
+              <Input
+                value={line.remarks}
+                onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
+                placeholder="Note for this line..."
+                aria-label={`Remarks for line ${index + 1}`}
+              />
             </div>
           )}
         </td>
@@ -531,30 +738,46 @@ function LineRow({
           />
         </td>
         {!isMobile && (
+          <td className="px-2 py-2">{showPricing ? renderTypeCell() : null}</td>
+        )}
+        {!isMobile && (
           <td className="px-2 py-2">
             {showPricing ? renderListPriceCell(false) : null}
           </td>
         )}
-        {!isMobile && priceMode === 'selling' && (
+        {!isMobile && anySelling && (
           <>
             <td className="px-2 py-2">
-              {showPricing ? renderPromotionCell(false) : null}
+              {showPricing && isSelling ? renderPromotionCell(false) : null}
             </td>
             <td className="px-2 py-2">
-              {showPricing ? renderSellingPriceCell(false) : null}
+              {showPricing && isSelling ? renderSellingPriceCell(false) : null}
             </td>
           </>
         )}
-        <td className="px-2 py-2">
-          <Input
-            value={line.remarks}
-            onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
-            placeholder="Note for this line..."
-            aria-label={`Remarks for line ${index + 1}`}
-          />
-        </td>
+        {!isMobile && (
+          <td className="px-2 py-2">
+            <Input
+              value={line.remarks}
+              onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
+              placeholder="Note for this line..."
+              aria-label={`Remarks for line ${index + 1}`}
+            />
+          </td>
+        )}
         <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              disabled={!canPreview}
+              onClick={() => onPreviewLine?.(line.key)}
+              title="Preview tag"
+              aria-label={`Preview tag for line ${index + 1}`}
+            >
+              <Eye className="size-3.5" />
+            </Button>
             {/* No confirm: the row is unsaved form state, not a record. */}
             <Button
               variant="ghost"
@@ -569,18 +792,14 @@ function LineRow({
           </div>
         </td>
       </tr>
-      {line.guard_error && (
-        <tr>
-          <td colSpan={subRowSpan} className="px-2 pb-2">
-            {/* The anchor the form's Submit scrolls to (`scrollToFirstProblem`): a
-                row's own refusal, the missing-template one included, sits below
-                the fold on a long request (crew browser pass). */}
-            <p
-              data-error-anchor={`line:${index}`}
-              className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
-            >
-              {line.guard_error}
-            </p>
+      {unfitted && (
+        <tr className="align-top">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            <div className="sticky left-0 max-w-[calc(100vw-9rem)] border-l-2 border-border pl-3 sm:max-w-none">
+              <Badge variant="warning" className="font-normal">
+                No {lineTypeLabel(unfitted)} template linked
+              </Badge>
+            </div>
           </td>
         </tr>
       )}
@@ -608,14 +827,21 @@ function LineRow({
                 truncateTriggerLabel
                 value={line.tag_template_id ?? ''}
                 onChange={(value) => onChooseTemplate(line.key, value)}
-                options={templateState.options.map((template) => ({
-                  value: template.id,
-                  label: template.name,
-                  description:
+                options={templateState.options.map((template) => {
+                  const size =
                     template.width_mm && template.height_mm
                       ? `${template.width_mm} x ${template.height_mm} mm`
-                      : undefined,
-                }))}
+                      : '';
+                  // AC-B4: what the template reads, in this combo's own words.
+                  const combo = comboOfLine(line);
+                  const needs =
+                    combo && template.needs ? needsText(template.needs, comboShape(combo.parts)) : '';
+                  return {
+                    value: template.id,
+                    label: template.name,
+                    description: [size, needs].filter(Boolean).join('. ') || undefined,
+                  };
+                })}
                 placeholder="Tag template"
                 emptyMessage="No templates."
                 size="sm"
@@ -623,6 +849,13 @@ function LineRow({
             </div>
           </td>
         </tr>
+      )}
+      {!isSet &&
+        line.product_id &&
+        (line.variant_members?.length ?? 0) > 0 &&
+        // Only a template that reads "All variants" prints the members (crew re-pass 1).
+        line.tag_templates?.some((template) => template.id === line.tag_template_id && template.reads_variants) && (
+        <VariantsRow line={line} colSpan={subRowSpan} onUpdate={onUpdate} />
       )}
       {showPackage && (
         <tr className="align-top">
@@ -652,14 +885,31 @@ function LineRow({
             lineIndex={index}
             part={part}
             pricing={pricing}
-            priceMode={priceMode}
+            priceMode={linePriceType(line, priceMode)}
             combos={line.combos.filter((combo) => combo.combo_id === line.combo_id)}
             colSpan={subRowSpan}
+            picksK={picksByPart.get(part.key) ?? 0}
             onResolvePart={onResolvePart}
+            onResolvePicks={onResolvePicks}
             onRemovePart={onRemovePart}
           />
+          {/* AC-C5: how many picks a multi-pick group still lacks. A live hint, not a
+              blocking reason: those show on the line only once Approve is clicked. */}
+          {(() => {
+            const k = picksByPart.get(part.key) ?? 0;
+            const held = part.product_ids?.length ?? (part.product_id ? 1 : 0);
+            return k >= 2 && part.candidates.length > 1 && held < k ? (
+              <tr>
+                <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+                  <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
+                    {`${part.role}: pick ${k - held} more.`}
+                  </p>
+                </td>
+              </tr>
+            ) : null;
+          })()}
           {/* AC-S2-3: once per line, under the LAST unresolved row. */}
-          {part.key === lastOpenPartKey && (
+          {part.key === lastOpenPartKey && !templateUsesPositions(templateState) && (
             <tr>
               <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
                 <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
@@ -686,8 +936,15 @@ function LineRow({
                 onChange={() => {
                   /* the whole option carries the code; see onOptionChange */
                 }}
-                onOptionChange={(option) => onAddPart(line.key, option)}
-                fetchOptions={fetchPartOptions}
+                onOptionChange={(option) => {
+                  // The package's own rows come back by their id; anything else is a catalogue part.
+                  if (option?.value.startsWith(PACKAGE_ROW)) {
+                    onRestorePart(line.key, option.value.slice(PACKAGE_ROW.length));
+                  } else {
+                    onAddPart(line.key, option);
+                  }
+                }}
+                fetchOptions={fetchAddPartOptions}
                 wrapOptions
                 placeholder="Add part"
                 emptyMessage="No products match."
@@ -697,26 +954,42 @@ function LineRow({
           </td>
         </tr>
       )}
-      {warning && (
+      {(reasons.length > 0 || warning) && (
         <tr>
-          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
-              <Badge variant="warning" appearance="light" size="sm">
-                Package warning
-              </Badge>
-              <span className="text-xs text-muted-foreground">{warning}</span>
-              {/* D19: put back exactly what is named missing above - only
-                  while there is a chosen package to restore it FROM. */}
-              {line.combo_id && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-1.5 text-2xs"
-                  onClick={() => onRestoreParts(line.key)}
+          <td colSpan={subRowSpan} className="px-2 pb-2">
+            {/* One message block under the line (owner, 5 Nov): what the last Approve click found
+                wrong, in red, and the package warning in its own style. The anchor is the one
+                the form's Submit scrolls to (`scrollToFirstProblem`). */}
+            <div className="flex flex-col gap-1.5">
+              {reasons.map((reason, at) => (
+                <p
+                  key={reason}
+                  {...(at === 0 ? { 'data-error-anchor': `line:${index}` } : {})}
+                  className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
                 >
-                  Restore
-                </Button>
+                  {reason}
+                </p>
+              ))}
+              {warning && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="warning" appearance="light" size="sm">
+                    Package warning
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">{warning}</span>
+                  {/* D19: put back exactly what is named missing above - only
+                      while there is a chosen package to restore it FROM. */}
+                  {line.combo_id && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-1.5 text-2xs"
+                      onClick={() => onRestoreParts(line.key)}
+                    >
+                      Restore
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           </td>

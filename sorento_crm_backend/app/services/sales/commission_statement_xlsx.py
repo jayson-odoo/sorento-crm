@@ -1,0 +1,224 @@
+"""The commission statement workbook (lane TARGET-COMMISSION-VIEW, owner Q1 4 Nov: xlsx).
+
+Writes what `target_service.commission_statements` computed, nothing more: a Summary sheet
+with one row per target, then one sheet per target (named by its number) with the header, the
+period summary, and per period the tier table used and the documents behind "Achieved".
+Dates are real dates shown dd/mm/yyyy, money is shown with 2 decimals (owner's 4 Nov rule),
+so a stakeholder can sort and sum the cells.
+"""
+from __future__ import annotations
+
+from app.utils.date_format import fmt_date_range, fmt_datetime
+import io
+from datetime import date, datetime
+from typing import Iterable, List, Optional
+
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
+
+DATE_FMT = "dd/mm/yyyy"
+MONEY_FMT = "#,##0.00"
+PCT_FMT = '0.0"%"'
+BOLD = Font(bold=True)
+
+METHODS = {
+    "retroactive": "Highest tier pays on the whole amount",
+    "marginal": "Each tier pays on its own slice",
+    "none": "No commission",
+}
+NOT_TRACKED = "Payment is not tracked in the CRM."
+#: A string starting with one of these is a formula to Excel: a target name typed by staff or a
+#: customer name synced from AutoCount must stay text in a file sent to stakeholders.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+
+def _account(account: Optional[dict]) -> str:
+    if not account:
+        return ""
+    return f"{account['code']} - {account['name']} ({account['label']})"
+
+
+def _rates(entries: Iterable[dict], metric: str) -> str:
+    unit = "%" if metric == "amount" else " RM/unit"
+    parts = []
+    for entry in entries:
+        if entry.get("rate") is None:
+            continue
+        text = f"{entry['rate']:.2f}{unit}"
+        parts.append(f"{entry['label']} {text}" if entry.get("label") else text)
+    return ", ".join(parts)
+
+
+def _reached_rate(p: dict, metric: str) -> str:
+    """The reached tier's rate(s) and its Additional, as the Periods tab reads it:
+    "A/C I 6.00% + 1.00%" or "6.00% + RM 500.00" (lane TARGET-TIER-ADDITIONAL)."""
+    text = _rates(p.get("tier_rates") or [], metric)
+    add = p.get("tier_additional")
+    if not text or not add or not add.get("value"):
+        return text
+    if add["kind"] == "amount" and add.get("accounts"):
+        # Set per account (owner 8 Nov): each account named, as the Periods tab reads it.
+        own = ", ".join(f"{e['label']} + RM {e['rate']:,.2f}" for e in add["accounts"] if e.get("rate"))
+        return f"{text}, {own}" if own else text
+    if add["kind"] == "amount":
+        return f"{text} + RM {add['value']:,.2f}"
+    if metric == "quantity":
+        return f"{text} + RM {add['value']:.2f}/unit"
+    return f"{text} + {add['value']:.2f}%"
+
+
+def _tier_additional(rung: dict, metric: str) -> str:
+    """The tier table's Additional cell: its % Additional rates, and an RM Additional set per
+    account as each account's own amount ("A/C I RM 100.00")."""
+    parts = [_rates(rung.get("additional_rates") or [], metric)]
+    add = rung.get("additional") or {}
+    if add.get("kind") == "amount" and add.get("accounts"):
+        parts.append(", ".join(f"{e['label']} RM {e['rate']:,.2f}" for e in add["accounts"] if e.get("rate")))
+    elif add.get("kind") == "amount" and add.get("value"):
+        parts.append(f"RM {add['value']:,.2f}")
+    return ", ".join(p for p in parts if p)
+
+
+def _period_label(p: dict) -> str:
+    return fmt_date_range(p["period_start"], p["period_end"])
+
+
+def _paid(p: dict) -> Optional[float]:
+    if p["commission_earned"] is None:
+        return None
+    return round((p["commission_earned"] or 0) + (p["bonus_earned"] or 0), 2)
+
+
+class _Sheet:
+    """Row-at-a-time writer that formats each cell by what it holds."""
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.row = 1
+
+    def write(self, values: List, *, bold: bool = False, money: Iterable[int] = (), pct: Iterable[int] = ()):
+        money, pct = set(money), set(pct)
+        for col, value in enumerate(values, start=1):
+            if value is None or value == "":
+                continue
+            cell = self.ws.cell(row=self.row, column=col, value=value)
+            if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+                # Kept as text, as project_quotation_excel_service does: the name reads as typed.
+                cell.data_type = "s"
+                cell.quotePrefix = True
+            if isinstance(value, (date, datetime)):
+                cell.number_format = DATE_FMT
+            elif col in money:
+                cell.number_format = MONEY_FMT
+            elif col in pct:
+                cell.number_format = PCT_FMT
+            if bold:
+                cell.font = BOLD
+        self.row += 1
+
+    def gap(self):
+        self.row += 1
+
+
+def _target_sheet(ws, t: dict, generated: datetime, on: date) -> None:
+    metric = t["metric"]
+    unit = "RM" if metric == "amount" else "units"
+    sheet = _Sheet(ws)
+    sheet.write([f"Commission statement: {t['target_no']} {t['name']}"], bold=True)
+    sheet.write(["For", t["subject_label"]])
+    sheet.write(["Counts", t["counts_label"]])
+    sheet.write(["Method", METHODS.get(t["commission_method"], t["commission_method"])])
+    sheet.write(["Payment", NOT_TRACKED])
+    sheet.write(["Earned to date (RM)", t.get("commission_to_date")], money=[2])
+    sheet.write(["Current period so far (RM), not final", t.get("commission_current")], money=[2])
+    sheet.write(["Generated", fmt_datetime(generated, naive_is_utc=False)])
+    sheet.gap()
+
+    sheet.write(["Summary"], bold=True)
+    sheet.write(
+        ["Period", f"Target ({unit})", f"Achieved ({unit})", "%", "Tier reached", "Rate",
+         "Commission (RM)", "Bonus (RM)", "Status"],
+        bold=True,
+    )
+    for p in t["periods"]:
+        status = "Current, not final" if p["is_current"] else ("Not started" if p["period_start"] > on else "Ended")
+        sheet.write(
+            [
+                _period_label(p), p["target_value"], p["achieved_value"], p["achieved_pct"],
+                f"Tier {p['tier_reached']}" if p["tier_reached"] else "None",
+                _reached_rate(p, metric), p["commission_earned"], p["bonus_earned"], status,
+            ],
+            money=[2, 3, 7, 8], pct=[4],
+        )
+    sheet.write(
+        ["Total", None, None, None, None, None,
+         round(sum(p["commission_earned"] or 0 for p in t["periods"]), 2),
+         round(sum(p["bonus_earned"] or 0 for p in t["periods"]), 2)],
+        bold=True, money=[7, 8],
+    )
+
+    for p in t["periods"]:
+        sheet.gap()
+        sheet.write([f"Period {_period_label(p)}"], bold=True)
+        if t["subject_kind"] == "dealer" and p.get("accounts") and _paid(p) is not None:
+            # Each account is its own payee (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov).
+            sheet.write(["Each account's commission"], bold=True)
+            sheet.write(["Account", f"Sales ({unit})", "Commission + bonus (RM)"], bold=True)
+            for a in p["accounts"]:
+                sheet.write([_account(a), a["achieved_value"], a["commission_earned"]], money=[2, 3])
+        if p["tier_table"]:
+            sheet.write(["Tier table used"], bold=True)
+            sheet.write(["Tier", "From (% of target)", f"Threshold ({unit})", "Rate", "Additional", "Reached"], bold=True)
+            for rung in p["tier_table"]:
+                sheet.write(
+                    [f"Tier {rung['tier']}", rung["from_pct"], rung["threshold_rm"],
+                     _rates(rung["rates"], metric), _tier_additional(rung, metric),
+                     "Yes" if rung["reached"] else "No"],
+                    money=[3], pct=[2],
+                )
+        sheet.write([f"Documents counted in Achieved ({t['counts_label']})"], bold=True)
+        sheet.write(["Document no.", "Date", "Account", f"Amount counted ({unit})"], bold=True)
+        for d in p["documents"]:
+            sheet.write([d["doc_no"], d["doc_date"], d["account_code"], d["amount"]], money=[4])
+        if not p["documents"]:
+            sheet.write(["No documents in this period"])
+        sheet.write(["Total (= Achieved)", None, None, p["achieved_value"]], bold=True, money=[4])
+
+    for col, width in enumerate((34, 16, 18, 14, 16, 18, 16, 12, 26), start=1):
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+
+def build(statements: List[dict], *, on: date, generated: Optional[datetime] = None) -> bytes:
+    """`on`: the date the figures were computed for (what "current" means)."""
+    generated = generated or datetime.now()
+    used: set = set()
+    wb = Workbook()
+    summary = _Sheet(wb.active)
+    wb.active.title = "Summary"
+    summary.write(["Commission statement", f"Generated {fmt_datetime(generated, naive_is_utc=False)}"], bold=True)
+    summary.write(["Earned to date counts periods that have ended; the current period can still change. " + NOT_TRACKED])
+    summary.gap()
+    summary.write(
+        ["Target no.", "Name", "For", "Counts", "Earned to date (RM)", "Current period so far (RM)"],
+        bold=True,
+    )
+    for t in statements:
+        summary.write(
+            [t["target_no"], t["name"], t["subject_label"], t["counts_label"],
+             t.get("commission_to_date"), t.get("commission_current")],
+            money=[5, 6],
+        )
+        # Target numbers are unique per company, so a statement over two companies can repeat one.
+        title, n = t["target_no"][:31], 1
+        while title in used:
+            n += 1
+            title = f"{t['target_no'][:27]} ({n})"
+        used.add(title)
+        _target_sheet(wb.create_sheet(title), t, generated, on)
+    for col, width in enumerate((14, 40, 34, 22, 20, 24), start=1):
+        wb["Summary"].column_dimensions[get_column_letter(col)].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

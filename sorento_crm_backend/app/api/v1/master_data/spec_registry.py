@@ -34,6 +34,7 @@ from app.dependencies import (
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
+from app.services.dealer_kit.asset_service import numeric_spec_values_by_key, numeric_value_keys
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_spec_rules import (
     BRAND_IS_NOT_A_SPEC,
@@ -92,7 +93,60 @@ def _also_on(row, owners: dict) -> dict[str, list[str]]:
     return out
 
 
-def _serialise(row, owners: Optional[dict] = None) -> dict:
+def _visible_icons(rows) -> dict[str, tuple[dict, dict]]:
+    """``{spec_key: (value_icons, {asset id: name})}``, as the CALLER may see them, for many rows
+    in one asset query.
+
+    The registry is shared by every company and assets are not: another company's icons, and
+    any icon since deleted, never reach the client (security review S1/S3).
+    """
+    from sqlalchemy.orm import object_session
+
+    from app.models.dealer_kit import Asset
+    from app.models.resources import Attachment
+    from app.services.dealer_kit.asset_service import ICON, _uuid_text
+
+    rows = [row for row in rows if row.value_icons]
+    ids = {
+        ident
+        for row in rows
+        for listed in (row.value_icons or {}).values()
+        for ident in (_uuid_text(x) for x in listed or [])
+        if ident
+    }
+    session = object_session(rows[0]) if rows else None
+    names: dict[str, str] = {}
+    if ids and session is not None:
+        names = {
+            asset.id: asset.name
+            for asset in session.query(Asset)
+            .join(Attachment, Attachment.id == Asset.attachment_id)
+            .filter(Asset.id.in_(ids), Asset.kind == ICON, Attachment.is_deleted.is_(False))
+            .all()
+        }
+    out: dict[str, tuple[dict, dict]] = {}
+    for row in rows:
+        icons: dict[str, list[str]] = {}
+        for value, listed in (row.value_icons or {}).items():
+            kept = [i for i in (_uuid_text(x) for x in listed or []) if i in names]
+            if kept:
+                icons[value] = kept
+        out[row.spec_key] = (icons, {i: names[i] for ids in icons.values() for i in ids})
+    return out
+
+
+def _serialise(
+    row, owners: Optional[dict] = None, icons: Optional[dict] = None, numeric: Optional[dict] = None
+) -> dict:
+    if icons is None:
+        icons = _visible_icons([row])
+    value_icons, icon_names = icons.get(row.spec_key, ({}, {}))
+    stored_conditions = row.value_icon_conditions or {}
+    visible_conditions = {
+        value: picked
+        for value, ids in value_icons.items()
+        if (picked := {i: stored_conditions[value][i] for i in ids if i in (stored_conditions.get(value) or {})})
+    }
     if owners is None:
         from sqlalchemy.orm import object_session
 
@@ -152,6 +206,21 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
         # value -> display label ("pp" -> "PP"), purely cosmetic (#423, D/E). Editable
         # on seed AND user rows, like user_synonyms.
         "value_labels": row.value_labels or {},
+        # value -> [Dealer Kit icon asset id, ...], in the admin's order (feature icons).
+        # Only the caller's own live icons: the registry is shared, the assets are not.
+        "value_icons": value_icons,
+        # value -> {icon id: [{spec_key, value}]}: the AND list an icon needs (visible pairs only).
+        "value_icon_conditions": visible_conditions,
+        # asset id -> name, so the screen names an icon rather than showing its id, without
+        # the reader holding the Dealer Kit library permission.
+        "value_icon_names": icon_names,
+        # Where this spec's icons sit in the tag's one icon sequence (null: last).
+        "icon_order": row.icon_order,
+        # PRICETAG-UPGRADE-VARIANTS S4: a numeric key's values that products hold, so each can
+        # carry icons on the Values and words tab. Empty on every other key.
+        "numeric_values": numeric_value_keys(row, numeric.get(row.spec_key, []) if numeric is not None else None)
+        if row.data_type == "numeric"
+        else [],
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),
@@ -175,7 +244,11 @@ def get_spec_registry(
     try:
         rows = active_registry(db)
         owners = vocabulary_owners(db)
-        keys = [_serialise(row, owners) for row in rows]
+        icons = _visible_icons(rows)
+        numeric = numeric_spec_values_by_key(
+            db, [row.spec_key for row in rows if row.data_type == "numeric"]
+        )
+        keys = [_serialise(row, owners, icons, numeric) for row in rows]
         stamps = [r.updated_at or r.created_at for r in rows]
         updated_at = max(stamps).isoformat() if stamps else None
 
@@ -193,7 +266,9 @@ def get_spec_registry(
             return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag_header})
 
         response.headers["ETag"] = etag_header
-        response.headers["Cache-Control"] = "private, max-age=60"
+        # Revalidated on every read (the ETag makes that a 304), never served from the
+        # browser's own copy: a refetch just after a save brought back the old icon order.
+        response.headers["Cache-Control"] = "private, no-cache"
         return payload
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -203,6 +278,11 @@ def get_spec_registry(
 # writes
 # --------------------------------------------------------------------------- #
 _EDITABLE_DATA_TYPES = {"enum", "numeric", "boolean"}
+
+
+class IconCondition(BaseModel):
+    spec_key: str
+    value: str
 
 
 class SpecKeyUpdate(BaseModel):
@@ -244,6 +324,13 @@ class SpecKeyUpdate(BaseModel):
     # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on ANY
     # row, seed or user - staff-owned like user_synonyms, never seed-repaired.
     value_labels: Optional[dict[str, str]] = None
+    # value -> [Dealer Kit icon asset id, ...] in display order: the feature icons a price tag
+    # shows for a product holding that value. Staff-owned like value_labels, never
+    # seed-repaired; an empty list removes the value's entry.
+    value_icons: Optional[dict[str, list[str]]] = None
+    value_icon_conditions: Optional[dict[str, dict[str, list[IconCondition]]]] = None
+    # The spec's place in the tag's one feature icon sequence (1 first); null clears it.
+    icon_order: Optional[int] = Field(default=None, ge=1, le=999)
     # Which products may carry this key at all, as {other_key: [permitted values]}.
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
@@ -1004,10 +1091,11 @@ def update_spec_key(
         fields = payload.model_dump(exclude_unset=True)
         # A save that changes how this key is read re-reads its products before it
         # answers, and only one catalogue read runs at a time (security review S1). The
-        # slot is taken here, before anything is changed, so a refused save stores
-        # nothing; it is given back in `finally`.
-        if _READING_FIELDS & set(fields):
-            read_token = product_spec_preview.begin_catalogue_read(db)
+        # slot is taken below, once the fields are applied and only if the reading
+        # really moved, but before the commit, so a refused save stores nothing. A save
+        # that changes only what a price tag draws (icon order, value icons, labels)
+        # never waits on another key's re-read, even when the record page re-sends the
+        # rules unchanged (SPEC-ICON-PICKER-UX, owner on PROD 6 Nov).
         # A save that changes how this key is read re-reads the products it changes,
         # straight away (D10, AC-S1.16). Judged against the row as it was, before any
         # field below is applied (a suppressed value is applied early; review S-10).
@@ -1030,6 +1118,21 @@ def update_spec_key(
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Permission required: master_data.spec_registry.edit",
+                )
+
+        # Feature icons are Dealer Kit artwork: choosing them needs the library too, on the
+        # server and not only in the UI (review S2). `icon_order` is registry-only.
+        if "value_icons" in fields or "value_icon_conditions" in fields:
+            from fastapi import HTTPException
+
+            from app.services.user_service import UserPermissionService
+
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "dealer_kit.library.manage"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Permission required: dealer_kit.library.manage",
                 )
 
         # The meaning and the cross-field word guard are judged before anything below is
@@ -1194,6 +1297,31 @@ def update_spec_key(
             # not persist.
             row.value_labels = cleaned_labels
 
+        if "value_icons" in fields:
+            from app.services.dealer_kit.asset_service import clean_value_icons
+
+            # Reassigned, never mutated in place (JSONB, see value_labels above).
+            row.value_icons = clean_value_icons(db, row, fields["value_icons"] or {})
+        if "value_icon_conditions" in fields:
+            from app.services.dealer_kit.asset_service import clean_value_icon_conditions
+
+            row.value_icon_conditions = clean_value_icon_conditions(
+                db, row, fields["value_icon_conditions"]
+            )
+        if "suppressed_values" in fields or "user_values" in fields:
+            from app.services.dealer_kit.asset_service import prune_value_icons
+
+            # A value taken away takes its icons with it (review B1).
+            prune_value_icons(row)
+        if "value_icons" in fields:
+            from app.services.dealer_kit.asset_service import drop_orphan_icon_conditions
+
+            # Icons that left a value take their conditions along.
+            drop_orphan_icon_conditions(row)
+
+        if "icon_order" in fields:
+            row.icon_order = fields["icon_order"]
+
         if "value_weights" in fields:
             row.value_weights = {
                 str(value).strip(): float(bonus)
@@ -1249,11 +1377,23 @@ def update_spec_key(
             _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 
         reading_after = _reading(row)
+        rereads = fingerprint_before is not None and _reading_changed(reading_before, reading_after)
+        if rereads:
+            try:
+                read_token = product_spec_preview.begin_catalogue_read(db, label=row.label)
+            except Exception:
+                db.rollback()
+                raise
+            # Taken again now the slot is held, from what is COMMITTED (a session of its
+            # own: this one's identity map already carries the edit). Another key's save
+            # may have landed since the first one, and `reread_after_save` judges whether
+            # the stored fingerprint was current against it (review S1).
+            fingerprint_before = _committed_fingerprint(db)
         db.commit()
         db.refresh(row)
 
         products_updated = 0
-        if fingerprint_before is not None and _reading_changed(reading_before, reading_after):
+        if rereads:
             products_updated = product_spec_rederive.reread_after_save_logged(
                 db, row.spec_key, fingerprint_before=fingerprint_before
             )
@@ -1269,14 +1409,36 @@ def update_spec_key(
 
 # The fields that change what a product reads: a rule, a scope, a cap, or a choice taken
 # away (a rule setting a suppressed value stops firing, `configured_rules`; review S-10).
+def _committed_fingerprint(db: Session) -> str:
+    """`rules_fingerprint` of the committed registry, read beside `db`'s unsaved edits."""
+    with Session(bind=db.get_bind(), autoflush=False) as fresh:
+        return product_spec_rederive.rules_fingerprint(fresh)
+
+
 _READING_FIELDS = {"derivation_rules", "applies_when", "max_value", "suppressed_values"}
 
 
 def _reading(row) -> tuple:
+    """How the row reads products, compared by MEANING: a rule is its cleaned builder.
+
+    Shipped rules carry bookkeeping a stored rule does not (`_seed`), so a key that read the
+    shipped rules and is now saved with those same rules stored (the record page re-sends what
+    it shows on the first save) reads exactly as before (crew pass on #2214).
+    """
     from app.services.product_spec_derivation import stored_or_shipped_rules
+    from app.services.product_spec_rules import builder_of, builder_identity, clean_builder
+
+    def meaning(rule):
+        builder = builder_of(rule)
+        if not builder:
+            return rule
+        try:
+            return builder_identity(clean_builder(builder))
+        except Exception:  # noqa: BLE001 - an odd legacy rule compares as it is stored
+            return builder_identity(builder)
 
     return (
-        stored_or_shipped_rules(row),
+        [meaning(rule) for rule in stored_or_shipped_rules(row)],
         dict(row.applies_when or {}),
         row.max_value,
         sorted(str(v) for v in (row.suppressed_values or [])),

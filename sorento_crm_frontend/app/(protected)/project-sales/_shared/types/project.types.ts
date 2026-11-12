@@ -12,25 +12,27 @@
  *   legitimate. Render the list from `blocks`, never from a similarity threshold.
  */
 
+import type { MatrixCells, MatrixHeader } from '../lib/quotationMatrix';
+
 export type ProjectOutcome = 'open' | 'won' | 'lost' | 'dormant';
 
-export type PartyType =
-  | 'developer'
-  | 'architect'
-  | 'main_contractor'
-  | 'trading_house'
-  | 'consultant'
-  | 'subcontractor'
-  | 'interior_designer'
-  | 'tender_party';
+/**
+ * A key of the editable lookup set `project_party_role` (PROJECT-PARTY-ROLES, owner 10 Nov 2026).
+ * The list is data: an admin adds, renames and deactivates roles on Lookup sets.
+ */
+export type PartyType = string;
 
-/** Roles a project links beyond developer, architect and main contractor (PS-REGISTRATION-V3). */
-export type PartyLinkRole =
-  | 'subcontractor'
-  | 'trading_house'
-  | 'tender_party'
-  | 'consultant'
-  | 'interior_designer';
+/** A role a project links a party in: any role of the list except the developer (a column). */
+export type PartyLinkRole = string;
+
+/** One role of the list as the public lookup read returns it. */
+export interface PartyRole {
+  value: string;
+  label: string;
+  is_active: boolean;
+  /** Several parties may fill the role on one project (several trading houses). */
+  allows_many: boolean;
+}
 
 export interface PartyLink {
   role: PartyLinkRole;
@@ -64,6 +66,10 @@ export interface PartyOnProject {
   role: string;
   name: string;
   phone: string | null;
+  /** The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2). */
+  address?: string | null;
+  email?: string | null;
+  fax?: string | null;
   contacts: {
     stakeholder_id: string;
     party_contact_id: string | null;
@@ -83,6 +89,7 @@ export interface ProjectParty {
   registration_no?: string | null;
   address?: string | null;
   phone?: string | null;
+  fax?: string | null;
   email?: string | null;
   notes?: string | null;
   customer_id?: string | null;
@@ -101,6 +108,7 @@ export interface ProjectPartyBody {
   registration_no?: string | null;
   address?: string | null;
   phone?: string | null;
+  fax?: string | null;
   email?: string | null;
   notes?: string | null;
   customer_id?: string | null;
@@ -193,6 +201,8 @@ export interface Project {
   /** Null until a portal registration is approved: render it with `projectCodeLabel`. */
   project_code: string | null;
   title: string;
+  /** Short name (PROJECT-NAME); null shows the title through `projectDisplayName`. */
+  name?: string | null;
   outcome: ProjectOutcome;
   loss_reason?: string | null;
   /** Project sales admin's filing reference, e.g. PS26-0143. Not an identity: it is
@@ -218,6 +228,9 @@ export interface Project {
   critical_at?: string | null;
   management_support?: string | null;
   management_notes?: string | null;
+  /** PS-QUOTE-RULES: this project's discounts go to this person; null = owner's superior. */
+  discount_approver_user_id?: string | null;
+  discount_approver_name?: string | null;
 
   registered_company_name?: string | null;
   location?: string | null;
@@ -225,10 +238,6 @@ export interface Project {
   /** Malaysian state (lookup set my_state) and mukim; both optional (PROJECT-REG-PORTAL D12). */
   state?: string | null;
   mukim?: string | null;
-  architect_party_id?: string | null;
-  architect_name?: string | null;
-  main_contractor_party_id?: string | null;
-  main_contractor_name?: string | null;
   /** Several trading houses, subcontractors, tender parties; one consultant / ID (PS-REGISTRATION-V3). */
   party_links?: PartyLink[];
   estimated_sales_value?: string | null;
@@ -291,6 +300,7 @@ export interface Project {
 
 export interface ProjectRegisterBody {
   title: string;
+  name?: string | null;
   developer_party_id?: string | null;
   type_id?: string | null;
   template_id?: string | null;
@@ -302,8 +312,6 @@ export interface ProjectRegisterBody {
   mukim?: string | null;
   /** Filing reference, e.g. PS26-0143 (D7). Settable on create too, not edit-only. */
   admin_ref?: string | null;
-  architect_party_id?: string | null;
-  main_contractor_party_id?: string | null;
   estimated_sales_value?: string | null;
   launch_date?: string | null;
   expected_delivery_from?: string | null;
@@ -314,7 +322,10 @@ export interface ProjectRegisterBody {
   lead_source?: string | null;
   /** Present replaces every link; absent keeps them. */
   party_links?: PartyLink[];
-  /** Register only: party contacts copied into the project's stakeholders. */
+  /**
+   * Party contacts copied into the project's stakeholders, on register and on edit. Edit only
+   * ADDS (PROJECT-PARTY-ROLES Q6 b): removal stays on the Stakeholders tab.
+   */
   contact_ids?: string[];
   /**
    * Only for a user holding `projects.registrations.submit` without edit: false saves a
@@ -329,6 +340,7 @@ export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
   is_critical?: boolean;
   management_support?: string | null;
   management_notes?: string | null;
+  discount_approver_user_id?: string | null;
   loss_reason?: string | null;
 }
 
@@ -336,6 +348,7 @@ export interface ClashCandidate {
   project_id: string;
   project_code: string;
   title: string;
+  name?: string | null;
   outcome?: ProjectOutcome;
   status_label?: string | null;
   owner_user_id?: string | null;
@@ -443,6 +456,8 @@ export interface ProjectTask {
   project_id: string;
   project_code?: string | null;
   project_title?: string | null;
+  /** The project's short name (PROJECT-NAME); null shows `project_title`. */
+  project_name?: string | null;
 
   name: string;
   description?: string | null;
@@ -562,6 +577,8 @@ export interface ProjectLead {
   id: string;
   lead_code: string;
   title: string;
+  /** Short name (PROJECT-NAME Q5); carried onto the project it qualifies into. */
+  name?: string | null;
 
   customer_id: string;
   customer_name?: string | null;
@@ -596,6 +613,7 @@ export interface ProjectLead {
 
 export interface ProjectLeadBody {
   title: string;
+  name?: string | null;
   customer_id?: string | null;
   developer_party_id?: string | null;
   source?: LeadSource | null;
@@ -669,8 +687,6 @@ export interface LeadListParams {
  * a quotation are both SERVER-DERIVED for rendering. Never write them, and never
  * re-derive "frozen" in the browser from anything else.
  */
-export type QuotationOutcome = 'open' | 'won' | 'lost';
-
 export type UnitType = 'house_unit' | 'bathroom' | 'facility' | 'common_area';
 
 export type FloorMode = 'percent' | 'absolute';
@@ -688,11 +704,6 @@ export interface ProjectQuotation {
   series_id?: string | null;
   series_name?: string | null;
   notes?: string | null;
-
-  outcome: QuotationOutcome;
-  loss_reason?: string | null;
-  loss_reason_label?: string | null;
-  decided_at?: string | null;
 
   version_count: number;
   current_version_id?: string | null;
@@ -730,6 +741,11 @@ export interface QuotationVersion {
   total_amount: string;
   notes?: string | null;
   created_at?: string | null;
+  /**
+   * PS-QUOTE-MATRIX: column headers over columns, frozen with the version. `[]` (or absent, on a
+   * payload from before the grid) is today's single Qty column.
+   */
+  matrix_columns?: MatrixHeader[];
 }
 
 /**
@@ -865,15 +881,21 @@ export interface QuotationLine {
   complete_set?: string | null;
   /** Set on the line that OPENS a section, so a band cannot orphan itself (AC-C3). */
   band_label?: string | null;
+  /** A heading row: band_label only, no product or money (PROPOSAL-FORM-COLLAPSE). */
+  is_section?: boolean;
 
   is_non_standard: boolean;
   /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */
   floor_value_applied?: string | null;
   floor_level_applied?: FloorLevel | null;
   is_below_floor: boolean;
+  /** Priced below its default price when saved (PS-QUOTE-RULES R1): what the banner counts. */
+  is_discounted?: boolean;
 
   sort_order: number;
   notes?: string | null;
+  /** PS-QUOTE-MATRIX: quantity per leaf key; `{}` on a scope without columns. */
+  qty_cells?: MatrixCells;
 }
 
 export interface QuotationLineBody {
@@ -895,7 +917,11 @@ export interface QuotationLineBody {
   technical_spec?: string | null;
   complete_set?: string | null;
   band_label?: string | null;
+  /** A heading row: band_label only, no product or money (PROPOSAL-FORM-COLLAPSE). */
+  is_section?: boolean;
   is_rate_only?: boolean;
+  /** Sent only on a version with columns; the server derives `quantity` from it. */
+  qty_cells?: MatrixCells | null;
 }
 
 /**
@@ -929,55 +955,48 @@ export interface StagedQuotationLine {
   removed: boolean;
 }
 
-export type QuotationAmendmentField = 'quantity' | 'unit_price' | 'remove';
-export type QuotationAmendmentDecision = 'pending' | 'accepted' | 'rejected';
+/** What one piece of customer feedback carries as its hint (PS-QUOTE-MATRIX R19-R22). */
+export type QuotationFeedbackKind = 'note' | 'quantity' | 'unit_price' | 'remove' | 'model_swap';
 
 /**
- * One customer suggestion on one ISSUED line (QUOTE-CUSTOMER-AMEND): one field, decided on its
- * own, so a quantity can be accepted and a price on the same line rejected. Money and quantities
- * are decimal strings; `value_to` is null for a removal. The floor fields are staff-only.
+ * One feedback note on an item or a cell. Nothing is accepted or applied: the only state is
+ * Handled (`handled_at`), ticked by staff. Money and quantities are decimal strings.
  */
-export interface QuotationAmendmentRow {
+export interface QuotationFeedbackRow {
   id: string;
   line_id: string;
-  field: QuotationAmendmentField;
+  /** The scope (quotation) the note's line sits in. Absent on a payload from before it. */
+  scope_id?: string | null;
+  scope_label: string;
+  line_description: string | null;
+  /** The cell it points at, or null for the whole item. */
+  cell_key: string | null;
+  /** "<header> / <column>" or the header label; null for an item note. */
+  cell_label: string | null;
+  kind: QuotationFeedbackKind;
   value_from: string | null;
   value_to: string | null;
-  decision: QuotationAmendmentDecision;
-  decision_reason: string | null;
-  below_floor?: boolean;
-  floor_value?: string | null;
+  /** Model swap: the model as the customer typed it. */
+  model: string | null;
+  note: string | null;
+  handled_at: string | null;
+  handled_by_name: string | null;
 }
 
-/** The request as the staff routes answer it. */
-export interface QuotationAmendmentRequest {
+export interface QuotationFeedbackRequest {
   id: string;
-  status: 'open' | 'applied' | 'superseded';
+  issue_label: string | null;
   submitted_at: string | null;
   requester_name: string | null;
+  /** The free note sent with the items. */
   note: string | null;
-  applied_at: string | null;
-  rows: QuotationAmendmentRow[];
-  /** The issue's total, and the total with the accepted rows applied. */
-  total_issued: string;
-  total_after: string;
-  /**
-   * Touched scopes that already carry a hand-made draft. `version_id` is the ISSUED version the
-   * rows name (the review is decided there); `has_accepted` says whether Apply refuses today.
-   */
-  blocked_scopes: {
-    quotation_id: string;
-    scope_label: string;
-    version_id: string;
-    has_accepted: boolean;
-  }[];
-  /** Apply drafted a revision. */
-  revised: boolean;
+  rows: QuotationFeedbackRow[];
 }
 
-export interface QuotationOutcomeBody {
-  outcome: QuotationOutcome;
-  loss_reason?: string | null;
+export interface QuotationFeedback {
+  open_count: number;
+  /** Newest first; rows in line order. */
+  requests: QuotationFeedbackRequest[];
 }
 
 export interface ProjectSeries {
@@ -1119,6 +1138,8 @@ export function importJobPhase(status: string): 'running' | 'done' | 'dead' {
 export interface QuotationLineVerdict {
   is_non_standard: boolean;
   is_below_floor: boolean;
+  /** Below the default price (series price, else list price), by the save's own rule. */
+  is_discounted?: boolean;
   floor_value: string | null;
   floor_level: string | null;
 }

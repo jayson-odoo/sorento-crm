@@ -17,8 +17,11 @@
  *   DELETE /sales/targets/{id}                                                      sales.targets.delete
  *   GET    /sales/targets/point-ratios                   -> {rows: PointRatio[]}    sales.targets.view
  *   POST   /sales/targets/point-ratios   body {effective_from, rm_per_point}        sales.targets.edit
+ *   PATCH  /sales/targets/point-ratios/{id}  body {effective_from, rm_per_point}     sales.targets.edit
+ *          (delete is the deferred `point_ratio.delete` pending action, also .edit)
  *   POST   /sales/targets/import?dry_run&year  multipart file (+ picks JSON) -> DealerImportResult sales.targets.edit
  *   GET    /sales/targets/import/template?year  -> .xlsx                           sales.targets.edit
+ *   POST   /sales/targets/commission-statement  body {ids} -> MyDownload (max 50)  sales.targets.view
  * The screens park `sales_target.delete` instead of calling DELETE (D7), through
  * useDeferredAction. Products for the scope picker come from master data's own
  * `/master-data/products/select`, paged on the server (about 22,000 rows).
@@ -38,6 +41,7 @@ import type {
   SalesTargetUpdatePayload,
 } from '../types/salesTarget.types';
 import { codeWithName } from '@/lib/product-display';
+import type { MyDownload } from '@/services/myDownloadsService';
 
 const BASE = '/api/v1/sales/targets';
 
@@ -54,14 +58,18 @@ function jsonInit(method: string, body: unknown): RequestInit {
   };
 }
 
-export async function getSalesTargets(params: SalesTargetListParams): Promise<SalesTargetList> {
+export async function getSalesTargets(
+  params: SalesTargetListParams,
+  signal?: AbortSignal,
+): Promise<SalesTargetList> {
   const search = new URLSearchParams();
   if (params.all) search.set('all', 'true');
   else if (params.on) search.set('on', params.on);
   search.set('subject', params.subject);
   if (params.salesTeamId) search.set('sales_team_id', params.salesTeamId);
   if (params.query?.trim()) search.set('query', params.query.trim());
-  return read(await apiFetch(`${BASE}?${search.toString()}`), 'Failed to load targets');
+  const url = `${BASE}?${search.toString()}`;
+  return read(await (signal ? apiFetch(url, { signal }) : apiFetch(url)), 'Failed to load targets');
 }
 
 export async function getSalesTarget(id: string, on?: string): Promise<SalesTargetDetail> {
@@ -152,6 +160,16 @@ export async function savePointRatio(payload: { effective_from: string; rm_per_p
   return read(await apiFetch(`${BASE}/point-ratios`, jsonInit('POST', payload)), 'Failed to save the ratio');
 }
 
+export async function updatePointRatio(
+  id: string,
+  payload: { effective_from: string; rm_per_point: number },
+): Promise<PointRatio> {
+  return read(
+    await apiFetch(`${BASE}/point-ratios/${encodeURIComponent(id)}`, jsonInit('PATCH', payload)),
+    'Failed to save the ratio',
+  );
+}
+
 export async function importDealerTargets(
   file: File,
   dryRun: boolean,
@@ -173,4 +191,17 @@ export async function downloadDealerTargetsTemplate(year: number): Promise<void>
   const response = await apiFetch(`${BASE}/import/template?year=${year}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to download the template'));
   saveBlobAs(await response.blob(), `dealer-targets-template-${year}.xlsx`);
+}
+
+/** Most targets one commission statement file takes (the backend refuses more). */
+export const MAX_STATEMENT_TARGETS = 50;
+
+/** The commission statement workbook of one or more targets (TARGET-COMMISSION-VIEW), through
+ * My Downloads (owner, 4 Nov): the POST queues it and answers the download row; the file appears
+ * in the My Downloads drawer once ready, like every other export. */
+export async function requestCommissionStatement(ids: string[]): Promise<MyDownload> {
+  return read(
+    await apiFetch(`${BASE}/commission-statement`, jsonInit('POST', { ids })),
+    'Failed to start the commission statement',
+  );
 }
