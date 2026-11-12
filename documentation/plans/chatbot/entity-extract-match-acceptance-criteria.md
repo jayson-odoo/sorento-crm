@@ -76,7 +76,11 @@ version that carries the span marker. Every other version behaves exactly as tod
 - **AC-S2-1 [BE]** On a parser version WITHOUT the span marker the turn is unchanged: same lookup lines, no span
   call, no `span_extract` trace event, no `chatbot_span_extract` usage row.
 - **AC-S2-2 [BE]** With the marker (`== LOOKUP SPANS ==` on its own line), exactly one span call runs before the
-  parser, with no DB session open, and its spans go through `list_resolver.resolve` over the rows the contact may see
+  parser. The span call never holds a DB session while it waits; the turn's session closes without waiting on it
+  (CHATBOT-SPEED, crew ruling 12 Nov: the call starts on its own thread as soon as its config is read, so the row
+  loading overlaps it; the thread gets plain data only, config values and the message text, and opens no session;
+  a failed step or an unread answer drops the result cleanly; `tests/chatbot/test_chatbot_speed_span_session.py`).
+  Its spans go through `list_resolver.resolve` over the rows the contact may see
   (a dealer: its own customers only; salespeople only when the contact may see them), the same visibility as today.
 - **AC-S2-3 [BE]** The lookup blocks then hold the rows the resolver matched (resolved or ambiguous), plus the rows
   the message spells near-exactly (today's lookup spelling score >= 0.95; never a meaning-only or looser spelled hit),
