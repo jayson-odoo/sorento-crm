@@ -319,6 +319,7 @@ def stub_storage(monkeypatch) -> None:
         {
             "upload_file": staticmethod(lambda **kw: ("stub/r2/key", "")),
             "download_file": staticmethod(lambda key: TINY_PNG),
+            "delete_file": staticmethod(lambda key: None),
             "get_signed_url": staticmethod(lambda key, expires_in=3600: f"https://signed.test/{key}"),
             "get_cloudfront_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
             "get_cdn_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
