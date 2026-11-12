@@ -12,6 +12,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  CopyPlus,
   Download,
   FileCheck2,
   Link2,
@@ -34,6 +35,7 @@ import {
   type QuotationIssue,
 } from '../../_shared/services/quotationDocumentService';
 import { MakeQuotationDialog } from './[documentId]/components/MakeQuotationDialog';
+import { DuplicateForPartyDialog } from './components/DuplicateForPartyDialog';
 import { QuotationSignDialog } from './[documentId]/components/QuotationSignDialog';
 import { QuotationSignLinkDialog } from './[documentId]/components/QuotationSignLinkDialog';
 import { QuotationWhatsAppDialog } from './[documentId]/components/QuotationWhatsAppDialog';
@@ -84,6 +86,7 @@ export function useQuotationDocumentActions({
   const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
   const [whatsAppIssue, setWhatsAppIssue] = React.useState<QuotationIssue | null>(null);
   const [making, setMaking] = React.useState(false);
+  const [duplicating, setDuplicating] = React.useState(false);
   const noun = documentNoun(document);
 
   const documentPath = `/project-sales/${projectId}/quotation-documents/${documentId}`;
@@ -244,6 +247,14 @@ export function useQuotationDocumentActions({
         if (issue) setWhatsAppIssue(issue);
       },
     });
+    // QUOTE-DUPLICATE-PARTY: the same lines and prices for another party, as its own copy.
+    actions.push({
+      key: 'quotation_document.duplicate',
+      label: 'Duplicate for another party',
+      icon: CopyPlus,
+      disabled: mutations.duplicate.isPending,
+      run: () => setDuplicating(true),
+    });
     actions.push({
       key: 'quotation_document.delete',
       label: `Delete ${noun.toLowerCase()}`,
@@ -294,6 +305,23 @@ export function useQuotationDocumentActions({
           }}
         />
       ) : null}
+      {/* Always mounted, toggled by `open` like the Sign dialog: one mounted on the menu's own
+          close is dismissed by that same close (browser pass, 11 Nov). */}
+      <DuplicateForPartyDialog
+        open={duplicating}
+        onOpenChange={setDuplicating}
+        projectId={projectId}
+        isSaving={mutations.duplicate.isPending}
+        onConfirm={async (body) => {
+          try {
+            const copy = await mutations.duplicate.mutateAsync({ id: document.id, body });
+            setDuplicating(false);
+            router.push(`/project-sales/${projectId}/quotation-documents/${copy.id}`);
+          } catch {
+            // The mutation toasted the reason; the dialog stays open.
+          }
+        }}
+      />
       <QuotationWhatsAppDialog
         projectId={projectId}
         document={document}
