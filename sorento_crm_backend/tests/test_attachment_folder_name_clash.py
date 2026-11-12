@@ -129,16 +129,20 @@ def test_move_clash_on_the_hidden_original_name_says_which_file_blocks_it(db):
     assert _reload(db, moving.id).directory_id == folder_a
 
 
-def test_move_of_a_same_visible_name_but_different_original_succeeds(db):
-    """The index judges the original name only; a visible-name twin is not a clash."""
+def test_move_of_a_same_visible_name_but_different_original_is_a_clash(db):
+    """Owner hand test 2 (12 Nov): a folder never ends with two files of one VISIBLE name,
+    whatever their hidden original names (was: allowed, because only the original counted)."""
     folder_a = _folder(db, "Folder A")
     folder_b = _folder(db, "Folder B")
     _file(db, "photo.jpg", folder_b, original="photo.jpg")
     moving = _file(db, "photo.jpg", folder_a, original="photo-2.jpg")
 
-    AttachmentService(db).update_attachment(moving.id, AttachmentUpdate(directory_id=folder_b))
+    with pytest.raises(AppException) as ei:
+        AttachmentService(db).update_attachment(moving.id, AttachmentUpdate(directory_id=folder_b))
 
-    assert _reload(db, moving.id).directory_id == folder_b
+    assert ei.value.status_code == 409
+    _assert_plain(ei.value.detail["message"], "photo.jpg", "Folder B")
+    assert _reload(db, moving.id).directory_id == folder_a
 
 
 def test_move_to_the_root_never_clashes(db):
@@ -780,3 +784,103 @@ def test_replace_does_not_retrash_a_file_trashed_meanwhile(db):
     )
 
     assert service._lock_replaceable(stale, folder_b) is None
+
+
+# --- hand test 2 F2: the visible name counts on every path into a folder ------------- #
+
+
+def test_owner_repro_rename_then_move_away_and_back_never_leaves_two_of_one_name(db):
+    """Rename in the same folder to a name already there is refused; and a twin pair that
+    already exists cannot be re-created by moving one away and back."""
+    folder_p = _folder(db, "Counter Top")
+    folder_q = _folder(db, "Other")
+    _file(db, "SRTWB7237.jpg", folder_p)
+    other = _file(db, "draft.jpg", folder_p)
+    service = AttachmentService(db)
+
+    with pytest.raises(AppException) as ei:
+        service.update_attachment(other.id, AttachmentUpdate(stored_filename="SRTWB7237.JPG"))
+    assert ei.value.status_code == 409
+    _assert_plain(ei.value.detail["message"], "SRTWB7237.JPG", "Counter Top")
+    assert _reload(db, other.id).stored_filename == "draft.jpg"
+
+    # A pair that already exists in the data (made before this fix):
+    twin = _file(db, "SRTWB7237.jpg", folder_q, original="older-upload.jpg")
+    with pytest.raises(AppException):
+        service.update_attachment(twin.id, AttachmentUpdate(directory_id=folder_p))
+    assert _reload(db, twin.id).directory_id == folder_q
+
+
+def test_rename_to_its_own_name_in_another_case_is_fine(db):
+    folder = _folder(db, "Folder A")
+    row = _file(db, "photo.jpg", folder)
+
+    AttachmentService(db).update_attachment(row.id, AttachmentUpdate(stored_filename="Photo.JPG"))
+
+    assert _reload(db, row.id).stored_filename == "Photo.JPG"
+
+
+def test_rename_outside_any_folder_is_unchanged(db):
+    _file(db, "photo.jpg", None)
+    row = _file(db, "draft.jpg", None)
+
+    AttachmentService(db).update_attachment(row.id, AttachmentUpdate(stored_filename="photo.jpg"))
+
+    assert _reload(db, row.id).stored_filename == "photo.jpg"
+
+
+def test_check_only_and_bulk_move_see_visible_twins(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "photo.jpg", folder_b, original="photo.jpg")
+    twin = _file(db, "photo.jpg", folder_a, original="renamed-from.jpg")
+    batch_1 = _file(db, "same.jpg", folder_a, original="x1.jpg")
+    batch_2 = _file(db, "same.jpg", _folder(db, "Folder C"), original="x2.jpg")
+    service = AttachmentService(db)
+
+    _u, conflicts = service.bulk_move_report([twin.id, batch_1.id, batch_2.id], folder_b, check_only=True)
+    assert [c["attachment_id"] for c in conflicts] == [twin.id, batch_2.id]
+
+    updated, not_moved = service.bulk_move_report([twin.id, batch_1.id, batch_2.id], folder_b)
+    assert updated == 1
+    assert {n["attachment_id"] for n in not_moved} == {twin.id, batch_2.id}
+
+
+def test_keep_both_on_a_visible_twin_picks_a_name_free_on_both(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "photo.jpg", folder_b, original="photo.jpg")
+    _file(db, "photo (1).jpg", folder_b, original="something-else.jpg")
+    twin = _file(db, "photo.jpg", folder_a, original="renamed-from.jpg")
+
+    result = AttachmentService(db).bulk_move_report(
+        [twin.id], folder_b, resolutions={twin.id: {"action": "rename"}}
+    )
+
+    assert (result.updated, result.renamed) == (1, 1)
+    assert _reload(db, twin.id).stored_filename == "photo (2).jpg"
+
+
+def test_restore_refuses_a_visible_twin(db):
+    folder = _folder(db, "Folder A")
+    gone = _file(db, "photo.jpg", folder, original="first.jpg")
+    service = AttachmentService(db)
+    service.archive_attachment(gone.id, None)
+    _file(db, "photo.jpg", folder, original="second.jpg")
+
+    with pytest.raises(AppException) as ei:
+        service.restore_attachment(gone.id)
+
+    assert ei.value.status_code == 409
+    assert _reload(db, gone.id).is_deleted is True
+
+
+def test_upload_refuses_a_visible_twin_with_another_original(db):
+    folder = _folder(db, "Folder A")
+    _file(db, "photo.jpg", folder, original="renamed-from.jpg")
+
+    with pytest.raises(AppException) as ei:
+        _file(db, "photo.jpg", folder, original="photo.jpg")
+
+    assert ei.value.status_code == 409
+    _assert_plain(ei.value.detail["message"], "photo.jpg", "Folder A")

@@ -87,9 +87,14 @@ describe('useMoveFiles', () => {
     preflight(conflicts, { updated: 100, renamed: 100, not_moved: [] });
     const pending = mount().move(ids, 'dir-b');
     expect(await screen.findByText('1 of 100')).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Do this for the remaining 99 conflicts' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 99 remaining conflicts' }));
+    // Ticked: the name row stays in place with a plain hint instead of the box (no jump).
     expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    expect(screen.getByText('Each file keeps its own name with (1) added.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Skip all' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Replace all' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep both' }));
     const outcome = await pending;
     const [, , opts] = bulkMoveAttachments.mock.calls[1];
     expect(Object.keys(opts.resolutions)).toHaveLength(100);
@@ -118,8 +123,8 @@ describe('useMoveFiles', () => {
   it('Replace for all sends replace for every conflict', async () => {
     preflight([conflict(1), conflict(2), conflict(3)], { updated: 4, replaced: 3, not_moved: [] });
     const pending = mount().move(['plain', 'f-1', 'f-2', 'f-3'], 'dir-b');
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Do this for the remaining 2 conflicts' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Apply to all 2 remaining conflicts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace all' }));
     const outcome = await pending;
     expect(bulkMoveAttachments.mock.calls[1][2].resolutions).toEqual({
       'f-1': { action: 'replace' },
@@ -197,5 +202,21 @@ describe('useMoveFiles', () => {
     const pending = mount().move(['f-1'], 'dir-b');
     fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
     expect(await pending).toMatchObject({ moved: 1, renamed: 0, replaced: 0 });
+  });
+
+  it('unticked, the buttons read Rename / Skip / Replace; one remaining conflict reads singular', async () => {
+    preflight([conflict(1), conflict(2)], { updated: 2, renamed: 2, not_moved: [] });
+    const pending = mount().move(['f-1', 'f-2'], 'dir-b');
+    expect(await screen.findByRole('checkbox', { name: 'Apply to all 1 remaining conflict' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
+    // Unticking brings the editable box back with the suggestion.
+    expect(screen.getByDisplayValue('scan 1 (1).pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep both' }));
+    expect(await pending).toMatchObject({ renamed: 2 });
   });
 });
