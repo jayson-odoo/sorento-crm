@@ -1,6 +1,6 @@
 # PLAN: N8N-RETIRE-A, the CRM sends bot replies (phase A of N8N-DECOM-HA)
 
-Status: Plan stage, behaviour card filed (crew-ask), build waits for its answers. Track: L, LEAD
+Status: Build (tests first). Behaviour card answered 12 Nov (section 0). Track: L, LEAD
 pattern (tester, then coder, then reviewer + security-reviewer). Parent:
 `documentation/plans/infra/PLAN-n8n-decom-ha-01nov.md` section 4 stage 2, job J1 (section 2).
 UAC: `n8n-retire-a-bot-reply-acceptance-criteria.md` (this folder).
@@ -8,6 +8,18 @@ UAC: `n8n-retire-a-bot-reply-acceptance-criteria.md` (this folder).
 Owner, 1 Nov: retire n8n; Q1 (a) staged, each CRM job switched on beside n8n alone. Owner, 11 Nov:
 every failed external send is retryable. Crew never flips the switch and never touches an n8n
 workflow; the owner does both.
+
+## 0. Behaviour card answers (crew, 12 Nov, from owner rulings 1 Nov + 11 Nov)
+
+- Q1 (b): the switch is `n8n` (default) / `CRM for listed contacts` / `CRM for all`, with its own
+  contact list, so the owner tests on his own number first.
+- Q2 (a): a part with an unknown outcome is looked up in the conversation's message list first:
+  found = sent (locked), not found = sent again, lookup fails = "Not confirmed" + Try again.
+- Q3 (a): Try again re-sends only the parts not yet confirmed, same words.
+- Q4 (a): respond.io's documented quick-reply message type; fakes in tests; proven at the owner's
+  stage-2 own-number test.
+- Q5 (a): one writer for the outgoing chat row (the `message.sent` webhook), linked to the turn by
+  the respond.io message id the send returns.
 
 ## 1. What happens today (measured from the code)
 
@@ -114,6 +126,47 @@ whether the sendmsg sub writes anything back to the CRM after a send.
   run; later steps are not attempted.
 - Recovery (`inbox_queue._last_send_outcome`, `:1027`) must not read a confirmed FIRST step as the
   whole reply sent: on the CRM path a row is done only when every step is confirmed.
+
+## 4c. Contract, round 2 (from the answers)
+
+- Columns on `system_settings` (migration, additive): `chatbot_reply_sender_mode` String(16) NOT
+  NULL server_default `n8n`, values `n8n` / `contacts` / `all`; `chatbot_reply_sender_contacts`
+  Text NULL (same format as `chatbot_direct_ingress_contacts`, parsed by
+  `direct_ingress.listed_contacts`). Both in the settings GET dict builder
+  (`app/api/v1/user_management/settings.py:546`), the PUT schema (`:220`) and the defaults
+  (`:1191`). Edited by whoever can edit the chatbot settings today (same route guard).
+- `crm_sender.covers(row, contact_id) -> bool` (mode `all`, or `contacts` and listed).
+- `direct_ingress.send_outcome`: if the turn already has a `sender: crm` log row, or
+  `crm_sender.covers(settings, contact_id)`, it calls `crm_sender.send(...)` and returns its value;
+  otherwise the n8n POST, unchanged. So a turn mid-send stays on the path it started on.
+- `direct_ingress.sender_configured(db, contact_id=None)`: True when the CRM sender covers the
+  contact (mode `all` when no contact is given), else today's URL + key check.
+- Unknown outcome (read timeout, 408, 5xx) on a message step (text, quick reply, attachment):
+  `client.list_messages(identifier, limit=20)`; an OUTGOING message created at or after the step's
+  attempt time (minus 5 s) whose text equals the part (attachment: whose url equals the file url)
+  = confirmed (log row `success`, `facts`/payload `"confirmed_by": "lookup"`), the run goes on. Not
+  found = return `SEND_REFUSED` (the drain resends from that step). Lookup raises = return
+  `SEND_TIMEOUT` (the drain flags `send_unconfirmed`, "Not confirmed").
+  Assign and contact-field steps are idempotent: unknown = resend once in the run, then refused.
+  A comment has no read-back (`integration_service.py:528-541`): unknown = `SEND_TIMEOUT`.
+- Recovery on the CRM path (`inbox_queue._recover_dead_rows`, `:1048`): a row whose every step is
+  confirmed is done; otherwise it is flagged `send_unconfirmed` (never re-run the turn: a new answer
+  could differ). Try again finishes it.
+- Try again (`POST` retry route, `app/api/v1/system/chatbot.py:520-620`), on a turn that has a
+  `sender: crm` log row or is covered by the switch: re-send that turn's stored actions
+  (`row.response["actions"]`, split with `engine.split_send_actions`) through `crm_sender.send`,
+  which skips confirmed steps; the outcome sets the row `done` (all confirmed) or keeps it failed
+  with the plain reason; answers 200 / 502 with a plain message. `retry_available` is True for such
+  a turn even with no n8n inject URL. A turn on the n8n path keeps today's Retry.
+- Message id link: each confirmed message step writes the returned `messageId` in its log row's
+  `response_payload`, sets Redis `chatbot:sent-msg:<messageId>` = turn id (TTL 24 h), and runs
+  `UPDATE chat_histories SET chatbot_turn_id = :turn WHERE contact_id = :c AND message_id = :m AND
+  chatbot_turn_id IS NULL` (the webhook row may already be there). The webhook, on an outgoing row
+  with no turn id, reads the Redis key and passes it as `chatbot_turn_id`. Redis down = no link
+  (the trace still has the log rows), never a failed send.
+- Settings > Chatbot: a select "Bot replies sent by" with options `n8n`, `CRM for listed contacts`,
+  `CRM for all`, and a contacts textarea shown only for the listed option, built exactly like the
+  Direct ingress pair on the same page (`page.tsx:264-290`).
 
 ## 5. Build slices (one lane, one PR)
 
