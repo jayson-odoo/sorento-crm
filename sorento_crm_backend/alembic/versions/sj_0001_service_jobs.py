@@ -14,7 +14,7 @@ nothing in the live Complaints module (owner ruling, 12 Nov 2026): no column on 
   Rows holding the earlier `complaint_management.*` spelling of the same three slugs are renamed.
 
 Revision ID: sj_0001_service_jobs
-Revises: town_0003_orders_cust_date
+Revises: passkey_0001_user_passkeys
 Create Date: 2026-11-12
 """
 import uuid
@@ -24,7 +24,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "sj_0001_service_jobs"
-down_revision = "town_0003_orders_cust_date"
+down_revision = "passkey_0001_user_passkeys"
 branch_labels = None
 depends_on = None
 
