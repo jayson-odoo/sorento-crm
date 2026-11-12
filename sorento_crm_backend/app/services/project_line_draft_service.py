@@ -160,7 +160,9 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
         db.query(SalesOrder.id)
         .filter(
             SalesOrder.id == sales_order_id,
-            SalesOrder.status.in_(["open", "closed"]),
+            # `cancelled` too: a cancelled / deleted SO's lines the board admits through a pending
+            # cancelled change (`_pending_cancelled_line` below) are decided like any other.
+            SalesOrder.status.in_(["open", "closed", "cancelled"]),
             admitted_to_planning(),
         )
         .one_or_none()
@@ -173,6 +175,9 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
     # demand line left at all). Looked up first so that case resolves; a demand line that
     # ALSO answers to the key makes it ambiguous, refused rather than guessed.
     awaiting = _awaiting_cancel_line(db, sales_order_id, line_no, item_code)
+    # OI-WHOLE-SO-CANCEL F2: and the line the board shows from `_cancelled_pending_change_rows`.
+    if awaiting is None:
+        awaiting = _pending_cancelled_line(db, sales_order_id, line_no, item_code)
     lines = (
         db.query(SalesOrderLine, Product.product_code)
         .join(Product, Product.id == SalesOrderLine.product_id)
@@ -234,6 +239,38 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
 # saves the board's own Transfer to Cancel SO as this line's draft, marked with this source so
 # a cancel that lowers again withdraws only what the sync itself proposed.
 AUTOCOUNT_CANCEL_SOURCE = "autocount_cancel"
+
+
+def _pending_cancelled_line(
+    db: Session, sales_order_id: str, line_no: int, item_code: str
+) -> Optional[SalesOrderLine]:
+    """The key of a line the board admits through a PENDING, unapplied `cancelled` planning change
+    (`FulfilmentBoardService._cancelled_pending_change_rows`): keyed by the change row's own
+    `line_no` and `item_code`, as that read keys it. None when no single line answers."""
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+    found = (
+        db.query(SalesOrderLine)
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+        )
+        .join(PlanningChangeRow, PlanningChangeRow.project_line_id == ProjectSalesOrderLine.id)
+        .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+        .filter(
+            SalesOrderLine.sales_order_id == sales_order_id,
+            PlanningChangeRow.kind == "cancelled",
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+            PlanningChangeBatch.applied_at.is_(None),
+            PlanningChangeRow.line_no == line_no,
+            PlanningChangeRow.item_code == item_code,
+        )
+        .distinct()
+        .limit(2)
+        .all()
+    )
+    return found[0] if len(found) == 1 else None
 
 
 def awaits_cancel_so(core_line: SalesOrderLine) -> bool:
