@@ -471,3 +471,5 @@ def test_ac20h_a_discontinued_code_is_not_offered_back_by_the_size_miss(session_
     at = text.find("Did you mean")
     assert FAM not in (text[at:] if at >= 0 else ""), f"offered back: {text!r}"
     assert FAM not in str(c.stored_question), c.stored_question
+    # Lead sign-off: nothing offerable is still a size miss, never an answer for a size the code does not store (R4).
+    assert text.startswith(f"Couldn't find {FAM} with size 400 mm") and "How many units" not in text and TICK not in text and "Stock summary" not in text, text

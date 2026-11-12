@@ -259,11 +259,10 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             if family:
                 break
         if not family:
-            # The code alone, when the chat may offer it (owner Q3); else no size miss is made.
+            # The code alone, when the chat may offer it (owner Q3); else the miss offers nothing
+            # (R4: a code is never answered for a size it does not store).
             alone = _offerable_rows(db, [exact[0]])
             family = [_row(str(r["canonical_code"]), str(r["uuid"]), "family") for r in alone]
-        if not family:
-            continue
         miss = {
             "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
             # The code exists; what is missing is the size, so the reply names the code itself.
