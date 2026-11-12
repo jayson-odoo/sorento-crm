@@ -297,7 +297,7 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
 
 describe('AC-14 one pick path', () => {
   const opt = (id: string, code: string) =>
-    ({ value: `product:${id}`, label: code, code, name: code }) as any;
+    ({ value: `product:${id}`, label: code, code, name: code }) as SearchableSelectOption;
 
   it('addPickedItems routes through handleItemSelect and addLine only, skipping taken and repeated options, and returns the last filled key', () => {
     const X = opt('x', 'X'), Y = opt('y', 'Y'), Z = opt('z', 'Z'), W = opt('w', 'W');
@@ -305,7 +305,7 @@ describe('AC-14 one pick path', () => {
     const handleItemSelect = vi.fn();
     const lines = [row('A'), row('B', { line_type: 'product', product_id: 'w', code: 'W' })];
 
-    const last = addPickedItems({ addLine, handleItemSelect } as any, lines, 'A', [W, X, X, Y, Z]);
+    const last = addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, lines, 'A', [W, X, X, Y, Z]);
 
     expect(handleItemSelect.mock.calls).toEqual([['A', X], ['nA', Y], ['nnA', Z]]);
     expect(addLine.mock.calls).toEqual([['A'], ['nA']]);
@@ -314,7 +314,7 @@ describe('AC-14 one pick path', () => {
 
   it('addPickedItems returns the origin key for a single option', () => {
     const addLine = vi.fn((k?: string) => 'n' + k);
-    const last = addPickedItems({ addLine, handleItemSelect: vi.fn() } as any, [row('A')], 'A', [opt('x', 'X')]);
+    const last = addPickedItems({ addLine, handleItemSelect: vi.fn() } as unknown as PickEditor, [row('A')], 'A', [opt('x', 'X')]);
     expect(last).toBe('A');
   });
 
@@ -379,7 +379,7 @@ describe('AC-13 (g) one-line, code only Item results', () => {
     const code = 'DIY-' + 'LONGCODE'.repeat(10);
     const long = { ...lookups(), lookupTagItems: vi.fn(async () => [
       { kind: 'product', id: 'p-l', code, name, list_price: 10 },
-    ]) } as any;
+    ]) } as unknown as PriceTagLineLookups;
     render(<Harness initial={[row('A')]} lookups={long} />);
     openItemPicker();
     await rowFor(code);
