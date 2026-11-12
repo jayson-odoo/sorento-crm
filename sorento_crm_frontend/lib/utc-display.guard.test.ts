@@ -25,6 +25,7 @@ const UTC_DISPLAY_FILES = [
   'app/(protected)/sla-management/_shared/FormSLATrackingTab.tsx',
   'app/(protected)/sla-management/_shared/FormSLATrackerDetail.tsx',
   'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx',
+  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestsList.tsx',
 ];
 
 describe('DATE-PICKER-UNIFY: UTC timestamps render in Malaysia time', () => {
