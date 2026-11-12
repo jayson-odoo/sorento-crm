@@ -1,6 +1,6 @@
 # PLAN - LIST-FILTER-MEMORY-4: four more lists remember sort and filters
 
-**Status:** Build (small fix track: under ~300 lines, no migration, no auth/RBAC change, no new ingest)
+**Status:** implemented on PR #2362 (small fix track: under ~300 lines, no migration, no auth/RBAC change, no new ingest)
 **Owner ask (12 Nov 2026):** the list-filter memory Sales Orders and Stock Inquiry have must also apply to
 Complaints, Purchase Requests, Price Tag Requests and Sponsorship Forms.
 **Mechanism (mirrored, not new):** `useListingViewPreferences`
