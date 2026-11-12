@@ -111,7 +111,12 @@ describe.each([
     stored({
       version: 1,
       sorting: [{ id: 'request_number', desc: false }],
-      filters: { approval_status: 'pending,approved', assigned_to: 'u-1' },
+      // A type stored by the combined list must never override the page's own pinned type.
+      filters: {
+        approval_status: 'pending,approved',
+        assigned_to: 'u-1',
+        request_type: requestType === 'purchase_request' ? 'sponsorship_form' : 'purchase_request',
+      },
       filtersVersion: 1,
     });
     renderIt(requestType);

@@ -167,6 +167,18 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     });
   });
 
+  it('changing a filter goes back to page 1 (LIST-FILTER-MEMORY-4)', async () => {
+    url.search = 'page=3';
+    const user = userEvent.setup();
+    await openFilters(user);
+    await waitFor(() => expect(lastArgs().pageIndex).toBe(2));
+    await user.selectOptions(await boxWith('Settled on site'), ['new']);
+    await waitFor(() => {
+      expect(asList(lastArgs().status)).toEqual(['new']);
+      expect(lastArgs().pageIndex).toBe(0);
+    });
+  });
+
   it('a remembered multi-value view reads back into both filters', async () => {
     view.filters = { status: 'new,approved', assigned_to: 'resp-ann,resp-ben' };
     renderIt();

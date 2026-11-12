@@ -195,6 +195,18 @@ describe('Purchase requests - multi Type, Status and Assigned to filters', () =>
     });
   });
 
+  it('changing a filter goes back to page 1 (LIST-FILTER-MEMORY-4)', async () => {
+    url.search = 'page=3';
+    const user = userEvent.setup();
+    await openFilters(user);
+    await waitFor(() => expect(lastParams().pageIndex).toBe(2));
+    await user.selectOptions(await box('pending'), ['approved']);
+    await waitFor(() => {
+      expect(statuses()).toEqual(['approved']);
+      expect(lastParams().pageIndex).toBe(0);
+    });
+  });
+
   it('a remembered view with several statuses and assignees restores both controls and the request', async () => {
     view.filters = { approval_status: 'pending,approved', assigned_to: '__unassigned__,u-1' };
     const user = userEvent.setup();
