@@ -4,6 +4,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.models.lookup import LookupOption, LookupOptionKeyword
 from app.schemas.lookup import LookupOptionCreate, LookupOptionUpdate, LookupKeywordIn
+from app.services import project_party_roles
 from app.services.error_handler import handle_not_found, handle_conflict
 
 
@@ -20,8 +21,12 @@ class LookupOptionService:
         return {"data": rows, "pagination": {"total": total, "page": page, "limit": limit},
                 "empty": total == 0}
 
-    def get(self, option_id: str) -> LookupOption:
-        o = self.db.query(LookupOption).filter(LookupOption.id == option_id).first()
+    def get(self, option_id: str, set_id: Optional[str] = None) -> LookupOption:
+        q = self.db.query(LookupOption).filter(LookupOption.id == option_id)
+        # Found through its own set only (security review N1): the URL names the set.
+        if set_id is not None:
+            q = q.filter(LookupOption.set_id == set_id)
+        o = q.first()
         if not o:
             raise handle_not_found("LookupOption", option_id)
         return o
@@ -60,7 +65,7 @@ class LookupOptionService:
             id=str(uuid.uuid4()), set_id=set_id,
             value=data.value, label=data.label,
             sort_order=data.sort_order, is_active=data.is_active,
-            description=data.description,
+            description=data.description, allows_many=data.allows_many,
         )
         self.db.add(o)
         self.db.flush()
@@ -69,9 +74,14 @@ class LookupOptionService:
         self.db.refresh(o)
         return o
 
-    def update(self, option_id: str, data: LookupOptionUpdate) -> LookupOption:
-        o = self.get(option_id)
+    def update(self, option_id: str, data: LookupOptionUpdate, set_id: Optional[str] = None) -> LookupOption:
+        o = self.get(option_id, set_id)
         update = data.model_dump(exclude_unset=True)
+        if update.get("allows_many") is None:
+            update.pop("allows_many", None)
+        project_party_roles.assert_option_change(
+            self.db, o, new_value=update.get("value"), deactivate=update.get("is_active") is False
+        )
         if "value" in update and update["value"].lower() != (o.value or "").lower():
             self._check_value_unique(o.set_id, update["value"], exclude_id=o.id)
         new_keywords = update.pop("keywords", None)
@@ -83,8 +93,9 @@ class LookupOptionService:
         self.db.refresh(o)
         return o
 
-    def delete(self, option_id: str) -> dict:
-        o = self.get(option_id)
+    def delete(self, option_id: str, set_id: Optional[str] = None) -> dict:
+        o = self.get(option_id, set_id)
+        project_party_roles.assert_option_change(self.db, o, delete=True)
         self.db.delete(o)
         self.db.commit()
         return {"message": "Option deleted"}

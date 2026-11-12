@@ -488,7 +488,7 @@ export function AttachmentDropzone({
       ) : (
         readOnly && (
           <p className="text-sm text-muted-foreground text-center py-4">
-            No sales order files attached.
+            No files attached.
           </p>
         )
       )}

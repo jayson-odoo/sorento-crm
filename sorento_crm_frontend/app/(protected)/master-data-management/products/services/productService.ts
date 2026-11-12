@@ -53,6 +53,8 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   /** "List price changed at" range, YYYY-MM-DD, Malaysia calendar day inclusive. */
   list_price_changed_from?: string;
   list_price_changed_to?: string;
+  /** Only products that use this price tag template (the template designer's picker). */
+  tag_template_id?: string;
 }
 
 
@@ -81,6 +83,7 @@ export async function getProducts(
     discontinued_to,
     list_price_changed_from,
     list_price_changed_to,
+    tag_template_id,
   } = params;
 
   const sortField = sorting?.[0]?.id || '';
@@ -105,6 +108,7 @@ export async function getProducts(
     ...(discontinued_to ? { discontinued_to } : {}),
     ...(list_price_changed_from ? { list_price_changed_from } : {}),
     ...(list_price_changed_to ? { list_price_changed_to } : {}),
+    ...(tag_template_id ? { tag_template_id } : {}),
   });
 
   const response = await apiFetch(

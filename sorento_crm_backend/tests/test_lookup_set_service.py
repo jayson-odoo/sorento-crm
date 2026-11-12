@@ -37,7 +37,8 @@ def test_list_paginated(db_session):
     svc = LookupSetService(db_session)
     for i in range(3):
         svc.create(LookupSetCreate(set_key=f"k{i}", name=f"K{i}"))
-    res = svc.list(page=1, limit=2, query=None)
+    res = svc.list(page=1, limit=2, query="k")
+    # The test schema also carries the seeded `project_party_role` set; the query narrows to ours.
     assert res["pagination"]["total"] == 3
     assert len(res["data"]) == 2
 

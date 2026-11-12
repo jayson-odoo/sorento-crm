@@ -1,0 +1,327 @@
+<title>Combo Settings Mock v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the product page's Combos card, as it would sit in the app; annotations in a side rail. */
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --fg: #1b1f27; --muted: #69707d; --line: #e3e6eb;
+  --accent: #1f6feb; --accent-soft: #e8f0fe; --tag: #ffffff; --tag-ink: #111; --price: #c8102e;
+  --note: #fff7e0; --note-ink: #6b4e00; --chip: #eef1f5;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1216; --card: #171b21; --fg: #e6e9ee; --muted: #9aa3b0; --line: #2a3039;
+  --accent: #5b9dff; --accent-soft: #1b2a44; --tag: #f4f4f2; --tag-ink: #111; --price: #c8102e;
+  --note: #2e2711; --note-ink: #f0d58a; --chip: #232a33; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1216; --card: #171b21; --fg: #e6e9ee; --muted: #9aa3b0; --line: #2a3039;
+  --accent: #5b9dff; --accent-soft: #1b2a44; --tag: #f4f4f2; --tag-ink: #111; --price: #c8102e;
+  --note: #2e2711; --note-ink: #f0d58a; --chip: #232a33; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.45; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px; }
+h1 { font-size: 20px; margin: 0; text-wrap: balance; }
+h2 { font-size: 15px; margin: 0; }
+.sub { color: var(--muted); margin: 0; max-width: 70ch; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.combo { display: grid; }
+.combo-head { display: flex; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
+.combo-head .host { color: var(--muted); font-size: 12px; }
+.body { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; padding: 14px; }
+@media (max-width: 820px) { .body { grid-template-columns: minmax(0,1fr); } }
+.label { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.label .q { color: var(--muted); font-weight: 400; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.editor { border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.toolbar { display: flex; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.toolbar span { font-size: 12px; padding: 2px 6px; border-radius: 4px; color: var(--muted); }
+.toolbar .ins { color: var(--accent); background: var(--accent-soft); font-weight: 600; cursor: pointer; }
+.text { padding: 10px; font-size: 13px; min-height: 96px; overflow-wrap: anywhere; }
+.tok { font-family: var(--mono); font-size: 11.5px; background: var(--chip); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.reads { font-size: 12px; color: var(--muted); display: grid; gap: 2px; }
+.reads b { color: var(--fg); font-weight: 500; }
+.warn { color: #b42318; }
+.btn { font: inherit; font-size: 12.5px; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+.btn:focus-visible, select:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.icon-btn { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 4px; font-size: 14px; }
+.icon-btn:hover { background: var(--chip); }
+.acc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.acc-list li { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.thumb { width: 32px; height: 32px; border-radius: 6px; background: var(--chip); flex: none; }
+.acc-list .t { min-width: 0; flex: 1; font-size: 13px; }
+.acc-list .t small { display: block; color: var(--muted); font-size: 11.5px; }
+.picker { position: relative; }
+.picker input { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--card); color: var(--fg); }
+.menu { border: 1px solid var(--line); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgb(0 0 0 / .12); margin-top: 4px; padding: 4px; font-size: 13px; }
+.menu .g { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 8px 2px; }
+.menu .o { padding: 5px 8px; border-radius: 5px; display: flex; justify-content: space-between; gap: 8px; }
+.menu .o:hover { background: var(--accent-soft); }
+.menu .o small { color: var(--muted); }
+.menu .o.grey { color: var(--muted); }
+.pop { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--card); box-shadow: 0 8px 24px rgb(0 0 0 / .12); display: grid; gap: 6px; font-size: 12.5px; max-width: 280px; }
+select { font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); max-width: 100%; }
+.preview { border: 1px solid var(--line); border-radius: 8px; display: grid; min-width: 0; }
+.pv-head { padding: 8px 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+.seg { display: flex; flex-wrap: wrap; gap: 0; }
+.seg button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 3px 8px; cursor: pointer; margin-left: -1px; }
+.seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 6px 6px 0; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); position: relative; }
+.picks { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12px; }
+.picks label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.stage { padding: 14px; background: var(--chip); display: grid; place-items: center; border-radius: 0 0 8px 8px; }
+.tag { background: var(--tag); color: var(--tag-ink); width: 100%; max-width: 360px; aspect-ratio: 3 / 4; border-radius: 4px; box-shadow: 0 1px 3px rgb(0 0 0 / .2); padding: 14px; box-sizing: border-box; display: grid; grid-template-rows: auto auto 1fr auto; gap: 6px; font-size: 11px; overflow: hidden; }
+.tag .code { font-weight: 700; font-size: 15px; letter-spacing: .02em; }
+.tag .desc { white-space: pre-line; }
+.tag .opts { font-size: 10.5px; display: grid; gap: 1px; align-content: start; }
+.tag .opts .on { font-weight: 700; }
+.tag .price { display: flex; justify-content: space-between; align-items: end; border-top: 1px solid #ccc; padding-top: 6px; }
+.tag .lp { text-decoration: line-through; color: #555; }
+.tag .sp { color: var(--price); font-weight: 700; font-size: 20px; font-variant-numeric: tabular-nums; }
+.note { background: var(--note); color: var(--note-ink); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.parts { padding: 0 14px 14px; display: grid; gap: 8px; font-size: 12.5px; }
+.group { border: 1px dashed var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 4px; }
+.group .row { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.group .row span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; }
+.dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 12px; display: grid; gap: 6px; font-size: 12.5px; max-width: 420px; box-shadow: 0 12px 32px rgb(0 0 0 / .15); }
+.dialog .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 6px; border-radius: 5px; }
+.dialog .row:hover { background: var(--accent-soft); }
+.dialog .row code { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.side { display: grid; gap: 14px; }
+.lbl { font: inherit; font-size: 12.5px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); width: 11rem; max-width: 100%; }
+@media (prefers-reduced-motion: no-preference) { .tag { transition: opacity .15s; } }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:6px">
+    <h1>Combos tab: one add, preview with choices, description fields</h1>
+    <p class="sub">Mock v2 for COMBO-SETTINGS-UX, on the dev copy's real rows (sorento_prod_1104, 10 Nov). Pick a TAP in the first preview; in the second, edit a part label or switch the part line: the tag redraws, nothing is saved. No new tab or page: these are the same combo blocks in the existing Combos card on the product page; the "Each part prints as" popover is drawn open here only to show it. Box style is gone (owner 10 Nov).</p>
+  </header>
+
+  <!-- Combo 1: kitchen sink, real rows -->
+  <section class="card combo" aria-label="Combo SRTKS7061-BL">
+    <div class="combo-head">
+      <div><h2>SRTKS7061-BL</h2><span class="host">on SRTKS7061-BL · List price RM 880.00 · Sell price blank · templates KS_1TAP_SP, KS_2TAP_SP</span></div>
+      <div style="display:flex;gap:6px"><button class="btn">Copy to other products</button></div>
+    </div>
+    <div class="body">
+      <div class="field" style="gap:14px">
+        <div class="field">
+          <span class="label">Description</span>
+          <div class="editor">
+            <div class="toolbar"><span>B</span><span>I</span><span>U</span><span>Colour</span><span>List</span><span class="ins" title="Opens the Insert field dialog">{ } Insert field</span></div>
+            <div class="text">1 KITCHEN SINK + 1 KITCHEN TAP<br>
+              L600xW470xH250mm - Matt Black<br>
+              Tap: <span class="tok">{{slot.pick.1.1.code}}</span></div>
+          </div>
+          <div class="reads">
+            <span>Fields read: <b>TAP pick code = the tap chosen on the line</b></span>
+            <span>With no tap chosen the field is empty and its line is dropped from the tag.</span>
+            <span class="warn">TAP options have no price tag description and no dimensions on record, so those fields would print nothing here.</span>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Accessories included <span class="q">· box style removed: every tag uses its template's own box</span></span>
+          <ul class="acc-list">
+            <li><span class="thumb"></span><span class="t"><b>BK002</b> DRAINER</span><button class="icon-btn" aria-label="Edit for this list">✎</button><button class="icon-btn" aria-label="Remove BK002">✕</button></li>
+            <li><span class="thumb"></span><span class="t"><b>SRTBK7005</b> PULL-OUT DRAINER</span><button class="icon-btn" aria-label="Edit for this list">✎</button><button class="icon-btn" aria-label="Remove SRTBK7005">✕</button></li>
+          </ul>
+          <div class="picker">
+            <input id="acc-add-1" value="drain" aria-label="Add accessory or product">
+            <div class="menu" role="listbox">
+              <div class="g">Accessories</div>
+              <div class="o">Sink drainer tray<small>library</small></div>
+              <div class="o">Create "drain"</div>
+              <div class="g">Products</div>
+              <div class="o"><span><b>SRTBK7006</b> Drainer basket</span><small>illustrative</small></div>
+              <div class="o grey"><span><b>SRTBK6001</b> Drainer</span><small>discontinued</small></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="preview" id="pv1">
+        <div class="pv-head">
+          <div class="seg" role="group" aria-label="Template to preview">
+            <button aria-pressed="false">KS_1TAP_SP (Default LP)</button><button aria-pressed="true">KS_2TAP_SP (Default SP)</button>
+          </div>
+          <div class="picks">
+            <label for="tap1">TAP
+              <select id="tap1">
+                <option value="">No pick</option>
+                <option>SRTKT1633SS-BL</option><option>SRTKT1634SS-BL</option><option>SRTWT5830-BL</option><option>SRTWT5831-BL</option><option>SRTKT71SS-BL</option>
+              </select></label>
+            <span style="color:var(--muted)">No upgrades on this combo, so no Upgrade picker. Preview only, not saved.</span>
+          </div>
+        </div>
+        <div class="stage">
+          <div class="tag" aria-live="polite">
+            <div class="code">SRTKS7061-BL</div>
+            <div class="desc" id="desc1"></div>
+            <div class="opts" id="opts1"></div>
+            <div class="price"><span class="lp" id="lp1">LP RM 880</span><span class="sp" id="sp1"></span></div>
+          </div>
+        </div>
+        <p class="sub" style="font-size:12px;padding:8px 10px" id="why1"></p>
+      </div>
+    </div>
+    <div class="parts">
+      <div class="group"><b style="font-size:12px;color:var(--muted)">TAP - pick one</b>
+        <div class="row"><span>SRTKT1633SS-BL</span><span>Sell price if picked RM 899.00</span></div>
+        <div class="row"><span>SRTKT1634SS-BL</span><span>Sell price if picked RM 899.00</span></div>
+        <div class="row"><span>SRTWT5830-BL</span><span>Sell price if picked RM 929.00</span></div>
+        <div class="row"><span>SRTWT5831-BL</span><span>Sell price if picked RM 929.00</span></div>
+        <div class="row"><span>SRTKT71SS-BL</span><span>Sell price if picked RM 1,099.00</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Combo 2: bathroom furniture, real rows, part labels + customizable parts list -->
+  <section class="card combo" aria-label="Combo SRTBF11829 + SRTMCB8083-BL">
+    <div class="combo-head">
+      <div><h2>SRTBF11829 + SRTMCB8083-BL</h2><span class="host">on SRTBF11829 · List price RM 2,715.00 · Sell price RM 2,099.00 · 4 fixed parts, no choices</span></div>
+    </div>
+    <div class="body">
+      <div class="field" style="gap:14px">
+        <div class="field">
+          <span class="label">Description</span>
+          <div class="editor">
+            <div class="toolbar"><span>B</span><span>I</span><span>U</span><span>Colour</span><span>List</span><span class="ins">{ } Insert field</span></div>
+            <div class="text"><span class="tok">{{combo.parts}}</span> <button class="btn" style="padding:1px 6px;font-size:11.5px" aria-expanded="true">Each part prints as…</button></div>
+          </div>
+        </div>
+        <div class="pop" style="max-width:100%" aria-label="Each part prints as (popover from the parts list field)">
+          <span class="label">Each part prints as <span class="q">· repeated for the main product, then each fixed part, then the chosen option of each pick-one group</span></span>
+          <div class="editor">
+            <div class="toolbar"><span>B</span><span>I</span><span>U</span><span>Colour</span><span class="ins">{ } Insert part field</span></div>
+            <div class="text" style="min-height:48px"><b><span class="tok">{{part.code}}</span> (<span class="tok">{{part.label}}</span>)</b><br><span class="tok">{{part.dimensions_lwh}}</span></div>
+          </div>
+          <span style="color:var(--muted)">Part fields: code, label, name, price tag description, dimensions (L780xW480xH400mm), dimensions (780 x 480 x 400 mm).</span>
+          <div class="seg" role="group" aria-label="Try another part line" id="shape">
+            <button aria-pressed="true" data-shape="a">code (label) / dimensions</button><button aria-pressed="false" data-shape="b">- code (price tag description)</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Accessories included</span>
+          <p class="sub" style="font-size:13px">No accessories</p>
+          <div class="picker"><input id="acc-add-2" placeholder="Add accessory or product" aria-label="Add accessory or product" style="border-color:var(--line)"></div>
+        </div>
+      </div>
+      <div class="preview">
+        <div class="pv-head"><div class="picks"><span style="color:var(--muted)">No pick-one parts: nothing to choose</span></div></div>
+        <div class="stage">
+          <div class="tag">
+            <div class="code">SRTBF11829</div>
+            <div class="desc" id="desc2"></div>
+            <div class="opts"></div>
+            <div class="price"><span class="lp">LP RM 2,715</span><span class="sp">RM 2,099</span></div>
+          </div>
+        </div>
+        <p class="sub" style="font-size:12px;padding:8px 10px">Empty fields: "( )" goes when the label is empty, and a line whose only field is empty is dropped (SRTWB2380 has no dimensions; SRTWT6203-GM and SRTW2600 none either). The main product's dimensions are SRTBF11829's own (780 x 480 x 400 mm on its page).</p>
+      </div>
+    </div>
+    <div class="parts">
+      <div style="display:grid;gap:6px">
+        <b style="font-size:12px;color:var(--muted)">Parts, each with its own Label (new, empty by default)</b>
+        <div class="group" style="border-style:solid">
+          <div class="row"><span><b>SRTBF11829</b> <span style="color:var(--muted)">main product</span></span><span><label for="lb0">Label</label> <input id="lb0" class="lbl" data-i="0" value="CABINET"></span></div>
+          <div class="row"><span><b>SRTWB2380</b> · Fixed part</span><span><label for="lb1">Label</label> <input id="lb1" class="lbl" data-i="1" value="BASIN"></span></div>
+          <div class="row"><span><b>SRTMCB8083-BL</b> · Fixed part</span><span><label for="lb2">Label</label> <input id="lb2" class="lbl" data-i="2" value="MIRROR CABINET"></span></div>
+          <div class="row"><span><b>SRTWT6203-GM</b> · Fixed part</span><span><label for="lb3">Label</label> <input id="lb3" class="lbl" data-i="3" value="BASIN COLD TAP"></span></div>
+          <div class="row"><span><b>SRTW2600</b> · Fixed part</span><span><label for="lb4">Label</label> <input id="lb4" class="lbl" data-i="4" value=""></span></div>
+        </div>
+        <span style="color:var(--muted);font-size:12px">Clear a label to see its "( )" go. SRTW2600 is left empty on purpose.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" style="padding:14px;display:grid;gap:10px">
+    <h2>Element to component map</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Element</th><th>Existing component (repo path)</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td>Add accessory or product (one picker)</td><td><code>products/[id]/components/AccessoryListField.tsx</code> + <code>components/common/SearchableSelect.tsx</code> (option <code>group</code>)</td><td>3 selects become 1, grouped Accessories / Products, Create kept</td></tr>
+          <tr><td>Box style</td><td><code>AccessoryListField.tsx</code>, <code>accessory-card.ts</code> <code>accessoryBoxStyleOf</code></td><td>Removed (owner 10 Nov): control gone, renderers stop applying it; column drop later</td></tr><tr><td>Part label</td><td><code>ProductCombosSection.tsx</code> <code>PartRow</code>; new column <code>product_combo_parts.label</code> + <code>product_combos.main_label</code></td><td>Text input per part, blur-save</td></tr><tr><td>Each part prints as</td><td><code>components/ui/popover</code> + <code>RichTextEditor</code> + <code>InsertFieldDialog</code>; new column <code>product_combos.parts_line</code></td><td>Opened from the parts list field; one line template per combo</td></tr>
+          <tr><td>Preview TAP / Upgrade pickers</td><td><code>products/[id]/components/ComboTagPreview.tsx</code>, <code>SearchableSelect</code></td><td>Sends picks as line <code>parts</code>; server draws (no BE change)</td></tr>
+          <tr><td>Insert field in the description</td><td><code>dealer-kit/tag-templates/components/InsertFieldDialog.tsx</code>, pattern from <code>ProductSpecificationsTab.tsx:278</code></td><td>Groups Combo + Combo positions, positions named by real codes</td></tr>
+          <tr><td>New fields</td><td><code>lib/dealer-kit/merge-fields.ts</code></td><td><code>combo.parts</code>, <code>slot.*.dimensions</code>, plain description resolves its own fields</td></tr>
+          <tr><td>Tag drawing</td><td><code>components/dealer-kit/DesignViewer</code>, <code>lib/dealer-kit/product-block.ts</code></td><td>None (already resolves fields in rich text)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">Questions for the owner are in the PR comment (crew-ask). The plan: <code>documentation/plans/dealer-kit/PLAN-combo-settings-ux-10nov.md</code>.</div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var tap = document.getElementById('tap1');
+  var opts = [['SRTKT1633SS-BL', 899], ['SRTKT1634SS-BL', 899], ['SRTWT5830-BL', 929], ['SRTWT5831-BL', 929], ['SRTKT71SS-BL', 1099]];
+  function rm(n) { return 'RM ' + n.toLocaleString('en-MY'); }
+  function draw1() {
+    var pick = tap.value;
+    var lines = ['1 KITCHEN SINK + 1 KITCHEN TAP', 'L600xW470xH250mm - Matt Black'];
+    if (pick) lines.push('Tap: ' + pick);
+    document.getElementById('desc1').textContent = lines.join('\n');
+    var box = document.getElementById('opts1');
+    box.innerHTML = '';
+    var shown = pick ? opts.filter(function (o) { return o[0] === pick; }) : opts;
+    var head = document.createElement('div');
+    head.textContent = pick ? 'TAP' : 'TAP - choose one:';
+    head.style.fontWeight = '600';
+    box.appendChild(head);
+    shown.forEach(function (o) {
+      var d = document.createElement('div');
+      d.textContent = o[0] + '   ' + rm(o[1]);
+      if (pick) d.className = 'on';
+      box.appendChild(d);
+    });
+    var picked = opts.filter(function (o) { return o[0] === pick; })[0];
+    document.getElementById('sp1').textContent = picked ? rm(picked[1]) : '';
+    document.getElementById('why1').textContent = picked
+      ? 'Sell price = the chosen tap\'s "Sell price if picked" (' + rm(picked[1]) + '), as the printed tag would show.'
+      : 'No tap chosen and the combo has no sell price, so the tag prints the list price and each option\'s own price, no single sell figure (today\'s print rule).';
+  }
+  var parts = [
+    ['SRTBF11829', 'L780xW480xH400mm', ''],
+    ['SRTWB2380', '', ''],
+    ['SRTMCB8083-BL', 'L800xW130xH700mm', ''],
+    ['SRTWT6203-GM', '', 'Basin Cold Tap Brass Gunmetal'],
+    ['SRTW2600', '', 'Popup Waste 80mm (c/w Overflow) Brass']
+  ];
+  var shape = 'a';
+  function draw2(next) {
+    if (next) shape = next;
+    var box = document.getElementById('desc2');
+    box.innerHTML = '';
+    document.querySelectorAll('.lbl').forEach(function (input) {
+      var p = parts[Number(input.dataset.i)], label = input.value.trim();
+      var head = document.createElement('div');
+      if (shape === 'a') {
+        var b = document.createElement('b');
+        b.textContent = p[0] + (label ? ' (' + label + ')' : '');
+        head.appendChild(b);
+        box.appendChild(head);
+        if (p[1]) { var d = document.createElement('div'); d.textContent = p[1]; box.appendChild(d); }
+      } else {
+        head.textContent = '- ' + p[0] + (p[2] ? ' (' + p[2] + ')' : '');
+        box.appendChild(head);
+      }
+    });
+    document.querySelectorAll('#shape button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.shape === shape)); });
+  }
+  document.querySelectorAll('#shape button').forEach(function (b) { b.addEventListener('click', function () { draw2(b.dataset.shape); }); });
+  document.querySelectorAll('.lbl').forEach(function (i) { i.addEventListener('input', function () { draw2(); }); });
+  tap.addEventListener('change', draw1);
+  draw1(); draw2('a');
+})();
+</script>

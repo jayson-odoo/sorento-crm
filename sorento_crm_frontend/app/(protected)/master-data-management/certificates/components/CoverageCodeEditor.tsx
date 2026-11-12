@@ -1,16 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useUpdateCertificateProductCode } from '../hooks/useCertificates';
 
 /**
- * The code printed on the certificate for one covered product. A Suggested code (read by the
- * system) shows a badge and Confirm; with the edit right the text can be typed over in place.
+ * The code printed on the certificate for one covered product; with the edit right the text can
+ * be typed over in place. A code the system read itself (`ai`) looks like any other: there is no
+ * Suggested badge or Confirm tick (CERT-TAB-UX, owner 11 Nov 2026: the red box is the check).
  */
 export function CoverageCodeEditor(props: CoverageCodeProps) {
   // The editable form holds the save mutation; a viewer's cell needs no hooks at all.
@@ -26,17 +26,12 @@ interface CoverageCodeProps {
   onSaved?: () => void;
 }
 
-function CoverageCodeText({ code, source }: CoverageCodeProps) {
+function CoverageCodeText({ code }: CoverageCodeProps) {
   return (
     <div className="flex min-w-0 items-center gap-1.5">
       <span className="truncate" title={code ?? undefined}>
         {code || '-'}
       </span>
-      {code && source === 'ai' && (
-        <Badge variant="warning" appearance="light" size="sm" className="shrink-0">
-          Suggested
-        </Badge>
-      )}
     </div>
   );
 }
@@ -45,7 +40,6 @@ function EditableCoverageCode({
   certificateId,
   coverageId,
   code,
-  source,
   canEdit,
   onSaved,
 }: CoverageCodeProps) {
@@ -53,7 +47,7 @@ function EditableCoverageCode({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
-  const save = (body: { model_code?: string | null; confirm?: boolean }) =>
+  const save = (body: { model_code?: string | null }) =>
     update.mutate(
       { id: certificateId, coverageId, body },
       {
@@ -94,23 +88,6 @@ function EditableCoverageCode({
       <span className="truncate" title={code ?? undefined}>
         {code || '-'}
       </span>
-      {code && source === 'ai' && (
-        <Badge variant="warning" appearance="light" size="sm" className="shrink-0">
-          Suggested
-        </Badge>
-      )}
-      {canEdit && code && source === 'ai' && (
-        <Button
-          mode="icon"
-          variant="dim"
-          size="sm"
-          aria-label="Confirm code"
-          disabled={update.isPending}
-          onClick={() => save({ confirm: true })}
-        >
-          <Check className="size-4" />
-        </Button>
-      )}
       {canEdit && (
         <Button
           mode="icon"

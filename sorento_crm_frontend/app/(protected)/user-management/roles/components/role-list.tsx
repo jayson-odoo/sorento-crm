@@ -166,7 +166,7 @@ const RoleList = () => {
         },
         size: 200,
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
         meta: {
           headerTitle: 'Role',
           skeleton: <Skeleton className="w-28 h-7" />,

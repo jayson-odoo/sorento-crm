@@ -1037,3 +1037,51 @@ describe('OI-UX-FILTER-SNAPSHOT: a change names its order customer / project', (
     expect(annotation.party).toBe('ACME SDN BHD / TAMAN JAYA');
   });
 });
+
+describe('the location AutoCount moved (SPLIT-SHEET-LOCATION)', () => {
+  const moved = {
+    required_date: '2026-11-20',
+    qty: '10',
+    status: 'open',
+    item_code: null,
+  };
+
+  it('carries the old and new location on a location_changed row', () => {
+    const annotation = annotationOf(
+      row({
+        kind: 'location_changed',
+        from: { ...moved, location: 'BRW-IB' },
+        to: { ...moved, location: 'BRW-BB' },
+      }),
+      'SO429664',
+    );
+    expect(annotation.locationChangedFrom).toBe('BRW-IB');
+    expect(annotation.locationChangedTo).toBe('BRW-BB');
+    expect(changedFieldsOf(annotation)).toContainEqual({
+      key: 'location',
+      label: 'Location',
+      from: 'BRW-IB',
+      to: 'BRW-BB',
+    });
+  });
+
+  it('carries the move when it rides on a qty change', () => {
+    const annotation = annotationOf(
+      row({
+        kind: 'qty_down',
+        from: { ...moved, location: 'BRW-IB' },
+        to: { ...moved, qty: '8', location: 'BRW-BB' },
+      }),
+      'SO429664',
+    );
+    const keys = changedFieldsOf(annotation).map((field) => field.key);
+    expect(keys).toContain('location');
+    expect(keys).toContain('qty');
+  });
+
+  it('a row with no location move reads no location field', () => {
+    const annotation = annotationOf(row({}), 'SO429664');
+    expect(annotation.locationChangedFrom).toBeNull();
+    expect(changedFieldsOf(annotation).map((field) => field.key)).not.toContain('location');
+  });
+});

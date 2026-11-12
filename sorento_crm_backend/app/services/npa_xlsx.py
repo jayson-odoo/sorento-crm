@@ -158,7 +158,9 @@ def _qty(line: Optional[NewProductApplicationLine], inquiry: Optional[StockInqui
         return text  # a free-text quantity on the inquiry prints as typed
 
 
-def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
+def to_xlsx(db: Session, app: NewProductApplication, *, portal: bool = False) -> Tuple[bytes, str]:
+    """`portal`: the dealer's own download, whose COST row stays blank (SUPPLIER-COST-ACCESS,
+    management 9 Nov 2026: cost is never shown to a dealer)."""
     import openpyxl
     from openpyxl.drawing.image import Image as XlImage
     from openpyxl.styles import Alignment, Border, Font, Side
@@ -240,7 +242,7 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
         field(16, "TARGET DELIVERY:", needed)
         field(17, "REMARK:", app.remark)
         heading(18, "PURCHASING FEEDBACK")
-        cost = line.cost_price if line else app.cost_price
+        cost = None if portal else (line.cost_price if line else app.cost_price)
         field(19, "COST:", float(cost) if cost is not None else None)
         field(20, "LEADTIME:", app.lead_time)
 

@@ -1,0 +1,324 @@
+"""SPEC-REGISTRY-ICON-LEAK: the spec registry is shared by every company, its icons are not.
+
+1. A key's History tab (`/audit/logs/?entity_type=product_spec_registry`) shows only the
+   caller's own company's icon ids in `value_icons` (and `value_icon_conditions`, the
+   SPEC-ICON-COMBINED column keyed by icon id), never another company's.
+2. A `value_icons` save naming another company's icon that is not already stored there is
+   refused (422), so an id read elsewhere cannot be hung on a value. Postgres only.
+"""
+from __future__ import annotations
+
+import uuid
+
+# MUST be first app import - resolves a circular import in app.modules.runtime.guards
+from app.main import app  # noqa: E402,F401
+
+from tests.test_feature_icons_spec_value import _icon, _patch, _spec_key, reg  # noqa: F401
+from tests.test_feature_icons_spec_value_fixround import _stored, two_companies  # noqa: F401
+from tests.test_spec_registry_pr2_routes import _BASE, _key
+
+_HISTORY = "/api/v1/audit/logs/?entity_type=product_spec_registry&entity_id={}"
+
+
+def _history_row(db, row_id: str, old: dict, new: dict) -> None:
+    from app.models.audit import AuditLog
+
+    db.add(AuditLog(
+        id=str(uuid.uuid4()), entity_type="product_spec_registry", entity_id=row_id,
+        action="UPDATE", old_values=old, new_values=new,
+    ))
+    db.commit()
+
+
+def _updates(res) -> list[dict]:
+    """The hand-written UPDATE rows (creating the key also writes its own INSERT row)."""
+    return [e for e in res.json()["data"] if e["action"] == "UPDATE"]
+
+
+def _setup(two_companies):  # noqa: F811
+    db, _as, client, other, as_company = two_companies
+    a_icon, a_icon2 = _icon(db, "ZZT A"), _icon(db, "ZZT A2")
+    b_icon = _icon(db, "ZZT B")
+    b_icon.company_id = other
+    row = _key(db, _spec_key(), data_type="enum", allowed_values=["a", "b"])
+    db.commit()
+    return db, client, other, as_company, row, a_icon, a_icon2, b_icon
+
+
+# ---------------------------------------------------------------------------
+# 1. History
+# ---------------------------------------------------------------------------
+
+
+def test_history_hides_another_companys_icon_ids(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, a_icon2, b_icon = _setup(two_companies)
+    _history_row(
+        db, row.id,
+        old={"value_icons": {"a": [a_icon.id, b_icon.id]}, "label": "Old"},
+        new={"value_icons": {"a": [a_icon.id, b_icon.id], "b": [b_icon.id, a_icon2.id]},
+             "label": "New"},
+    )
+
+    res = client.get(_HISTORY.format(row.id))
+    assert res.status_code == 200, res.text
+    [entry] = _updates(res)
+    assert b_icon.id not in res.text
+    # The caller's own icons, and the rest of the diff, are untouched.
+    assert entry["old_values"] == {"value_icons": {"a": [a_icon.id]}, "label": "Old"}
+    assert entry["new_values"] == {
+        "value_icons": {"a": [a_icon.id], "b": [a_icon2.id]}, "label": "New",
+    }
+
+    # The other company sees its own and none of A's.
+    as_company(other)
+    res = client.get(_HISTORY.format(row.id))
+    assert res.status_code == 200, res.text
+    [entry] = _updates(res)
+    assert a_icon.id not in res.text and a_icon2.id not in res.text
+    assert entry["new_values"]["value_icons"] == {"a": [b_icon.id], "b": [b_icon.id]}
+    assert entry["old_values"]["value_icons"] == {"a": [b_icon.id]}
+
+
+def test_history_hides_another_companys_ids_in_value_icon_conditions(two_companies):  # noqa: F811
+    # SPEC-ICON-COMBINED (#2291) column: value -> {icon id: [conditions]}. The audit row is
+    # JSON, so this holds whether or not the column has landed on main yet.
+    db, client, _other, _as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    cond = [{"spec_key": "zz_len", "value": "150"}]
+    _history_row(
+        db, row.id, old={},
+        new={"value_icon_conditions": {"a": {a_icon.id: cond, b_icon.id: cond}}},
+    )
+
+    res = client.get(_HISTORY.format(row.id))
+    assert res.status_code == 200, res.text
+    assert b_icon.id not in res.text
+    [entry] = _updates(res)
+    assert entry["new_values"] == {"value_icon_conditions": {"a": {a_icon.id: cond}}}
+
+
+def test_history_hides_a_deleted_icon_of_another_company_keeps_my_deleted_one(two_companies):  # noqa: F811
+    from app.models.resources import Attachment
+
+    db, client, _other, _as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    db.get(Attachment, a_icon.attachment_id).is_deleted = True
+    db.get(Attachment, b_icon.attachment_id).is_deleted = True
+    db.commit()
+    _history_row(db, row.id, old={}, new={"value_icons": {"a": [a_icon.id, b_icon.id]}})
+
+    res = client.get(_HISTORY.format(row.id))
+    assert res.status_code == 200, res.text
+    [entry] = _updates(res)
+    assert entry["new_values"] == {"value_icons": {"a": [a_icon.id]}}
+
+
+def test_history_of_other_entities_is_untouched(two_companies):  # noqa: F811
+    from app.models.audit import AuditLog
+
+    db, _client, _other, _as_company, _row, _a, _a2, b_icon = _setup(two_companies)
+    from app.services.dealer_kit.asset_service import redact_foreign_icon_ids
+
+    it = AuditLog(entity_type="product", entity_id="x", action="UPDATE",
+                  old_values=None, new_values={"value_icons": {"a": [b_icon.id]}})
+    redact_foreign_icon_ids(db, [it])
+    assert it.new_values == {"value_icons": {"a": [b_icon.id]}}
+
+
+def test_own_asset_ids_by_scope_state(two_companies):  # noqa: F811
+    from app.models.base import UNSET, company_scope
+    from app.services.dealer_kit.asset_service import own_asset_ids
+    from tests.test_feature_icons_spec_value import SORENTO
+
+    db, _client, other, _as_company, _row, a_icon, _a2, b_icon = _setup(two_companies)
+    ids = {a_icon.id, b_icon.id, str(uuid.uuid4())}
+    with company_scope(db, frozenset({SORENTO})):
+        # Upper-case ids are the same icons.
+        assert own_asset_ids(db, ids | {a_icon.id.upper()}) == {a_icon.id}
+    with company_scope(db, frozenset({other})):
+        assert own_asset_ids(db, ids) == {b_icon.id}
+    # Fail-closed: no scope resolved, or an empty one, owns nothing.
+    with company_scope(db, UNSET):
+        assert own_asset_ids(db, ids) == set()
+    with company_scope(db, frozenset()):
+        assert own_asset_ids(db, ids) == set()
+    # The all-companies principal (an X-API-Key) is not redacted.
+    with company_scope(db, None):
+        assert own_asset_ids(db, ids) is None
+
+
+def _audit_admin(db) -> str:
+    from app.models.user import User, UserRole, UserRoleAssignment
+
+    role = UserRole(id=str(uuid.uuid4()), slug="admin", name="admin", description="",
+                    is_protected=False, is_default=False)
+    user = User(id=str(uuid.uuid4()), email=f"zzt-{uuid.uuid4().hex[:8]}@test.com",
+                name="Admin", status="ACTIVE")
+    db.add_all([role, user])
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user.id, role_id=role.id))
+    db.commit()
+    return user.id
+
+
+def test_an_admin_of_another_company_does_not_see_my_ids_in_history(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    _as = two_companies[1]
+    _history_row(db, row.id, old={}, new={"value_icons": {"a": [a_icon.id, b_icon.id]}})
+    _as(_audit_admin(db))
+    as_company(other)
+
+    res = client.get(_HISTORY.format(row.id))
+    assert res.status_code == 200, res.text
+    assert a_icon.id not in res.text
+    [entry] = _updates(res)
+    assert entry["new_values"] == {"value_icons": {"a": [b_icon.id]}}
+
+
+def test_the_activity_feed_hides_another_companys_icon_ids(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    _as = two_companies[1]
+    _history_row(db, row.id, old={"value_icons": {"a": [b_icon.id]}},
+                 new={"value_icons": {"a": [a_icon.id, b_icon.id]}})
+    _as(_audit_admin(db))
+
+    res = client.get(f"/api/v1/audit/activity?q={row.id}&limit=50")
+    assert res.status_code == 200, res.text
+    assert [i for i in res.json()["items"] if i["entity_id"] == row.id], res.text
+    assert b_icon.id not in res.text
+    assert a_icon.id in res.text
+
+    as_company(other)
+    res = client.get(f"/api/v1/audit/activity?q={row.id}&limit=50")
+    assert res.status_code == 200, res.text
+    assert a_icon.id not in res.text
+
+
+# ---------------------------------------------------------------------------
+# 2. Save
+# ---------------------------------------------------------------------------
+
+
+def test_a_save_naming_another_companys_icon_is_refused(two_companies):  # noqa: F811
+    db, client, _other, _as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+
+    res = _patch(client, row.spec_key, {"a": [a_icon.id, b_icon.id]})
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "spec_registry_icon_not_an_icon"
+    assert _stored(db, row.spec_key) == {}
+
+
+def test_a_foreign_icon_stored_on_one_value_cannot_be_copied_to_another(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    as_company(other)
+    assert _patch(client, row.spec_key, {"a": [b_icon.id]}).status_code == 200
+
+    # Company A learned b_icon's id (e.g. from History before this fix) and names it on "b".
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+    from tests.test_feature_icons_spec_value import SORENTO
+
+    async def _a_scope():
+        scope = frozenset({SORENTO})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _a_scope
+    res = _patch(client, row.spec_key, {"a": [a_icon.id], "b": [b_icon.id]})
+    # Dropped, never stored on "b": it stays only where its own company put it.
+    assert res.status_code == 200, res.text
+    assert res.json()["value_icons"] == {"a": [a_icon.id]}
+    assert _stored(db, row.spec_key) == {"a": [b_icon.id, a_icon.id]}
+
+
+def test_own_icons_still_save_and_another_companys_stored_ones_are_kept(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, a_icon2, b_icon = _setup(two_companies)
+    as_company(other)
+    assert _patch(client, row.spec_key, {"a": [b_icon.id]}).status_code == 200
+
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+    from tests.test_feature_icons_spec_value import SORENTO
+
+    async def _a_scope():
+        scope = frozenset({SORENTO})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _a_scope
+    res = _patch(client, row.spec_key, {"a": [a_icon.id], "b": [a_icon2.id, a_icon.id]})
+    assert res.status_code == 200, res.text
+    assert res.json()["value_icons"] == {"a": [a_icon.id], "b": [a_icon2.id, a_icon.id]}
+    assert _stored(db, row.spec_key) == {"a": [b_icon.id, a_icon.id], "b": [a_icon2.id, a_icon.id]}
+
+
+# ---------------------------------------------------------------------------
+# 3. value_icon_conditions save (SPEC-ICON-COMBINED, #2291)
+# ---------------------------------------------------------------------------
+
+
+def _conditioned(two_companies):  # noqa: F811
+    """Company B's icon is on value "a" with a condition; company A then saves."""
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    trap = _key(db, _spec_key(), data_type="enum", allowed_values=["s_trap", "p_trap"])
+    db.commit()
+    cond = [{"spec_key": trap.spec_key, "value": "s_trap"}]
+    as_company(other)
+    res = client.patch(f"{_BASE}/{row.spec_key}", json={
+        "value_icons": {"a": [b_icon.id]}, "value_icon_conditions": {"a": {b_icon.id: cond}},
+    })
+    assert res.status_code == 200, res.text
+    _as_sorento(db)
+    return db, client, row, trap, a_icon, b_icon, cond
+
+
+def _as_sorento(db) -> None:
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+    from tests.test_feature_icons_spec_value import SORENTO
+
+    async def _a_scope():
+        scope = frozenset({SORENTO})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _a_scope
+
+
+def _row(db, key):
+    from app.models.product_spec import ProductSpecRegistry
+
+    db.expire_all()
+    return db.query(ProductSpecRegistry).filter_by(spec_key=key).one()
+
+
+def test_a_condition_naming_another_companys_icon_is_refused(two_companies):  # noqa: F811
+    db, client, row, trap, a_icon, b_icon, cond = _conditioned(two_companies)
+    other_cond = [{"spec_key": trap.spec_key, "value": "p_trap"}]
+
+    for payload in (
+        # Conditions only, and conditions alongside an icon save that keeps B's icon in place.
+        {"value_icon_conditions": {"a": {b_icon.id: other_cond}}},
+        {"value_icons": {"a": [a_icon.id]}, "value_icon_conditions": {"a": {b_icon.id: other_cond}}},
+    ):
+        res = client.patch(f"{_BASE}/{row.spec_key}", json=payload)
+        assert res.status_code == 422, res.text
+        body = res.json()
+        assert body["code"] == "spec_registry_icon_condition"
+        # The same words as an icon that is not on the value: nothing says B's icon exists.
+        assert "A condition belongs to an icon set on that value." in res.text
+        # The test shares one session with the route, so a refused request's earlier
+        # value_icons write is still in its transaction (a real request rolls it back);
+        # the conditions are what this refusal protects.
+        assert _row(db, row.spec_key).value_icon_conditions == {"a": {b_icon.id: cond}}
+
+
+def test_my_conditions_still_save_beside_another_companys(two_companies):  # noqa: F811
+    db, client, row, trap, a_icon, b_icon, cond = _conditioned(two_companies)
+    mine = [{"spec_key": trap.spec_key, "value": "p_trap"}]
+
+    res = client.patch(f"{_BASE}/{row.spec_key}", json={
+        "value_icons": {"a": [a_icon.id]}, "value_icon_conditions": {"a": {a_icon.id: mine}},
+    })
+    assert res.status_code == 200, res.text
+    assert res.json()["value_icon_conditions"] == {"a": {a_icon.id: mine}}
+    stored = _row(db, row.spec_key)
+    assert stored.value_icon_conditions == {"a": {b_icon.id: cond, a_icon.id: mine}}

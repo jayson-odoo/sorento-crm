@@ -41,6 +41,7 @@ from app.models.access import Team
 from app.models.accessory import Accessory
 from app.models.base import company_scope, get_company_scope
 from app.models.certificate import Certificate
+from app.models.costing import CustomerCostingProduct
 from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
 from app.models.country import Country
 from app.models.dealer_kit import (
@@ -167,6 +168,14 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
 # by the requester (`ACKNOWLEDGE`) or by CS (`RESERVE`, who may cancel a request that
 # is not hers - the ownership question itself is `cancel_request`'s own job, not the
 # park gate's).
+#: Grants an action needs IN ADDITION to its declared one (all of them). The Costing record
+#: actions touch cost data, which `products.cost.view` guards on every costing route, so parking
+#: one without it is refused here as well.
+_ALSO_REQUIRED_PERMISSIONS: dict = {
+    "costing_party_product.unlink": ("products.cost.view",),
+    "exchange_rate.delete": ("products.cost.view",),
+}
+
 _ANY_OF_PERMISSIONS: dict = {
     "form_comment.delete": (
         "complaint_management.complaints.view",
@@ -184,7 +193,7 @@ _ANY_OF_PERMISSIONS: dict = {
 #: Actions whose commit names the admin at the keyboard when one parked it while viewing as the
 #: requester: the salesperson's own deletes from the CRM request pages (PORTAL-P4-REQUESTS D7).
 #: The commit runs after the request, so the admin is stored with the action, server-side.
-_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink")
+_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink", "dealer_access_link.unlink")
 
 
 #: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID
@@ -198,6 +207,7 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_form_draft.discard",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
@@ -209,6 +219,24 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
     for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
         if not (payload or {}).get(key):
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
+    if action_key == "tag_template.unassign_products":
+        # PRICETAG-TEMPLATE-PRODUCTS: the same shape and 500-per-list cap /assign takes, so a
+        # parked removal can never carry a list the HTTP route would refuse.
+        from pydantic import ValidationError
+
+        from app.schemas.price_tag import TemplateAssignFilter
+
+        keys = (
+            "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids", "combo_ids",
+        )
+        try:
+            TemplateAssignFilter.model_validate(
+                {key: (payload or {})[key] for key in keys if (payload or {}).get(key) is not None}
+            )
+        except ValidationError:
+            raise handle_validation_error(
+                "Each filter must be a list of at most 500 values for 'tag_template.unassign_products'."
+            )
     if action_key in _UUID_ENTITY_ACTIONS:
         from app.services.ideation_gateway_service import require_uuid
 
@@ -254,6 +282,10 @@ def _assert_entity_visible(
 
         if get_link_by_id(db, entity_id) is None:
             raise handle_not_found("Customer link", entity_id)
+    elif action_key == "dealer_access_link.unlink":
+        from app.services import dealer_access_screen
+
+        dealer_access_screen.own_link(db, str(actor_id or ""), entity_id)  # 404 unless one of the requester's own
     elif action_key == "customer_group.delete":
         from app.services.customer_group_service import CustomerGroupService
 
@@ -262,6 +294,10 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
+    elif action_key == "quotation_form_draft.discard":
+        from app.services.record_actions import assert_form_draft_discardable
+
+        assert_form_draft_discardable(db, entity_id, actor_id)
     elif action_key in ("tag_template.delete", "tag_template.bulk_delete"):
         # Refused now, not ten seconds later: a template a spec sheet draws from stays.
         from app.services.dealer_kit import tag_template_service
@@ -361,6 +397,7 @@ _PARK_SCOPED_MODELS: dict = {
     "attachment_directory.set_company": AttachmentDirectory,
     "brand.delete": Brand,
     "campaign.delete": MarketingCampaign,
+    "costing_party_product.unlink": CustomerCostingProduct,
     "certificate.delete": Certificate,
     "cost_price_change_set.discard": CostPriceChangeSet,
     "country.delete": Country,
@@ -424,6 +461,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "customer.remove_from_group",
     "customer.unassign_sales_agent",
     "customer_group.delete",
+    "dealer_access_link.unlink",
     "form_comment.delete",
     "my_request.delete",
     "my_request_attachment.unlink",
@@ -435,6 +473,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_compatibility.unlink",
     "quotation_certificate.remove",
     "quotation_document.delete",
+    "quotation_form_draft.discard",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
     "sample_request.delete",
@@ -462,6 +501,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "contact_tag.delete",
     "container_size.delete",
     "currency_rate.delete",
+    # No company column: a dated exchange rate is the same for every company.
+    "exchange_rate.delete",
     "email_template.delete",
     "idea.archive",
     "idea.delete",
@@ -652,14 +693,15 @@ def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slu
             )
         return
 
-    if not user_id or not UserPermissionService(db).check_user_has_permission(
-        str(user_id), slug
-    ):
-        raise AppException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            message=f"Permission required: {slug}",
-            code="FORBIDDEN",
-        )
+    for needed in (slug, *_ALSO_REQUIRED_PERMISSIONS.get(action_key, ())):
+        if not user_id or not UserPermissionService(db).check_user_has_permission(
+            str(user_id), needed
+        ):
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message=f"Permission required: {needed}",
+                code="FORBIDDEN",
+            )
 
 
 def _window_seconds(row: SlaFormAction) -> Optional[int]:

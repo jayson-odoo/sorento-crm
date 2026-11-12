@@ -28,6 +28,7 @@ export interface SystemSetting {
   websiteURL?: string | null;
   supportEmail?: string | null;
   supportPhone?: string | null;
+  fax?: string | null;
   language: string;
   timezone: string;
   currency: string;

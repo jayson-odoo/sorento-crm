@@ -35,6 +35,16 @@ export function AccessoryTemplatePreview({ design }: { design: AccessoryDesign }
           rx={props.cornerRadius_mm}
         />
       )}
+      {box.header?.fill && (
+        <rect
+          x={box.header.x_mm}
+          y={box.header.y_mm}
+          width={box.header.width_mm}
+          height={box.header.height_mm}
+          rx={box.header.radius_mm}
+          fill={box.header.fill}
+        />
+      )}
       {box.header && (
         <text
           x={box.header.x_mm + box.header.width_mm / 2}

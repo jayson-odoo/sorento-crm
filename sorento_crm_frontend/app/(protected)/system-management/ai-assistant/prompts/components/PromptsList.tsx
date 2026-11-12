@@ -132,7 +132,7 @@ export function PromptsList() {
         ),
         size: 240,
         meta: { headerTitle: 'Prompt' },
-        enableHiding: false,
+        enableHiding: true,
       },
       {
         id: 'role',

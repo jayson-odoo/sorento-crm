@@ -4989,10 +4989,13 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
             Project.title,
             Project.outcome,
             Project.owner_user_id,
+            Project.name,
         ).filter(
             or_(
                 _ws_insensitive_lower(Project.project_code).in_(keys),
                 _ws_insensitive_lower(Project.title).in_(keys),
+                # The short name people say (PROJECT-NAME).
+                _ws_insensitive_lower(Project.name).in_(keys),
             )
         )
     )
@@ -5008,10 +5011,15 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
     ):
         query = query.filter(own_scope.project_clause(own_scope.me(db, acting_user)))
     rows = query.all()
-    for pid, code, title, outcome, owner_user_id in rows:
+    for pid, code, title, outcome, owner_user_id, name in rows:
         by_code = _strip_all_ws(str(code or "").lower())
         by_title = _strip_all_ws(str(title or "").lower())
-        token = norm_to_token.get(by_code) or norm_to_token.get(by_title)
+        by_name = _strip_all_ws(str(name or "").lower())
+        token = (
+            norm_to_token.get(by_code)
+            or norm_to_token.get(by_title)
+            or (norm_to_token.get(by_name) if by_name else None)
+        )
         if not token:
             continue
         result[token].append(
@@ -5019,9 +5027,14 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
                 entity_type="project",
                 canonical_code=code,
                 uuid=str(pid) if pid else None,
-                match_field="project_code" if norm_to_token.get(by_code) else "title",
+                match_field=(
+                    "project_code"
+                    if norm_to_token.get(by_code)
+                    else "title" if norm_to_token.get(by_title) else "name"
+                ),
                 display={
                     "title": title,
+                    "name": name,
                     "outcome": outcome,
                     "owner_user_id": owner_user_id,
                 },

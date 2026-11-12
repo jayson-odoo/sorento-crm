@@ -24,6 +24,7 @@ from app.schemas.project_supply import ConfirmLine
 
 PlanningChangeKind = Literal[
     "delayed", "advanced", "qty_up", "qty_down", "cancelled", "added", "product_changed",
+    "location_changed",
 ]
 #: The one decision per row (AC-C7): Confirm the composed suggestion, or Amend it.
 #: `accept` / `keep` / `board` are retired with the rule table that produced them (Slice C,
@@ -55,6 +56,9 @@ class PlanningChangeFromTo(BaseModel):
     #: The old/new product on a `product_changed` row (Slice A, rule 5's "carrying the old
     #: and the new product") - `None` on every other kind, same as the fields above.
     item_code: Optional[str] = None
+    #: The old/new AutoCount line location when it moved (SPLIT-SHEET-LOCATION), on any
+    #: kind; `None` when it did not.
+    location: Optional[str] = None
 
 
 class PlanningChangeHeldReserve(BaseModel):

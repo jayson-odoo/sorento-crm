@@ -221,3 +221,51 @@ export async function deleteProductComboImage(comboId: string): Promise<void> {
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to clear the image'));
 }
+
+/** A picked product as the copy answers it (COMBO-COPY-TO-PRODUCTS). */
+export interface ComboCopyTarget {
+  product_id: string;
+  code: string;
+  name: string;
+}
+
+/** What a combo copy did (or, with `dryRun`, would do). */
+export interface ComboCopySummary {
+  targets: number;
+  created: number;
+  overwritten: number;
+  /** `exists`: has a combo of that name, not picked to overwrite; `part`: a part of this combo. */
+  skipped: (ComboCopyTarget & { reason: 'exists' | 'part' })[];
+  /** Every picked product that already has a combo of that name. */
+  conflicts: ComboCopyTarget[];
+  /** False when the caller cannot manage tag templates: the links were left out. */
+  template_links_copied: boolean;
+}
+
+/**
+ * COMBO-COPY-TO-PRODUCTS: copy this combo as it is onto each picked product, one transaction.
+ * A product that already has a combo of that name is skipped unless it is in `overwriteIds`.
+ * `dryRun` answers the same summary and writes nothing (the confirm step).
+ *
+ *  POST /api/v1/master-data/product-combos/{combo_id}/copy
+ *    { target_product_ids, overwrite_product_ids, dry_run } -> ComboCopySummary
+ */
+export async function copyProductCombo(
+  comboId: string,
+  targetIds: string[],
+  overwriteIds: string[] = [],
+  dryRun = false,
+): Promise<ComboCopySummary> {
+  const res = await apiFetch(`${COMBOS}/${encodeURIComponent(comboId)}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target_product_ids: targetIds,
+      overwrite_product_ids: overwriteIds,
+      dry_run: dryRun,
+    }),
+  });
+  if (!res.ok)
+    throw new Error(await extractApiError(res, 'Failed to copy the combo'));
+  return (await res.json()) as ComboCopySummary;
+}

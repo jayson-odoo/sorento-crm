@@ -14,6 +14,7 @@ import {
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
   getOrderInquiryHeaderRelatedDocuments,
+  getOrderInquiryHistory,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
   getOrderInquiryPoDetail,
@@ -84,6 +85,7 @@ export const ORDER_INQUIRY_MATRIX_KEY = 'order-inquiry-matrix';
 export const ORDER_INQUIRY_HEADERS_KEY = 'order-inquiry-headers';
 export const ORDER_INQUIRY_HEADER_KEY = 'order-inquiry-header';
 export const ORDER_INQUIRY_HEADER_LINES_KEY = 'order-inquiry-header-lines';
+export const ORDER_INQUIRY_HISTORY_KEY = 'order-inquiry-history';
 export const ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY =
   'order-inquiry-header-related-documents';
 export const ORDER_INQUIRY_RESERVE_REQUESTS_KEY = 'order-inquiry-reserve-requests';
@@ -180,6 +182,18 @@ export function useOrderInquiryHeaderLines(id: string | undefined) {
     queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id],
     queryFn: () => getOrderInquiryHeaderLines(id as string),
     enabled: Boolean(id),
+  });
+}
+
+/** STANDARD-HISTORY wave 1: the History tab and the line dialog's "All events" tab, one
+ * read per OI, shared by both. Refetched each time either opens, so a press made a moment
+ * ago is on it. */
+export function useOrderInquiryHistory(id: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_HISTORY_KEY, id],
+    queryFn: () => getOrderInquiryHistory(id as string),
+    enabled: Boolean(id),
+    refetchOnMount: 'always',
   });
 }
 

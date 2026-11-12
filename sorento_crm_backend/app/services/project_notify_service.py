@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.projects import Project
-from app.services.project_service import project_label
+from app.services.project_service import project_display_name, project_label
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,7 @@ def notify_interest_registered(
         user_ids=sorted(recipients),
         notif_type="project_interest_registered",
         title=f"{requester_name} registered as secondary lead on {label}",
-        body=f"{requester_name} registered as secondary lead on {label}: {project.title}",
+        body=f"{requester_name} registered as secondary lead on {label}: {project_display_name(project)}",
         data={
             "project_id": str(project.id),
             "project_code": project.project_code,
@@ -238,7 +238,7 @@ def notify_reassigned(
         user_ids=sorted(recipients),
         notif_type="project_reassigned",
         title=f"{label} was reassigned",
-        body=f"{label}: {project.title} has a new owner.",
+        body=f"{label}: {project_display_name(project)} has a new owner.",
         data={
             "project_id": str(project.id),
             "project_code": project.project_code,
@@ -289,7 +289,7 @@ def notify_floor_breach(
     floor = event.get("floor_value")
     price = event.get("unit_price")
     body = (
-        f"{project.title}: a line was priced at {price}, below the minimum price of "
+        f"{project_display_name(project)}: a line was priced at {price}, below the minimum price of "
         f"{floor}. Approve it or ask for a re-price."
     )
     return _send(

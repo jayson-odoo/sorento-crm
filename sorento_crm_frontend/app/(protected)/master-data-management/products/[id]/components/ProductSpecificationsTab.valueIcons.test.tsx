@@ -255,6 +255,7 @@ describe('ProductSpecificationsTab value icons', () => {
     expect(icon?.getAttribute('title')).toBe('Hot water');
     expect(iconsFor).toHaveBeenCalledWith(
       expect.objectContaining({ specKey: 'water_supply', value: 'mixer' }),
+      expect.any(Array),
     );
   });
 

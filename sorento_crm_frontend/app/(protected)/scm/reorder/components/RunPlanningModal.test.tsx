@@ -177,7 +177,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 vi.mock('../../hooks/useScmOptions', () => ({
-  useWarehouseOptions: () => ({
+  useActiveWarehouseOptions: () => ({
     data: [
       { value: 'WH-KL', label: 'Kuala Lumpur DC' },
       { value: 'WH-JB', label: 'Johor Bahru DC' },

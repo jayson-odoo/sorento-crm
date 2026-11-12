@@ -113,10 +113,12 @@ const STAFF_SIDEBAR: MenuConfig = [
     permissionsAny: ['sla_management.conversation_sla_tracking.view', 'sla.kpi.view'],
   },
   {
-    // SORENTO-TOWN: open to every signed-in staff user; the amounts are redacted server-side.
+    // SORENTO-TOWN: admin-only (owner, 10 Nov 2026, TOWN-V2) through its own permission, granted to the
+    // admin and superadmin roles; amounts are still redacted server-side for anyone else granted it.
     title: 'Town',
     icon: Store,
     path: '/town',
+    permission: 'dashboards.town.view',
   },
   {
     title: 'Ideas',
@@ -440,7 +442,9 @@ const STAFF_SIDEBAR: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
+        // SUPPLIER-COST-ACCESS: every row is a supplier unit cost; the API also needs
+        // `procurement.product_suppliers.view`, which every holder of this one has.
+        permission: 'products.cost.view',
       },
       {
         title: 'Cost Price Uploads',
@@ -600,6 +604,12 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/master-data-management/product-sets',
             permission: 'master_data.product_sets.view',
           },
+          {
+            // PRODUCT-COSTING: landing cost, mark-ups and party prices.
+            title: 'Costing',
+            path: '/master-data-management/costing',
+            permission: 'products.cost.view',
+          },
         ],
       },
       {
@@ -644,6 +654,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             title: 'Item Classes',
             path: '/master-data-management/item-classes',
             permission: 'master_data.item_classes.view',
+          },
+          {
+            title: 'Payment Terms',
+            path: '/master-data-management/payment-terms',
+            permission: 'master_data.payment_terms.view',
           },
           {
             title: 'Units of Measure',
@@ -1564,6 +1579,13 @@ export const MENU_SIDEBAR: MenuConfig = [
     permission: 'sales.customer_asks.view',
     audience: 'salesperson',
   },
+  {
+    title: 'Dealer access',
+    icon: UserCheck,
+    path: '/sales/dealer-access',
+    permission: 'user_management.contacts.edit_own',
+    audience: 'salesperson',
+  },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
   ...MY_REQUEST_ITEMS,
 ];
@@ -2077,6 +2099,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.item_classes.view',
     },
     {
+      title: 'Payment Terms',
+      path: '/master-data-management/payment-terms',
+      permission: 'master_data.payment_terms.view',
+    },
+    {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
@@ -2101,7 +2128,9 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
+        // SUPPLIER-COST-ACCESS: every row is a supplier unit cost; the API also needs
+        // `procurement.product_suppliers.view`, which every holder of this one has.
+        permission: 'products.cost.view',
       },
       {
         title: 'Cost Price Uploads',

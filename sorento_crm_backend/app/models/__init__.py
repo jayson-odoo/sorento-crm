@@ -6,6 +6,7 @@ from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, 
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductAlternative, ProductCategory, Brand, UnitOfMeasure
 from app.models.country import Country
+from app.models.payment_term import PaymentTerm
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.models.product_combo import ProductCombo, ProductComboPart
@@ -24,6 +25,7 @@ from app.models.autocount_compare_mapping import AutocountCompareMapping
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.cost_price import ProductSupplierCost, CostPriceChangeSet, CostPriceChangeLine, SupplierPriceLink
+from app.models.costing import ExchangeRate, CostingSettings, CostingCategoryRule, CostingProductOverride, CustomerCostingProfile, CustomerCostingProduct
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
@@ -393,6 +395,7 @@ __all__ = [
     "EmailEventConfig",
     "ReorderPolicy",
     "ItemClassification",
+    "PaymentTerm",
     "AbcXyzPolicy",
     "SupplierScoringPolicy",
     "SupplierPerformance",

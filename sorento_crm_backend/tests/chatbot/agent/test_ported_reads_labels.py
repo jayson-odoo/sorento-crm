@@ -18,6 +18,7 @@ from app.services.chatbot.agent import tools as agent_tools
 from tests._pg_fixture import blank_session
 from tests.chatbot.agent._ported_reads_support import (
     AC1_NAMES,
+    LOCAL_PORTED,
     CAPABILITIES,
     ESCALATION_LOGS_VIEW,
     FIND,
@@ -79,8 +80,8 @@ def test_AC8_the_new_labels_are_distinct_from_each_other_and_from_every_other_la
 
 def test_AC8_agent_tool_labels_holds_the_label_of_every_ported_read():
     labels = router_labels()
-    assert sorted(ported_reads()) == sorted(PORTED_NAMES)
-    for name in PORTED_NAMES:
+    assert sorted(ported_reads()) == sorted([*PORTED_NAMES, *LOCAL_PORTED])
+    for name in [*PORTED_NAMES, *LOCAL_PORTED]:
         assert label_of(name) in labels, f"{name} is not told to Jev"
 
 

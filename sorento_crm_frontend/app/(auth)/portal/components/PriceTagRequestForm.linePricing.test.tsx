@@ -57,6 +57,10 @@ vi.mock('../lib/portal-client', () => ({
 // select is one per LINE (`promotion-${line.key}`), and only a real `id`
 // lets the component's own `<Label htmlFor>` pair with it so
 // `getByLabelText('Promotion for line 1')`-style queries work at all.
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -117,7 +121,7 @@ import {
   type ProductCombosLookup,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems } from '@/test-utils';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 const mockCombos = vi.mocked(lookupProductCombos);
@@ -157,7 +161,7 @@ beforeEach(() => {
 async function startWithALine(item: (typeof ITEMS)[number]) {
   render(<PriceTagRequestForm />);
   await selectOption('Customer', 'ZZTD01');
-  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+  chooseTypedItems();
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', `${item.kind}:${item.id}`);
 }

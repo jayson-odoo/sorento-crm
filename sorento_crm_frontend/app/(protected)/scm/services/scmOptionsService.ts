@@ -37,6 +37,14 @@ export async function getWarehouseOptions(): Promise<Option[]> {
   return data.map((w) => ({ value: w.warehouse_code, label: w.warehouse_name }));
 }
 
+/** ACTIVE locations only (SCM-INACTIVE-LOCATIONS): every picker that sets a reorder / low
+ *  stock / daily job scope. `getWarehouseOptions` above stays whole for code-to-name
+ *  lookups on records that may name a location deactivated since. */
+export async function getActiveWarehouseOptions(): Promise<Option[]> {
+  const { data } = await getWarehouseHealth(EMPTY_SCM_FILTERS, { activeOnly: true });
+  return data.map((w) => ({ value: w.warehouse_code, label: w.warehouse_name }));
+}
+
 export async function getSupplierOptions(): Promise<Option[]> {
   const { data } = await getSuppliers(EMPTY_SCM_FILTERS);
   return data.map((s) => ({ value: s.supplier_code, label: s.supplier_name }));

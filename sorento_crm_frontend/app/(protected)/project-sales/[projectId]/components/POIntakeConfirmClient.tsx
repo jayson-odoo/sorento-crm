@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../_shared/hooks/useProjects';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import { usePOIntakeController } from '../../_shared/hooks/usePOIntake';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
@@ -179,7 +180,7 @@ export function POIntakeConfirmClient({
   const crumbs = [
     { title: 'Project Sales' },
     { title: 'Projects', path: '/project-sales/pipeline' },
-    { title: project.data?.title ?? 'Project', path: `/project-sales/${projectId}` },
+    { title: (project.data && projectDisplayName(project.data)) || 'Project', path: `/project-sales/${projectId}` },
   ];
 
   return (
@@ -243,8 +244,8 @@ export function POIntakeConfirmClient({
             title={project.data?.title ?? undefined}
           >
             {project.data?.project_code
-              ? `${project.data.title} (${project.data.project_code})`
-              : project.data?.title}
+              ? `${projectDisplayName(project.data)} (${project.data.project_code})`
+              : project.data && projectDisplayName(project.data)}
           </span>
           {` · ${version.lines.length} line${version.lines.length === 1 ? '' : 's'}`}
           <TotalsMetaLine version={version} onJumpToProblem={jumpToProblem} />

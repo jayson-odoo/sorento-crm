@@ -1552,6 +1552,37 @@ register(
     )
 )
 
+def _unlink_dealer_access(db: Session, payload: dict):
+    from app.audit_context import AuditActor, actor_scope
+    from app.services import dealer_access_screen
+
+    # Runs from whichever request commits the window: the requester is the actor, and the link must still be one of
+    # their own accounts' links (it fails, and stays, when it is not).
+    requester = str(payload.get("requested_by_id") or "")
+    if not requester:
+        raise ValueError("dealer_access_link.unlink has no requester")
+    # `real_user_id` is the admin while one views as the requester (stamped at park time, `_REAL_USER_ACTIONS`).
+    with actor_scope(
+        AuditActor(
+            actor_type="user", user_id=requester, real_user_id=str(payload.get("real_user_id") or requester)
+        ),
+        db=db,
+    ):
+        return dealer_access_screen.unlink(db, requester, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="dealer_access_link.unlink",
+        # Parked on the LINK row (`respond_contact_customers`), one of the requester's own accounts'.
+        entity_types=("dealer_access_link",),
+        execute=_unlink_dealer_access,
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit_own",
+        label="Unlink dealer access",
+    )
+)
+
 register(
     FormAction(
         key="customer.unassign_sales_agent",
@@ -1771,7 +1802,8 @@ for _key, _fn, _label in (
 def _unassign_tag_template_products(db: Session, payload: dict):
     """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
     an unlink, so it parks (5s, reversible: Add puts the links back). The
-    filter is re-applied at commit, under the requester's own scope."""
+    filter is re-applied at commit, under the requester's own scope.
+    PRICETAG-TEMPLATE-PRODUCTS: the designer's Save parks its unticked ``product_ids`` here."""
     from app.services.dealer_kit import product_tag_template_service
 
     return product_tag_template_service.bulk_assign(
@@ -1779,7 +1811,10 @@ def _unassign_tag_template_products(db: Session, payload: dict):
         _entity_id(payload),
         {
             key: payload.get(key) or []
-            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+            for key in (
+                "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids",
+                "combo_ids",
+            )
         },
         "remove",
         user_id=payload.get("requested_by_id"),
@@ -2671,7 +2706,15 @@ def _delete_product_supplier_cost(db: Session, payload: dict):
     from app.models.cost_price import ProductSupplierCost
     from app.services.error_handler import handle_not_found
     from app.services.procurement.supplier_cost_service import delete_cost
+    from app.services.cost_access import COST_VIEW_PERM, can_view_cost
+    from app.services.error_handler import AppException
 
+    # SUPPLIER-COST-ACCESS: the cost routes also need `products.cost.view`, which the single
+    # parking slug below cannot say; checked here so this door is no wider than the router.
+    if not can_view_cost(db, payload.get("requested_by_id")):
+        raise AppException(
+            status_code=403, message=f"Permission required: {COST_VIEW_PERM}", code="cost_view_required"
+        )
     cost_id = _entity_id(payload)
     row = db.query(ProductSupplierCost).filter(ProductSupplierCost.id == cost_id).first()
     if row is None:
@@ -2882,6 +2925,51 @@ register(
 )
 
 
+def assert_form_draft_discardable(db: Session, draft_id: str, user_id):
+    """QUOTE-AUTOSAVE Discard draft (card Q5): the draft exists and is the caller's to discard -
+    edit rights on its project, and for a new proposal's private draft, the caller's own. Run at
+    park time and again when the window lapses. 404 for a draft the caller cannot see. Returns it.
+    """
+    from app.models.projects import Project, QuotationDocumentDraft
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    row = db.query(QuotationDocumentDraft).filter(QuotationDocumentDraft.id == draft_id).first()
+    if row is None or (row.document_id is None and str(row.owner_user_id) != str(user_id)):
+        raise handle_not_found("Draft", draft_id)
+    project = db.query(Project).filter(Project.id == row.project_id).first()
+    if project is None:
+        raise handle_not_found("Draft", draft_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return row
+
+
+def _discard_form_draft(db: Session, payload: dict):
+    from app.services import quotation_form_draft_service as drafts
+
+    user_id = payload.get("requested_by_id")
+    row = assert_form_draft_discardable(db, _entity_id(payload), user_id)
+    # Only the tab holding the draft when the window lapses may discard it: a newer tab opened
+    # during the countdown keeps what it typed (owner Q4). A click without a token (an older
+    # client) is checked the same way and refused.
+    drafts.assert_holder(db, row, payload.get("token"), str(user_id))
+    return drafts.discard_draft(db, row)
+
+
+register(
+    FormAction(
+        key="quotation_form_draft.discard",
+        entity_types=("quotation_form_draft",),
+        execute=_discard_form_draft,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Discard draft",
+    )
+)
+
+
 def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id, *, lock: bool = False):
     """The spec sheet routes' write checks (edit right + write access to the project), run at park
     time and again when the window lapses. 404 when the sheet is gone or not in the caller's
@@ -3042,5 +3130,44 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="projects.parties.edit",
         label="Delete party contact",
+    )
+)
+
+
+def _delete_exchange_rate(db: Session, payload: dict):
+    from app.services.costing import rates
+
+    return rates.delete_rate_by_id(db, _entity_id(payload))
+
+
+def _unlink_costing_party_product(db: Session, payload: dict):
+    from app.services.costing import party
+
+    return party.unlink_product_by_id(db, _entity_id(payload))
+
+
+# PRODUCT-COSTING (AC-ER-06): delete one dated exchange rate row from Costing > Settings.
+# Destructive; the row is gone for good, the audit row keeps the old value.
+register(
+    FormAction(
+        key="exchange_rate.delete",
+        entity_types=("exchange_rate",),
+        execute=_delete_exchange_rate,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.config.manage",
+        label="Delete exchange rate",
+    )
+)
+
+# PRODUCT-COSTING (AC-CG-12): remove one product from a party's costing list. Reversible: the
+# product stays and is one pick away on the Add products dialog.
+register(
+    FormAction(
+        key="costing_party_product.unlink",
+        entity_types=("costing_party_product",),
+        execute=_unlink_costing_party_product,
+        window=WINDOW_REVERSIBLE,
+        permission="products.party_costing.manage",
+        label="Remove from party",
     )
 )

@@ -147,7 +147,7 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     });
   });
 
-  it('renders the Sales Order card with an empty state when the request carries no attachments', async () => {
+  it('renders the files box with an empty state when the request carries no attachments', async () => {
     // S2 (ADR: View = Edit): the section is the SAME one the edit form
     // shows, always present - a reader must not wonder whether the form
     // even has a Sales Order section, the way an entirely-hidden card would
@@ -173,9 +173,8 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     render(<PriceTagRequestForm requestId="req-2" />);
 
     await screen.findByText('PT-202609-0002');
-    expect(await screen.findByText('Sales Order')).toBeInTheDocument();
-    expect(
-      screen.getByText('No sales order files attached.'),
-    ).toBeInTheDocument();
+    // Owner hand test 11 Nov: no "Sales Order" heading; the empty state says "No files attached."
+    expect(await screen.findByText('No files attached.')).toBeInTheDocument();
+    expect(screen.queryByText('Sales Order')).toBeNull();
   });
 });

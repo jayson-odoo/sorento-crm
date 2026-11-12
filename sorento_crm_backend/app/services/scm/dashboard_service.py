@@ -72,6 +72,10 @@ class ScmFilters:
     # → products.is_active; lifecycle ∈ {ongoing,discontinued,all} → is_discontinued.
     active_status: str = "active"
     lifecycle: str = "ongoing"
+    # SCM-INACTIVE-LOCATIONS: True narrows to ACTIVE warehouses (warehouses.is_active), the
+    # reorder / low stock / daily job scope pickers' reading. Off by default so the
+    # dashboard and the code->name lookups on SO / PO detail still see every location.
+    active_warehouses_only: bool = False
 
 
 def _f(value) -> float:
@@ -342,6 +346,8 @@ class ScmDashboardService:
         if filters.warehouses:
             where.append("w.warehouse_code = ANY(:whs)")
             params["whs"] = filters.warehouses
+        if filters.active_warehouses_only:
+            where.append("w.is_active = true")
         if filters.category_id:
             where.append("p.category_id = ANY(CAST(:cat AS uuid[]))")
             params["cat"] = filters.category_id

@@ -52,6 +52,10 @@ vi.mock('../lib/portal-client', () => ({
   fetchSubmissionNeighbours: vi.fn().mockResolvedValue({ prev_id: null, next_id: null }),
 }));
 
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -134,7 +138,7 @@ import {
 } from '../lib/price-tag-request-service';
 import { uploadAttachment } from '../lib/portal-client';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems, chooseUpload } from '@/test-utils';
 
 const DEBTORS = [{ code: 'ZZTD01', name: 'ZZT Dealer Sdn Bhd' }];
 const ITEMS = [
@@ -156,8 +160,10 @@ beforeEach(() => {
 // live inside the "Sales Order & Lines" section (D-P1), collapsed until a
 // customer is picked (AC-P3) or opened by hand - Radix's Collapsible
 // unmounts its content while closed.
+// PRICETAG-REQUEST-LAYOUT: "Price tags" asks upload OR type first; these suites type lines,
+// and a test about the dropzone takes the upload path.
 function openSalesOrderSection() {
-  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+  chooseTypedItems();
 }
 
 // Need by and Notes live in "Additional Information" (D-P2b), which auto-
@@ -165,7 +171,7 @@ function openSalesOrderSection() {
 // price mode chosen has to open it by hand.
 function openAdditionalInformationSection() {
   fireEvent.click(
-    screen.getByRole('button', { name: /Additional Information/ }),
+    screen.getByRole('button', { name: /^Additional information/ }),
   );
 }
 
@@ -188,7 +194,7 @@ async function pickPrinting() {
 describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has one line and no debtor and no date', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
     await addLineWithAProduct();
 
@@ -204,8 +210,8 @@ describe('Save Draft validates nothing (D48a)', () => {
 
   it('saves a form that has a debtor and nothing else', async () => {
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
 
@@ -217,7 +223,7 @@ describe('Save Draft validates nothing (D48a)', () => {
 
   it('is disabled only while there is nothing at all to save', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openAdditionalInformationSection();
 
     expect(screen.getByRole('button', { name: /Save Draft/ })).toBeDisabled();
@@ -235,8 +241,8 @@ describe('Save Draft validates nothing (D48a)', () => {
     // filled in left the button permanently disabled with no way to give the
     // buffered file a draft to upload to.
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    openSalesOrderSection();
+    await screen.findByLabelText('Customer');
+    chooseUpload();
 
     expect(screen.getByRole('button', { name: /Save Draft/ })).toBeDisabled();
 
@@ -254,8 +260,8 @@ describe('Save Draft validates nothing (D48a)', () => {
     asMock(uploadAttachment).mockRejectedValue(new Error('network blip'));
 
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    openSalesOrderSection();
+    await screen.findByLabelText('Customer');
+    chooseUpload();
     fireEvent.click(screen.getByRole('button', { name: 'Attach PO file' }));
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
@@ -286,7 +292,7 @@ describe('Save Draft validates nothing (D48a)', () => {
       Object.assign(new Error(message), { code, fields: ['line:0'] }),
     );
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
     await addLineWithAProduct();
 
@@ -305,10 +311,10 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     // `print_by` is a constant 'self' - so a blank form has two gaps left:
     // Customer, Lines.
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
 
-    // Approve is live too; its click is what checks the tag (owner, 5 Nov).
-    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
+    // Preview is live too; its click is what checks the tag before Approve (owner, 10 Nov).
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled();
     sendToMarketing();
 
     expect(
@@ -333,7 +339,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     sendToMarketing();
     await screen.findByText('Select the dealer these tags are for.');
     scrolled.mockClear();
@@ -345,8 +351,8 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
 
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
     sendToMarketing();
@@ -359,12 +365,12 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
 
   it('clears the error once the field is filled in', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     sendToMarketing();
     await screen.findByText('Select the dealer these tags are for.');
 
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
 
     await waitFor(() =>
       expect(
@@ -381,8 +387,8 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
       ),
     );
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     await addLineWithAProduct();
     await pickPrinting();
 
@@ -405,8 +411,8 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
       }),
     );
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     await addLineWithAProduct();
     await pickPrinting();
 
@@ -453,8 +459,8 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
 
   it('a missing line is reported on the form and no dialog opens', async () => {
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
     clickEscalate();
@@ -469,8 +475,8 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
 
   it('a complete form opens the Escalate to marketing dialog with the note and Need by', async () => {
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     await addLineWithAProduct();
 
     clickEscalate();
@@ -487,7 +493,7 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
 
   it('Need by is no longer on the form itself', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openAdditionalInformationSection();
 
     expect(screen.getByLabelText('Notes')).toBeInTheDocument();
@@ -496,8 +502,8 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
 
   it('the Need by picked in the dialog (dd/mm/yyyy) is sent with the escalation', async () => {
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     await addLineWithAProduct();
     clickEscalate();
     const dialog = await screen.findByRole('dialog');
@@ -546,7 +552,7 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
       attachments: [],
     });
     render(<PriceTagRequestForm requestId="req-1" />);
-    await waitFor(() => expect(screen.getByLabelText('Debtor')).toHaveValue('ZZTD01'));
+    await waitFor(() => expect(screen.getByLabelText('Customer')).toHaveValue('ZZTD01'));
 
     clickEscalate();
 
@@ -556,8 +562,8 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
 
   it('at 375 px the dialog buttons span its width', async () => {
     render(<PriceTagRequestForm />);
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
     await addLineWithAProduct();
     clickEscalate();
     const dialog = await screen.findByRole('dialog');

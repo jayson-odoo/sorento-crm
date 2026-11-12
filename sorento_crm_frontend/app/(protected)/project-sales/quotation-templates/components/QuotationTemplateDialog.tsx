@@ -15,6 +15,10 @@ import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { useQuotationTemplateMutations } from '../../_shared/hooks/useQuotationTemplates';
 import type { QuotationTemplate } from '../../_shared/services/quotationTemplateService';
+import {
+  QuoteTermsFields,
+  type QuoteTermsPatch,
+} from '../../_shared/components/QuoteTermsFields';
 
 /** Create or edit one terms template. Editing never touches a quotation already created. */
 export function QuotationTemplateDialog({
@@ -27,8 +31,18 @@ export function QuotationTemplateDialog({
   const { create, update } = useQuotationTemplateMutations('terms');
   const [name, setName] = React.useState(template?.name ?? '');
   const [bodyHtml, setBodyHtml] = React.useState(template?.body_html ?? '');
-  const [paymentTerms, setPaymentTerms] = React.useState(template?.payment_terms ?? '');
-  const [validity, setValidity] = React.useState(template?.validity ?? '');
+  // The saved values, and only what was changed since: an untouched legacy text is not sent, so
+  // it keeps printing until someone picks.
+  const [terms, setTerms] = React.useState({
+    payment_term_id: template?.payment_term_id ?? null,
+    payment_terms: template?.payment_terms ?? null,
+    validity_value: template?.validity_value ?? null,
+    validity_unit: template?.validity_unit ?? null,
+    validity: template?.validity ?? null,
+  });
+  const [termsPatch, setTermsPatch] = React.useState<QuoteTermsPatch>({});
+  // An invalid Validity on screen is never saved as the last valid one (crew pass 538d14b7).
+  const [validityOk, setValidityOk] = React.useState(true);
   const pending = create.isPending || update.isPending;
 
   return (
@@ -44,8 +58,7 @@ export function QuotationTemplateDialog({
             const body = {
               name: name.trim(),
               body_html: bodyHtml,
-              payment_terms: paymentTerms.trim() || null,
-              validity: validity.trim() || null,
+              ...termsPatch,
             };
             try {
               if (template) {
@@ -72,24 +85,15 @@ export function QuotationTemplateDialog({
                 required
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="quotation-template-payment-terms">Payment Terms</Label>
-                <Input
-                  id="quotation-template-payment-terms"
-                  value={paymentTerms}
-                  onChange={(event) => setPaymentTerms(event.target.value)}
-                />
-              </div>
-              <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="quotation-template-validity">Validity</Label>
-                <Input
-                  id="quotation-template-validity"
-                  value={validity}
-                  onChange={(event) => setValidity(event.target.value)}
-                />
-              </div>
-            </div>
+            <QuoteTermsFields
+              idPrefix="quotation-template"
+              values={terms}
+              onChange={(patch) => {
+                setTerms((previous) => ({ ...previous, ...patch }));
+                setTermsPatch((previous) => ({ ...previous, ...patch }));
+              }}
+              onValidityChange={setValidityOk}
+            />
             <div className="space-y-1.5">
               <Label>
                 Terms and conditions <span className="text-destructive">*</span>
@@ -102,7 +106,10 @@ export function QuotationTemplateDialog({
             <Button type="button" variant="outline" onClick={onDone}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || !bodyHtml.trim() || pending}>
+            <Button
+              type="submit"
+              disabled={!name.trim() || !bodyHtml.trim() || !validityOk || pending}
+            >
               {template ? 'Save changes' : 'Add template'}
             </Button>
           </DialogFooter>

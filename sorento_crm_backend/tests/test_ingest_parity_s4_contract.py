@@ -82,7 +82,7 @@ class TestAcP43ContractV21:
         # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
         # Bumped again (#1354 S2): "2.7" adds `delivery_orders`, `goods_receive_notes`, `branches`.
         # Bumped again (AC-CONSIGN-CRM): "2.9" adds consignment fields; "2.8" added `cancel_sales_orders`, `cancel_purchase_orders`.
-        assert res.json()["version"] == "2.13"
+        assert res.json()["version"] == "2.14"
 
     def test_contract_lists_fields_added_per_entity(self, env):
         body = env.client.get(CONTRACT_URL).json()
@@ -107,7 +107,8 @@ class TestAcP43ContractV21:
         body = env.client.get(CONTRACT_URL).json()
         fields_removed = body.get("fields_removed", {})
         expected = {
-            "customers": {"credit_limit", "payment_terms_days", "payment_terms_code"},
+            # payment_terms_code came back at v2.14 (QUOTE-TERMS-SELECT).
+            "customers": {"credit_limit", "payment_terms_days"},
             "suppliers": {"payment_terms_code"},
         }
         for entity, wanted in expected.items():

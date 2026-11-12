@@ -300,6 +300,27 @@ export function renameKey(headers: MatrixHeader[], key: string, label: string): 
   );
 }
 
+/**
+ * Duplicates a header with its columns' names (PROPOSAL-FORM-COLLAPSE, owner 10 Nov), right
+ * after it. Fresh keys, so the copy holds no quantities. An unknown key changes nothing.
+ */
+export function duplicateHeader(headers: MatrixHeader[], key: string, label: string): MatrixHeader[] {
+  const at = headers.findIndex((header) => header.key === key);
+  if (at < 0) return headers;
+  const taken = usedKeys(headers);
+  const fresh = () => {
+    const next = newKey(taken);
+    taken.add(next);
+    return next;
+  };
+  const copy: MatrixHeader = {
+    key: fresh(),
+    label: cleanLabel(label) || headers[at].label,
+    cols: headers[at].cols.map((col) => ({ key: fresh(), label: col.label })),
+  };
+  return [...headers.slice(0, at + 1), copy, ...headers.slice(at + 1)];
+}
+
 /** Removes a header (with its columns) or a column, whichever owns `key`. */
 export function removeKey(headers: MatrixHeader[], key: string): MatrixHeader[] {
   return headers

@@ -34,6 +34,7 @@ from app.dependencies import (
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
+from app.services.dealer_kit.asset_service import numeric_spec_values_by_key, numeric_value_keys
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_spec_rules import (
     BRAND_IS_NOT_A_SPEC,
@@ -134,10 +135,18 @@ def _visible_icons(rows) -> dict[str, tuple[dict, dict]]:
     return out
 
 
-def _serialise(row, owners: Optional[dict] = None, icons: Optional[dict] = None) -> dict:
+def _serialise(
+    row, owners: Optional[dict] = None, icons: Optional[dict] = None, numeric: Optional[dict] = None
+) -> dict:
     if icons is None:
         icons = _visible_icons([row])
     value_icons, icon_names = icons.get(row.spec_key, ({}, {}))
+    stored_conditions = row.value_icon_conditions or {}
+    visible_conditions = {
+        value: picked
+        for value, ids in value_icons.items()
+        if (picked := {i: stored_conditions[value][i] for i in ids if i in (stored_conditions.get(value) or {})})
+    }
     if owners is None:
         from sqlalchemy.orm import object_session
 
@@ -200,11 +209,18 @@ def _serialise(row, owners: Optional[dict] = None, icons: Optional[dict] = None)
         # value -> [Dealer Kit icon asset id, ...], in the admin's order (feature icons).
         # Only the caller's own live icons: the registry is shared, the assets are not.
         "value_icons": value_icons,
+        # value -> {icon id: [{spec_key, value}]}: the AND list an icon needs (visible pairs only).
+        "value_icon_conditions": visible_conditions,
         # asset id -> name, so the screen names an icon rather than showing its id, without
         # the reader holding the Dealer Kit library permission.
         "value_icon_names": icon_names,
         # Where this spec's icons sit in the tag's one icon sequence (null: last).
         "icon_order": row.icon_order,
+        # PRICETAG-UPGRADE-VARIANTS S4: a numeric key's values that products hold, so each can
+        # carry icons on the Values and words tab. Empty on every other key.
+        "numeric_values": numeric_value_keys(row, numeric.get(row.spec_key, []) if numeric is not None else None)
+        if row.data_type == "numeric"
+        else [],
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),
@@ -229,7 +245,10 @@ def get_spec_registry(
         rows = active_registry(db)
         owners = vocabulary_owners(db)
         icons = _visible_icons(rows)
-        keys = [_serialise(row, owners, icons) for row in rows]
+        numeric = numeric_spec_values_by_key(
+            db, [row.spec_key for row in rows if row.data_type == "numeric"]
+        )
+        keys = [_serialise(row, owners, icons, numeric) for row in rows]
         stamps = [r.updated_at or r.created_at for r in rows]
         updated_at = max(stamps).isoformat() if stamps else None
 
@@ -259,6 +278,11 @@ def get_spec_registry(
 # writes
 # --------------------------------------------------------------------------- #
 _EDITABLE_DATA_TYPES = {"enum", "numeric", "boolean"}
+
+
+class IconCondition(BaseModel):
+    spec_key: str
+    value: str
 
 
 class SpecKeyUpdate(BaseModel):
@@ -304,6 +328,7 @@ class SpecKeyUpdate(BaseModel):
     # shows for a product holding that value. Staff-owned like value_labels, never
     # seed-repaired; an empty list removes the value's entry.
     value_icons: Optional[dict[str, list[str]]] = None
+    value_icon_conditions: Optional[dict[str, dict[str, list[IconCondition]]]] = None
     # The spec's place in the tag's one feature icon sequence (1 first); null clears it.
     icon_order: Optional[int] = Field(default=None, ge=1, le=999)
     # Which products may carry this key at all, as {other_key: [permitted values]}.
@@ -1097,7 +1122,7 @@ def update_spec_key(
 
         # Feature icons are Dealer Kit artwork: choosing them needs the library too, on the
         # server and not only in the UI (review S2). `icon_order` is registry-only.
-        if "value_icons" in fields:
+        if "value_icons" in fields or "value_icon_conditions" in fields:
             from fastapi import HTTPException
 
             from app.services.user_service import UserPermissionService
@@ -1277,11 +1302,22 @@ def update_spec_key(
 
             # Reassigned, never mutated in place (JSONB, see value_labels above).
             row.value_icons = clean_value_icons(db, row, fields["value_icons"] or {})
+        if "value_icon_conditions" in fields:
+            from app.services.dealer_kit.asset_service import clean_value_icon_conditions
+
+            row.value_icon_conditions = clean_value_icon_conditions(
+                db, row, fields["value_icon_conditions"]
+            )
         if "suppressed_values" in fields or "user_values" in fields:
             from app.services.dealer_kit.asset_service import prune_value_icons
 
             # A value taken away takes its icons with it (review B1).
             prune_value_icons(row)
+        if "value_icons" in fields:
+            from app.services.dealer_kit.asset_service import drop_orphan_icon_conditions
+
+            # Icons that left a value take their conditions along.
+            drop_orphan_icon_conditions(row)
 
         if "icon_order" in fields:
             row.icon_order = fields["icon_order"]

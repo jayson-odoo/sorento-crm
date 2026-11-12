@@ -168,7 +168,7 @@ def test_registry_has_crm_resolve_and_no_longer_crm_lookup_resolve():
 
     assert RESOLVE in REGISTRY
     assert "crm_lookup_resolve" not in REGISTRY
-    assert len(REGISTRY) == 13 + 11  # AGENTIC-UNIFY PR 4: the eleven ported reads; round 5e: crm_products_find; AGENTIC-KNOWLEDGE: crm_knowledge_search, user_guides_read
+    assert len(REGISTRY) == 13 + 11 + 1  # AGENT-QUOTE-COMPARE: crm_project_quotation_lines; AGENTIC-UNIFY PR 4: the eleven ported reads; round 5e: crm_products_find; AGENTIC-KNOWLEDGE: crm_knowledge_search, user_guides_read
 
 
 def test_found_ambiguous_and_not_found_per_term_and_the_body_sent(held, resolver):

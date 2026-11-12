@@ -156,7 +156,8 @@ def test_a_word_two_items_share_names_neither(db):
     # The owner links the word "sheet" to both file types in the alias set.
     from app.models.lookup import LookupOption, LookupOptionKeyword
 
-    drawing_option = db.query(LookupOption).one()
+    # By value: the blank schema also holds the project_party_role options tests/conftest.py seeds (#2300).
+    drawing_option = db.query(LookupOption).filter_by(value="Technical Specifications").one()
     photo_option = LookupOption(
         id=str(uuid.uuid4()), set_id=drawing_option.set_id, value="Product Photos", label="Product Photos", sort_order=1,
     )

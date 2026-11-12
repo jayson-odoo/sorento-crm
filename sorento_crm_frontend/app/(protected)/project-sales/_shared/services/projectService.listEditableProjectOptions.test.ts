@@ -75,4 +75,20 @@ describe('listEditableProjectOptions', () => {
     expect(apiFetch).toHaveBeenCalledTimes(1);
     expect(options).toHaveLength(1);
   });
+
+  it('labels an option with the short name, else the title (PROJECT-NAME)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        data: [
+          project({ id: 'a', title: 'Long legal title A', name: 'Tower A' }),
+          project({ id: 'b', title: 'Long legal title B', name: null }),
+        ],
+        pagination: { total: 2, page: 1, limit: 1000 },
+      }),
+    );
+
+    const options = await listEditableProjectOptions('');
+
+    expect(options.map((o) => o.label)).toEqual(['Tower A', 'Long legal title B']);
+  });
 });

@@ -32,6 +32,7 @@ from tests._pg_fixture import blank_session
 from tests.chatbot.agent._ported_reads_support import (
     AC1,
     AC1_NAMES,
+    LOCAL_PORTED,
     EXTRA_SLUGS,
     PORTED_NAMES,
     Recorder,
@@ -50,7 +51,7 @@ from tests.chatbot.agent.test_ported_writes import make_order, make_world
 FINDS = ["crm_complaints_find", "crm_projects_find"]
 WRITE_NAMES = [CLOSE, CANCEL, TICKET]
 #: Every tool that did not exist before this PR.
-NEW_NAMES = frozenset([*AC1_NAMES, *FINDS, *WRITE_NAMES])
+NEW_NAMES = frozenset([*AC1_NAMES, *LOCAL_PORTED, *FINDS, *WRITE_NAMES])
 TURNS = ["operator", "linked_user", "contact_principal"]
 LABEL_MARK = "Outside this user's or this contact's access:"
 

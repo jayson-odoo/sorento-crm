@@ -321,3 +321,12 @@ def test_deleting_needs_the_setup_permission(api):
 
     with _without_permission(EDIT):
         assert client.delete(f"{BASE}/{spare['id']}").status_code == 403
+
+
+def test_subject_title_token_is_labelled_as_the_project_title_on_the_quotation():
+    """PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026): no "Subject" left in the letter editor."""
+    from app.services.project_quotation_template_service import MERGE_FIELDS
+
+    by_token = {field["token"]: field for field in MERGE_FIELDS}
+    assert by_token["subject_title"]["label"] == "Project title on this quotation"
+    assert not any("subject" in field["label"].lower() for field in MERGE_FIELDS)

@@ -7,7 +7,8 @@
  * product nor a set is refused on save, so it no longer has a flag of its own.
  *
  * Owner meeting 29 Oct: the below-floor flag leaves the product cell. It sits under the price in
- * the Rate cell (`MinimumPriceFlag`) and reads "Minimum price RM x", never "Below floor".
+ * the Rate cell (`MinimumPriceFlag`) and reads just "Below minimum price", no amount (owner hand tests 11 Nov:
+ * the Flags filter's own words), never "Below floor".
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -172,7 +173,7 @@ describe('MinimumPriceFlag', () => {
     ...extra,
   });
 
-  it('reads Minimum price RM x for a line priced below its floor, with no "Set on" line (PRICING-UX-FIXES)', () => {
+  it('reads just "Below minimum price", no amount, one line, for a line below its floor (owner 11 Nov)', () => {
     render(
       <MinimumPriceFlag
         quotationId="q1"
@@ -186,7 +187,13 @@ describe('MinimumPriceFlag', () => {
         draft={draftOf({ product_id: 'p1' })}
       />,
     );
-    expect(screen.getByText('Minimum price RM 700.00')).toBeInTheDocument();
+    // Owner hand test 11 Nov ~22:10: "just don't show the minimum price in the warning".
+    const pill = screen.getByText('Below minimum price');
+    expect(pill.textContent).toBe('Below minimum price');
+    expect(document.body.textContent).not.toMatch(/RM\s?\d|700/);
+    expect(pill.getAttribute('title') ?? '').not.toMatch(/RM|\d/);
+    expect(pill.className).toContain('whitespace-nowrap');
+    expect(pill.className).not.toContain('line-through');
     expect(screen.queryByText(/Set on/)).toBeNull();
     expect(screen.queryByText(/below floor/i)).toBeNull();
     expect(screen.queryByText(/\bfloor\b/i)).toBeNull();
@@ -200,7 +207,7 @@ describe('MinimumPriceFlag', () => {
         draft={draftOf({ product_id: 'p1' })}
       />,
     );
-    expect(screen.getByText('Minimum price')).toBeInTheDocument();
+    expect(screen.getByText('Below minimum price')).toBeInTheDocument();
     expect(screen.queryByText('Below the minimum price for this item.')).toBeNull();
   });
 
@@ -216,7 +223,7 @@ describe('MinimumPriceFlag', () => {
         draft={draftOf({ product_id: 'p1' })}
       />,
     );
-    expect(screen.getByText('Minimum price RM 900.00')).toBeInTheDocument();
+    expect(screen.getByText('Below minimum price')).toBeInTheDocument();
     expect(screen.queryByText(/Set on/)).toBeNull();
     useLineVerdict.mockReturnValue({ data: undefined });
   });
@@ -237,7 +244,7 @@ describe('MinimumPriceFlag', () => {
         <LineFlags quotationId={null} seriesId="s1" line={null} draft={draftOf({ product_id: 'p1' })} />
       </>,
     );
-    expect(screen.getByText('Minimum price RM 900.00')).toBeInTheDocument();
+    expect(screen.getByText('Below minimum price')).toBeInTheDocument();
     expect(screen.getByText('Non-standard')).toBeInTheDocument();
     const call = useLineVerdict.mock.calls.at(-1)!;
     expect(call[0]).toEqual({ quotationId: null, seriesId: 's1' });

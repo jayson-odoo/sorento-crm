@@ -5,6 +5,9 @@
  * accessories box while it is in editing mode. Every element is a selectable, draggable rectangle;
  * the selected one gets a Konva Transformer to resize it. Positions are written back in card
  * millimetres (the box's shrink factor undone), so what is dragged is what prints.
+ *
+ * TAG-ACC-CARD-RESIZE Q3: with no element selected the card frame itself has resize handles; a
+ * resize sets the card's design size (every card in the box), the elements keep their millimetres.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Group, Line, Rect, Transformer } from 'react-konva';
@@ -20,6 +23,8 @@ export type AccessoryEditTarget = 'card' | 'footer';
 
 const round = (mm: number) => Math.round(mm * 100) / 100;
 const MIN_MM = 1;
+/** The smallest card a frame resize sets (mm). */
+const MIN_CARD_MM = 5;
 
 export function AccessoryEditOverlay({
   layer,
@@ -29,6 +34,7 @@ export function AccessoryEditOverlay({
   scale,
   onSelectElement,
   onUpdateElement,
+  onResizeCard,
 }: {
   layer: TagLayer;
   target: AccessoryEditTarget;
@@ -39,9 +45,14 @@ export function AccessoryEditOverlay({
   scale: number;
   onSelectElement: (elementId: string | null) => void;
   onUpdateElement: (elementId: string, patch: Partial<CardElement>) => void;
+  /** A card frame resize: the new design size of every card, in card millimetres. */
+  onResizeCard?: (size: { width_mm: number; height_mm: number }) => void;
 }) {
   const props = layer.props as AccessoriesLayerProps;
   const trRef = useRef<Konva.Transformer>(null);
+  const frameTrRef = useRef<Konva.Transformer>(null);
+  const frameRef = useRef<Konva.Rect>(null);
+  const frameResizable = target === 'card' && !elementId && Boolean(onResizeCard);
   const nodes = useRef(new Map<string, Konva.Rect>());
   const [guides, setGuides] = useState<ElementGuide[]>([]);
 
@@ -52,6 +63,13 @@ export function AccessoryEditOverlay({
     tr.nodes(node ? [node] : []);
     tr.getLayer()?.batchDraw();
   }, [elementId, props.card, props.footer, target]);
+
+  useEffect(() => {
+    const tr = frameTrRef.current;
+    if (!tr) return;
+    tr.nodes(frameResizable && frameRef.current ? [frameRef.current] : []);
+    tr.getLayer()?.batchDraw();
+  }, [frameResizable, props.card]);
 
   // Editing the footer lays it out even while hidden (as the canvas draws it); editing the card does not.
   const shown: AccessoriesLayerProps =
@@ -72,6 +90,7 @@ export function AccessoryEditOverlay({
             nothing). It sits under the elements, so a click on one still reaches it. */}
         <Rect
           name="accessory-card-frame"
+          ref={frameRef}
           width={origin.width_mm * scale}
           height={origin.height_mm * scale}
           fill="transparent"
@@ -85,6 +104,16 @@ export function AccessoryEditOverlay({
             onSelectElement(null);
           }}
           onTap={() => onSelectElement(null)}
+          onTransformEnd={(e) => {
+            e.cancelBubble = true;
+            const node = e.target as Konva.Rect;
+            const unit = factor * scale;
+            const width_mm = Math.max(MIN_CARD_MM, round((node.width() * node.scaleX()) / unit));
+            const height_mm = Math.max(MIN_CARD_MM, round((node.height() * node.scaleY()) / unit));
+            node.scaleX(1);
+            node.scaleY(1);
+            onResizeCard?.({ width_mm, height_mm });
+          }}
         />
         {elements.map((element) => (
           <Rect
@@ -162,6 +191,19 @@ export function AccessoryEditOverlay({
             />
           );
         })}
+        {frameResizable && (
+          <Transformer
+            ref={frameTrRef}
+            name="accessory-card-frame-transformer"
+            rotateEnabled={false}
+            keepRatio={false}
+            ignoreStroke
+            // The card grows from its top-left, where it is laid out, so only the far edges move.
+            enabledAnchors={['middle-right', 'bottom-center', 'bottom-right']}
+            borderStroke="#2563eb"
+            anchorStroke="#2563eb"
+          />
+        )}
         <Transformer
           ref={trRef}
           rotateEnabled={false}

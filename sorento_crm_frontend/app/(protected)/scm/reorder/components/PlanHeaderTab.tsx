@@ -15,7 +15,7 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
 import { describeWindow, runStartedLabel } from '../lib/runListing';
 import { searchProductOptions } from '../../services/scmOptionsService';
-import { useWarehouseOptions } from '../../hooks/useScmOptions';
+import { useActiveWarehouseOptions } from '../../hooks/useScmOptions';
 import { runHistoryKey, todayRunKey } from '../hooks/useReorderRun';
 import { replanReorderRun } from '../services/reorderRunService';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -45,6 +45,16 @@ function Field({
       <div className="text-sm">{children}</div>
     </div>
   );
+}
+
+/** The Re-plan notice for locations dropped because they were deactivated since the run;
+ *  the same words the daily job's run summary uses (`skipped_inactive_message`). Every
+ *  ticked location inactive leaves the nothing-ticked rule: every active location. */
+export function skippedInactiveNotice(skipped: string[], fellBack: boolean): string | null {
+  if (!skipped.length) return null;
+  const noun = skipped.length === 1 ? 'location' : 'locations';
+  const msg = `Skipped inactive ${noun} ${skipped.join(', ')}`;
+  return fellBack ? `${msg}, planning every active location instead` : msg;
 }
 
 /** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date. */
@@ -96,12 +106,15 @@ export function PlanHeaderTab({
   const [demandClass, setDemandClass] = useState<'project' | 'retail' | null>(null);
   const [soNumbers, setSoNumbers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** SCM-INACTIVE-LOCATIONS: the one line the Re-plan edit shows when its prefill dropped
+   *  locations deactivated since this run (create_run would refuse them). */
+  const [skippedNotice, setSkippedNotice] = useState<string | null>(null);
   const [unsavedWarnOpen, setUnsavedWarnOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const { data: warehouseOptions, isLoading: warehousesLoading, isError: warehousesError } =
-    useWarehouseOptions();
+    useActiveWarehouseOptions();
 
   const fetchProductOptions = useCallback(async (query: string) => {
     const options = await searchProductOptions(query);
@@ -132,7 +145,12 @@ export function PlanHeaderTab({
     // S4: the START carries no `min` floor, so it is never clamped the way the cut-off
     // above is - a window that already started in the past is still a real window.
     setHorizonStart(run.plan_horizon_start ?? '');
-    setWarehouses(run.is_all_warehouses ? [] : (run.warehouse_codes ?? []));
+    const prefill = run.is_all_warehouses ? [] : (run.warehouse_codes ?? []);
+    const inactive = new Set(run.inactive_warehouse_codes ?? []);
+    const skipped = prefill.filter((code) => inactive.has(code));
+    const kept = prefill.filter((code) => !inactive.has(code));
+    setWarehouses(kept);
+    setSkippedNotice(skippedInactiveNotice(skipped, kept.length === 0));
     setProducts(run.product_codes ?? []);
     setDemandClass(run.demand_class ?? null);
     setSoNumbers(run.so_numbers ?? []);
@@ -143,6 +161,7 @@ export function PlanHeaderTab({
   const cancelEdit = () => {
     setIsEditing(false);
     setError(null);
+    setSkippedNotice(null);
   };
 
   // A run that has already been re-planned, or is not yet completed, cannot be re-planned
@@ -353,6 +372,9 @@ export function PlanHeaderTab({
                         Clear all
                       </button>
                     </div>
+                  ) : null}
+                  {skippedNotice ? (
+                    <p className="text-2xs text-muted-foreground">{skippedNotice}</p>
                   ) : null}
                   <SearchableMultiSelect
                     value={warehouses}

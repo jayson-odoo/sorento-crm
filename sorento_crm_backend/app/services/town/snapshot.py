@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import gzip
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -28,7 +29,7 @@ from app.models.company import Company
 from app.models.finance import CREDIT_NOTE, BillingDocument
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseRequestHeader
+from app.models.procurement import InboundShipment, InboundShipmentLine, PurchaseRequestHeader, Supplier
 from app.models.product import Product
 from app.models.projects import ProjectQuotationDocument
 from app.models.scm import ReorderLevel
@@ -36,6 +37,7 @@ from app.models.status import Status
 from app.models.town import TownDay
 from app.scheduler.task_scheduler import scheduler_session
 from app.services.sales import invoiced_sales as inv
+from app.utils.date_format import fmt_day_label
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +71,6 @@ def _money(value: Any) -> str:
 def _account_label(name: Optional[str]) -> Optional[str]:
     match = _LABEL_RE.search(name or "")
     return match.group(1).strip() if match else None
-
-
-_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
@@ -109,28 +107,52 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
         "dealer_customer_count": int(row[4]),
     }
     compare = {
-        "label": f"{_WEEKDAYS[week_ago.weekday()]} {week_ago.day} {_MONTHS[week_ago.month - 1]}",
+        "label": fmt_day_label(week_ago),
         "last_week_amount": _money(row[5]),
         "last_week_invoice_count": int(row[6]),
     }
     return figures, compare
 
 
+LORRY_CUSTOMERS = 6
+
+
 def _deliveries(db: Session, company_id: str, day: date) -> dict:
-    """Sales orders still owing goods that are due today or overdue (a count only)."""
+    """Sales orders still owing goods that are due today or overdue: the count, and the customers of
+    up to 6 of them, earliest due first (TOWN-V2 Q6: lorries drive to real customers). Keys here are
+    raw customer ids; `build_snapshot` keeps a key only when the customer has a shop in the town."""
     due = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.requested_delivery_date)
+    owing = (
+        SalesOrder.company_id == company_id,
+        SalesOrderLine.line_status == "open",
+        SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered > 0,
+        due <= day,
+    )
     count = db.execute(
         sa.select(sa.func.count(sa.distinct(SalesOrderLine.sales_order_id)))
         .select_from(SalesOrderLine)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .where(
-            SalesOrder.company_id == company_id,
-            SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered > 0,
-            due <= day,
-        )
+        .where(*owing)
     ).scalar_one()
-    return {"to_deliver": int(count)}
+    first_due = sa.func.min(due)
+    customers = db.execute(
+        sa.select(
+            SalesOrder.customer_id,
+            sa.func.max(Customer.customer_name),
+            sa.func.count(sa.distinct(SalesOrder.id)),
+        )
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .join(Customer, Customer.id == SalesOrder.customer_id, isouter=True)
+        .where(*owing, SalesOrder.customer_id.is_not(None))
+        .group_by(SalesOrder.customer_id)
+        .order_by(first_due, SalesOrder.customer_id)
+        .limit(LORRY_CUSTOMERS)
+    ).all()
+    return {
+        "to_deliver": int(count),
+        "customers": [{"key": str(c), "name": name, "orders": int(orders)} for c, name, orders in customers],
+    }
 
 
 def _dealer_rows(db: Session, company_id: str, since: date, until: date, *, today: Optional[date]) -> list:
@@ -302,6 +324,87 @@ def _approvals(db: Session, company_id: str) -> dict:
     return {"total": int(prs) + int(quotations), "purchase_requests": int(prs), "quotation_documents": int(quotations)}
 
 
+INCOMING_ROWS = 30
+
+
+def _incoming(db: Session, company_id: str, day: date) -> dict:
+    """Open shipments from overseas suppliers, in two plain states (owner, 10 Nov): INCOMING = the
+    effective ETA (`eta_delay_date`, else `estimated_arrival_date`) is today or later, or unknown;
+    LATE = it has passed. "Open" is the incoming-stock rule the assistant's shipment tool uses
+    (not draft, a line still incoming), imported, not re-derived. Exact counts, then up to 30
+    incoming rows (soonest first, no ETA last) and up to 30 late rows (most recently late first)."""
+    from app.services.incoming_stock_service import (
+        _not_draft_shipment_filter,
+        _remaining_expr,
+        _still_incoming_filter,
+    )
+
+    lines = (
+        sa.select(
+            InboundShipmentLine.shipment_id.label("sid"),
+            sa.func.count(sa.distinct(InboundShipmentLine.product_id)).label("products"),
+            sa.func.sum(_remaining_expr()).label("quantity"),
+        )
+        .where(InboundShipmentLine.company_id == company_id, _still_incoming_filter())
+        .group_by(InboundShipmentLine.shipment_id)
+        .subquery()
+    )
+    eta = sa.func.coalesce(InboundShipment.eta_delay_date, InboundShipment.estimated_arrival_date)
+    late = eta < day
+    base = (
+        sa.select(InboundShipment.id)
+        .join(lines, lines.c.sid == InboundShipment.id)
+        .where(InboundShipment.company_id == company_id, _not_draft_shipment_filter())
+    )
+    incoming_count, late_count, next_eta = db.execute(
+        sa.select(
+            sa.func.count().filter(sa.not_(late) | eta.is_(None)),
+            sa.func.count().filter(late),
+            sa.func.min(eta).filter(eta >= day),
+        )
+        .select_from(InboundShipment)
+        .where(InboundShipment.id.in_(base.scalar_subquery()))
+    ).one()
+
+    def rows(where, *order):
+        return db.execute(
+            sa.select(
+                InboundShipment.shipment_number,
+                InboundShipment.shipping_container_number,
+                Supplier.supplier_name,
+                eta,
+                lines.c.products,
+                lines.c.quantity,
+            )
+            .join(lines, lines.c.sid == InboundShipment.id)
+            .join(Supplier, Supplier.id == InboundShipment.supplier_id, isouter=True)
+            .where(InboundShipment.company_id == company_id, _not_draft_shipment_filter(), where)
+            .order_by(*order, InboundShipment.shipment_number.asc())
+            .limit(INCOMING_ROWS)
+        ).all()
+
+    def row(r, is_late: bool) -> dict:
+        number, container, supplier, when, products, quantity = r
+        return {
+            "shipment_number": number,
+            "container": container,
+            "supplier": supplier,
+            "eta": when.isoformat() if when else None,
+            "products": int(products or 0),
+            "quantity": int(quantity or 0),
+            "late": is_late,
+        }
+
+    upcoming = rows(sa.not_(late) | eta.is_(None), eta.asc().nulls_last())
+    overdue = rows(late, eta.desc())
+    return {
+        "incoming": int(incoming_count),
+        "late": int(late_count),
+        "next_eta": next_eta.isoformat() if next_eta else None,
+        "shipments": [row(r, False) for r in upcoming] + [row(r, True) for r in overdue],
+    }
+
+
 def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) -> dict:
     """The FULL variant (schema 1) for one company and one MYT day."""
     now_myt = now.astimezone(MYT)
@@ -311,6 +414,16 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         )
     ).scalar_one()
     today, compare = _today_and_compare(db, company_id, day)
+    shops = _shops(db, company_id, day)
+    deliveries = _deliveries(db, company_id, day)
+    # A customer with a shop in the town is named by that shop; any other keeps its name and no key
+    # (its lorry drives out of town). No customer id the town does not already show.
+    shop_keys = {shop["key"] for shop in shops}
+    deliveries["customers"] = [
+        {"key": c["key"], "name": None, "orders": c["orders"]} if c["key"] in shop_keys
+        else {"key": None, "name": c["name"], "orders": c["orders"]}
+        for c in deliveries["customers"]
+    ]
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -320,11 +433,12 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         "phase": "night" if now_myt.hour * 60 + now_myt.minute >= NIGHT_MINUTE else "day",
         "today": today,
         "compare": compare,
-        "shops": _shops(db, company_id, day),
+        "shops": shops,
         "warehouses": _warehouses(db, company_id),
         "reorder": _reorder(db, company_id),
         "approvals": _approvals(db, company_id),
-        "deliveries": _deliveries(db, company_id, day),
+        "deliveries": deliveries,
+        "incoming": _incoming(db, company_id, day),
     }
 
 
@@ -354,10 +468,42 @@ def day_events(db: Session, company_id: str, day: date, shop_keys: set) -> list:
 
 # ---------------------------------------------------------------------- redaction and wallboard
 
+_OPAQUE_RE = re.compile(r"s[0-9a-f]{12}")
+
+
+def opaque_key(snapshot: dict, key: str) -> str:
+    """A shop's key for a viewer who may not see customer ids: "s" + 12 hex of an HMAC over the company,
+    the day and the customer id. The same shop keeps it all day, whatever the list order (the sale beat
+    diffs keys between polls, TOWN-V2); it changes every day and cannot be turned back into an id. A key
+    that is already opaque stays as it is, so `strip_names(redact(...))` keeps the same keys."""
+    if _OPAQUE_RE.fullmatch(key):
+        return key
+    message = f"{snapshot.get('company_id')}:{snapshot.get('day')}:{key}".encode()
+    return "s" + hmac.new(_opaque_secret(), message, hashlib.sha256).hexdigest()[:12]
+
+
+def _opaque_secret() -> bytes:
+    """A key of its own for `opaque_key`, derived from JWT_SECRET (domain separated, so it never doubles
+    as the link-token signing key)."""
+    return hmac.new(settings.jwt_secret.encode(), b"town-opaque-key", hashlib.sha256).digest()
+
+
 def _opaque_keys(out: dict) -> None:
-    """Replace each shop's customer id with its position, so a viewer cannot correlate customers."""
-    for index, shop in enumerate(out.get("shops", []), start=1):
-        shop["key"] = f"s{index}"
+    """Replace each shop's customer id with its opaque key, so a viewer cannot correlate customers.
+    The lorries' destinations (`deliveries.customers`) follow their shop to its new key."""
+    renamed = {}
+    for shop in out.get("shops", []):
+        renamed[shop["key"]] = shop["key"] = opaque_key(out, shop["key"])
+    deliveries = out.get("deliveries")
+    for customer in (deliveries or {}).get("customers", []):
+        customer["key"] = renamed.get(customer["key"])
+        customer.pop("name", None)  # names stay on the personal full view
+
+
+def _drop_suppliers(out: dict) -> None:
+    """Supplier names follow dealer names: personal full view only (owner, 10 Nov)."""
+    for row in (out.get("incoming") or {}).get("shipments", []):
+        row.pop("supplier", None)
 
 
 def redact(snapshot: dict) -> dict:
@@ -376,6 +522,7 @@ def redact(snapshot: dict) -> dict:
         for key in ("today_amount", "ninety_day_amount", "name", "code", "rank"):
             shop.pop(key, None)
     _opaque_keys(out)
+    _drop_suppliers(out)
     return out
 
 
@@ -387,6 +534,7 @@ def strip_names(snapshot: dict) -> dict:
         for key in ("name", "code", "today_amount", "ninety_day_amount"):
             shop.pop(key, None)
     _opaque_keys(out)
+    _drop_suppliers(out)
     return out
 
 
@@ -456,7 +604,10 @@ def _replica_reachable() -> bool:
 
 class _build_session:
     """The session a build runs on: the read replica when configured (and `use_replica`), else the
-    primary. 5 s limit."""
+    primary. 5 s limit, and JIT off for the build's transaction: the sales type
+    (`inv.document_sales_type()`) gives Sorento's statements a planner cost above
+    `jit_inline_above_cost`, and on prod the compile alone outran the 5 s (TOWN-PROD-TIMEOUT; the
+    report engine's `_jit_off` is the same rule for the same expression)."""
 
     def __init__(self, use_replica: bool = True) -> None:
         self._use_replica = use_replica
@@ -468,6 +619,7 @@ class _build_session:
             self._ctx = scheduler_session("town_snapshot")
             self._db = self._ctx.__enter__()
         self._db.execute(sa.text(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"))
+        self._db.execute(sa.text("SET LOCAL jit = off"))
         return self._db
 
     def __exit__(self, *exc) -> None:
@@ -503,26 +655,46 @@ def _run_company(
         _freeze_day(company_id, day, full, events)
 
 
-def run_town_snapshot_tick(now: Optional[datetime] = None) -> None:
-    """Scheduler job: 07:00-22:05 MYT only; one run at a time (`town:lock`); a company that
-    fails is logged and the next one still runs. From 22:00 MYT the day is also frozen."""
+class TownSnapshotFailed(RuntimeError):
+    """One or more companies failed to build. Raised AFTER every company was attempted, so the
+    scheduled task records it as its last error (System Management > Scheduled Tasks)."""
+
+
+def run_town_snapshot_tick(now: Optional[datetime] = None) -> dict[str, Any]:
+    """Scheduled task `town_snapshot`: 07:00-22:05 MYT only; one run at a time (`town:lock`); a
+    company that fails is logged and the next one still runs, then the tick raises
+    `TownSnapshotFailed` naming each failed company. From 22:00 MYT the day is also frozen.
+    Returns the run summary the scheduled task stores."""
     from app.services.queue_service import redis_conn
 
     now = (now or datetime.now(MYT)).astimezone(MYT)
     minute = now.hour * 60 + now.minute
     if not OPEN_MINUTE <= minute <= CLOSE_MINUTE:
-        return
+        return {"skipped": "outside 07:00-22:05 Malaysia time"}
     token = uuid.uuid4().hex
     if not redis_conn.set(LOCK_KEY, token, nx=True, ex=LOCK_SECONDS):
-        return
+        return {"skipped": "an earlier town run is still going"}
+    failures: list[str] = []
     try:
         with scheduler_session("town_companies") as db:
-            company_ids = [str(c) for (c,) in db.query(Company.id).filter(Company.is_active.is_(True)).all()]
+            companies = [
+                (str(c), name)
+                for (c, name) in db.query(Company.id, Company.name).filter(Company.is_active.is_(True)).all()
+            ]
         use_replica = bool(settings.town_replica_database_url) and _replica_reachable()
-        for company_id in company_ids:
+        for company_id, name in companies:
             try:
                 _run_company(redis_conn, company_id, now.date(), now, minute >= NIGHT_MINUTE, use_replica)
-            except Exception:  # noqa: BLE001 - one company must not stop the next
+            except Exception as exc:  # noqa: BLE001 - one company must not stop the next
                 logger.error("town snapshot failed for company %s", company_id, exc_info=True)
+                # First line only: a database error carries its whole SQL statement after it, and
+                # the full traceback is in the log line above.
+                first_line = (str(exc).strip().splitlines() or [type(exc).__name__])[0][:300]
+                failures.append(f"{name or 'Unnamed company'}: {first_line}")
     finally:
         redis_conn.eval(_RELEASE, 1, LOCK_KEY, token)
+    if failures:
+        raise TownSnapshotFailed(
+            f"Town snapshot failed for {len(failures)} of {len(companies)} companies: " + "; ".join(failures)
+        )
+    return {"companies": len(companies), "built": len(companies), "failed": 0}

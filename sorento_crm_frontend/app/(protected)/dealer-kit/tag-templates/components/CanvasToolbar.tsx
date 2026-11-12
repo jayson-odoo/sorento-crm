@@ -120,7 +120,7 @@ interface CanvasToolbarProps {
   /** Card / footer editing mode: the toolbar swaps to the element tools. */
   accessoryEdit?: {
     target: 'card' | 'footer';
-    onAddElement: (kind: 'picture' | 'text' | 'colour_dots' | 'shape') => void;
+    onAddElement: (kind: 'picture' | 'text' | 'colour_dots' | 'shape' | 'feature_icons') => void;
     onDone: () => void;
   };
   onUndo: () => void;
@@ -368,6 +368,10 @@ export function CanvasToolbar({
     const tools = [
       ...(accessoryEdit.target === 'card' ? [{ kind: 'picture' as const, label: 'Picture', icon: ImageIcon }] : []),
       { kind: 'text' as const, label: 'Text', icon: Type },
+      // PRICETAG-UPGRADE-VARIANTS S1: the item's own feature icons (a card reads one item).
+      ...(accessoryEdit.target === 'card'
+        ? [{ kind: 'feature_icons' as const, label: 'Feature icons', icon: BadgeCheck }]
+        : []),
       { kind: 'colour_dots' as const, label: 'Colour dots', icon: CircleDot },
       { kind: 'shape' as const, label: 'Shape', icon: Shapes },
     ];

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
 import {
-  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, sceneSelection, separateLabels, stackTags, tagLabel, townFrame,
+  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, placeTags, sceneSelection, separateLabels, tagLabel, tagName,
 } from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
@@ -57,77 +57,41 @@ describe('boughtToday', () => {
   });
 });
 
-describe('townFrame', () => {
-  it('fits the island and its labels at 95% of the limiting dimension at every canvas shape', () => {
-    for (const aspect of [0.67, 1, 1.16, 1.5, 2, 2.5]) {
-      for (const small of [false, true]) {
-        const half = townFrame(aspect, small);
-        // the content (half height 21, half width 30 or 33.5) is inside the view, and fills 95% of the tighter side
-        expect(half).toBeGreaterThanOrEqual(21 / 0.955 - 1e-9);
-        expect(half * aspect).toBeGreaterThanOrEqual((small ? 33.5 : 30) / 0.95 - 1e-9);
-        const fillH = 21 / half;
-        const fillW = (small ? 33.5 : 30) / (half * aspect);
-        expect(Math.max(fillH, fillW)).toBeCloseTo(0.95, 5);
-      }
-    }
+describe('placeTags', () => {
+  type Box = { x: number; y: number; w: number; h: number };
+  const hits = (a: Box, b: Box) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+
+  it('leaves a tag that is clear at its anchor', () => {
+    expect(placeTags([{ x: 100, y: 100, w: 80, h: 20 }], [])).toEqual([{ x: 100, y: 100 }]);
   });
 
-  it('is height limited on a wide canvas and width limited on a narrow one', () => {
-    expect(townFrame(3, false)).toBeCloseTo(21 / 0.95, 5);
-    expect(townFrame(1, true)).toBeCloseTo(33.5 / 0.95, 5);
-  });
-});
-
-describe('stackTags', () => {
-  const overlaps = (tags: { y: number; h: number }[], raise: number[]) => {
-    const boxes = tags.map((t, i) => [t.y + raise[i] - t.h / 2, t.y + raise[i] + t.h / 2]).sort((x, y) => x[0] - y[0]);
-    return boxes.some((box, i) => i > 0 && box[0] < boxes[i - 1][1]);
-  };
-
-  it('raises tags just enough that none covers another, whatever their anchors', () => {
-    const tags = [{ y: 5, h: 2 }, { y: 5.5, h: 2 }, { y: 4.8, h: 2.4 }];
-    const raise = stackTags(tags);
-    expect(overlaps(tags, raise)).toBe(false);
-    expect(Math.min(...raise)).toBe(0);
+  it('nudges a tag off a label already placed, and never onto it', () => {
+    const placed = [{ x: 100, y: 100, w: 80, h: 20 }];
+    const [spot] = placeTags([{ x: 105, y: 102, w: 80, h: 20 }], placed);
+    expect(spot).not.toBeNull();
+    expect(hits({ ...(spot as { x: number; y: number }), w: 80, h: 20 }, placed[0])).toBe(false);
   });
 
-  it('leaves tags that are already apart where they are', () => {
-    expect(stackTags([{ y: 0, h: 2 }, { y: 10, h: 2 }])).toEqual([0, 0]);
+  it('culls a tag with no clear spot rather than cover another, and keeps the ones before it', () => {
+    const wall = Array.from({ length: 9 }, (_, i) => Array.from({ length: 9 }, (_, j) => ({ x: 20 + i * 40, y: 20 + j * 12, w: 40, h: 12 }))).flat();
+    const spots = placeTags([{ x: 400, y: 400, w: 40, h: 12 }, { x: 180, y: 70, w: 40, h: 12 }], wall);
+    expect(spots[0]).toEqual({ x: 400, y: 400 });
+    expect(spots[1]).toBeNull();
   });
 
-  it('never lowers a tag', () => {
-    const raise = stackTags([{ y: 3, h: 1 }, { y: 2, h: 1 }, { y: 2.2, h: 1 }]);
-    raise.forEach((r) => expect(r).toBeGreaterThanOrEqual(0));
-  });
-});
-
-describe('stackTags with obstacles and a top limit', () => {
-  it('raises a tag above a fixed obstacle it overlaps, and never moves the obstacle', () => {
-    const board = { y: 10, h: 6, x: 0, w: 16 };
-    const raise = stackTags([{ y: 10, h: 2, x: 2, w: 8 }], 0.3, { obstacles: [board] });
-    expect(raise[0]).toBeCloseTo(13.3 + 1 - 10, 5); // bottom at obstacle top (13) + margin, centre one half height above
+  it('pulls a tag at the stage edge back inside, so it is never clipped', () => {
+    const view = { left: 0, right: 375, bottom: 0, top: 500 };
+    const [spot] = placeTags([{ x: 360, y: 200, w: 150, h: 20 }], [], view);
+    expect((spot as { x: number }).x + 75).toBeLessThanOrEqual(375);
+    expect((spot as { y: number }).y).toBe(200);
   });
 
-  it('leaves a tag alone when it is beside the obstacle across the screen', () => {
-    expect(stackTags([{ y: 10, h: 2, x: 20, w: 6 }], 0.3, { obstacles: [{ y: 10, h: 6, x: 0, w: 16 }] })).toEqual([0]);
-  });
-
-  it('keeps a tag below an obstacle out of it too', () => {
-    const raise = stackTags([{ y: 5, h: 2, x: 0, w: 4 }], 0.3, { obstacles: [{ y: 6, h: 2, x: 0, w: 4 }] });
-    expect(raise[0]).toBeGreaterThan(0);
-  });
-
-  it('drops the lowest priority tag rather than clip one at the top', () => {
-    const tags = [{ y: 5, h: 2, x: 0, w: 4 }, { y: 5, h: 2, x: 0, w: 4 }, { y: 5, h: 2, x: 0, w: 4 }];
-    const raise = stackTags(tags, 0.3, { top: 10 });
-    expect(raise[2]).toBeNull();
-    expect(raise[0]).not.toBeNull();
-    expect(raise[1]).not.toBeNull();
-    raise.forEach((r, i) => r !== null && expect(tags[i].y + r + 1).toBeLessThanOrEqual(10 + 1e-9));
-  });
-
-  it('drops nothing when everything fits under the top', () => {
-    expect(stackTags([{ y: 0, h: 2 }, { y: 10, h: 2 }], 0.3, { top: 50 })).toEqual([0, 0]);
+  it('places tags apart from each other in priority order, and skips one off screen', () => {
+    const tags = [{ x: 50, y: 50, w: 60, h: 20 }, null, { x: 52, y: 50, w: 60, h: 20 }];
+    const spots = placeTags(tags, []);
+    expect(spots[1]).toBeNull();
+    expect(spots[0]).toEqual({ x: 50, y: 50 });
+    expect(hits({ ...(spots[2] as { x: number; y: number }), w: 60, h: 20 }, { x: 50, y: 50, w: 60, h: 20 })).toBe(false);
   });
 });
 
@@ -146,6 +110,11 @@ describe('tagLabel', () => {
   it('leaves a short name whole and shows no amount for a viewer without one', () => {
     expect(tagLabel(shop('ZZT Small Shop', '50'))).toBe('ZZT Small Shop  RM 50');
     expect(tagLabel(shop('ZZT Small Shop'))).toBe('ZZT Small Shop');
+  });
+
+  it('gives the capped name alone for the pill, which shows the amount beside it', () => {
+    expect(tagName(shop('ZZT Small Shop', '50'))).toBe('ZZT Small Shop');
+    expect(tagName(shop('ZZT Very Long Fictional Sanitaryware Trading Company'))).toHaveLength(22);
   });
 });
 

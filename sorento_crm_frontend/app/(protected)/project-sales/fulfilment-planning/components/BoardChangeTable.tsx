@@ -343,7 +343,15 @@ export function BoardChangeWasNowTable({
   const moved = onlyMovedFields
     ? new Set(changedFieldsOf(annotation).map((field) => field.key))
     : null;
-  const shows = (field: 'product' | 'qty' | 'date' | 'decision') => !moved || moved.has(field);
+  const shows = (field: 'product' | 'location' | 'qty' | 'date' | 'decision') =>
+    !moved || moved.has(field);
+  // SPLIT-SHEET-LOCATION: where AutoCount moved the line from and to, when it moved.
+  const locationFrom =
+    annotation.locationChangedFrom &&
+    annotation.locationChangedTo &&
+    annotation.locationChangedFrom !== annotation.locationChangedTo
+      ? annotation.locationChangedFrom
+      : null;
   // PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): a product swapped in place is the FIRST row,
   // the old code under Was and the line's own (new) code under Now.
   const productFrom =
@@ -405,6 +413,23 @@ export function BoardChangeWasNowTable({
                   title={annotation.itemCode}
                 >
                   {annotation.itemCode}
+                </td>
+              </tr>
+            ) : null}
+            {locationFrom && shows('location') ? (
+              <tr data-testid="change-row-location">
+                <th scope="row" className="text-start font-normal text-amber-800">
+                  Location
+                </th>
+                <td className="truncate" data-testid="change-was-location" title={locationFrom}>
+                  {locationFrom}
+                </td>
+                <td
+                  className="truncate font-medium"
+                  data-testid="change-now-location"
+                  title={annotation.locationChangedTo ?? ''}
+                >
+                  {annotation.locationChangedTo}
                 </td>
               </tr>
             ) : null}

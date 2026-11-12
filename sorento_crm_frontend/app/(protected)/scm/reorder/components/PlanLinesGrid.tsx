@@ -596,7 +596,7 @@ export function PlanLinesGrid({
         },
         size: 150,
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
         meta: {
           headerTitle: 'Product',
           skeleton: <Skeleton className="h-4 w-32" />,
@@ -1044,7 +1044,7 @@ export function PlanLinesGrid({
         },
         size: 170,
         enableSorting: false,
-        enableHiding: false,
+        enableHiding: true,
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-5 w-32" /> },
       },
     ],

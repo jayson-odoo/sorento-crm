@@ -7,7 +7,7 @@
  * Type-specific sections render below based on `layer.props.kind`.
  */
 
-import { useCallback, useId, useMemo } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import type {
   AccessoriesLayerProps,
   CardElement,
@@ -20,8 +20,18 @@ import {
   accessoryLineStyle,
   itemLayoutOf,
   type AccessoryLineStyle,
+  type AccessoryRect,
 } from '@/lib/dealer-kit/accessory-box';
-import { cardBoxLayout, cardDropped, cardFromLegacy, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
+import {
+  accessoryBinding,
+  accessoryDesignSamples,
+  cardBoxLayout,
+  cardDropped,
+  cardFromLegacy,
+  colourDotLayout,
+  defaultUpgradeCard,
+  headerResetPatch,
+} from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -63,7 +73,7 @@ import type {
   TagSlots,
   SubjectSlot,
 } from '@/lib/dealer-kit/tag-template-types';
-import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { defaultAccessoriesProps, imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
@@ -75,6 +85,7 @@ import { ColorPicker } from '@/components/common/ColorPicker';
 import { richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { InsertFieldDialog } from './InsertFieldDialog';
 import type { Editor } from '@tiptap/react';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +100,9 @@ const SLOT_BINDING_OPTIONS: SearchableSelectOption[] = [
   { value: 'combo_description', label: 'Combo Description', group: 'Combo' },
   { value: 'combo_choices', label: 'Combo Choices', group: 'Combo' },
   { value: 'combo_topups', label: 'Combo Top-ups', group: 'Combo' },
+  // PRICETAG-UPGRADE-VARIANTS S2: read on an "Upgrade N" position (Product select).
+  { value: 'upgrade_topup', label: 'Upgrade top-up', group: 'Combo' },
+  { value: 'sell_price_with_upgrade', label: 'SP with upgrade', group: 'Combo' },
   { value: '__none__', label: '(None)' },
   { value: 'product_image', label: 'Product Image' },
   // PS-SPEC-SHEET: the technical drawing (quotation line's frozen drawing on a spec sheet).
@@ -284,8 +298,9 @@ interface InspectorPanelProps {
   /** The box being edited and the element selected in it; the element inspector replaces the box one. */
   accessoryEdit?: { layerId: string; target: 'card' | 'footer'; elementId: string | null } | null;
   onUpdateAccessoryElement?: (elementId: string, patch: Partial<CardElement>) => void;
-  /** S6: "Box style from <product or combo>: <name>" while previewing an owner that overrides the box. */
-  accessoryBoxStyleNote?: string | null;
+  /** PRICETAG-HEADER-DRAG round 2: the box's header is selected (its band as drawn, box mm); the
+   *  header inspector replaces the box one, as the element inspector does in card editing. */
+  accessoryHeaderSelected?: AccessoryRect | null;
 }
 
 export function InspectorPanel({
@@ -324,7 +339,7 @@ export function InspectorPanel({
   accessoryTemplate,
   accessoryEdit,
   onUpdateAccessoryElement,
-  accessoryBoxStyleNote,
+  accessoryHeaderSelected,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -395,8 +410,9 @@ export function InspectorPanel({
     layer.slot_binding != null;
   const isSubjectAwareKind = carriesSubjectPart && readsProductData;
   // The template editor has no line, so no parts: it picks a POSITION in the combo instead.
+  const upgradesBox = layer.props.kind === 'accessories' && layer.props.list === 'upgrades';
   const showSubjectPicker =
-    isSubjectAwareKind && (subjectParts ? subjectParts.length > 0 : !specSheet);
+    isSubjectAwareKind && !upgradesBox && (subjectParts ? subjectParts.length > 0 : !specSheet);
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
   // canvas side (S5): a polygon shape, or a price badge whose box IS its
@@ -415,7 +431,18 @@ export function InspectorPanel({
         </span>
       </div>
       <ScrollArea className="flex-1">
-        {layer.props.kind === 'accessories' &&
+        {layer.props.kind === 'accessories' && accessoryHeaderSelected ? (
+          <div className="flex flex-col gap-4 p-3">
+            <AccessoryHeaderInspector
+              props={layer.props}
+              rect={accessoryHeaderSelected}
+              usedColours={usedColours}
+              fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
+              onUploadFont={onUploadFont}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+            />
+          </div>
+        ) : layer.props.kind === 'accessories' &&
         accessoryEdit &&
         accessoryEdit.layerId === layer.id &&
         accessoryEdit.elementId ? (
@@ -530,9 +557,18 @@ export function InspectorPanel({
             </h4>
             <SearchableSelect
               value={layer.slot_binding ?? '__none__'}
-              onChange={(v: string) =>
-                update({ slot_binding: (v === '__none__' ? null : v) as SlotBinding })
-              }
+              onChange={(v: string) => {
+                // The upgrade figures start with the words the card prints before them: binding and
+                // prefix go in ONE update, so one undo takes both back.
+                const next =
+                  layer.props.kind === 'text'
+                    ? switchedPrefix(layer.props.prefix, layer.slot_binding, v, UPGRADE_SLOT_PREFIX)
+                    : null;
+                update({
+                  slot_binding: (v === '__none__' ? null : v) as SlotBinding,
+                  ...(next ? { props: { ...layer.props, prefix: next.prefix } as TagLayerProps } : {}),
+                });
+              }}
               options={SLOT_BINDING_OPTIONS}
             />
           </section>
@@ -651,7 +687,6 @@ export function InspectorPanel({
                 onSaveAccessoryTemplate ? () => onSaveAccessoryTemplate(layer.id) : undefined
               }
               template={accessoryTemplate ?? null}
-              boxStyleNote={accessoryBoxStyleNote ?? null}
               onPatch={(changes) => onUpdateProps(layer.id, changes)}
             />
           )}
@@ -676,6 +711,29 @@ export function InspectorPanel({
 // ---------------------------------------------------------------------------
 
 const PRICE_SLOTS: string[] = ['list_price', 'sell_price', 'price'];
+
+/** PRICETAG-UPGRADE-VARIANTS S2: the two upgrade figures and the text each starts with. */
+const UPGRADE_SLOT_PREFIX: Record<string, string> = {
+  upgrade_topup: 'TOPUP ',
+  sell_price_with_upgrade: 'SP with upgrade ',
+};
+
+/**
+ * The text before the figure after the field changes (crew browser pass: a top-up printed "SP with
+ * upgrade RM 150"). An empty prefix, or one still the OLD field's default, becomes the NEW field's
+ * default (none when it has none); a prefix the designer typed is kept. Null = leave it alone.
+ */
+function switchedPrefix(
+  current: string | undefined,
+  oldField: string | null | undefined,
+  newField: string,
+  defaults: Partial<Record<string, string>>,
+): { prefix: string | undefined } | null {
+  const isDefault = current === undefined || current === '' || current === defaults[oldField ?? ''];
+  if (!isDefault) return null;
+  const prefix = defaults[newField];
+  return prefix === current ? null : { prefix };
+}
 
 function TextInspector({
   layer,
@@ -836,6 +894,9 @@ function TextInspector({
             Show currency
           </label>
         )}
+        {layer.slot_binding != null && layer.slot_binding in UPGRADE_SLOT_PREFIX && (
+          <UpgradeFigureControls props={props} onChange={onChange} />
+        )}
         <TypographyControls
           values={{
             fontFamily: props.fontFamily,
@@ -858,6 +919,50 @@ function TextInspector({
         />
       </div>
     </section>
+  );
+}
+
+/** The upgrade figures' own controls: the words before the figure, the currency (on unless turned
+ *  off, like the card's Top-up), and what a layer on "Upgrade N" asks of a combo (mock state H). */
+function UpgradeFigureControls({
+  props,
+  onChange,
+}: {
+  props: Extract<TagLayerProps, { kind: 'text' }>;
+  onChange: (changes: Partial<TagLayerProps>) => void;
+}) {
+  const prefixId = useId();
+  const slot = props.subjectSlot;
+  return (
+    <>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={prefixId} className="text-xs text-muted-foreground">
+          Text before the figure
+        </Label>
+        <Input
+          id={prefixId}
+          className="h-7 px-2 text-xs"
+          value={props.prefix ?? ''}
+          onChange={(e) => onChange({ ...props, prefix: e.target.value })}
+        />
+      </div>
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={props.showCurrency !== false}
+          onCheckedChange={(v) => onChange({ ...props, showCurrency: !!v })}
+        />
+        Show currency
+      </label>
+      {slot?.kind === 'upgrade' && (
+        <Alert variant="warning" size="sm" role="status">
+          <AlertDescription>
+            {slot.index === 0
+              ? 'A layer on "Upgrade 1" makes this template need 1 upgrade: it is not offered for a combo with none. A template that reads a combo position must also print every fixed part, so add a layer on each "Fixed part" too. Keep the top-up inside the Upgrades box for a template that fits every combo.'
+              : `A layer on "Upgrade ${slot.index + 1}" makes this template need ${slot.index + 1} upgrades: it is not offered for a combo with fewer. A template that reads a combo position must also print every fixed part, so add a layer on each "Fixed part" too. Keep the top-up inside the Upgrades box for a template that fits every combo.`}
+          </AlertDescription>
+        </Alert>
+      )}
+    </>
   );
 }
 
@@ -1719,6 +1824,9 @@ function SubjectInspector({
   // this tag's own candidate says so. A row without roles - a fixed part, or
   // a row pinned before r10 - renders the same flat list it always did.
   const grouped = (parts ?? []).some((part) => Boolean(part.role));
+  // PRICETAG-UPGRADE-VARIANTS S3: a feature icons layer may read the whole variant family.
+  const variantsOption: SearchableSelectOption[] =
+    props.kind === 'feature_icons' ? [{ value: 'slot:variants', label: 'All variants' }] : [];
   const options: SearchableSelectOption[] = parts
     ? [
         ...(defaultLabel ? [{ value: 'default', label: defaultLabel }] : []),
@@ -1728,6 +1836,7 @@ function SubjectInspector({
           label: `${listOf(part.code || part.name)}${part.chosen ? ' (this tag)' : ''}`,
           ...(grouped && part.role ? { group: part.role } : {}),
         })),
+        ...variantsOption,
       ]
     : [
         // A layer saved with a part number keeps showing it, so it stays visible and replaceable.
@@ -1735,9 +1844,12 @@ function SubjectInspector({
           ? [{ value: String(subjectPart), label: listOf(`Part ${subjectPart + 1}`) }]
           : []),
         ...slotOptions(slots, defaultLabel, listOf),
+        ...variantsOption,
       ];
   const value = parts
-    ? subjectPart === undefined
+    ? subjectSlot?.kind === 'variants'
+      ? 'slot:variants'
+      : subjectPart === undefined
       ? defaultLabel
         ? 'default'
         : '-1'
@@ -1790,6 +1902,8 @@ function slotValue(slot: SubjectSlot): string {
       return `slot:pick:${slot.group}:${slot.index}`;
     case 'upgrade':
       return `slot:upgrade:${slot.index}`;
+    case 'variants':
+      return 'slot:variants';
   }
 }
 
@@ -1800,6 +1914,7 @@ function parseSlotValue(value: string): SubjectSlot | undefined {
   if (kind === 'fixed') return { kind: 'fixed', index: Number(a) };
   if (kind === 'pick') return { kind: 'pick', group: Number(a), index: Number(b) };
   if (kind === 'upgrade') return { kind: 'upgrade', index: Number(a) };
+  if (kind === 'variants') return { kind: 'variants' };
   return undefined;
 }
 
@@ -2008,7 +2123,6 @@ function AccessoriesInspector({
   onEditFooter,
   onSaveTemplate,
   template,
-  boxStyleNote,
   onPatch,
 }: {
   props: AccessoriesLayerProps;
@@ -2016,7 +2130,6 @@ function AccessoriesInspector({
   onEditFooter?: () => void;
   onSaveTemplate?: () => void;
   template: { name: string; usedIn: number } | null;
-  boxStyleNote: string | null;
   /** Only these props change (not the whole props sent back). */
   onPatch: (changes: Partial<AccessoriesLayerProps>) => void;
   fit?: { count: number; lines: number };
@@ -2093,11 +2206,51 @@ function AccessoriesInspector({
     </section>
   );
 
+  const listsUpgrades = props.list === 'upgrades';
+  /** PRICETAG-UPGRADE-VARIANTS S1: Free items | Upgrades, one change (one undo step). A box with no
+   *  card of its own starts from the upgrade card, and a default header becomes "UPGRADE". */
+  const chooseList = (next: 'free' | 'upgrades') => {
+    if (next === 'free') {
+      onChange({ list: 'free' });
+      return;
+    }
+    onChange({
+      list: 'upgrades',
+      ...(props.card ? {} : { card: defaultUpgradeCard() }),
+      ...(props.headerText === defaultAccessoriesProps().headerText ? { headerText: 'UPGRADE' } : {}),
+    });
+  };
+
   return (
     <section className="flex flex-col gap-3">
       <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Accessories
       </h4>
+
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">List</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={listsUpgrades ? 'upgrades' : 'free'}
+          onValueChange={(next: string) => {
+            if (next) chooseList(next as 'free' | 'upgrades');
+          }}
+        >
+          <ToggleGroupItem value="free" className="flex-1 text-xs">
+            Free items
+          </ToggleGroupItem>
+          <ToggleGroupItem value="upgrades" className="flex-1 text-xs">
+            Upgrades
+          </ToggleGroupItem>
+        </ToggleGroup>
+        {listsUpgrades && (
+          <p className="text-xs text-muted-foreground">
+            Source: this combo&apos;s upgrade parts (product page &gt; Combos)
+          </p>
+        )}
+      </div>
 
       {/* Card design */}
       {(onEditCard || onEditFooter) && (
@@ -2159,7 +2312,6 @@ function AccessoriesInspector({
           </ToggleGroupItem>
         </ToggleGroup>
       </div>
-      {boxStyleNote && <p className="text-xs text-muted-foreground">{boxStyleNote}</p>}
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Columns</Label>
         <SearchableSelect
@@ -2217,15 +2369,37 @@ function AccessoriesInspector({
           min={0}
           max={50}
         />
-        {props.direction === 'horizontal' && (
-          <NumberInput
-            label="Card width (mm)"
-            value={props.cardWidth_mm}
-            onChange={(v) => onChange({ cardWidth_mm: v })}
-            step={0.5}
-            min={5}
-            max={300}
-          />
+        {props.card ? (
+          // TAG-ACC-CARD-RESIZE Q3: a designed card's own size, the same value its frame handles set.
+          <>
+            <NumberInput
+              label="Card width (mm)"
+              value={props.card.width_mm}
+              onChange={(v) => onChange({ card: { ...props.card!, width_mm: v } })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+            <NumberInput
+              label="Card height (mm)"
+              value={props.card.height_mm}
+              onChange={(v) => onChange({ card: { ...props.card!, height_mm: v } })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+          </>
+        ) : (
+          props.direction === 'horizontal' && (
+            <NumberInput
+              label="Card width (mm)"
+              value={props.cardWidth_mm}
+              onChange={(v) => onChange({ cardWidth_mm: v })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+          )
         )}
         <ColorPicker
           label="Card fill"
@@ -2312,7 +2486,26 @@ function AccessoriesInspector({
               onChange={(e) => onChange({ headerText: e.target.value })}
             />
           </div>
-          {showFrame && (
+          {/* PRICETAG-HEADER-DRAG (owner Q3): a dragged header is plain text, so "on the border" only
+              applies to an unmoved one; Reset puts it back on today's spot (and the setting back). */}
+          {(props.headerPos ||
+            props.headerSize ||
+            props.headerFill != null ||
+            props.headerRadius_mm ||
+            props.headerPadding) && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 self-start text-xs"
+              // Round 2: position, size and style back to the default look; the keys go (undefined),
+              // so a reset box saves exactly like one never touched (same design key).
+              onClick={() => onChange(headerResetPatch())}
+            >
+              Reset header
+            </Button>
+          )}
+          {showFrame && !props.headerPos && (
             <label className="flex items-center gap-1.5 text-xs">
               <Checkbox
                 checked={Boolean(props.headerOnBorder)}
@@ -2322,7 +2515,7 @@ function AccessoriesInspector({
               Header on the border
             </label>
           )}
-          {showFrame && props.headerOnBorder && (
+          {showFrame && props.headerOnBorder && !props.headerPos && (
             <ColorPicker
               label="Behind the header"
               value={props.headerBackground || '#ffffff'}
@@ -2373,6 +2566,149 @@ function AccessoriesInspector({
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Accessories box header, selected as an element (PRICETAG-HEADER-DRAG round 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The box's header as a normal design element (owner 9 Nov ~17:00): its text, the shared
+ * TypographyControls a text layer uses (font, size, B/I/U/S, weight, colour, alignment, line height,
+ * padding), a Background ColorPicker (its Transparent swatch is "none"), Corner Radius and X / Y / W /
+ * H, as the shape and Transform sections offer them. A size, position or padding typed on a header
+ * still at its computed spot pins it there first, so nothing jumps.
+ */
+function AccessoryHeaderInspector({
+  props,
+  rect: drawn,
+  usedColours,
+  fontOptions,
+  onUploadFont,
+  onChange,
+}: {
+  props: AccessoriesLayerProps;
+  rect: AccessoryRect;
+  usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
+  onChange: (changes: Partial<AccessoriesLayerProps>) => void;
+}) {
+  const headerId = useId();
+  const style = accessoryHeaderStyle(props);
+  // The layout's millimetres, to 0.01 mm: what the fields show and what a first edit pins.
+  const mm = (v: number) => Math.round(v * 100) / 100;
+  const rect = { x_mm: mm(drawn.x_mm), y_mm: mm(drawn.y_mm), width_mm: mm(drawn.width_mm), height_mm: mm(drawn.height_mm) };
+  const pinned = (changes: Partial<AccessoriesLayerProps>): Partial<AccessoriesLayerProps> => ({
+    headerPos: props.headerPos ?? { x_mm: rect.x_mm, y_mm: rect.y_mm },
+    headerSize: props.headerSize ?? { width_mm: rect.width_mm, height_mm: rect.height_mm },
+    ...changes,
+  });
+  const pos = { x_mm: rect.x_mm, y_mm: rect.y_mm };
+  const size = { width_mm: rect.width_mm, height_mm: rect.height_mm };
+  const background =
+    props.headerFill ?? (props.headerOnBorder && !props.headerPos ? props.headerBackground || '#ffffff' : 'transparent');
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Header</h4>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={headerId} className="text-xs text-muted-foreground">
+          Header text
+        </Label>
+        <Input
+          id={headerId}
+          className="h-7 px-2 text-xs"
+          value={props.headerText}
+          maxLength={60}
+          onChange={(e) => onChange({ headerText: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="X (mm)"
+          value={rect.x_mm}
+          onChange={(v) => onChange(pinned({ headerPos: { ...pos, x_mm: v } }))}
+          step={0.5}
+        />
+        <NumberInput
+          label="Y (mm)"
+          value={rect.y_mm}
+          onChange={(v) => onChange(pinned({ headerPos: { ...pos, y_mm: v } }))}
+          step={0.5}
+        />
+        <NumberInput
+          label="W (mm)"
+          value={rect.width_mm}
+          onChange={(v) => onChange(pinned({ headerSize: { ...size, width_mm: Math.max(2, v) } }))}
+          step={0.5}
+          min={2}
+        />
+        <NumberInput
+          label="H (mm)"
+          value={rect.height_mm}
+          onChange={(v) => onChange(pinned({ headerSize: { ...size, height_mm: Math.max(2, v) } }))}
+          step={0.5}
+          min={2}
+        />
+      </div>
+      <TypographyControls
+        values={{
+          fontFamily: style.fontFamily ?? '',
+          fontSize: props.headerFontSize,
+          fontWeight: style.fontWeight,
+          italic: style.italic,
+          underline: style.underline,
+          strikethrough: style.strikethrough,
+          align: style.align,
+          lineHeight: props.headerStyle?.lineHeight ?? 1,
+          letterSpacing: style.letterSpacing,
+          padding: props.headerPadding ?? ZERO_PADDING,
+        }}
+        onChange={(changes) => {
+          const { fontSize, padding, lineHeight, ...rest } = changes;
+          const styleChanges = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+          const next: Partial<AccessoriesLayerProps> = {};
+          if (Object.keys(styleChanges).length > 0 || lineHeight !== undefined) {
+            next.headerStyle = {
+              ...(props.headerStyle ?? {}),
+              ...styleChanges,
+              ...(lineHeight !== undefined ? { lineHeight } : {}),
+            };
+          }
+          if (fontSize !== undefined) next.headerFontSize = fontSize;
+          onChange(padding !== undefined ? pinned({ ...next, headerPadding: padding }) : next);
+        }}
+        colour={style.color}
+        onColourChange={(v) => onChange({ headerColor: v })}
+        usedColours={usedColours}
+        fontOptions={fontOptions}
+        onUploadFont={onUploadFont}
+      />
+      <ColorPicker
+        label="Background"
+        value={background}
+        onChange={(v) => onChange({ headerFill: v })}
+        usedColours={usedColours}
+      />
+      <NumberInput
+        label="Corner Radius"
+        value={props.headerRadius_mm ?? 0}
+        onChange={(v) => onChange({ headerRadius_mm: Math.max(0, v) })}
+        step={0.5}
+        min={0}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 self-start text-xs"
+        onClick={() => onChange(headerResetPatch())}
+      >
+        Reset header
+      </Button>
+    </section>
+  );
+}
+
 
 function FeatureIconsInspector({
   props,
@@ -2458,7 +2794,16 @@ const TEXT_FIELD_OPTIONS = [
   { value: 'spec', label: 'Spec lines' },
   { value: 'remark', label: 'Remark' },
   { value: 'price', label: 'Price' },
+  // PRICETAG-UPGRADE-VARIANTS S1: an upgrade's figures; empty on a free item, so they hide there.
+  { value: 'topup', label: 'Top-up' },
+  { value: 'price_with_upgrade', label: 'SP with upgrade' },
 ];
+
+/** The words a card field starts with when it is chosen. */
+const CARD_FIELD_PREFIX: Partial<Record<string, string>> = {
+  topup: 'TOPUP ',
+  price_with_upgrade: 'SP with upgrade ',
+};
 
 const COLUMN_OPTIONS = [
   { value: 'auto', label: 'Auto' },
@@ -2488,6 +2833,8 @@ function AccessoryElementInspector({
   const elements = edit.target === 'card' ? props.card?.elements : props.footer?.elements;
   const element = elements?.find((candidate) => candidate.id === edit.elementId);
   const textId = useId();
+  const prefixId = useId();
+  const [insertOpen, setInsertOpen] = useState(false);
   if (!element) return null;
   const patch = (changes: Partial<CardElement>) => onUpdate(element.id, changes);
   const inCard = edit.target === 'card';
@@ -2498,7 +2845,9 @@ function AccessoryElementInspector({
         ? 'Picture'
         : element.kind === 'shape'
           ? 'Shape'
-          : 'Text';
+          : element.kind === 'feature_icons'
+            ? 'Feature icons'
+            : 'Text';
   const showsOptions =
     element.kind === 'picture'
       ? [{ value: 'picture', label: 'Picture' }]
@@ -2522,7 +2871,7 @@ function AccessoryElementInspector({
         </Button>
       </div>
 
-      {(inCard ? element.kind !== 'shape' : element.kind === 'colour_dots') && (
+      {(inCard ? element.kind !== 'shape' && element.kind !== 'feature_icons' : element.kind === 'colour_dots') && (
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Shows</Label>
           <SearchableSelect
@@ -2531,63 +2880,162 @@ function AccessoryElementInspector({
             options={showsOptions}
             clearable={element.kind === 'text'}
             placeholder="Fixed text"
-            onChange={(value: string) =>
-              patch({ field: (value || null) as CardElement['field'] })
-            }
+            onChange={(value: string) => {
+              const next = switchedPrefix(element.prefix, element.field, value, CARD_FIELD_PREFIX);
+              patch({ field: (value || null) as CardElement['field'], ...(next ? { prefix: next.prefix } : {}) });
+            }}
           />
         </div>
       )}
 
+      {element.kind === 'text' && element.field && element.field in CARD_FIELD_PREFIX && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={prefixId} className="text-xs text-muted-foreground">
+            Text before the figure
+          </Label>
+          <Input
+            id={prefixId}
+            className="h-7 px-2 text-xs"
+            value={element.prefix ?? ''}
+            onChange={(e) => patch({ prefix: e.target.value })}
+          />
+        </div>
+      )}
+
+      {element.kind === 'feature_icons' && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <AccessoryNumberField
+              label="Icon size (mm)"
+              value={element.iconSize_mm ?? 4.6}
+              onChange={(value) => patch({ iconSize_mm: value })}
+              step={0.2}
+              min={0.5}
+              max={50}
+            />
+            <AccessoryNumberField
+              label="Spacing (mm)"
+              value={element.gap_mm ?? 0.8}
+              onChange={(value) => patch({ gap_mm: value })}
+              step={0.1}
+              min={0}
+              max={20}
+            />
+          </div>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={element.align ?? 'left'}
+            onValueChange={(next: string) => {
+              if (next) patch({ align: next as 'left' | 'center' | 'right' });
+            }}
+          >
+            {FEATURE_ICON_ALIGNS.map((a) => (
+              <ToggleGroupItem key={a.value} value={a.value} className="flex-1 text-xs">
+                {a.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </>
+      )}
+
       {element.kind === 'text' && !element.field && (
         <div className="flex flex-col gap-1">
-          <Label htmlFor={textId} className="text-xs text-muted-foreground">
-            Text
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor={textId} className="text-xs text-muted-foreground">
+              Text
+            </Label>
+            {/* TAG-ACC-CARD-RESIZE Q4: the normal text layer's fields, read per accessory (card only). */}
+            {inCard && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-xs"
+                onClick={() => setInsertOpen(true)}
+              >
+                Insert field
+              </Button>
+            )}
+          </div>
           <Input
             id={textId}
             className="h-7 px-2 text-xs"
             value={element.text ?? ''}
             onChange={(e) => patch({ text: e.target.value })}
           />
+          {inCard && (
+            <InsertFieldDialog
+              open={insertOpen}
+              value={element.text ?? ''}
+              data={accessoryBinding(accessoryDesignSamples(props.list)[0])}
+              specKeys={[]}
+              groups={['Product']}
+              onCancel={() => setInsertOpen(false)}
+              onDone={(content) => {
+                setInsertOpen(false);
+                patch({ text: content });
+              }}
+            />
+          )}
         </div>
       )}
 
       {element.kind === 'text' && (
-        <TypographyControls
-          singleLine
-          values={{
-            fontFamily: element.fontFamily ?? '',
-            fontSize: element.fontSize ?? 6,
-            fontWeight: element.fontWeight ?? 400,
-            italic: element.italic ?? false,
-            underline: element.underline ?? false,
-            strikethrough: false,
-            align: element.align ?? 'left',
-            lineHeight: null,
-            letterSpacing: 0,
-            padding: ZERO_PADDING,
-          }}
-          onChange={(changes) => {
-            const { fontFamily, fontSize, fontWeight, italic, underline, align } = changes;
-            patch(
-              Object.fromEntries(
-                Object.entries({
-                  fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
-                  fontSize,
-                  fontWeight,
-                  italic,
-                  underline,
-                  align,
-                }).filter(([, value]) => value !== undefined),
-              ) as Partial<CardElement>,
-            );
-          }}
-          colour={element.color ?? '#111827'}
-          onColourChange={(value) => patch({ color: value })}
-          usedColours={usedColours}
-          fontOptions={fontOptions}
-          onUploadFont={onUploadFont}
-        />
+        // Owner 22:30: the header's controls (AccessoryHeaderInspector): typography with line height
+        // and padding, then Background and Corner Radius. Nothing stored = drawn as before.
+        <>
+          <TypographyControls
+            values={{
+              fontFamily: element.fontFamily ?? '',
+              fontSize: element.fontSize ?? 6,
+              fontWeight: element.fontWeight ?? 400,
+              italic: element.italic ?? false,
+              underline: element.underline ?? false,
+              strikethrough: false,
+              align: element.align ?? 'left',
+              lineHeight: element.lineHeight ?? 1.1,
+              letterSpacing: 0,
+              padding: element.padding ?? ZERO_PADDING,
+            }}
+            onChange={(changes) => {
+              const { fontFamily, fontSize, fontWeight, italic, underline, align, lineHeight, padding } = changes;
+              patch(
+                Object.fromEntries(
+                  Object.entries({
+                    fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
+                    fontSize,
+                    fontWeight,
+                    italic,
+                    underline,
+                    align,
+                    lineHeight: lineHeight ?? undefined,
+                    padding,
+                  }).filter(([, value]) => value !== undefined),
+                ) as Partial<CardElement>,
+              );
+            }}
+            colour={element.color ?? '#111827'}
+            onColourChange={(value) => patch({ color: value })}
+            usedColours={usedColours}
+            fontOptions={fontOptions}
+            onUploadFont={onUploadFont}
+          />
+          <ColorPicker
+            label="Background"
+            value={element.fill || 'transparent'}
+            onChange={(value) => patch({ fill: value })}
+            usedColours={usedColours}
+          />
+          <AccessoryNumberField
+            label="Corner Radius"
+            value={element.cornerRadius_mm ?? 0}
+            onChange={(value) => patch({ cornerRadius_mm: Math.max(0, value) })}
+            step={0.25}
+            min={0}
+          />
+        </>
       )}
 
       {element.kind === 'picture' && (

@@ -61,6 +61,7 @@ const CONTACT: PortalContact = {
 
 const ORDER = [
   'Project title',
+  'Project name',
   'Distributor name',
   'Sales agent',
   'Customer name',

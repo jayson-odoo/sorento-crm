@@ -121,7 +121,7 @@ vi.mock('@/app/(protected)/system-management/companies/services/companyService',
 }));
 
 vi.mock('@/app/(protected)/scm/hooks/useScmOptions', () => ({
-  useWarehouseOptions: () => ({
+  useActiveWarehouseOptions: () => ({
     data: [
       { value: 'WH1', label: 'Warehouse One' },
       { value: 'WH2', label: 'Warehouse Two' },

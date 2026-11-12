@@ -44,8 +44,8 @@ breaks, commas and " + "; one card width per horizontal box).
   `PUT /products/{id}/accessories {items: [{accessory_id}|{product_id}]}` -> same, replaces the
   ordered list (duplicates or an entry naming both/neither -> 422, the host itself -> 422, unknown
   or other-company id -> 404).
-- `GET|PUT /product-combos/{id}/accessories`, same shapes; a product that is a part of the combo
-  -> 422. `ProductComboOut` gains `accessories`; `free_items` is no longer read or written.
+- `GET|PUT /product-combos/{id}/accessories`, same shapes; the host product -> 422 (a part is
+  allowed since COMBO-FREE-PART, 9 Nov). `ProductComboOut` gains `accessories`; `free_items` is no longer read or written.
 - Library delete is the deferred record action `accessory.delete` (products edit permission).
 
 ## Tag payload

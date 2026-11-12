@@ -21,6 +21,7 @@ import { normalizeLayers } from '@/lib/dealer-kit/tag-template-types';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { cn } from '@/lib/utils';
+import { codeWithName } from '@/lib/product-display';
 
 import {
   specSheetDetailKey,
@@ -52,6 +53,36 @@ function editableField(layer: TagLayer): EditableField | null {
       FIELD_TOKENS[f].test(text),
     ) ?? null
   );
+}
+
+/**
+ * The page's "Add accessory" choices: another page's item with no picks of its own, or one this
+ * page already picked. A catalogue product's name is often its code, so the label is the code
+ * once, with the name only when it says something more (`codeWithName`, the shared builder).
+ */
+export function accessoryOptionsFor(
+  page: Pick<SpecSheetPage, 'key' | 'accessories'>,
+  pages: ReadonlyArray<Pick<SpecSheetPage, 'key' | 'code' | 'name' | 'picked'>>,
+): SearchableSelectOption[] {
+  return [
+    ...pages
+      .filter(
+        (other) =>
+          other.key !== COVER &&
+          other.key !== page.key &&
+          other.picked.length === 0,
+      )
+      .map((other) => ({
+        value: other.key,
+        label: codeWithName(other.code, other.name, ' ').trim(),
+      })),
+    ...page.accessories
+      .filter((a) => a.source === 'picked' && a.key)
+      .map((a) => ({
+        value: a.key as string,
+        label: codeWithName(a.code, a.name, ' ').trim(),
+      })),
+  ];
 }
 
 export function ResetPageButton({
@@ -146,6 +177,8 @@ export interface ReaderPageProps {
   externalLayers: TagLayer[] | undefined;
   /** Whether this is the page being read: its actions show without hovering. */
   current: boolean;
+  /** The page the keyboard and clipboard act on (copy, cut, paste, duplicate, undo). */
+  active: boolean;
   /** Medium urls for the page being worked on (the strip keeps thumbnails). */
   sharp: {
     images: Record<string, string>;
@@ -160,6 +193,11 @@ export interface ReaderPageProps {
   onPatch: (key: string, change: Partial<SpecSheetPage>) => void;
   onSelectLayer: (key: string, layerId: string | null) => void;
   onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
+  /** Ctrl/Cmd+Z / Shift+Z / Y on this page: the host's per-page undo. Stable, like `onPatch`. */
+  onHistory: (key: string, step: -1 | 1) => void;
+  /** Any press on this page (left or right button, empty spot included): it becomes the page a
+   *  paste or shortcut acts on. Stable, like `onPatch`. */
+  onPressPage: (key: string) => void;
   controllerRefFor: (
     key: string,
   ) => React.MutableRefObject<EmbeddedController | null>;
@@ -216,6 +254,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   draftLayers,
   externalLayers,
   current,
+  active,
   sharp,
   canEdit,
   pages,
@@ -224,6 +263,8 @@ export const ReaderPage = React.memo(function ReaderPage({
   onPatch,
   onSelectLayer,
   onLayersReport,
+  onHistory,
+  onPressPage,
   controllerRefFor,
 }: ReaderPageProps) {
   const isCover = page.key === COVER;
@@ -269,9 +310,13 @@ export const ReaderPage = React.memo(function ReaderPage({
             height_mm: pageMm.height_mm,
           }
         : null,
-    // The document is a starting point: only a new payload arriving or a restart replaces it.
+    // The document is a starting point: only a new payload arriving, a restart, or the page
+    // becoming a live canvas again replaces it. Only 3 pages are live at once; a page that went
+    // back to a picture and returns must start from its LATEST layers (the host's draft), not
+    // the ones it first mounted with, or its next edit would be saved over the newer ones
+    // (crew pass on #2331: data loss).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm],
+    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm, live],
   );
   const bound = React.useMemo<TagBindingData | null>(() => {
     const row = payload?.resolvedData?.[page.key] as unknown as
@@ -296,6 +341,8 @@ export const ReaderPage = React.memo(function ReaderPage({
       layers: externalLayers,
       controllerRef,
       readOnly: !canEdit,
+      active,
+      onHistory: (step: -1 | 1) => onHistory(page.key, step),
       // A double-click on AREA / COMMENT / marker opens its box; a single click selects it.
       onEditField: (layerId: string) => {
         const layer = layersRef.current?.find((l) => l.id === layerId);
@@ -313,6 +360,8 @@ export const ReaderPage = React.memo(function ReaderPage({
       externalLayers,
       controllerRef,
       canEdit,
+      active,
+      onHistory,
       isCover,
     ],
   );
@@ -339,26 +388,7 @@ export const ReaderPage = React.memo(function ReaderPage({
     setEditing(null);
   };
 
-  // Another page's item with no picks of its own, or one this page already picked.
-  const accessoryOptions: SearchableSelectOption[] = [
-    ...pages
-      .filter(
-        (other) =>
-          other.key !== COVER &&
-          other.key !== page.key &&
-          other.picked.length === 0,
-      )
-      .map((other) => ({
-        value: other.key,
-        label: `${other.code} ${other.name}`.trim(),
-      })),
-    ...page.accessories
-      .filter((a) => a.source === 'picked' && a.key)
-      .map((a) => ({
-        value: a.key as string,
-        label: `${a.code} ${a.name}`.trim(),
-      })),
-  ];
+  const accessoryOptions = accessoryOptionsFor(page, pages);
 
   const title = isCover ? 'Cover' : page.code || page.name;
   const showActions = canEdit && (current || hover);
@@ -444,6 +474,8 @@ export const ReaderPage = React.memo(function ReaderPage({
         // The observed box: one fixed-size placeholder per page.
         data-testid={`spec-page-${page.key}`}
         data-page-key={page.key}
+        // Capture: before the canvas handles the press, so the paste / shortcut target is set first.
+        onPointerDownCapture={() => onPressPage(page.key)}
         className={`relative overflow-hidden rounded-sm border bg-white shadow-sm ${
           current ? 'border-primary' : 'border-border'
         }`}

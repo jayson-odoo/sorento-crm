@@ -6,6 +6,12 @@ export interface LookupKeyword {
   locale?: string | null;
 }
 
+/**
+ * The set whose options are the project party roles (PROJECT-PARTY-ROLES): its options carry
+ * "Many parties" (`allows_many`), shown for this set only.
+ */
+export const PARTY_ROLE_SET_KEY = 'project_party_role';
+
 export interface LookupOption {
   id: string;
   set_id: string;
@@ -14,6 +20,8 @@ export interface LookupOption {
   sort_order: number;
   is_active: boolean;
   description: string | null;
+  /** Party role set only: several parties may fill the role on one project. */
+  allows_many?: boolean;
   keywords: LookupKeyword[];
   created_at: string;
   updated_at: string | null;
@@ -32,6 +40,8 @@ export interface LookupOptionFormData {
   sort_order: number;
   is_active: boolean;
   description?: string;
+  /** Party role set only. */
+  allows_many?: boolean;
   keywords: LookupKeyword[];
 }
 

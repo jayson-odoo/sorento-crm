@@ -65,6 +65,7 @@ const COUNT_LABEL: Record<string, string> = {
   cancelled: 'Cancelled',
   added: 'Added',
   product_changed: 'Product changed',
+  location_changed: 'Location changed',
   confirmed: 'Confirmed',
   not_decided: 'Not decided',
   replaced: 'Replaced',
