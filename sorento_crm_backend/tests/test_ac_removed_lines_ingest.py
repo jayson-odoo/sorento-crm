@@ -910,7 +910,8 @@ def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_boar
     line's rows, so `flag_rows_for_cancelled_lines` met LIVE rows and acknowledged them by the
     system: a buy purchasing still had open read Done, with no email and nothing changed on the
     board. A REMOVED line is left out of that flag: the row keeps its state and ack until CS's
-    board Confirm retires it (and emails the CANCEL)."""
+    board Confirm retires it (and emails the CANCEL). H1 (owner rule 12 Nov): an OI whose only
+    live row is waiting for CS reads header status "waiting_for_cs"."""
     from app.models.planning_change import PlanningChangeRow
     from app.services import planning_change_service
     from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
@@ -926,7 +927,7 @@ def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_boar
     from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 
     inquiry_id = _so_mirror_row.last[1]
-    assert OrderInquiryHeaderService(env.db).get(str(inquiry_id)).status == "outstanding"
+    assert OrderInquiryHeaderService(env.db).get(str(inquiry_id)).status == "waiting_for_cs"
 
     batch_id = (
         env.db.query(PlanningChangeRow.batch_id)

@@ -483,7 +483,12 @@ def test_ac_v2_s1_a_date_change_put_back_while_the_item_also_changed_stays_waiti
         w,
         dict(
             w.record,
-            lines=[dict(w.x, required_date=OLD_DATE, product_ref=env.product2_ref), w.y],
+            lines=[dict(
+                w.x,
+                required_date=OLD_DATE,
+                product_ref=env.product2_ref,
+                product_code=w.y["product_code"],
+            ), w.y],
         ),
     )
 
