@@ -121,7 +121,8 @@ describe('F1 / UAC P3: Type column and the S/O no of a spare part request', () =
   });
 
   it('a header with no inquiry_type (older payload) reads Sales order', () => {
-    const { inquiry_type: _dropped, ...legacy } = SALES;
+    const legacy: Record<string, unknown> = { ...SALES };
+    delete legacy.inquiry_type;
     headers = [legacy];
     renderList();
     expect(cellUnder(rowOf('OI-2611-0001'), 'Type')).toHaveTextContent(/^Sales order$/);
