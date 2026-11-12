@@ -15051,33 +15051,21 @@ class ProjectOrderInquiryService:
         """
         from app.services import order_inquiry_export
 
-        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
-
         rows = self.all_rows(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
-        # The screen's own current qty (a row waiting for CS), off the worklist's projection,
-        # one query for the whole set. The eight golden headings stay as they are (AC-I5).
-        shown = {
-            str(r["id"]): r
-            for r in OrderInquiryWorklistService(self.db)._all_rows(
-                row_ids=[row.id for row in rows]
-            )
-        }
-        records = []
-        for row in self.serialize_rows(rows):
-            facts = shown.get(str(row.get("id")), {})
-            records.append(
-                {
-                    "SO DATE": self._as_naive(row.get("so_date")),
-                    "S/O NO": row.get("sales_order_ref") or "",
-                    "ITEM CODE": row.get("item_code") or "",
-                    "QTY": float(_dec(facts.get("qty", row.get("qty")))),
-                    "DELIVERY DATE": row.get("delivery_date"),
-                    "PROJECT/CUSTOMER": row.get("project_customer") or "",
-                    # Empty rather than a guess when no allocation is confirmed.
-                    "LOCATION": row.get("stock_location") or "",
-                    "REMARK": row.get("remark") or "",
-                }
-            )
+        records = [
+            {
+                "SO DATE": self._as_naive(row.get("so_date")),
+                "S/O NO": row.get("sales_order_ref") or "",
+                "ITEM CODE": row.get("item_code") or "",
+                "QTY": float(_dec(row.get("qty"))),
+                "DELIVERY DATE": row.get("delivery_date"),
+                "PROJECT/CUSTOMER": row.get("project_customer") or "",
+                # Empty rather than a guess when no allocation is confirmed.
+                "LOCATION": row.get("stock_location") or "",
+                "REMARK": row.get("remark") or "",
+            }
+            for row in self.serialize_rows(rows)
+        ]
         body = order_inquiry_export.xlsx(records, EXPORT_HEADINGS)
         project = self.db.query(Project).filter(Project.id == project_id).first()
         stem = (project.project_code if project else "project") or "project"

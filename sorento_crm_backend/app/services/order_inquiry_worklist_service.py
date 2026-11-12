@@ -204,9 +204,6 @@ MONTH_WORD = (
     "DEC",
 )
 
-#: OI-WHOLE-SO-CANCEL v2 (AC-V2-6): the three columns every OI export prints for an SO change.
-CHANGE_HEADINGS = ("STATUS", "WAS QTY", "WAS DATE")
-
 #: OI-EXPORT-SHARED (owner, 3 Nov 2026, answer (b)): one shared exporter, two layouts. This
 #: full layout is the LIST PAGE's own export (Excel and PDF); emails, their attachments and
 #: the per-project download print the eight-column `order_inquiry_export.HEADINGS`. Both are
@@ -255,9 +252,6 @@ EXPORT_HEADINGS = (
     # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
     "CHANGE QUANTITY",
     "CHANGE DATE",
-    # OI-WHOLE-SO-CANCEL v2 (AC-V2-6): what the screen's status and Was figures say, just
-    # before REMARK, which stays the last column.
-    *CHANGE_HEADINGS,
     # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
     "REMARK",
 )
@@ -1157,29 +1151,6 @@ def ack_label(row: Dict[str, Any]) -> str:
         head = f"Rejected by {who}" if who else "Rejected"
         return f"{head}: {reason}" if reason else head
     return "Awaiting"
-
-
-def status_label(row: Dict[str, Any]) -> str:
-    """AC-V2-5: the one status phrase the screen and the exports print for a row. A change
-    waiting for CS wins, then a cancelled SO, then a cancelled line, else the handshake."""
-    if row.get("waiting_for_cs"):
-        return "Waiting for CS"
-    if row.get("so_cancelled"):
-        return "SO cancelled"
-    if row.get("line_cancelled"):
-        return "Line cancelled"
-    return ack_label(row)
-
-
-def change_columns(row: Dict[str, Any]) -> Dict[str, Any]:
-    """STATUS / WAS QTY / WAS DATE for one export record."""
-    # The screen shows a Was quantity on a waiting row only (a settled row's is history).
-    was_qty = row.get("previous_qty") if row.get("waiting_for_cs") else None
-    return {
-        "STATUS": status_label(row),
-        "WAS QTY": float(_dec(was_qty)) if was_qty not in (None, "") else None,
-        "WAS DATE": row.get("previous_delivery_date"),
-    }
 
 
 def month_label(month: str) -> str:
@@ -4112,7 +4083,6 @@ class OrderInquiryWorklistService:
                     else None,
                     "CHANGE DATE": row.get("change_date"),
                     "REMARK": row.get("split_remark") or "",
-                    **change_columns(row),
                     # A split line printed on one QTY / DELIVERY DATE (first row only) keeps
                     # its later rows under that first row.
                     order_inquiry_export.CONTINUED: not own_figures
@@ -4251,7 +4221,7 @@ _EXPORT_WIDTHS = {
 }
 _EXPORT_DEFAULT_WIDTH = 14
 _EXPORT_DATE_HEADINGS = frozenset(
-    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO", "WAS DATE"}
+    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO"}
 )
 
 
