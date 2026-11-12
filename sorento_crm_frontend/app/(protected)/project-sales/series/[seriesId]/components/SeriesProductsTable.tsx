@@ -196,7 +196,8 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
         // This model's own answer; blank follows its category.
         key: 'non_cancellable',
         header: 'Non-cancellable',
-        width: 150,
+        // Wide enough for "Follows category" plus the clear X on one line at 1280.
+        width: 176,
         kind: 'select',
         placeholder: 'Follows category',
         options: [

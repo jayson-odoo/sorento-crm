@@ -1,9 +1,10 @@
 /**
  * NON-CANCELLABLE-ITEMS: the company default list. Rows show target, type, Yes/No and notes;
- * Add item is offered once, in the toolbar. Values invented.
+ * Create is offered once, in the toolbar; row actions live on the row's right-click menu, never as
+ * icon buttons on the row (owner standing rules). Values invented.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 if (!window.matchMedia) {
@@ -24,8 +25,9 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
+const removal = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('@/hooks/useDeferredRowAction', () => ({
-  useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false, countdown: null }),
+  useDeferredRowAction: () => ({ run: removal.run, targetId: null, isPending: false, countdown: null }),
 }));
 
 const rules = vi.hoisted(() => ({
@@ -82,10 +84,26 @@ describe('NonCancellableListClient', () => {
     expect(screen.getByText('Bulky')).toBeInTheDocument();
   });
 
-  it('offers Add item once, in the toolbar', () => {
+  it('offers Create once, in the toolbar, and no Add item', () => {
     render(<NonCancellableListClient />);
-    const buttons = screen.getAllByRole('button', { name: /Add item/i });
+    const buttons = screen.getAllByRole('button', { name: /^Create$/ });
     expect(buttons).toHaveLength(1);
     expect(buttons[0].closest('[data-slot="card-header"]')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Add item/i })).toBeNull();
+  });
+
+  it('puts no action icon button on a row', () => {
+    render(<NonCancellableListClient />);
+    const row = screen.getByText('Bathtubs').closest('tr')!;
+    expect(within(row).queryAllByRole('button')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /^Delete/ })).toBeNull();
+  });
+
+  it('offers Edit and Delete on the row right-click menu; Delete starts the countdown', async () => {
+    render(<NonCancellableListClient />);
+    fireEvent.contextMenu(screen.getByText('Bathtubs'));
+    expect(await screen.findByRole('menuitem', { name: 'Edit' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(removal.run).toHaveBeenCalledWith({ id: 'r2', subject: 'Bathtubs' });
   });
 });

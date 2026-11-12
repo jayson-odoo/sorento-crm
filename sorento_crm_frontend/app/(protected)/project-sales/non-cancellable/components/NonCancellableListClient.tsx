@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import {
   getCoreRowModel,
   getPaginationRowModel,
@@ -14,6 +14,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -37,7 +43,9 @@ const EDIT_PERMISSION = 'projects.types.edit';
 /** What the rule applies TO, in words rather than a UUID. */
 function targetOf(row: NonCancellableRule): string {
   if (row.product_code) {
-    return row.product_name ? `${row.product_code} ${row.product_name}` : row.product_code;
+    return row.product_name
+      ? `${row.product_code} ${row.product_name}`
+      : row.product_code;
   }
   return row.category_name ?? '-';
 }
@@ -46,7 +54,9 @@ function targetOf(row: NonCancellableRule): string {
 export function NonCancellableListClient() {
   const rules = useNonCancellableRules();
   const canEdit = useHasPermission(EDIT_PERMISSION);
-  const [editing, setEditing] = React.useState<NonCancellableRule | 'new' | null>(null);
+  const [editing, setEditing] = React.useState<
+    NonCancellableRule | 'new' | null
+  >(null);
   const removal = useDeferredRowAction({
     actionKey: 'non_cancellable_rule.delete',
     entityType: 'non_cancellable_rule',
@@ -77,11 +87,19 @@ export function NonCancellableListClient() {
       {
         id: 'target',
         accessorFn: (row) => targetOf(row),
-        header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Target" column={column} />
+        ),
         size: 260,
-        meta: { headerTitle: 'Target', skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: {
+          headerTitle: 'Target',
+          skeleton: <Skeleton className="h-4 w-40" />,
+        },
         cell: ({ row }) => (
-          <span className="block truncate font-medium" title={targetOf(row.original)}>
+          <span
+            className="block truncate font-medium"
+            title={targetOf(row.original)}
+          >
             {targetOf(row.original)}
           </span>
         ),
@@ -89,16 +107,28 @@ export function NonCancellableListClient() {
       {
         id: 'type',
         accessorFn: (row) => (row.product_id ? 'Product' : 'Category'),
-        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Type" column={column} />
+        ),
         size: 100,
-        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) => <span>{row.original.product_id ? 'Product' : 'Category'}</span>,
+        meta: {
+          headerTitle: 'Type',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
+        cell: ({ row }) => (
+          <span>{row.original.product_id ? 'Product' : 'Category'}</span>
+        ),
       },
       {
         accessorKey: 'non_cancellable',
-        header: ({ column }) => <DataGridColumnHeader title="Non-cancellable" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Non-cancellable" column={column} />
+        ),
         size: 130,
-        meta: { headerTitle: 'Non-cancellable', skeleton: <Skeleton className="h-4 w-12" /> },
+        meta: {
+          headerTitle: 'Non-cancellable',
+          skeleton: <Skeleton className="h-4 w-12" />,
+        },
         cell: ({ row }) =>
           row.original.non_cancellable ? (
             <Badge variant="warning" appearance="light">
@@ -110,9 +140,14 @@ export function NonCancellableListClient() {
       },
       {
         accessorKey: 'notes',
-        header: ({ column }) => <DataGridColumnHeader title="Notes" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Notes" column={column} />
+        ),
         size: 220,
-        meta: { headerTitle: 'Notes', skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: {
+          headerTitle: 'Notes',
+          skeleton: <Skeleton className="h-4 w-40" />,
+        },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.notes ?? ''}>
             {row.original.notes || '-'}
@@ -121,44 +156,25 @@ export function NonCancellableListClient() {
       },
       {
         accessorKey: 'updated_at',
-        header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Updated" column={column} />
+        ),
         size: 120,
-        meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Updated',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
         cell: ({ row }) => (
           <span className="tabular-nums">
-            {row.original.updated_at ? formatDateInMalaysia(row.original.updated_at) : '-'}
+            {row.original.updated_at
+              ? formatDateInMalaysia(row.original.updated_at)
+              : '-'}
           </span>
         ),
       },
     ];
-    if (canEdit) {
-      cols.push({
-        id: 'actions',
-        header: () => <span className="sr-only">Actions</span>,
-        size: 56,
-        enableSorting: false,
-        enableResizing: false,
-        meta: { headerTitle: 'Actions' },
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            aria-label={`Delete ${targetOf(row.original)}`}
-            disabled={removal.targetId === row.original.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              removal.run({ id: row.original.id, subject: targetOf(row.original) });
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" aria-hidden />
-          </Button>
-        ),
-      });
-    }
     return cols;
-  }, [canEdit, removal]);
+  }, []);
 
   const table = useReactTable({
     columns,
@@ -175,52 +191,113 @@ export function NonCancellableListClient() {
     defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
   });
 
-  // The one offer this listing makes, in the toolbar only (#1335).
+  // The one offer this listing makes, in the toolbar only (#1335): "Create" (owner standing rules).
   const listPrimaryAction = canEdit ? (
     <Button onClick={() => setEditing('new')}>
       <Plus />
-      Add item
+      Create
     </Button>
   ) : undefined;
 
+  // Row actions live on the row's right-click menu (long-press on touch), never as icon buttons
+  // on the row (owner standing rules); the cert list on the proposal page works the same way.
+  const [menuRow, setMenuRow] = React.useState<NonCancellableRule | null>(null);
+  const rowAt = (target: EventTarget) => {
+    const id = (target as Element)
+      .closest?.('[data-rule-id]')
+      ?.getAttribute('data-rule-id');
+    return id ? rows.find((r) => r.id === id) : undefined;
+  };
+
   return (
     <>
-      <DataGrid
-        table={table}
-        recordCount={rows.length}
-        isLoading={rules.isLoading}
-        error={rules.error}
-        onRetry={() => void rules.refetch()}
-        onRowClick={canEdit ? (row: NonCancellableRule) => setEditing(row) : undefined}
-        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        tableClassNames={{ edgeCell: 'px-5' }}
-      >
-        <Card>
-          <CardHeader className="block">
-            <DataGridListToolbar
-              table={table}
-              searchSlot={
-                <ListSearchInput
-                  value={searchInput}
-                  onChange={setSearchInput}
-                  placeholder="Search items"
-                  className="w-full sm:w-56 md:w-64"
-                />
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger asChild disabled={!canEdit}>
+          <div
+            // A right-click outside a rule row stops here, so the browser's own menu shows.
+            onContextMenuCapture={(event) => {
+              const hit = rowAt(event.target);
+              if (!hit) {
+                event.stopPropagation();
+                return;
               }
-              exportConfig={{ filename: 'non_cancellable_items_export.xlsx' }}
-              onRefresh={() => void rules.refetch()}
-              isRefreshing={rules.isFetching}
-              primaryAction={listPrimaryAction}
-            />
-          </CardHeader>
-          <CardTable>
-            <DataGridTable />
-          </CardTable>
-          <CardFooter>
-            <DataGridPagination />
-          </CardFooter>
-        </Card>
-      </DataGrid>
+              setMenuRow(hit);
+            }}
+            onPointerDownCapture={(event) => {
+              if (event.pointerType !== 'mouse')
+                setMenuRow(rowAt(event.target) ?? null);
+            }}
+          >
+            <DataGrid
+              table={table}
+              recordCount={rows.length}
+              isLoading={rules.isLoading}
+              error={rules.error}
+              onRetry={() => void rules.refetch()}
+              onRowClick={
+                canEdit
+                  ? (row: NonCancellableRule) => setEditing(row)
+                  : undefined
+              }
+              rowAttributes={(row: NonCancellableRule) => ({
+                'data-rule-id': row.id,
+              })}
+              tableLayout={{
+                width: 'fixed',
+                columnsResizable: true,
+                columnsVisibility: true,
+              }}
+              tableClassNames={{ edgeCell: 'px-5' }}
+            >
+              <Card>
+                <CardHeader className="block">
+                  <DataGridListToolbar
+                    table={table}
+                    searchSlot={
+                      <ListSearchInput
+                        value={searchInput}
+                        onChange={setSearchInput}
+                        placeholder="Search items"
+                        className="w-full sm:w-56 md:w-64"
+                      />
+                    }
+                    exportConfig={{
+                      filename: 'non_cancellable_items_export.xlsx',
+                    }}
+                    onRefresh={() => void rules.refetch()}
+                    isRefreshing={rules.isFetching}
+                    primaryAction={listPrimaryAction}
+                  />
+                </CardHeader>
+                <CardTable>
+                  <DataGridTable />
+                </CardTable>
+                <CardFooter>
+                  <DataGridPagination />
+                </CardFooter>
+              </Card>
+            </DataGrid>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-40" hidden={!menuRow}>
+          {menuRow && (
+            <>
+              <ContextMenuItem onSelect={() => setEditing(menuRow)}>
+                Edit
+              </ContextMenuItem>
+              <ContextMenuItem
+                variant="destructive"
+                disabled={removal.targetId === menuRow.id}
+                onSelect={() =>
+                  removal.run({ id: menuRow.id, subject: targetOf(menuRow) })
+                }
+              >
+                Delete
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
       {removal.countdown}
       {editing && (
         <NonCancellableRuleDialog
