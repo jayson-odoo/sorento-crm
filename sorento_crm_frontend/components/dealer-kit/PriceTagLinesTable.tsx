@@ -510,6 +510,18 @@ function ItemPicker({
   // lists only what its own fetch (made against the request as it stands) returns.
   const [session, setSession] = useState(0);
   const wasOpen = useRef(false);
+  const cellRef = useRef<HTMLDivElement | null>(null);
+  // The remount drops the focused trigger, leaving focus on <body>: put it back on the new
+  // trigger, but only when nothing else took it (a click on another field keeps its focus).
+  useEffect(() => {
+    if (session === 0) return;
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      cellRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [session]);
   const onOpenChange = useCallback(
     (open: boolean) => {
       ticked.current = new Set();
@@ -570,7 +582,7 @@ function ItemPicker({
 
   return (
     <div className="flex items-center gap-1">
-      <div className="min-w-0 flex-1">
+      <div ref={cellRef} className="min-w-0 flex-1">
         <SearchableMultiSelect
           key={session}
           value={requestValues}
