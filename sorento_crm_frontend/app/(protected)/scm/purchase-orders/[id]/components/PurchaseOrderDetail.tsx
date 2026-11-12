@@ -43,7 +43,6 @@ import AuditTrail from '@/components/audit/AuditTrail';
 import { useHasPermission } from '@/hooks/usePermissions';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Input } from '@/components/ui/input';
 import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';

@@ -13,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -80,7 +79,7 @@ export const DEMAND_OPTIONS = [
   { value: 'retail', label: 'Dealer' },
 ];
 
-/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date, not
+/** Today as `YYYY-MM-DD` - local calendar date, not
  *  `toISOString()`'s UTC one, which reads as yesterday or tomorrow depending on the
  *  browser's own offset. */
 function todayDateInputValue(): string {
@@ -340,6 +339,7 @@ export function RunPlanningModal({
                 as an unhorizoned run today. */}
             <Label htmlFor="plan-window-range" className="mb-1 block">Project delivery range</Label>
             <DateRangePicker
+              portal
               id="plan-window-range"
               aria-label="Project delivery range"
               from={horizonStart || null}
@@ -358,6 +358,7 @@ export function RunPlanningModal({
             <div>
               <Label htmlFor="plan-raised-range" className="mb-1 block">Inquiries raised</Label>
               <DateRangePicker
+                portal
                 id="plan-raised-range"
                 aria-label="Inquiries raised"
                 from={raisedFrom || null}

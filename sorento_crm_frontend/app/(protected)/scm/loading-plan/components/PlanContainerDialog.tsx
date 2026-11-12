@@ -23,7 +23,6 @@ import {
   type ImportMappingProbe,
   type ImportMappingSelection,
 } from '@/components/common/ImportColumnMapper';
-import { Input } from '@/components/ui/input';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -411,6 +410,7 @@ export function PlanContainerDialog({
           <div>
             <Label htmlFor="plan-container-horizon-range" className="mb-1 block text-xs">Sales orders needed</Label>
             <DateRangePicker
+              portal
               id="plan-container-horizon-range"
               aria-label="Sales orders needed"
               disabled={busy}

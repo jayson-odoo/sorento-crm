@@ -21,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -725,6 +724,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
           <DialogBody className="space-y-2">
             <Label htmlFor="plan-cutoff-range" className="text-xs">Sales orders needed</Label>
             <DateRangePicker
+              portal
               id="plan-cutoff-range"
               aria-label="Sales orders needed"
               from={cutOffStartDraft || null}
