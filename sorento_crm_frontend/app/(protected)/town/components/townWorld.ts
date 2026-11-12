@@ -3,6 +3,7 @@ import type { TownDueCustomer, TownShipment, TownShop, TownSite, TownSnapshot, T
 import {
   changePercent,
   count,
+  fitColumns,
   placeTags,
   rm0,
   sceneSelection,
@@ -606,11 +607,14 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       g.fillText((full ? `${inv}   ` : '') + vs, 512, 270);
       const split = (snapshot.today as { split?: Record<'dealer' | 'project' | 'other', { amount?: string; invoice_count: number }> }).split;
       if (split) {
-        g.font = '600 40px Inter, sans-serif';
         const part = (label: string, v: { amount?: string; invoice_count: number }) => `${label} ${v.amount != null ? rm0(v.amount) : count(v.invoice_count)}`;
         // three separate labelled values in their own columns, never one dot-joined line (owner rule, crew 12 Nov)
         g.fillStyle = '#f2c46d';
-        [part('Dealers', split.dealer), part('Projects', split.project), part('Other', split.other)].forEach((t, i) => g.fillText(t, 512 + (i - 1) * 330, 352));
+        const parts = [part('Dealers', split.dealer), part('Projects', split.project), part('Other', split.other)];
+        // each value fits its 330 px column: the font shrinks for a six-figure amount (crew pass, 12 Nov)
+        const px = fitColumns((t, size) => { g.font = `600 ${size}px Inter, sans-serif`; return g.measureText(t).width; }, parts, 310, 40, 22);
+        g.font = `600 ${px}px Inter, sans-serif`;
+        parts.forEach((t, i) => g.fillText(t, 512 + (i - 1) * 330, 352));
       }
     }
     boardTex.needsUpdate = true;

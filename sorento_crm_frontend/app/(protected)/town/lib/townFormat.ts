@@ -36,6 +36,17 @@ export const signedPercent = (pct: number) => `${pct >= 0 ? '+' : ''}${pct.toFix
 const byToday = (a: TownShop, b: TownShop) =>
   b.today_docs - a.today_docs || Number(b.today_amount ?? 0) - Number(a.today_amount ?? 0);
 
+/** Which stalls get a building: invoice count only, ties kept in the snapshot's own order. Every variant carries
+ * both, so the wallboard (no amounts) draws the same stalls as the named view (crew pass, 12 Nov). */
+const byDocs = (a: TownShop, b: TownShop) => b.today_docs - a.today_docs;
+
+/** The largest font size (from `start` down to `min`, in 2 px steps) at which every text fits `column` px. */
+export function fitColumns(measure: (text: string, px: number) => number, texts: string[], column: number, start: number, min: number): number {
+  let px = start;
+  while (px > min && texts.some((t) => measure(t, px) > column)) px -= 2;
+  return px;
+}
+
 /** The shops that bought today, busiest first, and the dealers beyond them with no building. */
 export function boughtToday(snapshot: TownSnapshot) {
   const bought = snapshot.shops.filter((shop) => shop.today_docs > 0).sort(byToday);
@@ -55,7 +66,7 @@ export function sceneSelection(snapshot: TownSnapshot) {
   const shops = snapshot.shops.filter((shop) => shop.kind === 'shop');
   const stalls = snapshot.shops
     .filter((shop) => shop.kind !== 'shop')
-    .sort(byToday)
+    .sort(byDocs)
     .slice(0, SCENE_STALL_CAP);
   const drawn = [...shops, ...stalls];
   const lit = drawn.filter((shop) => shop.today_docs > 0);
