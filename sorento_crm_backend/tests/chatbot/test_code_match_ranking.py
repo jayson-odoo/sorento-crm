@@ -52,6 +52,28 @@ def test_ac8_candidates_holding_every_typed_part_are_offered_before_one_missing_
     assert _option_codes(c) == dealer, (_option_codes(c), dealer)
 
 
+# --------------------------------------------------------------------------- AC-8c
+
+#: Typed "TWC8354-SH-UF": the separators split the letter blocks, so the parts are TWC, 8354, SH, UF.
+#: TWC8354-SH-N-UF holds all four, in order, though SH and UF are not adjacent (trigram 0.667 vs the folded
+#: typed form); TWC8354-SH-UC misses UF and scores higher (0.714), so today's order puts it first. No
+#: catalogue code equals the typed code folded.
+SPLIT_TYPED = "TWC8354-SH-UF"
+HOLDS_NOT_ADJACENT = "TWC8354-SH-N-UF"
+MISSES_UF = "TWC8354-SH-UC"
+
+
+def test_ac8c_parts_come_from_the_code_as_typed_so_a_separator_splits_letter_blocks(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, [MISSES_UF, HOLDS_NOT_ADJACENT])
+    dealer_text = c.say(f"{SPLIT_TYPED} x 3", stock(product(SPLIT_TYPED, 3)))
+    dealer = _option_codes(c)
+    assert dealer == [HOLDS_NOT_ADJACENT, MISSES_UF], (dealer, dealer_text)
+
+    _as_staff(c)
+    c.say(f"{SPLIT_TYPED} x 3", stock(product(SPLIT_TYPED, 3)))
+    assert _option_codes(c) == [HOLDS_NOT_ADJACENT, MISSES_UF], c.stored_question
+
+
 # --------------------------------------------------------------------------- AC-8b
 
 
