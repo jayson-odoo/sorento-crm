@@ -368,23 +368,23 @@ export function richLayerLines(
         endLine();
         continue;
       }
+      // A line has "started" once it holds a piece, never "once it has width": with no measure
+      // (no canvas) every width is 0, and a measured word can be 0 wide (U+200B).
       const groupWidth = group.words.reduce((sum, piece) => sum + piece.width, 0);
-      const spaceWidth = lineWidth > 0 ? group.space.reduce((sum, piece) => sum + piece.width, 0) : 0;
-      if (measurable && lineWidth > 0 && lineWidth + spaceWidth + groupWidth > available) endLine();
-      if (measurable && groupWidth > available && lineWidth === 0) {
+      const spaceWidth = line.length > 0 ? group.space.reduce((sum, piece) => sum + piece.width, 0) : 0;
+      if (measurable && line.length > 0 && lineWidth + spaceWidth + groupWidth > available) endLine();
+      if (measurable && groupWidth > available && line.length === 0) {
         // A word wider than the line: cut it where it overflows.
         for (const piece of group.words) {
           for (const char of Array.from(piece.text)) {
             const charWidth = widthOf(char, piece.run);
-            if (lineWidth > 0 && lineWidth + charWidth > available) endLine();
+            if (line.length > 0 && lineWidth + charWidth > available) endLine();
             line.push({ run: piece.run, text: char, width: charWidth });
             lineWidth += charWidth;
           }
         }
         continue;
       }
-      // The space joins a started line. "Started" is "holds a piece", not "has width": with no
-      // measure (no canvas) every width is 0, and a width test dropped every space.
       if (line.length > 0) {
         line.push(...group.space);
         lineWidth += spaceWidth;
