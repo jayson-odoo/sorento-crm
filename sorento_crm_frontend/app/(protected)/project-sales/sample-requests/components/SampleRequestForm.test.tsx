@@ -96,7 +96,7 @@ const ensureRow = (): HTMLElement => {
   return rows()[0];
 };
 const labelNode = (re: RegExp): HTMLElement => screen.getAllByText(re)[0];
-/** Owner 12 Nov: every section starts collapsed; open them all to work in the form. */
+/** Opens every section that is still collapsed (owner 12 Nov: only the first starts open). */
 function openAll() {
   for (const title of ['Customer & project', 'Ship to', 'Items', 'Delivery']) {
     const trigger = screen.queryByRole('button', { name: new RegExp(`^${title}`) });
@@ -528,20 +528,17 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
 });
 
 
-describe('owner hand test 12 Nov: collapsed sections, separate fields, proposal contact pattern, no Preview', () => {
+describe('owner hand test 12 Nov: section start, separate fields, proposal contact pattern, no Preview', () => {
   const SECTIONS = ['Customer & project', 'Ship to', 'Items', 'Delivery'];
 
-  it('every section starts collapsed, new and edit alike', async () => {
+  // Superseded by the owner's hand test 12 Nov ~15:45 ("similar to price tag request, by default
+  // this section should be expanded"): the first section starts open, the rest as they are reached.
+  // SampleRequestForm.ownerRound2.test.tsx holds that rule.
+  it('a new request opens only the first section', async () => {
     renderForm();
     await screen.findByText('Customer & project');
-    for (const title of SECTIONS) {
-      expect(screen.getByRole('button', { name: new RegExp(`^${title}`) }).getAttribute('aria-expanded')).toBe('false');
-    }
-    cleanup();
-    mut.existing = READY_DRAFT;
-    renderForm({ requestId: 'sr-1' });
-    await screen.findByText('Customer & project');
-    for (const title of SECTIONS) {
+    expect(screen.getByRole('button', { name: /^Customer & project/ }).getAttribute('aria-expanded')).toBe('true');
+    for (const title of SECTIONS.slice(1)) {
       expect(screen.getByRole('button', { name: new RegExp(`^${title}`) }).getAttribute('aria-expanded')).toBe('false');
     }
   });

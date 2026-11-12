@@ -247,9 +247,6 @@ export default function SampleRequestForm({
 
   const readOnly = Boolean(request && !isDraft);
   const canCancel = request?.status === 'submitted';
-  const projectTitle = state.project_id
-    ? state.project_label.split(' - ').slice(1).join(' - ') || state.project_label
-    : state.project_title;
 
   return (
     <div className={shell}>
@@ -340,14 +337,19 @@ export default function SampleRequestForm({
                 />
               </FormField>
 
-              <FormField label="Project Title" htmlFor="sr-project-title">
-                <Input
-                  id="sr-project-title"
-                  disabled={readOnly || Boolean(state.project_id)}
-                  value={projectTitle}
-                  onChange={(e) => set('project_title', e.target.value)}
-                />
-              </FormField>
+              {/* A registered project is its own one line ("code - title") in the picker below; the
+                  typed title is for a project not registered yet, as on the CRM form (owner 12 Nov
+                  ~15:45: the two forms read the same). */}
+              {!state.project_id && (
+                <FormField label="Project Title" htmlFor="sr-project-title">
+                  <Input
+                    id="sr-project-title"
+                    disabled={readOnly}
+                    value={state.project_title}
+                    onChange={(e) => set('project_title', e.target.value)}
+                  />
+                </FormField>
+              )}
               <FormField
                 label="Registered project (optional)"
                 htmlFor="sr-project"

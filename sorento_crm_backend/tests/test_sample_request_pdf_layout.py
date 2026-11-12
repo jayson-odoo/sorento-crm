@@ -120,3 +120,14 @@ def test_sample_request_v2_the_for_row_prints_only_when_an_old_request_has_it():
     assert "<th>For</th>" in old
     new = build_html({**DETAIL, "scope_note": None})
     assert "<th>For</th>" not in new
+
+
+def test_sample_request_v2_every_contact_phone_prints():
+    """Owner hand test 12 Nov ~15:45 (F4): two contacts chosen, both phones on the printed copy."""
+    html = _cells(build_html({
+        **DETAIL,
+        "site_contact_name": "Mei Ling Tan & Ravi Kumar",
+        "site_contact_phone": "012-345 6789 & 011-1111 1111",
+    }))
+    assert "Mei Ling Tan &amp; Ravi Kumar" in html or "Mei Ling Tan & Ravi Kumar" in html
+    assert "012-345 6789" in html and "011-1111 1111" in html

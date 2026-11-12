@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  contactPhonesText,
   EMPTY_FORM,
   blankLine,
   staffPayloadFromState,
@@ -74,8 +75,25 @@ describe('withShipToParty', () => {
   });
 });
 
-describe('withShipToContacts (owner Q3 a)', () => {
-  it('prints several as "A & B" with the first one\'s phone', () => {
+describe('withShipToContacts (owner Q3 a; every phone since the owner hand test 12 Nov ~15:45)', () => {
+  it('two contacts with phones: both phones, in the order of the names', () => {
+    const next = withShipToContacts(ready(), [
+      { id: 'k1', name: 'Mei Ling Tan', phone: '0123456789' },
+      { id: 'k2', name: 'Ravi Kumar', phone: '01111111111' },
+    ]);
+    expect(next.site_contact_name).toBe('Mei Ling Tan & Ravi Kumar');
+    expect(next.site_contact_phone).toBe('012-345 6789 & 011-1111 1111');
+  });
+
+  it('one of two without a phone: the other phone carries its name', () => {
+    const next = withShipToContacts(ready(), [
+      { id: 'k1', name: 'Mei Ling Tan', phone: null },
+      { id: 'k2', name: 'Ravi Kumar', phone: '01111111111' },
+    ]);
+    expect(next.site_contact_phone).toBe('Ravi Kumar 011-1111 1111');
+  });
+
+  it('prints several as "A & B" with a phone', () => {
     const next = withShipToContacts(ready(), [
       { id: 'k1', name: 'Mei Ling Tan', phone: '0123456789' },
       { id: 'k2', name: 'Ravi Kumar', phone: null },
@@ -202,5 +220,21 @@ describe('stateFromDetail (card example E)', () => {
     expect(state.ship_to_party_id).toBe('party-1');
     expect(state.ship_to_role).toBe('trading_house');
     expect(state.ship_to_typed_before).toBe('');
+  });
+});
+
+describe('contactPhonesText', () => {
+  it('one contact: just the phone; none with a phone: empty', () => {
+    expect(contactPhonesText([{ name: 'A', phone: '0123456789' }])).toBe('012-345 6789');
+    expect(contactPhonesText([{ name: 'A', phone: null }, { name: 'B' }])).toBe('');
+  });
+});
+
+describe('contactPhonesText fits the column (review S3)', () => {
+  it('never longer than 255 characters, however many contacts', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: `Person number ${i}`, phone: i % 2 ? '0123456789' : null }));
+    const text = contactPhonesText(many);
+    expect(text.length).toBeLessThanOrEqual(255);
+    expect(text.startsWith('Person number 1 012-345 6789')).toBe(true);
   });
 });

@@ -500,6 +500,27 @@ def _ship_to_invalid(code: str, field: str, message: str) -> AppException:
     return AppException(status_code=422, message=message, code=code, details={"field": field})
 
 
+def _contact_phones_text(contacts: List[Any], display_phone: Any) -> Optional[str]:
+    """Every chosen contact's phone, in the order of their names (owner hand test 12 Nov ~15:45:
+    "I added 2 contacts but why got 1 phone only"). When each has one, the phones read in the
+    order of the names; when some have none, each phone carries its contact's name, so no phone
+    reads as someone else's. The form builds the same text (`lib/sample-request-form.ts`
+    `contactPhonesText`)."""
+    with_phone = [
+        (c.name, (display_phone(c.phone) or c.phone or "").strip()) for c in contacts if c.phone
+    ]
+    with_phone = [(name, phone) for name, phone in with_phone if phone]
+    if not with_phone:
+        return None
+    if len(with_phone) == len(contacts):
+        text = " & ".join(phone for _name, phone in with_phone)
+    else:
+        text = " & ".join(f"{name} {phone}" for name, phone in with_phone)
+    # The column holds 255 (srv2_0003); a longer list keeps its start (review S3).
+    return text if len(text) <= 255 else text[:252] + "..."
+
+
+
 def _apply_ship_to(
     db: Session,
     req: SampleRequest,
@@ -636,11 +657,10 @@ def _apply_ship_to(
             site_contact_phone=None,
         )
     if contacts:
-        first = contacts[0]
         loaded.update(
             site_contact_name=" & ".join(c.name for c in contacts),
             site_contact_phone=(
-                party_contacts.display_phone(first.phone)
+                _contact_phones_text(contacts, party_contacts.display_phone)
                 if "projects.parties.view" in granted
                 else None
             ),
