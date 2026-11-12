@@ -23,7 +23,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.orm import Session
@@ -494,6 +494,8 @@ def upload_attachment(
         uploaded_by=actor.user_id,
         commit=False,
         key_prefix=f"order_change_notices/{row.id}",
+        # The notice is company-scoped, so its files are too (security review M5).
+        company_id=str(row.company_id) if row.company_id else None,
     )
 
 
@@ -1247,12 +1249,16 @@ def linkable_clause():
 
 def assert_linkable(
     db: Session, ocn_id: str, *, project_id: Optional[str], actor: Actor
-) -> OrderChangeNotice:
+) -> Tuple[OrderChangeNotice, List[Callable[[], None]]]:
     """An existing notice an amendment may take: one the author can see, of the same project,
     passing `linkable_clause`. The row is locked for the rest of the transaction, so two
     amendments cannot link it at once (the partial unique index on so_amendments.ocn_id is the
     backstop). An approved notice goes back to draft at the next revision before the change
-    table is put on it, so publishing waits for a fresh approval of this change."""
+    table is put on it, so publishing waits for a fresh approval of this change.
+
+    Answers the row and what to tell once the amendment COMMITS (security review M4): nothing
+    is sent inside the amendment's transaction, so a failed amendment tells nobody, and a
+    notification's own commit or rollback can never split the reset from the amendment."""
     row = find(db, ocn_id, for_update=True)
     if row is None:
         raise _invalid("ocn_id", "That order change notice does not exist.")
@@ -1268,18 +1274,18 @@ def assert_linkable(
                 "This order change notice is approved. Only someone who can revise notices can "
                 "pick it, because it goes back for approval."
             )
-        _reopen_for_amendment(db, row, actor)
-    return row
+        return row, [_reopen_for_amendment(db, row, actor)]
+    return row, []
 
 
 REOPENED_REASON = "Picked for a sales order amendment: the change needs approval."
 
 
-def _reopen_for_amendment(db: Session, row: OrderChangeNotice, actor: Actor) -> None:
+def _reopen_for_amendment(db: Session, row: OrderChangeNotice, actor: Actor) -> Callable[[], None]:
     """An approved notice picked by an amendment goes back to draft (Revise's own writes, so
-    the row listener audits the move), with a History line naming why, and the raiser and the
-    approver are told in-app (review N4). Inside the amendment's transaction: it all rolls back
-    together if the amendment does not land."""
+    the row listener audits the move), with a History line naming why, all inside the
+    amendment's transaction, so it rolls back with it. Answers the in-app notice to the raiser
+    and the approver (review N4), for the caller to send after its commit (security M4)."""
     from app.services.audit_service import log_audit
 
     previous_approver = row.approver_id
@@ -1299,11 +1305,19 @@ def _reopen_for_amendment(db: Session, row: OrderChangeNotice, actor: Actor) -> 
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("order change notice reopen audit not written: %s (%s)", row.id, exc)
-    _tell(
-        db, row, "reopened",
-        f"Order change notice {row.ocn_number} went back for approval for a sales order amendment",
-        users=[row.created_by, previous_approver], actor_id=actor.user_id,
-    )
+    ocn_id, users, actor_id = str(row.id), [row.created_by, previous_approver], actor.user_id
+
+    def tell() -> None:
+        fresh = find(db, ocn_id)
+        if fresh is None:
+            return
+        _tell(
+            db, fresh, "reopened",
+            f"Order change notice {fresh.ocn_number} went back for approval for a sales order amendment",
+            users=users, actor_id=actor_id,
+        )
+
+    return tell
 
 
 def _not_linkable_sentence(db: Session, row: OrderChangeNotice) -> str:

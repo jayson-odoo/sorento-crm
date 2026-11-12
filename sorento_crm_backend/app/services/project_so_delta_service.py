@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -191,6 +191,21 @@ class ProjectSODeltaService:
 
     def __init__(self, db: Session):
         self.db = db
+        #: What to tell once the caller commits (a picked approved notice's reopen notices,
+        #: security review M4). The caller runs `run_after_commit()` after `db.commit()`; a
+        #: rollback simply drops this service and its list.
+        self._after_commit: List[Callable[[], None]] = []
+
+    def run_after_commit(self) -> None:
+        """Send what waited for the commit, best effort: a failed notice never undoes it."""
+        pending, self._after_commit = self._after_commit, []
+        for send in pending:
+            try:
+                send()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("amendment after-commit notice not sent (%s)", exc)
+                if not self.db.is_active:
+                    self.db.rollback()
 
     # ---------------------------------------------------------------- preview
 
@@ -721,16 +736,15 @@ class ProjectSODeltaService:
     ) -> Dict[str, Any]:
         from app.services import order_change_notice_service
 
-        picked = (
-            order_change_notice_service.assert_linkable(
+        picked = None
+        if ocn_id:
+            picked, to_tell = order_change_notice_service.assert_linkable(
                 self.db,
                 ocn_id,
                 project_id=order.project_id,
                 actor=order_change_notice_service.actor_for_user(self.db, actor_user_id),
             )
-            if ocn_id
-            else None
-        )
+            self._after_commit.extend(to_tell)
         amendment = SOAmendment(
             company_id=order.company_id,
             project_sales_order_id=order.id,

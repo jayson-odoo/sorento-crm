@@ -357,7 +357,9 @@ class FormCommentService:
         self.db.flush()
         return msg
 
-    def _store_staff_files(self, kind: str, entity_id: str, comment_id: str, user_id: str, files: Sequence[CommentFile]) -> None:
+    def _store_staff_files(self, kind: str, entity_id: str, comment_id: str, user_id: str, files: Sequence[CommentFile], company_id: Optional[str] = None) -> None:
+        """``company_id`` owns the files for a company-scoped record (the order change notice,
+        security review M5); other kinds keep them shared, as before."""
         from app.services.entity_attachment_service import create_response_attachment
 
         for filename, contents, content_type in files:
@@ -370,6 +372,7 @@ class FormCommentService:
                 content_type=content_type,
                 uploaded_by=user_id,
                 commit=False,
+                company_id=company_id,
             )
 
     def _store_contact_files(self, kind: str, entity_id: str, comment_id: str, contact_id: str, files: Sequence[CommentFile], acting_user_id: Optional[str] = None) -> None:
@@ -573,7 +576,8 @@ class FormCommentService:
         user_id = str(user.id if hasattr(user, "id") else user["id"])
         try:
             msg = self._insert(kind, entity_id, text, user_id=user_id, parent_id=parent_id)
-            self._store_staff_files(kind, entity_id, msg.id, user_id, files)
+            owner = getattr(row, "company_id", None) if kind == "order_change_notice" else None
+            self._store_staff_files(kind, entity_id, msg.id, user_id, files, str(owner) if owner else None)
             comment = self._commit_comment(msg, self.staff_viewer(user))
         except Exception:
             self.db.rollback()

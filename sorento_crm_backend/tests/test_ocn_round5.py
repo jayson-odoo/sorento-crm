@@ -156,7 +156,14 @@ def test_r5_reopening_writes_history_and_tells_the_raiser_and_the_approver(build
     grant(b.db, raiser, VIEW)
     grant(b.db, approver, VIEW)
     mine = _approved_crm_ocn(b, raiser, approver)
-    _create(b, ocn_id=mine.id)
+    # Round 6 (security M4): the notices go out after the amendment commits, as the route does.
+    from app.services.project_so_delta_service import ProjectSODeltaService
+
+    delta = ProjectSODeltaService(b.db)
+    delta.create(b.orders["TOWER"].id, schedule_version_id=b.r2.id,
+                 reason="Main contractor pushed the programme.", actor_user_id=b.owner, ocn_id=mine.id)
+    b.db.commit()
+    delta.run_after_commit()
     b.db.expire_all()
     assert b.db.get(type(mine), mine.id).status == "draft"
     lines = b.db.query(AuditLog).filter(AuditLog.entity_type == KIND, AuditLog.entity_id == str(mine.id)).all()

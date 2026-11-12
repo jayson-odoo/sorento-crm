@@ -864,7 +864,8 @@ def create_amendment(
     links the existing notice the request picks (`ocn_id`, OCN-ORDER-CHANGE-NOTICE E2)."""
     try:
         _service, order = _order_for_edit(db, pso_id, current_user)
-        body = ProjectSODeltaService(db).create(
+        delta_service = ProjectSODeltaService(db)
+        body = delta_service.create(
             order.id,
             po_version_id=payload.po_version_id,
             schedule_version_id=payload.schedule_version_id,
@@ -873,10 +874,13 @@ def create_amendment(
             ocn_id=payload.ocn_id,
         )
         db.commit()
-        return body
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+    # Only once the amendment is durable: a picked approved notice's raiser and approver hear
+    # it went back for approval (security review M4). Best effort, never undoes the commit.
+    delta_service.run_after_commit()
+    return body
 
 
 @router.get("/amendments/{amendment_id}", response_model=AmendmentDetail)
