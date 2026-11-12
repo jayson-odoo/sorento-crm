@@ -186,49 +186,57 @@ export function useMoveFiles() {
             {prompt && prompt.total > 1 ? `${prompt.index + 1} of ${prompt.total}` : 'Choose what to do.'}
           </DialogDescription>
         </DialogHeader>
-        {!forAll && (
+        <div className="space-y-5 pb-1">
           <div className="space-y-2">
-            <Label htmlFor="move-clash-name">New name</Label>
-            <Input
-              id="move-clash-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && trimmed) {
-                  e.preventDefault();
-                  choose('rename');
-                }
-              }}
-            />
+            <Label htmlFor={forAll ? undefined : 'move-clash-name'}>New name</Label>
+            {forAll ? (
+              // Same height as the box it stands in for, so ticking never moves the layout.
+              <p className="flex h-8.5 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground">
+                Each file keeps its own name with (1) added.
+              </p>
+            ) : (
+              <Input
+                id="move-clash-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && trimmed) {
+                    e.preventDefault();
+                    choose('rename');
+                  }
+                }}
+              />
+            )}
           </div>
-        )}
-        {remaining > 0 && (
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="move-clash-for-all"
-              checked={forAll}
-              onCheckedChange={(checked) => setForAll(checked === true)}
-            />
-            <Label htmlFor="move-clash-for-all" className="font-normal">
-              {`Do this for the remaining ${remaining} conflict${remaining === 1 ? '' : 's'}`}
-            </Label>
-          </div>
-        )}
-        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row">
+          {remaining > 0 && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="move-clash-for-all"
+                checked={forAll}
+                onCheckedChange={(checked) => setForAll(checked === true)}
+              />
+              {/* Wording follows the app's existing "Apply to all lines" (dealer-kit TagSizeControl). */}
+              <Label htmlFor="move-clash-for-all" className="font-normal">
+                {`Apply to all ${remaining} remaining conflict${remaining === 1 ? '' : 's'}`}
+              </Label>
+            </div>
+          )}
+        </div>
+        <DialogFooter className="flex-col-reverse gap-2 pt-2 sm:flex-row">
           <Button variant="ghost" onClick={() => answer({ kind: 'cancel' })}>
             Cancel
           </Button>
           <Button variant="outline" onClick={() => choose('skip')}>
-            Skip
+            {forAll ? 'Skip all' : 'Skip'}
           </Button>
           {canReplace && (
             <Button variant="outline" onClick={() => choose('replace')}>
-              Replace
+              {forAll ? 'Replace all' : 'Replace'}
             </Button>
           )}
           <Button onClick={() => choose('rename')} disabled={!forAll && !trimmed}>
-            Rename
+            {forAll ? 'Keep both' : 'Rename'}
           </Button>
         </DialogFooter>
       </DialogContent>

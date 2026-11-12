@@ -61,13 +61,13 @@ A folder can hold only one file with a given name. Before anything moves, the sy
 | **Skip** | The file stays where it is. |
 | **Cancel** | The whole move is cancelled: nothing moves, not even the files without a clash. Closing the window or pressing Esc does the same. |
 
-Tick **Do this for the remaining … conflicts** to give the same answer to every other clash at once; no more windows open. With **Rename** ticked for all, each file gets its own free name such as `photo (1).jpg`. The **New name** box is only for the file the window is showing.
+Tick **Apply to all … remaining conflicts** to give the same answer to every other clash at once; no more windows open. The buttons then read **Keep both**, **Skip all** and **Replace all**. With **Keep both**, each file keeps its own name with (1) added, for example `photo (1).jpg`. Untick the box to type a name for the file the window is showing.
 
 When the move is done, one message sums it up, for example: *6 moved, 3 renamed, 1 replaced. 1 skipped: photo.jpg.*
 
 A file renamed earlier still counts under the name it was first uploaded with. Open a file to see both: its name, and under it **Original name** when the two differ. If the target folder holds a file first uploaded under that same name, the message says so, for example: *holiday.jpg cannot be moved into Folder B: photo.jpg there has the same original file name.* Choose **Rename** to move it under a new name.
 
-The same rule applies when you upload a file into a folder: a name already used there (including a file first uploaded under it and renamed since) is refused with a plain message naming the file and the folder.
+A folder never holds two files with the same name. The same check runs when you rename a file (renaming to a name already in its folder is refused with a plain message), restore a file from Trash, and upload a file into a folder (a name already used there, including a file first uploaded under it and renamed since, is refused with a plain message naming the file and the folder).
 
 ## Quick Access
 

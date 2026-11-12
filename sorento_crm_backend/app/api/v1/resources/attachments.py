@@ -209,7 +209,10 @@ def _next_copy_name(
     # itself would clash with a renamed file still holding that original name.
     while (
         _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None
-        or service._folder_clash(directory_id, sanitize_storage_filename(candidate)) is not None
+        or service._folder_clash(
+            directory_id, sanitize_storage_filename(candidate), visible_name=candidate
+        )
+        is not None
     ):
         candidate = _suffix_copy_name(candidate)
     return candidate
@@ -994,7 +997,9 @@ async def create_attachment(
         if existing_to_replace is None:
             # FILES-MOVE-DUPLICATE: the folder allows one file per ORIGINAL name; a renamed file
             # can still hold it. Refuse in plain words before the bytes go to storage.
-            original_clash = AttachmentService(db)._folder_clash(directory_id, original_filename)
+            original_clash = AttachmentService(db)._folder_clash(
+                directory_id, original_filename, visible_name=stored_filename
+            )
             if original_clash is not None:
                 raise AttachmentService(db)._clash_error(
                     stored_filename,

@@ -2164,6 +2164,21 @@ class AttachmentService:
                     get_company_scope(self.db)
                 )
 
+        if directory_id:
+            clash = self._folder_clash(
+                directory_id,
+                attachment_dict.get("original_filename"),
+                visible_name=attachment_dict.get("stored_filename"),
+            )
+            if clash is not None:
+                raise self._clash_error(
+                    attachment_dict.get("stored_filename") or attachment_dict.get("original_filename"),
+                    clash,
+                    directory_id,
+                    verb="added to",
+                    code="ATTACHMENT_FOLDER_NAME_CLASH",
+                    viewer_id=attachment_dict.get("uploaded_by"),
+                )
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
         try:
@@ -2176,7 +2191,11 @@ class AttachmentService:
                 raise
             raise self._clash_error(
                 attachment_dict.get("stored_filename") or attachment_dict.get("original_filename"),
-                self._folder_clash(directory_id, attachment_dict.get("original_filename")),
+                self._folder_clash(
+                    directory_id,
+                    attachment_dict.get("original_filename"),
+                    visible_name=attachment_dict.get("stored_filename"),
+                ),
                 directory_id,
                 verb="added to",
                 code="ATTACHMENT_FOLDER_NAME_CLASH",
@@ -2221,16 +2240,30 @@ class AttachmentService:
     # catches the IntegrityError of a race, so a clash always reads as a plain 409 naming the
     # file and the folder, never a 500 with database text.
 
-    def _folder_clash(self, directory_id: Optional[str], original_name: Optional[str], exclude_id=None):
-        """The active file in ``directory_id`` holding ``original_name`` (any case), or None.
+    def _folder_clash(
+        self,
+        directory_id: Optional[str],
+        original_name: Optional[str],
+        exclude_id=None,
+        visible_name: Optional[str] = None,
+    ):
+        """The active file in ``directory_id`` that clashes with a file named ``visible_name``
+        (uploaded as ``original_name``), or None. Any case.
 
-        Mirrors the index exactly: root (no folder) is never checked, deleted files never count.
+        The ONE check every path into a folder goes through (move, bulk move, rename, restore,
+        upload). A folder never holds two files of one visible name (owner, hand test 12 Nov:
+        a renamed file shared a visible name and moved away and back unwarned), and never two
+        of one original name (the index, migration 198). Root (no folder) is never checked;
+        deleted files never count.
         """
         if not directory_id:
             return None
+        same = func.lower(Attachment.original_filename) == (original_name or "").lower()
+        if visible_name:
+            same = or_(same, func.lower(Attachment.stored_filename) == visible_name.lower())
         q = self.db.query(Attachment).filter(
             Attachment.directory_id == directory_id,
-            func.lower(Attachment.original_filename) == (original_name or "").lower(),
+            same,
             Attachment.is_deleted.is_(False),
         )
         if exclude_id:
@@ -2255,7 +2288,7 @@ class AttachmentService:
         # Upload stores the sanitised name, the clash dialog's Rename stores it as typed: both
         # forms must be free for a suggestion to work either way.
         for original in {display_name, sanitize_storage_filename(display_name)}:
-            if self._folder_clash(directory_id, original, exclude_id):
+            if self._folder_clash(directory_id, original, exclude_id, visible_name=display_name):
                 return False
         q = self.db.query(Attachment.id).filter(
             Attachment.directory_id == directory_id,
@@ -2358,8 +2391,13 @@ class AttachmentService:
         file_name = update_data.get("stored_filename") or attachment.stored_filename
         original_name = update_data.get("original_filename", attachment.original_filename)
         replaced = None
-        if target_dir and (moving or "original_filename" in update_data):
-            clash = self._folder_clash(target_dir, original_name, exclude_id=attachment.id)
+        renaming = "stored_filename" in update_data and (
+            (update_data["stored_filename"] or "").lower() != (attachment.stored_filename or "").lower()
+        )
+        if target_dir and (moving or renaming or "original_filename" in update_data):
+            clash = self._folder_clash(
+                target_dir, original_name, exclude_id=attachment.id, visible_name=file_name
+            )
             if clash is not None:
                 if on_conflict == "replace":
                     replaced = self._lock_replaceable(clash, target_dir)
@@ -2419,7 +2457,7 @@ class AttachmentService:
                 raise
             raise self._clash_error(
                 file_name,
-                self._folder_clash(target_dir, original_name, exclude_id=attachment_id),
+                self._folder_clash(target_dir, original_name, exclude_id=attachment_id, visible_name=file_name),
                 target_dir,
                 verb="moved into",
                 exclude_id=attachment_id,
@@ -2513,17 +2551,21 @@ class AttachmentService:
             action = resolution.get("action")
             if action == "skip":
                 # The user chose to leave it: it stays even if its clash went away meanwhile.
-                clash = self._folder_clash(directory_id, original, exclude_id=row_id) if directory_id else None
+                clash = (
+                    self._folder_clash(directory_id, original, exclude_id=row_id, visible_name=file_name)
+                    if directory_id
+                    else None
+                )
                 not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
                 continue
             if directory_id and str(row.directory_id or "") != str(directory_id):
-                clash = self._folder_clash(directory_id, original, exclude_id=row_id)
+                clash = self._folder_clash(directory_id, original, exclude_id=row_id, visible_name=file_name)
                 if clash is not None:
                     if action == "rename":
                         new_name = (resolution.get("name") or "").strip() or self._suggest_name(
                             directory_id, file_name, row_id
                         )
-                        taken = self._folder_clash(directory_id, new_name, exclude_id=row_id)
+                        taken = self._folder_clash(directory_id, new_name, exclude_id=row_id, visible_name=new_name)
                         if taken is not None:
                             not_moved.append(
                                 self._not_moved_entry(row_id, new_name, taken, directory_id, viewer_id)
@@ -2568,7 +2610,9 @@ class AttachmentService:
                 savepoint.rollback()
                 if not _is_folder_name_clash(exc):
                     raise
-                clash = self._folder_clash(directory_id, new_name or original, exclude_id=row_id)
+                clash = self._folder_clash(
+                    directory_id, new_name or original, exclude_id=row_id, visible_name=new_name or file_name
+                )
                 not_moved.append(
                     self._not_moved_entry(row_id, new_name or file_name, clash, directory_id, viewer_id)
                 )
@@ -2618,12 +2662,15 @@ class AttachmentService:
         for row in rows:
             if str(row.directory_id or "") == str(directory_id):
                 continue
-            key = (row.original_filename or "").lower()
-            clash = self._folder_clash(directory_id, row.original_filename, exclude_id=row.id) or claimed.get(key)
+            keys = {("o", (row.original_filename or "").lower()), ("v", (row.stored_filename or "").lower())}
+            clash = self._folder_clash(
+                directory_id, row.original_filename, exclude_id=row.id, visible_name=row.stored_filename
+            ) or next((claimed[k] for k in keys if k in claimed), None)
             if clash is not None:
                 conflicts.append(self._not_moved_entry(str(row.id), row.stored_filename, clash, directory_id, viewer_id))
                 continue
-            claimed[key] = row
+            for k in keys:
+                claimed[k] = row
         return conflicts
 
     def _lock_replaceable(self, clash, directory_id: str):
@@ -2720,7 +2767,15 @@ class AttachmentService:
         """
         if not attachment.directory_id:
             return None
-        if self._folder_clash(attachment.directory_id, attachment.original_filename, exclude_id=attachment.id) is None:
+        if (
+            self._folder_clash(
+                attachment.directory_id,
+                attachment.original_filename,
+                exclude_id=attachment.id,
+                visible_name=attachment.stored_filename,
+            )
+            is None
+        ):
             return None
         return self._restore_refusal_text(
             attachment.stored_filename or attachment.original_filename, attachment.directory_id
@@ -2777,20 +2832,26 @@ class AttachmentService:
         )
         if not trashed:
             return 0, []
-        active = {
-            (str(d), (n or "").lower())
-            for d, n in self.db.query(Attachment.directory_id, Attachment.original_filename).filter(
-                Attachment.directory_id.in_(directory_ids), Attachment.is_deleted == False  # noqa: E712
-            )
-        }
+        # Both names count, as in `_folder_clash`: ("o", original) and ("v", visible) per folder.
+        active: set[tuple[str, str, str]] = set()
+        for d, o, v in self.db.query(
+            Attachment.directory_id, Attachment.original_filename, Attachment.stored_filename
+        ).filter(
+            Attachment.directory_id.in_(directory_ids), Attachment.is_deleted == False  # noqa: E712
+        ):
+            active.add((str(d), "o", (o or "").lower()))
+            active.add((str(d), "v", (v or "").lower()))
         restore_ids: list[str] = []
         refusals: list[str] = []
         for row_id, directory_id, original, stored in trashed:
-            key = (str(directory_id), (original or "").lower())
-            if key in active:
+            keys = {
+                (str(directory_id), "o", (original or "").lower()),
+                (str(directory_id), "v", (stored or original or "").lower()),
+            }
+            if keys & active:
                 refusals.append(self._restore_refusal_text(stored or original, str(directory_id)))
                 continue
-            active.add(key)
+            active |= keys
             restore_ids.append(str(row_id))
         count = 0
         if restore_ids:
