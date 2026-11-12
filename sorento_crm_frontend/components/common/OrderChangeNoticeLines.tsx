@@ -3,18 +3,18 @@
 /**
  * The line table of the order change notice form (OCN-ORDER-CHANGE-NOTICE A6): one catalogue
  * product per row, before and after quantities and dates, the delivered quantity and a remark.
- * Built like `SampleRequestLines`: the product search only lists, a click picks, and there is no
- * free-text product. Quantities are never capped by stock.
+ * Built like `SampleRequestLines` on the same `ProductPickCell`: the product search only lists,
+ * a click picks, and there is no free-text product. Quantities are never capped by stock.
+ * `readOnly` draws the same table as plain values (the detail page).
  */
 
-import { useCallback, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DatePickerField } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
-import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
-import { codeWithName } from '@/lib/product-display';
+import { ProductPickCell, ProductPickMissed, useProductPickSearch } from '@/components/common/ProductPickCell';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type { OcnProductHit } from '@/types/orderChangeNotice';
 
 export interface OcnDraftLine {
@@ -49,8 +49,10 @@ export function blankOcnLine(): OcnDraftLine {
 
 export interface OrderChangeNoticeLinesProps {
   lines: OcnDraftLine[];
-  onChange: (lines: OcnDraftLine[]) => void;
-  search: (q: string) => Promise<OcnProductHit[]>;
+  onChange?: (lines: OcnDraftLine[]) => void;
+  search?: (q: string) => Promise<OcnProductHit[]>;
+  /** Plain values, no controls: the detail page's table. */
+  readOnly?: boolean;
   /** `lines` for the table as a whole; `qty_before_<key>` and the like for one box. */
   errors?: Record<string, string>;
   disabled?: boolean;
@@ -61,27 +63,64 @@ const QTY_FIELDS = [
   ['qty_after', 'Qty after'],
 ] as const;
 
+const NO_SEARCH = async (): Promise<OcnProductHit[]> => [];
+const day = (v: string | null) => (v ? formatDateInMalaysia(v) : '-');
+
 export function OrderChangeNoticeLines({
   lines,
-  onChange,
-  search,
+  onChange = () => {},
+  search = NO_SEARCH,
+  readOnly = false,
   errors = {},
   disabled,
 }: OrderChangeNoticeLinesProps) {
-  const [missed, setMissed] = useState('');
-
-  const fetchProducts = useCallback(
-    async (q: string) => {
-      if (!q.trim()) return [];
-      const hits = await search(q);
-      setMissed(hits.length === 0 ? q.trim() : '');
-      return hits;
-    },
-    [search],
-  );
+  const { fetchProducts, missed, clearMissed } = useProductPickSearch(search);
 
   const patchLine = (key: string, patch: Partial<OcnDraftLine>) =>
     onChange(lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  if (readOnly) {
+    return (
+      <div className="relative overflow-x-auto">
+        <table className="w-full min-w-[760px] table-fixed text-sm">
+          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="w-[26%] px-2 py-2 text-left">Product</th>
+              <th className="px-2 py-2 text-left">Qty before</th>
+              <th className="px-2 py-2 text-left">Qty after</th>
+              <th className="px-2 py-2 text-left">Date before</th>
+              <th className="px-2 py-2 text-left">Date after</th>
+              <th className="px-2 py-2 text-left">Delivered</th>
+              <th className="w-[20%] px-2 py-2 text-left">Remark</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.length === 0 ? (
+              <tr className="border-t">
+                <td colSpan={7} className="px-2 py-6 text-center text-muted-foreground">
+                  No line items yet
+                </td>
+              </tr>
+            ) : (
+              lines.map((line) => (
+                <tr key={line.key} data-testid="order-change-notice-line" className="border-t align-top">
+                  <td className="truncate px-2 py-2" title={line.label}>
+                    {line.label || '-'}
+                  </td>
+                  <td className="px-2 py-2 tabular-nums">{line.qty_before || '-'}</td>
+                  <td className="px-2 py-2 tabular-nums">{line.qty_after || '-'}</td>
+                  <td className="px-2 py-2 tabular-nums">{day(line.date_before)}</td>
+                  <td className="px-2 py-2 tabular-nums">{day(line.date_after)}</td>
+                  <td className="px-2 py-2 tabular-nums">{line.delivered_qty || '-'}</td>
+                  <td className="break-words px-2 py-2">{line.remark || '-'}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -107,25 +146,14 @@ export function OrderChangeNoticeLines({
               <tr key={line.key} data-testid="order-change-notice-line" className="border-t align-top">
                 <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
                 <td className="px-2 py-2">
-                  <AsyncCombobox<OcnProductHit>
-                    ariaLabel="Item code"
-                    value={line.product_id}
-                    displayValue={line.label}
+                  <ProductPickCell<OcnProductHit>
+                    productId={line.product_id}
+                    label={line.label}
                     disabled={disabled}
-                    allowFreeText={false}
-                    fetchOptions={fetchProducts}
-                    optionValue={(o) => o.id}
-                    optionLabel={(o) => codeWithName(o.product_code, o.product_name)}
-                    optionMeta={(o) => o.brand_name ?? ''}
-                    placeholder="Search item code"
-                    onChange={(v, item) => {
-                      setMissed('');
-                      patchLine(
-                        line.key,
-                        item
-                          ? { product_id: v, label: codeWithName(item.product_code, item.product_name) }
-                          : { product_id: '', label: '' },
-                      );
+                    fetchProducts={fetchProducts}
+                    onPick={(item, label) => {
+                      clearMissed();
+                      patchLine(line.key, item ? { product_id: item.id, label } : { product_id: '', label: '' });
                     }}
                   />
                   {errors[`product_${line.key}`] && (
@@ -198,11 +226,7 @@ export function OrderChangeNoticeLines({
           </tbody>
         </table>
       </div>
-      {missed && (
-        <p className="mt-2 text-sm text-muted-foreground">
-          {missed} is not in the product list. Pick the product you mean.
-        </p>
-      )}
+      <ProductPickMissed text={missed} hint="Pick the product you mean." />
       {errors.lines && <p className="mt-2 text-xs text-destructive">{errors.lines}</p>}
     </div>
   );

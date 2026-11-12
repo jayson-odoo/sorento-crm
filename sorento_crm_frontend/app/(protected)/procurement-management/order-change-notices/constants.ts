@@ -3,3 +3,4 @@ export const OCN_BASE_PATH = '/procurement-management/order-change-notices';
 export const OCN_CREATE = 'procurement.order_change_notices.create';
 export const OCN_EDIT = 'procurement.order_change_notices.edit';
 export const OCN_APPROVE = 'procurement.order_change_notices.approve';
+export const OCN_PROCESS = 'procurement.order_change_notices.process';

@@ -79,6 +79,28 @@ export interface OcnDetail extends OcnRow {
   voided_at?: string | null;
   void_reason?: string | null;
   lines: OcnLine[];
+  /** An amendment-born or picked notice: the amendment's change table (rows, verb summary). */
+  change_table_json?: {
+    rows?: unknown[];
+    verb_summary?: Record<string, number>;
+    unmatched?: unknown[];
+  } | null;
+  so_ref?: string | null;
+  po_number?: string | null;
+  amendment_id?: string | null;
+  amendment_status?: string | null;
+  amendment_sales_order_id?: string | null;
+  attachments?: OcnAttachment[];
+}
+
+export interface OcnAttachment {
+  link_id: string;
+  attachment_id: string;
+  filename: string | null;
+  size: number | null;
+  url: string | null;
+  content_type?: string | null;
+  uploaded_at?: string | null;
 }
 
 export interface OcnLineInput {
@@ -122,7 +144,8 @@ export interface OcnProductHit {
 export const OCN_STATUS_WORDS: Record<string, string> = {
   draft: 'Draft',
   submitted: 'Submitted',
-  resubmitted: 'Resubmitted',
+  // One word on every form (submission_status: "Appealed"), the backend's label too.
+  resubmitted: 'Appealed',
   approved: 'Approved',
   rejected: 'Rejected',
   processed_by_cs: 'Done',
@@ -144,6 +167,12 @@ export function ocnStatusPillKey(row: Pick<OcnRow, 'status' | 'approval_status'>
   if (word === 'Pending approval') return 'pending_approval';
   if (row.status === 'processed_by_cs') return 'completed';
   return String(row.status ?? '');
+}
+
+/** An amendment-born notice carrying the amendment's change rows: the rows are its lines, and
+ *  Submit asks for no typed customer, PO or line (the backend's `validate_submit`). */
+export function carriesChangeRows(row: Pick<OcnDetail, 'source' | 'change_table_json'> | null | undefined): boolean {
+  return Boolean(row && row.source === 'amendment' && (row.change_table_json?.rows?.length ?? 0) > 0);
 }
 
 export const OCN_SOURCE_WORDS: Record<string, string> = { crm: 'CRM', amendment: 'Amendment' };

@@ -46,7 +46,8 @@ export function AmendmentCreateDialog({
   const [created, setCreated] = React.useState<AmendmentCreated | null>(null);
   const [linked, setLinked] = React.useState(false);
   const trimmed = reason.trim();
-  const notices = useProjectOrderChangeNoticesQuery(projectId);
+  // Only the notices an amendment may take (the backend's own predicate, `linkable=true`).
+  const notices = useProjectOrderChangeNoticesQuery(projectId, { linkable: true });
   const noticeOptions = React.useMemo(
     () =>
       (notices.data?.data ?? []).map((row) => ({

@@ -3,8 +3,9 @@
 /**
  * The Order Change Notice detail page (OCN-ORDER-CHANGE-NOTICE G4): the record header (number and
  * status pill, the pager, one main button per status and permission), the read-only metadata,
- * and the tabs Details / Conversation / SLA / Revisions / History. The Details tab reads like the
- * form, field for field, then the Customer Service comment and the sign-off.
+ * and the tabs Details / Conversation / SLA / History (Revisions comes with slice 2). The
+ * Details tab reads like the form, field for field, then the linked amendment's change, the
+ * files, the Customer Service comment and the sign-off.
  *
  * Pattern: NewProductApplicationDetail (the same lifecycle template).
  */
@@ -15,7 +16,7 @@ import { Ban, Link2, RotateCcw, Undo2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogBody,
@@ -34,6 +35,13 @@ import AuditTrail from '@/components/audit/AuditTrail';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { DocField, ReadValue } from '@/components/common/DocField';
+import { EntityAttachmentsSection } from '@/components/common/EntityAttachmentsSection';
+import { OrderChangeNoticeLines, type OcnDraftLine } from '@/components/common/OrderChangeNoticeLines';
+import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
+import { PurchaseRequestSignoffFooter } from '@/app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestSignoffFooter';
+import { AmendmentDeltaSummary } from '@/app/(protected)/project-sales/[projectId]/components/AmendmentDeltaSummary';
+import { AmendmentDeltaTable } from '@/app/(protected)/project-sales/[projectId]/components/AmendmentDeltaTable';
+import type { AmendmentDeltaRow } from '@/app/(protected)/project-sales/_shared/types/projectSalesOrder.types';
 import { FormComments } from '@/components/common/comments/FormComments';
 import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLATrackingTab';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
@@ -54,20 +62,20 @@ import {
   ocnStatusWord,
   type OcnDetail,
 } from '@/types/orderChangeNotice';
+import { linkOrderChangeNoticeAttachment } from '../services/orderChangeNoticeService';
 import {
   orderChangeNoticesPagerQuery,
   useOrderChangeNoticeMutations,
   useOrderChangeNoticeQuery,
 } from '../hooks/useOrderChangeNotices';
-import { OCN_APPROVE, OCN_BASE_PATH, OCN_CREATE, OCN_EDIT } from '../constants';
+import { OCN_APPROVE, OCN_BASE_PATH, OCN_CREATE, OCN_EDIT, OCN_PROCESS } from '../constants';
 
-
-const DETAIL_TABS = ['details', 'conversation', 'sla', 'revisions', 'history'] as const;
+// Revisions joins with slice 2 (lead ruling m9): there is no revision snapshot to show yet.
+const DETAIL_TABS = ['details', 'conversation', 'sla', 'history'] as const;
 const TAB_LABELS: ReadonlyArray<readonly [(typeof DETAIL_TABS)[number], string]> = [
   ['details', 'Details'],
   ['conversation', 'Conversation'],
   ['sla', 'SLA'],
-  ['revisions', 'Revisions'],
   ['history', 'History'],
 ];
 
@@ -82,12 +90,12 @@ type Asking =
 
 const ASK: Record<
   Asking['kind'],
-  { title: string; label: string; confirm: string; required: boolean; destructive?: boolean }
+  { title: string; label: string; confirm: string; required: boolean; destructive?: boolean; minLength?: number }
 > = {
   send_back: { title: 'Send back to the raiser', label: 'Reason', confirm: 'Send back', required: true },
   reject: { title: 'Reject this notice', label: 'Remarks', confirm: 'Reject', required: true, destructive: true },
   done: { title: 'Mark done', label: 'Customer Service comment (optional)', confirm: 'Mark done', required: false },
-  void: { title: 'Void this notice', label: 'Reason', confirm: 'Void', required: true, destructive: true },
+  void: { title: 'Void this notice', label: 'Reason', confirm: 'Void', required: true, destructive: true, minLength: 3 },
   revise: { title: 'Revise this notice', label: 'What changed, and why?', confirm: 'Revise', required: true },
 };
 
@@ -104,7 +112,8 @@ function ReasonDialog({
 }) {
   const spec = ASK[asking.kind];
   const [value, setValue] = useState('');
-  const ready = !spec.required || value.trim().length > 0;
+  // The backend's own rule for each reason: a void needs at least 3 characters.
+  const ready = !spec.required || value.trim().length >= (spec.minLength ?? 1);
   return (
     <Dialog open onOpenChange={(next) => !next && onCancel()}>
       <DialogContent className="w-full max-w-md">
@@ -172,15 +181,13 @@ function DetailsCard({ r }: { r: OcnDetail }) {
           </DocField>
           <DocField label="Type of change" className="sm:col-span-2">
             <div className="py-2 text-sm">
-              <p>
-                <span className="font-medium">{r.change_type_name || '-'}</span>
-                {r.risk_level && (
-                  <>
-                    <span className="text-muted-foreground"> · Risk: </span>
-                    <span>{r.risk_level}</span>
-                  </>
-                )}
-              </p>
+              <p className="font-medium">{r.change_type_name || '-'}</p>
+              {r.risk_level && (
+                <p>
+                  <span className="text-muted-foreground">Risk: </span>
+                  <span>{r.risk_level}</span>
+                </p>
+              )}
               {r.guide_text && <p className="mt-1 text-muted-foreground">{r.guide_text}</p>}
             </div>
           </DocField>
@@ -190,47 +197,7 @@ function DetailsCard({ r }: { r: OcnDetail }) {
         </div>
 
         <h3 className="mb-3 mt-8 text-base font-semibold">Line items</h3>
-        <div className="relative overflow-x-auto">
-          <table className="w-full min-w-[760px] table-fixed text-sm">
-            <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="w-[26%] px-2 py-2 text-left">Product</th>
-                <th className="px-2 py-2 text-left">Qty before</th>
-                <th className="px-2 py-2 text-left">Qty after</th>
-                <th className="px-2 py-2 text-left">Date before</th>
-                <th className="px-2 py-2 text-left">Date after</th>
-                <th className="px-2 py-2 text-left">Delivered</th>
-                <th className="w-[20%] px-2 py-2 text-left">Remark</th>
-              </tr>
-            </thead>
-            <tbody>
-              {r.lines.length === 0 ? (
-                <tr className="border-t">
-                  <td colSpan={7} className="px-2 py-6 text-center text-muted-foreground">
-                    No line items yet
-                  </td>
-                </tr>
-              ) : (
-                r.lines.map((line, index) => {
-                  const label = codeWithName(line.product_code ?? '', line.product_name ?? '');
-                  return (
-                    <tr key={line.id ?? index} className="border-t align-top">
-                      <td className="truncate px-2 py-2" title={label}>
-                        {label || '-'}
-                      </td>
-                      <td className="px-2 py-2 tabular-nums">{line.qty_before ?? '-'}</td>
-                      <td className="px-2 py-2 tabular-nums">{line.qty_after ?? '-'}</td>
-                      <td className="px-2 py-2 tabular-nums">{day(line.date_before) || '-'}</td>
-                      <td className="px-2 py-2 tabular-nums">{day(line.date_after) || '-'}</td>
-                      <td className="px-2 py-2 tabular-nums">{line.delivered_qty ?? '-'}</td>
-                      <td className="break-words px-2 py-2">{line.remark || '-'}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <OrderChangeNoticeLines lines={draftLines(r)} readOnly />
 
         <section className="mt-8 rounded-md border px-4 py-3">
           <h3 className="text-sm font-semibold">Customer Service comment</h3>
@@ -239,7 +206,7 @@ function DetailsCard({ r }: { r: OcnDetail }) {
           ) : (
             <div className="mt-1 text-sm">
               <p className="font-medium">No comment yet</p>
-              <p className="text-muted-foreground">Customer Service writes one when the notice is done.</p>
+              <p className="text-muted-foreground">Nothing from Customer Service so far.</p>
             </div>
           )}
         </section>
@@ -250,26 +217,95 @@ function DetailsCard({ r }: { r: OcnDetail }) {
   );
 }
 
-/** Decision, the deciding person, the day and the remarks; Pending until a decision. */
+/** The detail's read-only table: the notice's lines in the shared line table. */
+function draftLines(r: OcnDetail): OcnDraftLine[] {
+  return r.lines.map((l, index) => ({
+    key: l.id ?? `line-${index}`,
+    product_id: l.product_id,
+    label: codeWithName(l.product_code ?? '', l.product_name ?? ''),
+    qty_before: l.qty_before ?? '',
+    qty_after: l.qty_after ?? '',
+    date_before: l.date_before ?? null,
+    date_after: l.date_after ?? null,
+    delivered_qty: l.delivered_qty ?? '',
+    remark: l.remark ?? '',
+  }));
+}
+
+/** The shared sign-off (Decision, Name, Date, Remarks); Pending until a decision. */
 function Signoff({ r }: { r: OcnDetail }) {
-  const decided = r.approval_status === 'approved' || r.approval_status === 'rejected';
-  const decision = decided ? (r.approval_status === 'approved' ? 'Approved' : 'Rejected') : 'Pending';
-  const name = r.approval_status === 'rejected' ? (r.rejected_by_name ?? r.approved_by) : r.approver_name;
+  const name =
+    r.approval_status === 'rejected' ? (r.rejected_by_name ?? r.approved_by) : (r.approver_name ?? r.approved_by);
   return (
-    <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-4 border-t pt-6 sm:grid-cols-2">
-      <DocField label="Decision">
-        <ReadValue>{decision}</ReadValue>
-      </DocField>
-      <DocField label="Name">
-        <ReadValue>{decided ? name : ''}</ReadValue>
-      </DocField>
-      <DocField label="Date">
-        <ReadValue>{decided ? day(r.approved_at) : ''}</ReadValue>
-      </DocField>
-      <DocField label="Remarks">
-        <ReadValue>{decided ? r.approval_comments : ''}</ReadValue>
-      </DocField>
-    </div>
+    <PurchaseRequestSignoffFooter
+      variant="decision"
+      request={{
+        approval_status: r.approval_status,
+        approved_by: name,
+        approved_at: r.approved_at,
+        approval_comments: r.approval_comments,
+      }}
+    />
+  );
+}
+
+/** UAC E4 / review B1: the change an amendment put on the notice, read-only, with its sales
+ *  order and PO by number (links, never an id on screen). */
+function LinkedAmendment({ r }: { r: OcnDetail }) {
+  const table = r.change_table_json;
+  if (!r.amendment_id && !(table?.rows?.length ?? 0)) return null;
+  const rows = (table?.rows ?? []) as AmendmentDeltaRow[];
+  const projectPath = r.project_id ? `/project-sales/${r.project_id}` : null;
+  const soId = r.project_sales_order_id ?? r.amendment_sales_order_id;
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle className="text-sm">Linked amendment</CardTitle>
+        {r.amendment_status && (
+          <Badge variant="secondary" appearance="light">
+            {r.amendment_status.replace(/_/g, ' ')}
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 gap-x-10 gap-y-3 sm:grid-cols-2">
+          <DocField label="Sales order">
+            <ReadValue>
+              {r.so_ref && projectPath && soId ? (
+                <Link href={`${projectPath}/sales-orders/${soId}/revisions`} className="text-primary hover:underline">
+                  {r.so_ref}
+                </Link>
+              ) : (
+                r.so_ref
+              )}
+            </ReadValue>
+          </DocField>
+          <DocField label="Customer PO">
+            <ReadValue>
+              {r.po_number && projectPath && r.purchase_order_id ? (
+                <Link href={`${projectPath}/pos/${r.purchase_order_id}`} className="text-primary hover:underline">
+                  {r.po_number}
+                </Link>
+              ) : (
+                r.po_number
+              )}
+            </ReadValue>
+          </DocField>
+        </div>
+        {rows.length > 0 && (
+          <>
+            <AmendmentDeltaSummary
+              rows={rows}
+              verbSummary={table?.verb_summary ?? {}}
+              unmatchedCount={(table?.unmatched ?? []).length}
+              fromLabel="Published order"
+              toLabel="Revised document"
+            />
+            <AmendmentDeltaTable rows={rows} />
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -288,6 +324,7 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
   const canCreate = useHasPermission(OCN_CREATE);
   const canEdit = useHasPermission(OCN_EDIT);
   const canApprove = useHasPermission(OCN_APPROVE);
+  const canProcess = useHasPermission(OCN_PROCESS);
   const userId = useEffectiveUserId();
   const handlingLock = useHandlingLock({
     sourceEntityType: 'order_change_notice',
@@ -341,7 +378,7 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
   const canSubmit = !held && editable && canCreate && (mine || canEdit);
   const canSend = !held && awaiting && !pendingApproval && canEdit;
   const canDecide = !held && pendingApproval && canApprove;
-  const canDone = !held && status === 'approved' && canEdit;
+  const canDone = !held && status === 'approved' && canProcess;
   const canRevise = !held && (status === 'approved' || status === 'rejected') && (canEdit || canApprove);
   const canVoid = !held && open && (canEdit || mine);
   const canEditForm = editable && (mine || canEdit) && (canCreate || canEdit);
@@ -369,27 +406,18 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-2">
-          <h2 className="flex flex-wrap items-center gap-2 break-words text-2xl font-bold">
+      <RecordHeaderCard
+        // The pill sits in the heading with the number, as the record header reads it.
+        title={
+          <span className="flex flex-wrap items-center gap-2">
             <span>{r.ocn_number}</span>
             {pill}
-          </h2>
-          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-            <div className="flex gap-1.5">
-              <dt className="text-muted-foreground">Created by</dt>
-              <dd>{r.created_by_name || '-'}</dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt className="text-muted-foreground">Revision</dt>
-              <dd className="tabular-nums">{r.revision_no ?? 0}</dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt className="text-muted-foreground">Source</dt>
-              <dd>{OCN_SOURCE_WORDS[r.source ?? ''] ?? (r.source || '-')}</dd>
-            </div>
-          </dl>
-        </div>
+          </span>
+        }
+        subtitle={[r.customer_name, r.customer_po_no ? `PO ${r.customer_po_no}` : null]
+          .filter(Boolean)
+          .join(', ')}
+        actions={
         <DetailActions
           pager={{
             ...orderChangeNoticesPagerQuery,
@@ -492,7 +520,23 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
             </div>
           }
         />
-      </div>
+        }
+      >
+        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+          <div className="flex gap-1.5">
+            <dt className="text-muted-foreground">Created by</dt>
+            <dd>{r.created_by_name || '-'}</dd>
+          </div>
+          <div className="flex gap-1.5">
+            <dt className="text-muted-foreground">Revision</dt>
+            <dd className="tabular-nums">{r.revision_no ?? 0}</dd>
+          </div>
+          <div className="flex gap-1.5">
+            <dt className="text-muted-foreground">Source</dt>
+            <dd>{OCN_SOURCE_WORDS[r.source ?? ''] ?? (r.source || '-')}</dd>
+          </div>
+        </dl>
+      </RecordHeaderCard>
 
       <HandlingLockBanner
         state={handlingLock.state}
@@ -534,27 +578,23 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
         </TabsList>
         <TabsContent value="details" className="mt-6 space-y-6">
           <DetailsCard r={r} />
+          <LinkedAmendment r={r} />
+          <EntityAttachmentsSection
+            entityId={r.id}
+            attachments={r.attachments ?? []}
+            editable={canEditForm}
+            linkAttachment={linkOrderChangeNoticeAttachment}
+            unlinkActionKey="order_change_notice_attachment.unlink"
+            unlinkEntityType="order_change_notice_attachment"
+            invalidateKeys={[['order-change-notice', r.id], ['order-change-notices']]}
+            entityLabel="notice"
+          />
         </TabsContent>
         <TabsContent value="conversation" className="mt-6">
           <FormComments kind="order_change_notice" entityId={r.id} />
         </TabsContent>
         <TabsContent value="sla" className="mt-6">
           <FormSLATrackingTab sourceEntityType="order_change_notice" sourceEntityId={r.id} />
-        </TabsContent>
-        <TabsContent value="revisions" className="mt-6">
-          <div className="rounded-md border px-4 py-6 text-sm">
-            {(r.revision_no ?? 0) > 0 ? (
-              <>
-                <p className="font-medium">{`Revision ${r.revision_no}`}</p>
-                <p className="text-muted-foreground">What changed in each revision is in History.</p>
-              </>
-            ) : (
-              <>
-                <p className="font-medium">No revisions yet</p>
-                <p className="text-muted-foreground">This notice has not been revised.</p>
-              </>
-            )}
-          </div>
         </TabsContent>
         <TabsContent value="history" className="mt-6">
           <AuditTrail entityType="order_change_notice" entityId={r.id} title="History" />

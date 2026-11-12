@@ -367,3 +367,17 @@ describe('G2 empty and error states', () => {
     expect(await screen.findByRole('button', { name: /try again|retry/i })).toBeTruthy();
   });
 });
+
+describe('round 4: one status word, and Pending approval as a filter value (review m8)', () => {
+  it('offers Pending approval and calls a resubmitted notice Appealed, and sends the value as is', async () => {
+    const user = userEvent.setup();
+    mount();
+    await screen.findByText('OCN26-0302');
+    openFilters();
+    const status = await box('pending_approval');
+    expect(status.querySelector('option[value="pending_approval"]')?.textContent).toBe('Pending approval');
+    expect(status.querySelector('option[value="resubmitted"]')?.textContent).toBe('Appealed');
+    await user.selectOptions(status, ['pending_approval']);
+    await waitFor(() => expect(setOf(lastParams().status)).toEqual(['pending_approval']));
+  });
+});

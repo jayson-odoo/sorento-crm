@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { ocnStatusPillKey, ocnStatusWord } from '@/types/orderChangeNotice';
 import { GitCompareArrows } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -429,8 +431,24 @@ function AmendmentSection({
     <div className="space-y-4">
       <Card>
         <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm">
-            {detail.ocn_number ? `Change notice ${detail.ocn_number}` : 'Amendment'}
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            {detail.ocn_number && detail.ocn_id ? (
+              <Link
+                href={`/procurement-management/order-change-notices/${detail.ocn_id}`}
+                className="text-primary hover:underline"
+              >
+                {`Change notice ${detail.ocn_number}`}
+              </Link>
+            ) : detail.ocn_number ? (
+              `Change notice ${detail.ocn_number}`
+            ) : (
+              'Amendment'
+            )}
+            {detail.ocn_status && (
+              <span className={`${STATUS_PILL_BASE} ${statusPillClass(ocnStatusPillKey({ status: detail.ocn_status, approval_status: detail.ocn_approval_status }))}`}>
+                {ocnStatusWord({ status: detail.ocn_status, approval_status: detail.ocn_approval_status })}
+              </span>
+            )}
           </CardTitle>
           <Badge variant={published ? 'success' : 'secondary'} appearance="light">
             {(detail.status ?? 'proposed').replace(/_/g, ' ')}

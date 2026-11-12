@@ -142,7 +142,8 @@ describe('E1 the default is unchanged: draft a new notice', () => {
 describe('E2 pick an existing notice of this project', () => {
   it('asks for this project’s notices only', async () => {
     mount();
-    await waitFor(() => expect(svc.project).toHaveBeenCalledWith(PROJECT_ID));
+    // Lead ruling M6 (round 4): only the notices an amendment may take.
+    await waitFor(() => expect(svc.project).toHaveBeenCalledWith(PROJECT_ID, { linkable: true }));
   });
 
   it('lists each notice as number, type and status in words, never an id', async () => {

@@ -71,10 +71,15 @@ export async function listOrderChangeNotices(params: OrderChangeNoticeListParams
   return read<OcnPage>(res, 'Failed to load order change notices');
 }
 
-/** The project page's panel and the amendment dialog: that project's notices, newest first. */
-export async function listProjectOrderChangeNotices(projectId: string): Promise<OcnPage> {
+/** The project page's panel: that project's notices, newest first. `linkable` (the amendment
+ *  dialog) keeps only the ones an amendment may pick, by the backend's own predicate. */
+export async function listProjectOrderChangeNotices(
+  projectId: string,
+  options: { linkable?: boolean } = {},
+): Promise<OcnPage> {
+  const qs = options.linkable ? '?linkable=true' : '';
   const res = await apiFetch(
-    `/api/v1/project-sales/projects/${encodeURIComponent(projectId)}/order-change-notices`,
+    `/api/v1/project-sales/projects/${encodeURIComponent(projectId)}/order-change-notices${qs}`,
   );
   return read<OcnPage>(res, 'Failed to load order change notices');
 }
@@ -99,9 +104,34 @@ export async function createOrderChangeNotice(body: OcnWrite): Promise<OcnDetail
   return read<OcnDetail>(res, 'Failed to save the order change notice');
 }
 
-export async function updateOrderChangeNotice(id: string, body: OcnWrite): Promise<OcnDetail> {
-  const res = await apiFetch(recordPath(id), { method: 'PUT', body: JSON.stringify(body) });
+/** An edit, sent at the revision on screen when it is known (the PUT is fenced too). */
+export async function updateOrderChangeNotice(
+  id: string,
+  body: OcnWrite,
+  revisionNo?: number | null,
+): Promise<OcnDetail> {
+  const res = await apiFetch(recordPath(id), {
+    method: 'PUT',
+    ...(revisionNo == null ? {} : { headers: { [REVISION_HEADER]: String(revisionNo) } }),
+    body: JSON.stringify(body),
+  });
   return read<OcnDetail>(res, 'Failed to save the order change notice');
+}
+
+export async function linkOrderChangeNoticeAttachment(id: string, attachmentId: string): Promise<OcnDetail> {
+  const res = await apiFetch(recordPath(id, 'attachments'), {
+    method: 'POST',
+    body: JSON.stringify({ attachment_id: attachmentId }),
+  });
+  return read<OcnDetail>(res, 'Failed to link the attachment');
+}
+
+/** Whether the System Settings switch asks for a project; read from the open app-config
+ *  projection, as the sample request form reads its own switch. */
+export async function getOrderChangeNoticeSwitches(): Promise<{ requireProject: boolean }> {
+  const res = await apiFetch('/api/user-management/settings/app-config');
+  const body = await read<{ order_change_notice_require_project?: boolean }>(res, 'Failed to load settings');
+  return { requireProject: Boolean(body.order_change_notice_require_project) };
 }
 
 /** What a move answers: the updated notice, or (a stage move inside its grace window) the

@@ -8,6 +8,7 @@ import {
   createOrderChangeNotice,
   decideOrderChangeNotice,
   getOrderChangeNotice,
+  getOrderChangeNoticeSwitches,
   listChangeTypes,
   listOrderChangeNotices,
   listProjectOrderChangeNotices,
@@ -69,10 +70,17 @@ export function useOrderChangeNoticesQuery(params: OrderChangeNoticeListParams) 
   });
 }
 
-export function useProjectOrderChangeNoticesQuery(projectId: string | null | undefined) {
+export function useProjectOrderChangeNoticesQuery(
+  projectId: string | null | undefined,
+  options: { linkable?: boolean } = {},
+) {
+  const linkable = Boolean(options.linkable);
   return useQuery({
-    queryKey: [LIST_KEY, 'project', projectId],
-    queryFn: () => listProjectOrderChangeNotices(projectId as string),
+    queryKey: [LIST_KEY, 'project', projectId, linkable],
+    queryFn: () =>
+      linkable
+        ? listProjectOrderChangeNotices(projectId as string, { linkable: true })
+        : listProjectOrderChangeNotices(projectId as string),
     enabled: !!projectId,
     retry: false,
   });
@@ -84,6 +92,15 @@ export function useOrderChangeNoticeQuery(id: string | null | undefined) {
     queryFn: () => getOrderChangeNotice(id as string),
     enabled: !!id,
     retry: false,
+  });
+}
+
+/** The System Settings switch the form reads through the open app-config projection. */
+export function useOrderChangeNoticeSwitches() {
+  return useQuery({
+    queryKey: ['system-app-config', 'order-change-notice-switches'],
+    queryFn: getOrderChangeNoticeSwitches,
+    staleTime: Infinity,
   });
 }
 
@@ -130,7 +147,8 @@ export function useOrderChangeNoticeMutations(options: OrderChangeNoticeMutation
     onSuccess: refresh,
   });
   const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: OcnWrite }) => updateOrderChangeNotice(id, body),
+    mutationFn: ({ id, body, revisionNo }: { id: string; body: OcnWrite; revisionNo?: number | null }) =>
+      updateOrderChangeNotice(id, body, revisionNo),
     onSuccess: refresh,
   });
   const submit = useMutation({

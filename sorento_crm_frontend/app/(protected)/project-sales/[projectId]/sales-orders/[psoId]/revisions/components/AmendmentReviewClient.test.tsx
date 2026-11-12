@@ -480,6 +480,19 @@ describe('AmendmentReviewClient, once the amendment is created', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
   }
 
+  // OCN-ORDER-CHANGE-NOTICE round 4 (review B1): the amendment links back to its notice and
+  // shows where the notice stands, the word the notice's own pages use.
+  it('links the change notice to its own page and shows its status', async () => {
+    getAmendment.mockResolvedValue(
+      amendmentDetail({ ocn_id: 'ocn-1', ocn_status: 'submitted', ocn_approval_status: 'pending' }),
+    );
+    getAmendmentAutocountChangeList.mockResolvedValue({ rows: [], declined_count: 0 });
+    await createTheAmendment();
+    const link = await screen.findByRole('link', { name: 'Change notice OCN-000045' });
+    expect(link.getAttribute('href')).toBe('/procurement-management/order-change-notices/ocn-1');
+    expect(screen.getByText('Pending approval')).toBeInTheDocument();
+  });
+
   it('replaces the compare flow with the amendment, its decisions and the change list', async () => {
     getAmendment.mockResolvedValue(amendmentDetail());
     getAmendmentAutocountChangeList.mockResolvedValue({

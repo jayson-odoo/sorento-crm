@@ -40,7 +40,9 @@ import { OCN_BASE_PATH, OCN_CREATE } from '../constants';
 const STATUS_OPTIONS = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
-  { value: 'resubmitted', label: 'Resubmitted' },
+  { value: 'resubmitted', label: 'Appealed' },
+  // The word the rows show for a submitted notice waiting on its approver (the backend maps it).
+  { value: 'pending_approval', label: 'Pending approval' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'processed_by_cs', label: 'Done' },

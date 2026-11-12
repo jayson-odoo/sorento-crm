@@ -19,6 +19,8 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { DocField, ReadValue } from '@/components/common/DocField';
+import { EntityAttachmentsSection } from '@/components/common/EntityAttachmentsSection';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   OrderChangeNoticeLines,
@@ -34,6 +36,7 @@ import { lookupCustomersForRequest } from '@/app/(protected)/procurement-managem
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
 import {
+  carriesChangeRows,
   ocnStatusPillKey,
   ocnStatusWord,
   type OcnDetail,
@@ -43,9 +46,11 @@ import {
   useChangeTypesQuery,
   useOrderChangeNoticeMutations,
   useOrderChangeNoticeQuery,
+  useOrderChangeNoticeSwitches,
 } from '../hooks/useOrderChangeNotices';
 import {
   OrderChangeNoticeError,
+  linkOrderChangeNoticeAttachment,
   searchOrderChangeNoticeProducts,
 } from '../services/orderChangeNoticeService';
 import { OCN_BASE_PATH } from '../constants';
@@ -146,11 +151,24 @@ function numberErrors(s: FormState): Record<string, string> {
   return out;
 }
 
-function submitErrors(s: FormState): Record<string, string> {
+/** The backend's Submit rule set (`validate_submit`), mirrored so a refusal shows beside its
+ *  field before anything is sent: the type of change; the customer, the customer PO and a line
+ *  unless the notice carries an amendment's change rows; the project when the setting asks. */
+function submitErrors(
+  s: FormState,
+  { fromAmendment, requireProject }: { fromAmendment: boolean; requireProject: boolean },
+): Record<string, string> {
   const out = numberErrors(s);
+  if (!s.change_type_id) out.change_type_id = 'Choose the type of change.';
+  if (requireProject && !s.project_id) out.project_id = 'Choose the project before you submit.';
+  if (fromAmendment) {
+    s.lines.forEach((line, index) => {
+      if (!line.product_id) out[`product_${line.key}`] = `Line ${index + 1}: choose a product.`;
+    });
+    return out;
+  }
   if (!s.customer_name.trim() && !s.customer_id) out.customer = 'Enter the customer name.';
   if (!s.customer_po_no.trim()) out.customer_po_no = 'Enter the customer PO no.';
-  if (!s.change_type_id) out.change_type_id = 'Choose the type of change.';
   if (s.lines.length === 0) out.lines = 'Add at least one line item.';
   s.lines.forEach((line, index) => {
     if (!line.product_id) out[`product_${line.key}`] = `Line ${index + 1}: choose a product.`;
@@ -183,6 +201,8 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
   const { create, update, submit } = useOrderChangeNoticeMutations();
   const existing = useOrderChangeNoticeQuery(ocnId ?? null);
   const { data: changeTypes = [] } = useChangeTypesQuery();
+  const { data: switches } = useOrderChangeNoticeSwitches();
+  const requireProject = Boolean(switches?.requireProject);
   const { data: users = [] } = useQuery({
     queryKey: ['user-lookup'],
     queryFn: () => getUserLookup(),
@@ -194,6 +214,9 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
     lines: [blankOcnLine()],
   }));
   const [hydrated, setHydrated] = useState(!ocnId);
+  // A new notice keeps the id its create answered: a refused Submit, then Submit again, edits
+  // the same draft instead of numbering a second one (review M4).
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -205,7 +228,9 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
   useEffect(() => {
     if (ocnId && existing.data && !hydrated) {
       const loaded = stateFromDetail(existing.data);
-      setState(loaded.lines.length ? loaded : { ...loaded, lines: [blankOcnLine()] });
+      // An amendment-born notice's change rows are its lines: no blank row to fill in.
+      const blank = loaded.lines.length || carriesChangeRows(existing.data) ? [] : [blankOcnLine()];
+      setState(loaded.lines.length ? loaded : { ...loaded, lines: blank });
       setHydrated(true);
     }
   }, [ocnId, existing.data, hydrated]);
@@ -216,6 +241,8 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
   );
   const pickedType = changeTypes.find((t) => t.id === state.change_type_id);
   const record = existing.data;
+  // UAC E4: an amendment-born or picked notice keeps the amendment's project, read-only.
+  const linkedToAmendment = Boolean(record && (record.source === 'amendment' || record.amendment_id));
   const detailPath = (id: string) => `${OCN_BASE_PATH}/${id}`;
   const saving = create.isPending || update.isPending || submit.isPending;
 
@@ -226,9 +253,15 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
     setServerMessage(message);
   };
 
-  const save = () => {
+  const savedId = ocnId ?? createdId;
+  const save = async () => {
     const body = payloadFromState(state);
-    return ocnId ? update.mutateAsync({ id: ocnId, body }) : create.mutateAsync(body);
+    if (savedId) {
+      return update.mutateAsync({ id: savedId, body, revisionNo: record?.revision_no ?? null });
+    }
+    const created = await create.mutateAsync(body);
+    setCreatedId(created.id);
+    return created;
   };
 
   const handleSaveDraft = async () => {
@@ -247,11 +280,14 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
 
   const handleSubmit = async () => {
     setServerMessage(null);
-    const found = submitErrors(state);
+    const found = submitErrors(state, { fromAmendment: carriesChangeRows(record), requireProject });
     setErrors(found);
     if (Object.keys(found).length > 0) return;
     try {
+      const wasNew = !savedId;
       const saved = await save();
+      // Keep the draft's address before its Submit can be refused.
+      if (wasNew) router.replace(`${detailPath(saved.id)}/edit`);
       await submit.mutateAsync({ id: saved.id, revisionNo: saved.revision_no ?? 0 });
       router.push(detailPath(saved.id));
     } catch (e) {
@@ -341,8 +377,13 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
               />
             </DocField>
 
+            {linkedToAmendment ? (
+              <DocField label="Registered project" className="sm:col-span-2">
+                <ReadValue>{record?.project_title}</ReadValue>
+              </DocField>
+            ) : (
             <DocField
-              label="Registered project (optional)"
+              label={requireProject ? 'Registered project *' : 'Registered project (optional)'}
               htmlFor="ocn-project"
               className="sm:col-span-2"
               error={errors.project_id}
@@ -370,6 +411,7 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
                 emptyMessage="No project matches that."
               />
             </DocField>
+            )}
 
             <DocField label="C.S. Incharge" htmlFor="ocn-cs">
               <SearchableSelect
@@ -393,27 +435,21 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
             </DocField>
 
             <DocField label="Type of change *" className="sm:col-span-2" error={errors.change_type_id}>
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Type of change">
-                {changeTypes.map((t) => {
-                  const on = t.id === state.change_type_id;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => patch({ change_type_id: t.id })}
-                      className={cn(
-                        'rounded-md border px-3 py-1.5 text-sm transition-colors',
-                        on
-                          ? 'border-primary bg-primary/10 font-medium text-primary'
-                          : 'border-border hover:bg-muted',
-                      )}
-                    >
-                      {t.name}
-                    </button>
-                  );
-                })}
-              </div>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                aria-label="Type of change"
+                className="flex-wrap"
+                value={state.change_type_id}
+                // A choice stays chosen: a second click on it does not clear the type.
+                onValueChange={(v) => v && patch({ change_type_id: v })}
+              >
+                {changeTypes.map((t) => (
+                  <ToggleGroupItem key={t.id} value={t.id} className={cn('px-3')}>
+                    {t.name}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
               {pickedType && (
                 <div className="mt-3 rounded-md border bg-muted/30 px-3 py-2 text-sm">
                   <p>
@@ -481,6 +517,20 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
           </div>
         </CardContent>
       </Card>
+      {ocnId && record && (
+        <div className="mt-6">
+          <EntityAttachmentsSection
+            entityId={ocnId}
+            attachments={record.attachments ?? []}
+            editable={record.status === 'draft' || record.status === 'rejected'}
+            linkAttachment={linkOrderChangeNoticeAttachment}
+            unlinkActionKey="order_change_notice_attachment.unlink"
+            unlinkEntityType="order_change_notice_attachment"
+            invalidateKeys={[['order-change-notice', ocnId], ['order-change-notices']]}
+            entityLabel="notice"
+          />
+        </div>
+      )}
     </div>
   );
 }

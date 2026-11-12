@@ -449,6 +449,7 @@ export interface AmendmentDetail extends AmendmentPreview {
   ocn_id?: string | null;
   ocn_number?: string | null;
   ocn_status?: string | null;
+  ocn_approval_status?: string | null;
   ocn_approver_name?: string | null;
   created_by_name?: string | null;
   created_at?: string | null;

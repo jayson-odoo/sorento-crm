@@ -163,6 +163,7 @@ const VIEW = 'procurement.order_change_notices.view';
 const CREATE = 'procurement.order_change_notices.create';
 const EDIT = 'procurement.order_change_notices.edit';
 const APPROVE = 'procurement.order_change_notices.approve';
+const PROCESS = 'procurement.order_change_notices.process';
 
 function mount(record: Record<string, unknown>, perms: string[]) {
   state.perms = new Set([VIEW, ...perms]);
@@ -201,7 +202,8 @@ describe('G4 the record header', () => {
   it.each([
     [{ status: 'draft' }, 'Draft'],
     [{ status: 'submitted', approval_status: null }, 'Submitted'],
-    [{ status: 'resubmitted', approval_status: null }, 'Resubmitted'],
+    // Lead ruling m8 (round 4): one word on every form, the backend's "Appealed".
+    [{ status: 'resubmitted', approval_status: null }, 'Appealed'],
     [{ status: 'submitted', approval_status: 'pending' }, 'Pending approval'],
     [{ status: 'approved', approval_status: 'approved' }, 'Approved'],
     [{ status: 'rejected', approval_status: 'rejected' }, 'Rejected'],
@@ -289,8 +291,9 @@ describe('G4 which main button each viewer sees', () => {
     expect(button(/^send for approval$/i)).toBeNull();
   });
 
-  it('approved: Mark done as the main button, and a Revise action, for edit', async () => {
-    mount(ocnDetail({ status: 'approved', approval_status: 'approved' }), [EDIT]);
+  // Lead ruling (round 4, security M3): Done needs `.process`; Revise stays with `.edit`.
+  it('approved: Mark done as the main button for process, and a Revise action for edit', async () => {
+    mount(ocnDetail({ status: 'approved', approval_status: 'approved' }), [EDIT, PROCESS]);
     await ready();
     expect(button(/^mark done$/i)).toBeTruthy();
     expect(button(/^revise$/i)).toBeTruthy();
@@ -317,11 +320,12 @@ describe('G4 which main button each viewer sees', () => {
 });
 
 describe('G4 tabs', () => {
-  it('Details, Conversation, SLA, Revisions, History, in that order', async () => {
+  // Lead ruling m9 (round 4): the Revisions tab waits for slice 2.
+  it('Details, Conversation, SLA, History, in that order', async () => {
     mount(ocnDetail(), []);
     await ready();
     const names = screen.getAllByRole('tab').map((t) => (t.textContent ?? '').trim());
-    const expected = [/^Details/, /^Conversation/, /^SLA/, /^Revisions/, /^History/];
+    const expected = [/^Details/, /^Conversation/, /^SLA/, /^History/];
     expect(names).toHaveLength(expected.length);
     expected.forEach((re, i) => expect(names[i], `tab ${i + 1}`).toMatch(re));
   });
