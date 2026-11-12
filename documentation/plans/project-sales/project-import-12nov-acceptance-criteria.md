@@ -65,7 +65,7 @@ Terms:
 
 ## Preview and import (same function)
 
-- AC-PI-20: Preview runs the exact import function and rolls back. Afterwards there is no new project, PO, party, project sales order or audit row. Only the run's report rows are kept.
+- AC-PI-20: Preview runs the exact import function and rolls back. Afterwards there is no new project, PO, party, project sales order or audit row. Only the run's own bookkeeping is kept: its report rows and its "Previewed" History entry (AC-PI-48a).
 - AC-PI-21: Import of a row with all links set creates:
   - the project (only on the first row of a "create" group);
   - the PO;
@@ -172,6 +172,12 @@ Terms:
   - clicking a needs-review row opens the blocking line;
   - Import is the one main button.
 - AC-PI-48: Results: breakdown by reason (`OutcomeBreakdownCard`), rows (`ImportJobRowsCard`), and tabs Results | Values | History (`AuditTrail`). Revert sits in the gear menu as a `DeferredActionButton` countdown with Cancel and no confirm dialog.
+- AC-PI-48a: The run's History tab lists one entry per action: Uploaded, Columns saved, Value linked (per kind, bulk included), Previewed, Imported, Reverted.
+  - Each entry shows who and when, through `GET /api/v1/audit/logs?entity_type=project_import_run`.
+  - It is readable with `projects.import.view` alone.
+  - No ids or file values appear in the action text.
+  - Reason labels come from the API (`labels` on report rows, `code_labels` on the run); the frontend keeps no copy of the label table.
+  - The Project Sales layout lets `/project-sales/import` through on `projects.import.view` alone; every other Project Sales page keeps its own gate.
 - AC-PI-49: Every date reads dd/mm/yyyy via `formatDate`. No UUID shows anywhere. Usable at 375 and 1280 px.
 
 ## The owner's file
