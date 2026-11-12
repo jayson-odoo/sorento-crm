@@ -1,6 +1,6 @@
 # PLAN: CREW-TESTENV-LEAN (lean test copies)
 
-Status: Plan, behaviour card filed with crew (12 Nov 2026). Track: M (crew tool, not the product). Code lives in
+Status: Build (red tests), card answered by crew 12 Nov: Q1 b, Q2 yes, Q3 b, Q4 a, Q5 trial on slot 12 after crew GO. Track: M (crew tool, not the product). Code lives in
 a COPY of crew at `foundryx/crew-lean/` (git repo of its own); crew swaps it in after review. This sorento PR carries
 the plan only.
 
@@ -60,6 +60,26 @@ Real examples (crew state 12 Nov ~19:00):
 Edge cases: build fails (no stamp written, copy fails like any service, `testenv_failed`); two builds at once (both
 pass admission seconds apart; no lock unless the trial shows the peak hurts); `.next` removed by worktree-gc (stamp
 gone -> rebuild); worker edits uncommitted files on a local lane (not in the build; same as today's sha rule).
+
+## Crew rulings (12 Nov)
+
+- Q1 (b): refuse a test copy when swap used >= `[admission] max_swap_used_gb = 8`; free-% rule kept; unknown swap =
+  no refusal; message names swap used and the cap. Applies to `testenv` only (local spawns keep today's rules: the
+  brief scopes the gate to copies).
+- Q2: crew-owned HAND TEST ask = never park; park only when the ask is the owner's for > 2 h (`ask.fwd`) AND copy up > 2 h.
+- Q3 (b): also stay up while the copy's backend pane shows new output (request lines), read each daemon tick.
+- Q4 (a): board shows the parked copy and `crew testenv up LANE`; no POST surface.
+- Q5: one trial on slot 12 only after crew's GO (one live copy down or swap < 10 GB), stop within 30 min, never --force.
+
+## Interface (what the tests pin)
+
+- `parse_swapusage(text) -> float|None` (used GiB from `sysctl vm.swapusage`), `swap_used_gb()`.
+- Service keys: `build` (cmd), `build_stamp` (path in the service dir), `build_inputs` (files in the service dir whose
+  content is part of the key), `ready_timeout` (seconds, default 240).
+- `build_key(sha, svc, svc_dir) -> str`, `build_step(svc, svc_dir, key) -> str` ("" when the stamp holds the key, else
+  `rm -f STAMP && BUILD && printf %s KEY > STAMP && `), prefixed to the service cmd in `testenv_up`.
+- `park_due(lane, asks, now) -> str|None`, `note_copy_activity(lane, tail, now)`, `park_copy(lane_id)`;
+  `[admission] park_idle_minutes = 120` (0 = off); lane field `parked = {ts, slot, sha, url}`, cleared by `up`/`down`.
 
 ## UAC
 
