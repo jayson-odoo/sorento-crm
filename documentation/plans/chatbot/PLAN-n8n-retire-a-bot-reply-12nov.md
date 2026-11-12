@@ -79,6 +79,42 @@ Filled from the research pass and the behaviour card answers before tests are wr
 format on WhatsApp, 24 h window behaviour, attachment link fallback, the failure reply wording,
 whether the sendmsg sub writes anything back to the CRM after a send.
 
+## 4b. Contract: `app/services/chatbot/crm_sender.py` (new)
+
+- `split_text(text: str, *, with_quick_replies: bool) -> list[str]`: the n8n sendmsg chunk rule
+  (`PLAN-quoted-reply-07oct.md:153-158`). Limit `TEXT_PART_MAX_CHARS = 3900`, or
+  `QUICK_REPLY_PART_MAX_CHARS = 1024` when quick replies ride the message. Cut at paragraph
+  breaks (`\n\n`) first, then line breaks; a single line longer than the limit is cut at the limit.
+  Parts are stripped of surrounding blank lines; an empty / whitespace text gives `[]`. Joining the
+  parts back loses no non-whitespace character.
+- `send(session_factory, *, turn_id, contact_id, actions, ctx=None, client=None) -> str` returns a
+  `direct_ingress.SEND_*` value and never raises. `client` defaults to
+  `RespondClient.for_identifier(db, contact_id)`; tests pass a fake.
+- Steps, in action order: `send_message` -> one step per text part (quick replies, comma-joined
+  input split and trimmed, on the LAST part only, as `RespondClient.send_quick_reply(identifier,
+  text, replies)`: a NEW method that builds `{"message": {"type": "quick_reply", "title": text,
+  "replies": replies}}` and goes through `_post_contact_message`; payload UNVERIFIED, Q4);
+  `send_attachments` -> one step per `attachments_src` entry, `send_attachment(identifier, type,
+  url, caption)` with type `image` / `video` / `audio` from `attachmentType` or `mimeType`, else
+  `file`; `assign_conversation` -> `set_conversation_assignee(identifier, respond_user_id)`;
+  `add_comment` -> `create_comment(identifier, "{{@user.<id>}} ..." + "\n" + text)` (no mention
+  line when there are none, exactly the n8n expression); `update_contact_fields` ->
+  `update_contact(identifier, {"custom_fields": [{"name": k, "value": v}, ...]})`
+  (`app/tasks/respond_io_tasks.py:936-939`). Unknown kinds and `dry_run` actions are skipped (the
+  n8n sender's `explode-actions` drops dry runs). The identifier is `id:<contact_id>`.
+- Step key `"<action index>.<part index>"`. Each attempted step writes ONE `integration_log` row:
+  channel `chatbot_sender`, `business_table = chatbot.turns`, `business_id = turn_id`, direction
+  outbound, `request_payload` JSON carrying `{"sender": "crm", "step": key, "kind": ..., ...}`,
+  status `success` / `failed`, `status_code`, plain `error_message`.
+- Resume: before sending, the steps whose latest row for this turn is `success` are skipped.
+- Outcome per step: 2xx = confirmed. Refused = `httpx.ConnectError` / `ConnectTimeout`, an
+  `HTTPStatusError` with status 4xx other than 408, or an `AppException` from the outbound gate
+  (`OUTBOUND_DISABLED`, `respond_outbound_service.py:127`): stop, return `SEND_REFUSED` (nothing
+  of that step left). Unknown = read timeout, 408, 5xx: Q2. The first non-confirmed step stops the
+  run; later steps are not attempted.
+- Recovery (`inbox_queue._last_send_outcome`, `:1027`) must not read a confirmed FIRST step as the
+  whole reply sent: on the CRM path a row is done only when every step is confirmed.
+
 ## 5. Build slices (one lane, one PR)
 
 1. Migration: one column on `system_settings` (the switch), added to the manual dict builder in
