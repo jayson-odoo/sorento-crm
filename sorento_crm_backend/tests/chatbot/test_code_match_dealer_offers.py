@@ -390,3 +390,112 @@ def test_ac15d_two_misses_each_get_their_did_you_mean_in_one_numbered_on_reply(s
         assert "escalate" not in text.lower(), text
     assert _option_codes(c) == [first, second], c.stored_question
     assert [o["position"] for o in c.stored_question["options"]] == [1, 2], c.stored_question
+
+
+# --------------------------------------------------------------------------- round 3: two-list pick, near pick, escalation
+
+
+FIRST, SECOND = "TWC8354-SH-UF", "TWC8152"
+TWO_MISSES = f"{TYPO} x 1, SWTWC8152 x 2"
+
+
+def _two_lists(session_factory, monkeypatch, stub_access) -> tuple[Console, str]:  # noqa: F811
+    c = _console(
+        session_factory, monkeypatch, stub_access, [FIRST, SECOND],
+        **{"TWC8354_SH_UF": Stock(on_hand=100), "TWC8152": Stock(on_hand=100)},
+    )
+    text = c.say(TWO_MISSES, stock(product(TYPO, 1), product("SWTWC8152", 2)))
+    assert text.count("Did you mean") == 2 and _option_codes(c) == [FIRST, SECOND], text
+    return c, text
+
+
+def _group_qtys(c: Console) -> list[Any]:
+    payload = (c.stored_question or {}).get("payload") or {}
+    return [g.get("qty") for g in payload.get("groups") or []]
+
+
+def _pick_positions(*positions: int):
+    return reply(reference_positions=list(positions), open_question_answer=answer("pick", picked=list(positions)))
+
+
+def test_ac22b_yes_over_the_two_lists_answers_both_or_re_asks_them_with_both_quantities(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c, _ = _two_lists(session_factory, monkeypatch, stub_access)
+    text = c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes")))
+    answered_both = f"{FIRST} x 1: {TICK} Got stock." in text and f"{SECOND} x 2: {TICK} Got stock." in text
+    if answered_both:
+        return
+    assert text.count("Did you mean") == 2, f"neither answered nor re-asked as before: {text!r}"
+    assert _group_qtys(c) == [1, 2], f"the re-asked pick lost the typed quantities: {c.stored_question}"
+    # "1 and 2" after that "yes" answers both, each at its own quantity.
+    both = c.say("1 and 2", _pick_positions(1, 2))
+    assert f"{FIRST} x 1: {TICK} Got stock." in both, both
+    assert f"{SECOND} x 2: {TICK} Got stock." in both, both
+
+
+def test_ac21b_no_over_the_two_lists_records_both_typed_codes_for_the_salesman(session_factory, monkeypatch, stub_access):  # noqa: F811
+    from app.services.chatbot import refer_asks
+    from app.services.chatbot.turn.pending import Pending
+    from app.services.chatbot.turn.plan import Plan, Trace
+
+    c, _ = _two_lists(session_factory, monkeypatch, stub_access)
+    q = c.stored_question
+    pending = Pending(
+        kind=q["kind"], expects=q.get("expects"), options=q["options"], team=q.get("team"),
+        payload=q["payload"], asked_at_turn=q.get("asked_at_turn"),
+    )
+    trace = Trace()
+    trace.rules_fired.append("stock_pick_declined")
+    entries = refer_asks.referred_entries(
+        referred=True,
+        reply_text=REFER_TO_SALESMAN,
+        envelopes=[],
+        plan=Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace),
+        pending_before=pending,
+        message_text="no",
+        answered=[],
+    )
+    recorded = {str(e["product_code"]).upper(): e.get("requested_qty") for e in entries}
+    assert recorded == {TYPO: 1, "SWTWC8152": 2}, recorded
+
+
+def test_ac22c_pick_one_over_the_two_lists_answers_it_and_re_asks_the_other_as_a_did_you_mean(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c, _ = _two_lists(session_factory, monkeypatch, stub_access)
+    text = c.say("1", _pick_positions(1))
+    assert f"{FIRST} x 1: {TICK} Got stock." in text, text
+    assert "Couldn't find SWTWC8152. Did you mean" in text, text
+    assert "which one?" not in text, text
+    assert _option_codes(c) == [SECOND], c.stored_question
+    payload = (c.stored_question or {}).get("payload") or {}
+    assert payload.get("stock_qty") == 2 or 2 in _group_qtys(c), f"quantity 2 was lost: {payload}"
+
+
+def test_ac20d_the_parsers_near_pick_never_offers_an_inactive_code(session_factory, monkeypatch, stub_access):  # noqa: F811
+    inactive, active = "TWC8354-SH-UF", "TWC8354-SH-UP"
+    c = _console(session_factory, monkeypatch, stub_access, [inactive, active])
+    _hide(session_factory, inactive, "inactive")
+    typed = "TWC8354-SH-UZ"
+    for who in ("dealer", "staff"):
+        if who == "staff":
+            c.as_staff()
+            c.stock_on_hand = 12
+        picked = {**product(typed, 3), "canonical_code": inactive}  # the parser's correction is the inactive code
+        text = c.say(f"{typed} x 3", stock(picked))
+        assert not _word(inactive, text), (who, text)
+        assert inactive not in _option_codes(c), (who, c.stored_question)
+
+
+def test_ac20e_the_escalation_lanes_product_suggestions_never_list_an_inactive_code(session_factory):  # noqa: F811
+    from app.services.chatbot.lanes.escalation_services import product_suggestions
+    from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+
+    inactive, active = "TWC8354-SH-UF", "TWC8354-SH-UP"
+    _seed(session_factory, [inactive, active])
+    _hide(session_factory, inactive, "inactive")
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    try:
+        codes = product_suggestions(db, "TWC8354-SH-UZ")
+    finally:
+        db.close()
+    assert active in codes, codes
+    assert inactive not in codes, codes
