@@ -36,6 +36,17 @@ export const signedPercent = (pct: number) => `${pct >= 0 ? '+' : ''}${pct.toFix
 const byToday = (a: TownShop, b: TownShop) =>
   b.today_docs - a.today_docs || Number(b.today_amount ?? 0) - Number(a.today_amount ?? 0);
 
+/** Which stalls get a building: invoice count only, ties kept in the snapshot's own order. Every variant carries
+ * both, so the wallboard (no amounts) draws the same stalls as the named view (crew pass, 12 Nov). */
+const byDocs = (a: TownShop, b: TownShop) => b.today_docs - a.today_docs;
+
+/** The largest font size (from `start` down to `min`, in 2 px steps) at which every text fits `column` px. */
+export function fitColumns(measure: (text: string, px: number) => number, texts: string[], column: number, start: number, min: number): number {
+  let px = start;
+  while (px > min && texts.some((t) => measure(t, px) > column)) px -= 2;
+  return px;
+}
+
 /** The shops that bought today, busiest first, and the dealers beyond them with no building. */
 export function boughtToday(snapshot: TownSnapshot) {
   const bought = snapshot.shops.filter((shop) => shop.today_docs > 0).sort(byToday);
@@ -55,7 +66,7 @@ export function sceneSelection(snapshot: TownSnapshot) {
   const shops = snapshot.shops.filter((shop) => shop.kind === 'shop');
   const stalls = snapshot.shops
     .filter((shop) => shop.kind !== 'shop')
-    .sort(byToday)
+    .sort(byDocs)
     .slice(0, SCENE_STALL_CAP);
   const drawn = [...shops, ...stalls];
   const lit = drawn.filter((shop) => shop.today_docs > 0);
@@ -180,4 +191,16 @@ export function placeTags(
     }
     return null;
   });
+}
+
+/** TOWN-PROJECT-CITY: ["Dealers RM 300", "Projects RM 150", "Other RM 30"] (adds up to the day's figure), or the
+ * invoice counts for a viewer without amounts; shown as separate items, never dot-joined (owner rule, crew 12 Nov).
+ * null on a snapshot built before the split existed. */
+export function splitParts(today: TownSnapshot['today']): string[] | null {
+  const s = today.split;
+  if (!s) return null;
+  const parts = ([['Dealers', s.dealer], ['Projects', s.project], ['Other', s.other]] as const).map(([label, part]) =>
+    part.amount != null ? `${label} ${rm0(part.amount)}` : `${label} ${count(part.invoice_count)}`,
+  );
+  return parts;
 }
