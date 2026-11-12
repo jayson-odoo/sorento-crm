@@ -1,6 +1,6 @@
 # UAC: quotation line note in the customer REMARK column (QUOTE-LINE-NOTE-REMARK)
 
-Draft pending behaviour-card answers (PR #2378). Masked data only.
+Approved via behaviour card (PR #2378, 12 Nov). Hint text: "Shown to the customer". Masked data only.
 
 - AC-1 `quotation_columns.remark(line)`: flag only -> "Non-cancellable"; note only -> the trimmed
   note; both -> "Non-cancellable\n<note>"; neither, or note blank/whitespace -> "". A heading row
@@ -13,5 +13,5 @@ Draft pending behaviour-card answers (PR #2378). Masked data only.
   AC-1, and the page renders it in the REMARK column with line breaks, wrapping long text.
 - AC-5 PDF (the email attachment): the REMARK cell prints AC-1's text, flag and note on separate
   lines, long notes wrap.
-- AC-6 Excel export: the REMARK cell holds AC-1's text with wrap on (if Q3 = a).
+- AC-6 Excel export: the REMARK cell holds AC-1's text with wrap on.
 - AC-7 Editor: the line note popup shows a one-line hint that the note is shown to the customer.

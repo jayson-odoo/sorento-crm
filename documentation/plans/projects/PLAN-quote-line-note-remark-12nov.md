@@ -1,6 +1,6 @@
 # PLAN: quotation line note shows in the customer REMARK column
 
-Status: Plan (behaviour card filed as crew-ask, awaiting answers). Track: M, cloud lane QUOTE-LINE-NOTE-REMARK.
+Status: Build (card approved 12 Nov: Q1 a stacked on #2339, Q2 a all notes, Q3 a Excel too). Track: M, cloud lane QUOTE-LINE-NOTE-REMARK.
 
 ## Journey
 
