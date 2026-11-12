@@ -20,6 +20,7 @@ const webauthn = vi.hoisted(() => ({
   startAuthentication: vi.fn(),
   startRegistration: vi.fn(),
   browserSupportsWebAuthnAutofill: vi.fn(async () => false),
+  WebAuthnAbortService: { cancelCeremony: vi.fn() },
 }));
 // Not installed until the implementation lands; the test never imports it
 // directly, so a red run fails on the missing product module, not on this.
@@ -203,6 +204,27 @@ describe('PasskeysCard - list (AC-43)', () => {
       screen.getByText('Sign in with Face ID, Touch ID or your fingerprint.'),
     ).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /add passkey/i })).toHaveLength(1);
+  });
+});
+
+describe('PasskeysCard - failed list load (AC-47)', () => {
+  it('shows the shared ListLoadFailure with a retry that refetches, never a dead end', async () => {
+    svc.fetchMyPasskeys.mockRejectedValue(new Error('Failed to load passkeys'));
+    renderCard();
+
+    const failure = await screen.findByTestId('data-grid-error');
+    expect(within(failure).getByRole('alert')).toHaveTextContent('Failed to load passkeys');
+    expect(screen.queryByText('No passkeys yet')).not.toBeInTheDocument();
+
+    const callsBefore = svc.fetchMyPasskeys.mock.calls.length;
+    svc.fetchMyPasskeys.mockResolvedValue([PK_IPHONE]);
+    // UAC says "Try again"; the shared ListLoadFailure labels it "Retry". Either passes.
+    fireEvent.click(within(failure).getByRole('button', { name: /^(try again|retry)$/i }));
+
+    await waitFor(() =>
+      expect(svc.fetchMyPasskeys.mock.calls.length).toBeGreaterThan(callsBefore),
+    );
+    expect(await screen.findByText('Safari on iPhone')).toBeInTheDocument();
   });
 });
 

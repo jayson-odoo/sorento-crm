@@ -7,24 +7,44 @@
  * `signIn('passkey', { redirect: false, challengeId, credential: JSON })` ->
  * `onSignedIn`. A cancelled browser prompt (NotAllowedError) shows nothing;
  * a backend refusal reaches `onError` as the backend's message.
+ *
+ * AC-46 (review round): the button reaches the service through a hook
+ * (`usePasskeyStatusQuery` from `hooks/usePasskeys.ts`), never directly, so it
+ * renders inside a QueryClientProvider here.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const webauthn = vi.hoisted(() => ({
   startAuthentication: vi.fn(),
   startRegistration: vi.fn(),
   browserSupportsWebAuthnAutofill: vi.fn(async () => false),
+  WebAuthnAbortService: { cancelCeremony: vi.fn() },
 }));
-// Not installed until the implementation lands; the test never imports it
-// directly, so a red run fails on the missing product module, not on this.
 vi.mock('@simplewebauthn/browser', () => webauthn, { virtual: true });
 
 vi.mock('next-auth/react', () => ({
   signIn: vi.fn(),
   getSession: vi.fn(),
 }));
+
+// AC-46: the status read comes from this hook; null = the real hook (which calls the
+// service mock below). A test sets it to prove the button renders from the hook.
+const statusHookOverride = vi.hoisted(() => ({ current: null as null | (() => unknown) }));
+vi.mock('@/hooks/usePasskeys', async (importOriginal) => {
+  const real = await importOriginal<Record<string, unknown>>();
+  return {
+    ...real,
+    usePasskeyStatusQuery: (...a: unknown[]) =>
+      statusHookOverride.current
+        ? statusHookOverride.current()
+        : (real.usePasskeyStatusQuery as (...x: unknown[]) => unknown)(...a),
+  };
+});
 
 vi.mock('@/services/passkeyService', () => ({
   fetchPasskeyStatus: vi.fn(),
@@ -77,12 +97,18 @@ function setWebAuthn(present: boolean) {
 function renderButton(props: Partial<{ onSignedIn: () => void; onError: (m: string) => void; disabled: boolean }> = {}) {
   const onSignedIn = props.onSignedIn ?? vi.fn();
   const onError = props.onError ?? vi.fn();
-  render(<PasskeySignInButton onSignedIn={onSignedIn} onError={onError} disabled={props.disabled} />);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <PasskeySignInButton onSignedIn={onSignedIn} onError={onError} disabled={props.disabled} />
+    </QueryClientProvider>,
+  );
   return { onSignedIn, onError };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  statusHookOverride.current = null;
   setWebAuthn(true);
   setSecure(true);
   mockStatus.mockResolvedValue({ enabled: true } as never);
@@ -185,5 +211,38 @@ describe('PasskeySignInButton - signing in (AC-40)', () => {
       expect(onError).toHaveBeenCalledWith('Too many attempts. Try again in a minute.'),
     );
     expect(mockStart).not.toHaveBeenCalled();
+  });
+});
+
+describe('PasskeySignInButton - layering (AC-46)', () => {
+  it('renders from usePasskeyStatusQuery, not from its own service call', async () => {
+    // The service says off, the hook says on: only a button that reads the hook shows.
+    mockStatus.mockResolvedValue({ enabled: false } as never);
+    statusHookOverride.current = () => ({
+      data: { enabled: true },
+      isSuccess: true,
+      isLoading: false,
+      isError: false,
+    });
+    renderButton();
+    expect(await screen.findByRole('button', { name: 'Passkey' })).toBeInTheDocument();
+  });
+
+  it('hides when usePasskeyStatusQuery says passkeys are off', async () => {
+    mockStatus.mockResolvedValue({ enabled: true } as never);
+    statusHookOverride.current = () => ({
+      data: { enabled: false },
+      isSuccess: true,
+      isLoading: false,
+      isError: false,
+    });
+    renderButton();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: 'Passkey' })).not.toBeInTheDocument();
+  });
+
+  it('does not import services/passkeyService directly', () => {
+    const source = readFileSync(path.join(__dirname, 'passkey-signin-button.tsx'), 'utf8');
+    expect(source).not.toMatch(/from ['"](@\/services\/passkeyService|\.\.?\/[^'"]*passkeyService)['"]/);
   });
 });

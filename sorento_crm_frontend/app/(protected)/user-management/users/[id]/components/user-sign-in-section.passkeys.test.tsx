@@ -226,6 +226,28 @@ describe('UserSignInSection - "Passkeys" row (AC-45)', () => {
   });
 });
 
+describe('UserSignInSection - passkeys dialog failed load (AC-47)', () => {
+  it('shows the shared ListLoadFailure with a retry that refetches', async () => {
+    svc.fetchUserPasskeys.mockRejectedValue(new Error('Failed to load passkeys'));
+    renderSection(baseUser(enabledWith(2)));
+    fireEvent.click(await screen.findByText('2 passkeys'));
+
+    const dialog = await screen.findByRole('dialog');
+    const failure = await within(dialog).findByTestId('data-grid-error');
+    expect(within(failure).getByRole('alert')).toHaveTextContent('Failed to load passkeys');
+
+    const callsBefore = svc.fetchUserPasskeys.mock.calls.length;
+    svc.fetchUserPasskeys.mockResolvedValue(PASSKEYS);
+    // UAC says "Try again"; the shared ListLoadFailure labels it "Retry". Either passes.
+    fireEvent.click(within(failure).getByRole('button', { name: /^(try again|retry)$/i }));
+
+    await waitFor(() =>
+      expect(svc.fetchUserPasskeys.mock.calls.length).toBeGreaterThan(callsBefore),
+    );
+    expect(await within(dialog).findByText('Safari on iPhone')).toBeInTheDocument();
+  });
+});
+
 describe('UserSignInSection - last sign-in by passkey (AC-32, AC-45)', () => {
   it('reads a passkey session as "passkey"', () => {
     renderSection(

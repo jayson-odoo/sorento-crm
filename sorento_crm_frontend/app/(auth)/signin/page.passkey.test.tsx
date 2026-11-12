@@ -6,7 +6,10 @@
  *     sign-in lands; a refusal shows in the page's error Alert;
  *   - the Email input carries `autocomplete="username webauthn"`, and where
  *     conditional mediation is available the page starts an autofill passkey
- *     request on mount.
+ *     request on mount;
+ *   - AC-48 (review round): the autofill request is cancelled
+ *     (`WebAuthnAbortService.cancelCeremony()`) when the user signs in another
+ *     way or the page goes away, and starts again after a failed password attempt.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,6 +36,7 @@ const webauthn = vi.hoisted(() => ({
   startAuthentication: vi.fn(),
   startRegistration: vi.fn(),
   browserSupportsWebAuthnAutofill: vi.fn(async () => false),
+  WebAuthnAbortService: { cancelCeremony: vi.fn() },
 }));
 vi.mock('@simplewebauthn/browser', () => webauthn, { virtual: true });
 
@@ -160,5 +164,72 @@ describe('/signin passkey autofill (AC-41)', () => {
     await screen.findByRole('button', { name: 'Passkey' });
     await new Promise((r) => setTimeout(r, 20));
     expect(webauthn.startAuthentication).not.toHaveBeenCalled();
+  });
+});
+
+describe('/signin passkey autofill is cancelled and restarted (AC-48)', () => {
+  const autofillCalls = () =>
+    webauthn.startAuthentication.mock.calls.filter(
+      (c) => (c[0] as { useBrowserAutofill?: boolean })?.useBrowserAutofill === true,
+    ).length;
+
+  async function renderWithOpenAutofill() {
+    setWebAuthn({ conditional: true });
+    webauthn.browserSupportsWebAuthnAutofill.mockResolvedValue(true);
+    webauthn.startAuthentication.mockReturnValue(new Promise(() => {}));
+    const view = render(<Page />, { wrapper });
+    await waitFor(() => expect(autofillCalls()).toBe(1));
+    webauthn.WebAuthnAbortService.cancelCeremony.mockClear();
+    return view;
+  }
+
+  function submitPassword() {
+    fireEvent.change(screen.getByPlaceholderText('Your email'), {
+      target: { value: 'staff.one@example.test' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Your password'), {
+      target: { value: 'hunter22' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  }
+
+  it('cancels the open autofill request when a password sign-in starts', async () => {
+    mockSignIn.mockReturnValue(new Promise(() => {}) as never);
+    await renderWithOpenAutofill();
+    submitPassword();
+    await waitFor(() =>
+      expect(mockSignIn).toHaveBeenCalledWith('credentials', expect.anything()),
+    );
+    await waitFor(() =>
+      expect(webauthn.WebAuthnAbortService.cancelCeremony).toHaveBeenCalled(),
+    );
+  });
+
+  it('cancels the open autofill request when the user switches to phone sign-in', async () => {
+    await renderWithOpenAutofill();
+    fireEvent.click(screen.getByRole('button', { name: 'Phone number' }));
+    await waitFor(() =>
+      expect(webauthn.WebAuthnAbortService.cancelCeremony).toHaveBeenCalled(),
+    );
+  });
+
+  it('cancels the open autofill request when the page unmounts', async () => {
+    const view = await renderWithOpenAutofill();
+    view.unmount();
+    expect(webauthn.WebAuthnAbortService.cancelCeremony).toHaveBeenCalled();
+  });
+
+  it('starts a new autofill request after a failed password attempt', async () => {
+    await renderWithOpenAutofill();
+    mockSignIn.mockResolvedValue({
+      ok: false,
+      status: 401,
+      url: null,
+      error: JSON.stringify({ code: 401, message: 'Invalid email or password' }),
+    } as never);
+    submitPassword();
+
+    expect(await screen.findByText('Invalid email or password')).toBeInTheDocument();
+    await waitFor(() => expect(autofillCalls()).toBe(2));
   });
 });
