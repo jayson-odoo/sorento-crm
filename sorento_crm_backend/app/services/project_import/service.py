@@ -205,6 +205,7 @@ def create_run(db: Session, *, company_id: str, user_id: str, filename: str, con
         if f in reader.FIELDS and f not in columns:
             columns[f] = col["header"]
 
+    run_no = _next_run_no(db, company_id)
     job = JobService(db).create_job(
         job_type=JOB_TYPE, user_id=str(user_id), filename=filename, company_id=str(company_id),
     )
@@ -212,7 +213,7 @@ def create_run(db: Session, *, company_id: str, user_id: str, filename: str, con
     if not store_import_source_file(job, content, filename, XLSX_CONTENT_TYPE):
         raise AppException(503, "The file could not be stored. Try again.", code="project_import_store_failed")
     _save_meta(db, job, {
-        "run_no": _next_run_no(db, company_id),
+        "run_no": run_no,
         "phase": PHASE_DRAFT,
         "sheets": ticked,
         "columns": columns,
@@ -424,12 +425,16 @@ def list_lines(db: Session, run: ImportJob, *, kind: str, status: Optional[str] 
     for (ck, vk), info in lines.items():
         out.append(_line_dict(kind, ck, vk, info, maps.get((kind, ck, vk)), so_customers.get(vk)))
     labels = _labels(db, kind, {l["target_id"] for l in out if l["target_id"]})
-    setters = {str(u.id): u.name or u.email for u in db.query(User).filter(
-        User.id.in_({l.pop("_set_by") for l in out if l.get("_set_by")} or {""}))}
+    setter_ids = {l["_set_by"] for l in out if l.get("_set_by")}
+    setters = (
+        {str(u.id): u.name or u.email for u in db.query(User).filter(User.id.in_(setter_ids))}
+        if setter_ids else {}
+    )
     for line in out:
-        line.pop("_set_by", None)
+        set_by = line.pop("_set_by", None)
+        line.pop("_set_by_id", None)
         line["target_label"] = labels.get(line["target_id"]) if line["target_id"] else None
-        line["set_by_name"] = setters.get(line.pop("_set_by_id", None) or "")
+        line["set_by_name"] = setters.get(set_by) if set_by else None
     if status:
         out = [l for l in out if l["status"] == status]
     out.sort(key=lambda l: (l["customer_value_key"], l["value_key"]))
@@ -544,7 +549,8 @@ def set_line(
     db.flush()
     line = _line_dict(kind, ck, vk, info, m, None)
     line.pop("_set_by", None)
-    setter = db.query(User).filter(User.id == line.pop("_set_by_id", None) or "").first() if user_id else None
+    line.pop("_set_by_id", None)
+    setter = db.query(User).filter(User.id == str(user_id)).first() if user_id else None
     line["set_by_name"] = (setter.name or setter.email) if setter else None
     line["target_label"] = _labels(db, kind, {line["target_id"]}).get(line["target_id"]) if line["target_id"] else None
     return line
@@ -884,7 +890,7 @@ def _resolve(db: Session, p: _Plan, maps: dict, so_customers: dict) -> None:
             p.developer = (ACTION_CREATE, dk)
     p.flags = extra + p.flags
     if blocking:
-        p.outcome, p.codes = oc.OUTCOME_NEEDS_REVIEW, blocking
+        p.outcome, p.codes = oc.OUTCOME_NEEDS_REVIEW, blocking + p.flags
 
 
 def _groups(db: Session, company_id: str, ready: list[_Plan], maps: dict) -> dict[str, _Group]:

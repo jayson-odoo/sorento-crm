@@ -3192,3 +3192,27 @@ register(
         label="Remove from party",
     )
 )
+
+
+# ----- Project import (PLAN-project-import-12nov.md, AC-PI-37/38) ------------------------
+#
+# Revert a run: it removes what the run created and keeps anything changed since. Destructive
+# (records are removed), so it takes the long window. Parked from the run page's gear menu.
+
+
+def _revert_project_import_run(db: Session, payload: dict):
+    from app.services.project_import import service as project_import
+
+    return project_import.revert_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
+
+
+register(
+    FormAction(
+        key="project_import_run.revert",
+        entity_types=("project_import_run",),
+        execute=_revert_project_import_run,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.import.run",
+        label="Revert import",
+    )
+)
