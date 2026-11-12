@@ -193,6 +193,36 @@ describe('PreviewStep', () => {
     expect(onOpenLine.mock.calls[0][0]).toBe(kind);
   });
 
+  it('reason labels come from the API, never from a local code table', async () => {
+    // An unknown code: only the label the API sends can name it in plain words. Shape: each
+    // report row carries `labels` (one per code) and the run carries `code_labels`.
+    const label = 'ZZ plain test label';
+    service.listRows.mockResolvedValue({
+      data: [
+        { ...reportRow('PS26-0009', 'skipped', ['zz_test_code'], 9), labels: [label] },
+      ],
+      total: 1,
+    });
+    const labelled = {
+      ...run,
+      preview_codes: { zz_test_code: 1 },
+      code_labels: { zz_test_code: label },
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <PreviewStep run={labelled as never} onOpenLine={onOpenLine} />
+      </QueryClientProvider>
+    );
+
+    const row = (await screen.findByText('PS26-0009')).closest('tr')!;
+    expect(row.textContent).toContain(label);
+    const reason = screen.getByLabelText(/Reason/i) as HTMLSelectElement;
+    expect(Array.from(reason.options).map((o) => o.textContent)).toContain(label);
+    // Neither the raw code nor a humanised guess of it is shown.
+    expect(container.textContent ?? '').not.toMatch(/zz_test_code|zz test code/i);
+  });
+
   it('a row that needs nothing does not open a line', async () => {
     const user = userEvent.setup();
     renderStep();

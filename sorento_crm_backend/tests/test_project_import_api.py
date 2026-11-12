@@ -676,3 +676,201 @@ def test_ac_pi_43_status_and_uploaded_by_filters_are_multi_select_and_combine(ru
     both = ids({"status": "previewed", "uploaded_by": list(two)})
     assert both == {k for k in status_of if status_of[k] == "previewed" and user_of[k] in two}
     assert both and both != ids({"status": "previewed"})
+
+
+# --------------------------------------------------------------------------- round 3:
+# the run's History (owner rule: every tracked action on a record shows in its History:
+# who, when, plain action) and plain labels carried by the API.
+#
+# History is read through the endpoint the shared AuditTrail calls:
+#   GET /api/v1/audit/logs?entity_type=<type>&entity_id=<run id>
+# READING (lead to confirm): the run's entity type is `project_import_run`, the same word the
+# record action `project_import_run.revert` uses, and `projects.import.view` reads it on the
+# per-record path. Mapping the generic `import_jobs` type instead would open every import
+# job's history to an import-view holder.
+# The plain action word is the entry's `event` or `description` (either carries it).
+
+import re as _re
+
+HISTORY_URL = "/api/v1/audit/logs"
+HISTORY_ENTITY_TYPE = "project_import_run"
+_UUID = _re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", _re.I)
+
+
+def _history_text(entry) -> str:
+    return " ".join(str(entry.get(k) or "") for k in ("event", "description")).strip()
+
+
+@pytest.fixture
+def history_world(world, api_client, monkeypatch):
+    from app.api.v1.audit import audit_logs
+    from app.services.project_import import service
+
+    w = world
+    # The content tests read as an audit admin, so a missing entry is reported as missing
+    # rather than hidden behind the per-record permission (tested on its own below).
+    real_is_admin = audit_logs._is_audit_admin
+    w.extra["admin_reader"] = {"on": True}
+    monkeypatch.setattr(
+        audit_logs, "_is_audit_admin",
+        lambda db, uid: True if w.extra["admin_reader"]["on"] else real_is_admin(db, uid),
+    )
+    customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
+    w.db.commit()
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    run_id = _created_id(client, _small_book())
+    assert client.put(f"{BASE}/runs/{run_id}/columns",
+                      json={"sheets": ["JAN'26"], "columns": HEADER_BY_FIELD}).status_code in (200, 204)
+    linked = client.put(f"{BASE}/runs/{run_id}/lines", json={
+        "kind": "customer", "customer_value_key": "", "value_key": "CUSTOMER 001 SDN BHD",
+        "action": "link", "target_id": customer.id, "new_title": None})
+    assert linked.status_code == 200, linked.text
+    bulk = client.put(f"{BASE}/runs/{run_id}/lines/bulk", json={
+        "kind": "project",
+        "keys": [["CUSTOMER 001 SDN BHD", "PROJECT 001 SAMPLE NAME"]],
+        "action": "create", "target_id": None, "new_title": "ZZT HISTORY TOWER"})
+    assert bulk.status_code == 200, bulk.text
+    preview = client.post(f"{BASE}/runs/{run_id}/preview")
+    assert preview.status_code == 200, preview.text
+    from app.models.job import ImportJob
+
+    run = w.db.get(ImportJob, run_id)
+    service.apply(w.db, run, user_id=w.admin_id)
+    service.revert(w.db, run, user_id=w.admin_id)
+    w.db.commit()
+    return w, client, run_id
+
+
+def _history(client, run_id):
+    response = client.get(HISTORY_URL, params={"entity_type": HISTORY_ENTITY_TYPE,
+                                               "entity_id": run_id, "limit": 200})
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+@pytest.mark.parametrize("word", ["Uploaded", "Columns saved", "Value linked", "Previewed",
+                                  "Imported", "Reverted"])
+def test_history_every_action_on_the_run_has_one_entry(history_world, word):
+    _w, client, run_id = history_world
+
+    entries = _history(client, run_id)
+
+    matching = [e for e in entries if _re.search(rf"\b{word}\b", _history_text(e), _re.I)]
+    assert len(matching) == 1, (word, [_history_text(e) for e in entries])
+
+
+def test_history_the_bulk_set_is_recorded(history_world):
+    _w, client, run_id = history_world
+
+    texts = [_history_text(e) for e in _history(client, run_id)]
+
+    assert any(_re.search(r"\bvalues?\b.*\b(set|created|create|linked|skipped)\b", t, _re.I)
+               and not _re.search(r"\bValue linked\b", t) for t in texts), texts
+
+
+def test_history_names_the_acting_user_and_when(history_world):
+    w, client, run_id = history_world
+
+    entries = _history(client, run_id)
+
+    assert len(entries) >= 7
+    for e in entries:
+        assert e["user_id"] == w.admin_id, e
+        assert e["user_display_name"] == f"{MARKER} Importer", e
+        assert e["changed_at"]
+        assert e["entity_id"] == run_id
+
+
+def test_history_action_text_carries_no_uuid_and_no_customer_name(history_world):
+    _w, client, run_id = history_world
+
+    entries = _history(client, run_id)
+    assert len(entries) >= 7, "no history to check"
+    for e in entries:
+        text = _history_text(e)
+        assert text, e
+        assert not _UUID.search(text), text
+        assert "CUSTOMER 001" not in text.upper(), text
+        assert "ZZT-PIM DEALER" not in text.upper(), text
+
+
+def test_history_reads_with_the_import_view_permission_only(history_world, api_client):
+    w, _client, run_id = history_world
+    w.extra["admin_reader"]["on"] = False  # the per-record path, not the audit admin
+    reader = api_client(w.db, w.admin_id, w.company_id, {VIEW})
+
+    response = reader.get(HISTORY_URL, params={"entity_type": HISTORY_ENTITY_TYPE,
+                                               "entity_id": run_id})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]
+
+
+# --------------------------------------------------------------------------- labels
+#
+# Shape (documented here, the coder matches it):
+# - every report row (GET .../rows, and the `rows` of the preview / import report) carries
+#   `labels`: [label_for(code) for code in codes], same order and length as `codes`;
+# - the run detail (GET /runs/{id}) carries `code_labels`: {code: label_for(code)} for every
+#   code in preview_codes and result_codes, so the frontend keeps no copy of the label table.
+
+
+def test_labels_report_rows_carry_a_plain_label_per_code(world, api_client):
+    from app.services import import_outcome_codes as oc
+    from app.services.project_import import service
+
+    w = world
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    run_id = _created_id(client, make_book({"JAN'26": [
+        row("PS26-0001"),
+        row("PS26-0002", project_name=None),
+        row("PS26-0003", po_value="-"),
+    ]}))
+    client.put(f"{BASE}/runs/{run_id}/columns",
+               json={"sheets": ["JAN'26"], "columns": HEADER_BY_FIELD})
+
+    preview = client.post(f"{BASE}/runs/{run_id}/preview")
+    assert preview.status_code == 200, preview.text
+    rows = client.get(f"{BASE}/runs/{run_id}/rows", params={"limit": 50}).json()["data"]
+
+    assert len(rows) == 3
+    for r in rows:
+        assert "labels" in r, r
+        assert r["labels"] == [oc.label_for(c) for c in r["codes"]], r
+    from app.models.job import ImportJob
+
+    report = service.preview(w.db, w.db.get(ImportJob, run_id), user_id=w.admin_id)
+    for r in report["rows"]:
+        assert r["labels"] == [oc.label_for(c) for c in r["codes"]], r
+
+
+def test_labels_run_detail_carries_code_labels_for_preview_and_result_codes(world, api_client):
+    from app.services import import_outcome_codes as oc
+    from app.services.project_import import service
+    from app.models.job import ImportJob
+
+    w = world
+    customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
+    w.db.commit()
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    run_id = _created_id(client, _small_book())
+    client.put(f"{BASE}/runs/{run_id}/columns",
+               json={"sheets": ["JAN'26"], "columns": HEADER_BY_FIELD})
+    client.put(f"{BASE}/runs/{run_id}/lines", json={
+        "kind": "customer", "customer_value_key": "", "value_key": "CUSTOMER 001 SDN BHD",
+        "action": "link", "target_id": customer.id, "new_title": None})
+    client.put(f"{BASE}/runs/{run_id}/lines/bulk", json={
+        "kind": "project", "keys": [["CUSTOMER 001 SDN BHD", "PROJECT 001 SAMPLE NAME"]],
+        "action": "create", "target_id": None, "new_title": "ZZT LABEL TOWER"})
+    client.post(f"{BASE}/runs/{run_id}/preview")
+    service.apply(w.db, w.db.get(ImportJob, run_id), user_id=w.admin_id)
+    w.db.commit()
+
+    body = client.get(f"{BASE}/runs/{run_id}").json()
+
+    codes = set(body.get("preview_codes") or {}) | set(body.get("result_codes") or {})
+    assert codes, body
+    assert "code_labels" in body, sorted(body)
+    for c in codes:
+        assert body["code_labels"].get(c) == oc.label_for(c), c
+        assert "_" not in body["code_labels"][c], c

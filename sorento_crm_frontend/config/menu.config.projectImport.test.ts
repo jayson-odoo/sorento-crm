@@ -8,8 +8,6 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
-
 import { MENU_SIDEBAR, MENU_SIDEBAR_COMPACT } from './menu.config';
 import type { MenuConfig, MenuItem } from './types';
 
@@ -58,8 +56,15 @@ describe('MENU_SIDEBAR nesting', () => {
   });
 });
 
-describe('projectViewPermissions', () => {
-  it('lets a user holding only projects.import.view reach the page', () => {
-    expect(PROJECT_VIEW_PERMISSIONS).toContain('projects.import.view');
+// Lead sign-off (round 3): projects.import.view is NOT added to PROJECT_VIEW_PERMISSIONS (that
+// would open every project read page to an import-only user). The entry is gated by its own
+// permission instead.
+describe('Project import gating', () => {
+  it.each([
+    ['MENU_SIDEBAR', MENU_SIDEBAR],
+    ['MENU_SIDEBAR_COMPACT', MENU_SIDEBAR_COMPACT],
+  ])('%s gates the entry by projects.import.view', (_name, menu) => {
+    const [entry] = find(menu, ENTRY.path);
+    expect(entry?.item.permission).toBe('projects.import.view');
   });
 });
