@@ -1,0 +1,140 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock order request mock v1</title>
+<style>
+:root{--fg:#18181b;--mut:#71717a;--line:#e4e4e7;--soft:#f4f4f5;--pri:#1b84ff;--new:#b45309;--newbg:#fffbeb;--err:#dc2626;--ok:#047857;--okbg:#ecfdf5;--warn:#b45309;--warnbg:#fffbeb;--r:8px}
+*{box-sizing:border-box}body{margin:0;background:#fafafa;color:var(--fg);font:13px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}.note{font-size:12px;color:var(--mut);margin:0 0 12px}
+h2{font-size:15px;margin:28px 0 8px}.new{display:inline-block;font-size:9px;font-weight:700;color:var(--new);background:var(--newbg);border:1px solid #fcd34d;border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px}
+.tabsw{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px}.tabsw button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 12px;font:inherit;cursor:pointer}.tabsw button.on{background:var(--fg);color:#fff;border-color:var(--fg)}
+.ph{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ph h1{font-size:18px;margin:0}.ph .grow{flex:1}
+.sub{color:var(--mut);font-size:12px;margin-bottom:12px}
+.pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;white-space:nowrap}.pill.w{color:var(--warn);background:var(--warnbg)}.pill.g{color:var(--ok);background:var(--okbg)}.pill.n{color:#3f3f46;background:var(--soft)}.pill.r{color:var(--err);background:#fef2f2}
+.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer;white-space:nowrap}.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}.btn.sm{padding:3px 10px;font-size:12px}.btn.gh{border-color:transparent;background:transparent}.btn.d{color:var(--err)}
+.pager{display:inline-flex;gap:2px}.pager .btn{padding:4px 8px}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 16px;background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px 16px;margin-bottom:12px}.meta div>span:first-child{display:block;font-size:11px;color:var(--mut)}
+.sec{background:#fff;border:1px solid var(--line);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+.sh{display:flex;align-items:center;gap:8px;padding:12px 16px;cursor:pointer;user-select:none}.sh b{font-size:14px}.sh .sum{color:var(--mut);font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sh .chev{color:var(--mut)}
+.sec.closed .sb{display:none}.sec.closed .chev{transform:rotate(-90deg)}.sec:not(.closed) .sum{visibility:hidden}
+.sb{padding:4px 16px 16px;display:flex;flex-direction:column;gap:12px}.lbl{font-size:12px;font-weight:500;display:block;margin-bottom:4px}.hint{font-size:12px;color:var(--mut)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.in,.sel{font:inherit;border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%;background:#fff}.sel{display:flex;justify-content:space-between;align-items:center}.sel:after{content:"\25BE";color:var(--mut)}
+.ro{padding:6px 0}
+.tw{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff}table{width:100%;border-collapse:collapse;min-width:820px;table-layout:fixed}
+th{font-size:11px;color:var(--mut);text-align:left;padding:6px 8px;background:var(--soft);font-weight:500;white-space:nowrap;cursor:pointer}th.r,td.r{text-align:right}
+td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td .in{padding:3px 6px}td .in.r{text-align:right}tr.click{cursor:pointer}tr.click:hover td{background:#f8fafc}
+.th{display:inline-flex;gap:3px}.th i{display:inline-block;width:26px;height:26px;border-radius:4px;background:linear-gradient(135deg,#d4d4d8,#a1a1aa);cursor:pointer}.th small{color:var(--mut);align-self:center}
+.chg{color:var(--warn);font-size:11px;margin-left:4px}
+.tot{display:flex;justify-content:flex-end;gap:16px;padding:8px 4px;font-weight:600}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}.toolbar .in{max-width:260px}.toolbar .grow{flex:1}
+.acts{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:4px}.acts .sp{flex:1}
+.ltabs{display:flex;gap:16px;border-bottom:1px solid var(--line);margin:4px 0 12px}.ltabs span{padding:6px 0;color:var(--mut);cursor:pointer}.ltabs span.on{color:var(--fg);border-bottom:2px solid var(--fg)}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:16px;z-index:5}.ov.on{display:flex}
+.lb{background:#fff;border-radius:var(--r);width:min(560px,100%);max-height:90vh;display:flex;flex-direction:column}.lbh{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line)}.lbh b{flex:1}.lbb{padding:16px;overflow:auto}.lbf{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line)}
+.photo{height:280px;border-radius:6px;background:linear-gradient(135deg,#e4e4e7,#a1a1aa);display:flex;align-items:center;justify-content:center;color:#fff}
+ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);margin:0;padding:10px 10px 10px 28px;font-size:12px}ul.map li,ol.q li{margin:4px 0}code{font:11px ui-monospace,Menlo,monospace;background:var(--soft);border-radius:3px;padding:0 3px;word-break:break-all}
+.view{display:none}.view.on{display:block}
+@media(max-width:640px){.acts .btn{flex:1 1 100%}.acts .sp{display:none}.ph .pager{display:none}}
+</style></head><body><div class="wrap">
+<p class="note">Mock v1 for SPARE-PART-ORDER-REQUEST. It follows the behaviour card's recommendations: a separate request, Form SLA stages as approval levels, photos per line, catalogue products, one currency per request, and an OI raised on final approval. Every name, code, price and photo is invented. <span class="new">NEW</span> marks what this lane adds; everything else exists today. Switch screens with the buttons below. Click a photo for the lightbox.</p>
+<div class="tabsw" id="sw"><button data-v="v1" class="on">1 Requester: Create</button><button data-v="v2">2 Approver: Pending approval</button><button data-v="v3">3 Purchasing: Order Inquiries list</button><button data-v="v4">4 Purchasing: Order Inquiry detail</button></div>
+
+<!-- 1. Requester -->
+<div class="view on" id="v1">
+<div class="ph"><h1>New Stock Order Request</h1><span class="pill n">Draft</span><span class="grow"></span><button class="btn">Back to stock order requests</button></div>
+<div class="sub">Prepared by Requester A</div>
+<div class="sec" id="s1"><div class="sh" onclick="fold('s1')"><span class="chev">&#9662;</span><b>Request</b><span class="sum">MYR, needed by 30/11/2026</span></div>
+<div class="sb"><div class="grid2">
+<div><span class="lbl">Currency *</span><div class="sel">MYR</div></div>
+<div><span class="lbl">Needed by</span><input class="in" value="30/11/2026"></div>
+<div><span class="lbl">Stock location</span><div class="sel">Main warehouse</div></div>
+</div><div><span class="lbl">Reason</span><textarea class="in" rows="2">Service stock for the hinge and damper repairs</textarea></div></div></div>
+<div class="sec" id="s2"><div class="sh" onclick="fold('s2')"><span class="chev">&#9662;</span><b>Products</b><span class="sum">2 lines, MYR 260.00</span></div>
+<div class="sb"><div class="tw"><table>
+<colgroup><col style="width:30px"><col style="width:18%"><col style="width:24%"><col style="width:80px"><col style="width:100px"><col style="width:110px"><col style="width:20%"></colgroup>
+<thead><tr><th>#</th><th>Product</th><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Total</th><th>Photos <span class="new">NEW</span></th></tr></thead>
+<tbody>
+<tr><td>1</td><td><div class="sel" title="ZZX-100 Hinge set soft close">ZZX-100</div></td><td title="Hinge set soft close">Hinge set soft close</td><td><input class="in r" value="10"></td><td><input class="in r" value="12.00"></td><td class="r">120.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i><button class="btn sm">+ Photo</button></span></td></tr>
+<tr><td>2</td><td><div class="sel" title="ZZX-220 Damper 90 deg">ZZX-220</div></td><td title="Damper 90 deg">Damper 90 deg</td><td><input class="in r" value="4"></td><td><input class="in r" value="35.00"></td><td class="r">140.00</td><td><span class="th"><button class="btn sm">+ Photo</button></span></td></tr>
+</tbody></table></div>
+<div class="row"><button class="btn sm">+ Add product</button></div>
+<div class="tot"><span>Total</span><span>MYR 260.00</span></div></div></div>
+<div class="acts"><button class="btn d">Delete draft</button><span class="sp"></span><button class="btn">Save as draft</button><button class="btn p">Submit</button></div>
+</div>
+
+<!-- 2. Approver -->
+<div class="view" id="v2">
+<div class="ph"><h1>SOR-2611-0001</h1><span class="pill w">Pending approval</span><span class="grow"></span><span class="pager"><button class="btn">&lsaquo;</button><button class="btn">&rsaquo;</button></span><button class="btn">Reject</button><button class="btn p" onclick="ap()">Approve</button></div>
+<div class="sub">Stock replenishment, MYR</div>
+<div class="meta"><div><span>Requested by</span>Requester A</div><div><span>Submitted</span>12/11/2026, 4:10 pm</div><div><span>Approval level</span>1 of 1 (Service HOD) <span class="new">NEW</span></div><div><span>Waiting on</span>Approver B</div></div>
+<div class="ltabs"><span class="on">Details</span><span>History</span></div>
+<div class="tw"><table>
+<colgroup><col style="width:30px"><col style="width:16%"><col style="width:24%"><col style="width:110px"><col style="width:100px"><col style="width:110px"><col style="width:18%"></colgroup>
+<thead><tr><th>#</th><th>Product</th><th>Description</th><th class="r">Qty <span class="new">editable</span></th><th class="r">Unit price</th><th class="r">Total</th><th>Photos</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>ZZX-100</td><td title="Hinge set soft close">Hinge set soft close</td><td><input class="in r" id="q1" value="6" oninput="rc()"></td><td class="r">12.00</td><td class="r" id="t1">72.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i></span></td></tr>
+<tr><td>2</td><td>ZZX-220</td><td title="Damper 90 deg">Damper 90 deg</td><td><input class="in r" id="q2" value="4" oninput="rc()"></td><td class="r">35.00</td><td class="r" id="t2">140.00</td><td><small class="hint">-</small></td></tr>
+</tbody></table></div>
+<div class="tot"><span>Total</span><span id="tt">MYR 212.00</span></div>
+<p class="hint">Requested qty for line 1 was 10; the History tab records the change to 6.</p>
+</div>
+
+<!-- 3. Purchasing list -->
+<div class="view" id="v3">
+<div class="ph"><h1>Order Inquiries</h1></div>
+<div class="toolbar"><input class="in" placeholder="Search..."><button class="btn">Filters</button><button class="btn">Columns</button><span class="grow"></span></div>
+<div class="tw"><table>
+<colgroup><col style="width:30px"><col style="width:130px"><col style="width:150px"><col style="width:130px"><col style="width:20%"><col style="width:80px"><col style="width:110px"><col style="width:110px"></colgroup>
+<thead><tr><th><input type="checkbox"></th><th>Inquiry</th><th>Type <span class="new">NEW</span></th><th>Sales order</th><th>Project / request</th><th class="r">Rows</th><th>Raised</th><th>Status</th></tr></thead>
+<tbody>
+<tr class="click" onclick="show('v4')"><td><input type="checkbox" onclick="event.stopPropagation()"></td><td>OI-2611-0042</td><td>Stock replenishment</td><td>-</td><td title="SOR-2611-0001">SOR-2611-0001</td><td class="r">2</td><td>12/11/2026</td><td><span class="pill w">Raised</span></td></tr>
+<tr class="click"><td><input type="checkbox" onclick="event.stopPropagation()"></td><td>OI-2611-0041</td><td>Sales order</td><td>SO-ZZ-24117</td><td title="ZZ Residence Tower B">ZZ Residence Tower B</td><td class="r">5</td><td>12/11/2026</td><td><span class="pill w">Raised</span></td></tr>
+<tr class="click"><td><input type="checkbox" onclick="event.stopPropagation()"></td><td>OI-2611-0038</td><td>Sales order</td><td>SO-ZZ-24090</td><td title="ZZ Kitchen Gallery">ZZ Kitchen Gallery</td><td class="r">3</td><td>10/11/2026</td><td><span class="pill g">Actioned</span></td></tr>
+</tbody></table></div>
+<p class="hint">Filters gain a Type multi-select (Sales order, Stock replenishment).</p>
+</div>
+
+<!-- 4. Purchasing detail -->
+<div class="view" id="v4">
+<div class="ph"><h1>OI-2611-0042</h1><span class="pill w">Raised</span><span class="grow"></span><span class="pager"><button class="btn">&lsaquo;</button><button class="btn">&rsaquo;</button></span><button class="btn p">Acknowledge</button></div>
+<div class="sub">Stock replenishment from SOR-2611-0001</div>
+<div class="meta"><div><span>Type</span>Stock replenishment <span class="new">NEW</span></div><div><span>Requested by</span>Requester A</div><div><span>Approved by</span>Approver B</div><div><span>Approved</span>12/11/2026, 5:02 pm</div><div><span>Currency</span>MYR</div><div><span>Sales order</span>-</div></div>
+<div class="ltabs"><span class="on">Lines</span><span>Related documents</span><span>History</span></div>
+<div class="tw"><table>
+<colgroup><col style="width:30px"><col style="width:14%"><col style="width:22%"><col style="width:80px"><col style="width:100px"><col style="width:100px"><col style="width:16%"><col style="width:120px"></colgroup>
+<thead><tr><th><input type="checkbox"></th><th>Product</th><th>Description</th><th class="r">Qty</th><th class="r">Unit price <span class="new">NEW</span></th><th class="r">Total <span class="new">NEW</span></th><th>Photos <span class="new">NEW</span></th><th>Status</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox"></td><td>ZZX-100</td><td title="Hinge set soft close">Hinge set soft close</td><td class="r">6</td><td class="r">12.00</td><td class="r">72.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i></span></td><td><span class="pill n">Awaiting</span></td></tr>
+<tr><td><input type="checkbox"></td><td>ZZX-220</td><td title="Damper 90 deg">Damper 90 deg</td><td class="r">4</td><td class="r">35.00</td><td class="r">140.00</td><td><small class="hint">-</small></td><td><span class="pill n">Awaiting</span></td></tr>
+</tbody></table></div>
+<div class="tot"><span>Total</span><span>MYR 212.00</span></div>
+</div>
+
+<div class="ov" id="ov" onclick="if(event.target===this)cl()"><div class="lb"><div class="lbh"><b>ZZX-100 photo 1 of 2</b><button class="btn gh" onclick="cl()">&#10005;</button></div><div class="lbb"><div class="photo">photo</div></div><div class="lbf"><button class="btn">&lsaquo; Prev</button><button class="btn">Next &rsaquo;</button></div></div></div>
+<div class="ov" id="ova" onclick="if(event.target===this)cl()"><div class="lb"><div class="lbh"><b>Approve SOR-2611-0001</b><button class="btn gh" onclick="cl()">&#10005;</button></div><div class="lbb"><p>2 lines, MYR 212.00, go to purchasing as an order inquiry.</p><p class="hint">Line 1 qty changed 10 to 6.</p><span class="lbl">Note (optional)</span><textarea class="in" rows="2"></textarea></div><div class="lbf"><button class="btn" onclick="cl()">Back</button><button class="btn p" onclick="cl();show('v4')">Approve</button></div></div></div>
+
+<h2>Each element and what it reuses</h2>
+<ul class="map">
+<li>Page header (number + status pill, subtitle, pager, one main button): <code>sorento_crm_frontend/components/common/PageHeader.tsx:133</code>, <code>components/common/RecordNavigation.tsx</code>, status pill via <code>components/ui/badge</code></li>
+<li>Collapsible sections that open the next one by themselves: <code>components/common/FormSection.tsx</code>, behaviour copied from <code>app/(auth)/portal/components/PriceTagRequestForm.tsx:525</code> (<code>openSectionOnce</code>)</li>
+<li>Currency select: <code>components/common/SearchableSelect.tsx:173</code> over <code>lib/currencies.ts</code></li>
+<li>Product line table: <code>components/common/SampleRequestLines.tsx:35</code> (product picker by code and name), extended with unit price, total, photos <span class="new">NEW</span>; money via <code>app/(protected)/project-sales/_shared/lib/money.ts:128</code> (<code>formatMoneyExact</code>)</li>
+<li>Photos per line <span class="new">NEW</span>: upload through <code>sorento_crm_backend/app/services/so_line_attachments.py:181</code> generalised by entity type, storage <code>entity_attachment_links</code> (<code>app/models/entity_attachment.py:10</code>), thumbnails <code>image_thumbnailer.store_thumbnail</code>; FE thumbnails <code>components/common/AttachmentImage.tsx:19</code>, strip lifted from <code>procurement-management/packing-lists/components/ShipmentLinePhotosCell.tsx</code>, lightbox <code>components/common/AttachmentPreviewModal.tsx:197</code></li>
+<li>Approve popup: the main button opens it, Approve is inside (standing rule); the backend is <code>FormSLAOrchestrator.emit_event</code> (<code>app/services/form_sla_service.py:378</code>) advancing the stage chain from <code>form_sla_configs</code> (<code>app/models/sla.py:222</code>); approver identity check modelled on <code>app/services/project_quotation_approval_service.py:500</code></li>
+<li>Approval levels setting: existing <code>/sla-management/form-sla-config</code> screen, new form type <code>stock_order_request</code> in <code>FORM_SLA_TYPES</code> (<code>form_sla_service.py:34</code>); no new settings screen</li>
+<li>History tab: <code>components/audit/AuditTrail.tsx:100</code> (requested qty 10 to 6 by Approver B shows here)</li>
+<li>Order Inquiries list: <code>app/(protected)/project-sales/order-inquiries/components/OrderInquiryHeadersList.tsx</code>, one new Type column + Type filter <span class="new">NEW</span>; Sales order cell shows "-" for this type</li>
+<li>Order Inquiry detail: <code>app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryDetail.tsx</code>, <code>OrderInquiryLinesTab.tsx</code>, <code>OrderInquiryHistory.tsx</code>; new unit price, total, photo columns shown only for this type; Acknowledge / per-row reject are the existing actions</li>
+<li>Backend storage <span class="new">NEW</span>: <code>order_inquiries.inquiry_type</code> + nullable <code>project_sales_order_id</code> with a CHECK (<code>app/models/project_so.py:839</code>); the request itself is its own table (card question 1)</li>
+</ul>
+<h2>Open questions (from the behaviour card)</h2>
+<ol class="q"><li>Own request record vs pending states on the OI (mock shows own record).</li><li>Form SLA stages as approval levels (mock shows level 1 of 1).</li><li>Photos per line (mock) vs per request.</li><li>Catalogue products only (mock) vs free-text spare parts.</li><li>Revise after approval until purchasing acknowledges (not shown).</li></ol>
+</div>
+<script>
+const $=i=>document.getElementById(i);
+function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id===v));document.querySelectorAll('#sw button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));}
+document.querySelectorAll('#sw button').forEach(b=>b.onclick=()=>show(b.dataset.v));
+function fold(id){$(id).classList.toggle('closed')}
+function pv(){$('ov').classList.add('on')}function ap(){$('ova').classList.add('on')}function cl(){$('ov').classList.remove('on');$('ova').classList.remove('on')}
+function rc(){const a=+($('q1').value||0)*12,b=+($('q2').value||0)*35;$('t1').textContent=a.toFixed(2);$('t2').textContent=b.toFixed(2);$('tt').textContent='MYR '+(a+b).toFixed(2)}
+</script>
+</body></html>
