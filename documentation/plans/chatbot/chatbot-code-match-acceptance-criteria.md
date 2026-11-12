@@ -39,6 +39,9 @@ marker or default size.
 - AC-2b A code that differs only by a dash (shape of BT015SS-CR typed BT015SSCR or BT015SS CR) is answered directly,
   staff and dealer (guard; red-first shows whether main already passes).
 - AC-2 Token `twc 8354 sh uf` against `TWC8354-SH-UF` is answered directly (R0 equal).
+- AC-19 letters-only (owner 13 Nov, Q1 = b): a letters-only word the parser hands as a product code, with a close
+  catalogue code, gets a "Did you mean <code>?" OFFER, never a direct answer. The 28 Sep digit rule stays for ordinary
+  words (basin, gunmetal, a word the parser types as a category or spec): no offer, reply unchanged.
 - AC-19 Code shapes: a digits-first token (`8152-SH`) and a letters-only token (`ABCD`) both reach their catalogue
   codes through the same ranking.
 

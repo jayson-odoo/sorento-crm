@@ -18,6 +18,10 @@ x1 / x3 run and the letters-only digit rule (AC-19, recommendation b) are owner 
 run by crew (cap US$0.50 inside the US$1 code-match fallback). The X insert stays as fallback until a data-driven
 replacement passes the owner #833 tests.
 
+Owner answers (13 Nov ~00:13): Q1 = (b) letters-only word that looks like a mistyped code is OFFERED, never
+answered; the digit rule stays for ordinary words. Q2 = (b) ONE live pass, hard cap US$1, frozen set + owner-FAIL set,
+run by crew locally after the Q1 head; x3 only with a new owner OK. Q3 (inactive codes offered) still open: AC-20 kept.
+
 Owner rule (12 Nov): no rule so customised it cannot be replicated for another company in a different industry.
 
 ## Slices (one a day; each one PR commit series on this branch, each with red-first + kill proof)
