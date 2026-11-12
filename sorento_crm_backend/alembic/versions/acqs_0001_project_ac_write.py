@@ -5,7 +5,7 @@
 * Permission `projects.autocount.write`, granted to the admin roles.
 
 Revision ID: acqs_0001_project_ac_write
-Revises: pc_0001_product_costing
+Revises: qdp_0001_duplicate_party
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "acqs_0001_project_ac_write"
-down_revision = "pc_0001_product_costing"
+down_revision = "qdp_0001_duplicate_party"
 branch_labels = None
 depends_on = None
 
