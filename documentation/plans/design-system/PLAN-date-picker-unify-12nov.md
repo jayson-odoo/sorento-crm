@@ -66,6 +66,7 @@ Timezone / off-by-a-day callers (part 2):
 - **D** project-sales, sales, complaint, ticket, workflow-forms, account, user/resource/integration,
   components.
 - **E** system-management + SLA `datetime-local` (shape per Q1) and the portal (6).
+- **F** naive-UTC display sweep (list at the bottom of this plan).
 
 Each slice: red tests (typing, display, timezone) committed alone, kill test, reviewer, browser
 pass at 1280 + 375, hand test, user guide check.
@@ -86,3 +87,73 @@ Forms "Nothing hangs", Wording "plain words". Everything else: n/a (no list, ERP
 - Q4 (a) generic builders (rule builder, list filter dialog, workflow dynamic fields) render
   `DatePicker` for the date case in this lane.
 - Q5 (a) slice A as listed.
+
+## Naive-UTC display sweep (found by the slice A browser pass, 12 Nov)
+
+Slice A fixes `PurchaseRequestsList.tsx:320` (same field as the named Detail fix). The rest of the pattern, `formatDate(` / `formatDateTime(` on an `*_at` / `*At` API timestamp (browser-local, so before 08:00 Malaysia a date reads the previous day), is 66 calls in 46 files and goes to slice F, area by area, each file joining `lib/utc-display.guard.test.ts`:
+
+- `app/(protected)/procurement-management/new-product-applications/components/NewProductApplicationAttachments.tsx:105`
+- `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx:431`
+- `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx:444`
+- `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx:1211`
+- `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx:1228`
+- `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx:1250`
+- `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryAttachmentsSection.tsx:147`
+- `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestAttachmentsSection.tsx:138`
+- `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDocumentEditCard.tsx:401`
+- `app/(protected)/procurement-management/suppliers/[id]/components/SupplierDetail.tsx:186`
+- `app/(protected)/marketing-management/promotions/components/PromotionAttachmentsTab.tsx:166`
+- `app/(protected)/marketing-management/promotions/components/PromotionAttachmentsTab.tsx:305`
+- `app/(protected)/marketing-management/campaigns/[id]/components/CampaignDashboard.tsx:164`
+- `app/(protected)/account/notifications/components/coverage-manager.tsx:427`
+- `app/(protected)/account/notifications/components/coverage-section.tsx:253`
+- `app/(protected)/forms-management/forms/components/FormsList.tsx:194`
+- `app/(protected)/forms-management/forms/components/FormForm.tsx:395`
+- `app/(protected)/forms-management/forms/[id]/components/FormDetail.tsx:209`
+- `app/(protected)/forms-management/forms/[id]/components/FormDetail.tsx:213`
+- `app/(protected)/master-data-management/units-of-measure/[id]/page.tsx:192`
+- `app/(protected)/master-data-management/units-of-measure/[id]/page.tsx:199`
+- `app/(protected)/master-data-management/brands/[id]/page.tsx:462`
+- `app/(protected)/master-data-management/brands/[id]/page.tsx:464`
+- `app/(protected)/master-data-management/products/components/ProductAttachmentsTab.tsx:228`
+- `app/(protected)/master-data-management/item-classes/[id]/page.tsx:230`
+- `app/(protected)/master-data-management/item-classes/[id]/page.tsx:234`
+- `app/(protected)/master-data-management/product-specifications/components/record/SpecKeyRecordCard.tsx:116`
+- `app/(protected)/master-data-management/product-categories/[id]/page.tsx:490`
+- `app/(protected)/master-data-management/product-categories/[id]/page.tsx:492`
+- `app/(protected)/inventory-management/warehouses/[id]/page.tsx:156`
+- `app/(protected)/inventory-management/warehouses/[id]/page.tsx:159`
+- `app/(protected)/ideas/portal/components/IdeasPortal.tsx:221`
+- `app/(protected)/order-management/customer-groups/components/CustomerGroupsList.tsx:182`
+- `app/(protected)/order-management/customer-groups/[id]/components/CustomerGroupDetail.tsx:144`
+- `app/(protected)/order-management/customer-groups/[id]/components/CustomerGroupDetail.tsx:147`
+- `app/(protected)/order-management/orders/components/OrderDetail.tsx:254`
+- `app/(protected)/order-management/orders/components/OrderDetail.tsx:261`
+- `app/(protected)/order-management/customers/components/CustomerDetail.tsx:224`
+- `app/(protected)/order-management/customers/components/CustomerDetail.tsx:231`
+- `app/(protected)/order-management/order-statuses/components/OrderStatusDetail.tsx:105`
+- `app/(protected)/system-management/activity/components/ActivityTimeline.tsx:404`
+- `app/(protected)/system-management/activity/components/ActivityTimeline.tsx:406`
+- `app/(protected)/system-management/import-logs/components/ImportLogsList.tsx:173`
+- `app/(protected)/system-management/import-logs/[id]/page.tsx:148`
+- `app/(protected)/resource-management/attachments/components/AttachmentDetail.tsx:353`
+- `app/(protected)/resource-management/attachments/components/AttachmentBrowser.tsx:280`
+- `app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx:1124`
+- `app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:830`
+- `app/(protected)/user-management/contact-access-agents/components/ContactAccessAgentsGroupedList.tsx:407`
+- `app/(protected)/user-management/contact-access-agents/components/ContactAccessAgentsList.tsx:209`
+- `app/(protected)/user-management/access-agents/components/AccessAgentDetail.tsx:255`
+- `app/(protected)/user-management/access-agents/components/AccessAgentDetail.tsx:259`
+- `app/(protected)/user-management/access-agents/components/ContactAccessAgentsTable.tsx:93`
+- `app/(protected)/user-management/contacts/components/ContactsList.tsx:734`
+- `app/(protected)/user-management/contacts/components/ContactsList.tsx:743`
+- `app/(protected)/user-management/contacts/[id]/components/ContactAccessAgentsTable.tsx:152`
+- `app/(protected)/user-management/contact-tags/components/ContactTagDetail.tsx:175`
+- `app/(protected)/user-management/contact-tags/components/ContactTagDetail.tsx:178`
+- `app/(protected)/complaint-management/complaints/components/ComplaintManualAttachmentsSection.tsx:144`
+- `app/(protected)/complaint-management/complaints/components/ComplaintDetail.tsx:392`
+- `app/(protected)/complaint-management/complaints/components/ComplaintDetail.tsx:1384`
+- `app/(auth)/portal/ideas/[token]/components/PortalIdeaTrack.tsx:113`
+- `components/ideas/IdeaDetail.tsx:473`
+- `components/ideas/IdeasListView.tsx:348`
+- `components/ideas/IdeasListView.tsx:351`
