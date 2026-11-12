@@ -36,7 +36,7 @@ def _cost_reader(
 ) -> dict:
     """SUPPLIER-COST-ACCESS: a staff member (a session, or a key acting as a named staff
     member) needs `products.cost.view` for PO costs. A plain integration key keeps its own
-    gate: the contact chatbot's per-contact field reveal (`purchase_orders.cost`)."""
+    gate: the contact chatbot's cost rule: the contact's linked active user holds `products.cost.view` (`purchase_orders.cost`)."""
     plain_key = bool(current_user.get("integration_id")) and not current_user.get("key_user_id")
     if not plain_key and not holds_cost_view(db, current_user):
         raise HTTPException(status_code=403, detail=f"Permission required: {COST_VIEW_PERM}")
