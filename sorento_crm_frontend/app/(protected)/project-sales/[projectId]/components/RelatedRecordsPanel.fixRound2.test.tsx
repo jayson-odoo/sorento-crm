@@ -152,4 +152,15 @@ describe('RelatedRecordsPanel fix round 2', () => {
     expect(screen.queryAllByText('2026', { exact: true })).toHaveLength(0);
     expect(state.rollupCalls.every((c) => (c[1] as { enabled?: boolean } | undefined)?.enabled === false)).toBe(true);
   });
+
+  it("D5 (fix round 5) a complaint pill keeps its own label's case, no capitalize", () => {
+    state.related = response(
+      ROWS.map((r) => (r.kind === 'complaint' ? { ...r, status: 'processed_by_cs' } : r)),
+    );
+    renderWithClient(<RelatedRecordsPanel project={project()} />);
+    const row = screen.getByText('CX-ZZT-0001').closest('tr') as HTMLElement;
+    const pill = within(row).getByText('Processed by CS');
+    expect(pill.className).toContain('normal-case');
+    expect(pill.className).not.toMatch(/(^|\s)capitalize(\s|$)/);
+  });
 });
