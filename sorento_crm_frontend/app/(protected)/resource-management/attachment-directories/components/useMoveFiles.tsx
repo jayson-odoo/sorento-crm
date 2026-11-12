@@ -16,38 +16,47 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
+  AttachmentMoveClashError,
   bulkMoveAttachments,
+  bulkRestoreAttachments,
+  updateAttachment,
   type AttachmentMoveResolution,
   type AttachmentNotMoved,
 } from '../../attachments/services/attachmentService';
 import { updateDirectory } from '../../attachments/services/directoryService';
 import type { MoveOutcome, MoveSkipped } from './driveMoveSummary';
 
-type Action = 'skip' | 'replace' | 'rename';
+type Action = 'keep' | 'rename' | 'replace' | 'skip';
 
-/** Shown in place of the name box under "Apply to all": the server adds (1), or (2) if taken. */
-const HINT = 'Each file gets a number added, like (1).';
-type Choice = { kind: 'cancel' } | { kind: Action; name?: string; forAll: boolean };
+export type ClashChoice = { kind: 'cancel' } | { kind: Action; name?: string; forAll: boolean };
+
+/** Shown in place of the name box while "Apply to all" is ticked. */
+const HINT = 'Rename all adds a number to each name, like (1).';
 
 interface Prompt {
-  conflict: AttachmentNotMoved;
+  conflict: Pick<AttachmentNotMoved, 'message' | 'file_name' | 'suggested_name'>;
   index: number;
   total: number;
 }
 
+type BulkCall = (
+  ids: string[],
+  options: { checkOnly?: boolean; resolutions?: Record<string, AttachmentMoveResolution> }
+) => Promise<{ updated: number; not_moved: AttachmentNotMoved[]; renamed?: number; replaced?: number }>;
+
 /**
- * FILES-MOVE-DUPLICATE: move files (and folders) into a folder, Windows-style.
+ * FILES-MOVE-DUPLICATE: same-name files are allowed (owner, 12 Nov 17:35), and every action
+ * that would put a second file of one name into a folder asks first, Windows-style.
  *
- * 1. One check-only call finds every name conflict; nothing moves yet.
- * 2. One window walks the conflicts ("1 of N"): Rename (keeps both; the typed name is for
- *    this file only), Replace (the file already there goes to Trash) or Skip, with "Do this
- *    for the remaining N-1 conflicts" so 100 conflicts take one decision. Cancel, the X and
- *    Esc cancel the WHOLE move: nothing is moved, files without a conflict included.
- * 3. One call moves everything with the decisions; the outcome feeds `summarizeMove`.
+ * 1. One check-only call finds every clash; nothing changes yet.
+ * 2. One window walks them ("1 of N"): Keep both (main), Rename (the typed name, this file
+ *    only), Replace (the file already there goes to Trash), Skip (leave this file where it is),
+ *    with "Apply to all N remaining conflicts" (Keep all / Rename all / Replace all / Skip all).
+ *    Cancel, the X and Esc stop the WHOLE action: nothing changes.
+ * 3. One call carries every decision; the outcome feeds `summarizeMove`.
  *
- *   const { moveFiles, MoveClashDialog } = useMoveFiles();
- *   const outcome = await moveFiles(fileIds, destinationId, folders);
- *   // render {MoveClashDialog} once
+ * `moveFiles` (Move to..., drag), `restoreFiles` (Trash) and `askOne` (Rename in a folder)
+ * share the window. Render `MoveClashDialog` once.
  */
 export function useMoveFiles() {
   const queryClient = useQueryClient();
@@ -55,11 +64,11 @@ export function useMoveFiles() {
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [name, setName] = useState('');
   const [forAll, setForAll] = useState(false);
-  const resolverRef = useRef<((choice: Choice) => void) | null>(null);
+  const resolverRef = useRef<((choice: ClashChoice) => void) | null>(null);
 
   const ask = useCallback(
     (next: Prompt) =>
-      new Promise<Choice>((resolve) => {
+      new Promise<ClashChoice>((resolve) => {
         setPrompt(next);
         setName(next.conflict.suggested_name || next.conflict.file_name);
         setForAll(false);
@@ -68,19 +77,26 @@ export function useMoveFiles() {
     []
   );
 
-  const answer = useCallback((choice: Choice) => {
+  const answer = useCallback((choice: ClashChoice) => {
     const resolve = resolverRef.current;
     resolverRef.current = null;
     setPrompt(null);
-    // Resolve after the window closes so the next conflict opens cleanly.
+    // Resolve after the window closes so the next clash opens cleanly.
     setTimeout(() => resolve?.(choice), 0);
   }, []);
 
-  const moveFiles = useCallback(
+  /** One clash on its own (Rename inside a folder): no counter, no tick box. */
+  const askOne = useCallback(
+    (conflict: Prompt['conflict']) => ask({ conflict, index: 0, total: 1 }),
+    [ask]
+  );
+
+  const run = useCallback(
     async (
-      fileIds: string[],
-      destinationId: string | null,
-      folders: { id: string; name: string }[] = []
+      ids: string[],
+      call: BulkCall,
+      folders: { id: string; name: string }[],
+      moveFolder: (id: string) => Promise<unknown>
     ): Promise<MoveOutcome> => {
       const outcome: MoveOutcome = {
         cancelled: false,
@@ -92,22 +108,24 @@ export function useMoveFiles() {
       };
       const resolutions: Record<string, AttachmentMoveResolution> = {};
       const names: Record<string, string> = {};
+      const failedAll = (err: unknown) =>
+        outcome.notMoved.push({
+          name: ids.length === 1 ? 'The file' : `${ids.length} files`,
+          reason: err instanceof Error ? err.message : 'could not be moved',
+        } satisfies MoveSkipped);
 
-      // 1. Every conflict, before anything moves.
+      // 1. Every clash, before anything changes.
       let conflicts: AttachmentNotMoved[] = [];
-      if (fileIds.length > 0) {
+      if (ids.length > 0) {
         try {
-          conflicts = (await bulkMoveAttachments(fileIds, destinationId, { checkOnly: true })).not_moved ?? [];
+          conflicts = (await call(ids, { checkOnly: true })).not_moved ?? [];
         } catch (err) {
-          outcome.notMoved.push({
-            name: fileIds.length === 1 ? 'The file' : `${fileIds.length} files`,
-            reason: err instanceof Error ? err.message : 'could not be moved',
-          });
+          failedAll(err);
           return outcome;
         }
       }
 
-      // 2. One decision per conflict, or one for all of the remaining.
+      // 2. One decision per clash, or one for all of the remaining.
       let applyToRest: Action | null = null;
       for (let i = 0; i < conflicts.length; i += 1) {
         const conflict = conflicts[i];
@@ -126,20 +144,14 @@ export function useMoveFiles() {
       }
 
       // 3. Folders, then every file in one call.
-      const folderResults = await Promise.allSettled(
-        folders.map((folder) => updateDirectory(folder.id, { parent_id: destinationId }))
-      );
+      const folderResults = await Promise.allSettled(folders.map((folder) => moveFolder(folder.id)));
       folderResults.forEach((r, i) => {
         if (r.status === 'fulfilled') outcome.moved += 1;
-        else
-          outcome.notMoved.push({
-            name: folders[i].name,
-            reason: r.reason instanceof Error ? r.reason.message : '',
-          });
+        else outcome.notMoved.push({ name: folders[i].name, reason: r.reason instanceof Error ? r.reason.message : '' });
       });
-      if (fileIds.length > 0) {
+      if (ids.length > 0) {
         try {
-          const result = await bulkMoveAttachments(fileIds, destinationId, { resolutions });
+          const result = await call(ids, { resolutions });
           const left = new Map((result.not_moved ?? []).map((n) => [n.attachment_id, n]));
           for (const [id, resolution] of Object.entries(resolutions)) {
             if (resolution.action === 'skip') {
@@ -147,39 +159,77 @@ export function useMoveFiles() {
               left.delete(id);
             }
           }
-          // The server counts what it renamed / replaced: a clash that vanished before the move
-          // makes a plain move, never a phantom "renamed".
+          // The server counts what it renamed / replaced; Keep both is a plain move.
           outcome.renamed = result.renamed ?? 0;
           outcome.replaced = result.replaced ?? 0;
           outcome.moved += result.updated - outcome.renamed - outcome.replaced;
-          left.forEach((n) =>
-            outcome.notMoved.push({ name: names[n.attachment_id] ?? n.file_name, reason: n.message })
-          );
+          left.forEach((n) => outcome.notMoved.push({ name: names[n.attachment_id] ?? n.file_name, reason: n.message }));
         } catch (err) {
-          outcome.notMoved.push({
-            name: fileIds.length === 1 ? 'The file' : `${fileIds.length} files`,
-            reason: err instanceof Error ? err.message : 'could not be moved',
-          } satisfies MoveSkipped);
+          failedAll(err);
         }
-      }
-      if (folders.length > 0) {
-        queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       }
       queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      if (folders.length > 0) queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       return outcome;
     },
     [ask, queryClient]
   );
 
+  const moveFiles = useCallback(
+    (fileIds: string[], destinationId: string | null, folders: { id: string; name: string }[] = []) =>
+      run(
+        fileIds,
+        (ids, options) => bulkMoveAttachments(ids, destinationId, options),
+        folders,
+        (id) => updateDirectory(id, { parent_id: destinationId })
+      ),
+    [run]
+  );
+
+  const restoreFiles = useCallback(
+    (fileIds: string[]) => run(fileIds, (ids, options) => bulkRestoreAttachments(ids, options), [], async () => {}),
+    [run]
+  );
+
+  /**
+   * Rename inside a folder. A name already shown there opens the window (no counter):
+   * Keep both renames anyway, Rename uses the box (prefilled "name (1)"), Replace sends the
+   * other file to Trash, Skip / Cancel leave the name as it was. Resolves to whether it renamed.
+   */
+  const renameFile = useCallback(
+    async (attachmentId: string, newName: string): Promise<boolean> => {
+      let name = newName;
+      let onConflict: 'keep' | 'rename' | 'replace' | undefined;
+      for (;;) {
+        try {
+          await updateAttachment(attachmentId, { stored_filename: name, ...(onConflict ? { on_conflict: onConflict } : {}) });
+          queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
+          queryClient.invalidateQueries({ queryKey: ['attachments'] });
+          return true;
+        } catch (err) {
+          if (!(err instanceof AttachmentMoveClashError)) throw err;
+          const choice = await askOne({
+            message: err.message,
+            file_name: err.detail.file_name,
+            suggested_name: err.detail.suggested_name,
+          });
+          if (choice.kind === 'cancel' || choice.kind === 'skip') return false;
+          onConflict = choice.kind;
+          if (choice.kind === 'rename') name = choice.name || err.detail.suggested_name || name;
+        }
+      }
+    },
+    [askOne, queryClient]
+  );
+
   const trimmed = name.trim();
   const remaining = prompt ? prompt.total - prompt.index - 1 : 0;
-  const choose = (kind: Action) =>
-    answer({ kind, forAll, name: kind === 'rename' && !forAll ? trimmed : undefined });
+  const choose = (kind: Action) => answer({ kind, forAll, name: kind === 'rename' && !forAll ? trimmed : undefined });
 
   const MoveClashDialog = (
     <Dialog open={prompt !== null} onOpenChange={(open) => !open && answer({ kind: 'cancel' })}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           {/* pe-8 keeps a long name clear of the close X in the corner. */}
           <DialogTitle className="line-clamp-2 break-words pe-8" title={prompt?.conflict.message}>
@@ -229,7 +279,7 @@ export function useMoveFiles() {
             </div>
           )}
         </div>
-        <DialogFooter className="flex-col-reverse gap-2 pt-4 sm:flex-row">
+        <DialogFooter className="flex-col-reverse flex-wrap gap-2 pt-4 sm:flex-row">
           <Button variant="ghost" onClick={() => answer({ kind: 'cancel' })}>
             Cancel
           </Button>
@@ -241,13 +291,14 @@ export function useMoveFiles() {
               {forAll ? 'Replace all' : 'Replace'}
             </Button>
           )}
-          <Button onClick={() => choose('rename')} disabled={!forAll && !trimmed}>
+          <Button variant="outline" onClick={() => choose('rename')} disabled={!forAll && !trimmed}>
             {forAll ? 'Rename all' : 'Rename'}
           </Button>
+          <Button onClick={() => choose('keep')}>{forAll ? 'Keep all' : 'Keep both'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 
-  return { moveFiles, MoveClashDialog };
+  return { moveFiles, restoreFiles, renameFile, askOne, MoveClashDialog };
 }

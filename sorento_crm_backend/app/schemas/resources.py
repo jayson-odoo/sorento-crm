@@ -223,11 +223,11 @@ class AttachmentUpdate(BaseModel):
     stored_filename: Optional[str] = None
     target_entity_type: Optional[str] = None
     target_field_keys: Optional[list[str]] = None
-    # FILES-MOVE-DUPLICATE: how a move answers a name clash in the target folder. Omitted =
-    # 409 naming the file and the folder. "replace" = the clashing file goes to Trash and this
-    # one takes its place. "rename" = `stored_filename` becomes the visible AND original name
-    # (DB only; the stored object and its URL never change), then the move runs.
-    on_conflict: Optional[Literal["replace", "rename"]] = None
+    # FILES-MOVE-DUPLICATE: how a move or rename answers a same-name file in the folder.
+    # Omitted = 409 naming the file and the folder. "keep" = go ahead (same names are allowed).
+    # "replace" = the file there goes to Trash. "rename" = move under `stored_filename`
+    # (visible name only; DB only, the stored object and its URL never change).
+    on_conflict: Optional[Literal["keep", "replace", "rename"]] = None
 
     @model_validator(mode="after")
     def _check_field_linkage_template(self):
@@ -287,7 +287,7 @@ class AttachmentReorderRequest(BaseModel):
 
 class AttachmentMoveResolution(BaseModel):
     """What to do with one file whose name is already in the target folder."""
-    action: Literal["skip", "replace", "rename"]
+    action: Literal["keep", "skip", "replace", "rename"]
     # Rename only: the new name; omitted = a free "name (1).ext" style name.
     name: Optional[str] = None
 
@@ -302,6 +302,20 @@ class AttachmentMoveResolution(BaseModel):
         if any(ch in s for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in s) or len(s) > 255:
             raise ValueError("The new name cannot contain / or \\ and must be at most 255 characters.")
         return s
+
+
+class AttachmentsBulkRestoreRequest(BaseModel):
+    """Restore many files from Trash; same check-first rules as a bulk move."""
+    attachment_ids: list[str]
+    check_only: bool = False
+    resolutions: dict[str, "AttachmentMoveResolution"] = {}
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def at_least_one(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("At least one attachment ID is required")
+        return v
 
 
 class AttachmentsBulkMoveRequest(BaseModel):

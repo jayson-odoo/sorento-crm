@@ -56,4 +56,12 @@ describe('summarizeMove', () => {
       text: 'Move cancelled. Nothing was moved.',
     });
   });
+
+  it('restore reads "restored" throughout', () => {
+    expect(summarizeMove({ ...base, moved: 2, renamed: 1 }, 'restored').text).toBe('2 restored, 1 renamed.');
+    expect(summarizeMove({ ...base, cancelled: true }, 'restored').text).toBe('Restore cancelled. Nothing was restored.');
+    expect(
+      summarizeMove({ ...base, notMoved: [{ name: 'a.jpg', reason: 'Not allowed' }] }, 'restored').text
+    ).toBe('0 restored. 1 not restored: a.jpg: Not allowed.');
+  });
 });

@@ -2,7 +2,7 @@
 from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, event
 from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func, text
+from sqlalchemy.sql import func
 from app.database import Base
 from app.models.base import CompanyScopedMixin
 import uuid
@@ -246,15 +246,6 @@ class Attachment(Base, CompanyScopedMixin):
         Index("ix_attachments_storage_provider", "storage_provider"),
         Index("ix_attachments_storage_status", "storage_status"),
         Index("ix_attachments_upload_batch_id", "upload_batch_id"),
-        # One active file per (folder, original name, any case). Created by migration
-        # 198_attachments_dirname_unique; declared here so a create_all schema (tests) has it.
-        Index(
-            "ux_attachments_dir_lower_filename_active",
-            "directory_id",
-            func.lower(original_filename),
-            unique=True,
-            postgresql_where=text("directory_id IS NOT NULL AND is_deleted = false"),
-        ),
     )
 
 

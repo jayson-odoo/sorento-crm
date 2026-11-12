@@ -58,6 +58,7 @@ from app.schemas.resources import (
     AttachmentResponse,
     AttachmentBulkDeleteRequest,
     AttachmentReorderRequest,
+    AttachmentsBulkRestoreRequest,
     AttachmentsBulkMoveRequest,
     AttachmentsBulkMoveResponse,
     BulkAccessLevelsPreviewRequest,
@@ -973,10 +974,10 @@ async def create_attachment(
         # 409 paths don't waste storage. Scoped to the user-facing display name.
         # ------------------------------------------------------------------
         on_conflict_clean = (on_conflict or "").strip().lower() or None
-        if on_conflict_clean not in (None, "copy", "replace"):
+        if on_conflict_clean not in (None, "keep", "copy", "replace"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="on_conflict must be one of 'copy', 'replace', or omitted.",
+                detail="on_conflict must be one of 'keep', 'copy', 'replace', or omitted.",
             )
         # The project check runs before the collision lookup, so a 409 never tells a caller
         # who may not write that project which file names it holds.
@@ -997,28 +998,32 @@ async def create_attachment(
                 )
             if on_conflict_clean == "copy":
                 display_name = _next_copy_name(db, directory_id, display_name, entity_type, entity_id)
-            else:  # "replace"
+            elif on_conflict_clean == "replace":
                 existing_to_replace = collision
+            # "keep": same names are allowed (owner, 12 Nov) - the new file lands beside it.
 
         # Split the resolved display name into the two canonical columns:
         #   stored_filename   = user-facing label (editable later via rename)
         #   original_filename = immutable, sanitized → the object-key basename
         stored_filename = display_name
         original_filename = sanitize_storage_filename(display_name)
-        if existing_to_replace is None:
-            # FILES-MOVE-DUPLICATE: the folder allows one file per ORIGINAL name; a renamed file
-            # can still hold it. Refuse in plain words before the bytes go to storage.
-            original_clash = AttachmentService(db)._folder_clash(
-                directory_id, original_filename, visible_name=stored_filename
-            )
-            if original_clash is not None:
-                raise AttachmentService(db)._clash_error(
-                    stored_filename,
-                    original_clash,
-                    directory_id,
-                    verb="added to",
-                    code="ATTACHMENT_FOLDER_NAME_CLASH",
-                    viewer_id=str(current_user["id"]),
+        if collision is None and on_conflict_clean is None and directory_id:
+            # FILES-MOVE-DUPLICATE: a same-named file on ANOTHER record in this folder still asks
+            # first (same window: Keep both / Create copy / Replace). No id is handed out for a
+            # file of another record, and a private file's name stays hidden.
+            other = AttachmentService(db)._folder_clash(directory_id, stored_filename)
+            if other is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "ATTACHMENT_FILENAME_COLLISION",
+                        "existing_attachment_id": None,
+                        "existing_file_name": (
+                            None if is_private_to_others(other, str(current_user["id"])) else other.stored_filename
+                        ),
+                        "existing_target_entity_type": None,
+                        "existing_target_field_keys": None,
+                    },
                 )
 
         # Get attachment type: optional in DB (nullable); required by API for new uploads.
@@ -1831,16 +1836,62 @@ def archive_attachment(
 @router.put("/{attachment_id}/restore", status_code=status.HTTP_200_OK)
 def restore_attachment(
     attachment_id: str,
+    on_conflict: Optional[str] = Query(
+        None,
+        description="When the folder now shows a file of the same name: keep | rename | replace. "
+        "Omitted = 409 with what the clash window needs.",
+    ),
     current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
     """Restore an archived attachment. Takes the archive slug: restore undoes an archive."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        if on_conflict not in (None, "keep", "rename", "replace"):
+            raise HTTPException(status_code=400, detail="on_conflict must be keep, rename or replace.")
         assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
-        result = service.restore_attachment(attachment_id)
+        result = service.restore_attachment(
+            attachment_id,
+            on_conflict=on_conflict,
+            actor_id=str(current_user["id"]),
+            replace_guard=lambda row: assert_can_write_existing(db, row.entity_type, row.entity_id, current_user),
+        )
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-restore", response_model=AttachmentsBulkMoveResponse)
+def bulk_restore_attachments(
+    body: AttachmentsBulkRestoreRequest,
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
+    db: Session = Depends(get_db),
+):
+    """Restore many files from Trash with the move's rules (FILES-MOVE-DUPLICATE).
+
+    ``check_only`` writes nothing and lists every file whose folder now shows another file of
+    the same name; ``resolutions`` (keep / rename / replace / skip per file) then restore them in
+    one call. A clashing file without a resolution stays in Trash and is named.
+    """
+    try:
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
+        result = AttachmentService(db).bulk_restore_report(
+            body.attachment_ids,
+            check_only=body.check_only,
+            resolutions={k: v.model_dump() for k, v in body.resolutions.items()},
+            viewer_id=str(current_user["id"]),
+            actor_id=str(current_user["id"]),
+            replace_guard=lambda row: assert_can_write_existing(db, row.entity_type, row.entity_id, current_user),
+        )
+        return AttachmentsBulkMoveResponse(
+            updated=result.updated,
+            not_moved=result.not_moved,
+            renamed=result.renamed,
+            replaced=result.replaced,
+        )
     except HTTPException:
         raise
     except Exception as e:

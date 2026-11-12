@@ -76,13 +76,21 @@ export function useUploadConflict() {
         <AlertDialogHeader>
           <AlertDialogTitle>File already exists in this folder</AlertDialogTitle>
           <AlertDialogDescription>
-            An attachment named <strong>{detail?.existing_file_name ?? ''}</strong> already exists.
-            Replace the existing file (its links to packing lists, promotions, products and forms stay
-            valid) or upload a renamed copy?
+            {detail?.existing_file_name ? (
+              <>
+                A file named <strong>{detail.existing_file_name}</strong> already exists.
+              </>
+            ) : (
+              'A file with this name already exists.'
+            )}{' '}
+            Keep both (two files with the same name), upload a renamed copy, or replace the existing
+            file (its links to packing lists, promotions, products and forms stay valid)?
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => close(null)}>Cancel</AlertDialogCancel>
+          {/* Same names are allowed (owner, 12 Nov, FILES-MOVE-DUPLICATE). */}
+          <AlertDialogAction onClick={() => close('keep')}>Keep both</AlertDialogAction>
           <AlertDialogAction onClick={() => close('copy')}>Create copy</AlertDialogAction>
           <AlertDialogAction
             onClick={() => close('replace')}

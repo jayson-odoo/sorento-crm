@@ -11,8 +11,8 @@ import {
   type AttachmentFilenameCollision,
 } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 
-type PerformResult = { id: string; onConflict?: 'copy' | 'replace' };
-type PerformFn = (onConflict?: 'copy' | 'replace') => Promise<PerformResult>;
+type PerformResult = { id: string; onConflict?: 'copy' | 'replace' | 'keep' };
+type PerformFn = (onConflict?: 'copy' | 'replace' | 'keep') => Promise<PerformResult>;
 
 const COLLISION: AttachmentFilenameCollision = {
   existing_attachment_id: 'att-1',
@@ -89,6 +89,23 @@ describe('useUploadConflict', () => {
     expect(perform).toHaveBeenCalledTimes(2);
     expect(perform).toHaveBeenNthCalledWith(2, 'replace');
     expect(resolved).toEqual({ id: 'after-replace', onConflict: 'replace' });
+  });
+
+  it('re-runs with keep choice (same names are allowed)', async () => {
+    const { handle } = mountHarness();
+    const perform: PerformFn = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw new AttachmentFilenameCollisionError(COLLISION);
+      })
+      .mockImplementationOnce(async (onConflict) => ({ id: 'after-keep', onConflict }));
+
+    const triggerPromise = handle.trigger(perform);
+
+    await waitFor(() => screen.getByText(/File already exists in this folder/i));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep both' }));
+
+    expect(await triggerPromise).toEqual({ id: 'after-keep', onConflict: 'keep' });
   });
 
   it('returns null when user cancels and does not retry perform', async () => {

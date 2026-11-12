@@ -191,7 +191,8 @@ describe('useMoveFiles', () => {
     });
     const pending = mount().moveFiles(['plain', 'f-1', 'f-2'], 'dir-b');
     fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Replace' }));
+    await screen.findByText('2 of 2');
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
     const outcome = await pending;
     expect(outcome).toMatchObject({ moved: 1, renamed: 1, replaced: 0 });
     expect(outcome.notMoved).toEqual([{ name: 'scan 2.pdf', reason: 'You cannot change that file.' }]);

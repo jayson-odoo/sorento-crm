@@ -63,8 +63,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   useDriveContents,
   useDownloadAttachment,
-  useRestoreAttachment,
-  useBulkRestoreAttachments,
   useRestoreDirectory,
   useUpdateAttachment,
   useDirectoryTree,
@@ -294,8 +292,10 @@ export default function AttachmentsInFolderPanel({
   // Show the Location column only during a recursive/search scope.
   const showLocation = recursive;
 
-  const restoreMutation = useRestoreAttachment();
-  const bulkRestoreMutation = useBulkRestoreAttachments();
+  // FILES-MOVE-DUPLICATE: move, drag, restore and rename share one clash window
+  // (Keep both / Rename / Replace / Skip; Cancel stops the whole action).
+  const { moveFiles, restoreFiles, renameFile, MoveClashDialog } = useMoveFiles();
+  const [isRestoring, setIsRestoring] = useState(false);
   const restoreDirectoryMutation = useRestoreDirectory();
   const downloadMutation = useDownloadAttachment();
   const updateMutation = useUpdateAttachment();
@@ -327,6 +327,21 @@ export default function AttachmentsInFolderPanel({
     setRenameDialogOpen(true);
   }, []);
 
+  const performRestore = useCallback(
+    async (ids: string[], fromSelection: boolean) => {
+      setIsRestoring(true);
+      try {
+        const summary = summarizeMove(await restoreFiles(ids), 'restored');
+        if (summary.ok) toast.success(summary.text);
+        else toast.error(summary.text);
+        if (fromSelection) setRowSelection({});
+      } finally {
+        setIsRestoring(false);
+      }
+    },
+    [restoreFiles]
+  );
+
   const submitRename = useCallback(async () => {
     if (!renameTarget) return;
     const next = renameValue.trim();
@@ -338,16 +353,17 @@ export default function AttachmentsInFolderPanel({
       setRenameDialogOpen(false);
       return;
     }
+    // A name already in the folder opens the same window as a move (Keep both / Rename /
+    // Replace / Skip); the rename window closes first so the two never stack.
+    setRenameDialogOpen(false);
     try {
-      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { stored_filename: next } });
-      toast.success('Renamed.');
-      setRenameDialogOpen(false);
+      const renamed = await renameFile(renameTarget.id, next);
+      if (renamed) toast.success('Renamed.');
       setRenameTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Rename failed.');
     }
-  }, [renameTarget, renameValue, updateMutation, queryClient]);
+  }, [renameTarget, renameValue, renameFile]);
 
   const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
 
@@ -729,7 +745,7 @@ export default function AttachmentsInFolderPanel({
         selectionHasFolder,
         isTrashView,
         isResubmitting: isResubmittingBulk,
-        canRestore: !bulkRestoreMutation.isPending && selectedDeletableFileIds.length > 0,
+        canRestore: !isRestoring && selectedDeletableFileIds.length > 0,
         canDelete,
       },
       {
@@ -744,8 +760,7 @@ export default function AttachmentsInFolderPanel({
         },
         onResubmit: handleBulkResubmit,
         onDelete: () => setBulkDeleteDialogOpen(true),
-        onRestore: () =>
-          bulkRestoreMutation.mutate(selectedDeletableFileIds, { onSuccess: clearSelection }),
+        onRestore: () => void performRestore(selectedDeletableFileIds, true),
       }
     ).map((a) => ({ ...a, icon: BULK_ACTION_ICONS[a.key] }));
 
@@ -858,7 +873,6 @@ export default function AttachmentsInFolderPanel({
 
   // FILES-MOVE-DUPLICATE: every item that can move does; a file whose name is already in the
   // target folder gets the Rename / Replace / Skip dialog; one notice names what did not move.
-  const { moveFiles, MoveClashDialog } = useMoveFiles();
   const [isMoving, setIsMoving] = useState(false);
   const performMove = useCallback(
     async (destinationId: string | null) => {
@@ -981,7 +995,7 @@ export default function AttachmentsInFolderPanel({
           onMove: openMoveForItem,
           onSetCompany: openSetCompanyForItem,
           onResubmit: handleResubmit,
-          onRestore: (id) => restoreMutation.mutate(id),
+          onRestore: (id) => void performRestore([id], false),
           onDelete: (it) => {
             if (isFileItem(it)) {
               setSelectedAttachment(it as unknown as Attachment);
@@ -1007,7 +1021,7 @@ export default function AttachmentsInFolderPanel({
       openMoveForItem,
       openSetCompanyForItem,
       handleResubmit,
-      restoreMutation,
+      performRestore,
       openFolderRename,
       openNewSubfolder,
       openFolderDelete,

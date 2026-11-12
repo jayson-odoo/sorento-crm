@@ -29,9 +29,15 @@ function sentence(item: MoveSkipped): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-export function summarizeMove(outcome: MoveOutcome): { ok: boolean; text: string } {
-  if (outcome.cancelled) return { ok: true, text: 'Move cancelled. Nothing was moved.' };
-  const counts = [`${outcome.moved} moved`];
+export function summarizeMove(
+  outcome: MoveOutcome,
+  verb: 'moved' | 'restored' = 'moved'
+): { ok: boolean; text: string } {
+  if (outcome.cancelled) {
+    const action = verb === 'restored' ? 'Restore' : 'Move';
+    return { ok: true, text: `${action} cancelled. Nothing was ${verb}.` };
+  }
+  const counts = [`${outcome.moved} ${verb}`];
   if (outcome.renamed) counts.push(`${outcome.renamed} renamed`);
   if (outcome.replaced) counts.push(`${outcome.replaced} replaced`);
   let text = `${counts.join(', ')}.`;
@@ -46,7 +52,7 @@ export function summarizeMove(outcome: MoveOutcome): { ok: boolean; text: string
     const shown = notMoved.slice(0, NAMED_AT_MOST).map(sentence).join(' ');
     const more =
       notMoved.length > NAMED_AT_MOST ? ` And ${notMoved.length - NAMED_AT_MOST} more.` : '';
-    text += ` ${notMoved.length} not moved: ${shown}${more}`;
+    text += ` ${notMoved.length} not ${verb}: ${shown}${more}`;
   }
   return { ok: notMoved.length === 0, text };
 }
