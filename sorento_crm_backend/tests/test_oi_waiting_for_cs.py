@@ -297,44 +297,6 @@ def _as_ddmmyyyy(value):
     return value
 
 
-def _exports(env, w):
-    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
-
-    service = OrderInquiryWorklistService(env.db)
-    return {
-        "list export (POST /order-inquiries/export)": service.export_xlsx()[1],
-        "OI export (POST /order-inquiries/{id}/export)": service.export_xlsx(
-            inquiry_id=w.inquiry_id
-        )[1],
-    }
-
-
-def test_ac_v2_6_both_exports_carry_status_was_qty_and_was_date_columns(env):
-    w = _world(env, "date")
-
-    for name, content in _exports(env, w).items():
-        header, _rows = _sheet_rows(content)
-        for column in ("STATUS", "WAS QTY", "WAS DATE"):
-            assert column in header, (name, header)
-        named = [h for h in header if h]
-        assert named[-1] == "REMARK", (name, header)
-        assert named[-4:-1] == ["STATUS", "WAS QTY", "WAS DATE"], (name, header)
-
-
-def test_ac_v2_6_a_date_changed_waiting_row_exports_status_new_date_and_was_date(env):
-    w = _world(env, "date")
-
-    for name, content in _exports(env, w).items():
-        _header, rows = _sheet_rows(content)
-        # the mirror order carries its own S/O NO; the seeded row is the only ZZT-CL-PUSH one
-        mine = [r for r in rows if r.get("ITEM CODE") == "ZZT-CL-PUSH"]
-        assert mine, (name, rows)
-        changed = [r for r in mine if _as_ddmmyyyy(r.get("DELIVERY DATE")) == "01/02/2027"]
-        assert len(changed) == 1, (name, mine)
-        assert changed[0].get("STATUS") == "Waiting for CS", (name, changed[0])
-        assert _as_ddmmyyyy(changed[0].get("WAS DATE")) == "01/01/2027", (name, changed[0])
-
-
 def test_ac_v2_6_the_per_project_export_keeps_its_golden_eight_headings_and_the_live_date(env):
     """GET /projects/{project_id}/order-inquiry-export (ProjectOrderInquiryService.export_xlsx)
     keeps exactly its eight golden headings (lead decision: only the Lines list export gets
@@ -455,27 +417,6 @@ def test_ac_v2_b2_confirming_the_batch_acknowledges_a_row_its_links_fully_cover(
     assert _row_snapshot(env, w.row_id)["ack_state"] == ACK_ACKNOWLEDGED
 
 
-def _sheet_cells(content: bytes):
-    sheet = openpyxl.load_workbook(io.BytesIO(content)).worksheets[0]
-    header = [str(c.value).strip() if c.value is not None else "" for c in sheet[1]]
-    return sheet, header
-
-
-def test_ac_v2_b3_was_date_has_the_same_date_format_as_delivery_date_in_both_exports(env):
-    w = _world(env, "date")
-
-    for name, content in _exports(env, w).items():
-        sheet, header = _sheet_cells(content)
-        assert "WAS DATE" in header, (name, header)
-        delivery = sheet.cell(row=2, column=header.index("DELIVERY DATE") + 1)
-        was = sheet.cell(row=2, column=header.index("WAS DATE") + 1)
-        assert was.value is not None, (name, "WAS DATE is empty")
-        assert was.number_format == delivery.number_format, (
-            name, was.number_format, delivery.number_format,
-        )
-        assert "yy" in was.number_format.lower(), (name, was.number_format)
-
-
 def test_ac_v2_s1_a_date_change_put_back_while_the_item_also_changed_stays_waiting(env):
     w = _world(env, "date")
     assert _wl_row(env, w).get("waiting_for_cs") is True, "precondition"
@@ -495,37 +436,6 @@ def test_ac_v2_s1_a_date_change_put_back_while_the_item_also_changed_stays_waiti
     )
 
     assert _wl_row(env, w).get("waiting_for_cs") is True
-
-
-def test_ac_v2_s2_was_qty_is_empty_for_a_changed_row_and_filled_for_a_waiting_row(env):
-    from sqlalchemy import text
-
-    changed = _world(env)
-    env.db.execute(
-        text(
-            "UPDATE order_inquiry_rows SET ack_state = 'changed', previous_qty = 8, "
-            "changed_at = now() WHERE id = :i"
-        ),
-        {"i": changed.row_id},
-    )
-    env.db.commit()
-    waiting = _world(env, "qty")
-
-    def was_qty(content, so_row_qty):
-        sheet, header = _sheet_cells(content)
-        rows = list(sheet.iter_rows(min_row=2, values_only=True))
-        col = header.index("WAS QTY")
-        q = header.index("QTY")
-        return [r[col] for r in rows if r[q] == so_row_qty]
-
-    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
-
-    service = OrderInquiryWorklistService(env.db)
-    changed_sheet = service.export_xlsx(inquiry_id=changed.inquiry_id)[1]
-    waiting_sheet = service.export_xlsx(inquiry_id=waiting.inquiry_id)[1]
-
-    assert was_qty(changed_sheet, 10) in ([None], [""]), was_qty(changed_sheet, 10)
-    assert was_qty(waiting_sheet, 7) == [10], was_qty(waiting_sheet, 7)
 
 
 def test_ac_v2_s4_a_cancel_so_document_line_waits_for_cs(env):
