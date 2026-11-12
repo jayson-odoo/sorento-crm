@@ -131,3 +131,12 @@ def test_sample_request_v2_every_contact_phone_prints():
     }))
     assert "Mei Ling Tan &amp; Ravi Kumar" in html or "Mei Ling Tan & Ravi Kumar" in html
     assert "012-345 6789" in html and "011-1111 1111" in html
+
+
+def test_sample_request_v2_the_header_has_no_dot_delimiter():
+    """Standing rule (owner 12 Nov, crew pass round 3): status and print date are separate, with no
+    " · " between them."""
+    html = build_html(DETAIL)
+    assert "&middot;" not in html and "·" not in html
+    cells = _cells(html)
+    assert "Submitted" in cells and "Printed " in cells

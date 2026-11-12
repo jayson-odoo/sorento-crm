@@ -99,7 +99,7 @@ vi.mock(
 );
 
 import SampleRequestForm from './SampleRequestForm';
-import { listPartyContacts } from '../../_shared/services/projectService';
+import { getProject, listPartyContacts } from '../../_shared/services/projectService';
 import { getSampleRequestQuotationPrefill } from '../services/sampleRequestService';
 
 const SECTIONS = ['Customer & project', 'Ship to', 'Items', 'Delivery'] as const;
@@ -278,5 +278,20 @@ describe('review round (owner F1-F4)', () => {
     expect(expanded('Items')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() => expect(expanded('Items')).toBe('true'));
+  });
+});
+
+describe('crew pass round 3 (owner point 1)', () => {
+  it('a customer prefilled from the project does not count as filled: Ship to stays collapsed at first load', async () => {
+    (getProject as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 'proj-1', project_code: 'PPF2611001', title: LONG_TITLE, address: null,
+      customer_id: 'c-9', customer_name: 'NUSANTARA BUILDERS SDN BHD',
+    });
+    renderForm({ projectId: 'proj-1' });
+    await screen.findByText('Customer & project');
+    expect(await screen.findByDisplayValue(/NUSANTARA BUILDERS/)).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(expanded('Customer & project')).toBe('true');
+    for (const t of ['Ship to', 'Items', 'Delivery']) expect(expanded(t)).toBe('false');
   });
 });

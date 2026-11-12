@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -39,6 +39,19 @@ describe('portal sample request: the project field matches the CRM form', () => 
   it('no registered project: the typed Project Title is the field', async () => {
     render(<SampleRequestForm />);
     await screen.findByText(/Registered project/);
+    expect(document.getElementById('sr-project-title')).not.toBeNull();
+  });
+});
+
+describe('crew pass round 3 (owner point 3): the portal project is one clamped line too', () => {
+  const LABEL = 'PPF2611001 - Residensi Taman Seri Murni Fasa 2B, Blok A hingga D, Pembangunan Bercampur';
+  it('a picked project reads as one clamped line with the whole label on hover, and can be cleared', async () => {
+    render(<SampleRequestForm initialValues={{ project_id: 'prj-1', project_label: LABEL }} />);
+    await screen.findByText(/Registered project/);
+    const label = await screen.findByTitle(LABEL);
+    expect(label.className).toMatch(/(^|\s)truncate(\s|$)/);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear project' }));
+    expect(screen.queryByTitle(LABEL)).toBeNull();
     expect(document.getElementById('sr-project-title')).not.toBeNull();
   });
 });
