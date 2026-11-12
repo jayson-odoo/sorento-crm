@@ -17,7 +17,7 @@ version", "a mismatch is flagged, never blocked") live in exactly one place.
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
-from app.schemas.common import ListResponse
+from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
     ProjectPurchaseOrderCreate,
     ProjectPurchaseOrderLineCreate,
@@ -38,8 +38,10 @@ from app.schemas.projects import (
     ProjectSampleUpdate,
     ProjectSponsorshipResponse,
     ProjectSponsorshipRollupResponse,
+    RelatedRecordsResponse,
     SponsorshipConversionResponse,
 )
+from app.services.project_related_records import SORT_KEYS as RELATED_SORT_KEYS
 from app.services import after_response
 from app.services import project_po_service as po_svc
 from app.services import project_sample_service as sample_svc
@@ -519,6 +521,49 @@ def list_project_sponsorships(
         from app.services import sponsorship_link_service as links
 
         return _envelope(links.list_sponsorships(db, project_id=project_id))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/related-records",
+    response_model=RelatedRecordsResponse,
+)
+def list_project_related_records(
+    project_id: str,
+    type: Optional[List[str]] = Query(None, description="Record kinds (repeat or comma-join)"),
+    status: Optional[List[str]] = Query(None, description="Raw status values (repeat or comma-join)"),
+    query: Optional[str] = Query(None, description="Number, subject or raised by contains"),
+    sort: Literal[RELATED_SORT_KEYS] = Query("date"),
+    dir: Literal["asc", "desc"] = Query("desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
+    user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Every stock inquiry, complaint, purchase request, sponsorship form and new product
+    application linked to this project (PROJECT-RELATED-RECORDS), one grid, sorted, searched,
+    filtered and paged on the server. Each type follows the viewer's own request rule."""
+    from app.services import own_scope
+    from app.services import project_related_records as related
+    from app.utils.multi_value import multi_values
+
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        return related.list_related_records(
+            db,
+            project_id=project_id,
+            perms=permission_slugs(db, user["id"]),
+            me=own_scope.me(db, user["id"]),
+            types=multi_values(type, "type"),
+            statuses=multi_values(status, "status"),
+            query=query,
+            sort=sort,
+            direction=dir,
+            page=page,
+            limit=limit,
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
