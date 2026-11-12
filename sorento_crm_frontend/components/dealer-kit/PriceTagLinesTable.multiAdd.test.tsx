@@ -15,6 +15,10 @@ import { PriceTagLinesTable } from './PriceTagLinesTable';
 import { addPickedItems, usePriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagItemOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import type { PriceTagLineLookups } from '@/hooks/usePriceTagLineEditor';
+
+type PickEditor = Parameters<typeof addPickedItems>[0];
 
 const ITEMS: TagItemOption[] = [
   { kind: 'product', id: 'p-x', code: 'DIY-BS-4501', name: 'Basin X', list_price: 100 },
@@ -49,7 +53,7 @@ function hookSetup(initial: DraftLine[]) {
   });
 }
 
-async function options(result: { current: { editor: { fetchItemOptions: (q: string) => Promise<any[]> } } }) {
+async function options(result: { current: { editor: { fetchItemOptions: (q: string) => Promise<SearchableSelectOption[]> } } }) {
   return result.current.editor.fetchItemOptions('');
 }
 
@@ -155,12 +159,12 @@ function Harness({
 }: {
   initial: DraftLine[];
   lookups?: typeof LOOKUPS;
-  selectSpy?: (key: string, option: any) => void;
+  selectSpy?: (key: string, option: SearchableSelectOption | null) => void;
 }) {
   const [lines, setLines] = useState<DraftLine[]>(initial);
   const real = usePriceTagLineEditor({ lines, setLines, priceMode: 'selling', lookups });
   const editor = selectSpy
-    ? { ...real, handleItemSelect: (k: string, o: any) => { selectSpy(k, o); return real.handleItemSelect(k, o); } }
+    ? { ...real, handleItemSelect: (k: string, o: SearchableSelectOption | null) => { selectSpy(k, o); return real.handleItemSelect(k, o); } }
     : real;
   return (
     <>
@@ -200,7 +204,7 @@ describe('the Item picker in the table', () => {
 
 describe('AC-14 one pick path', () => {
   const opt = (id: string, code: string) =>
-    ({ value: `product:${id}`, label: code, code, name: code }) as any;
+    ({ value: `product:${id}`, label: code, code, name: code }) as SearchableSelectOption;
 
   it('addPickedItems routes through handleItemSelect and addLine only, skipping taken and repeated options', () => {
     const X = opt('x', 'X'), Y = opt('y', 'Y'), Z = opt('z', 'Z'), W = opt('w', 'W');
@@ -208,7 +212,7 @@ describe('AC-14 one pick path', () => {
     const handleItemSelect = vi.fn();
     const lines = [row('A'), row('B', { line_type: 'product', product_id: 'w', code: 'W' })];
 
-    addPickedItems({ addLine, handleItemSelect } as any, lines, 'A', [W, X, X, Y, Z]);
+    addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, lines, 'A', [W, X, X, Y, Z]);
 
     expect(handleItemSelect.mock.calls).toEqual([['A', X], ['nA', Y], ['nnA', Z]]);
     expect(addLine.mock.calls).toEqual([['A'], ['nA']]);
@@ -262,7 +266,7 @@ describe('AC-13 one-line Item results', () => {
   it('a name equal to the code also gives just the code', async () => {
     const same = { ...lookups(), lookupTagItems: vi.fn(async () => [
       { kind: 'product', id: 'p-s', code: 'SAME-1', name: 'SAME-1', list_price: 5 },
-    ]) } as any;
+    ]) } as unknown as PriceTagLineLookups;
     const { result } = renderHook(() => {
       const [lines, setLines] = useState<DraftLine[]>([row('A')]);
       return usePriceTagLineEditor({ lines, setLines, priceMode: 'selling', lookups: same });
@@ -293,7 +297,7 @@ describe('AC-13 one-line Item results', () => {
     const code = 'DIY-' + 'LONGCODE'.repeat(10);
     const long = { ...lookups(), lookupTagItems: vi.fn(async () => [
       { kind: 'product', id: 'p-l', code, name, list_price: 10 },
-    ]) } as any;
+    ]) } as unknown as PriceTagLineLookups;
     render(<Harness initial={[row('A')]} lookups={long} />);
     fireEvent.click(screen.getAllByRole('combobox')[0]);
     await screen.findByRole('checkbox', { name: new RegExp(`Tick ${code}`) });
