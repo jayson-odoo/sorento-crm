@@ -819,6 +819,8 @@ def resolve_entity_body(
         "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
         "contact_id": _contact_id_from_ctx(ctx),
         "space_id": space_id,
+        # CHATBOT-CODE-MATCH AC-20: the chat never offers an inactive code as a did-you-mean.
+        "alternatives_active_only": True,
     }
     if dry_run:
         body["dry_run"] = True

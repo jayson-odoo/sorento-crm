@@ -489,7 +489,8 @@ def code_candidates_events(
     the close codes each was offered from (`answer.did_you_mean_by_token`, keyed by the
     resolver's token), `question` the pick the reply stored. Per miss: the typed word, the
     candidates (code, the resolver's match tier and similarity) with the offered ones first
-    in offered order, and `offered` when the reply's pick holds one of them, else `answered`.
+    in offered order, and `offered` when the reply's did-you-mean pick (`payload.did_you_mean`)
+    holds one of them, else `answered`.
     Codes only, never a row id.
     """
     from app.services.chatbot.turn.state import token_key
@@ -503,7 +504,9 @@ def code_candidates_events(
         for match in [*(resolution.get("matches") or []), *(resolution.get("alternatives") or [])]:
             if isinstance(match, dict) and match.get("uuid"):
                 how.setdefault(str(match["uuid"]), (match.get("match_tier"), match.get("similarity")))
-    options = getattr(question, "options", None) or []
+    # Only a did-you-mean pick offers a candidate; a which-one picker listing the same code does not.
+    is_dym = (getattr(question, "payload", None) or {}).get("did_you_mean") is True
+    options = (getattr(question, "options", None) or []) if is_dym else []
     offered = [str(o.get("code")) for o in options if isinstance(o, dict) and o.get("code")]
     by_key = {token_key(token): rows for token, rows in (suggestions or {}).items()}
     events: list[dict[str, Any]] = []

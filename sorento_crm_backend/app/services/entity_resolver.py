@@ -3370,8 +3370,7 @@ def _trgm_lookup(
                                (left({n_code}, length(:pn)) = :pn) AS is_variant
                         FROM products
                         WHERE {n_code} % :pn
-                          AND {n_code} <> :pn
-                          AND is_active IS TRUE{scope_sql}
+                          AND {n_code} <> :pn{scope_sql}
                         ORDER BY is_variant DESC, sim DESC, product_code
                         LIMIT :n
                         """
@@ -3379,8 +3378,7 @@ def _trgm_lookup(
                     {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             # A did-you-mean must not offer a placeholder the exact tier just
-            # refused to answer with, nor an inactive code (CHATBOT-CODE-MATCH AC-20,
-            # the `is_active` clause above, as `_family_alternatives` reads it).
+            # refused to answer with.
             visible = _chat_visible_product_ids(db, [r.id for r in rows])
             for r in rows:
                 if str(r.id) not in visible:
@@ -5487,8 +5485,10 @@ def resolve_references(
 
     `alternatives_active_only` (AI-EXTRACT-DYM): drop inactive products from a token's
     "did you mean" `alternatives` BEFORE the `_ALTERNATIVES_CAP` cut, so inactive near
-    matches cannot push an active one out. Off by default: every other caller's
-    alternatives are unchanged.
+    matches cannot push an active one out. The same-family alternatives
+    (`_family_alternatives`) honour it too. On for AI extract and for the chatbot's
+    resolve (`resolve_gate`, CHATBOT-CODE-MATCH AC-20). Off by default: every other
+    caller's alternatives are unchanged.
 
     `code_reader` (RESOLVE-SEMANTIC-FALLBACK, owner ruling 6 Oct 2026): a
     `resolver_code_reader.CodeReader`. When set, a PRE-EXTRACTED product-typed token that

@@ -10062,66 +10062,38 @@ def _stock_ask_reply(
     from app.services.chatbot.composers import stock as composers_stock
 
     parts = _stock_answer_lines(envelopes, full=composers.enabled())
-    # CHATBOT-CODE-MATCH R1/R7: a dealer's missed code beside found ones gets the pick a
-    # single-code miss gets (`dealer_stock.did_you_mean`), over the same candidates.
-    offer = (
-        _dealer_miss_offer(misses, envelopes, verdict, turn_no)
-        if not pick and not text and getattr(getattr(state_out, "profile", None), "stock_availability_only", False)
-        else None
-    )
+    # CHATBOT-CODE-MATCH R1/R7: a dealer's missed codes beside found ones get the pick a
+    # single-code miss gets (`dealer_stock.did_you_mean_each`), over the same candidates,
+    # never one this reply already answered.
+    offer = None
+    if not pick and not text and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
+        from app.services.chatbot import dealer_stock as dealer_mod
+
+        suggested = turn_compose.unplaced_suggestions(envelopes)
+        offer = dealer_mod.did_you_mean_each(
+            [
+                (m, (suggested.get(m) or {}).get("rows") or [], dealer_mod.quantity_of(verdict.get("entities"), m))
+                for m in misses
+            ],
+            answered=turn_compose.answered_codes(envelopes),
+            asked_at_turn=turn_no,
+        )
     if offer is not None:
-        misses = [m for m in misses if m != offer[0]]
+        misses = [m for m in misses if m not in offer[2]]
     if misses:
         miss_line = composers_stock.miss_line(misses)
         if miss_line:
             parts.append(miss_line)
     if offer is not None:
-        parts.append(offer[1])
+        parts.append(offer[0])
     if text:
         parts.append(text)
     question = (
         turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
         if pick
-        else offer[2] if offer is not None else None
+        else offer[1] if offer is not None else None
     )
     return dataclasses_replace(answer, text="\n\n".join(parts), question=question, sections=[])
-
-
-def _dealer_miss_offer(
-    misses: list[str], envelopes: list[dict[str, Any]], verdict: dict[str, Any], turn_no: int
-) -> tuple[str, str, Any] | None:
-    """The first missed code (as typed) with a did-you-mean, its sentence and its pick: the
-    candidates are the envelope's `unresolved_suggestions` (`answer.did_you_mean_by_token`),
-    the pick is `dealer_stock.did_you_mean` carrying that code's own quantity. None when no
-    miss has a candidate."""
-    from app.services.chatbot import dealer_stock as dealer_mod
-
-    suggested: dict[str, list[Any]] = {}
-    for envelope in envelopes or []:
-        carried = envelope.get("unresolved_suggestions") if isinstance(envelope, dict) else None
-        for raw, entry in (carried.items() if isinstance(carried, dict) else []):
-            if isinstance(entry, dict) and isinstance(entry.get("rows"), list):
-                suggested.setdefault(raw, entry["rows"])
-    for token in misses:
-        rows = [dict(r) for r in suggested.get(token) or [] if isinstance(r, dict)]
-        if not rows:
-            continue
-        key = turn_state.token_key(token)
-        quantity = next(
-            (
-                int(e["quantity"])
-                for e in verdict.get("entities") or []
-                if isinstance(e, dict)
-                and isinstance(e.get("quantity"), (int, float))
-                and not isinstance(e.get("quantity"), bool)
-                and key in (turn_state.token_key(e.get("raw")), turn_state.token_key(e.get("canonical_code")))
-            ),
-            None,
-        )
-        offered = dealer_mod.did_you_mean(token, rows, quantity=quantity, asked_at_turn=turn_no)
-        if offered is not None:
-            return token, offered[0], offered[1]
-    return None
 
 
 #: `turn/compose.py`'s once-per-turn line for a token nothing placed.

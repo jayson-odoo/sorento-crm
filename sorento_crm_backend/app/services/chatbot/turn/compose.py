@@ -437,6 +437,30 @@ def _line_number(line: str) -> int | None:
     return int(head) if dot and head.isdigit() else None
 
 
+def unplaced_suggestions(envelopes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """MULTI-CODE-DYM: each unplaced word's did-you-mean (`{"head", "rows"}`, keyed by the
+    word as typed) the envelopes carry (`envelope["unresolved_suggestions"]`), first wins."""
+    suggestions: dict[str, dict[str, Any]] = {}
+    for env in envelopes:
+        carried = env.get("unresolved_suggestions") if isinstance(env, dict) else None
+        for raw, entry in (carried.items() if isinstance(carried, dict) else []):
+            if isinstance(entry, dict) and isinstance(entry.get("rows"), list) and entry.get("head"):
+                suggestions.setdefault(raw, entry)
+    return suggestions
+
+
+def answered_codes(envelopes: list[dict[str, Any]]) -> set[str]:
+    """The codes this reply answered (`envelope["product_codes"]`), folded by `token_key`:
+    a did-you-mean never offers one of them again."""
+    return {
+        token_key(code)
+        for env in envelopes
+        if isinstance(env, dict)
+        for code in (env.get("product_codes") or [])
+        if isinstance(code, str)
+    }
+
+
 def _did_you_mean_per_code(
     text: str,
     unplaced: list[str],
@@ -481,18 +505,8 @@ def _did_you_mean_per_code(
             return line
         return f"I could not find {_join_words(names, localizer)}."
 
-    suggestions: dict[str, dict[str, Any]] = {}
-    for env in envelopes:
-        carried = env.get("unresolved_suggestions")
-        for raw, entry in (carried.items() if isinstance(carried, dict) else []):
-            if isinstance(entry, dict) and isinstance(entry.get("rows"), list) and entry.get("head"):
-                suggestions.setdefault(raw, entry)
-    used = {
-        token_key(code)
-        for env in envelopes
-        for code in (env.get("product_codes") or [])
-        if isinstance(code, str)
-    }
+    suggestions = unplaced_suggestions(envelopes)
+    used = answered_codes(envelopes)
     numbers = [b for b in (_line_number(line) for line in text.splitlines()) if b is not None]
     n = max(numbers, default=0)
     options: list[dict[str, Any]] = []

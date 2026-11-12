@@ -19,6 +19,7 @@ from typing import Any
 from app.services.chatbot import label_catalog
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending, ask
+from app.services.chatbot.turn.state import token_key
 from app.services.chatbot.turn.task import MAX_SLOTS, numbered
 
 #: Every escalation sentence the stock ask's composers print
@@ -74,6 +75,12 @@ def without_escalation(
     return refer.after(body), question
 
 
+def _code_of(row: dict[str, Any]) -> Any:
+    """A candidate row's code: a resolver roster row, or (`code`) a row of
+    `answer.did_you_mean_by_token`, a missed code beside found ones."""
+    return row.get("product") or row.get("value") or row.get("label") or row.get("code")
+
+
 def did_you_mean(
     typed: str,
     candidates: list[dict[str, Any]],
@@ -89,8 +96,7 @@ def did_you_mean(
     for row in candidates or []:
         if not isinstance(row, dict):
             continue
-        # `code`: a row of `answer.did_you_mean_by_token` (a missed code beside found ones).
-        code = row.get("product") or row.get("value") or row.get("label") or row.get("code")
+        code = _code_of(row)
         if not code or not row.get("uuid"):
             continue
         if row.get("entity_type") not in (None, "product"):
@@ -129,3 +135,69 @@ def did_you_mean(
         },
     )
     return text, pick
+
+
+def quantity_of(entities: Any, token: Any) -> int | None:
+    """The quantity the message stated for the product it typed as `token` (separators and
+    case folded), None when it stated none."""
+    key = token_key(token)
+    for e in entities or []:
+        if not isinstance(e, dict) or not key:
+            continue
+        qty = e.get("quantity")
+        if (
+            isinstance(qty, (int, float))
+            and not isinstance(qty, bool)
+            and key in (token_key(e.get("raw")), token_key(e.get("canonical_code")))
+        ):
+            return int(qty)
+    return None
+
+
+def did_you_mean_each(
+    groups: list[tuple[str, list[dict[str, Any]], Any]],
+    *,
+    answered: set[str] | frozenset[str] = frozenset(),
+    asked_at_turn: int | None = None,
+) -> tuple[str, Pending, list[str]] | None:
+    """CHATBOT-CODE-MATCH R7: every missed code of one message gets its own did-you-mean,
+    in one reply. `groups` is `(typed, candidates, quantity)` per missed code. A code this
+    reply already `answered` (folded by `token_key`), or one an earlier code offered, is not
+    offered again. One code with candidates left reads exactly as `did_you_mean`; several
+    read one numbered list each, numbers running on, stored as one pick whose `groups`
+    keep each code's quantity (`task.stock_pick`). Returns the text, the pick and the typed
+    codes it offered for; None when no candidate is left."""
+    from app.services.chatbot.turn.task import stock_pick
+
+    seen = set(answered)
+    blocks: list[tuple[str, Any, Pending, str]] = []
+    for typed, candidates, quantity in groups:
+        fresh = [r for r in candidates or [] if isinstance(r, dict) and token_key(_code_of(r)) not in seen]
+        one = did_you_mean(typed, fresh, quantity=quantity, asked_at_turn=asked_at_turn)
+        if one is None:
+            continue
+        seen.update(token_key(o["code"]) for o in one[1].options)
+        blocks.append((typed, quantity, one[1], one[0]))
+    if not blocks:
+        return None
+    if len(blocks) == 1:
+        typed, _quantity, pick, text = blocks[0]
+        return text, pick, [typed]
+    options: list[dict[str, Any]] = []
+    pick_groups: list[dict[str, Any]] = []
+    lines: list[str] = []
+    for _typed, quantity, one, _text in blocks:
+        start = len(options) + 1
+        options.extend({**o, "position": start + i} for i, o in enumerate(one.options))
+        positions = list(range(start, len(options) + 1))
+        shown = one.payload["typed"]
+        pick_groups.append({"typed": shown, "count": len(positions), "qty": quantity, "positions": positions})
+        lines.append("\n".join([f"Couldn't find {shown}. Did you mean:", *numbered([o["label"] for o in one.options], start)]))
+    stored = stock_pick(options, pick_groups)
+    pick = ask(
+        "product_pick",
+        stored["options"],
+        asked_at_turn=asked_at_turn,
+        payload={**stored["payload"], "did_you_mean": True},
+    )
+    return "\n\n".join(lines), pick, [b[0] for b in blocks]

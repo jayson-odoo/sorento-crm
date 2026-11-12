@@ -2301,25 +2301,34 @@ def _dealer_did_you_mean(
     ]
     from app.services.chatbot.turn.state import token_key
 
-    token = next(
-        (
-            c.get("for_raw")
-            for c in (offer.get("dym_candidates") or [])
-            if isinstance(c, Mapping) and c.get("for_raw")
-        ),
-        None,
-    )
-    # `for_raw` is the RESOLVER's token (dashes and spaces folded off); the dealer is shown
-    # what they typed, as the business lane's own did-you-mean quotes it (`raw_of_tok`).
-    typed = next(
-        (
-            e.get("raw")
-            for e in named
-            if e.get("raw") and token_key(token) in (token_key(e.get("raw")), token_key(e.get("canonical_code")))
-        ),
-        None,
-    ) if token else None
-    typed = typed or token or next((e.get("raw") for e in named if e.get("raw")), "")
+    def typed_of(token: Any) -> str | None:
+        # `for_raw` is the RESOLVER's token (dashes and spaces folded off); the dealer is shown
+        # what they typed, as the business lane's own did-you-mean quotes it (`raw_of_tok`).
+        return next(
+            (
+                e.get("raw")
+                for e in named
+                if e.get("raw") and token_key(token) in (token_key(e.get("raw")), token_key(e.get("canonical_code")))
+            ),
+            None,
+        )
+
+    by_token: dict[str, list[dict[str, Any]]] = {}
+    for c in offer.get("dym_candidates") or []:
+        if isinstance(c, Mapping) and c.get("for_raw"):
+            by_token.setdefault(str(c["for_raw"]), []).append(dict(c))
+    if len(by_token) > 1:
+        # CHATBOT-CODE-MATCH R7: several missed codes, each its own did-you-mean.
+        each = dealer_mod.did_you_mean_each(
+            [
+                (str(typed_of(token) or token), rows_of, dealer_mod.quantity_of(named, token))
+                for token, rows_of in by_token.items()
+            ],
+            asked_at_turn=asked_at_turn,
+        )
+        return (each[0], each[1]) if each is not None else None
+    token = next(iter(by_token), None)
+    typed = (typed_of(token) if token else None) or token or next((e.get("raw") for e in named if e.get("raw")), "")
     quantities = {
         int(e["quantity"])
         for e in named
