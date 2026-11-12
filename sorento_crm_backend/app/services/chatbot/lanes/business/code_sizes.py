@@ -8,9 +8,13 @@ missed product code:
 * a product whose stored size equals a number in the typed code, and whose code holds the
   rest of the typed parts (`answer.holds_every_typed_part`), is a close code: it is offered,
   never answered ("8152-300-SH" offers TWC8152-SH-300 with 300 stored);
-* when any close code holds a stored size, every close code carries one size line in its
-  display (`size_line`): the key the typed number matched, else the stored key, else
-  "<label>: not recorded". Nothing is assumed: a code with no stored value has no size.
+* a size the parser read apart from the code that the code does not store is never answered
+  with that code: its resolution becomes a miss ("Couldn't find X with size 400 mm") whose
+  close codes are what the generic code probe finds for the typed code
+  (`entity_resolver._prefix_probe_product`), a family of one included;
+* when any close code holds a stored size, or the miss is a size miss, every close code
+  carries one size line in its display (`size_line`): the key the typed number matched, else
+  the stored key, else "<label>: not recorded". Nothing is assumed.
 
 Data only: no company letter, size marker or key name is read.
 """
@@ -49,80 +53,105 @@ def _size_rows(db: Any) -> list[Any]:
 
 
 def _typed_of(parser: dict[str, Any], token: Any) -> str | None:
-    """The product entity's typed `raw` for the resolver's `token`, or None when the token
-    is not a product the parser named."""
+    """The word typed for the resolver's `token` (`turn_runtime._typed_by_token`, the one
+    lookup), or None when the message typed none."""
     from app.services.chatbot.turn.state import token_key
+    from app.services.chatbot.turn_runtime import _typed_by_token
 
-    key = token_key(token)
-    for e in jsc.array(jsc.get(parser, "entities")):
-        if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "").lower() not in ("", "product"):
-            continue
-        if key in (token_key(e.get("raw")), token_key(e.get("canonical_code"))):
-            return jsc.js_string(e.get("raw") or e.get("canonical_code") or token)
-    return None
+    return _typed_by_token(jsc.array(jsc.get(parser, "entities"))).get(token_key(token)) or None
 
 
 def _stored_matches(db: Any, rows: list[Any], typed: str) -> list[dict[str, Any]]:
-    """Products whose stored size (any size key a class scopes, or a bare-size key) equals a
-    number in `typed` and whose code holds every other typed part, as resolver-shaped rows."""
-    from sqlalchemy import Float, case, cast, func, or_
+    """Products whose stored size equals a number in `typed`, under a size key of the product's
+    own class (`bare_size.size_key_applies`), and whose code holds every other typed part in
+    order (`answer.typed_code_parts`, the slice 2 rule, read in the query before its bound)."""
+    from sqlalchemy import Float, and_, case, cast, func, or_
 
-    from app.models.product import Product, chat_searchable_products
+    from app.models.product import Product, ProductCategory, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
-    from app.services.chatbot.head.bare_size import size_key_rows
-    from app.services.chatbot.lanes.business.answer import (
-        _CODE_PART,
-        holds_every_typed_part,
-    )
+    from app.services.chatbot.lanes.business.answer import typed_code_parts
 
-    parts = _CODE_PART.findall(typed)
-    # Every class's size keys: the classes any key scopes, read through the one rule.
-    classes = {str(c).casefold() for r in rows for c in (getattr(r, "applies_when", None) or {}).get("class") or []}
-    keys = [r.spec_key for r in size_key_rows(rows, classes)]
+    parts = typed_code_parts(typed)
+    categories = ProductCategory.__table__  # Core, so the company listener cannot hide a shared category
+    product_class = func.lower(func.coalesce(ProductSpecifications.values["class"]["value"].astext, categories.c.class_label))
+    folded_code = func.lower(func.regexp_replace(Product.product_code, "[^[:alnum:]]", "", "g"))
     out: dict[str, dict[str, Any]] = {}
     for i, part in enumerate(parts):
-        if not part.isdigit() or not keys:
-            continue
         rest = parts[:i] + parts[i + 1 :]
-        if not rest:
+        if not part.isdigit() or not rest:
             continue
         number = float(part)
         conditions = []
-        for key in keys:
-            stored = ProductSpecifications.values[key]["value"]
+        for row in rows:
+            stored = ProductSpecifications.values[row.spec_key]["value"]
             value = cast(case((func.jsonb_typeof(stored) == "number", stored.astext), else_=None), Float)
-            conditions.append(value.between(number - 1e-6, number + 1e-6))
+            equal = value.between(number - 1e-6, number + 1e-6)
+            scope = [str(c).casefold() for c in (getattr(row, "applies_when", None) or {}).get("class") or []]
+            if scope:
+                conditions.append(and_(equal, product_class.in_(scope)))
+            elif getattr(row, "matches_bare_size", False):
+                conditions.append(equal)
+        if not conditions:
+            continue
+        escaped = [p.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") for p in rest]
         with db.begin_nested():
             found = (
                 db.query(Product.id, Product.product_code)
                 .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-                .filter(Product.is_active.is_(True), chat_searchable_products(), or_(*conditions))
+                .outerjoin(categories, categories.c.id == Product.category_id)
+                .filter(
+                    Product.is_active.is_(True),
+                    chat_searchable_products(),
+                    folded_code.like("%" + "%".join(escaped) + "%", escape="\\"),
+                    or_(*conditions),
+                )
                 .order_by(Product.product_code)
                 .limit(_STORED_MATCH_CAP)
                 .all()
             )
         for pid, code in found:
-            if str(pid) not in out and holds_every_typed_part("-".join(rest), code):
-                out[str(pid)] = {
-                    "entity_type": "product",
-                    "canonical_code": code,
-                    "uuid": str(pid),
-                    "match_field": "product_code",
-                    "match_tier": "stored_size",
-                    "similarity": None,
-                    "display": {},
-                }
+            out.setdefault(str(pid), _row(code, str(pid), "stored_size"))
     return list(out.values())
 
 
-def _size_line(rows: list[Any], values: dict[str, Any], numbers: list[float]) -> tuple[str, bool] | None:
-    """The one size line of a product with these stored `values`, and whether it is a stored
-    value: the key a typed number matched, else the first key with a stored value, else the
-    first size key "not recorded". None when its class has no size key."""
+def _row(code: str, uuid: str, tier: str) -> dict[str, Any]:
+    return {
+        "entity_type": "product", "canonical_code": code, "uuid": uuid, "match_field": "product_code",
+        "match_tier": tier, "similarity": None, "display": {},
+    }
+
+
+def _product_facts(db: Any, ids: list[str]) -> dict[str, tuple[dict[str, Any], str]]:
+    """`{product id: (stored spec values, class)}`: the class is the stored spec class, else the
+    product category's class (the class a product with no spec row is filed under)."""
+    from app.models.product import Product, ProductCategory
+    from app.models.product_spec import ProductSpecifications
+
+    categories = ProductCategory.__table__  # Core, so the company listener cannot hide a shared category
+    with db.begin_nested():
+        found = (
+            db.query(Product.id, ProductSpecifications.values, categories.c.class_label)
+            .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+            .outerjoin(categories, categories.c.id == Product.category_id)
+            .filter(Product.id.in_(ids))
+            .all()
+        )
+    out: dict[str, tuple[dict[str, Any], str]] = {}
+    for pid, values, class_label in found:
+        values = values if isinstance(values, dict) else {}
+        cls = jsc.js_string(jsc.get(jsc.get(values, "class"), "value") or class_label or "")
+        out[str(pid)] = (values, cls.casefold())
+    return out
+
+
+def _size_line(rows: list[Any], facts: tuple[dict[str, Any], str] | None, numbers: list[float]) -> tuple[str, bool] | None:
+    """The one size line of a product with these stored values and class, and whether it is a
+    stored value: the key a typed number matched, else the first key with a stored value, else
+    the first size key "not recorded". None when its class has no size key."""
     from app.services.chatbot.head.bare_size import size_key_rows
 
-    cls = jsc.get(jsc.get(values, "class"), "value")
-    keys = size_key_rows(rows, {str(cls).casefold()} if cls else set())
+    values, cls = facts or ({}, "")
+    keys = size_key_rows(rows, {cls} if cls else set())
     if not keys:
         return None
     stored = {r.spec_key: _number(jsc.get(jsc.get(values, r.spec_key), "value")) for r in keys}
@@ -138,106 +167,105 @@ def _size_line(rows: list[Any], values: dict[str, Any], numbers: list[float]) ->
 SIZE_ASKED = "size_asked"
 
 
-def _asked_size(parser: dict[str, Any], spec_none: Any) -> str:
-    """ "with size 400 mm" for the size `spec_none` says nothing holds: the grounded entity's
-    own label, value and unit (the registry key's, `head/bare_size`); "" when not one size."""
-    misses = [m for m in jsc.array(spec_none) if isinstance(m, dict)]
-    if len(misses) != 1:
-        return ""
-    for e in jsc.array(jsc.get(parser, "entities")):
-        if isinstance(e, dict) and e.get("spec_key") == misses[0].get("key") and e.get("spec_value") == misses[0].get("value"):
-            value = _number(e.get("spec_value"))
-            if value is None:
-                return ""
-            label = jsc.js_string(e.get("spec_label") or e.get("spec_key")).strip().lower()
-            return f"with {label} {_plain(value)} {jsc.js_string(e.get('spec_unit') or '').strip()}".strip()
-    return ""
+def _asked_size(parser: dict[str, Any]) -> tuple[list[str], float, str] | None:
+    """The one numeric size the parser read apart from a code (a grounded specification
+    entity of this message): the keys it may be under, its value, and "with size 400 mm" in
+    the key's own label and unit (`head/bare_size`). None when there is not exactly one."""
+    sizes = [
+        e for e in jsc.array(jsc.get(parser, "entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and e.get("spec_key")
+        and _number(e.get("spec_value")) is not None
+    ]
+    if len(sizes) != 1:
+        return None
+    e = sizes[0]
+    value = _number(e.get("spec_value"))
+    keys = [str(k) for k in e.get("spec_any_keys") or [e.get("spec_key")] if k]
+    label = jsc.js_string(e.get("spec_label") or e.get("spec_key")).strip().lower()
+    said = f"with {label} {_plain(value)} {jsc.js_string(e.get('spec_unit') or '').strip()}".strip()
+    return keys, value, said
 
 
-def _unheld_size_is_a_miss(db: Any, rows: list[Any], parser: dict[str, Any], resolved: dict[str, Any]) -> None:
-    """R4 (lead ruling, 12 Nov 2026): a size the parser read that no variant of the code's family
-    holds (the route's `spec_none`, `narrow_code_tokens_by_specs`) is never answered with a code
-    that has no stored size. Such a code's resolution becomes a miss whose close codes are its
-    family (`product_code_family._family_rows`, the same family the narrowing read), so the
-    reply is "Couldn't find X" and the family with each one's stored size."""
-    from app.models.product import Product
-    from app.models.product_spec import ProductSpecifications
+def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
+    """R4 (lead ruling, 12 Nov 2026): a code the parser named beside a size it does not store is
+    never answered as that code. Its resolution becomes a miss ("Couldn't find X with size N")
+    whose close codes are what the generic code probe finds for the code as typed
+    (`entity_resolver._prefix_probe_product`, prefix then substring), the code itself included,
+    so a family of one is still offered; the route's separate "None with size" clause is then
+    said by the header and dropped."""
     from app.services.chatbot.turn.state import token_key
-    from app.services.product_code_family import _CODE_WORD, _family_rows, _fold
+    from app.services.entity_resolver import _prefix_probe_product
 
+    asked = _asked_size(parser)
+    if asked is None:
+        return
+    keys, value, said = asked
     # The rows each typed token matched: per token (OR mode), or the one token's rows (AND mode).
-    asked: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
+    named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
         for res in resolved.get("resolutions") or []
         if isinstance(res, dict) and res.get("resolved") is True
     ]
     tokens = resolved.get("tokens") or []
     if isinstance(resolved.get("intersection"), list) and len(tokens) == 1:
-        asked.append((None, tokens[0], resolved["intersection"]))
-    for res, token, matched in asked:
-        if _typed_of(parser, token) is None:
-            continue
+        named.append((None, tokens[0], resolved["intersection"]))
+    for res, token, matched in named:
+        typed = _typed_of(parser, token)
         exact = [
             m for m in matched
             if isinstance(m, dict) and m.get("entity_type") == "product" and m.get("uuid")
             and token_key(m.get("canonical_code")) == token_key(token)
         ]
-        if len(exact) != 1 or not _CODE_WORD.match(_fold(exact[0].get("canonical_code"))):
+        if typed is None or len(exact) != 1:
             continue
+        values = (_product_facts(db, [str(exact[0]["uuid"])]).get(str(exact[0]["uuid"])) or ({}, ""))[0]
+        if any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys):
+            continue  # the code holds the size it was asked with: answered as today
         with db.begin_nested():
-            values = db.query(ProductSpecifications.values).filter(ProductSpecifications.product_id == str(exact[0]["uuid"])).scalar()
-        line = _size_line(rows, values or {}, [])
-        if line is None or line[1]:
-            continue  # its class has no size key, or the code holds a stored size: answered as today
-        codes = [code for code, _values, _text in _family_rows(db, _fold(exact[0]["canonical_code"]), loose=True)]
-        with db.begin_nested():
-            ids = dict(db.query(Product.product_code, Product.id).filter(Product.product_code.in_(codes)).all())
+            probed = _prefix_probe_product(db, typed)
         family = [
-            {"entity_type": "product", "canonical_code": code, "uuid": str(ids[code]), "match_field": "product_code",
-             "match_tier": "family", "similarity": None, "display": {}}
-            for code in codes if code in ids
+            _row(p.canonical_code, str(p.uuid), "family")
+            for p in probed
+            if p.uuid and p.canonical_code and (p.display or {}).get("is_active") is not False
         ]
-        if len(family) < 2:
+        if not family:
             continue
-        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family}
-        # What was not found is the size, never the code (owner: state only what the data
-        # holds): the miss reads "Couldn't find <code> with size <N> <unit>", and the route's
-        # separate "None with size" clause has nothing left to say.
-        asked_size = _asked_size(parser, resolved.get("spec_none"))
-        if asked_size:
-            miss[SIZE_ASKED] = asked_size
-            resolved["spec_none"] = []
+        miss = {
+            "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
+        }
         if res is not None:
             res.update(miss)
         else:
             # AND mode: the one token's rows become that token's miss, in the per-token shape.
             resolved.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [miss]})
+        resolved["spec_none"] = []
         unresolved = resolved.setdefault("unresolved_tokens", [])
         if token not in unresolved:
             unresolved.append(token)
 
 
 def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
-    """Every missed product code of `resolved` (in place): the products a stored size equal
-    to a typed number reaches, first among its close codes, and each close code's size line
-    when any of them holds a stored size. Best effort: a failed read changes nothing."""
-    from app.models.product_spec import ProductSpecifications
-    from app.services.chatbot.lanes.business.answer import _CODE_PART
+    """Every product code of `resolved` that missed (in place), or that a size it does not store
+    makes a miss (`_unheld_size_is_a_miss`): the products a stored size equal to a typed number
+    reaches, first among its close codes, and each close code's size line when any of them holds
+    a stored size or the miss is a size miss. The registry is read only for a miss. Best effort:
+    a failed read changes nothing."""
+    from app.services.chatbot.lanes.business.answer import typed_code_parts
 
     if not isinstance(resolved, dict):
         return
     try:
-        rows = _size_rows(db)
+        _unheld_size_is_a_miss(db, parser, resolved)
+        misses = [
+            (res, typed)
+            for res in resolved.get("resolutions") or []
+            if isinstance(res, dict) and res.get("resolved") is not True
+            and (typed := _typed_of(parser, res.get("token"))) is not None
+        ]
+        rows = _size_rows(db) if misses else []
         if not rows:
             return
-        if resolved.get("spec_none"):
-            _unheld_size_is_a_miss(db, rows, parser, resolved)
-        for res in resolved.get("resolutions") or []:
-            if not isinstance(res, dict) or res.get("resolved") is True:
-                continue
-            typed = _typed_of(parser, res.get("token"))
-            if typed is None:
-                continue
+        for res, typed in misses:
             alternatives = [a for a in res.get("alternatives") or [] if isinstance(a, dict)]
             seen = {str(a.get("uuid")) for a in [*alternatives, *(res.get("matches") or [])] if isinstance(a, dict)}
             added = [m for m in _stored_matches(db, rows, typed) if m["uuid"] not in seen]
@@ -249,17 +277,10 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
             ]
             if not close:
                 continue
-            with db.begin_nested():
-                stored = dict(
-                    db.query(ProductSpecifications.product_id, ProductSpecifications.values)
-                    .filter(ProductSpecifications.product_id.in_([str(a["uuid"]) for a in close]))
-                    .all()
-                )
-            numbers = [float(p) for p in _CODE_PART.findall(typed) if p.isdigit()]
-            lines = {
-                str(a["uuid"]): _size_line(rows, stored.get(str(a["uuid"])) or {}, numbers) for a in close
-            }
-            if not any(line and line[1] for line in lines.values()):
+            facts = _product_facts(db, [str(a["uuid"]) for a in close])
+            numbers = [float(p) for p in typed_code_parts(typed) if p.isdigit()]
+            lines = {str(a["uuid"]): _size_line(rows, facts.get(str(a["uuid"])), numbers) for a in close}
+            if not res.get(SIZE_ASKED) and not any(line and line[1] for line in lines.values()):
                 continue  # no close code holds a stored size: not a size question
             for a in close:
                 line = lines.get(str(a["uuid"]))

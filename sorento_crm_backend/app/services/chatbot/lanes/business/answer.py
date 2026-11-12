@@ -5084,15 +5084,21 @@ _CODE_KINDS = frozenset({"product", "product_set"})
 _CODE_PART = re.compile(r"[^\W\d_]+|\d+")
 
 
+def typed_code_parts(typed: Any) -> list[str]:
+    """CHATBOT-CODE-MATCH R2: a typed code's parts, case folded: each run of letters and each
+    run of digits, in typed order (separators and letter/digit boundaries split them)."""
+    return [p.casefold() for p in _CODE_PART.findall(jsc.nullish_str(typed))]
+
+
 def holds_every_typed_part(typed: Any, code: Any) -> bool:
     """CHATBOT-CODE-MATCH R2: does `code` hold every part of the `typed` code, in order? The
     parts are `typed` split at separators and letter/digit boundaries; a part is held when
     `code`, case and separators folded (`token_key`), contains it after the part before it.
     Generic: reads no company's letters, sizes or code shape. False when `typed` has no part."""
-    parts = _CODE_PART.findall(jsc.nullish_str(typed))
+    parts = typed_code_parts(typed)
     folded = token_key(jsc.nullish_str(code))
     at = 0
-    for part in (p.casefold() for p in parts):
+    for part in parts:
         at = folded.find(part, at)
         if at < 0:
             return False

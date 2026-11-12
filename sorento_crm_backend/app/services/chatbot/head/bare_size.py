@@ -81,11 +81,20 @@ def _scopes_class(row: Any, classes: set[str]) -> bool:
     return bool(classes) and any(str(c).casefold() in classes for c in scope)
 
 
+def size_key_applies(row: Any, classes: set[str]) -> bool:
+    """Is registry `row` a size key of a product of one of `classes`? A key a class scopes
+    (`applies_when.class`) is read for that class only; an unscoped key flagged
+    `matches_bare_size` for every class."""
+    if (getattr(row, "applies_when", None) or {}).get("class"):
+        return _scopes_class(row, classes)
+    return bool(getattr(row, "matches_bare_size", False))
+
+
 def size_key_rows(rows: list[Any], classes: set[str]) -> list[Any]:
-    """R6-1's size keys among the registry `rows` (numeric, with a unit): a key one of `classes`
-    scopes (`applies_when.class`), then the keys flagged `matches_bare_size`, registry order
+    """R6-1's size keys among the registry `rows` (numeric, with a unit) for `classes`
+    (`size_key_applies`): the keys a class scopes first, then the bare-size keys, registry order
     kept within each. The one rule a size number is read against; never a key list."""
-    keys = [r for r in rows if getattr(r, "matches_bare_size", False) or _scopes_class(r, classes)]
+    keys = [r for r in rows if size_key_applies(r, classes)]
     return sorted(keys, key=lambda r: not _scopes_class(r, classes))
 
 
@@ -129,7 +138,12 @@ def ground_bare(
         # own unit, never converted into the dimension keys' unit. Only when such a key
         # exists, so a millimetre key and every other unit read exactly as before.
         classes = _classes(db, entities, held_ids)
-        own = [r for r in size_key_rows(rows, classes) if str(r.unit).casefold() == unit_said]
+        # No class known yet (a code the resolver has not read): every size key in that unit is
+        # a candidate, and the stored values decide.
+        candidates = size_key_rows(rows, classes) if classes else [
+            r for r in rows if getattr(r, "matches_bare_size", False) or (getattr(r, "applies_when", None) or {}).get("class")
+        ]
+        own = [r for r in candidates if str(r.unit).casefold() == unit_said]
         for row in own:
             if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
                 return Grounded(row.spec_key, row.label, said, _plain(number), row.unit)
