@@ -2272,7 +2272,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               />
             )}
             {entryPath === 'manual' && (
-              <Button size="sm" variant="outline" onClick={lineEditor.addLine}>
+              <Button size="sm" variant="outline" onClick={() => lineEditor.addLine()}>
                 <Plus className="size-3.5 mr-1" /> Add line
               </Button>
             )}

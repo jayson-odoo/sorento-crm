@@ -717,8 +717,13 @@ export function SearchableSelect({
                       </>
                     ) : (
                       <div className="flex flex-1 flex-col min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="min-w-0 break-words">{opt.label}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span
+                            className={cn('min-w-0', multiAdd ? 'truncate' : 'break-words')}
+                            title={multiAdd ? opt.label : undefined}
+                          >
+                            {opt.label}
+                          </span>
                           {badges}
                         </div>
                         {opt.description && !sameDisplayText(opt.label, opt.description) ? (

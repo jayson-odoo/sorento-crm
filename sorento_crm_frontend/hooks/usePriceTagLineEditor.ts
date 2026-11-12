@@ -63,7 +63,6 @@ function tagItemOption(item: TagItemOption): SearchableSelectOption {
     description: itemOptionDescription(item.kind === 'product_set', item.code, item.name),
     code: item.code,
     name: item.name || item.code,
-    ...(item.is_discontinued ? { badgeText: 'Discontinued' } : {}),
   };
 }
 
@@ -105,6 +104,17 @@ function itemPickPatch(option: SearchableSelectOption): Partial<DraftLine> {
 function lineHoldsItem(line: DraftLine, option: SearchableSelectOption): boolean {
   const [kind, id] = option.value.split(':');
   return kind === 'product_set' ? line.product_set_id === id : line.product_id === id;
+}
+
+/** The Item picker's option (AC-13): one line, the code only. The name stays on the option for
+ *  `handleItemSelect` and is matched server-side; a set and a discontinued product carry a hint. */
+function itemSearchOption(item: TagItemOption): SearchableSelectOption {
+  return {
+    ...tagItemOption(item),
+    label: item.code,
+    description: undefined,
+    badgeText: item.kind === 'product_set' ? 'Set' : item.is_discontinued ? 'Discontinued' : undefined,
+  };
 }
 
 /** The three catalogue calls the editor makes. */
@@ -206,11 +216,20 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   }, [priceMode, pricingSignature, lookups, setLines]);
 
   // ---- Line management ----
-  const addLine = useCallback(() => {
-    // PRICETAG-LPSP: a new line is untyped, so it follows Preferred Default until the row's own
-    // toggle (or the paste) sets it.
-    setLines((prev) => [...prev, emptyDraftLine()]);
-  }, [setLines]);
+  /** Appends a new untyped line, or inserts it directly after `afterKey`; returns its key. */
+  const addLine = useCallback(
+    (afterKey?: string): string => {
+      // PRICETAG-LPSP: a new line is untyped, so it follows Preferred Default until the row's own
+      // toggle (or the paste) sets it.
+      const line = emptyDraftLine();
+      setLines((prev) => {
+        const at = afterKey === undefined ? -1 : prev.findIndex((l) => l.key === afterKey);
+        return at < 0 ? [...prev, line] : [...prev.slice(0, at + 1), line, ...prev.slice(at + 1)];
+      });
+      return line.key;
+    },
+    [setLines],
+  );
 
   const removeLine = useCallback(
     (key: string) => {
@@ -613,7 +632,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   const fetchItemOptions = useCallback(
     async (query: string): Promise<SearchableSelectOption[]> => {
       const items = await lookups.lookupTagItems(query);
-      return items.map(tagItemOption);
+      return items.map(itemSearchOption);
     },
     [lookups],
   );
@@ -687,42 +706,12 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     [forgetCombosAsked, updateLine, lines],
   );
 
-  /**
-   * PRICETAG-MULTI-ADD: Add N from the Item picker. The first option not already on the
-   * request fills the row it was opened from; each further one becomes a new line directly
-   * below, in order, in ONE update. An option already on another line, or repeated in the
-   * batch, is skipped.
-   */
-  const handleItemsAdd = useCallback(
-    (key: string, options: SearchableSelectOption[]) => {
-      forgetCombosAsked(key);
-      setLines((prev) => {
-        const origin = prev.find((l) => l.key === key);
-        if (!origin) return prev;
-        const fresh: SearchableSelectOption[] = [];
-        for (const option of options) {
-          if (prev.some((l) => l.key !== key && lineHoldsItem(l, option))) continue;
-          if (fresh.some((f) => f.value === option.value)) continue;
-          fresh.push(option);
-        }
-        if (fresh.length === 0) return prev;
-        const [first, ...rest] = fresh;
-        const added = rest.map((option) => ({ ...emptyDraftLine(), ...itemPickPatch(option) }));
-        return prev.flatMap((l) =>
-          l.key === key ? [{ ...l, ...itemPickPatch(first) }, ...added] : [l],
-        );
-      });
-    },
-    [forgetCombosAsked, setLines],
-  );
-
   return {
     linePricing,
     addLine,
     removeLine,
     updateLine,
     handleItemSelect,
-    handleItemsAdd,
     choosePackage,
     chooseTemplate,
     choosePromotion,
@@ -739,3 +728,39 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
 }
 
 export type PriceTagLineEditor = ReturnType<typeof usePriceTagLineEditor>;
+
+/**
+ * PRICETAG-MULTI-ADD: Add N from the Item picker, through the one pick path. Options already on
+ * another line, or repeated in the batch, are dropped. The first fills `key` through
+ * `handleItemSelect`; each further one goes on a new line directly below the previous, via
+ * `addLine` and the same `handleItemSelect`. Sets no line field itself. If the row already holds
+ * one of the options it keeps it and the rest go below (`handleItemSelect` would otherwise refuse
+ * that option on its new line, from its pre-batch `lines`).
+ */
+export function addPickedItems(
+  editor: Pick<PriceTagLineEditor, 'addLine' | 'handleItemSelect'>,
+  lines: DraftLine[],
+  key: string,
+  options: SearchableSelectOption[],
+): void {
+  const fresh: SearchableSelectOption[] = [];
+  for (const option of options) {
+    if (lines.some((l) => l.key !== key && lineHoldsItem(l, option))) continue;
+    if (fresh.some((f) => f.value === option.value)) continue;
+    fresh.push(option);
+  }
+  const origin = lines.find((l) => l.key === key);
+  const held = origin ? fresh.find((o) => lineHoldsItem(origin, o)) : undefined;
+  let previous = key;
+  let rest = fresh;
+  if (held) {
+    rest = fresh.filter((o) => o !== held);
+  } else if (fresh.length > 0) {
+    editor.handleItemSelect(key, fresh[0]);
+    rest = fresh.slice(1);
+  }
+  for (const option of rest) {
+    previous = editor.addLine(previous);
+    editor.handleItemSelect(previous, option);
+  }
+}

@@ -27,7 +27,7 @@ import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
 import { defaultOptionFor, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
-import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
+import { addPickedItems, type PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
@@ -162,7 +162,7 @@ export function PriceTagLinesTable({
               fetchItemOptions={editor.fetchItemOptions}
               fetchPartOptions={editor.fetchPartOptions}
               onItemSelect={editor.handleItemSelect}
-              onItemsAdd={editor.handleItemsAdd}
+              onItemsAdd={(key, opts) => addPickedItems(editor, lines, key, opts)}
               takenItems={takenItems}
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
@@ -705,7 +705,6 @@ function LineRow({
             // "CODE  RM <price>" text when the picked value is among the options.
             renderTriggerLabel={() => selectedItem?.label}
             clearable
-            wrapOptions
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
             multiAdd={{
