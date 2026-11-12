@@ -679,7 +679,7 @@ def test_g_1011_round_7_session(session_factory, monkeypatch, stub_access):
     assert c.say("5", reply(demand_qty=5, open_question_answer=answer("fill", items=[(1, None, 5)]))) == _answered(
         ("SRTWC286-SH-150", 5)
     )
-    # Row 8: a did-you-mean of three; "2" picks SRTWC286-SH; 50; "howa bout 30".
+    # Row 8: a did-you-mean of three; "3" picks SRTWC286-SH; 50; "howa bout 30".
     # CODE-VARIANTS (#1573, owner card Q1/Q2): the typed code's own family (SRTWC286)
     # leads the suggestions, so another model's SRTWC287-S-150 no longer makes the three.
     # CHATBOT-CODE-MATCH AC-10: the typed code is quoted as typed, dashes kept.
