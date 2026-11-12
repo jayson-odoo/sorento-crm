@@ -364,3 +364,185 @@ def test_ac_v2_6_the_per_project_export_route_carries_status_and_was_columns(env
     assert mine[0].get("STATUS") == "Waiting for CS", mine[0]
     assert _as_ddmmyyyy(mine[0].get("DELIVERY DATE")) == "01/02/2027", mine[0]
     assert _as_ddmmyyyy(mine[0].get("WAS DATE")) == "01/01/2027", mine[0]
+
+
+# ================================================================ v2 review gaps (B1..S4)
+def _cover_with_po(env, w, *, qty=None):
+    """A live PO link covering the row's qty (a real PO line of the same company)."""
+    from .test_ac_removed_lines_ingest import _push_po
+    from .test_order_inquiry_kinds import _link
+
+    po = _push_po(env)
+    link = _link(
+        env.db, env.company_a, w.row_id, str(qty or 10),
+        po_line_id=po.line_b, document=po.po_number,
+    )
+    env.db.commit()
+    return po, link
+
+
+def _auto_confirm(env, w):
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    svc = ProjectOrderInquiryService(env.db)
+    with company_scope(env.db, frozenset({env.company_a})):
+        svc.refresh_link_state([env.db.get(__import__("app.models.project_so", fromlist=["x"]).OrderInquiryRow, w.row_id)])
+        svc.auto_confirm([w.row_id])
+    env.db.commit()
+    env.db.expire_all()
+
+
+def test_ac_v2_b1a_control_a_covered_ordinary_row_is_auto_confirmed(env):
+    """Control for B1a: the same link on a row with no pending change IS acknowledged."""
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    w = _world(env)
+    _cover_with_po(env, w)
+
+    _auto_confirm(env, w)
+
+    assert _row_snapshot(env, w.row_id)["ack_state"] == ACK_ACKNOWLEDGED
+
+
+def test_ac_v2_b1a_auto_confirm_does_not_acknowledge_a_waiting_row(env):
+    w = _world(env, "date")
+    _cover_with_po(env, w)
+
+    _auto_confirm(env, w)
+
+    assert _row_snapshot(env, w.row_id)["ack_state"] == ACK_AWAITING
+
+
+def test_ac_v2_b1a_the_po_line_cascade_does_not_acknowledge_a_waiting_row(env):
+    """The cascade a PO push runs (`auto_confirm_rows_on_po_lines`)."""
+    from app.services.project_order_inquiry_service import auto_confirm_rows_on_po_lines
+
+    w = _world(env, "date")
+    po, _link_row = _cover_with_po(env, w)
+
+    auto_confirm_rows_on_po_lines(env.db, [po.line_b])
+    env.db.commit()
+    env.db.expire_all()
+
+    assert _row_snapshot(env, w.row_id)["ack_state"] == ACK_AWAITING
+
+
+def test_ac_v2_b1b_the_to_confirm_count_matches_what_the_filter_lists(env):
+    waiting = _world(env, "date")
+    ordinary = _world(env)
+
+    res = env.client.get(f"{BASE}/order-inquiries/summary")
+    assert res.status_code == 200, res.text
+    chip = res.json()["ack"]["to_confirm"]
+    listed = [r["id"] for r in _worklist(env, waiting, ack="to_confirm")]
+
+    assert listed == [ordinary.row_id], listed
+    assert chip == len(listed), (chip, listed)
+
+
+def test_ac_v2_b2_confirming_the_batch_acknowledges_a_row_its_links_fully_cover(env):
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    w = _world(env, "date")
+    _cover_with_po(env, w)
+    assert _row_snapshot(env, w.row_id)["ack_state"] == ACK_AWAITING, "precondition"
+
+    _confirm(w)
+
+    assert _row_snapshot(env, w.row_id)["ack_state"] == ACK_ACKNOWLEDGED
+
+
+def _sheet_cells(content: bytes):
+    sheet = openpyxl.load_workbook(io.BytesIO(content)).worksheets[0]
+    header = [str(c.value).strip() if c.value is not None else "" for c in sheet[1]]
+    return sheet, header
+
+
+def test_ac_v2_b3_was_date_has_the_same_date_format_as_delivery_date_in_both_exports(env):
+    w = _world(env, "date")
+
+    for name, content in _exports(env, w).items():
+        sheet, header = _sheet_cells(content)
+        assert "WAS DATE" in header, (name, header)
+        delivery = sheet.cell(row=2, column=header.index("DELIVERY DATE") + 1)
+        was = sheet.cell(row=2, column=header.index("WAS DATE") + 1)
+        assert was.value is not None, (name, "WAS DATE is empty")
+        assert was.number_format == delivery.number_format, (
+            name, was.number_format, delivery.number_format,
+        )
+        assert "yy" in was.number_format.lower(), (name, was.number_format)
+
+
+def test_ac_v2_s1_a_date_change_put_back_while_the_item_also_changed_stays_waiting(env):
+    w = _world(env, "date")
+    assert _wl_row(env, w).get("waiting_for_cs") is True, "precondition"
+
+    # the date goes back to its confirmed value, but the line is now another product
+    _push(
+        w,
+        dict(
+            w.record,
+            lines=[dict(w.x, required_date=OLD_DATE, product_ref=env.product2_ref), w.y],
+        ),
+    )
+
+    assert _wl_row(env, w).get("waiting_for_cs") is True
+
+
+def test_ac_v2_s2_was_qty_is_empty_for_a_changed_row_and_filled_for_a_waiting_row(env):
+    from sqlalchemy import text
+
+    changed = _world(env)
+    env.db.execute(
+        text(
+            "UPDATE order_inquiry_rows SET ack_state = 'changed', previous_qty = 8, "
+            "changed_at = now() WHERE id = :i"
+        ),
+        {"i": changed.row_id},
+    )
+    env.db.commit()
+    waiting = _world(env, "qty")
+
+    def was_qty(content, so_row_qty):
+        sheet, header = _sheet_cells(content)
+        rows = list(sheet.iter_rows(min_row=2, values_only=True))
+        col = header.index("WAS QTY")
+        q = header.index("QTY")
+        return [r[col] for r in rows if r[q] == so_row_qty]
+
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    service = OrderInquiryWorklistService(env.db)
+    changed_sheet = service.export_xlsx(inquiry_id=changed.inquiry_id)[1]
+    waiting_sheet = service.export_xlsx(inquiry_id=waiting.inquiry_id)[1]
+
+    assert was_qty(changed_sheet, 10) in ([None], [""]), was_qty(changed_sheet, 10)
+    assert was_qty(waiting_sheet, 7) == [10], was_qty(waiting_sheet, 7)
+
+
+def test_ac_v2_s4_a_cancel_so_document_line_waits_for_cs(env):
+    """PROBE: an AutoCount Cancel SO document fully cancels ONE line (header open) of an SO
+    with a live OI row. After sync the row keeps (raised, awaiting)."""
+    from .test_autocount_cancel_effects import _push_xs
+    from .test_oi_cancelled_line_used_confirm import _mirror_for_ingest_line
+
+    x = _so_line(env, ref="SRT_DB:4001:5001", qty_ordered=10)
+    record = _so_record(env, number="ZZT-S4-SO", ref="ZZTDOC:SO:ZZT-S4-SO", lines=[x])
+    res = env.post(INGEST_SO, [record])
+    assert res.status_code == 200, res.text
+    header = env.header("sales_orders", record["source_ref"])
+    line = env.so_lines(header["id"])[0]
+    product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+    _mirror, row = _mirror_for_ingest_line(
+        env, header["id"], line["id"], product_id, row_state=INQUIRY_RAISED, row_ack=ACK_AWAITING,
+    )
+
+    _push_xs(env, "ZZT-S4-SO", 10)
+    res = env.post(INGEST_SO, [dict(record, status="open")])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    assert env.so_lines(header["id"])[0]["line_status"] == "cancelled", "precondition"
+    snap = _row_snapshot(env, str(row.id))
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap

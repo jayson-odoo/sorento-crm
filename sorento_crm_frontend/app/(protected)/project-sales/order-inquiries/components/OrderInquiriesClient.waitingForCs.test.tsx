@@ -334,8 +334,8 @@ beforeEach(() => {
   unacknowledgeOrderInquiryRows.mockResolvedValue({ updated: 0, skipped: 0 });
 });
 
-describe('AC-V2-3: a waiting row is not offered to Confirm', () => {
-  it('disables the tick box of a waiting_for_cs row, with the reason, and Confirm stays at 0', async () => {
+describe('AC-V2-3 (S3): a waiting row can be ticked, but Confirm skips it and says so', () => {
+  it('ticks a waiting_for_cs row freely; Confirm sends only the ordinary row and names the skipped one', async () => {
     const waitingRow = ackRow({
       id: 'row-waiting',
       item_code: 'ZZT-WAIT',
@@ -352,19 +352,39 @@ describe('AC-V2-3: a waiting row is not offered to Confirm', () => {
       state: 'raised',
     });
     listOrderInquiryWorklist.mockResolvedValue(envelope([waitingRow, plainRow]));
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 1,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 0,
+    });
 
     renderClient();
     await screen.findByText('SO-WAIT');
 
     const waitingBox = screen.getByLabelText('Select ZZT-WAIT on SO-WAIT');
-    expect(waitingBox).toBeDisabled();
-    // The shared select column puts the reason on the wrapper span (a disabled control gets
-    // no hover), so the title is read there.
-    expect(waitingBox.closest('span[title]')).toHaveAttribute(
-      'title',
-      expect.stringContaining('Waiting for CS to confirm the sales order change'),
+    expect(waitingBox).toBeEnabled();
+    fireEvent.click(waitingBox);
+    fireEvent.click(screen.getByLabelText('Select ZZT-PLAIN on SO-PLAIN'));
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm \(/ }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(
+        ['row-plain'],
+        expect.anything(),
+      ),
     );
-    expect(screen.getByLabelText('Select ZZT-PLAIN on SO-PLAIN')).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Confirm (0)' })).toBeDisabled();
+    const notices = [
+      ...(toast.success as unknown as { mock: { calls: unknown[][] } }).mock.calls,
+      ...(toast.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls,
+    ]
+      .map((call) => String(call[0]))
+      .join(' | ');
+    const shown = `${notices} | ${document.body.textContent ?? ''}`;
+    expect(shown).toMatch(/1 row (is )?waiting for CS/i);
+    expect(shown).toMatch(/skipped/i);
   });
 });
