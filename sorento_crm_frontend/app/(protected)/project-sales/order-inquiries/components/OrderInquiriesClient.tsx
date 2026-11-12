@@ -72,7 +72,6 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
 import { LinkDocumentDialog } from '../../_shared/components/LinkDocumentDialog';
-import { STATE_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 import {
@@ -1655,25 +1654,6 @@ export function OrderInquiriesClient({
             };
           })}
           placeholder="Any"
-        />
-      </div>
-      <div className="space-y-1.5">
-        {/* AC-OH-61: the row's OWN state - Raised / Partly linked / Actioned /
-            Cancelled / Linked, off `summary.by_state` (`total` is a count, not an
-            option). The one field that can ask for `state=cancelled`, since the list
-            hides cancelled by default otherwise (S5). */}
-        <Label className="text-xs text-muted-foreground">State</Label>
-        <SearchableMultiSelect
-          value={splitMulti(stateFilter)}
-          onChange={(value) => setStateFilter(joinMulti(value))}
-          clearable
-          options={Object.entries(summary.data?.by_state ?? {})
-            .filter(([key]) => key !== 'total')
-            .map(([key, count]) => ({
-              value: key,
-              label: `${STATE_LABEL[key] ?? key} (${count})`,
-            }))}
-          placeholder="Every state"
         />
       </div>
       <div className="space-y-1.5">
