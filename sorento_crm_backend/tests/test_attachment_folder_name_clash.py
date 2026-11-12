@@ -277,7 +277,7 @@ def test_upload_of_a_new_original_name_succeeds(db):
 def test_move_clash_409_carries_what_the_dialog_needs(db):
     folder_a = _folder(db, "Folder A")
     folder_b = _folder(db, "Folder B")
-    existing = _file(db, "photo.jpg", folder_b)
+    _file(db, "photo.jpg", folder_b)
     _file(db, "photo (1).jpg", folder_b)
     moving = _file(db, "photo.jpg", folder_a)
 
@@ -288,7 +288,7 @@ def test_move_clash_409_carries_what_the_dialog_needs(db):
     details = ei.value.detail["details"]
     assert details["file_name"] == "photo.jpg"
     assert details["folder_name"] == "Folder B"
-    assert details["existing_attachment_id"] == existing.id
+    assert "existing_attachment_id" not in details, "the 409 must not hand out another file's id"
     assert details["existing_file_name"] == "photo.jpg"
     assert details["suggested_name"] == "photo (2).jpg"
 
@@ -390,13 +390,13 @@ def test_general_rename_still_changes_only_the_visible_name(db):
 def test_bulk_move_not_moved_entry_carries_the_dialog_details(db):
     folder_a = _folder(db, "Folder A")
     folder_b = _folder(db, "Folder B")
-    existing = _file(db, "photo.jpg", folder_b)
+    _file(db, "photo.jpg", folder_b)
     clashing = _file(db, "photo.jpg", folder_a)
 
     _updated, not_moved = AttachmentService(db).bulk_move_report([clashing.id], folder_b)
 
     entry = not_moved[0]
-    assert entry["existing_attachment_id"] == existing.id
+    assert "existing_attachment_id" not in entry
     assert entry["existing_file_name"] == "photo.jpg"
     assert entry["folder_name"] == "Folder B"
     assert entry["suggested_name"] == "photo (1).jpg"

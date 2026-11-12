@@ -1064,10 +1064,13 @@ def process_attachment_bulk_import(
                     successful += 1
                     seen_in_run.add((directory_id, original_filename.lower()))
                 except Exception as e:
-                    errors.append(f"{file_path}: {e}")
+                    # An AppException (e.g. a folder name clash) carries a plain message; its
+                    # str() is the raw "409: {...}" body.
+                    plain = getattr(e, "message", None) or str(e)
+                    errors.append(f"{file_path}: {plain}")
                     logger.exception("Bulk import file failed: %s", file_path)
                     outcome.fail(
-                        row=entry_row, code=oc.ROW_ERROR, message=str(e),
+                        row=entry_row, code=oc.ROW_ERROR, message=plain,
                         value=file_path, identity=entry_identity,
                     )
                     failed += 1

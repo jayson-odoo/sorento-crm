@@ -24,6 +24,7 @@ from app.dependencies import (
 )
 
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
+from app.services.user_service import UserPermissionService
 from app.services.attachment_company_service import AttachmentCompanyService
 from app.services.attachment_entity_access import (
     PROJECT_ENTITY_TYPE,
@@ -202,8 +203,14 @@ def _next_copy_name(
     entity_id: Optional[str] = None,
 ) -> str:
     """Loop _suffix_copy_name until the candidate display name is free in the directory."""
+    service = AttachmentService(db)
     candidate = _suffix_copy_name(display_name)
-    while _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None:
+    # Free on the visible name AND on the folder's one-original-name index, or the copy
+    # itself would clash with a renamed file still holding that original name.
+    while (
+        _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None
+        or service._folder_clash(directory_id, sanitize_storage_filename(candidate)) is not None
+    ):
         candidate = _suffix_copy_name(candidate)
     return candidate
 
@@ -984,6 +991,18 @@ async def create_attachment(
         #   original_filename = immutable, sanitized → the object-key basename
         stored_filename = display_name
         original_filename = sanitize_storage_filename(display_name)
+        if existing_to_replace is None:
+            # FILES-MOVE-DUPLICATE: the folder allows one file per ORIGINAL name; a renamed file
+            # can still hold it. Refuse in plain words before the bytes go to storage.
+            original_clash = AttachmentService(db)._folder_clash(directory_id, original_filename)
+            if original_clash is not None:
+                raise AttachmentService(db)._clash_error(
+                    stored_filename,
+                    original_clash,
+                    directory_id,
+                    verb="added to",
+                    code="ATTACHMENT_FOLDER_NAME_CLASH",
+                )
 
         # Get attachment type: optional in DB (nullable); required by API for new uploads.
         # When entity_type is "promotion" and no type_id given, use the promotion attachment type (code='promotion').
@@ -1592,7 +1611,26 @@ def update_attachment(
                 requested.get("entity_id", current.entity_id),
                 current_user,
             )
-        attachment = service.update_attachment(attachment_id, attachment_data)
+        if requested.get("on_conflict") == "replace":
+            # Replace sends the file already in the target folder to Trash: the same slug as
+            # Archive, and the same per-record write check that file's own edit would take.
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "resource.attachments.delete"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Replacing a file needs the permission to delete files.",
+                )
+            clash = service._folder_clash(
+                requested.get("directory_id", current.directory_id),
+                current.original_filename,
+                exclude_id=current.id,
+            )
+            if clash is not None:
+                assert_can_write_existing(db, clash.entity_type, clash.entity_id, current_user)
+        attachment = service.update_attachment(
+            attachment_id, attachment_data, actor_id=str(current_user["id"])
+        )
         # The bare ORM row serializes company_name as None; stamp it so the write
         # echo matches what the list and detail reads return.
         data = AttachmentResponse.model_validate(attachment).model_dump()
@@ -1615,8 +1653,8 @@ def bulk_move_attachments(
         # A moved file is under that folder's delete / restore cascade from then on.
         assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
-        updated = service.bulk_move(body.attachment_ids, body.directory_id)
-        return AttachmentsBulkMoveResponse(updated=updated)
+        updated, not_moved = service.bulk_move_report(body.attachment_ids, body.directory_id)
+        return AttachmentsBulkMoveResponse(updated=updated, not_moved=not_moved)
     except HTTPException:
         raise
     except Exception as e:

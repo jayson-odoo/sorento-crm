@@ -182,7 +182,11 @@ def test_an_ambiguous_scope_is_never_guessed(db):
 
     for scope in (None, UNSET, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID})):
         set_company_scope(db, scope)
-        attachment = _upload(db, _payload(db, directory_id=directory_id))
+        # One active original name per folder (migration 198), so each pass uploads its own.
+        name = f"{uuid.uuid4().hex[:8]}.xlsx"
+        attachment = _upload(
+            db, _payload(db, directory_id=directory_id, original_filename=name, stored_filename=name)
+        )
         assert attachment.company_id is None, f"scope {scope!r} was guessed at"
 
         at_root = _upload(db, _payload(db))

@@ -223,6 +223,11 @@ class AttachmentUpdate(BaseModel):
     stored_filename: Optional[str] = None
     target_entity_type: Optional[str] = None
     target_field_keys: Optional[list[str]] = None
+    # FILES-MOVE-DUPLICATE: how a move answers a name clash in the target folder. Omitted =
+    # 409 naming the file and the folder. "replace" = the clashing file goes to Trash and this
+    # one takes its place. "rename" = `stored_filename` becomes the visible AND original name
+    # (DB only; the stored object and its URL never change), then the move runs.
+    on_conflict: Optional[Literal["replace", "rename"]] = None
 
     @model_validator(mode="after")
     def _check_field_linkage_template(self):
@@ -293,8 +298,20 @@ class AttachmentsBulkMoveRequest(BaseModel):
         return v
 
 
+class AttachmentNotMoved(BaseModel):
+    """A file a bulk move left where it was, with what the clash dialog needs."""
+    attachment_id: str
+    file_name: str
+    folder_name: str
+    message: str
+    existing_file_name: Optional[str] = None
+    suggested_name: Optional[str] = None
+
+
 class AttachmentsBulkMoveResponse(BaseModel):
     updated: int
+    # One bad file never fails the batch: every other file moves and these are named.
+    not_moved: list[AttachmentNotMoved] = []
 
 
 class UploadedByUser(BaseModel):

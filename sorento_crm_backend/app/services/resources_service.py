@@ -3,6 +3,7 @@ import logging
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ from app.schemas.resources import (
     AttachmentDirectoryCreate, AttachmentDirectoryUpdate,
 )
 from app.services.error_handler import (
+    AppException,
     handle_not_found,
     handle_conflict,
     handle_unprocessable,
@@ -22,6 +24,20 @@ from app.services.embedding_events import publish_embedding_event
 from app.services.storage_router import extract_key
 from app.services.entity_attachment_service import exclude_private_types, is_private_to_others
 from app.utils.multi_value import multi_values
+
+
+FOLDER_NAME_INDEX = "ux_attachments_dir_lower_filename_active"
+
+
+def _is_folder_name_clash(exc: IntegrityError) -> bool:
+    """True when the IntegrityError is the one-name-per-folder index (migration 198)."""
+    return FOLDER_NAME_INDEX in str(getattr(exc, "orig", None) or exc)
+
+
+def uuid_suffix() -> str:
+    import uuid as _uuid
+
+    return _uuid.uuid4().hex[:6]
 
 
 _UUID_RE = re.compile(
@@ -2135,7 +2151,21 @@ class AttachmentService:
 
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            # FILES-MOVE-DUPLICATE: the folder already holds this original name. The upload
+            # route checks the visible name only (and per record), so this is the backstop.
+            self.db.rollback()
+            if not _is_folder_name_clash(exc):
+                raise
+            raise self._clash_error(
+                attachment_dict.get("stored_filename") or attachment_dict.get("original_filename"),
+                self._folder_clash(directory_id, attachment_dict.get("original_filename")),
+                directory_id,
+                verb="added to",
+                code="ATTACHMENT_FOLDER_NAME_CLASH",
+            )
         self.db.refresh(attachment)
 
         # A shared FORM attachment (complaint/PR/stock-inquiry) is NULL by the
@@ -2168,11 +2198,138 @@ class AttachmentService:
         )
         return attachment
     
-    def update_attachment(self, attachment_id: str, attachment_data: AttachmentUpdate):
-        """Update an attachment. Recalculates full_directory_path when directory_id changes."""
+    # ---- FILES-MOVE-DUPLICATE: a name clash inside a folder ------------------------------
+    #
+    # ``ux_attachments_dir_lower_filename_active`` (migration 198) allows one active file per
+    # (folder, lower(original_filename)). Every write that can hit it checks first and still
+    # catches the IntegrityError of a race, so a clash always reads as a plain 409 naming the
+    # file and the folder, never a 500 with database text.
+
+    def _folder_clash(self, directory_id: Optional[str], original_name: Optional[str], exclude_id=None):
+        """The active file in ``directory_id`` holding ``original_name`` (any case), or None.
+
+        Mirrors the index exactly: root (no folder) is never checked, deleted files never count.
+        """
+        if not directory_id:
+            return None
+        q = self.db.query(Attachment).filter(
+            Attachment.directory_id == directory_id,
+            func.lower(Attachment.original_filename) == (original_name or "").lower(),
+            Attachment.is_deleted.is_(False),
+        )
+        if exclude_id:
+            q = q.filter(Attachment.id != str(exclude_id))
+        return q.first()
+
+    def _folder_label(self, directory_id: Optional[str]) -> str:
+        name = (
+            self.db.query(AttachmentDirectory.name)
+            .filter(AttachmentDirectory.id == directory_id)
+            .scalar()
+            if directory_id
+            else None
+        )
+        return name or "this folder"
+
+    def _name_free(self, directory_id: str, display_name: str, exclude_id=None) -> bool:
+        """Free on the index (original name) AND not a visible twin, so a suggestion never
+        lands on a name the user already sees in that folder."""
+        from app.services.storage_router import sanitize_storage_filename
+
+        if self._folder_clash(directory_id, sanitize_storage_filename(display_name), exclude_id):
+            return False
+        q = self.db.query(Attachment.id).filter(
+            Attachment.directory_id == directory_id,
+            func.lower(Attachment.stored_filename) == display_name.lower(),
+            Attachment.is_deleted.is_(False),
+        )
+        if exclude_id:
+            q = q.filter(Attachment.id != str(exclude_id))
+        return q.first() is None
+
+    def _suggest_name(self, directory_id: str, display_name: str, exclude_id=None) -> str:
+        """``photo.jpg`` -> ``photo (1).jpg``, bumped until free in the folder."""
+        name = display_name or "file"
+        base, dot, ext = name.rpartition(".")
+        if not dot:
+            base, ext = name, ""
+        else:
+            ext = "." + ext
+        base = re.sub(r" \(\d+\)$", "", base) or base
+        for n in range(1, 1000):
+            candidate = f"{base} ({n}){ext}"
+            if self._name_free(directory_id, candidate, exclude_id):
+                return candidate
+        return f"{base} ({uuid_suffix()}){ext}"
+
+    @staticmethod
+    def _clash_message(file_name: str, existing_name: Optional[str], folder_name: str, verb: str) -> str:
+        if not existing_name or existing_name.lower() == (file_name or "").lower():
+            return f"{file_name} already exists in {folder_name}."
+        return (
+            f"{file_name} cannot be {verb} {folder_name}: "
+            f"{existing_name} there has the same original file name."
+        )
+
+    def _clash_details(self, file_name: str, existing, directory_id: str, exclude_id=None) -> dict:
+        folder_name = self._folder_label(directory_id)
+        existing_name = (existing.stored_filename or existing.original_filename) if existing else None
+        return {
+            "file_name": file_name,
+            "folder_name": folder_name,
+            "existing_file_name": existing_name,
+            "suggested_name": self._suggest_name(directory_id, file_name, exclude_id),
+        }
+
+    def _clash_error(
+        self, file_name: str, existing, directory_id: str, *, verb: str, exclude_id=None,
+        code: str = "ATTACHMENT_MOVE_NAME_CLASH",
+    ) -> AppException:
+        details = self._clash_details(file_name, existing, directory_id, exclude_id)
+        return AppException(
+            status_code=409,
+            message=self._clash_message(file_name, details["existing_file_name"], details["folder_name"], verb),
+            code=code,
+            details=details,
+        )
+
+    def update_attachment(
+        self, attachment_id: str, attachment_data: AttachmentUpdate, actor_id: Optional[str] = None
+    ):
+        """Update an attachment. Recalculates full_directory_path when directory_id changes.
+
+        A move into a folder holding the same original name is a 409 (``_clash_error``) unless
+        ``on_conflict`` says what to do: "replace" sends the file already there to Trash,
+        "rename" makes ``stored_filename`` the visible AND original name first (DB only - the
+        stored object is keyed on the attachment id and read back from ``file_path``, so its
+        URL never changes).
+        """
         attachment = self.get_attachment(attachment_id)
         
         update_data = attachment_data.model_dump(exclude_unset=True)
+        on_conflict = update_data.pop("on_conflict", None)
+        if on_conflict == "rename":
+            if not update_data.get("stored_filename"):
+                raise handle_validation_error("Type the new name for the file.")
+            from app.services.storage_router import sanitize_storage_filename
+
+            update_data["original_filename"] = sanitize_storage_filename(update_data["stored_filename"])
+
+        # The clash check runs before anything is written.
+        target_dir = update_data["directory_id"] if "directory_id" in update_data else attachment.directory_id
+        moving = "directory_id" in update_data and str(target_dir or "") != str(attachment.directory_id or "")
+        file_name = update_data.get("stored_filename") or attachment.stored_filename
+        original_name = update_data.get("original_filename", attachment.original_filename)
+        replaced = None
+        if target_dir and (moving or "original_filename" in update_data):
+            clash = self._folder_clash(target_dir, original_name, exclude_id=attachment.id)
+            if clash is not None:
+                if on_conflict == "replace":
+                    replaced = clash
+                else:
+                    raise self._clash_error(
+                        file_name, clash, target_dir, verb="moved into", exclude_id=attachment.id
+                    )
         if "access_levels" in update_data and update_data["access_levels"]:
             from app.services.contact_access_type_service import ContactAccessTypeService
             access_svc = ContactAccessTypeService(self.db)
@@ -2187,33 +2344,39 @@ class AttachmentService:
             update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
 
         # Rename is DB-only and edits stored_filename (the user-facing label). original_filename
-        # is immutable (it is the object-key basename - uuid-segregated key, independent of the
-        # name, like portal submissions). The generic setattr loop applies stored_filename
-        # directly; no storage work. See docs/plans/PLAN-attachment-key-uuid-segregation.md.
+        # was the object-key basename at upload; the key itself is frozen in file_path and is
+        # never rebuilt from a name (PLAN-attachment-key-uuid-segregation.md), so only the clash
+        # dialog's "rename" choice also rewrites original_filename, and still no storage work.
         type_changed = "attachment_type_id" in update_data and str(attachment.attachment_type_id or "") != str(
             update_data["attachment_type_id"] or ""
         )
-        for key, value in update_data.items():
-            setattr(attachment, key, value)
+        try:
+            if replaced is not None:
+                # Replace: the file already in the folder goes to Trash (restorable, still in
+                # its folder; its stored object stays until a permanent delete). Flushed on its
+                # own first: one flush orders UPDATEs by primary key, which could write the
+                # moved row before the trashed one and trip the index.
+                from datetime import datetime
 
-        # PLAN-shared-brand-attachments R10: a move never re-stamps the FILE's
-        # own company - only `Set company…` (AttachmentCompanyService) does
-        # that now. R19: moving a SHARED file into an owned folder instead
-        # pulls that folder's ancestor chain to shared, so the path it now
-        # lives under still resolves from every company. A shared FORM
-        # attachment's NULL is the pre-existing form-sharing convention
-        # (AC-G3), not a `Set company…` decision, so it is excluded here too.
-        changed_fields = list(update_data.keys())
-        if (
-            update_data.get("directory_id")
-            and attachment.company_id is None
-            and (attachment.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
-        ):
-            from app.services.attachment_company_service import share_ancestor_chain
-
-            share_ancestor_chain(self.db, update_data["directory_id"])
-
-        self.db.commit()
+                replaced.is_deleted = True
+                replaced.deleted_at = datetime.utcnow()
+                replaced.deleted_by = actor_id
+                self.db.flush()
+            for key, value in update_data.items():
+                setattr(attachment, key, value)
+            self._finish_update(attachment, update_data)
+        except IntegrityError as exc:
+            # Two parallel moves can both pass the check above; the loser lands here.
+            self.db.rollback()
+            if not _is_folder_name_clash(exc):
+                raise
+            raise self._clash_error(
+                file_name,
+                self._folder_clash(target_dir, original_name, exclude_id=attachment_id),
+                target_dir,
+                verb="moved into",
+                exclude_id=attachment_id,
+            )
         self.db.refresh(attachment)
         if type_changed:
             self._queue_ai_reads([attachment])
@@ -2224,15 +2387,45 @@ class AttachmentService:
             source_key=attachment.original_filename,
             source_updated_at=attachment.created_at,
             event_type="attachment.updated",
-            changed_fields=changed_fields,
+            changed_fields=list(update_data.keys()),
         )
         return attachment
+
+    def _finish_update(self, attachment: Attachment, update_data: dict) -> None:
+        """Share the destination chain when needed, then commit (update_attachment's tail)."""
+        # PLAN-shared-brand-attachments R10: a move never re-stamps the FILE's
+        # own company - only `Set company…` (AttachmentCompanyService) does
+        # that now. R19: moving a SHARED file into an owned folder instead
+        # pulls that folder's ancestor chain to shared, so the path it now
+        # lives under still resolves from every company. A shared FORM
+        # attachment's NULL is the pre-existing form-sharing convention
+        # (AC-G3), not a `Set company…` decision, so it is excluded here too.
+        if (
+            update_data.get("directory_id")
+            and attachment.company_id is None
+            and (attachment.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
+        ):
+            from app.services.attachment_company_service import share_ancestor_chain
+
+            share_ancestor_chain(self.db, update_data["directory_id"])
+
+        self.db.commit()
     
     def bulk_move(self, attachment_ids: list[str], directory_id: Optional[str]) -> int:
-        """Move many attachments into the same folder in one transaction.
+        """Count-only form of ``bulk_move_report`` (the files moved)."""
+        return self.bulk_move_report(attachment_ids, directory_id)[0]
+
+    def bulk_move_report(
+        self, attachment_ids: list[str], directory_id: Optional[str]
+    ) -> tuple[int, list[dict]]:
+        """Move many attachments into the same folder; one clash never fails the batch.
 
         Resolves full_directory_path once for the target folder so all rows
-        share the same denormalised path. Skips ids that no longer exist.
+        share the same denormalised path. Skips ids that no longer exist. A file whose
+        original name is already in the folder (or in an earlier file of this batch) stays
+        where it is and is named in the returned list, with what the clash dialog needs.
+        Each row is written under its own savepoint, so a race on the index skips that one
+        file instead of rolling back the batch.
         """
         rows = (
             exclude_private_types(self.db.query(Attachment))
@@ -2240,12 +2433,34 @@ class AttachmentService:
             .all()
         )
         if not rows:
-            return 0
+            return 0, []
+        position = {str(aid): i for i, aid in enumerate(attachment_ids)}
+        rows.sort(key=lambda r: position.get(str(r.id), len(position)))
         dir_service = AttachmentDirectoryService(self.db)
         full_path = dir_service.get_full_directory_path(directory_id) if directory_id else None
+        moved: list[Attachment] = []
+        not_moved: list[dict] = []
         for row in rows:
-            row.directory_id = directory_id
-            row.full_directory_path = full_path
+            row_id, file_name, original = str(row.id), row.stored_filename, row.original_filename
+            if directory_id and str(row.directory_id or "") != str(directory_id):
+                clash = self._folder_clash(directory_id, original, exclude_id=row_id)
+                if clash is not None:
+                    not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id))
+                    continue
+            savepoint = self.db.begin_nested()
+            try:
+                row.directory_id = directory_id
+                row.full_directory_path = full_path
+                self.db.flush()
+                savepoint.commit()
+                moved.append(row)
+            except IntegrityError as exc:
+                savepoint.rollback()
+                if not _is_folder_name_clash(exc):
+                    raise
+                clash = self._folder_clash(directory_id, original, exclude_id=row_id)
+                not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id))
+        rows = moved
 
         # PLAN-shared-brand-attachments R10/R19: a move never re-stamps a
         # file's own company - only `Set company…` does that now. A SHARED
@@ -2276,7 +2491,17 @@ class AttachmentService:
                 event_type="attachment.updated",
                 changed_fields=changed_fields,
             )
-        return len(rows)
+        return len(rows), not_moved
+
+    def _not_moved_entry(self, attachment_id: str, file_name: str, existing, directory_id: str) -> dict:
+        details = self._clash_details(file_name, existing, directory_id, attachment_id)
+        return {
+            "attachment_id": attachment_id,
+            "message": self._clash_message(
+                file_name, details["existing_file_name"], details["folder_name"], "moved into"
+            ),
+            **details,
+        }
 
     def reorder_attachments(self, attachment_ids: list[str], directory_id: Optional[str] = None):
         """Set sort_order to index for each attachment id (within the same directory)."""
