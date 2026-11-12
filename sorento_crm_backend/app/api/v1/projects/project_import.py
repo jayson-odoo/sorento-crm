@@ -138,6 +138,7 @@ def save_columns(
         _raise(exc)
 
 
+# ai: not-for-assistant rows and value lines inside one import run; the assistant answers from the runs list
 @router.get("/runs/{run_id}/lines")
 def list_lines(
     run_id: str,
@@ -163,6 +164,7 @@ def list_lines(
         _raise(exc)
 
 
+# ai: not-for-assistant rows and value lines inside one import run; the assistant answers from the runs list
 @router.get("/runs/{run_id}/lines/summary")
 def lines_summary(
     run_id: str,
@@ -243,6 +245,7 @@ def preview(
         _raise(exc)
 
 
+# ai: not-for-assistant rows and value lines inside one import run; the assistant answers from the runs list
 @router.get("/runs/{run_id}/rows")
 def list_rows(
     run_id: str,

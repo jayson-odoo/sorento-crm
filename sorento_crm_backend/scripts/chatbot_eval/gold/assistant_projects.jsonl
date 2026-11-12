@@ -1,0 +1,2 @@
+{"id": "asst-projects-01", "module": "projects", "message": "which project imports are still waiting for review?", "expect": {"entity": "project_import_run"}}
+{"id": "asst-projects-02", "message": "show the last project import run", "module": "projects", "expect": {"entity": "project_import_run"}}
