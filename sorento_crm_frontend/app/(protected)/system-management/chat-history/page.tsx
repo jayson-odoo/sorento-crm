@@ -74,7 +74,7 @@ function LatencyCell({ seconds }: { seconds: number | null }) {
 }
 
 export default function ChatHistoryPage() {
-  // Default to the last 24h - an unbounded scan of this table is never the intent.
+  // Default to yesterday through today (whole Malaysia days) - an unbounded scan of this table is never the intent.
   const [dateFrom, setDateFrom] = useState(() => malaysiaCivilYyyyMmDdFromApi(Date.now() - 86_400_000) ?? '');
   const [dateTo, setDateTo] = useState(() => todayMalaysiaYyyyMmDd());
   const [direction, setDirection] = useState('');

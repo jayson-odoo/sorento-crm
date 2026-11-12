@@ -22,6 +22,8 @@ const UTC_DISPLAY_FILES = [
   'app/(protected)/sla-management/conversation-sla-tracking/components/ConversationSLATrackingList.tsx',
   'app/(protected)/sla-management/escalation-logs/components/EventLogList.tsx',
   'app/(protected)/sla-management/_shared/SlaExtensionBanner.tsx',
+  'app/(protected)/sla-management/_shared/FormSLATrackingTab.tsx',
+  'app/(protected)/sla-management/_shared/FormSLATrackerDetail.tsx',
   'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx',
 ];
 

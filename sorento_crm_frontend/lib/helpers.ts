@@ -482,7 +482,8 @@ export function formatDateTimeInMalaysia(
 
 /**
  * `01/01/2026 - 31/03/2026`: the one range shape, the same text the range picker shows
- * (`components/ui/date-range-picker.tsx`). One end alone shows that end; neither shows `fallback`.
+ * (`components/ui/date-range-picker.tsx`) for a full range. One end alone shows that end alone here;
+ * the picker's input adds a trailing or leading dash so the text can be re-typed. Neither end shows `fallback`.
  */
 export function formatDateRange(
   start: Date | string | number | null | undefined,

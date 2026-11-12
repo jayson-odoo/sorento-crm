@@ -634,10 +634,10 @@ export function PurchaseRequestDocumentEditCard({
                       <FormItem>
                         <FormControl>
                           <DatePickerField
-                        value={field.value ?? null}
-                        onChange={(v) => field.onChange(v ?? '')}
-                        ariaLabel="Expected date to receive PO"
-                      />
+                            value={field.value ?? null}
+                            onChange={(v) => field.onChange(v ?? '')}
+                            ariaLabel="Expected date to receive PO"
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
