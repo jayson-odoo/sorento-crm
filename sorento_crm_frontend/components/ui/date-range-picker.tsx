@@ -64,26 +64,44 @@ function formatRangeLabel(from?: string | null, to?: string | null): string {
       ? formatDDMMYYYY(start)
       : `${formatDDMMYYYY(start)} - ${formatDDMMYYYY(end)}`;
   }
-  if (start) return formatDDMMYYYY(start);
-  if (end) return formatDDMMYYYY(end);
+  if (start) return `${formatDDMMYYYY(start)} -`;
+  if (end) return `- ${formatDDMMYYYY(end)}`;
   return '';
 }
 
 const RANGE_INPUT_RE =
   /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+const HALF_FROM_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s*-$/;
+const HALF_TO_RE = /^-\s*(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 const SINGLE_INPUT_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 
 function dateFromParts(d: string, m: string, y: string): Date | undefined {
   const date = new Date(Number(y), Number(m) - 1, Number(d));
-  return Number.isNaN(date.getTime()) ? undefined : date;
+  // `new Date` rolls 31/02 into March: only a day that IS the typed one counts.
+  return date.getFullYear() === Number(y) &&
+    date.getMonth() === Number(m) - 1 &&
+    date.getDate() === Number(d)
+    ? date
+    : undefined;
 }
 
-/** Typed `DD/MM/YYYY - DD/MM/YYYY` or a single `DD/MM/YYYY` (from = to = that day);
- *  anything else, including blank, is unparseable - the caller reverts the input rather
- *  than emitting a change. */
-function parseRangeInput(raw: string): { from: Date; to: Date } | null {
+/** Typed `DD/MM/YYYY - DD/MM/YYYY`, a single `DD/MM/YYYY` (from = to = that day),
+ *  `DD/MM/YYYY -` (From only) or `- DD/MM/YYYY` (To only). A day that does not exist or any
+ *  other text is unparseable and the caller reverts the input; empty text is handled by the
+ *  caller, which clears both ends. */
+function parseRangeInput(raw: string): { from: Date | null; to: Date | null } | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  const fromOnly = HALF_FROM_RE.exec(trimmed);
+  if (fromOnly) {
+    const from = dateFromParts(fromOnly[1], fromOnly[2], fromOnly[3]);
+    return from ? { from, to: null } : null;
+  }
+  const toOnly = HALF_TO_RE.exec(trimmed);
+  if (toOnly) {
+    const to = dateFromParts(toOnly[1], toOnly[2], toOnly[3]);
+    return to ? { from: null, to } : null;
+  }
   const range = RANGE_INPUT_RE.exec(trimmed);
   if (range) {
     const [, d1, m1, y1, d2, m2, y2] = range;
@@ -142,16 +160,25 @@ export function DateRangePicker({
    *  the last committed label - never leaves half-typed, unparseable text sitting in a
    *  field the caller never heard about. */
   const commit = () => {
+    if (inputValue.trim() === '') {
+      if (from || to) {
+        onChange({ from: null, to: null });
+        // A parent that refuses the empty range leaves from/to unchanged, so the effect above never
+        // re-runs; snap the text back to the committed label (a parent that accepts it re-syncs via the effect).
+        setInputValue(formatRangeLabel(from, to));
+      }
+      return;
+    }
     const parsed = parseRangeInput(inputValue);
     if (parsed) {
-      onChange({ from: toIsoDate(parsed.from), to: toIsoDate(parsed.to) });
+      onChange({ from: toIsoDate(parsed.from ?? undefined), to: toIsoDate(parsed.to ?? undefined) });
     } else {
       setInputValue(formatRangeLabel(from, to));
     }
   };
 
   return (
-    <div className={cn('flex gap-2', className)}>
+    <div className={cn('flex min-w-0 gap-2', className)}>
       <Input
         id={id}
         type="text"
@@ -167,7 +194,7 @@ export function DateRangePicker({
         }}
         disabled={disabled}
         aria-label={ariaLabel}
-        className="flex-1"
+        className="flex-1 min-w-0"
         autoComplete="off"
       />
       <Popover open={open} onOpenChange={setOpen}>

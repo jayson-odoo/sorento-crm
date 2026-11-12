@@ -430,3 +430,31 @@ def test_view_mode_is_per_user(api_client):
 
     assert _stored_config(db, first_user)["view"] == "grid"
     assert _stored_config(db, other)["view"] == "board"
+
+
+def test_sort_and_filters_are_per_user_on_a_pathname_key(api_client):
+    """LIST-FILTER-MEMORY-4: the lists key their memory by route (e.g. the complaints list),
+    and one user's remembered sort and filters never reach another user on the same list."""
+    client, current_user, db = api_client
+    route_key = "/complaint-management/complaints"
+
+    first_view = {
+        "version": 1,
+        "sorting": [{"id": "complaint_number", "desc": False}],
+        "filters": {"status": "new"},
+        "filtersVersion": 1,
+    }
+    assert client.put(_url(route_key), json=first_view).status_code == 200
+    first_user = current_user["id"]
+
+    other = str(uuid.uuid4())
+    _seed_rbac_and_user(
+        db, user_id=other, permission_slug=PERM_SLUG, role_id=f"{TEST_PREFIX}-role-granted"
+    )
+    current_user["id"] = other
+    assert client.get(_url(route_key)).json()["config"] is None
+
+    first = _stored_config(db, first_user, route_key)
+    assert first["sorting"] == [{"id": "complaint_number", "desc": False}]
+    assert first["filters"] == {"status": "new"}
+    assert _stored_config(db, other, route_key) is None
