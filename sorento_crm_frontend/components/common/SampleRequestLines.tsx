@@ -149,7 +149,7 @@ export function SampleRequestLines({
                   )}
                 </td>
                 <td className="px-2 py-2 max-sm:col-span-2 max-sm:col-start-2 max-sm:row-start-2">
-                  <span data-narrow-caption className="mb-1 block text-xs text-muted-foreground sm:hidden">
+                  <span data-narrow-caption aria-hidden="true" className="mb-1 block text-xs text-muted-foreground sm:hidden">
                     {captions.qty}
                   </span>
                   <NumberInput
@@ -163,7 +163,7 @@ export function SampleRequestLines({
                   />
                 </td>
                 <td className="px-2 py-2 max-sm:col-span-2 max-sm:col-start-2 max-sm:row-start-3">
-                  <span data-narrow-caption className="mb-1 block text-xs text-muted-foreground sm:hidden">
+                  <span data-narrow-caption aria-hidden="true" className="mb-1 block text-xs text-muted-foreground sm:hidden">
                     Remark
                   </span>
                   <Input

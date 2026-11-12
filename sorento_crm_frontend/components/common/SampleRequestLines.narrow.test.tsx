@@ -54,6 +54,8 @@ describe('Sample request lines at phone width (375 px)', () => {
     expect(captions).toEqual(['Qty', 'Remark']);
     for (const el of Array.from(line.querySelectorAll('[data-narrow-caption]'))) {
       expect((el as HTMLElement).className).toMatch(/(^|\s)sm:hidden(\s|$)/);
+      // The input already has its own label; the caption is for the eye only (review SHOULD).
+      expect(el.getAttribute('aria-hidden')).toBe('true');
     }
   });
 });
