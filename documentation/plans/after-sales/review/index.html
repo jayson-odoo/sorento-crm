@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>After-sales review</title>
+<style>
+  :root {
+    --bg: #f9fafb; --card: #ffffff; --text: #111827; --muted: #6b7280; --line: #e5e7eb;
+    --primary: #1b84ff; --primary-soft: #eff6ff; --ok: #059669; --ok-soft: #ecfdf5;
+    --warn: #b45309; --warn-soft: #fffbeb; --bad: #dc2626; --bad-soft: #fef2f2; --grey-soft: #f3f4f6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header.top { background: var(--card); border-bottom: 1px solid var(--line); padding: 20px 16px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  header.top .wrap { padding: 0; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 0 0 4px; }
+  h3 { font-size: 15px; margin: 22px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--muted); margin: 0; }
+  nav.toc { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line); }
+  nav.toc .wrap { display: flex; gap: 4px; overflow-x: auto; padding: 0 16px; }
+  nav.toc a { white-space: nowrap; padding: 12px 10px; color: var(--muted); text-decoration: none; font-weight: 500;
+    border-bottom: 2px solid transparent; }
+  nav.toc a:hover { color: var(--primary); border-bottom-color: var(--primary); }
+  section.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin: 20px 0; }
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .p-blue { background: var(--primary-soft); color: var(--primary); }
+  .p-ok { background: var(--ok-soft); color: var(--ok); }
+  .p-warn { background: var(--warn-soft); color: var(--warn); }
+  .p-bad { background: var(--bad-soft); color: var(--bad); }
+  .p-grey { background: var(--grey-soft); color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 10px; }
+  figure { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+  figure a { display: block; height: 170px; overflow: hidden; background: var(--grey-soft); }
+  figure img { width: 100%; display: block; }
+  figure.phone a { height: 260px; }
+  figcaption { padding: 8px 10px; font-size: 13px; border-top: 1px solid var(--line); }
+  figcaption b { display: block; }
+  ol.flow { padding-left: 22px; margin: 6px 0; }
+  ol.flow li { margin: 4px 0; }
+  ul { padding-left: 20px; margin: 6px 0; }
+  li { margin: 3px 0; }
+  .tablewrap { overflow-x: auto; margin: 8px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--grey-soft); font-weight: 600; white-space: nowrap; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .note { background: var(--warn-soft); border: 1px solid #fde68a; border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
+  .ok { background: var(--ok-soft); border: 1px solid #a7f3d0; border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
+  .gap { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  .gap b.id { color: var(--primary); margin-right: 6px; }
+  .flowchart { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+  .flowchart span.arrow { color: var(--muted); }
+  code { font-size: 13px; background: var(--grey-soft); padding: 1px 5px; border-radius: 4px; }
+  footer { color: var(--muted); font-size: 13px; padding: 20px 16px 40px; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } section.card { padding: 16px; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <h1>After-sales module: what PR #163 built</h1>
+    <p class="sub">Review page for the owner (12/11/2026). Every screenshot is the #163 branch running in a sandbox on FAKE data
+      (invented consumers, phones and addresses). Nothing here is in production. Click any screenshot to open it full size.</p>
+  </div>
+</header>
+
+<nav class="toc"><div class="wrap">
+  <a href="#decisions">Decisions</a>
+  <a href="#p1">P1 Service jobs</a>
+  <a href="#p2">P2 Warranty</a>
+  <a href="#p3">P3 Consumers</a>
+  <a href="#p4">P4 Portal</a>
+  <a href="#later">Deferred / dropped</a>
+  <a href="#gaps">What would you add?</a>
+</div></nav>
+
+<main class="wrap">
+
+<!-- ============================================================ DECISIONS -->
+<section class="card" id="decisions">
+  <h2>Your decisions (12/11/2026)</h2>
+  <div class="tablewrap"><table>
+    <tr><th>#</th><th>Question</th><th>Decision</th></tr>
+    <tr><td>1</td><td>Who uses it first</td><td>CS staff first (service jobs + technician dispatch on existing complaints)</td></tr>
+    <tr><td>2</td><td>What to keep</td><td>Port P1 to P4 in that order, each its own PR on today's main. Defer SLA waiting, notification spine, WhatsApp intake, upload checker. Drop the forms rewrite.</td></tr>
+    <tr><td>3</td><td>Warranty without a portal receipt</td><td>CS can enter purchase date + product kind on a complaint line (in P2)</td></tr>
+    <tr><td>4</td><td>Technicians</td><td>Simple list, no login. A technician portal link is a later slice.</td></tr>
+    <tr><td>5</td><td>Retail complaints</td><td>One Complaints list with a "Reported by" column + filter</td></tr>
+  </table></div>
+  <div class="note"><b>Every port rebuilds the screens to today's rules.</b> What you see below is the August look. In the port:
+    right-click row menus instead of row icons, countdown delete instead of a confirm dialog, dd/mm/yyyy dates and the shared date picker
+    (the screenshots still show "01 Jan 2000" and browser date boxes), the standard record header with prev/next, a History tab,
+    multi-select filters, server-side sort, "Create" as the button label, and a user guide per PR.</div>
+</section>
+
+<!-- ============================================================ P1 -->
+<section class="card" id="p1">
+  <div class="head"><h2>P1 Service jobs: send a technician to the site</h2><span class="pill p-blue">Port first, size L</span></div>
+  <p class="sub">From #163 slices S1 (site address on complaint), S6 (service jobs, dispatch, technicians) and S7a (auto-raise from a resolution).</p>
+
+  <h3>Screens</h3>
+  <div class="grid">
+    <figure><a href="img/08-complaint-retail-detail.png" target="_blank"><img src="img/08-complaint-retail-detail.png" alt="Complaint detail"></a>
+      <figcaption><b>Complaint detail</b>New "Reported by", Site (address + contact on site) and a Service Jobs section with "Raise service job".</figcaption></figure>
+    <figure><a href="img/09-service-jobs-list.png" target="_blank"><img src="img/09-service-jobs-list.png" alt="Service jobs list"></a>
+      <figcaption><b>Service jobs list</b>Complaint Management &gt; Service Jobs. DataGrid of every job.</figcaption></figure>
+    <figure><a href="img/14-job-proposed.png" target="_blank"><img src="img/14-job-proposed.png" alt="Job proposed"></a>
+      <figcaption><b>Service job, Proposed</b>Raised, no agreed date yet.</figcaption></figure>
+    <figure><a href="img/15-job-update-dialog.png" target="_blank"><img src="img/15-job-update-dialog.png" alt="Update job"></a>
+      <figcaption><b>Update job</b>Confirm the visit (date + who agreed) and send a technician. Only the moves the status allows are offered.</figcaption></figure>
+    <figure><a href="img/11-service-job-detail.png" target="_blank"><img src="img/11-service-job-detail.png" alt="Job confirmed"></a>
+      <figcaption><b>Service job, Confirmed</b>Visit times (scheduled, arrived, attend time, completed, verified) and Site.</figcaption></figure>
+    <figure><a href="img/10-dispatch-board.png" target="_blank"><img src="img/10-dispatch-board.png" alt="Dispatch board"></a>
+      <figcaption><b>Dispatch board</b>One day at a time: stalled jobs on top, then Unassigned, then one column per technician.</figcaption></figure>
+    <figure><a href="img/12-technicians.png" target="_blank"><img src="img/12-technicians.png" alt="Technicians"></a>
+      <figcaption><b>Technicians</b>Name, phone, employee / contractor, active. Not system users.</figcaption></figure>
+    <figure><a href="img/07-complaints-list.png" target="_blank"><img src="img/07-complaints-list.png" alt="Complaints list"></a>
+      <figcaption><b>Complaints list</b>Retail and project complaints in one list (decision 5 adds the "Reported by" column + filter).</figcaption></figure>
+  </div>
+
+  <h3>Flow, step by step</h3>
+  <ol class="flow">
+    <li>CS opens a complaint. It has a Site: address, optional map pin, the contact on site and phone.</li>
+    <li>CS presses <b>Raise service job</b>, or sets a Resolution marked "requires service job" and the job is raised by itself. The job copies the complaint's site.</li>
+    <li>The job starts as <b>Proposed</b>: there is no agreed date yet.</li>
+    <li>CS calls the customer, then <b>Confirm date</b>: date and time plus who agreed it (e.g. "Consumer on WhatsApp"). The job becomes <b>Confirmed</b>.</li>
+    <li>CS picks a technician and presses <b>Assign</b>. The job shows in that technician's column on the dispatch board for that day.</li>
+    <li>Technician leaves (<b>On the way</b>), reaches the site (<b>Arrived</b>; the attend time stops here), finishes (<b>Completed</b>). CS marks these today, because technicians have no login.</li>
+    <li>CS checks the work and presses <b>Verify</b>. That is the end of the job.</li>
+    <li>If the customer turns the visit down, or a revisit is needed, the job goes back to <b>Proposed</b> with a new assignment row. The history of the first try is kept.</li>
+  </ol>
+
+  <h3>Rules</h3>
+  <div class="flowchart">
+    <span class="pill p-grey">Proposed</span><span class="arrow">&rarr;</span>
+    <span class="pill p-blue">Confirmed</span><span class="arrow">&rarr;</span>
+    <span class="pill p-blue">On the way</span><span class="arrow">&rarr;</span>
+    <span class="pill p-blue">Arrived</span><span class="arrow">&rarr;</span>
+    <span class="pill p-ok">Completed</span><span class="arrow">&rarr;</span>
+    <span class="pill p-ok">Verified</span>
+    <span class="arrow">&nbsp;|&nbsp;</span><span class="pill p-grey">Cancelled</span>
+  </div>
+  <div class="tablewrap"><table>
+    <tr><th>From</th><th>To</th><th>Button</th></tr>
+    <tr><td>Proposed</td><td>Confirmed</td><td>Confirm date (needs a date AND who agreed)</td></tr>
+    <tr><td>Confirmed</td><td>On the way</td><td>On my way</td></tr>
+    <tr><td>On the way / Confirmed</td><td>Arrived</td><td>Arrived (a missed "On my way" does not block)</td></tr>
+    <tr><td>Arrived</td><td>Completed</td><td>Complete</td></tr>
+    <tr><td>Completed</td><td>Verified</td><td>Verify (final)</td></tr>
+    <tr><td>Confirmed / On the way</td><td>Proposed</td><td>Customer rejected the visit</td></tr>
+    <tr><td>Arrived</td><td>Proposed</td><td>Revisit needed</td></tr>
+    <tr><td>Completed</td><td>Arrived</td><td>Reopen: work not accepted</td></tr>
+    <tr><td>Proposed / Confirmed</td><td>Cancelled</td><td>Cancel (final, shown grey: admin, not a failure)</td></tr>
+  </table></div>
+  <ul>
+    <li><b>Stalled</b> = still Proposed and past its date. A Confirmed job past its date is not a stall (it has an agreed date and a technician).</li>
+    <li><b>Auto-raise</b>: a Resolution with "requires service job" raises one job. If a live job (not cancelled) already exists, it does not raise a second one. Clearing the resolution never deletes a job.</li>
+    <li>A job is not tied to complaints only: it records its source (type + id), so later another record can raise one too.</li>
+    <li>Job number format <code>SV{yy}/{mm}-</code> is seeded, but the sandbox showed "Unnumbered": a fix for the port.</li>
+    <li>Built but no screen: visit charge (state + amount) and case cost lines (parts, transport). See gaps G6 and G7.</li>
+  </ul>
+  <h3>New tables</h3>
+  <p><code>technicians</code>, <code>service_jobs</code>, <code>service_job_assignments</code>, <code>external_providers</code>, <code>case_cost_lines</code>;
+    site columns on <code>complaints</code>; <code>requires_service_job</code> on resolutions.</p>
+</section>
+
+<!-- ============================================================ P2 -->
+<section class="card" id="p2">
+  <div class="head"><h2>P2 Warranty: is this covered?</h2><span class="pill p-blue">Port second, size L</span></div>
+  <p class="sub">From #163 slices S2 (warranty engine, Policy v15 seeded) and S7b (Warranty Configuration screens). New in the port (decision 3):
+    CS enters purchase date + product kind on a complaint line and sees the verdict.</p>
+
+  <h3>Screens</h3>
+  <div class="grid">
+    <figure><a href="img/01-warranty-policies.png" target="_blank"><img src="img/01-warranty-policies.png" alt="Policies"></a>
+      <figcaption><b>Policies tab</b>Each published policy version with the dates it is in force. v15 runs from 01/01/2000, open ended.</figcaption></figure>
+    <figure><a href="img/04-warranty-policy-detail.png" target="_blank"><img src="img/04-warranty-policy-detail.png" alt="Policy detail"></a>
+      <figcaption><b>Policy v15</b>41 terms grouped by product kind: part, months or lifetime, defects covered, installation.</figcaption></figure>
+    <figure><a href="img/02-warranty-kinds.png" target="_blank"><img src="img/02-warranty-kinds.png" alt="Kinds"></a>
+      <figcaption><b>Kinds tab</b>31 product kinds from the policy. The red badge "29 of 31 have no rule" means those products cannot be matched to a kind yet.</figcaption></figure>
+    <figure><a href="img/03-warranty-rules.png" target="_blank"><img src="img/03-warranty-rules.png" alt="Rules"></a>
+      <figcaption><b>Rules tab</b>Which products belong to which kind: by series, model list, category or code prefix.</figcaption></figure>
+    <figure><a href="img/16-rule-tester-result.png" target="_blank"><img src="img/16-rule-tester-result.png" alt="Rule tester"></a>
+      <figcaption><b>Rule tester</b>Type a product code and see which kind it lands in and which rule decided it.</figcaption></figure>
+  </div>
+
+  <h3>Flow</h3>
+  <ol class="flow">
+    <li>Admin keeps the policy: Policies (versions), Kinds (product types the policy names) and Rules (which products are which kind).</li>
+    <li>A new policy version is added with <b>Supersede</b>: it closes the old one the day before and the new one starts (the dialog shows both date ranges before you confirm).</li>
+    <li>On a complaint line, the product's kind comes from the rules (or CS picks it), and the purchase date comes from the consumer's purchase (or CS types it, decision 3).</li>
+    <li>The engine returns one verdict per covered part (a water closet has three parts, so three answers), and they are stored on the line.</li>
+  </ol>
+
+  <h3>Rules</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Verdict</th><th>Meaning</th></tr>
+    <tr><td><span class="pill p-ok">Covered</span></td><td>Inside the term; shows "Covered to dd/mm/yyyy inclusive".</td></tr>
+    <tr><td><span class="pill p-bad">Expired</span></td><td>Past the term's end date.</td></tr>
+    <tr><td><span class="pill p-bad">Defect not covered</span></td><td>The term lists the defects it covers and this defect is not one of them.</td></tr>
+    <tr><td><span class="pill p-warn">No term</span></td><td>The policy says nothing about this kind.</td></tr>
+    <tr><td><span class="pill p-grey">Unknown</span></td><td>Something is missing: no purchase date, no kind, or no policy in force on that date. Never shown as "not covered".</td></tr>
+  </table></div>
+  <ul>
+    <li>Judged against the policy in force on the <b>purchase date</b>, never today's policy.</li>
+    <li>The purchase date and the last day of cover are both covered. Month maths clamps: 31/01 + 1 month = 29/02, not 02/03.</li>
+    <li>A term with no defect list covers all defects. If the defect is not stated and the term is restricted, the answer is Unknown, not "not covered".</li>
+    <li>Which kind wins when two rules match: priority, then the most specific match type, then the longest matched value, then kind code. Always the same answer.</li>
+    <li>Policy dates may not overlap; a term is either lifetime or a number of months, never both; a kind in use cannot be deleted.</li>
+    <li>Registration bonus months apply only when the consumer registered the purchase themselves (or via SMC / e-commerce). A purchase the system created from a complaint earns none.</li>
+    <li>Clause 17 (residential only) is recorded but NOT enforced, because many complaints are project cases.</li>
+  </ul>
+  <div class="note"><b>Data work before verdicts are useful:</b> only 2 of 31 kinds have product rules. Someone has to map product series / categories to kinds on the Rules tab (gap G9).</div>
+  <h3>New tables</h3>
+  <p><code>warranty_product_kinds</code>, <code>warranty_kind_rules</code>, <code>warranty_policies</code>, <code>warranty_terms</code>, plus the stored verdicts (<code>warranty_assessments</code>).</p>
+</section>
+
+<!-- ============================================================ P3 -->
+<section class="card" id="p3">
+  <div class="head"><h2>P3 Consumers: who bought what</h2><span class="pill p-blue">Port third, size M/L</span></div>
+  <p class="sub">From #163 slice S2b (consumer profiles + purchase ledger) and Consumer 360. This is what the portal writes into.</p>
+  <h3>Screens</h3>
+  <div class="grid">
+    <figure><a href="img/05-consumers-list.png" target="_blank"><img src="img/05-consumers-list.png" alt="Consumers list"></a>
+      <figcaption><b>Consumers list</b>New sidebar group Consumer Management. Counts on top, search by phone or name. Built as cards; the port makes it the standard list grid.</figcaption></figure>
+    <figure><a href="img/06-consumer-360.png" target="_blank"><img src="img/06-consumer-360.png" alt="Consumer 360"></a>
+      <figcaption><b>Consumer 360</b>Consent, purchases (date, dealer document, lines) and their complaints on one page.</figcaption></figure>
+  </div>
+  <h3>Flow</h3>
+  <ol class="flow">
+    <li>A consumer is created when they lodge from the portal (P4). In P3 alone, CS sees consumers and their purchases.</li>
+    <li>Each purchase has a date, the dealer and the dealer's document number, and product lines (product, kind, quantity).</li>
+    <li>A complaint line points at the purchase line it is about, which is where the warranty engine gets the purchase date.</li>
+  </ol>
+  <h3>Rules</h3>
+  <ul>
+    <li>One consumer per phone number (stored in +60 form). The same phone again finds the same person.</li>
+    <li>A purchase is not entered twice: same dealer + same dealer document number = the same purchase.</li>
+    <li>Consent is recorded with the notice version the consumer saw (PDPA). A profile created by staff shows "Not recorded".</li>
+    <li>Deleting a consumer's personal data (anonymise) keeps the purchase, so warranty still works.</li>
+    <li>Purchase value is visible only with its own permission.</li>
+  </ul>
+  <h3>New tables</h3>
+  <p><code>consumer_profiles</code>, <code>consumer_profile_reviews</code>, <code>consumer_purchases</code>, <code>consumer_purchase_lines</code>, <code>consent_notices</code>.</p>
+</section>
+
+<!-- ============================================================ P4 -->
+<section class="card" id="p4">
+  <div class="head"><h2>P4 Portal "Report a problem"</h2><span class="pill p-blue">Port fourth, size L</span></div>
+  <p class="sub">From #163 slice S3. A consumer reports a fault from the portal on their phone. Needs the Malay PDPA notice signed off and a Google Maps key.
+    Screenshots are the built-in preview mode (no file is uploaded; the receipt reading is simulated). The shop name is replaced with a fake one.</p>
+  <h3>Screens (phone width)</h3>
+  <div class="grid">
+    <figure class="phone"><a href="img/17-lodge-photos.png" target="_blank"><img src="img/17-lodge-photos.png" alt="Step 1"></a>
+      <figcaption><b>1. Photos</b>Receipt and the problem.</figcaption></figure>
+    <figure class="phone"><a href="img/18-lodge-step1.png" target="_blank"><img src="img/18-lodge-step1.png" alt="Step 2"></a>
+      <figcaption><b>2. "Did we get this right?"</b>AI read the shop and the date; the consumer can correct them.</figcaption></figure>
+    <figure class="phone"><a href="img/18-lodge-step2.png" target="_blank"><img src="img/18-lodge-step2.png" alt="Step 3"></a>
+      <figcaption><b>3. Which item has the problem</b>Products found on the receipt, or "Something else is broken".</figcaption></figure>
+    <figure class="phone"><a href="img/18-lodge-step3.png" target="_blank"><img src="img/18-lodge-step3.png" alt="Step 4"></a>
+      <figcaption><b>4. Photo of the problem</b></figcaption></figure>
+    <figure class="phone"><a href="img/18-lodge-step4.png" target="_blank"><img src="img/18-lodge-step4.png" alt="Step 5"></a>
+      <figcaption><b>5. Where is it installed</b>Address + optional map pin for the technician.</figcaption></figure>
+    <figure class="phone"><a href="img/18-lodge-step5.png" target="_blank"><img src="img/18-lodge-step5.png" alt="Step 6"></a>
+      <figcaption><b>6. Done</b>Complaint number and the warranty answer in plain words.</figcaption></figure>
+  </div>
+  <h3>Flow</h3>
+  <ol class="flow">
+    <li>The consumer opens the portal link (their phone number comes from the link, never typed) and taps Report a problem.</li>
+    <li>Photos are stored first, then AI reads the receipt: shop, date, products. Dates are read as dd/mm/yyyy in code, not guessed by AI.</li>
+    <li>The consumer confirms or corrects, picks the faulty product(s), adds a problem photo and the site address.</li>
+    <li>Submit creates, in one go: consumer profile + consent, purchase, complaint (Reported by: End user) with lines, and the warranty verdicts.</li>
+    <li>The complaint lands in the normal Complaints list for CS; from there P1 (service job) takes over.</li>
+  </ol>
+  <h3>Rules</h3>
+  <ul>
+    <li>Never blocks the consumer: an unreadable receipt or unknown shop still files the complaint.</li>
+    <li>The shop is matched to a dealer as "matched", "maybe" (CS confirms) or "not found". A near tie is never auto-matched.</li>
+    <li>Product matching tries exact code, code without dashes, brand prefix, size suffix, family, then close spelling. If still unsure, the kind decides cover.</li>
+    <li>The consumer is never asked for the product kind; it is worked out.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ LATER -->
+<section class="card" id="later">
+  <h2>Deferred and dropped</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Piece in #163</th><th>What it does</th><th>Status</th></tr>
+    <tr><td>S4a Waiting attribution</td><td>"Waiting on: customer / dealer / supplier..." banner on complaint, PR, stock inquiry; stamped on SLA events</td><td><span class="pill p-warn">Deferred</span> rebuild on today's SLA code</td></tr>
+    <tr><td>S4 Notification spine</td><td>Notifications to contacts (not only users), Respond outbox, call logging</td><td><span class="pill p-warn">Deferred</span></td></tr>
+    <tr><td>S5 WhatsApp intake</td><td>A dealer's WhatsApp messages become a complaint</td><td><span class="pill p-warn">Deferred</span> rebuild on today's chatbot (semantic parser rule)</td></tr>
+    <tr><td>S2a Upload checker</td><td>AI scores a photo against guidance, offers Retake / Use anyway</td><td><span class="pill p-warn">Deferred</span></td></tr>
+    <tr><td>F0-F2c Forms rewrite</td><td>New form engine, line statuses, portal submission of workflow forms</td><td><span class="pill p-bad">Dropped</span> builder never finished; breaks form saves</td></tr>
+    <tr><td>Never built</td><td>Goods track / exchange / RMA, feedback survey, reporting, dealer view, technician portal</td><td><span class="pill p-grey">Not built</span></td></tr>
+  </table></div>
+</section>
+
+<!-- ============================================================ GAPS -->
+<section class="card" id="gaps">
+  <h2>What would you add?</h2>
+  <p class="sub">Gaps compared with today's complaints module and how CS works. Mark each keep / later / no. Each line names the port it would go in.</p>
+
+  <div class="gap"><b class="id">G1</b><b>Warranty answer on the complaint for CS.</b> #163 shows the verdict only to the consumer in the portal; the CS complaint page has no warranty panel ("Within warranty" stays "-"). <span class="pill p-blue">P2</span></div>
+  <div class="gap"><b class="id">G2</b><b>Job numbers.</b> Jobs show "Unnumbered" on a fresh setup; give every job a number from the shared numbering (e.g. SV26/11-0001). <span class="pill p-blue">P1</span></div>
+  <div class="gap"><b class="id">G3</b><b>History tab on a service job.</b> Who confirmed, assigned, rejected, completed and verified, with old -> new (standing rule). <span class="pill p-blue">P1</span></div>
+  <div class="gap"><b class="id">G4</b><b>WhatsApp the customer.</b> Send the agreed visit date and "technician on the way" through Respond.io templates (today's complaint already has a conversation tab). <span class="pill p-grey">P1 or later</span></div>
+  <div class="gap"><b class="id">G5</b><b>Send the job to the technician.</b> A WhatsApp with address, contact, map link and problem, without a login (a first step before the technician portal). <span class="pill p-grey">P1 or later</span></div>
+  <div class="gap"><b class="id">G6</b><b>Completion report.</b> On Complete: work done notes, before/after photos, parts used, customer sign-off. Today nothing is captured. <span class="pill p-grey">P1 or later</span></div>
+  <div class="gap"><b class="id">G7</b><b>Charges and costs.</b> Out-of-warranty visit charge (quote, customer accepts) and case costs (parts, transport, contractor fee): the columns exist, there is no screen. <span class="pill p-grey">later</span></div>
+  <div class="gap"><b class="id">G8</b><b>Job sheet PDF.</b> One printable page per job for the technician. <span class="pill p-grey">later</span></div>
+  <div class="gap"><b class="id">G9</b><b>Map products to warranty kinds.</b> 29 of 31 kinds have no product rule; someone has to map series/categories (could be a one-time bulk mapping from product categories). <span class="pill p-blue">P2 data</span></div>
+  <div class="gap"><b class="id">G10</b><b>Stalled-job alert.</b> A Proposed job past its date notifies CS, and the check shows on Scheduled Tasks. <span class="pill p-blue">P1</span></div>
+  <div class="gap"><b class="id">G11</b><b>Week view on the dispatch board.</b> Today it is one day at a time; a week view shows each technician's load. <span class="pill p-grey">later</span></div>
+  <div class="gap"><b class="id">G12</b><b>Reports.</b> Jobs per technician, time to attend, revisits, warranty vs chargeable. Never built. <span class="pill p-grey">later</span></div>
+  <div class="gap"><b class="id">G13</b><b>AI assistant.</b> "When is the technician coming for complaint X?", "Is this product under warranty?" <span class="pill p-blue">P1 / P2</span></div>
+  <div class="gap"><b class="id">G14</b><b>Excel export</b> of the service jobs list in the shared style. <span class="pill p-blue">P1</span></div>
+  <div class="gap"><b class="id">G15</b><b>Warranty on the product page.</b> Show the product's kind and its cover on Product detail. <span class="pill p-grey">P2 or later</span></div>
+</section>
+
+</main>
+<footer class="wrap">Source: PR #163 (branch worktree-after-sales-warranty, head 35ef765e7), scouted on lane AFTER-SALES-REVIVE.
+  Full scout report: documentation/plans/after-sales/SCOUT-after-sales-revive.md. Fake data only.</footer>
+</body>
+</html>
