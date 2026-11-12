@@ -936,29 +936,6 @@ function countsInPress(
 }
 
 /**
- * PLAN-BATCH-COUNT-DISPLAY (D2): per sales order, the lines a pending AutoCount change retires
- * (role `cancelled`: the book cancelled them and nobody decided them). The count leaves them out;
- * the board and the results say them in ONE note instead.
- */
-export interface AutocountChangeNote {
-  salesOrderId: string;
-  soNumber: string | null;
-  count: number;
-  itemCodes: string[];
-}
-
-export function autocountChangeNotes(
-  _contributions: BoardContribution[],
-  _draft: BoardDraft,
-  _excludeKeys?: ReadonlySet<string>,
-): AutocountChangeNote[] {
-  void [_contributions, _draft, _excludeKeys];
-  // Retired (OI-WHOLE-SO-CANCEL F2): a book-cancelled line is decided and confirmed like any
-  // other, so the board no longer keeps a separate note for the lines a press would retire.
-  return [];
-}
-
-/**
  * "24/09/2026" from a batch's `created_at`, a naive UTC timestamp, read as the Malaysia calendar
  * date (reviewer round 1: a change uploaded before 08:00 MYT is the previous UTC day).
  */
@@ -1014,9 +991,7 @@ export function autocountChangeClause(note: NoteLines): string {
  * The Confirm button's label: always the decisions it confirms (OI-WHOLE-SO-CANCEL F2: a
  * book-cancelled line is decided like any other, so there is no apply-only press any more).
  */
-/** `_changeOrders` is accepted and ignored: older callers still pass it. */
-export function confirmButtonLabel(toConfirm: number, _changeOrders?: number): string {
-  void _changeOrders;
+export function confirmButtonLabel(toConfirm: number): string {
   return `Confirm (${toConfirm})`;
 }
 

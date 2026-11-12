@@ -40,9 +40,13 @@ def waiting_row_ids(db: Session, row_ids: Iterable[str]) -> Set[str]:
     ids = [str(i) for i in row_ids if i]
     if not ids:
         return set()
-    found = (
-        db.query(OrderInquiryRow.id)
-        .filter(OrderInquiryRow.id.in_(ids), waiting_for_cs_clause())
-        .all()
-    )
+    # The lines an apply is deciding right now do not wait on that very apply (screens still read
+    # the plain EXISTS above, which is true until the apply commits).
+    from app.services.planning_change_service import APPLYING_LINE_IDS_KEY
+
+    applying = db.info.get(APPLYING_LINE_IDS_KEY) or set()
+    query = db.query(OrderInquiryRow.id).filter(OrderInquiryRow.id.in_(ids), waiting_for_cs_clause())
+    if applying:
+        query = query.filter(OrderInquiryRow.so_line_id.notin_(list(applying)))
+    found = query.all()
     return {str(r[0]) for r in found}

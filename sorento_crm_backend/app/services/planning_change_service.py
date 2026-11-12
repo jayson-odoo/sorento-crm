@@ -4702,6 +4702,11 @@ def _settle_answered_rows(
     db.flush()
 
 
+#: `Session.info` key holding the project line ids an apply is deciding right now, so the OI
+#: "waiting for CS" check (`oi_waiting_for_cs.waiting_row_ids`) ignores them while it runs.
+APPLYING_LINE_IDS_KEY = "oi_applying_change_line_ids"
+
+
 def _apply_one_order(
     db: Session,
     supply,
@@ -4882,13 +4887,14 @@ def _apply_one_order(
         and r.kind not in _UNDECIDED_KINDS_EXCLUDED
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     } | other_batch_undecided_line_ids
-    # The batch's rows are decided now: marked applied BEFORE the confirm and the purchasing reaction
-    # below, so the OI rows they restate do not read as "waiting for CS" on this very change
-    # (auto-confirm skips a waiting row, which left a covered Done row stamped `changed` by its
-    # own date move). The same rows get their result written at the end.
-    for r in live:
-        r.applied_state = PLANNING_CHANGE_STATE_APPLIED
-    db.flush()
+    # While this apply runs, the lines it is deciding are not "waiting for CS": the OI rows it
+    # restates would otherwise be skipped by auto-confirm on this very change and a covered Done
+    # row left stamped `changed` by its own date move. Held on the session (read by
+    # `oi_waiting_for_cs.waiting_row_ids`), cleared by `apply` once this order is done. The rows
+    # themselves stay pending until the end, as the line splits read them.
+    db.info[APPLYING_LINE_IDS_KEY] = {
+        str(r.project_line_id) for r in live if r.project_line_id
+    }
     confirm_lines: List[dict] = []
     replanned = 0
     retired = 0
@@ -5457,6 +5463,8 @@ def apply(
                 }
             )
             continue
+        finally:
+            db.info.pop(APPLYING_LINE_IDS_KEY, None)
 
         # Queued AFTER `savepoint.commit()` has returned, under the order's parent
         # transaction: a later rollback of the whole write drops it, a sibling order's

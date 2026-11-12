@@ -488,7 +488,7 @@ def save_draft(
     # still naming it does not stand in the way of transferring it.
     # OI-WHOLE-SO-CANCEL F2: a line the book has cancelled is decided (its cancel accepted) like any
     # other pending change, even while an older revision still names it.
-    book_cancelled = core_line.line_status == "cancelled"
+    book_cancelled = core_line.line_status == "cancelled" and verdict == "approved"
     covered = (
         None
         if verdict == "amended" or awaiting or book_cancelled
