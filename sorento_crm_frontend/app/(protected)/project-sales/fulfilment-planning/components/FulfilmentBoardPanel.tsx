@@ -4231,7 +4231,7 @@ export function FulfilmentBoardPanel({
       ) : null}
       {orderHistory ? (
         <Dialog open onOpenChange={(open) => (open ? undefined : setOrderHistory(null))}>
-          <DialogContent className="max-w-3xl">
+          <DialogContent className="max-w-3xl" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle className="truncate">{`History ${orderHistory.soNumber}`}</DialogTitle>
             </DialogHeader>

@@ -79,7 +79,7 @@ def _history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
     for event in events:
         actor_id = event.pop("_actor_id", None)
         if event.get("actor") is None:
-            event["actor"] = names.get(actor_id)
+            event["actor"] = names.get(actor_id) or oi_history.AUTOMATIC
     events.sort(key=lambda e: e["at"] or "", reverse=True)
     return events
 
