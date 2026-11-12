@@ -77,7 +77,7 @@ export default function ComplaintResolutionsList() {
         id: 'name',
         accessorFn: (row) => row.name,
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        size: 300,
+        size: 220,
         enableSorting: true,
         meta: { headerTitle: 'Name' },
         cell: ({ row }) => <span className="font-medium truncate block">{row.original.name}</span>,
@@ -86,7 +86,7 @@ export default function ComplaintResolutionsList() {
         id: 'description',
         accessorFn: (row) => row.description,
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-        size: 360,
+        size: 240,
         enableSorting: false,
         meta: { headerTitle: 'Description' },
         cell: ({ row }) => (
@@ -102,7 +102,7 @@ export default function ComplaintResolutionsList() {
         id: 'is_active',
         accessorFn: (row) => row.is_active,
         header: ({ column }) => <DataGridColumnHeader title="Active" column={column} />,
-        size: 140,
+        size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Active' },
         cell: ({ row }) => (
@@ -120,7 +120,7 @@ export default function ComplaintResolutionsList() {
         id: 'requires_service_job',
         accessorFn: (row) => row.requires_service_job,
         header: ({ column }) => <DataGridColumnHeader title="Requires service job" column={column} />,
-        size: 180,
+        size: 150,
         enableSorting: true,
         meta: { headerTitle: 'Requires service job' },
         cell: ({ row }) => (
@@ -131,7 +131,7 @@ export default function ComplaintResolutionsList() {
         id: 'complaint_count',
         accessorFn: (row) => row.complaint_count ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="Complaints" column={column} />,
-        size: 140,
+        size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Complaints' },
         cell: ({ row }) => (
@@ -146,7 +146,7 @@ export default function ComplaintResolutionsList() {
       {
         id: 'actions',
         header: '',
-        size: 140,
+        size: 90,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,

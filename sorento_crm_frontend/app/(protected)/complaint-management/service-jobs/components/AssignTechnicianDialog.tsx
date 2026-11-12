@@ -7,6 +7,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -40,6 +41,7 @@ export default function AssignTechnicianDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Assign technician</DialogTitle>
+          <DialogDescription className="sr-only">Choose the technician for this visit.</DialogDescription>
         </DialogHeader>
         <div className="space-y-1">
           <Label>Technician</Label>

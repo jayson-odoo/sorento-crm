@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -37,6 +37,7 @@ import { useServiceJobsList, useTechniciansSelect } from '../hooks/useServiceJob
 import { useServiceJobMoves } from '../hooks/useServiceJobMoves';
 import { nextStepFor, secondaryMoves } from '../lib/nextStep';
 import { ymd } from '../lib/jobDates';
+import { listUrlSearch } from '../lib/listUrl';
 import type { ServiceJob, ServiceJobStatus } from '../types/serviceJob.types';
 import ServiceJobStatusPill from './ServiceJobStatusPill';
 
@@ -97,6 +98,27 @@ export default function ServiceJobsList() {
     dateTo,
   ]);
 
+  // The list keeps ALL its state in its own address, so the browser's Back restores it.
+  const filtersKey = [statusFilter.join(','), technicianFilter.join(','), dateFrom, dateTo].join('|');
+  useEffect(() => {
+    const next = listUrlSearch(window.location.search, {
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+      filters: {
+        status: statusFilter.length ? joinMulti(statusFilter) : undefined,
+        technician_id: technicianFilter.length ? joinMulti(technicianFilter) : undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+      },
+    });
+    if (next !== window.location.search.replace(/^\?/, '')) {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}?${next}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, filtersKey]);
+
   const { data, isLoading, isPlaceholderData, isFetching, refetch, error } = useServiceJobsList({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
@@ -134,7 +156,7 @@ export default function ServiceJobsList() {
         id: 'job_number',
         accessorFn: (r) => r.job_number,
         header: ({ column }) => <DataGridColumnHeader title="Job no." column={column} />,
-        size: 150,
+        size: 120,
         cell: ({ row }) => <Text value={row.original.job_number} />,
         meta: { headerTitle: 'Job no.', skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -142,7 +164,7 @@ export default function ServiceJobsList() {
         id: 'complaint_number',
         accessorFn: (r) => r.complaint_number,
         header: ({ column }) => <DataGridColumnHeader title="Complaint no." column={column} />,
-        size: 160,
+        size: 130,
         cell: ({ row }) => <Text value={row.original.complaint_number} />,
         meta: { headerTitle: 'Complaint no.', skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -150,7 +172,7 @@ export default function ServiceJobsList() {
         id: 'status',
         accessorFn: (r) => r.status,
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        size: 130,
+        size: 110,
         cell: ({ row }) => (
           <ServiceJobStatusPill status={row.original.status} label={row.original.status_label} />
         ),
@@ -160,7 +182,7 @@ export default function ServiceJobsList() {
         id: 'scheduled_from',
         accessorFn: (r) => r.scheduled_from,
         header: ({ column }) => <DataGridColumnHeader title="Scheduled" column={column} />,
-        size: 180,
+        size: 160,
         cell: ({ row }) => (
           <Text
             value={
@@ -176,7 +198,7 @@ export default function ServiceJobsList() {
         id: 'technician',
         accessorFn: (r) => r.technician_name,
         header: ({ column }) => <DataGridColumnHeader title="Technician" column={column} />,
-        size: 160,
+        size: 110,
         cell: ({ row }) => <Text value={row.original.technician_name} />,
         meta: { headerTitle: 'Technician', skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -184,7 +206,7 @@ export default function ServiceJobsList() {
         id: 'city',
         accessorFn: (r) => r.city,
         header: ({ column }) => <DataGridColumnHeader title="City" column={column} />,
-        size: 140,
+        size: 100,
         cell: ({ row }) => <Text value={row.original.city} />,
         meta: { headerTitle: 'City', skeleton: <Skeleton className="h-4 w-20" /> },
       },
@@ -192,7 +214,7 @@ export default function ServiceJobsList() {
         id: 'customer',
         accessorFn: (r) => r.customer_name,
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
-        size: 220,
+        size: 150,
         cell: ({ row }) => <Text value={row.original.customer_name} />,
         meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-32" /> },
       },
@@ -288,7 +310,7 @@ export default function ServiceJobsList() {
                               clearable
                             />
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="grid grid-cols-1 gap-2">
                             <div>
                               <Label>Scheduled from</Label>
                               <DatePicker

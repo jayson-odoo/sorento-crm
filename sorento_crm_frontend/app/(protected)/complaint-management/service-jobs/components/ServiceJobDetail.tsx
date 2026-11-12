@@ -80,10 +80,7 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
             <DetailActionsMenu ariaLabel="Service job actions">
               {canChangeTechnician && (
                 <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    moves.changeTechnician(job);
-                  }}
+                  onSelect={() => moves.changeTechnician(job)}
                 >
                   Change technician
                 </DropdownMenuItem>
@@ -91,10 +88,7 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
               {secondary.map((m) => (
                 <DropdownMenuItem
                   key={`${m.to}-${m.label}`}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    moves.runMove(job, m);
-                  }}
+                  onSelect={() => moves.runMove(job, m)}
                 >
                   {m.label}
                 </DropdownMenuItem>

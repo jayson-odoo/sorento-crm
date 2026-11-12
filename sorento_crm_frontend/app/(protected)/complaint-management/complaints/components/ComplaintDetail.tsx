@@ -60,7 +60,7 @@ import {
 import { useHasPermission } from '@/hooks/usePermissions';
 import ComplaintSiteCard from './ComplaintSiteCard';
 import ComplaintServiceJobsSection from './ComplaintServiceJobsSection';
-import { useComplaintServiceJobs, useRaiseServiceJob } from '../../service-jobs/hooks/useServiceJobs';
+import RaiseServiceJobMenuItem from './RaiseServiceJobMenuItem';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
@@ -136,10 +136,6 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const closeComplaintMutation = useCloseComplaint();
   const notifyRootCauseMutation = useNotifyComplaintRootCause();
   const notifyResolutionMutation = useNotifyComplaintResolution();
-  const canDispatch = useHasPermission('complaint_management.service_jobs.dispatch');
-  const raiseServiceJob = useRaiseServiceJob();
-  const { data: serviceJobs = [] } = useComplaintServiceJobs(complaintId);
-  const hasLiveServiceJob = serviceJobs.some((j) => !['verified', 'cancelled'].includes(j.status));
   const canApprove = useHasPermission('complaint_management.complaints.approve');
   const canReject = useHasPermission('complaint_management.complaints.reject');
   const canProcess = useHasPermission('complaint_management.complaints.resolve');
@@ -576,16 +572,7 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   Void
                 </DropdownMenuItem>
               )}
-              {canDispatch && !hasLiveServiceJob && (
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    raiseServiceJob.mutate(complaintId);
-                  }}
-                >
-                  Raise service job
-                </DropdownMenuItem>
-              )}
+              <RaiseServiceJobMenuItem complaintId={complaintId} />
               {/* The set the list row renders too (D15) - Download PDF, Delete.
                   Spliced in as an array so the menu can see the destructive one and
                   move it last by itself, after this record's own Void. */}

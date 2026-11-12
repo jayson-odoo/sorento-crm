@@ -311,7 +311,7 @@ def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any
     for row in day_rows:
         job, _status, tech, _complaint = row
         data = serialize(row)
-        if tech is None or not tech.is_active:
+        if tech is None:
             unassigned.append(data)
             continue
         col = by_tech.setdefault(

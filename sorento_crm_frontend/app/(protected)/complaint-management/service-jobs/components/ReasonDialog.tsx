@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -31,6 +32,7 @@ export default function ReasonDialog({ open, onOpenChange, title, onSubmit, isPe
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="sr-only">Enter the reason.</DialogDescription>
         </DialogHeader>
         <div className="space-y-1">
           <Label htmlFor="move-reason">Reason</Label>

@@ -8,6 +8,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -60,6 +61,7 @@ export default function TechnicianFormDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{technician ? 'Edit technician' : 'Create technician'}</DialogTitle>
+          <DialogDescription className="sr-only">Technician details.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1">
