@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, NamedTuple
 
 import httpx
@@ -112,8 +113,9 @@ def _url_is(url: Any) -> Callable[[dict], bool]:
     return match
 
 
-def _steps(actions: list[dict[str, Any]], ident: str) -> list[Step]:
-    """The steps, in action order."""
+def _steps(actions: list[dict[str, Any]], ident: str, prefix: str = "") -> list[Step]:
+    """The steps, in action order. `prefix` keeps a side message (the failure reply) off the
+    turn's own step keys."""
     steps: list[Step] = []
     for a, action in enumerate(actions):
         kind = action.get("kind")
@@ -124,31 +126,31 @@ def _steps(actions: list[dict[str, Any]], ident: str) -> list[Step]:
             parts = split_text(str(action.get("text") or ""), with_quick_replies=bool(replies))
             for p, part in enumerate(parts):
                 if replies and p == len(parts) - 1:
-                    steps.append(Step(f"{a}.{p}", kind, {"text": part, "replies": replies},
+                    steps.append(Step(f"{prefix}{a}.{p}", kind, {"text": part, "replies": replies},
                                       lambda c, t=part, r=replies: c.send_quick_reply(ident, t, r),
                                       _text_is(part)))
                 else:
-                    steps.append(Step(f"{a}.{p}", kind, {"text": part},
+                    steps.append(Step(f"{prefix}{a}.{p}", kind, {"text": part},
                                       lambda c, t=part: c.send_message(ident, t), _text_is(part)))
         elif kind == "send_attachments":
             for p, att in enumerate(action.get("attachments_src") or []):
                 kind_, url, cap = _attachment_type(att), att.get("url"), att.get("caption")
-                steps.append(Step(f"{a}.{p}", kind, {"attachment_type": kind_, "url": url},
+                steps.append(Step(f"{prefix}{a}.{p}", kind, {"attachment_type": kind_, "url": url},
                                   lambda c, k=kind_, u=url, cp=cap: c.send_attachment(ident, k, u, cp),
                                   _url_is(url)))
         elif kind == "assign_conversation":
             uid = action.get("respond_user_id")
-            steps.append(Step(f"{a}.0", kind, {"respond_user_id": uid},
+            steps.append(Step(f"{prefix}{a}.0", kind, {"respond_user_id": uid},
                               lambda c, u=uid: c.set_conversation_assignee(ident, u), idempotent=True))
         elif kind == "add_comment":
             mentions = " ".join(f"{{{{@user.{m}}}}}" for m in action.get("mention_user_ids") or [])
             body = f"{mentions}\n{action.get('text') or ''}" if mentions else str(action.get("text") or "")
-            steps.append(Step(f"{a}.0", kind, {"text": body},
+            steps.append(Step(f"{prefix}{a}.0", kind, {"text": body},
                               lambda c, b=body: c.create_comment(ident, b)))
         elif kind == "update_contact_fields":
             fields = action.get("fields") or {}
             payload = {"custom_fields": [{"name": k, "value": v} for k, v in fields.items()]}
-            steps.append(Step(f"{a}.0", kind, {"fields": fields},
+            steps.append(Step(f"{prefix}{a}.0", kind, {"fields": fields},
                               lambda c, pl=payload: c.update_contact(ident, pl), idempotent=True))
         # Unknown kinds are skipped, as the n8n sender does.
     return steps
@@ -213,9 +215,11 @@ def all_confirmed(db: Any, turn_id: str, actions: list[dict[str, Any]]) -> bool:
     return {st.key for st in _steps(actions, "")} <= confirmed_keys(db, turn_id)
 
 
-def _step_row(turn_id: str, contact_id: str, key: str, kind: str, detail: dict, *, confirmed_by: str | None = None,
-              unknown: bool = False) -> dict:
-    body = {"sender": "crm", "step": key, "kind": kind, **detail}
+def _step_row(turn_id: str, contact_id: str, key: str, kind: str, detail: dict, *, attempted_at: str,
+              confirmed_by: str | None = None, unknown: bool = False) -> dict:
+    # `attempted_at` is the ORIGINAL attempt's time, copied unchanged onto every later row of
+    # the step: the lookup window starts there, never at a later row's own time.
+    body = {"sender": "crm", "step": key, "kind": kind, "attempted_at": attempted_at, **detail}
     if confirmed_by:
         body["confirmed_by"] = confirmed_by
     if unknown:
@@ -277,8 +281,9 @@ def _finalise(db: Any, base: dict, stamp: Any, **kw: Any) -> bool:
 
 
 def _prior_attempt(db: Any, turn_id: str, key: str) -> tuple[Any, float | None]:
-    """(latest row of this step, its age in seconds by the database clock), or (None, None)."""
-    from sqlalchemy import text
+    """(latest row of this step when its outcome is unknown, the ORIGINAL attempt's epoch), else
+    (None, None). Unknown = a `processing` stamp with no result, or a failure flagged unknown."""
+    from datetime import datetime, timezone
 
     from app.models.integration import IntegrationLog
 
@@ -302,16 +307,18 @@ def _prior_attempt(db: Any, turn_id: str, key: str) -> tuple[Any, float | None]:
         unknown = row.status == "processing" or (row.status == "failed" and bool(body.get("unknown")))
         if not unknown:
             return None, None
-        age = db.execute(
-            text("SELECT EXTRACT(EPOCH FROM (now() - created_at)) FROM integration_log WHERE id = :i"),
-            {"i": row.id},
-        ).scalar()
-        return row, float(age or 0.0)
+        try:
+            at = datetime.fromisoformat(str(body["attempted_at"]))
+            at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+            return row, at.timestamp()
+        except (KeyError, ValueError):
+            created = row.created_at
+            return row, (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).timestamp()
     return None, None
 
 
-def last_failure_reason(db: Any, turn_id: str) -> str | None:
-    """The plain reason on the turn's latest failed CRM step row."""
+def last_failure_reason(db: Any, turn_id: str, since: Any = None) -> str | None:
+    """The plain reason on the turn's latest failed CRM step row (only rows from `since` on)."""
     from app.models.integration import IntegrationLog
 
     row = (
@@ -321,6 +328,7 @@ def last_failure_reason(db: Any, turn_id: str) -> str | None:
             IntegrationLog.integration_channel == direct_ingress.INTEGRATION_CHANNEL,
             IntegrationLog.request_payload.contains('"sender": "crm"'),
             IntegrationLog.status == "failed",
+            *([IntegrationLog.created_at >= since] if since is not None else []),
         )
         .order_by(IntegrationLog.created_at.desc())
         .first()
@@ -418,6 +426,7 @@ def send(
     actions: list[dict[str, Any]],
     ctx: dict[str, Any] | None = None,
     client: Any = None,
+    step_prefix: str = "",
 ) -> str:
     """Run the actions through Respond.io, resuming past confirmed steps. Never raises.
 
@@ -432,21 +441,26 @@ def send(
             # The way the live path builds it for this contact (`direct_ingress._lookup_contact`).
             client = RespondClient.for_identifier(db, contact_id)
         done = confirmed_keys(db, turn_id)
-        for step in _steps(actions, ident):
+        for step in _steps(actions, ident, step_prefix):
             if step.key in done:
                 continue
-            base = _step_row(turn_id, contact_id, step.key, step.kind, step.detail)
-
             # An earlier attempt with an unknown result: ask the conversation before sending again.
-            prior, age = _prior_attempt(db, turn_id, step.key)
+            prior, prior_at = _prior_attempt(db, turn_id, step.key)
+            attempted_at = prior_at if prior_at is not None else time.time()
+            iso = datetime.fromtimestamp(attempted_at, timezone.utc).isoformat()
+
+            def row_for(**kw: Any) -> dict:
+                return _step_row(turn_id, contact_id, step.key, step.kind, step.detail, attempted_at=iso, **kw)
+
+            base = row_for()
+
             if prior is not None and step.matches is not None:
                 try:
-                    found = _in_conversation(client, ident, step, time.time() - (age or 0.0))
+                    found = _in_conversation(client, ident, step, attempted_at)
                 except Exception:  # noqa: BLE001
                     logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
                     if prior.status == "processing":
-                        row = _write_row(db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail,
-                                                       unknown=True),
+                        row = _write_row(db, row_for(unknown=True),
                                          status="failed", error=_NOT_CONFIRMED)
                         if row is not None:
                             _drop_stamp(db, prior)
@@ -471,7 +485,6 @@ def send(
                 return direct_ingress.SEND_HTTP_ERROR
             if prior is not None and prior.status == "processing":
                 _drop_stamp(db, prior)
-            attempted_at = time.time()
             response, failure = _attempt(client, step)
             if failure is None:
                 if not _finalise(db, base, stamp, status="success", status_code=200, response=_kept_response(response)):
@@ -483,7 +496,7 @@ def send(
                 _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
                 return outcome
             # Unknown: the request may have left.
-            unknown_base = _step_row(turn_id, contact_id, step.key, step.kind, step.detail, unknown=True)
+            unknown_base = row_for(unknown=True)
             if step.idempotent:
                 _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
                 stamp = _write_row(db, base, status="processing")
@@ -508,7 +521,7 @@ def send(
                 _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
                 return direct_ingress.SEND_REFUSED
             if not _finalise(
-                db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail, confirmed_by="lookup"),
+                db, row_for(confirmed_by="lookup"),
                 stamp, status="success",
             ):
                 return direct_ingress.SEND_HTTP_ERROR

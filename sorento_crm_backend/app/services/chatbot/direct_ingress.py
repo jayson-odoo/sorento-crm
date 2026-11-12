@@ -370,8 +370,10 @@ def send_outcome(
     reply: Any,
     branch_kind: str | None,
     ctx: dict[str, Any] | None = None,
+    step_prefix: str = "",
 ) -> str:
-    """`send`, naming what the attempt came to (`SEND_*`). Never raises."""
+    """`send`, naming what the attempt came to (`SEND_*`). Never raises.
+    `step_prefix` only matters on the CRM path (it names a side message's step keys)."""
     import httpx
 
     from app.services.chatbot import crm_sender
@@ -379,7 +381,8 @@ def send_outcome(
 
     if _on_crm_path(session_factory, turn_id, contact_id):
         return crm_sender.send(
-            session_factory, turn_id=turn_id, contact_id=contact_id, actions=actions, ctx=ctx
+            session_factory, turn_id=turn_id, contact_id=contact_id, actions=actions, ctx=ctx,
+            step_prefix=step_prefix,
         )
     db = session_factory()
     try:

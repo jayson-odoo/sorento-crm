@@ -1056,6 +1056,7 @@ def _send_failure_reply(factory: Callable[[], Any], turn_id: str, contact: str) 
         direct_ingress.send_outcome(
             factory, turn_id=turn_id, contact_id=contact, actions=[action],
             reply={"text": CHATBOT_REPLY_TURN_FAILED, "quick_replies": None}, branch_kind=None,
+            step_prefix="f.",
         )
     except Exception:  # noqa: BLE001
         logger.warning("chatbot inbox: could not send the failure reply for %s", turn_id, exc_info=True)

@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -650,11 +650,11 @@ def _refuse_crm_retry(db: Session, row: ChatbotTurn, now: datetime) -> str | Non
     """Why Try again must not send now, in plain words; None when it may."""
     from app.services.chatbot import direct_ingress
 
-    finished = row.finished_at or row.created_at
-    if finished is not None:
-        if finished.tzinfo is None:
-            finished = finished.replace(tzinfo=timezone.utc)
-        if now - finished > RETRY_MAX_AGE:
+    # Counted from when the turn was created (a turn can sit a long time before it finishes).
+    stamps = [t for t in (row.created_at, row.finished_at) if t is not None]
+    created = min((t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in stamps), default=None)
+    if created is not None:
+        if now - created > RETRY_MAX_AGE:
             return "This reply is more than a day old, so it is not sent now."
     contact = row.contact_respond_id
     if not direct_ingress._on_default_workspace(db, contact):
@@ -699,13 +699,14 @@ def _retry_via_crm(
             "started_at": now.isoformat(),
             "ms": 0,
             "summary": "Retry requested by an operator.",
-            "why": "The reply's parts not yet confirmed were sent again; sent parts were not repeated.",
-            "facts": {"attempt": row.attempt + 1, "requested_at": now.isoformat(), "requested_by": actor_id},
+            "why": "Try again requested; only the parts not yet confirmed are sent, sent parts are not repeated.",
+            "facts": {"attempt": row.attempt, "requested_at": now.isoformat(), "requested_by": actor_id},
             "error": None,
             "raw": {"retry": True, "from_attempt": row.attempt, "requested_by": actor_id},
         },
     ]
     db.commit()
+    attempt_began = db.execute(text("SELECT now()")).scalar()
     try:
         outcome = crm_sender.send(
             lambda: SessionLocal(),
@@ -720,15 +721,17 @@ def _retry_via_crm(
     if outcome == direct_ingress.SEND_OK:
         row.status, row.stage, row.error = "done", "sent", None
         db.commit()
-        _log_retry(db, request, row, actor_id, 200, None)
+        _log_retry(db, request, row, actor_id, 200, None, channel="chatbot_crm_sender")
         return RetryTurnResponse(turn_id=turn_id, attempt=row.attempt)
+    # Only a plain refusal has a reason worth showing, and only from this attempt. Anything else
+    # (timeout, a result that could not be recorded) may have reached the customer.
     row.error = (
-        "Not confirmed: the reply may not have reached the customer."
-        if outcome == direct_ingress.SEND_TIMEOUT
-        else (crm_sender.last_failure_reason(db, turn_id) or "The reply was not sent.")
+        crm_sender.last_failure_reason(db, turn_id, since=attempt_began) or "The reply was not sent."
+        if outcome == direct_ingress.SEND_REFUSED
+        else "Not confirmed: the reply may not have reached the customer."
     )
     db.commit()
-    _log_retry(db, request, row, actor_id, 502, row.error)
+    _log_retry(db, request, row, actor_id, 502, row.error, channel="chatbot_crm_sender")
     raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"{row.error} Try again.")
 
 
@@ -739,6 +742,7 @@ def _log_retry(
     actor_id: str,
     status_code: int,
     error_message: str | None,
+    channel: str = "n8n",
 ) -> None:
     """An `integration_log` row for the outbound POST, success AND failure.
 
@@ -749,7 +753,7 @@ def _log_retry(
     try:
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
-                integration_channel="n8n",
+                integration_channel=channel,
                 business_table="chatbot.turns",
                 business_id=str(row.id),
                 external_reference=row.contact_respond_id,
