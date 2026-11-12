@@ -2,12 +2,14 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { isPending, type TownPayload, type TownShipment, type TownSnapshot } from '@/types/town.types';
 import { boughtToday, count, rm, shopLabel, shopToday } from '../lib/townFormat';
+import { siteTimeline, siteTitle, stageLabel } from '../lib/townMap';
 
 export type TownTarget =
   | { kind: 'sales' }
@@ -16,7 +18,10 @@ export type TownTarget =
   | { kind: 'low' }
   | { kind: 'deliver' }
   | { kind: 'approve' }
-  | { kind: 'port' };
+  | { kind: 'port' }
+  | { kind: 'site'; key: string }
+  | { kind: 'trading_house'; key: string }
+  | { kind: 'projects' };
 
 /** The existing screens a lightbox opens (each is permission-checked by its own page). */
 const ROUTES = {
@@ -28,15 +33,20 @@ const ROUTES = {
   shipments: '/procurement-management/packing-lists',
 } as const;
 
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
+/** A label / value table. A row may carry a stable id as its third item (a list of sites, where two
+ * anonymous rows share the label "Project site"); otherwise the label is the key. */
+function Rows({ rows }: { rows: ([string, ReactNode] | [string, ReactNode, string])[] }) {
   return (
     <div className="mt-2 overflow-x-auto">
       <table className="w-full text-sm">
         <tbody>
-          {rows.map(([label, value]) => (
-            <tr key={label} className="border-b border-border last:border-0">
-              <td className="py-1.5 pe-2">{label}</td>
-              <td className="py-1.5 text-end tabular-nums">{value}</td>
+          {rows.map(([label, value, id]) => (
+            <tr key={id ?? label} className="border-b border-border last:border-0">
+              {/* a long name (a project title can run to hundreds of characters) clamps to one line, full text on hover or the eye */}
+              <td className="w-full max-w-0 py-1.5 pe-2">
+                <TruncatedTextCell text={label} dialogTitle="Full name" />
+              </td>
+              <td className="whitespace-nowrap py-1.5 text-end tabular-nums">{value}</td>
             </tr>
           ))}
         </tbody>
@@ -129,6 +139,12 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
             <Rows
               rows={[
                 ...(full ? ([['Invoiced today', rm(today.amount as string)]] as [string, ReactNode][]) : []),
+                ...(today.split
+                  ? (['dealer', 'project', 'other'] as const).map((k): [string, ReactNode] => [
+                      { dealer: 'Dealers', project: 'Projects', other: 'Other' }[k],
+                      today.split?.[k].amount != null ? rm(today.split[k].amount as string) : `${count(today.split?.[k].invoice_count ?? 0)} invoices`,
+                    ])
+                  : []),
                 ['Invoices', count(today.invoice_count)],
                 ['Credit notes', count(today.credit_note_count)],
                 ['Customers', count(today.customer_count)],
@@ -149,7 +165,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
         content: (
           <Rows
             rows={[
-              ...bought.map((shop): [string, ReactNode] => [shopLabel(shop), shopToday(shop)]),
+              ...bought.map((shop): [string, ReactNode, string] => [shopLabel(shop), shopToday(shop), shop.key]),
               ...(others ? ([[`+ ${others} more dealers`, '']] as [string, ReactNode][]) : []),
             ]}
           />
@@ -161,14 +177,13 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       if (!shop) return { title: 'Dealer', meta: '', content: null };
       return {
         title: shopLabel(shop),
-        meta: `${shop.today_docs ? 'Bought today' : 'No invoice today'}${
-          shop.rank && shop.name ? ` · rank ${shop.rank} of 30 (90 days)` : ''
-        }`,
+        meta: shop.today_docs ? 'Bought today' : 'No invoice today',
         content: (
           <>
             <Rows
               rows={[
                 ['Invoices today', shop.today_docs],
+                ...(shop.rank && shop.name ? ([['Rank (90 days)', `${shop.rank} of 30`]] as [string, ReactNode][]) : []),
                 ...(shop.today_amount ? ([['Invoiced today', rm(shop.today_amount)]] as [string, ReactNode][]) : []),
                 ...(shop.ninety_day_amount
                   ? ([['Last 90 days', rm(shop.ninety_day_amount)]] as [string, ReactNode][])
@@ -178,6 +193,70 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
             {full ? link(ROUTES.invoices, 'Open invoices') : null}
           </>
         ),
+      };
+    }
+    case 'site': {
+      const site = snapshot.projects?.sites.find((s) => s.key === target.key);
+      if (!site) return { title: 'Project site', meta: '', content: null };
+      return {
+        // the name alone as the title (it clamps; a project name can run to hundreds of characters) and the
+        // code on its own row, where no clamp can cut it (crew pass, 12 Nov)
+        title: site.name ?? 'Project site',
+        meta: stageLabel(site),
+        content: (
+          <>
+            <Rows
+              rows={[
+                ...(site.code ? ([['Code', site.code]] as [string, ReactNode][]) : []),
+                ['Stage', stageLabel(site)],
+                ['Final negotiation', site.final_negotiation ? 'Yes' : 'No'],
+                ['State', site.state ?? 'State not set'],
+                ...siteTimeline(site, snapshot.day),
+                ...(full ? ([['Estimated value', site.estimated_value ? rm(site.estimated_value) : '-']] as [string, ReactNode][]) : []),
+              ]}
+            />
+            {site.name ? link(`/project-sales/${site.key}`, 'Open project') : null}
+          </>
+        ),
+      };
+    }
+    case 'trading_house': {
+      const row = snapshot.trading_houses?.rows.find((r) => r.key === target.key);
+      if (!row) return { title: 'Trading house', meta: '', content: null };
+      return {
+        title: row.name ?? 'Trading house',
+        meta: row.today_docs ? 'Bought today' : 'No project invoice today',
+        content: (
+          <Rows
+            rows={[
+              ['State', row.state ?? 'State not set'],
+              ['Open projects', count(row.open_projects)],
+              ['Project invoices today', count(row.today_docs)],
+            ]}
+          />
+        ),
+      };
+    }
+    case 'projects': {
+      const p = snapshot.projects;
+      return {
+        title: `${count(p?.open_count ?? 0)} open projects`,
+        meta: '',
+        content: p ? (
+          <>
+            <Rows rows={[['On the map', count(p.sites.length)], ['More', count(p.more)], ['Dormant', count(p.dormant)]]} />
+            <Rows
+              rows={p.sites.map((s): [string, ReactNode, string] => [
+                siteTitle(s),
+                <>
+                  <div>{stageLabel(s)}</div>
+                  <div className="text-muted-foreground">{s.state ?? 'State not set'}</div>
+                </>,
+                s.key,
+              ])}
+            />
+          </>
+        ) : null,
       };
     }
     case 'low':
@@ -265,7 +344,9 @@ export function TownLightbox({
     <Dialog open={shown !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className={wide ? 'sm:max-w-2xl' : 'sm:max-w-md'}>
         <DialogHeader className="mb-2 space-y-0 pe-8 text-start">
-          <DialogTitle>{shown?.title}</DialogTitle>
+          <DialogTitle>
+            <TruncatedTextCell text={shown?.title} lines={2} dialogTitle="Full name" />
+          </DialogTitle>
           <DialogDescription className={shown?.meta ? 'text-xs' : 'sr-only'}>
             {shown?.meta || shown?.title}
           </DialogDescription>
