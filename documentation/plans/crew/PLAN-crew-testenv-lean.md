@@ -90,6 +90,19 @@ failed build fails fast via a sentinel + `herdr pane wait-output --regex` (R5); 
 tests (R8). Pushed back: dirty-worktree digest in the build key (copies serve the PR head by sha; crew restarts on
 sha moves only, so uncommitted edits are not what the owner tests).
 
+## Trial (12 Nov 23:46-23:51, slot 1, crew GO; replaced a freed copy, both runs stopped)
+
+Same head f29ed18eb5, same 10 signed-in pages, `footprint -p` summed over each process tree.
+
+| | backend | frontend at ready | frontend after 10 pages | copy total |
+|---|---|---|---|---|
+| current (`--reload`, `next dev --turbopack`) | 954 MB (3 procs) | 271 MB | 2575 MB (grows per page) | 3.5 GB |
+| lean (no reload, `next build` + `next start`) | 906 MB (1 proc) | 1016 MB | 979 MB (flat) | 1.9 GB |
+
+Start: current ready 15 s, first page 5 s; lean cold = build 165 s + start 2 s, same head again 2 s, pages under 1 s.
+Build peak 6.6 GB footprint, swap 6.8 -> 9.7 GB while it ran. Worktree clean after the build. `.next` 4.8 GB, of which
+`.next/cache/webpack` 4.2 GB (a dev `.next` is ~186 MB). Proposal filed with crew: cap 6, drop `.next/cache` after build.
+
 ## UAC
 
 1. Copy frontend is `next start` serving a build of the copy's head; a second `testenv up` on the same head and env
