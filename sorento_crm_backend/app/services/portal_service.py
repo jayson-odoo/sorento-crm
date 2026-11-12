@@ -1155,6 +1155,19 @@ class PortalService:
             self.db.refresh(row)
         return self.get_submission(token, kind, str(row.id))
 
+    def _assert_own_project(self, token: PortalToken, row: Any) -> None:
+        """A picked project must be one of the contact's own companies' (PROJECT-RELATED-RECORDS
+        AC-C3): the ownership half of the sponsorship form's gate, reused as is. Optional for
+        these kinds (D3), so nothing picked is never refused. Checked on submit, as the
+        sponsorship's link is, because a draft may be incomplete."""
+        if not getattr(row, "project_id", None):
+            return
+        from app.services import sponsorship_link_service
+
+        sponsorship_link_service.assert_project_requirement(
+            self.db, contact=self.get_contact(token), project_id=str(row.project_id)
+        )
+
     def submit_draft(
         self,
         token: PortalToken,
@@ -1189,6 +1202,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
+            self._assert_own_project(token, row)
             # A draft may be incomplete; a submission may not (FORM-REQUIRED-SERVER). Read
             # off the row after the body above, so a bare resubmit of a saved draft is
             # checked too; before any write below, so a refusal leaves the row as it was.
@@ -1203,6 +1217,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
+            self._assert_own_project(token, row)
             portal_required_fields.require_complete(kind, row)
             # Portal submit mirrors the system "submit for project sales" flow:
             # advance directly to pending_project_sales so the Project Sales
@@ -1254,6 +1269,7 @@ class PortalService:
                         message="That project is not approved yet. Pick a project from the list.",
                         code="purchase_request_project_not_approved",
                     )
+                self._assert_own_project(token, row)
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )
@@ -1804,6 +1820,8 @@ class PortalService:
                 "contact_number",
                 "customer_address",
                 "project_title",
+                # PROJECT-RELATED-RECORDS AC-C3: the registered project, ownership checked on submit.
+                "project_id",
             )
         if kind == "stock_inquiry":
             return (
@@ -1813,6 +1831,8 @@ class PortalService:
                 "item_description",
                 "project_customer",
                 "project_name",
+                # PROJECT-RELATED-RECORDS AC-C3: the registered project, ownership checked on submit.
+                "project_id",
                 "quantity",
                 "delivery_date",
                 "remark",
@@ -2173,6 +2193,10 @@ class PortalService:
                 "contact_number": row.contact_number,
                 "customer_address": row.customer_address,
                 "project_title": row.project_title,
+                # PROJECT-RELATED-RECORDS AC-C3: the picked project round-trips by id and
+                # shows by code, as the sponsorship form's does.
+                "project_id": str(row.project_id) if row.project_id else None,
+                "project_code": self._project_code(row.project_id),
                 "technical_team_response": row.technical_team_response,
             }
         )
@@ -2231,6 +2255,9 @@ class PortalService:
                 "item_description": row.item_description,
                 "project_customer": row.project_customer,
                 "project_name": row.project_name,
+                # PROJECT-RELATED-RECORDS AC-C3, as the complaint above.
+                "project_id": str(row.project_id) if row.project_id else None,
+                "project_code": self._project_code(row.project_id),
                 "quantity": row.quantity,
                 "delivery_date": row.delivery_date,
                 "remark": row.remark,

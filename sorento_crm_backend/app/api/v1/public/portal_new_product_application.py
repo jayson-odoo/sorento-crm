@@ -84,6 +84,15 @@ def _check_write(db: Session, token: PortalToken, data: dict) -> None:
         space_id=token.space_id,
         stock_inquiry_id=data.get("stock_inquiry_id"),
     )
+    if data.get("project_id") and svc._is_uuid(data["project_id"]):  # free text: `_check_refs` refuses
+        # PROJECT-RELATED-RECORDS AC-C3: only a project of the contact's own companies, the
+        # sponsorship form's ownership check reused as is.
+        from app.services import sponsorship_link_service
+        from app.services.portal_service import PortalService
+
+        sponsorship_link_service.assert_project_requirement(
+            db, contact=PortalService(db).get_contact(token), project_id=str(data["project_id"])
+        )
     # Owner 8 Nov: the customer is the stock inquiry's customer dropdown (every customer of every
     # company of the contact). Another of the contact's companies is kept as text (below); an id
     # outside them is refused by the service's company-filtered `_check_refs`.

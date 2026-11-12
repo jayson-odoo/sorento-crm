@@ -214,6 +214,18 @@ interface FieldDef {
   showWhenDetail?: (detail: PortalSubmissionDetail | null) => boolean;
 }
 
+/**
+ * PROJECT-RELATED-RECORDS AC-C3: the sponsorship form's project picker (below), on the stock
+ * inquiry, complaint and purchase request too. Optional for everyone (D3): the typed project
+ * name stays for a project that is not registered. The server checks the pick is the contact's.
+ */
+const REGISTERED_PROJECT_FIELD: FieldDef = {
+  name: 'project_id',
+  label: 'Registered project (optional)',
+  widget: 'project-async',
+  displayFromDetail: 'project_code',
+};
+
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   stock_inquiry: [
     { name: 'product_code', label: 'Product code', widget: 'product-async' },
@@ -226,6 +238,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'debtor-async',
     },
     { name: 'project_name', label: 'Project name' },
+    REGISTERED_PROJECT_FIELD,
     {
       name: 'salesperson_contact_id',
       label: 'Salesperson',
@@ -352,12 +365,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       required: true,
     },
     { name: 'project_title', label: 'Project title' },
+    REGISTERED_PROJECT_FIELD,
   ],
   purchase_request: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
     { name: 'customer_id', label: 'Customer', widget: 'hidden' },
     { name: 'pic', label: 'PIC', placeholder: 'Name and contact number' },
     { name: 'project_title', label: 'Project title' },
+    REGISTERED_PROJECT_FIELD,
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     {
       name: 'sales_type',

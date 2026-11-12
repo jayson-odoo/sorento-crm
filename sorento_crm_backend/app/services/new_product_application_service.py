@@ -221,6 +221,9 @@ def _check_refs(db: Session, data: Dict[str, Any]) -> None:
     inquiry_id = data.get("stock_inquiry_id")
     if inquiry_id is not None and not _ref_exists(db, StockInquiry, inquiry_id):
         raise _invalid("stock_inquiry_id", "That stock inquiry does not exist.")
+    project_id = data.get("project_id")
+    if project_id and not _is_uuid(project_id):
+        raise _invalid("project_id", "Pick a registered project from the list.")
     customer_id = data.get("customer_id")
     if customer_id is not None and not _ref_exists(db, Customer, customer_id):
         raise _invalid("customer_id", "That customer is not in the debtor list.")
