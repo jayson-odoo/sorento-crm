@@ -60,6 +60,8 @@ Guard: `require_any_permission(READ)` + the project own-scope router guard; proj
 Response `RelatedRecordsResponse` = `ListResponse[RelatedRecordRow]` plus:
 - `type_counts: Dict[kind, int]`: rows per visible type with no type/status/query filter (the tab badge = sum);
 - `types: List[{"kind", "label"}]`: types the viewer may see, in registry order.
+- `statuses: List[str]`: the raw statuses of the visible linked rows with no filter, sorted (the Status filter's
+  options; added by the coder so the filter offers every status, not only the loaded page's).
 
 `RelatedRecordRow`: `kind`, `id`, `number`, `status`, `approval_status` (PR/SF only, else null), `date` (date),
 `raised_by` (a name, never an id), `subject`, `value` (Decimal or null).
