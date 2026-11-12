@@ -17,14 +17,15 @@ Click **Start Plan** in the list toolbar. The dialog is titled **Start Plan**:
 * **Demand** - optional, reads **All** when left blank. Pick **Project** to plan only the
   project side of demand, **Dealer** to plan only the retail side, or leave it on **All** to
   plan both together.
-* **Project delivery range** - **From** and **To** dates, both optional. The helper text reads
+* **Project delivery range** - one date range field (type `01/11/2026 - 30/11/2026` or use the
+  calendar button; either end can be left empty). The helper text reads
   "Empty = every open order counts." A sales order with no date of its own always counts,
   whichever dates you set.
   * With **Demand** on **All** and one or more orders ticked in **Orders** (below), this range
     limits the project rows only - the retail lines are planned whatever their date.
   * With no orders ticked, or with **Demand** on **Project** or **Dealer**, the range works as
     it always has: it limits the whole run.
-* **Inquiries raised** - **Raised from** and **Raised to** dates, shown only when **Demand** is
+* **Inquiries raised** - one date range field for the raise dates, shown only when **Demand** is
   **Project**. The helper text reads "Empty = any raise date. Pre-selects the matching orders;
   the list still shows them all."
 * **Orders** - shown whenever **Demand** is **Project** or **All** (**Dealer** has no picker,
@@ -57,7 +58,7 @@ The **Header** tab shows the Plan card with:
   01/01/2025", or "every open order", matching whatever you set at Start Plan.
 * **Warehouses** and **Products** - the scope the run was launched with.
 
-**Edit** is the primary button on the Plan card. Editing lets you change the From and To dates
+**Edit** is the primary button on the Plan card. Editing lets you change the date range
 (and warehouses/products) and **Re-plan**: this launches a new run rather than editing the old
 one in place, and carries your decisions across, the same as before.
 
