@@ -17,14 +17,13 @@ if (!window.matchMedia) {
   });
 }
 
-let permitted = true;
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/after-sales/service-jobs/j-1',
   useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('next/link', () => ({
-  default: ({ href, children, ...rest }: any) => (
+  default: ({ href, children, ...rest }: Omit<import('react').ComponentProps<'a'>, 'href'> & { href?: unknown }) => (
     <a href={typeof href === 'string' ? href : '#'} {...rest}>{children}</a>
   ),
 }));

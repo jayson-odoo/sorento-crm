@@ -9,14 +9,14 @@ if (!window.matchMedia) {
     matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
   });
 }
-let permitted = true;
+const permitted = true;
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/after-sales/service-jobs/j-1',
   useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('next/link', () => ({
-  default: ({ href, children, ...rest }: any) => <a href={typeof href === 'string' ? href : '#'} {...rest}>{children}</a>,
+  default: ({ href, children, ...rest }: Omit<import('react').ComponentProps<'a'>, 'href'> & { href?: unknown }) => <a href={typeof href === 'string' ? href : '#'} {...rest}>{children}</a>,
 }));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => permitted }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));

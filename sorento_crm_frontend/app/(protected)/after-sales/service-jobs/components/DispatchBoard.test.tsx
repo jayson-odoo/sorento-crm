@@ -12,7 +12,7 @@ if (!window.matchMedia) {
   });
 }
 vi.mock('next/link', () => ({
-  default: ({ href, children, ...rest }: any) => <a href={typeof href === 'string' ? href : '#'} {...rest}>{children}</a>,
+  default: ({ href, children, ...rest }: Omit<import('react').ComponentProps<'a'>, 'href'> & { href?: unknown }) => <a href={typeof href === 'string' ? href : '#'} {...rest}>{children}</a>,
 }));
 
 const board = vi.fn();

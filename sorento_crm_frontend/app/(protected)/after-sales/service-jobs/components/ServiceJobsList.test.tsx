@@ -23,7 +23,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('next/link', () => ({
-  default: ({ href, children, ...rest }: any) => (
+  default: ({ href, children, ...rest }: Omit<import('react').ComponentProps<'a'>, 'href'> & { href?: unknown }) => (
     <a href={typeof href === 'string' ? href : '#'} {...rest}>{children}</a>
   ),
 }));
