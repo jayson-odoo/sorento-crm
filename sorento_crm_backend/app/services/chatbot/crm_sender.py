@@ -452,11 +452,17 @@ def send(
                             _drop_stamp(db, prior)
                     return direct_ingress.SEND_TIMEOUT
                 if found:
-                    ok = _finalise(
-                        db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail, confirmed_by="lookup"),
-                        prior if prior.status == "processing" else None, status="success",
-                    )
-                    if not ok:
+                    # The earlier attempt's own row becomes the confirmed one (no second row).
+                    try:
+                        body = json.loads(prior.request_payload or "{}")
+                        body.pop("unknown", None)
+                        body["confirmed_by"] = "lookup"
+                        prior.request_payload = json.dumps(body, default=str)
+                        prior.status, prior.error_message = "success", None
+                        db.commit()
+                    except Exception:  # noqa: BLE001
+                        db.rollback()
+                        logger.warning("crm sender: could not confirm step %s", step.key, exc_info=True)
                         return direct_ingress.SEND_HTTP_ERROR
                     continue
 
