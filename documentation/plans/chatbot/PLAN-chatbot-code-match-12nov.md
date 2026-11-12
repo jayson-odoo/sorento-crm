@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-CODE-MATCH (stock code matching, close-code offers)
 
-Status: Build, slice 1 (card v3 approved by crew 12 Nov with 8 changes, folded in below). Track: size M, lead pattern, cloud lane. Phase 1 of the
+Status: Build complete for slices 1-5 code (each reviewed READY); waiting on crew for the letters-only ruling, data counts, live-run cap and the slice 1 traces. Card v3 approved by crew 12 Nov with 8 changes, folded in below. Track: size M, lead pattern, cloud lane. Phase 1 of the
 chatbot plan v2 (D3, owner 12 Nov 16:08 "ok"): lookup only, no parser prompt change, no migration.
 
 Card: `CARD-chatbot-code-match-12nov.md` (v3, generic rules R0-R7). UAC: `chatbot-code-match-acceptance-criteria.md`.
