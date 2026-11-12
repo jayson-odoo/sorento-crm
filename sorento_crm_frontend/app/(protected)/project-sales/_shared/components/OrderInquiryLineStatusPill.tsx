@@ -3,7 +3,7 @@
 import { statusPillClass } from '@/lib/status-pill';
 import { ackOverrideHint, ackStateOf, ackStatusText } from '../lib/orderInquiryAck';
 import type { OrderInquiryLine } from '../lib/orderInquiryLineFold';
-import { OrderInquiryLineStatePill, ReservePill } from './OrderInquiryVerbPill';
+import { OrderInquiryLineStatePill, ReservePill, STATE_LABEL } from './OrderInquiryVerbPill';
 import { OrderInquiryRejectedBadge } from './OrderInquiryRejectedBadge';
 
 /** The status pill keeps the text's own case ("To order · 220 left"), so no capitalize. */
@@ -53,6 +53,61 @@ export function lineShowsRejectedBadge(line: OrderInquiryLine): boolean {
     ackStateOf(line.primary) === 'rejected'
   );
 }
+
+/**
+ * The ONE status word of a folded line: the words the pill below prints, minus its figures
+ * ("To order · 8 left" is "To order"; "Request to reserve 4" is "Request to reserve"). The OI
+ * Lines tab's State filter offers `LINE_STATUS_OPTIONS` and matches a line when it reads the
+ * chosen word, so the filter and the State column cannot disagree.
+ */
+export function lineStatusWord(line: OrderInquiryLine): string {
+  const primary = line.primary;
+  if (showsReservePill(line)) {
+    const reserve = reserveStateOf(line);
+    return reserve === 'requested'
+      ? 'Request to reserve'
+      : reserve === 'reserved'
+        ? 'Reserved'
+        : 'Not reserved';
+  }
+  if (primary.waiting_for_cs) return 'Waiting for CS';
+  if (line.state === 'line_cancelled' && primary.so_cancelled) return 'SO cancelled';
+  if (!LIVE_LINE_STATES.includes(line.state)) {
+    if (line.state === 'line_cancelled') return 'Line cancelled';
+    if (line.state === 'nothing_to_buy') return 'Nothing to buy';
+    if (line.state === 'to_confirm') return 'To order';
+    return STATE_LABEL[line.state] ?? line.state;
+  }
+  if (lineShowsRejectedBadge(line)) return 'Rejected';
+  return ackStatusText(primary).split(' \u00b7 ')[0];
+}
+
+/** The reserve words keep the URL values older links carry (`view_state=reserve:requested`). */
+const LINE_STATUS_URL_VALUE: Record<string, string> = {
+  'Request to reserve': 'reserve:requested',
+  Reserved: 'reserve:reserved',
+  'Not reserved': 'reserve:declined',
+};
+
+/** The filter value of a line: its status word, or the reserve word's URL value. */
+export function lineStatusValue(line: OrderInquiryLine): string {
+  const word = lineStatusWord(line);
+  return LINE_STATUS_URL_VALUE[word] ?? word;
+}
+
+/** Every word `lineStatusWord` can give a live, non-historical line, in the order they are offered. */
+export const LINE_STATUS_OPTIONS: { value: string; label: string }[] = [
+  'To order',
+  'Waiting for CS',
+  'Done',
+  'Rejected',
+  'SO cancelled',
+  'Line cancelled',
+  'Nothing to buy',
+  'Request to reserve',
+  'Reserved',
+  'Not reserved',
+].map((word) => ({ value: LINE_STATUS_URL_VALUE[word] ?? word, label: word }));
 
 /**
  * SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): the ONE status of a sales order line's
