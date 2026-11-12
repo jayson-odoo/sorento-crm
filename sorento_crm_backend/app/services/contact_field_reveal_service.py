@@ -84,6 +84,13 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     ("sales.sales_target", "Sales target"),
 )
 
+#: COST-ACCESS-UNIFIED: keys that stay in `FIELD_REVEAL_KEYS` (the catalogue pin, the staff
+#: mapping) but are no longer a per-contact checklist item. Their answer comes from a rule, not
+#: from a stored row: `purchase_orders.cost` is held iff the contact's linked active user holds
+#: `products.cost.view` (`cost_access.contact_can_view_cost`).
+RETIRED_CHECKLIST_KEYS: frozenset[str] = frozenset({"purchase_orders.cost"})
+COST_KEY = "purchase_orders.cost"
+
 #: The DO reveal keys, on for every contact until a `granted=False` row says otherwise
 #: (owner, 4 Oct 2026). Every other key stays hidden by default. Any future
 #: `delivery_orders.*` reveal key is ON by default through this prefix rule, so adding one
@@ -138,7 +145,11 @@ def field_reveal_keys() -> list[dict[str, str]]:
     Sourced from the `FIELD_REVEAL_KEYS` literal above, not from `mcp_tools` - see the
     module docstring for why a live query cannot be used here.
     """
-    return [{"key": key, "label": label} for key, label in sorted(FIELD_REVEAL_KEYS)]
+    return [
+        {"key": key, "label": label}
+        for key, label in sorted(FIELD_REVEAL_KEYS)
+        if key not in RETIRED_CHECKLIST_KEYS
+    ]
 
 
 def granted_keys_for(db: Session, respond_contact_ids: list[str]) -> dict[str, list[str]]:
@@ -162,7 +173,16 @@ def granted_keys_for(db: Session, respond_contact_ids: list[str]) -> dict[str, l
             have_row[str(contact_id)].add(key)
             if granted:
                 held[str(contact_id)].add(key)
-    return {i: sorted(held[i] | (DEFAULT_ON_KEYS - have_row[i])) for i in ids}
+    from app.services.cost_access import contact_ids_who_can_view_cost
+
+    cost_holders = contact_ids_who_can_view_cost(db, ids)
+    out: dict[str, list[str]] = {}
+    for i in ids:
+        keys = (held[i] | (DEFAULT_ON_KEYS - have_row[i])) - RETIRED_CHECKLIST_KEYS
+        if i in cost_holders:
+            keys.add(COST_KEY)
+        out[i] = sorted(keys)
+    return out
 
 
 def granted_keys(db: Session, respond_contact_id: str) -> list[str]:
@@ -187,7 +207,7 @@ def set_granted_keys(
     keeps its original `created_at` / `created_by` rather than looking newly
     granted.
     """
-    wanted = set(keys)
+    wanted = set(keys) - RETIRED_CHECKLIST_KEYS
     existing = {
         row.field_key: row
         for row in db.query(ContactFieldReveal)
@@ -213,7 +233,7 @@ def set_granted_keys(
             # so one is `now()` in local time and the other was UTC).
             row.granted = True
 
-    known = {key for key, _label in FIELD_REVEAL_KEYS}
+    known = {key for key, _label in FIELD_REVEAL_KEYS} - RETIRED_CHECKLIST_KEYS
     for key in DEFAULT_ON_KEYS - wanted - existing.keys():
         # No row means ON for these, so turning one off needs an explicit row to stick.
         db.add(

@@ -18,6 +18,7 @@ import { expandBoxesForDefault, type PageBox } from '@/components/common/pdf-vie
 import { CoverageCodeEditor } from '@/app/(protected)/master-data-management/certificates/components/CoverageCodeEditor';
 
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { VALIDITY } from '../../../../../../_shared/lib/quotationCertificateDisplay';
 import { projectCrumbs } from '../../../../../../_shared/lib/crumbs';
 import {
@@ -173,6 +174,11 @@ export function CertificateReader({
     }
   }, [detail, dirty]);
 
+  // Unsaved boxes ask before any way out: a link, the browser's Back, a refresh or close.
+  const leaveGuard = useUnsavedChangesGuard(dirty, {
+    fallbackHref: `/project-sales/${projectId}/quotation-documents/${documentId}/certification`,
+  });
+
   const canEdit = Boolean(detail?.can_edit);
   const canDefaults = Boolean(detail?.can_edit_defaults);
   const productId = drawProduct || detail?.products[0]?.product_id || null;
@@ -186,7 +192,8 @@ export function CertificateReader({
   // "Go to box": bring the box into the middle of the viewer and outline it for a moment. The
   // pages (and their boxes) exist only once the file has loaded, so a jump asked for on open
   // waits for its box; the outline starts when the box is found, not when the jump was asked.
-  // A new jump or leaving the page cancels a jump still waiting.
+  // A new jump or leaving the page cancels a jump still waiting. `onSettled` runs once the box is
+  // on screen, or once the jump gives up (the page never drew it).
   const seekTimer = React.useRef<number | null>(null);
   const cancelSeek = React.useCallback(() => {
     if (seekTimer.current !== null) window.clearTimeout(seekTimer.current);
@@ -194,7 +201,7 @@ export function CertificateReader({
   }, []);
   React.useEffect(() => cancelSeek, [cancelSeek]);
   const goToBox = React.useCallback(
-    (index: number) => {
+    (index: number, onSettled?: () => void) => {
       cancelSeek();
       let tries = 0;
       const seek = () => {
@@ -203,9 +210,11 @@ export function CertificateReader({
         if (node) {
           revealInViewer(node);
           setFlashed(index);
+          onSettled?.();
           return;
         }
         if (tries++ < 100) seekTimer.current = window.setTimeout(seek, 100);
+        else onSettled?.();
       };
       seek();
     },
@@ -218,13 +227,30 @@ export function CertificateReader({
     return () => window.clearTimeout(timer);
   }, [flashed]);
 
-  // Opening a certificate from the list lands on its first box: one click from the row.
+  // Opening a certificate from the list lands on its first box: one click from the row. The
+  // certificate counts as landed only once its box is on screen, so a jump that was cancelled
+  // before it got there (StrictMode's mount, cleanup, mount on a certificate whose data was
+  // already cached, i.e. every second open) is asked again instead of being skipped.
   const landedRef = React.useRef<string | null>(null);
+  // A jump the user asked for replaces the landing: a later refetch must not pull the view back.
+  const jumpTo = React.useCallback(
+    (index: number) => {
+      landedRef.current = detail?.certificate_id ?? null;
+      goToBox(index);
+    },
+    [detail?.certificate_id, goToBox],
+  );
   React.useEffect(() => {
     if (!detail || landedRef.current === detail.certificate_id) return;
-    landedRef.current = detail.certificate_id;
+    const id = detail.certificate_id;
     const first = boxOrder(detail.boxes)[0];
-    if (first !== undefined) goToBox(first);
+    if (first === undefined) {
+      landedRef.current = id;
+      return;
+    }
+    goToBox(first, () => {
+      landedRef.current = id;
+    });
   }, [detail, goToBox]);
 
   const removeAt = React.useCallback(
@@ -418,7 +444,7 @@ export function CertificateReader({
                 onSaved={refresh}
                 onGoToBox={(() => {
                   const first = boxOrder(boxes, p.product_id)[0];
-                  return first === undefined ? undefined : () => goToBox(first);
+                  return first === undefined ? undefined : () => jumpTo(first);
                 })()}
               />
             ))}
@@ -470,6 +496,7 @@ export function CertificateReader({
           )}
         </aside>
       </div>
+      {leaveGuard}
     </div>
   );
 }
