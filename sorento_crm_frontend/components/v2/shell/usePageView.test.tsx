@@ -13,16 +13,17 @@
  *       - when the queue reaches 10 items  : apiFetch('/api/v1/system/page-views', { method: 'POST', body })
  *       - 15 s after the first queued item : the same
  *       - on `pagehide`                    : plain global fetch (not apiFetch, not sendBeacon), like
-                                            lib/client-error-report.ts: first GET `<base>/api/auth/token` for
-                                            `{token}`, then POST `<base>/api/v1/system/page-views` with
-                                            `keepalive: true`, header `Authorization: Bearer <token>`,
-                                            `Content-Type: application/json` and the same `{items}` body.
-                                            No token (non-ok or empty) sends nothing. navigator.sendBeacon is
-                                            never used.
+ *                                            lib/client-error-report.ts: first GET `<base>/api/auth/token` for
+ *                                            `{token}`, then POST `<base>/api/v1/system/page-views` with
+ *                                            `keepalive: true`, header `Authorization: Bearer <token>`,
+ *                                            `Content-Type: application/json` and the same `{items}` body.
+ *                                            No token (non-ok or empty) sends nothing. navigator.sendBeacon is
+ *                                            never used.
  *     A flushed item is never sent twice. An unchanged pathname adds no item. Nothing is sent for an empty queue.
  *   "Mounted once in AppShell" and "no importer outside components/v2/shell" are the S4 AppShell test and the S5
  *   inventory guard (D-6); they are not asserted here.
- * import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 
 const apiFetch = vi.fn();
@@ -205,16 +206,5 @@ describe('usePageView', () => {
     });
     expect(pageViewFetches()).toHaveLength(0);
     expect(sendBeacon).not.toHaveBeenCalled();
-  });
-});
-    expect(beacon).toHaveBeenCalledTimes(1);
-    expect(String(beacon.mock.calls[0][0])).toMatch(URL_RE);
-    const body = await beaconBody();
-    expect(body.items.map((i) => i.route)).toEqual(['/p0', '/p1', '/p2']);
-    // those items are gone: the timer must not send them again
-    act(() => {
-      vi.advanceTimersByTime(20_000);
-    });
-    expect(postedBatches()).toHaveLength(0);
   });
 });
