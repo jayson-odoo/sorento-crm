@@ -62,7 +62,8 @@ export function useOrderChangeNoticesQuery(params: OrderChangeNoticeListParams) 
     ...LIST_QUERY_OPTIONS,
     queryKey: orderChangeNoticesListQueryKey(params),
     queryFn: () => listOrderChangeNotices(params),
-    retry: 1,
+    // A failed read ends in the grid's Try again at once, not after a silent retry.
+    retry: false,
   });
 }
 
@@ -80,7 +81,7 @@ export function useOrderChangeNoticeQuery(id: string | null | undefined) {
     queryKey: [DETAIL_KEY, id],
     queryFn: () => getOrderChangeNotice(id as string),
     enabled: !!id,
-    retry: 1,
+    retry: false,
   });
 }
 
