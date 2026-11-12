@@ -102,7 +102,11 @@ for both comments). Customer Service then appears twice on one record. Stage ide
 rows on the same `customer_service` team set would let a late CS comment resolve the after-approval stage.
 The CS check therefore gets its own team set code `ocn_cs_review`: the seed copies the existing
 `customer_service` tier -> team rows of the `purchase_request` agent under that code (same teams, same
-members, no new team). Purchasing stage hours: pending the SI/NPA dump (crew asked to confirm them).
+members, no new team). Purchasing stage hours (crew dump 2, 12 Nov prod clone): the SI and NPA purchasing rows both use agent
+`lead_time_enquiries`, team set `purchasing`, policy `NORMAL` = tier 1 Executive 72 h, tier 2 Manager 24 h,
+tier 3 Director 24 h (teams: Purchasing - Product, Stock Inquiry / Purchasing Manager / Retail Director).
+The OCN purchasing row copies the SI purchasing row as is (same agent, team set, policy), like
+`npasla_0001` did; the other OCN rows use the new `ORDER_CHANGE_NOTICE` policy (24 / 72 / 24 h).
 
 ## 4. Worked examples (masked shapes)
 
@@ -214,4 +218,6 @@ Open, with the owner now:
 - **d2** amendment publish waits for its OCN's approval. Crew recommends yes; that is today's rule
   (`project_so_delta_service.py:791`), and the OCN's approval becomes what sets `approver_id` /
   `approved_at`. Drawn in mock v2 frame 5 (tag d2).
-- Data: count of existing amendment-drafted OCN rows (asked); SI/NPA purchasing stage hours (asked).
+- Data (answered, 12 Nov prod clone): `projects.order_change_notices` has 0 rows, so the migration
+  backfills nothing; `projects.so_amendments` has 2 rows, both published with no OCN (they predate or
+  bypassed the OCN gate) and are left as they are.
