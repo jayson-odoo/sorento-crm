@@ -513,7 +513,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       );
     });
 
-    it('To before From is refused by the range field and blocks submit', async () => {
+    it('To before From is refused by the range field and never reaches the payload', async () => {
       const { onSubmit } = await renderModal();
       const range = delivery() as HTMLInputElement;
       fireEvent.change(range, { target: { value: '01/06/2026 - 01/01/2026' } });
@@ -522,7 +522,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       expect(range.value).toBe('');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
-      expect(onSubmit).not.toHaveBeenCalled();
+      // Nothing backwards reaches the payload: the window is still empty.
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_horizon_start: '', plan_horizon_date: '' }),
+      );
     });
 
     it('submits both dates in ManualPlanInputs when both are set', async () => {
