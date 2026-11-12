@@ -25,8 +25,9 @@ from app.services.order_service import (
 )
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.document_relations import RELATED_SORT_PATTERN
-from app.config import settings as app_settings
+from app.config import settings as app_settings  # noqa: F401  tests patch orders.app_settings
 from app.utils.heavy_work import heavy
+from app.api.v1._external_api_key import request_has_valid_external_api_key
 
 
 # External/AI callers capped at 20 rows: even with slimmed MCP rows (no UUIDs /
@@ -35,17 +36,6 @@ from app.utils.heavy_work import heavy
 _EXTERNAL_ORDERS_LIST_LIMIT_CAP = 20
 # Aggregation + by-product endpoints share the same tight cap.
 _EXTERNAL_ORDERS_AGG_LIMIT_CAP = 20
-
-
-def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
-    """True when X-API-Key header matches configured external API key."""
-    if request is None:
-        return False
-    key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
-    valid = getattr(app_settings, "external_api_key", None)
-    if not key or not valid:
-        return False
-    return key.strip() == str(valid).strip()
 
 
 # Highest limit an external/agent call may receive (matches the route's le=1000).
@@ -68,7 +58,7 @@ def _external_orders_limit(
     no date filter        → keep the tight top-N cap.
     Non-external callers  → unchanged.
     """
-    if not _request_has_valid_external_api_key(request):
+    if not request_has_valid_external_api_key(request):
         return limit
     if date_scoped:
         return _EXTERNAL_ORDERS_DATE_SCOPED_LIMIT
@@ -723,7 +713,7 @@ def list_distinct_debtors(
     """
     from app.models.order import Order as _Order
 
-    if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_AGG_LIMIT_CAP:
+    if request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_AGG_LIMIT_CAP:
         limit = _EXTERNAL_ORDERS_AGG_LIMIT_CAP
 
     # Group by lower(trim(debtor_name)) so 'V Bath  ' and 'v bath' collapse to one row.

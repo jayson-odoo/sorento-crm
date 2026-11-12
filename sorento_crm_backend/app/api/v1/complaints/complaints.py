@@ -1,10 +1,12 @@
 """Complaints API routes."""
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, File, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
+from app.api.v1._external_api_key import request_has_valid_external_api_key
 from app.api.v1._request_own_scope import RequestScope, complaint_own_scope, empty_page
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
@@ -1099,7 +1101,7 @@ def create_complaint(
             complaint_data = ComplaintCreate.model_validate(raw)
 
         service = ComplaintService(db)
-        requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
+        requires_user_confirm = is_integration_payload or request_has_valid_external_api_key(request)
         update_identifier = (
             _resolve_complaint_update_identifier(integration_payload)
             if integration_payload is not None
@@ -1172,7 +1174,7 @@ def create_complaint(
 
         complaint = service.create_complaint(complaint_data)
         db.commit()
-        should_notify_handlers = is_integration_payload or _request_has_valid_external_api_key(request)
+        should_notify_handlers = is_integration_payload or request_has_valid_external_api_key(request)
         if should_notify_handlers:
             try:
                 service.notify_team_complaint_external_created(

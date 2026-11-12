@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price tag multi add</title>
+<!--
+  PRICETAG-MULTI-ADD mock v3 (12/11/2026; v2 = owner 14:17: each result is one line, no price, no second line, hints on the same line; v3 = owner 14:21: the result shows the code only, no product name). Static, no data fetch. Fake codes, names and prices only.
+  Plan: documentation/plans/dealer-kit/PLAN-pricetag-multi-add-12nov.md
+  Element -> existing component: section 4 at the bottom of the page.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --sel:#eef4ff;
+          --warn:#b45309; --warnbg:#fffbeb; --head:#f3f4f6; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --head:#1d212a; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --head:#1d212a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:32px 0 8px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:1100px; }
+  .scroll { overflow-x:auto; }
+  table.lines { width:100%; min-width:560px; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+  table.lines th { background:var(--head); color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; text-align:left; padding:8px; font-weight:500; }
+  table.lines td { border-top:1px solid var(--line); padding:8px; vertical-align:top; }
+  .input { border:1px solid var(--line); border-radius:8px; padding:5px 9px; background:var(--card); color:var(--fg); font-size:13px; min-height:32px; display:flex; align-items:center; gap:6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .input.focus { border-color:var(--primary); box-shadow:0 0 0 2px var(--sel); }
+  .ph { color:var(--muted); }
+  .icons { display:flex; gap:4px; color:var(--muted); }
+  .icon { width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:6px; }
+  .link { color:var(--primary); font-size:13px; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; white-space:nowrap; }
+  .btn.primary { background:var(--primary); border-color:var(--primary); color:#fff; font-weight:600; }
+  .btn.ghost { border-color:transparent; color:var(--primary); padding-left:0; }
+  .wrap { position:relative; }
+  .pop { position:absolute; z-index:5; top:38px; left:0; width:min(28rem, calc(100vw - 2rem)); background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.15); overflow:hidden; }
+  .pop.static { position:static; width:100%; margin-top:6px; }
+  .search { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); font-size:13px; }
+  .caret { display:inline-block; width:1px; height:15px; background:var(--fg); margin-left:-6px; }
+  .all { display:flex; align-items:center; gap:8px; padding:7px 10px; border-bottom:1px solid var(--line); font-size:13px; font-weight:500; }
+  .list { max-height:300px; overflow-y:auto; }
+  .grp { font-size:11px; color:var(--muted); padding:6px 10px 2px; text-transform:uppercase; letter-spacing:.04em; }
+  .opt { display:flex; align-items:flex-start; gap:8px; padding:6px 10px; }
+  .opt.hl { background:var(--sel); }
+  .opt.dis { opacity:.55; }
+  .box { flex:none; width:16px; height:16px; margin-top:1px; border:1.5px solid var(--muted); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:11px; line-height:1; color:#fff; }
+  .box.on { background:var(--primary); border-color:var(--primary); }
+  .box.grey { background:var(--line); border-color:var(--line); color:var(--muted); }
+  .txt { min-width:0; flex:1; }
+  .l1 { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+  .l1 { display:flex; align-items:center; gap:6px; }
+  .l1 > .pill:first-of-type { margin-left:auto; }
+  .l1 .pill { flex:none; margin-left:0; }
+  .nm { color:var(--muted); }
+  .pill { display:inline-block; border-radius:999px; padding:0 7px; font-size:11px; background:var(--line); color:var(--muted); margin-left:6px; white-space:nowrap; vertical-align:1px; }
+  .foot { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-top:1px solid var(--line); }
+  .more { padding:6px 10px; font-size:12px; color:var(--muted); border-top:1px solid var(--line); }
+  .new { background:var(--sel); }
+  .phone { width:375px; max-width:100%; border:1px solid var(--line); border-radius:14px; padding:12px; background:var(--card); }
+  .phone table.lines { min-width:0; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(330px, 1fr)); gap:16px; align-items:start; }
+  table.map { border-collapse:collapse; width:100%; font-size:12px; table-layout:fixed; }
+  table.map td, table.map th { border-top:1px solid var(--line); padding:6px; text-align:left; vertical-align:top; word-break:break-word; }
+  table.map th { color:var(--muted); font-weight:500; border-top:0; }
+  code { font-size:12px; }
+  @media (max-width: 640px) { .scroll-narrow { overflow-x:auto; } }
+</style>
+</head>
+<body>
+<h1>New Price Tag Request: Price section, tick several items</h1>
+<p class="muted">Mock v3, 12/11/2026 (one-line results: code only, no name, no price). Fake data. State A: the user typed "DIY" in row 1 and ticked three results.</p>
+
+<h2>1. State A: picker open, three ticked (1280 px)</h2>
+<div class="card">
+  <div class="scroll-narrow">
+  <table class="lines">
+    <thead><tr>
+      <th style="width:28px">#</th><th style="width:36%">Item</th><th style="width:10%">Qty (tags)</th>
+      <th style="width:9%">Price</th><th style="width:14%">List price</th><th style="width:20%">Remarks</th><th style="width:72px"></th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td class="muted">1</td>
+        <td>
+          <div class="wrap">
+            <div class="input focus"><span class="ph">Search a set or product...</span></div>
+            <div class="pop">
+              <div class="search"><span class="muted">&#x1F50D;</span><span>DIY</span><span class="caret"></span></div>
+              <div class="all"><span class="box"></span>Select all 9</div>
+              <div class="list">
+                <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-SET-KT60<span class="pill">Set</span></div></div></div>
+                <div class="opt dis"><span class="box grey">&#10003;</span><div class="txt"><div class="l1">DIY-SET-KT90<span class="pill">Set</span><span class="pill">Already added</span></div></div></div>
+                <div class="opt hl"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4501</div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4502</div></div></div>
+                <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-6001</div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-6002<span class="pill">Discontinued</span></div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-MR-0450</div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-MR-0600</div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-SH-0900</div></div></div>
+              </div>
+              <div class="foot"><span class="muted">3 ticked</span><span class="btn primary">Add 3</span></div>
+            </div>
+          </div>
+        </td>
+        <td><div class="input">1</div></td><td></td><td></td><td><div class="input"></div></td>
+        <td><div class="icons"><span class="icon">&#128065;</span><span class="icon">&#128465;</span></div></td>
+      </tr>
+      <tr>
+        <td class="muted">2</td><td><div class="input">Demo kitchen starter set 90</div></td><td><div class="input">1</div></td>
+        <td></td><td>RM 999</td><td><div class="input"></div></td>
+        <td><div class="icons"><span class="icon">&#128065;</span><span class="icon">&#128465;</span></div></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div style="height:470px"></div>
+  <span class="btn ghost">+ Add line</span> <span class="link">Upload a file instead</span>
+</div>
+<p class="muted">Click on a result's text = today's single pick (fills the row, closes). Click its tick box, or Space, = tick and stay open. The footer and "Add N" show only once something is ticked. Row 2's set is already on the request, so it shows ticked grey with "Already added" and cannot be ticked.</p>
+
+<h2>2. State B: after "Add 3"</h2>
+<div class="card">
+  <div class="scroll">
+  <table class="lines">
+    <thead><tr>
+      <th style="width:28px">#</th><th style="width:36%">Item</th><th style="width:10%">Qty (tags)</th>
+      <th style="width:9%">Price</th><th style="width:14%">List price</th><th style="width:20%">Remarks</th><th style="width:72px"></th>
+    </tr></thead>
+    <tbody>
+      <tr><td class="muted">1</td><td><div class="input">Demo kitchen starter set 60</div></td><td><div class="input">1</div></td><td></td><td>RM 999</td><td><div class="input"></div></td><td><div class="icons"><span class="icon">&#128065;</span><span class="icon">&#128465;</span></div></td></tr>
+      <tr class="new"><td class="muted">2</td><td><div class="input">Demo basin cabinet 450 white</div></td><td><div class="input">1</div></td><td><div class="input">LP</div></td><td>RM 111</td><td><div class="input"></div></td><td><div class="icons"><span class="icon">&#128065;</span><span class="icon">&#128465;</span></div></td></tr>
+      <tr class="new"><td class="muted">3</td><td><div class="input">Demo basin cabinet 600 white</div></td><td><div class="input">1</div></td><td><div class="input">LP</div></td><td>RM 222</td><td><div class="input"></div></td><td><div class="icons"><span class="icon">&#128065;</span><span class="icon">&#128465;</span></div></td></tr>
+      <tr><td class="muted">4</td><td><div class="input">Demo kitchen starter set 90</div></td><td><div class="input">1</div></td><td></td><td>RM 999</td><td><div class="input"></div></td><td><div class="icons"><span class="icon">&#128065;</span><span class="icon">&#128465;</span></div></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <span class="btn ghost">+ Add line</span> <span class="link">Upload a file instead</span>
+</div>
+<p class="muted">Row 1 gets the first ticked item (list order: sets first, then products, by code). The other two land right below it, before the old row 2. Each new row is exactly what a single pick gives today (qty 1, price type, package, template and price looked up the same way, remarks empty). Highlight is mock-only.</p>
+
+<h2>3. State C: phone (375 px) and the search cap</h2>
+<div class="grid2">
+  <div class="phone">
+    <table class="lines">
+      <thead><tr><th style="width:28px">#</th><th>Item</th><th style="width:4.5rem">Qty</th><th style="width:64px"></th></tr></thead>
+      <tbody><tr>
+        <td class="muted">1</td>
+        <td colspan="3">
+          <div class="input focus"><span class="ph">Search a set or product...</span></div>
+          <div class="pop static">
+            <div class="search"><span class="muted">&#x1F50D;</span><span>DIY-BS</span><span class="caret"></span></div>
+            <div class="all"><span class="box on">&#10003;</span>Select all 2</div>
+            <div class="list">
+              <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4501</div></div></div>
+              <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4502</div></div></div>
+            </div>
+            <div class="foot"><span class="muted">2 ticked</span><span class="btn primary">Add 2</span></div>
+          </div>
+        </td>
+      </tr></tbody>
+    </table>
+  </div>
+  <div class="card" style="padding:0; overflow:hidden; max-width:28rem">
+    <div class="search"><span class="muted">&#x1F50D;</span><span>D</span><span class="caret"></span></div>
+    <div class="all"><span class="box"></span>Select all 40 shown</div>
+    <div class="list" style="max-height:150px">
+      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4501</div></div></div>
+      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4502</div></div></div>
+      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-6001</div></div></div>
+    </div>
+    <div class="more">More match. Type more of the code to see them.</div>
+  </div>
+</div>
+<p class="muted">Left: the same picker at 375 px (the popup fits the screen width; Add N stays in view at the bottom). Right: a short search that hits the search cap (Q3 below): Select all ticks only what is shown.</p>
+
+<h2>4. Element -> existing component</h2>
+<div class="card scroll">
+<table class="map">
+  <tr><th style="width:32%">Element</th><th>Reuses</th></tr>
+  <tr><td>Lines table, row, + Add line, Upload a file instead</td><td><code>sorento_crm_frontend/components/dealer-kit/PriceTagLinesTable.tsx</code> (unchanged)</td></tr>
+  <tr><td>Item trigger "Search a set or product..."</td><td><code>components/common/SearchableSelect.tsx</code> (as today, <code>PriceTagLinesTable.tsx:678</code>)</td></tr>
+  <tr><td>Popup, search box, option text = the code only, one line (no name, no price, no second line)</td><td><code>SearchableSelect.tsx</code> popup; options from <code>hooks/usePriceTagLineEditor.ts:58</code> <code>tagItemOption</code></td></tr>
+  <tr><td>Tick box per option, "Select all N" row, disabled option</td><td>the tick + Select all rows of <code>components/common/SearchableMultiSelect.tsx</code> (same markup and classes), added to SearchableSelect as an opt-in prop</td></tr>
+  <tr><td>"Already added" / "Discontinued" grey hint</td><td><code>badgeText</code> on the option, as the part picker does (<code>PriceTagLinesTable.tsx:383-410</code>)</td></tr>
+  <tr><td>Footer "N ticked" + "Add N"</td><td><code>components/ui/button.tsx</code> primary; wording as <code>master-data-management/costing/components/AddCostingProductsDialog.tsx:59</code></td></tr>
+  <tr><td>New rows' values</td><td>Add N calls the single-pick function <code>handleItemSelect</code> (<code>hooks/usePriceTagLineEditor.ts</code>) once per item: one path for one or many</td></tr>
+</table>
+</div>
+</body>
+</html>

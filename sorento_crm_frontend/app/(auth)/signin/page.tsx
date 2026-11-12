@@ -29,6 +29,7 @@ import { getSigninSchema, SigninSchemaType } from '../forms/signin-schema';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { PhoneSignIn } from './components/phone-signin';
 import { DevLoginPicker } from './components/dev-login-picker';
+import PasskeySignInButton from '@/components/passkey-signin-button';
 
 type SigninMode = 'email' | 'phone';
 
@@ -82,6 +83,8 @@ export default function Page() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phoneBusy, setPhoneBusy] = useState(false);
+  // Bumped after a failed password attempt so the passkey autofill starts again (AC-48).
+  const [autofillRound, setAutofillRound] = useState(0);
 
   const form = useForm<SigninSchemaType>({
     resolver: zodResolver(getSigninSchema()),
@@ -129,6 +132,7 @@ export default function Page() {
           setError(response.error || 'An error occurred during sign in.');
         }
         setIsProcessing(false);
+        setAutofillRound((n) => n + 1);
       } else {
         await goToLandingUrl();
       }
@@ -139,6 +143,7 @@ export default function Page() {
           : 'An unexpected error occurred. Please try again.',
       );
       setIsProcessing(false);
+      setAutofillRound((n) => n + 1);
     }
   }
 
@@ -187,7 +192,13 @@ export default function Page() {
                   <FormItem>
                     <FormLabel>Email</FormLabel>
                     <FormControl>
-                      <Input placeholder="Your email" {...field} />
+                      {/* "webauthn" lets the browser offer a passkey in this field's
+                          autofill (PASSKEY-LOGIN AC-41). */}
+                      <Input
+                        placeholder="Your email"
+                        autoComplete="username webauthn"
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -278,7 +289,7 @@ export default function Page() {
             </span>
             <Separator className="flex-1" />
           </div>
-          <div className="flex justify-center">
+          <div className="flex justify-center gap-3">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -295,6 +306,18 @@ export default function Page() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom">Phone number</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PasskeySignInButton
+                  autofill
+                  autofillRound={autofillRound}
+                  onSignedIn={goToLandingUrl}
+                  onError={setError}
+                  disabled={isProcessing}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Passkey</TooltipContent>
             </Tooltip>
           </div>
         </>

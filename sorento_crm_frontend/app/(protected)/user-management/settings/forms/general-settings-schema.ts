@@ -78,6 +78,8 @@ export const GeneralSettingsSchema = z.object({
   borrowFromOrderEnabled: z.boolean(),
   /** Sample requests (SR-CORE): need a registered project / a quotation to submit. Off by default. */
   sampleRequestRequireProject: z.boolean(),
+  /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
+  projectAutocountWriteEnabled: z.boolean(),
   /** AC-LINK-CRM-UI: "AutoCount links from Stock Debt", off until tested end to end. */
   stockDebtPoLinkEnabled: z.boolean(),
   /** Price tag packages (D2): the product classes a line is warned about when it
