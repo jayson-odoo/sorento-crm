@@ -550,7 +550,11 @@ def _run_planning_change_hook(db: Session, service, *, actor: Optional[str]) -> 
     if not service.so_diff_before and not service.so_diff_after:
         return
     try:
-        diff = diff_lines(service.so_diff_before, service.so_diff_after)
+        diff = diff_lines(
+            service.so_diff_before,
+            service.so_diff_after,
+            scope_documents=set(service.so_header_id_by_number),
+        )
         applied_line_ids: dict[int, str] = {}
         for change in diff.changes:
             line_id = (change.after.row_ref if change.after else None) or (
@@ -1351,6 +1355,7 @@ def delete_records(
             db,
             integration_id=current_user.get("integration_id"),
             company_id=company_id,
+            actor_user_id=current_user.get("id"),
         )
         try:
             result = service.delete(entity, source_refs, codes=codes, dry_run=dry_run)

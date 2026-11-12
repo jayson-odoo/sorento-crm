@@ -1287,25 +1287,24 @@ class DocumentIngestService(MasterRefResolver):
         for row in existing:
             if row.line_status == CANCELLED:
                 continue
-            self.so_diff_before.append(
-                outstanding_diff.Line(
-                    doc_number=payload.so_number,
-                    item_code=self._product_code_of(row.product_id) or "",
-                    location=self._warehouse_code_of(row.warehouse_id) or "",
-                    # AC-CANCEL-CRM: the planned basis leaves out what Cancel SO took (and, CONSIGN-PLAN
-                    # Q3, what a consignment return took back).
-                    qty=float((row.qty_ordered or 0) - (row.qty_cancelled or 0)
-                               - (row.qty_returned or 0)),
-                    required_date=row.required_date,
-                    row_ref=str(row.id),
-                    # Same identity `SalesOrderService._propagate_planning_change` sets
-                    # (Slice A review round, R-S1): a product swap on the SAME line, if
-                    # the ingest sync writes IN PLACE, pairs by `line_id` into one
-                    # `product_changed` row instead of a `closed` plus an unrelated
-                    # `added`.
-                    line_id=str(row.id),
-                )
-            )
+            self.so_diff_before.append(self._diff_line(payload.so_number, row))
+
+    def _diff_line(self, so_number: str, row: Any) -> "outstanding_diff.Line":
+        return outstanding_diff.Line(
+            doc_number=so_number,
+            item_code=self._product_code_of(row.product_id) or "",
+            location=self._warehouse_code_of(row.warehouse_id) or "",
+            # AC-CANCEL-CRM: the planned basis leaves out what Cancel SO took (and, CONSIGN-PLAN
+            # Q3, what a consignment return took back).
+            qty=float((row.qty_ordered or 0) - (row.qty_cancelled or 0)
+                       - (row.qty_returned or 0)),
+            required_date=row.required_date,
+            row_ref=str(row.id),
+            # Same identity `SalesOrderService._propagate_planning_change` sets
+            # (Slice A review round, R-S1): a product swap on the SAME line pairs by
+            # `line_id` into one `product_changed` row instead of `closed` plus `added`.
+            line_id=str(row.id),
+        )
 
     def _capture_planning_diff_after(self, header: Any, payload: Any) -> None:
         """The AFTER half of `_capture_planning_diff_before` - read back post-sync
@@ -1800,9 +1799,16 @@ class DocumentIngestService(MasterRefResolver):
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,
+                flag_rows_for_whole_so_cancel,
             )
 
-            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)
+            # OI-WHOLE-SO-CANCEL Q1: a header cancel goes through the whole-SO seam.
+            flag = (
+                flag_rows_for_whole_so_cancel
+                if header.status == CANCELLED
+                else flag_rows_for_cancelled_lines
+            )
+            flag(self.db, newly_cancelled_so_line_ids)
         # Self-heal (issue #969): the ESB push is the true writer behind almost every
         # unmirrored line measured live (394 of them, all `source_system = autocount`) -
         # `_upsert_lines`'s self-heal never sees this write, it is the manual FE edit's

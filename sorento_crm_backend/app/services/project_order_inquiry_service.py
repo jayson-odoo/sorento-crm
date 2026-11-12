@@ -1293,6 +1293,20 @@ def auto_confirm_rows_on_spo_allocations(db: Session, spo_allocation_ids: Sequen
         ProjectOrderInquiryService(db).auto_confirm(row_ids)
 
 
+# OI-WHOLE-SO-CANCEL Q1 (owner pending): True keeps the 30 Oct auto-done at sync for a header
+# cancel / SO delete; False leaves the rows live until CS confirms the board item.
+WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC = True
+
+
+def flag_rows_for_whole_so_cancel(
+    db: Session, core_line_ids: Sequence[Any]
+) -> int:
+    """`flag_rows_for_cancelled_lines` for a header cancel / SO delete, behind the Q1 seam."""
+    if not WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC:
+        return 0
+    return flag_rows_for_cancelled_lines(db, core_line_ids)
+
+
 def flag_rows_for_cancelled_lines(
     db: Session, core_line_ids: Sequence[Any]
 ) -> int:
