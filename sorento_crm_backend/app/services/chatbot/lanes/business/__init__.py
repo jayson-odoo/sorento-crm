@@ -2409,6 +2409,21 @@ def run_fetch(
         # CHAT-CODE-LOOKUP R2: member rows of a product set the customer typed; the reply
         # groups them under their set and prints no price (`output_structurer`).
         trigger["set_by_code"] = set_by_code
+        # CHATBOT-CODE-MATCH AC-29: the price drop is for a set the customer TYPED; a family
+        # word that also heads a registered set ("Srtwc8608") keeps every price line it
+        # printed before the set existed (the rows are still grouped under the set).
+        from app.services.chatbot.turn.state import token_key
+
+        typed = {
+            token_key(jsc.get(x, field))
+            for x in jsc.array(parse_output.get("entities"))
+            if isinstance(x, dict) and x.get("current_message") is not False
+            for field in ("raw", "canonical_code")
+            if jsc.truthy(jsc.get(x, field))
+        }
+        trigger["set_typed"] = sorted(
+            {c for codes in set_by_code.values() for c in codes if token_key(c) in typed}
+        )
     if tool_name == "crm_portal_link_get":
         # DEV-FAILURES RC-B: the intro names the form the link opens, in the reply language.
         templates = reply_copy.resolve(db) if db is not None else reply_copy.fallback_copy()
