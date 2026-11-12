@@ -24,6 +24,9 @@ import { updateDirectory } from '../../attachments/services/directoryService';
 import type { MoveOutcome, MoveSkipped } from './driveMoveSummary';
 
 type Action = 'skip' | 'replace' | 'rename';
+
+/** Shown in place of the name box under "Apply to all": the server adds (1), or (2) if taken. */
+const HINT = 'Each file gets a number added, like (1).';
 type Choice = { kind: 'cancel' } | { kind: Action; name?: string; forAll: boolean };
 
 interface Prompt {
@@ -191,8 +194,11 @@ export function useMoveFiles() {
             <Label htmlFor={forAll ? undefined : 'move-clash-name'}>New name</Label>
             {forAll ? (
               // Same height as the box it stands in for, so ticking never moves the layout.
-              <p className="flex h-8.5 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground">
-                Each file keeps its own name with a number added, like (1).
+              <p
+                className="flex h-8.5 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground"
+                title={HINT}
+              >
+                <span className="truncate">{HINT}</span>
               </p>
             ) : (
               <Input
