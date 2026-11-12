@@ -18,7 +18,7 @@ import { addPickedItems, usePriceTagLineEditor } from '@/hooks/usePriceTagLineEd
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagItemOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import type { PriceTagLineLookups } from '@/hooks/usePriceTagLineEditor';
+import type { PriceTagLineLookups, TagItemSearchOption } from '@/hooks/usePriceTagLineEditor';
 
 type PickEditor = Parameters<typeof addPickedItems>[0];
 
@@ -55,7 +55,7 @@ function hookSetup(initial: DraftLine[]) {
   });
 }
 
-async function options(result: { current: { editor: { fetchItemOptions: (q: string) => Promise<SearchableSelectOption[]> } } }) {
+async function options(result: { current: { editor: { fetchItemOptions: (q: string) => Promise<TagItemSearchOption[]> } } }) {
   return result.current.editor.fetchItemOptions('');
 }
 
@@ -160,7 +160,7 @@ function Harness({
   selectSpy,
 }: {
   initial: DraftLine[];
-  lookups?: typeof LOOKUPS;
+  lookups?: PriceTagLineLookups;
   selectSpy?: (key: string, option: SearchableSelectOption | null) => void;
 }) {
   const [lines, setLines] = useState<DraftLine[]>(initial);
