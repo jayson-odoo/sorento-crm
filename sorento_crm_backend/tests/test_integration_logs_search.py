@@ -97,6 +97,9 @@ def test_search_combines_with_filters(client, db):
     tag = unique_code("both", alpha=True)
     failed = _log(db, 1, endpoint=f"/x/{tag}", status="failed")
     _log(db, 2, endpoint=f"/x/{tag}", status="success")
+    # A failed row without the term: the status filter alone would return it too, so this only
+    # passes when the search really narrows the filtered rows (review round, INTLOG-SPEED-2).
+    _log(db, 3, endpoint="/x/other", status="failed")
     ids, total = _ids(client, ("query", tag), ("status", "failed"))
     assert ids == [failed.id] and total == 1
 
@@ -132,3 +135,10 @@ def test_a_backslash_in_the_term_is_literal(client, db):
     _log(db, 2, error_message=f"{tag} C:tmp failed")
     ids, _ = _ids(client, ("query", f"{tag} C:\\tmp"))
     assert ids == [literal.id]
+
+
+def test_search_term_longer_than_200_characters_is_refused(client, db):
+    resp = get(client, LOGS, [("query", "x" * 201)])
+    assert resp.status_code == 422, resp.text
+    ok = get(client, LOGS, [("query", "x" * 200)])
+    assert ok.status_code == 200, ok.text
