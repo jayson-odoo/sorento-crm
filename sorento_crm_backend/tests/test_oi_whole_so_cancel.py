@@ -123,22 +123,24 @@ def test_ac_wc_1_a_header_cancel_push_raises_one_cancelled_row_for_the_line(env)
 
 # ============================================================================ AC-WC-2
 def test_ac_wc_2_removing_the_last_open_line_raises_the_cancelled_row(env):
-    """Shape: two-line SO. y is already cancelled in the core (an earlier push removed it,
-    simulated by setting its line_status), so x is the LAST open line. The next push carries
-    only the cancelled y, i.e. removes x: no open line is left to derive the diff scope from.
-    (A zero-line push is a no-op per AC-RL-07, so the push must carry something.)"""
+    """Shape (header OPEN, so distinct from WC-1): two-line SO; y was fully cancelled by a
+    Cancel SO document (line_status cancelled, cancelled_by_cancel_doc, qty_cancelled =
+    qty_ordered, set directly as in test_ac_rl_30). The push keeps the header open and
+    carries only y, so x is removed; y stays cancelled, hence the SO has no AFTER lines and
+    the diff scope (derived from open lines) misses x."""
     record, header, line_x, y = _push_so(env)
     _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
     env.db.execute(
         text(
-            "UPDATE sales_order_lines SET line_status = 'cancelled' "
+            "UPDATE sales_order_lines SET line_status = 'cancelled', "
+            "cancelled_by_cancel_doc = true, qty_cancelled = qty_ordered "
             "WHERE sales_order_id = :h AND id <> :x"
         ),
         {"h": str(header["id"]), "x": str(line_x["id"])},
     )
     env.db.commit()
 
-    res = env.post(INGEST_SO, [dict(record, lines=[y])])
+    res = env.post(INGEST_SO, [dict(record, status="open", lines=[y])])
     assert res.status_code == 200, res.text
     env.db.expire_all()
 
