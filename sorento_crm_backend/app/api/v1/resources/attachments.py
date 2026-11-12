@@ -200,9 +200,7 @@ def _find_filename_collision(
 def _folder_name_collision(db: Session, directory_id: Optional[str], display_name: str):
     """The active file in the folder showing ``display_name`` (any case), or None. The zip
     import asks Skip / Copy / Replace off this; Replace itself only ever targets this record's
-    own row (``_find_filename_collision``)."""The active file in the folder holding ``display_name`` as its visible OR original name
-    (any case), or None. The zip import asks Skip / Copy / Replace off this, so a renamed file
-    still holding the name as its original counts too (FILES-MOVE-DUPLICATE)."""
+    own row (``_find_filename_collision``)."""
     if not directory_id:
         return None
     return AttachmentService(db)._folder_clash(
