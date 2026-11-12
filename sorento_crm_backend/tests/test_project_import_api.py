@@ -293,6 +293,9 @@ def test_ac_pi_11_preview_is_refused_while_a_required_field_has_no_column(world,
     client = api_client(w.db, w.admin_id, w.company_id, BOTH)
     run_id = _created_id(client, _small_book())
     columns = {f: h for f, h in HEADER_BY_FIELD.items() if f != missing}
+    # Round 4 rule (crew's real-file dry run): a field not sent keeps its auto-matched
+    # heading, so "no column" is said explicitly with "ignore". Lead sign-off, assertion unchanged.
+    columns[missing] = "ignore"
     client.put(f"{BASE}/runs/{run_id}/columns", json={"sheets": ["JAN'26"], "columns": columns})
 
     response = client.post(f"{BASE}/runs/{run_id}/preview")
