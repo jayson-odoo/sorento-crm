@@ -667,3 +667,41 @@ def test_ac_v2_f1b_the_existing_words_keep_matching_and_never_list_a_waiting_row
     assert rejected.row_id in rejected_ids
     for ids in (to_confirm, acknowledged, rejected_ids):
         assert waiting.row_id not in ids
+
+
+# ================================================================ F1c: the State column sort
+STATE_WORDS = {
+    "raised": "To buy",
+    "partly_linked": "Partly on PO/SPO",
+    "placed": "On PO/SPO",
+    "actioned": "Done",
+    "cancelled": "Cancelled",
+}
+
+
+@pytest.mark.parametrize("direction", ("asc", "desc"))
+def test_ac_v2_f1c_the_state_sort_orders_by_the_word_the_column_prints(env, direction):
+    from sqlalchemy import text
+
+    worlds = [_world(env) for _ in STATE_WORDS]
+    for world, state in zip(worlds, STATE_WORDS):
+        env.db.execute(
+            text("UPDATE order_inquiry_rows SET state = :s WHERE id = :i"),
+            {"s": state, "i": world.row_id},
+        )
+    env.db.commit()
+    states = list(STATE_WORDS)
+
+    def words(**params):
+        res = env.client.get(
+            f"{BASE}/order-inquiries",
+            params={"sort": "state", "dir": direction, "state": states, **params},
+        )
+        assert res.status_code == 200, res.text
+        return [STATE_WORDS[r["state"]] for r in res.json()["data"]]
+
+    expected = sorted(STATE_WORDS.values(), reverse=(direction == "desc"))
+    paged = words(limit=2, page=1) + words(limit=2, page=2) + words(limit=2, page=3)
+
+    assert words(limit=100) == expected
+    assert paged == expected, paged
