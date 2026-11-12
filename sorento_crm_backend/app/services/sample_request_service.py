@@ -511,7 +511,7 @@ def _apply_ship_to(
     Keyed on presence like every draft save. A new ``ship_to_party_id`` reloads the printed block
     from that party: its name, its address or else the project's site address, and clears the old
     contact. A party not on the project yet is linked in ``ship_to_role`` first (no project: nothing
-    is linked). ``ship_to_contact_ids`` are that party's people: "A & B", the first one's phone, and
+    is linked). ``ship_to_contact_ids`` are that party's people: "A & B", their phones in that order, and
     they join the project's stakeholders. A text field present in ``data`` was typed and wins.
 
     Security review B1/S1: linking a party and adding stakeholders are project edits, so they need
@@ -631,12 +631,14 @@ def _apply_ship_to(
             site_contact_phone=None,
         )
     if contacts:
-        first = contacts[0]
+        # Every picked contact's phone, in the names' order, "-" for one without (owner hand
+        # test 12 Nov: two contacts showed one phone, because only the first was copied).
+        phones = [party_contacts.display_phone(c.phone) or "-" for c in contacts]
         loaded.update(
             site_contact_name=" & ".join(c.name for c in contacts),
             site_contact_phone=(
-                party_contacts.display_phone(first.phone)
-                if "projects.parties.view" in granted
+                " & ".join(phones)
+                if "projects.parties.view" in granted and any(p != "-" for p in phones)
                 else None
             ),
         )

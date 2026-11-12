@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from html import escape
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.services.pdf_render import today_in_malaysia
 
@@ -52,6 +52,31 @@ def _ticks(options, chosen: Optional[str]) -> str:
     )
 
 
+def contact_people(name: Optional[str], phone: Optional[str]) -> List[str]:
+    """One "Name phone" per picked contact (owner hand test 12 Nov: every contact's phone).
+
+    The party pick stores the names "A & B" and the phones "pa & pb" in the same order, "-" for a
+    contact without one. Text that does not split into the same count (typed by hand, an old
+    request) stays one line, as it was printed before.
+    """
+    names = [n.strip() for n in (name or "").split("&")]
+    phones = [p.strip() for p in (phone or "").split("&")]
+    if name and phone and len(names) > 1 and len(names) == len(phones) and all(names):
+        return [f"{n} {p}" if p and p != "-" else n for n, p in zip(names, phones)]
+    joined = " ".join(x for x in (name, phone) if x)
+    return [joined] if joined else []
+
+
+def _site_contact(d: Dict[str, Any]) -> str:
+    lines = contact_people(d.get("site_contact_name"), d.get("site_contact_phone"))
+    if d.get("site_contact_note"):
+        if lines:
+            lines[-1] = f"{lines[-1]} {d['site_contact_note']}"
+        else:
+            lines = [str(d["site_contact_note"])]
+    return "<br>".join(escape(x) for x in lines) if lines else _fmt(None)
+
+
 def build_html(d: Dict[str, Any]) -> str:
     customer = d.get("customer_name") or "-"
     customer = (
@@ -61,9 +86,7 @@ def build_html(d: Dict[str, Any]) -> str:
     )
     delivery = _date(d.get("delivery_date"))
     ship_to = " ".join(x for x in (d.get("ship_to_name"), d.get("ship_to_address")) if x) or None
-    site = " ".join(
-        x for x in (d.get("site_contact_name"), d.get("site_contact_phone"), d.get("site_contact_note")) if x
-    ) or None
+    site = _site_contact(d)
 
     header = "".join(
         [
@@ -75,7 +98,7 @@ def build_html(d: Dict[str, Any]) -> str:
             _row("For", d.get("scope_note")) if d.get("scope_note") else "",
             _row("Request Delivery Date", delivery),
             _row("Shipping Address", ship_to),
-            _row("Contact Person", site),
+            f"<tr><th>Contact Person</th><td>{site}</td></tr>",
         ]
     )
 

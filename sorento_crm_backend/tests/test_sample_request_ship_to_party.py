@@ -170,19 +170,47 @@ def test_without_a_project_any_party_is_accepted_and_nothing_is_linked(world):
 # ------------------------------------------------------------------ rule 4: contact person
 
 
-def test_several_contacts_print_a_and_b_with_the_first_ones_phone(world):
+def test_several_contacts_keep_every_contacts_phone_in_name_order(world):
+    """Owner hand test 12 Nov: "i added 2 contacts but why got 1 phone only". Every picked
+    contact's phone is kept, in the same order as the names; one without a phone reads "-"."""
     w = world
     # The phone is party data: it is copied only for a caller who may read it (security S1).
     w.perms[w.sales].add("projects.parties.view")
     party = _party(w.db, "Bintang Trading", address="Klang", phone="+60 11-111 1111")
     _link(w.db, w.project, party)
     mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
+    ravi = _contact(w.db, party, "Ravi Kumar", phone="0134567890")
+    anis = _contact(w.db, party, "Anis Rahman")
+    d = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id, ravi.id, anis.id]).json()
+    assert d["site_contact_name"] == "Mei Ling Tan & Ravi Kumar & Anis Rahman"
+    phones = [p.strip() for p in d["site_contact_phone"].split("&")]
+    assert len(phones) == 3
+    assert phones[0].replace(" ", "").replace("-", "").endswith("123456789")
+    assert phones[1].replace(" ", "").replace("-", "").endswith("134567890")
+    assert phones[2] == "-"
+
+
+def test_contacts_without_any_phone_keep_no_phone(world):
+    w = world
+    w.perms[w.sales].add("projects.parties.view")
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    mei = _contact(w.db, party, "Mei Ling Tan")
     ravi = _contact(w.db, party, "Ravi Kumar")
     d = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id, ravi.id]).json()
-    assert d["site_contact_name"] == "Mei Ling Tan & Ravi Kumar"
-    assert d["site_contact_phone"] and d["site_contact_phone"].replace(" ", "").replace("-", "").endswith(
-        "123456789"
-    )
+    assert d["site_contact_phone"] is None
+
+
+def test_many_contacts_phones_fit_the_column(world):
+    """Six contacts' phones are longer than the old 60-character column."""
+    w = world
+    w.perms[w.sales].add("projects.parties.view")
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    people = [_contact(w.db, party, f"Person {i}", phone=f"01234567{i:02d}") for i in range(6)]
+    res = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[c.id for c in people])
+    assert res.status_code == 201, res.text
+    assert len(res.json()["site_contact_phone"].split("&")) == 6
 
 
 def test_picked_contacts_join_the_projects_stakeholders(world):
