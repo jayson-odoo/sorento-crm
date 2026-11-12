@@ -209,7 +209,7 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     expect(screen.getByRole('listbox')).toBeInTheDocument();
   });
 
-  it('(c) ticked rows are checked, disabled and read Already added', async () => {
+  it('(c) a row ticked in this session is checked but NOT disabled and not "Already added"; one on the request at open is disabled', async () => {
     render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
     openItemPicker();
     search('DIY');
@@ -217,11 +217,53 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501'));
     const ticked = await rowFor('DIY-BS-4501');
     expect(ticked).toHaveAttribute('aria-checked', 'true');
-    expect(ticked).toHaveAttribute('aria-disabled', 'true');
-    expect(within(ticked).getByText('Already added')).toBeInTheDocument();
+    expect(ticked).not.toHaveAttribute('aria-disabled', 'true');
+    expect(within(ticked).queryByText('Already added')).toBeNull();
     const preExisting = await rowFor('DIY-BS-4001');
     expect(preExisting).toHaveAttribute('aria-disabled', 'true');
     expect(within(preExisting).getByText('Already added')).toBeInTheDocument();
+  });
+
+  it('after close and reopen the three ticked in the earlier session are Already added and disabled', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    await clickRow('DIY-BS-4501');
+    await clickRow('DIY-BS-4502');
+    await clickRow('DIY-SET-4503');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501,DIY-BS-4502,DIY-SET-4503,DIY-BS-4001'));
+    fireEvent.keyDown(screen.getByPlaceholderText('Search...'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Search...')).toBeNull());
+    openItemPicker();
+    for (const c of ['DIY-BS-4501', 'DIY-BS-4502', 'DIY-SET-4503']) {
+      const r = await rowFor(c);
+      expect(r).toHaveAttribute('aria-disabled', 'true');
+      expect(within(r).getByText('Already added')).toBeInTheDocument();
+    }
+  });
+
+  it('tick 3, untick the 2nd: its line is gone and the other two keep their order', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    await clickRow('DIY-BS-4501');
+    await clickRow('DIY-BS-4502');
+    await clickRow('DIY-SET-4503');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501,DIY-BS-4502,DIY-SET-4503,DIY-BS-4001'));
+    await clickRow('DIY-BS-4502');
+    await waitFor(() => expect(codes().textContent).toBe('DIY-BS-4501,DIY-SET-4503,DIY-BS-4001'));
+    expect((await rowFor('DIY-BS-4502')).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('an untick on a touched line does nothing and the item stays ticked', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    await clickRow('DIY-BS-4501');
+    await clickRow('DIY-BS-4502');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501,DIY-BS-4502,DIY-BS-4001'));
+    fireEvent.change(screen.getAllByLabelText('Remarks for line 2')[0], { target: { value: 'keep me' } });
+    await clickRow('DIY-BS-4502');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(codes().textContent).toBe('DIY-BS-4501,DIY-BS-4502,DIY-BS-4001');
+    expect((await rowFor('DIY-BS-4502')).getAttribute('aria-checked')).toBe('true');
   });
 
   it('(d) on a row that already has an item a tick adds a new line below and keeps it', async () => {
