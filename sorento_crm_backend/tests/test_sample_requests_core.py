@@ -839,8 +839,13 @@ def test_ac_sr_34_no_project_no_project_activity(world):
 # ------------------------------------------------------------------ AC-SR-51 / 54
 
 
-def test_ac_sr_51_queue_defaults_to_open_statuses_delivery_date_ascending(world):
-    """AC-SR-51: default Submitted+Processing+Customer confirmed; delivery date ascending."""
+def test_ac_sr_51_queue_defaults_to_open_statuses_last_activity_descending(world):
+    """AC-SR-51: default Submitted+Processing+Customer confirmed; last activity descending.
+
+    FORMS-LAST-ACTIVITY Q1 (owner ruling, 12 Nov) superseded the old delivery date ascending
+    default. The rows are touched in the order later, sooner, soonest, so newest first is the
+    reverse.
+    """
     later = _submitted(world, delivery_date="2026-12-20")
     sooner = _submitted(world, delivery_date="2026-12-05")
     soonest = _submitted(world, delivery_date="2026-11-30")

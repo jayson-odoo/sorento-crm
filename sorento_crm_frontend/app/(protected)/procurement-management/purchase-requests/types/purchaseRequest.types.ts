@@ -148,7 +148,7 @@ export interface PurchaseRequestFormData {
   products?: PurchaseRequestLineFormData[];
 }
 
-export interface PurchaseRequestDetail extends PurchaseRequest {}
+export type PurchaseRequestDetail = PurchaseRequest;
 
 /** One row of the customer picker; `sales_type` is the server's mapping of the debtor type. */
 export interface CustomerLookupItem {

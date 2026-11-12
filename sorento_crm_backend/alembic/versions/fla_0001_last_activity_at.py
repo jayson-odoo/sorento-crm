@@ -104,6 +104,8 @@ def upgrade() -> None:
         op.execute(f"ALTER TABLE {name} ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP NULL")
         op.execute(f"CREATE INDEX IF NOT EXISTS ix_{table}_last_activity_at ON {name} (last_activity_at)")
     _set_comment_types(_COMMENT_TYPES + ",'sample_request'")
+    # Literal for the one table whose model-vs-migration tests read the DDL text.
+    op.execute("ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP NULL")
     backfill_last_activity(bind)
 
 
