@@ -575,6 +575,71 @@ def mark_issued(db: Session, document: ProjectQuotationDocument) -> None:
     _set_status(db, document, _status_by_key(db, STATUS_ISSUED))
 
 
+def source_prices_approved(db: Session, source: ProjectQuotationDocument) -> bool:
+    """The source's lines, as they stand, are prices a manager approved (QUOTE-DUPLICATE-PARTY).
+
+    True while it stands on ``approved`` (locked, so its lines cannot have moved since), or on
+    ``issued`` when every scope's current version is the one its latest revision went out with:
+    sending spends the approval, and a send that needed one could not have happened without it.
+    """
+    key = current_key(db, source)
+    if key == STATUS_APPROVED:
+        return True
+    if key != STATUS_ISSUED:
+        return False
+    from app.models.projects import ProjectQuotationIssue, ProjectQuotationIssueScope
+
+    latest = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.document_id == source.id)
+        .order_by(ProjectQuotationIssue.issue_no.desc())
+        .first()
+    )
+    if latest is None:
+        return False
+    sent = {
+        str(row[0])
+        for row in db.query(ProjectQuotationIssueScope.version_id)
+        .filter(ProjectQuotationIssueScope.issue_id == latest.id)
+        .all()
+    }
+    current = {str(v) for v in current_version_ids(db, source)}
+    return bool(current) and current == sent
+
+
+def carry_approval(
+    db: Session,
+    *,
+    copy: ProjectQuotationDocument,
+    source: ProjectQuotationDocument,
+    actor_user_id: Optional[str] = None,
+) -> bool:
+    """Give a duplicate the source's approval when it needs one and the source's prices were
+    approved as they stand. The copy then sits on ``approved`` like any approved document:
+    locked, and spent by its own first send. Returns whether it was carried."""
+    if not requires_approval(db, copy):
+        return False
+    if not source_prices_approved(db, source):
+        return False
+    _set_status(db, copy, _status_by_key(db, STATUS_APPROVED))
+    copy.approver_user_id = source.approver_user_id
+    # Its own event (security review N1): the copy's approver never saw the copy, so the feed
+    # says whose approval it is and who carried it, rather than a second "approved".
+    _record(
+        db,
+        copy,
+        template="quotation_approval_carried",
+        body_text=(
+            f"{_actor_name(db, actor_user_id)} carried the approval of {source.document_no} "
+            f"to {copy.document_no}"
+        ),
+        actor_user_id=actor_user_id,
+        payload={"source_document_id": str(source.id), "source_document_no": source.document_no},
+    )
+    db.flush()
+    return True
+
+
 def assert_unlocked(db: Session, document: Optional[ProjectQuotationDocument]) -> None:
     """Refuse an edit to a quotation a manager is looking at, or has already approved."""
     if document is None:
