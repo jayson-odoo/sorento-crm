@@ -1,6 +1,6 @@
 # PLAN: project related records (SI, complaint, purchase request, sponsorship form, NPA, OCN)
 
-Status: Q1-Q4 = (a) (crew 12 Nov), D1-D3 decided by the owner 13 Nov; mock v3 filed; waiting on the owner's OK on the mock. No product code before it. Track: L (migration: nullable project_id on SI and NPA). Lane PROJECT-RELATED-RECORDS, PR #2383.
+Status: APPROVED by the owner 13 Nov 00:05 (card + mock v3, D1 b, D2 a, D3 a). Build in progress (Phase 2: tester red tests). Contract: `CONTRACT-project-related-records.md`. Track: L (migration: nullable project_id on SI and NPA). Lane PROJECT-RELATED-RECORDS, PR #2383.
 
 Card: `CARD-project-related-records-12nov.md`. UAC: `project-related-records-12nov-acceptance-criteria.md`. Mock: `documentation/mockups/project-related/index.html`.
 Q1-Q4 = (a). D1 = reviewed list, D2 = editable any time, D3 = optional.
