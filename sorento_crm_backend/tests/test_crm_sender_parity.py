@@ -14,6 +14,8 @@ from tests.test_crm_sender import (  # noqa: F401 - fixtures used by name
     FakeClient,
     _NoClose,
     _logs,
+    _outgoing_text,
+    _payload,
     _run,
     _status_error,
     db,
@@ -23,8 +25,11 @@ from tests.test_crm_sender import (  # noqa: F401 - fixtures used by name
 from tests.test_crm_sender_wiring import (  # noqa: F401 - fixtures used by name
     _answer,
     _claimed_row,
+    SENDER_URL,
     _drain_turn,
+    _give_n8n_sender,
     _settings,
+    _turn,
     fake_respond,
     workspace,
 )
@@ -427,6 +432,22 @@ def test_row23_a_presign_failure_sends_the_bare_original_url(db, factory, turn_i
     assert _url_of(fake.calls[0]) == url
 
 
+def _attachment_row(db, url):
+    import uuid
+
+    from app.models.resources import Attachment
+
+    db.add(
+        Attachment(
+            id=str(uuid.uuid4()),
+            original_filename="a.pdf",
+            stored_filename=f"zzt-{uuid.uuid4().hex[:8]}.pdf",
+            file_path=url,
+        )
+    )
+    db.commit()
+
+
 def test_row23_the_presign_asks_for_one_hour(db, monkeypatch):
     from app.services import storage_router
     from app.services.chatbot import crm_sender
@@ -438,7 +459,9 @@ def test_row23_the_presign_asks_for_one_hour(db, monkeypatch):
         return "https://signed.test/zzt?sig=2"
 
     monkeypatch.setattr(storage_router, "resolve_signed_url", fake_resolve)
-    assert crm_sender._presign(db, "https://files.cdn-sorento.test/a.pdf") == "https://signed.test/zzt?sig=2"
+    url = "https://files.cdn-sorento.test/a.pdf"
+    _attachment_row(db, url)
+    assert crm_sender._presign(db, url) == "https://signed.test/zzt?sig=2"
     assert asked["expires_in"] == 3600
 
 
@@ -577,3 +600,266 @@ def test_row31_an_engine_that_raises_sends_the_failure_sentence(db, factory, wor
     _drain_turn(db, factory, monkeypatch, tid, claimed_at, boom)
     sent = [c[1][1] for c in fake_respond["client"].calls if c[0] == "send_message"]
     assert sent == [LIVE_FAILURE_SENTENCE]
+
+
+# --------------------------------------------------------------------------- #
+# P2: the presign keeps the external route's attachment-row guard
+# --------------------------------------------------------------------------- #
+
+CDN = "https://files.cdn-sorento.test/a.pdf"
+
+
+def _recording_resolve(monkeypatch):
+    from app.services import storage_router
+
+    asked = []
+
+    def fake_resolve(path, **kw):
+        asked.append((path, kw))
+        return "https://signed.test/zzt?sig=3"
+
+    monkeypatch.setattr(storage_router, "resolve_signed_url", fake_resolve)
+    return asked
+
+
+def test_p2_without_an_attachments_row_the_original_url_is_sent_and_nothing_is_signed(
+    db, factory, turn_id, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "presigned_require_attachment_row", True)
+    asked = _recording_resolve(monkeypatch)
+    fake = FakeClient()
+    _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": [{"url": CDN}]}], fake)
+    assert _url_of(fake.calls[0]) == CDN
+    assert asked == [], "no signed url may be issued for a path with no attachments row"
+
+
+def test_p2_with_a_matching_attachments_row_the_file_is_presigned(db, factory, turn_id, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "presigned_require_attachment_row", True)
+    asked = _recording_resolve(monkeypatch)
+    _attachment_row(db, CDN)
+    fake = FakeClient()
+    _run(factory, turn_id, [{"kind": "send_attachments", "attachments_src": [{"url": CDN}]}], fake)
+    assert _url_of(fake.calls[0]) == "https://signed.test/zzt?sig=3"
+    assert len(asked) == 1 and asked[0][1].get("expires_in") == 3600
+
+
+# --------------------------------------------------------------------------- #
+# P3: a failing presign lookup leaves the sender's session usable
+# --------------------------------------------------------------------------- #
+
+
+def test_p3_a_presign_whose_db_lookup_raises_does_not_poison_the_next_step(db, factory, monkeypatch):
+    from sqlalchemy import text as sql
+
+    from app.api.v1.external import presigned_url
+    from app.services.chatbot import direct_ingress
+
+    def broken_lookup(session, raw, key):
+        session.execute(sql("SELECT * FROM zzt_table_that_does_not_exist"))  # aborts the transaction
+
+    monkeypatch.setattr(presigned_url, "_resolve_attachment", broken_lookup)
+    tid = _turn(db)
+    fake = FakeClient()
+    actions = [
+        {"kind": "send_attachments", "attachments_src": [{"url": CDN}]},
+        {"kind": "send_message", "text": "after the file"},
+    ]
+    assert _run(factory, tid, actions, fake) == direct_ingress.SEND_OK
+    assert fake.names() == ["send_attachment", "send_message"]
+    rows = _logs(db, tid)
+    assert [r.status for r in rows if _payload(r)["step"] == "1.0"] == ["success"]
+    assert [r for r in rows if r.status == "processing"] == []
+
+
+# --------------------------------------------------------------------------- #
+# P4: the link fallback is its own logged step
+# --------------------------------------------------------------------------- #
+
+_FILE = "https://files.test/a.pdf"
+_FILE_ACTION = [{"kind": "send_attachments", "attachments_src": [{"url": _FILE, "filename": "a.pdf"}]}]
+
+
+def test_p4_the_fallback_row_is_marked_as_a_link(db, factory, turn_id):
+    fake = FakeClient({0: _status_error(400)})
+    _run(factory, turn_id, _FILE_ACTION, fake)
+    links = [r for r in _logs(db, turn_id) if _payload(r).get("fallback") == "link"]
+    assert len(links) == 1 and links[0].status == "success"
+
+
+def test_p4_a_link_that_timed_out_is_looked_up_as_text_and_neither_part_is_resent(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    first = FakeClient({0: _status_error(400), 1: httpx.ReadTimeout("slow")}, lookup=httpx.ConnectError("down"))
+    assert _run(factory, turn_id, _FILE_ACTION, first) == direct_ingress.SEND_TIMEOUT
+    second = FakeClient(lookup=[_outgoing_text(_FILE)])
+    assert _run(factory, turn_id, _FILE_ACTION, second) == direct_ingress.SEND_OK
+    assert second.calls == [], "the link arrived, and the file is not sent again"
+
+
+def test_p4_a_refused_link_is_retried_as_the_link_not_the_file(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    first = FakeClient({0: _status_error(400), 1: _status_error(400)})
+    assert _run(factory, turn_id, _FILE_ACTION, first) == direct_ingress.SEND_REFUSED
+    second = FakeClient()
+    assert _run(factory, turn_id, _FILE_ACTION, second) == direct_ingress.SEND_OK
+    assert second.names() == ["send_message"]
+    assert second.calls[0][1][1] == _FILE
+
+
+# --------------------------------------------------------------------------- #
+# P5: three failed tries of a file, then the link
+# --------------------------------------------------------------------------- #
+
+_AFTER = {"kind": "add_comment", "text": "after the file"}
+
+
+def _fail_file_runs(factory, turn_id, times, exc):
+    from app.services.chatbot import direct_ingress
+
+    for _ in range(times):
+        fake = FakeClient({0: exc}, lookup=[])
+        result = _run(factory, turn_id, _FILE_ACTION + [_AFTER], fake)
+        assert result == direct_ingress.SEND_REFUSED
+        assert fake.names() == ["send_attachment"]
+
+
+def test_p5_after_three_failed_tries_the_next_send_sends_the_link_and_goes_on(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    _fail_file_runs(factory, turn_id, 3, _status_error(503))
+    fourth = FakeClient(lookup=[])
+    assert _run(factory, turn_id, _FILE_ACTION + [_AFTER], fourth) == direct_ingress.SEND_OK
+    assert fourth.names() == ["send_message", "create_comment"]
+    assert fourth.calls[0][1][1] == _FILE
+
+
+def test_p5_two_failed_tries_still_retry_the_file(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    _fail_file_runs(factory, turn_id, 2, _status_error(503))
+    third = FakeClient(lookup=[])
+    assert _run(factory, turn_id, _FILE_ACTION + [_AFTER], third) == direct_ingress.SEND_OK
+    assert third.names() == ["send_attachment", "create_comment"]
+
+
+def test_p5_the_link_is_the_presigned_one_when_the_file_was_presigned(db, factory, turn_id, monkeypatch):
+    from app.services.chatbot import crm_sender
+
+    monkeypatch.setattr(crm_sender, "_presign", lambda *a, **k: "https://signed.test/zzt?sig=1")
+    action = [{"kind": "send_attachments", "attachments_src": [{"url": CDN, "filename": "a.pdf"}]}]
+    for _ in range(3):
+        _run(factory, turn_id, action, FakeClient({0: _status_error(503)}, lookup=[]))
+    fourth = FakeClient()
+    _run(factory, turn_id, action, fourth)
+    assert fourth.calls[0][1][1] == "https://signed.test/zzt?sig=1"
+
+
+def test_p5_a_connection_error_never_turns_into_a_link(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    for _ in range(4):
+        fake = FakeClient({0: httpx.ConnectError("down")})
+        assert _run(factory, turn_id, _FILE_ACTION, fake) == direct_ingress.SEND_REFUSED
+        assert fake.names() == ["send_attachment"]
+
+
+# --------------------------------------------------------------------------- #
+# N1 / N2 / N3
+# --------------------------------------------------------------------------- #
+
+
+def test_n1_a_list_of_buttons_is_joined_then_split_on_commas(db, factory, turn_id):
+    fake = FakeClient()
+    _run(
+        factory,
+        turn_id,
+        [{"kind": "send_message", "text": "Pick", "quick_replies": ["Yes, please", "No"]}],
+        fake,
+    )
+    assert fake.calls[0][1][2] == ["Yes", "please", "No"]
+
+
+def test_n1_the_cap_of_ten_applies_after_the_split(db, factory, turn_id):
+    fake = FakeClient()
+    raw = ["a, b, c", "d, e, f", "g, h, i", "j, k, l"]
+    _run(factory, turn_id, [{"kind": "send_message", "text": "Pick", "quick_replies": raw}], fake)
+    assert fake.calls[0][1][2] == list("abcdefghij")
+
+
+def test_n2_a_skipped_empty_assignee_leaves_one_skipped_success_row(db, factory, turn_id):
+    fake = FakeClient()
+    actions = [{"kind": "assign_conversation", "respond_user_id": ""}, {"kind": "add_comment", "text": "go on"}]
+    _run(factory, turn_id, actions, fake)
+    assert fake.names() == ["create_comment"]
+    skipped = [r for r in _logs(db, turn_id) if _payload(r).get("skipped") == "empty_assignee"]
+    assert len(skipped) == 1 and skipped[0].status == "success"
+
+
+@pytest.mark.parametrize("contact", [None, ""])
+def test_n3_a_missing_contact_id_leaves_a_failed_row_with_a_plain_reason(db, factory, turn_id, contact):
+    from app.services.chatbot import crm_sender, direct_ingress
+
+    fake = FakeClient()
+    result = crm_sender.send(
+        factory, turn_id=turn_id, contact_id=contact, actions=[{"kind": "send_message", "text": "hi"}], client=fake
+    )
+    assert result != direct_ingress.SEND_OK
+    assert fake.calls == []
+    rows = _logs(db, turn_id)
+    assert len(rows) == 1 and rows[0].status == "failed"
+    assert rows[0].error_message and "Traceback" not in rows[0].error_message
+
+
+# --------------------------------------------------------------------------- #
+# N4: the CRM failure sentence belongs to the CRM path only
+# --------------------------------------------------------------------------- #
+
+
+def test_n4_on_the_n8n_path_a_failed_engine_turn_never_sends_the_crm_sentence(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from app.services.chatbot import engine
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
+
+    _settings(db, chatbot_reply_sender_mode="n8n")
+    _give_n8n_sender(db, workspace, monkeypatch)
+    post = MagicMock(return_value=httpx.Response(200, request=httpx.Request("POST", SENDER_URL)))
+    monkeypatch.setattr(httpx, "post", post)
+    tid, claimed_at = _claimed_row(db)
+
+    _drain_turn(
+        db, factory, monkeypatch, tid, claimed_at,
+        lambda *a, **k: engine._failed_result("t", "understood", "boom", [], False),
+    )
+    assert fake_respond["client"].calls == []
+    for call in post.call_args_list:
+        assert FAILURE_REPLY_TEXT not in str(call.kwargs.get("json"))
+
+
+def test_n4_on_the_n8n_path_an_engine_that_raises_never_sends_the_crm_sentence(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
+
+    _settings(db, chatbot_reply_sender_mode="contacts", chatbot_reply_sender_contacts="somebody-else")
+    _give_n8n_sender(db, workspace, monkeypatch)
+    post = MagicMock(return_value=httpx.Response(200, request=httpx.Request("POST", SENDER_URL)))
+    monkeypatch.setattr(httpx, "post", post)
+    tid, claimed_at = _claimed_row(db)
+
+    def boom(*a, **k):
+        raise RuntimeError("engine blew up")
+
+    _drain_turn(db, factory, monkeypatch, tid, claimed_at, boom)
+    assert fake_respond["client"].calls == []
+    for call in post.call_args_list:
+        assert FAILURE_REPLY_TEXT not in str(call.kwargs.get("json"))
