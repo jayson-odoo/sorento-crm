@@ -447,6 +447,11 @@ def test_c12_a_cancel_of_a_line_the_batch_names_rides_along_and_the_change_appli
     batch = _open_batch_naming(world, w, "a")
     batch_id = str(batch.id)
     retired_row = _cancelled_row_on_open_line(world, w, batch_id)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(db, batch_id)
+    db.commit()
 
     response = client.post(
         f"{BASE}/fulfilment-planning/confirm-all",
