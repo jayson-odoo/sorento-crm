@@ -11,7 +11,7 @@ export const APPROVE_PERMISSION = 'projects.quotations.approve';
 export { isBlockedByApproval };
 
 /** The lines filter's option a banner clause opens (`LINE_FLAG_FILTERS` in QuotationVersionEditor). */
-export type ApprovalLineFlag = 'non_standard' | 'below_floor' | 'below_default';
+export type ApprovalLineFlag = 'non_standard' | 'below_floor';
 
 type ReasonClause = { count: number; rest: string; flag: ApprovalLineFlag | null };
 
@@ -28,7 +28,7 @@ function linesPhrase(count: number): string {
 export function reasonClauses(document: QuotationDocument): ReasonClause[] {
   const offSeries = document.off_series_line_count ?? 0;
   const belowFloor = document.below_floor_line_count ?? 0;
-  // Per line from the server (discounted and not below the floor: the pill's rule), else the
+  // Per line from the server (discounted and not below the floor), else the
   // older payload's arithmetic.
   const discounted =
     document.below_default_line_count ??
@@ -37,7 +37,9 @@ export function reasonClauses(document: QuotationDocument): ReasonClause[] {
   const clauses: ReasonClause[] = [];
   if (offSeries) clauses.push({ count: offSeries, rest: "outside the project's series", flag: 'non_standard' });
   if (belowFloor) clauses.push({ count: belowFloor, rest: 'priced below the minimum price', flag: 'below_floor' });
-  if (discounted) clauses.push({ count: discounted, rest: 'priced below the default price', flag: 'below_default' });
+  // No lines filter for the default price (owner, 12 Nov 2026: the minimum price pill is
+  // enough), so this count stays text. The words are the server's, unchanged.
+  if (discounted) clauses.push({ count: discounted, rest: 'priced below the default price', flag: null });
   if (belowProposal) clauses.push({ count: belowProposal, rest: 'priced below the proposal', flag: null });
   return clauses;
 }

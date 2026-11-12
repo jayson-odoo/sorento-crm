@@ -72,6 +72,8 @@ export interface LinePricingResult {
 export interface LinePricingLineInput {
   key: string;
   product_id: string | null;
+  /** A set line is priced from the set's own tag function. */
+  product_set_id?: string | null;
   part_product_ids: string[];
   candidate_product_ids: string[];
   promotion_id?: string | null;

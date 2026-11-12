@@ -12,6 +12,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ComplaintsList from './ComplaintsList';
+import { getUserLookup } from '@/services/userSelectService';
 
 const view = vi.hoisted(() => ({ filters: null as Record<string, unknown> | null }));
 // LIST-FILTER-MEMORY-4: the filters come back from the remembered view (per user), not the URL.
@@ -52,6 +53,8 @@ vi.mock('@/services/userSelectService', () => ({
   getUserLookup: vi.fn(async () => [
     { id: 'u-ann', respond_user_id: 'resp-ann', name: 'ZZT Ann', email: 'a@e.com' },
     { id: 'u-ben', respond_user_id: 'resp-ben', name: 'ZZT Ben', email: 'b@e.com' },
+    // ASSIGNED-FILTER-ALL-STAFF: staff never synced to Respond.io carry no respond id.
+    { id: 'u-cat', name: 'ZZT Cat' },
   ]),
 }));
 vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
@@ -150,8 +153,18 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     await openFilters(user);
     const box = await boxWith('Unassigned');
     await waitFor(() => expect(within(box).queryByText('ZZT Ben')).not.toBeNull());
-    await user.selectOptions(box, ['__unassigned__', 'resp-ann']);
-    await waitFor(() => expect(asList(lastArgs().assigned_to)).toEqual(['__unassigned__', 'resp-ann']));
+    await user.selectOptions(box, ['__unassigned__', 'u-ann']);
+    await waitFor(() => expect(asList(lastArgs().assigned_to)).toEqual(['__unassigned__', 'u-ann']));
+  });
+
+  it('lists every staff member, a Respond.io-unsynced one too, keyed by CRM id (ASSIGNED-FILTER-ALL-STAFF)', async () => {
+    const user = userEvent.setup();
+    await openFilters(user);
+    const box = await boxWith('Unassigned');
+    await waitFor(() => expect(within(box).queryByText('ZZT Cat')).not.toBeNull());
+    expect(getUserLookup).toHaveBeenCalledWith({ include_inactive: true });
+    await user.selectOptions(box, ['u-cat', 'u-ann']);
+    await waitFor(() => expect(asList(lastArgs().assigned_to)).toEqual(['u-ann', 'u-cat']));
   });
 
   it('the filters AND across each other', async () => {
@@ -159,10 +172,10 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     await openFilters(user);
     const box = await boxWith('Unassigned');
     await waitFor(() => expect(within(box).queryByText('ZZT Ben')).not.toBeNull());
-    await user.selectOptions(box, ['resp-ann', 'resp-ben']);
+    await user.selectOptions(box, ['u-ann', 'u-ben']);
     await user.selectOptions(await boxWith('Settled on site'), ['new', 'rejected']);
     await waitFor(() => {
-      expect(asList(lastArgs().assigned_to)).toEqual(['resp-ann', 'resp-ben']);
+      expect(asList(lastArgs().assigned_to)).toEqual(['u-ann', 'u-ben']);
       expect(asList(lastArgs().status)).toEqual(['new', 'rejected']);
     });
   });

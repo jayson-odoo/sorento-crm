@@ -1306,6 +1306,7 @@ class TagItemLookupItem(BaseModel):
     # The option reads "CODE  RM <list price>" (owner, 4 Nov). None when the row
     # has no price or a zero one; a set answers its override only.
     list_price: Optional[float] = None
+    is_discontinued: bool = False
 
 
 def _uuid_or_none(value: Optional[str]) -> Optional[str]:
@@ -1338,13 +1339,15 @@ class LinePricingLineIn(BaseModel):
 
     key: str
     product_id: Optional[str] = None
+    #: A set line (F1-7): priced from the set's own tag function, not from members sent here.
+    product_set_id: Optional[str] = None
     part_product_ids: list[str] = Field(default_factory=list, max_length=50)
     candidate_product_ids: list[str] = Field(default_factory=list, max_length=50)
     promotion_id: Optional[str] = None
     #: PRICETAG-COMBO: the combo the line names, so the lookup answers the combo's price.
     combo_id: Optional[str] = None
 
-    @field_validator("product_id", "promotion_id", "combo_id", mode="after")
+    @field_validator("product_id", "product_set_id", "promotion_id", "combo_id", mode="after")
     @classmethod
     def _validate_id(cls, value):
         return _uuid_or_none(value)
