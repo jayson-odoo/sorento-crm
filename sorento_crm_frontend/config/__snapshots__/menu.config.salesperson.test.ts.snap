@@ -305,6 +305,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Order Inquiries",
           },
           {
+            "path": "/project-sales/order-inquiries?inquiry_type=spare_part_request&state=all",
+            "title": "Spare Part Requests",
+          },
+          {
             "path": "/scm/purchase-orders",
             "title": "Purchase Orders",
           },

@@ -448,7 +448,7 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
     ]);
   });
 
-  it('Supply Chain sub-group holds Reorder Planning, Stock Debt, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
+  it('Supply Chain sub-group holds Reorder Planning, Stock Debt, Loading Plan, Order Inquiries, Spare Part Requests, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
     const procurement = findGroup(MENU_SIDEBAR, 'Procurement');
     const supplyChain = findSubGroup(procurement!, 'Supply Chain');
     expect(supplyChain).toBeDefined();
@@ -462,9 +462,15 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
       'Stock Debt',
       'Loading Plan',
       'Order Inquiries',
+      // SPARE-PART-ORDER-REQUEST: a spare part request IS an order inquiry; beside it.
+      'Spare Part Requests',
       'Purchase Orders',
       'Proforma Invoices',
     ]);
+    expect(findLeaf(supplyChain!.children!, 'Spare Part Requests')).toMatchObject({
+      path: '/project-sales/order-inquiries?inquiry_type=spare_part_request&state=all',
+      permission: 'procurement.spare_part_requests.create',
+    });
     expect(findLeaf(supplyChain!.children!, 'Reorder Planning')).toMatchObject({
       path: '/scm/reorder',
       permission: 'scm.reorder.run',
