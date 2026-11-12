@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passkey sign-in mock v1</title>
+<style>
+  /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light). */
+  :root { --primary:#3b82f6; --fg:#09090b; --muted:#71717a; --border:#e4e4e7; --bg:#ffffff;
+          --page:#fafafa; --accent:#f4f4f5; --destructive:#ef4444; --success:#16a34a; --radius:10px; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 Inter, system-ui, sans-serif; color:var(--fg); background:var(--page); }
+  h1 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:32px 16px 8px; }
+  .frame { max-width:1100px; margin:0 auto 24px; padding:0 16px; }
+  .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  .card { background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card-h { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 20px; border-bottom:1px solid var(--border); font-weight:600; font-size:15px; }
+  .card-b { padding:20px; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:36px; padding:0 14px; border-radius:8px; border:1px solid transparent; font:inherit; font-weight:500; cursor:pointer; }
+  .btn-primary { background:var(--primary); color:#fff; width:100%; }
+  .btn-outline { background:var(--bg); border-color:var(--border); color:var(--fg); }
+  .btn-sm { height:30px; padding:0 10px; font-size:13px; }
+  .btn-icon { width:44px; height:44px; padding:0; border-radius:999px; }
+  .btn-destructive { background:var(--destructive); color:#fff; }
+  .btn-ghost { background:transparent; color:var(--muted); }
+  .input { width:100%; height:36px; border:1px solid var(--border); border-radius:8px; padding:0 12px; font:inherit; }
+  label { font-weight:500; display:block; margin-bottom:6px; }
+  .field { margin-bottom:18px; }
+  .sep { display:flex; align-items:center; gap:12px; color:var(--muted); font-size:12px; margin:22px 0 14px; }
+  .sep::before,.sep::after { content:""; flex:1; height:1px; background:var(--border); }
+  .row { display:flex; justify-content:center; gap:12px; }
+  .signin { max-width:380px; margin:0 auto; padding:32px 24px; }
+  .signin h2 { text-align:center; font-size:18px; margin:0 0 24px; }
+  .tip { position:relative; }
+  .tip span { position:absolute; top:50px; left:50%; transform:translateX(-50%); background:var(--fg); color:#fff; font-size:11px; padding:2px 8px; border-radius:6px; white-space:nowrap; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  @media (max-width:760px) { .grid2 { grid-template-columns:1fr; } }
+  .pk { display:flex; align-items:center; gap:12px; padding:12px 0; border-top:1px solid var(--border); }
+  .pk:first-child { border-top:0; padding-top:0; }
+  .pk .ico { width:36px; height:36px; border-radius:8px; background:var(--accent); display:grid; place-items:center; flex:none; }
+  .pk .txt { flex:1; min-width:0; }
+  .pk .name { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pk .meta { color:var(--muted); font-size:12px; }
+  .menu { width:30px; height:30px; border-radius:8px; border:1px solid var(--border); background:var(--bg); cursor:pointer; flex:none; }
+  .empty { padding:8px 0; }
+  .empty b { display:block; }
+  .empty span { color:var(--muted); font-size:13px; }
+  dl { display:grid; grid-template-columns:auto 1fr; gap:8px 12px; margin:0; }
+  dt { color:var(--muted); }
+  dd { margin:0; }
+  a { color:var(--primary); text-decoration:none; }
+  .badge { display:inline-block; font-size:11px; padding:1px 8px; border-radius:999px; background:#dcfce7; color:var(--success); margin-left:6px; }
+  .lightbox { max-width:520px; margin:0 auto; }
+  .countdown { position:relative; overflow:hidden; height:30px; border-radius:8px; background:#fee2e2; color:#991b1b; font-size:13px; display:flex; align-items:center; gap:8px; padding:0 10px; flex:none; }
+  .countdown i { position:absolute; left:0; top:0; bottom:0; width:60%; background:rgba(239,68,68,.18); }
+  .countdown b { position:relative; font-weight:500; }
+  .countdown u { position:relative; text-decoration:none; font-weight:600; cursor:pointer; }
+  .dropdown { position:absolute; right:0; top:34px; background:var(--bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.08); min-width:130px; padding:4px; z-index:2; }
+  .dropdown div { padding:6px 10px; border-radius:6px; }
+  .dropdown div:hover { background:var(--accent); }
+  .rel { position:relative; }
+  svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+</style>
+</head>
+<body>
+
+<h1>1. Sign-in page (app/(auth)/signin/page.tsx), 375 and 1280 the same column</h1>
+<div class="frame">
+  <div class="card signin">
+    <h2>Sign in</h2>
+    <div class="field"><label>Email</label><input class="input" placeholder="Your email" autocomplete="username webauthn"></div>
+    <div class="field"><label style="display:flex;justify-content:space-between">Password <a href="#">Forgot Password?</a></label><input class="input" type="password" placeholder="Your password"></div>
+    <button class="btn btn-primary">Continue</button>
+    <div class="sep">or Log in with</div>
+    <div class="row">
+      <div class="tip"><button class="btn btn-outline btn-icon" aria-label="Phone number"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg></button></div>
+      <div class="tip"><button class="btn btn-outline btn-icon" aria-label="Passkey"><svg viewBox="0 0 24 24"><path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/></svg></button><span>Passkey</span></div>
+    </div>
+  </div>
+  <p class="note">New: the round "Passkey" button beside the existing "Phone number" one (same Button variant="outline" mode="icon" shape="circle" + Tooltip). It shows only where the browser can use passkeys. On browsers with passkey autofill, tapping the Email field also offers the saved passkey. "Continue" stays the one filled button.</p>
+</div>
+
+<h1>2. My account &gt; Security (app/(protected)/user-management/account/security/page.tsx)</h1>
+<div class="frame grid2">
+  <div>
+    <div class="card">
+      <div class="card-h">Passkeys <button class="btn btn-outline btn-sm">Add passkey</button></div>
+      <div class="card-b">
+        <div class="pk">
+          <div class="ico"><svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
+          <div class="txt"><div class="name" title="Safari on iPhone">Safari on iPhone</div><div class="meta"><span>Added 12/11/2026</span></div><div class="meta"><span>Last used 12/11/2026, 5:42 pm</span></div></div>
+          <div class="rel"><button class="menu" aria-label="Passkey actions">&#8943;</button>
+            <div class="dropdown"><div>Rename</div><div style="color:var(--destructive)">Remove</div></div></div>
+        </div>
+        <div class="pk">
+          <div class="ico"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <div class="txt"><div class="name">Office Mac</div><div class="meta"><span>Added 03/11/2026</span></div><div class="meta"><span>Last used 10/11/2026, 9:05 am</span></div></div>
+          <div class="countdown"><i></i><b>Removing in 6s</b><u>Cancel</u></div>
+        </div>
+      </div>
+    </div>
+    <p class="note">Card sits between "Password" and "Delete Account". Row menu = existing DropdownMenu. Remove = existing DeferredActionButton countdown (10s, server commits, Cancel only). Rename = small dialog, same shape as RenameAccessoryTemplateDialog. New passkeys are named after the device ("Safari on iPhone", from device_label_from_ua) and can be renamed.</p>
+  </div>
+  <div>
+    <div class="card">
+      <div class="card-h">Passkeys <button class="btn btn-outline btn-sm">Add passkey</button></div>
+      <div class="card-b"><div class="empty"><b>No passkeys yet</b><span>Sign in with Face ID, Touch ID or your fingerprint.</span></div></div>
+    </div>
+    <p class="note">Empty state: heading + one hint, no second button (DESIGN-LANGUAGE.md section 6). On a browser or address that cannot use passkeys, "Add passkey" is disabled with the hint "This browser can't use passkeys."</p>
+  </div>
+</div>
+
+<h1>3. Admin: Users &gt; user detail, Sign-in card (users/[id]/components/user-sign-in-section.tsx)</h1>
+<div class="frame grid2">
+  <div>
+    <div class="card">
+      <div class="card-h">Sign-in</div>
+      <div class="card-b">
+        <dl>
+          <dt>Email</dt><dd>staff.one@example.com</dd>
+          <dt>Phone</dt><dd>+60 12-*** 6789 <span class="badge">verified</span></dd>
+          <dt>WhatsApp contact</dt><dd><a href="#">Staff One - +60 12-*** 6789</a></dd>
+          <dt>Last sign-in</dt><dd>12/11/2026, 5:42 pm, passkey</dd>
+          <dt>Passkeys</dt><dd><a href="#">2 passkeys</a></dd>
+        </dl>
+      </div>
+    </div>
+    <p class="note">New row "Passkeys" ("None" when empty). "passkey" joins email / phone as a last-sign-in method word. The link opens the lightbox on the right.</p>
+  </div>
+  <div>
+    <div class="card lightbox">
+      <div class="card-h">Passkeys: Staff One <button class="btn btn-ghost btn-sm" aria-label="Close">&#10005;</button></div>
+      <div class="card-b">
+        <div class="pk"><div class="txt"><div class="name">Safari on iPhone</div><div class="meta"><span>Added 12/11/2026</span></div><div class="meta"><span>Last used 12/11/2026, 5:42 pm</span></div></div><button class="menu" aria-label="Passkey actions">&#8943;</button></div>
+        <div class="pk"><div class="txt"><div class="name">Office Mac</div><div class="meta"><span>Added 03/11/2026</span></div><div class="meta"><span>Last used 10/11/2026, 9:05 am</span></div></div><button class="menu" aria-label="Passkey actions">&#8943;</button></div>
+      </div>
+    </div>
+    <p class="note">Centred Dialog (lightbox). Row menu has one item, Remove. It needs user_management.users.edit (same as "Sign this user out of all devices") and runs the same 10s countdown. Admins cannot add or rename a user's passkey.</p>
+  </div>
+</div>
+
+</body>
+</html>
