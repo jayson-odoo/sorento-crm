@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import { ListLoadFailure } from '@/components/common/ListLoadFailure';
 import PasskeyRow from '@/components/passkey-row';
 import {
   useSetUserPasskeyEnabledMutation,
@@ -69,7 +70,7 @@ export default function UserPasskeysRows({ user, canEdit }: { user: User; canEdi
             <DialogTitle>Passkeys</DialogTitle>
           </DialogHeader>
           {list.isError ? (
-            <p className="text-sm text-destructive">{list.error.message}</p>
+            <ListLoadFailure error={list.error} onRetry={() => void list.refetch()} />
           ) : (list.data ?? []).length === 0 && !list.isLoading ? (
             <div className="py-4 text-center">
               <p className="text-sm font-medium">No passkeys</p>

@@ -83,6 +83,8 @@ export default function Page() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phoneBusy, setPhoneBusy] = useState(false);
+  // Bumped after a failed password attempt so the passkey autofill starts again (AC-48).
+  const [autofillRound, setAutofillRound] = useState(0);
 
   const form = useForm<SigninSchemaType>({
     resolver: zodResolver(getSigninSchema()),
@@ -130,6 +132,7 @@ export default function Page() {
           setError(response.error || 'An error occurred during sign in.');
         }
         setIsProcessing(false);
+        setAutofillRound((n) => n + 1);
       } else {
         await goToLandingUrl();
       }
@@ -140,6 +143,7 @@ export default function Page() {
           : 'An unexpected error occurred. Please try again.',
       );
       setIsProcessing(false);
+      setAutofillRound((n) => n + 1);
     }
   }
 
@@ -307,6 +311,7 @@ export default function Page() {
               <TooltipTrigger asChild>
                 <PasskeySignInButton
                   autofill
+                  autofillRound={autofillRound}
                   onSignedIn={goToLandingUrl}
                   onError={setError}
                   disabled={isProcessing}
