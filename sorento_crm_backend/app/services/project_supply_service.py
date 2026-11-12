@@ -1455,6 +1455,7 @@ class ProjectSupplyService:
             # reason names its document, and the board's results say which one.
             echo.append(
                 {
+                    "project_line_id": str(mirror.id),
                     "line_no": mirror.line_no,
                     "so_line_no": so_line_no(core.line_no, mirror.line_no),
                     "item_code": code,
