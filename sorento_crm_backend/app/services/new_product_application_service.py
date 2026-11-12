@@ -36,6 +36,7 @@ from app.models.new_product_application import (
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, StockInquiry, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.projects import Project
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
 from app.services import submission_status
@@ -257,6 +258,16 @@ def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any]) -> Non
     for key in ("stock_inquiry_id", "customer_id", "needed_by"):
         if key in data:
             setattr(app, key, data[key] or None)
+    if "project_id" in data:
+        # PROJECT-RELATED-RECORDS AC-C2: an approved project only; re-saving the same link is
+        # not a change. The typed `project_name` never fills it (AC-C5).
+        from app.services.project_service import assert_linkable_project
+
+        project_id = data["project_id"] or None
+        assert_linkable_project(
+            db, project_id, app.project_id, code="new_product_application_project_not_approved"
+        )
+        app.project_id = project_id
     for key in HEADER_TEXT:
         if key in data:
             setattr(app, key, _clean(data[key]))
@@ -340,6 +351,12 @@ def create_draft(
     )
     db.add(app)
     _apply(db, app, data)
+    if "project_id" not in data and app.stock_inquiry_id:
+        # AC-C4: raised from a stock inquiry, it starts with that inquiry's project; the
+        # person may pick another or clear it (an explicit null is kept).
+        app.project_id = (
+            db.query(StockInquiry.project_id).filter(StockInquiry.id == app.stock_inquiry_id).scalar()
+        )
     db.flush()
     return app
 
@@ -1738,8 +1755,17 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         return out
 
     summary = serialize_summary(db, app)
+    project = (
+        db.query(Project.project_code, Project.title).filter(Project.id == app.project_id).first()
+        if app.project_id
+        else None
+    )
     out = {
         **summary,
+        # PROJECT-RELATED-RECORDS AC-C7: the linked project as code + title, never the UUID alone.
+        "project_id": app.project_id,
+        "project_code": project[0] if project else None,
+        "project_title": project[1] if project else None,
         "stock_inquiry_product_code": inquiry[1] if inquiry else None,
         # NPA-FROM-SI rule 7: the application's "Stock inquiry" tab (the one inquiry it links).
         "stock_inquiry": (

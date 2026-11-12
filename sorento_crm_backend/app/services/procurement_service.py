@@ -5902,6 +5902,31 @@ class StockInquiryService:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
 
+    def _assert_linkable_project(self, project_id, current=None) -> None:
+        """A stock inquiry links to an approved PROJECT (PROJECT-RELATED-RECORDS AC-C2), as a
+        complaint does. Re-saving the link it already has is not a change."""
+        from app.services.project_service import assert_linkable_project
+
+        assert_linkable_project(self.db, project_id, current, code="stock_inquiry_project_not_approved")
+
+    def _attach_project_display(self, inquiry) -> None:
+        """Stamp the linked project's code and title onto the row for serialization, as
+        `PurchaseRequestService._attach_project_display` does: the response reads attributes
+        off the ORM object, and no screen may render the bare UUID."""
+        inquiry.project_code = None
+        inquiry.project_title = None
+        if not getattr(inquiry, "project_id", None):
+            return
+        from app.models.projects import Project
+
+        row = (
+            self.db.query(Project.project_code, Project.title)
+            .filter(Project.id == str(inquiry.project_id))
+            .first()
+        )
+        if row:
+            inquiry.project_code, inquiry.project_title = row[0], row[1]
+
     def _resolve_requestor_display_name(self, contact_id: Optional[str]) -> Optional[str]:
         """Display name of a requestor contact, or None. Read-only lookup - the
         eligibility check + the actual stamping still go through
@@ -5945,6 +5970,9 @@ class StockInquiryService:
         # `column_attrs` skips python properties, so the derived requestor name
         # has to be copied in explicitly or the response returns null.
         data["salesperson_contact_name"] = inquiry.salesperson_contact_name
+        self._attach_project_display(inquiry)
+        data["project_code"] = inquiry.project_code
+        data["project_title"] = inquiry.project_title
         # Same reason - a python property, skipped by column_attrs. The detail page
         # gates its response affordances on this rather than mirroring the status
         # list (UAC O1).
@@ -6338,6 +6366,9 @@ class StockInquiryService:
             # `pending_purchasing` skips the review stage, so both keep their name.
             new_status = submission_status.RESUBMITTED
 
+        if "project_id" in data:
+            data["project_id"] = data["project_id"] or None
+            self._assert_linkable_project(data["project_id"], inquiry.project_id)
         column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
         immutable = {"id", "created_at", "inquiry_number", "updated_at"}
         requestor_value = data.pop("salesperson_contact_id", _UNSET_REQUESTOR)
@@ -6389,6 +6420,7 @@ class StockInquiryService:
                 )
         except Exception as e:
             logger.warning("Form SLA emit 'submit' (resubmit_rejected_inquiry) failed for %s: %s", inquiry.id, e)
+        self._attach_project_display(inquiry)
         return inquiry
 
     def create_inquiry(
@@ -6449,6 +6481,8 @@ class StockInquiryService:
         data = inquiry_data.model_dump()
         data.pop("inquiry_number", None)
         data.pop("user_confirmed", None)
+        data["project_id"] = data.get("project_id") or None
+        self._assert_linkable_project(data["project_id"])
         # `salesperson` is a REQUIRED submission field, but the CRM form now
         # offers a contact picker instead of the free-text input - so derive the
         # label from the FK before the completeness gate, or a perfectly complete
@@ -6511,6 +6545,7 @@ class StockInquiryService:
                 )
         except Exception as e:
             logger.warning("Form SLA emit 'submit' (create_inquiry) failed for %s: %s", inquiry.id, e)
+        self._attach_project_display(inquiry)
         return inquiry, "created"
 
     def delete_inquiry(self, inquiry_id: str) -> dict:
@@ -6832,6 +6867,9 @@ class StockInquiryService:
         ):
             assert_response_write_allowed("stock_inquiry", inquiry.status)
         self._apply_npa_request(inquiry, update_data, actor_user_id)
+        if "project_id" in update_data:
+            update_data["project_id"] = update_data["project_id"] or None
+            self._assert_linkable_project(update_data["project_id"], inquiry.project_id)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -6856,6 +6894,7 @@ class StockInquiryService:
 
         self.db.commit()
         self.db.refresh(inquiry)
+        self._attach_project_display(inquiry)
         return inquiry
 
     STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
