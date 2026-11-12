@@ -391,7 +391,7 @@ function quantityColumn({
       const value = line[field];
       // AC-V2-4b: the line's quantity as CS last confirmed it, when the line has changed.
       const was =
-        field === 'soQty'
+        field === 'soQty' && line.rows.some((r) => r.waiting_for_cs)
           ? wasQtyOf(
               value as number | null,
               line.rows.find((r) => r.previous_so_line_qty != null)?.previous_so_line_qty,
