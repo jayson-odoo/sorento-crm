@@ -347,7 +347,8 @@ def test_rename_choice_sets_visible_and_original_name_and_keeps_the_cloudflare_k
     row = _reload(db, moving.id)
     assert row.directory_id == folder_b
     assert row.stored_filename == "photo (1).jpg"
-    assert row.original_filename == "photo 1.jpg" or row.original_filename == "photo (1).jpg"
+    # Kept as typed, brackets and all (crew pass 12 Nov: "invoice 1.pdf" lost its brackets).
+    assert row.original_filename == "photo (1).jpg"
     assert row.file_path == key_before, "a rename in the clash dialog must not touch the stored object"
 
 
