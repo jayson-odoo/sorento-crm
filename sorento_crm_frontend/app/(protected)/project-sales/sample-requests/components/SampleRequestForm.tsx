@@ -17,7 +17,6 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { DocField, ReadValue } from '@/components/common/DocField';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
 import {
@@ -41,7 +40,7 @@ import {
 } from '@/lib/sample-request-form';
 import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
-import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
+import { RegisteredProjectSelect } from '@/components/common/RegisteredProjectSelect';
 import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
@@ -313,7 +312,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               htmlFor="sr-project"
               error={errors.project_id}
             >
-              <SearchableSelect
+              <RegisteredProjectSelect
                 id="sr-project"
                 value={state.project_id}
                 onChange={(v) => {
@@ -327,12 +326,6 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
                     ? { value: state.project_id, label: state.project_label }
                     : undefined
                 }
-                fetchOptions={(query, pageIndex) => searchProjectsForLink(query, pageIndex + 1)}
-                paginated
-                pageSize={25}
-                clearable
-                truncateTriggerLabel
-                placeholder="Search a project by code or title"
                 emptyMessage="No project matches that."
               />
             </DocField>

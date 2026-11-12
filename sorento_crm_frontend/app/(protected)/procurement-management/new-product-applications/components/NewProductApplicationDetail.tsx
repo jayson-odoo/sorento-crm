@@ -43,6 +43,7 @@ import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { RecordProjectField } from '@/components/common/RecordProjectField';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
@@ -613,6 +614,22 @@ function StaffNewProductApplicationDetail({
                       ) : (
                         'None'
                       )
+                    }
+                    projectField={
+                      <RecordProjectField
+                        kind="new_product_application"
+                        recordId={r.id}
+                        projectId={r.project_id}
+                        projectCode={r.project_code}
+                        projectTitle={r.project_title}
+                        // The NPA edit rule (the applicant), as Edit itself (review S3).
+                        canEdit={ownerActs}
+                        onSaved={() =>
+                          void queryClient.invalidateQueries({
+                            queryKey: ['new-product-application', r.id],
+                          })
+                        }
+                      />
                     }
                     productCodesField={
                       <NewProductApplicationProductCodes

@@ -31,6 +31,11 @@ export interface NewProductApplicationHeaderProps {
   readOnly?: boolean;
   stockInquiryField: ReactNode;
   customerField: ReactNode;
+  /**
+   * REGISTERED PROJECT, under PROJECT (PROJECT-RELATED-RECORDS): the staff picker, the portal
+   * picker, or the detail page's linked project. Omitted, the row is not drawn.
+   */
+  projectField?: ReactNode;
   /** PRODUCT CODES, directly under STOCK INQUIRY. */
   productCodesField: ReactNode;
   /** NEW PRODUCT CODE, directly under REMARK. */
@@ -51,6 +56,7 @@ export function NewProductApplicationHeader({
   readOnly,
   stockInquiryField,
   customerField,
+  projectField,
   productCodesField,
   newCodeField,
   costField,
@@ -107,6 +113,9 @@ export function NewProductApplicationHeader({
           />
         )}
       </InquiryFormTableRow>
+      {projectField !== undefined && (
+        <InquiryFormTableRow label="REGISTERED PROJECT:">{projectField}</InquiryFormTableRow>
+      )}
       <InquiryFormTableRow label="TARGET DELIVERY:">
         {readOnly ? (
           <InquiryReadValue>

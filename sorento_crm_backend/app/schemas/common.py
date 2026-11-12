@@ -1,6 +1,7 @@
 """Common Pydantic schemas."""
 from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, Optional, List, Generic, TypeVar
+from uuid import UUID
 
 T = TypeVar('T')
 
@@ -21,6 +22,14 @@ class FormVoidRequest(BaseModel):
         if len(cleaned) < 3:
             raise ValueError("A void reason of at least 3 characters is required.")
         return cleaned
+
+
+class RecordProjectUpdate(BaseModel):
+    """Body for the per-form ``PATCH /{id}/project`` endpoints (PROJECT-RELATED-RECORDS D2):
+    set the record's registered project, or ``null`` to clear it. A UUID, so free text is a
+    422 here rather than a database error."""
+    project_id: Optional[UUID] = None
+
 
 # Shared ceiling for DataGrid list endpoints (`page`/`limit` pagination).
 # The frontend pagination selector offers up to 1000 rows per page; every

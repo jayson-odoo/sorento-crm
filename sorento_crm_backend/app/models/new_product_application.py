@@ -77,6 +77,10 @@ class NewProductApplication(Base, CompanyScopedMixin):
     #: Typed when the customer has no debtor code; copied as TEXT from the inquiry, never matched.
     customer_name = Column(String(255), nullable=True)
     project_name = Column(Text, nullable=True)  # as stock_inquiries.project_name (npasi_0001)
+    #: PROJECT-RELATED-RECORDS AC-C1: the link to a registered project (as stock_inquiries).
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
+    )
     needed_by = Column(Date, nullable=True)
     remark = Column(Text, nullable=True)
 

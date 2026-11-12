@@ -1062,6 +1062,11 @@ class StockInquiry(Base):
     item_description = Column(Text, nullable=True)
     project_customer = Column(Text, nullable=True)
     project_name = Column(Text, nullable=True)
+    # PROJECT-RELATED-RECORDS AC-C1: the link to a registered project, beside the typed
+    # `project_name` (never filled from it). SET NULL: deleting a project unlinks, never erases.
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
+    )
     quantity = Column(Text, nullable=True)
     delivery_date = Column(Text, nullable=True)
     remark = Column(Text, nullable=True)

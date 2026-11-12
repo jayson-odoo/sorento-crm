@@ -31,6 +31,8 @@ function summaryCovers(change: AuditFieldChange, entry: AuditLogEntry, summary: 
   // So does a record whose status is a code the backend words for it (the order change notice:
   // "Status: Approved → Done"), so the stored code never shows under it.
   if (change.key === 'status' && /^Status: /.test(summary)) return true;
+  // The backend names a project link move the same way: "Project: A → B" (PROJECT-RELATED-RECORDS).
+  if (change.key === 'project_id') return /^Project(:| changed to)/.test(summary);
   if (!STATUS_SUMMARY_KEYS.includes(change.key)) return false;
   const to = entry.new_values?.[change.key];
   // The backend prints a cleared value as "None".

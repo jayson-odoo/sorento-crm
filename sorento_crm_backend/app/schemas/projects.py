@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
+from app.schemas.common import ListResponse
 from app.services.uuid_path_param import UUID_PATTERN
 
 from typing import Annotated as _Annotated
@@ -1906,6 +1907,40 @@ class ProjectSponsorshipRollupResponse(BaseModel):
     total: Decimal
     form_count: int
     by_year: List[SponsorshipYearTotal] = Field(default_factory=list)
+
+
+#: The field below is called `date`, which would shadow the type inside the class body.
+_RowDate = date
+
+
+class RelatedRecordRow(BaseModel):
+    """One record linked to a project (PROJECT-RELATED-RECORDS AC-A3/A4): one line in the
+    project's Related grid. `raised_by` is a name, never an id."""
+
+    kind: str
+    id: str
+    number: Optional[str] = None
+    status: Optional[str] = None
+    approval_status: Optional[str] = None  # purchase requests and sponsorship forms only
+    date: Optional[_RowDate] = None
+    raised_by: Optional[str] = None
+    subject: Optional[str] = None
+    value: Optional[Decimal] = None
+
+
+class RelatedRecordType(BaseModel):
+    kind: str
+    label: str
+
+
+class RelatedRecordsResponse(ListResponse[RelatedRecordRow]):
+    """`ListResponse[RelatedRecordRow]` plus the per-type counts with no filter (the tab badge)
+    and the types the viewer may see, in registry order (the Type filter)."""
+
+    type_counts: Dict[str, int] = Field(default_factory=dict)
+    types: List[RelatedRecordType] = Field(default_factory=list)
+    #: The raw statuses of the visible linked rows, unfiltered: the Status filter's options.
+    statuses: List[str] = Field(default_factory=list)
 
 
 class SponsorshipConversionResponse(BaseModel):

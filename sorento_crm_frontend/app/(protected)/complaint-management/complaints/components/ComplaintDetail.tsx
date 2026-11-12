@@ -89,6 +89,7 @@ import ComplaintConversationPanel from './ComplaintConversationPanel';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
+import { RecordProjectField } from '@/components/common/RecordProjectField';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
@@ -1243,17 +1244,21 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
               >
                 {complaint.project_title || '-'}
               </p>
-              {/* AC-L3: the registered project, by CODE. Rendered as a link because the
-                  first thing somebody wants after seeing it is the pursuit itself. */}
-              {complaint.project_code && (
-                <Link
-                  href={`/project-sales/${complaint.project_id}`}
-                  className="text-xs text-primary hover:underline"
-                >
-                  {complaint.project_code}
-                  {complaint.project_name ? ` - ${complaint.project_name}` : ''}
-                </Link>
-              )}
+            </div>
+            <div>
+              {/* AC-L3 + PROJECT-RELATED-RECORDS D2: the registered project, by code and title,
+                  opening the project; anyone who may edit the complaint changes it here at any
+                  status. */}
+              <p className="text-sm text-muted-foreground">Registered project</p>
+              <RecordProjectField
+                kind="complaint"
+                recordId={complaint.id}
+                projectId={complaint.project_id}
+                projectCode={complaint.project_code}
+                projectTitle={complaint.project_name}
+                canEdit={canEditComplaint}
+                onSaved={() => void queryClient.invalidateQueries({ queryKey: ['complaint', complaintId] })}
+              />
             </div>
           </div>
           {complaint.customer_address && (

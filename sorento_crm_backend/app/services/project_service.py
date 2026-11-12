@@ -190,7 +190,17 @@ def assert_linkable_project(
     is not a change, so an older link keeps saving."""
     if not project_id or str(project_id) == str(current or ""):
         return
-    if approved_projects(db.query(Project.id).filter(Project.id == str(project_id))).first() is None:
+    from uuid import UUID
+
+    try:
+        UUID(str(project_id))
+        is_uuid = True
+    except (TypeError, ValueError):
+        # Typed text never reaches the uuid column: the cast error would be a 500.
+        is_uuid = False
+    if not is_uuid or approved_projects(
+        db.query(Project.id).filter(Project.id == str(project_id))
+    ).first() is None:
         raise AppException(
             status_code=422,
             message="That project is not approved yet. Pick a project from the list.",
