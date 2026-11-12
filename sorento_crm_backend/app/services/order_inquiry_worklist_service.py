@@ -1160,7 +1160,8 @@ def status_label(row: Dict[str, Any]) -> str:
 
 def change_columns(row: Dict[str, Any]) -> Dict[str, Any]:
     """STATUS / WAS QTY / WAS DATE for one export record."""
-    was_qty = row.get("previous_qty")
+    # The screen shows a Was quantity on a waiting row only (a settled row's is history).
+    was_qty = row.get("previous_qty") if row.get("waiting_for_cs") else None
     return {
         "STATUS": status_label(row),
         "WAS QTY": float(_dec(was_qty)) if was_qty not in (None, "") else None,
@@ -4237,7 +4238,7 @@ _EXPORT_WIDTHS = {
 }
 _EXPORT_DEFAULT_WIDTH = 14
 _EXPORT_DATE_HEADINGS = frozenset(
-    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO"}
+    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO", "WAS DATE"}
 )
 
 

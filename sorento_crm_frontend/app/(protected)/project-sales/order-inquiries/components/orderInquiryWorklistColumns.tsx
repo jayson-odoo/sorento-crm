@@ -1100,9 +1100,7 @@ export function useOrderInquiryWorklistColumns({
               disabledReason: (row) =>
                 row.original.state === 'cancelled'
                   ? 'This instruction was called off'
-                  : row.original.waiting_for_cs
-                    ? 'Waiting for CS to confirm the sales order change'
-                    : undefined,
+                  : undefined,
               rowLabel: (row) =>
                 `Select ${row.original.item_code ?? 'row'} on ${row.original.so_number ?? 'this order'}`,
             }),

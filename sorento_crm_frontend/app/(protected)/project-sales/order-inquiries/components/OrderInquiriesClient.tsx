@@ -1162,8 +1162,7 @@ export function OrderInquiriesClient({
     // `selectedRejectable` below) and say so in their own label, so a row ineligible for
     // one action can still be ticked for another in the same batch. "Link selected" is the
     // exception (R18): it acts on every ticked row, whatever its state.
-    // OI-WHOLE-SO-CANCEL v2 (AC-V2-3): a row waiting for CS is not purchasing's to take on.
-    enableRowSelection: (row) => row.original.state !== 'cancelled' && !row.original.waiting_for_cs,
+    enableRowSelection: (row) => row.original.state !== 'cancelled',
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -1195,8 +1194,14 @@ export function OrderInquiriesClient({
   // do not tick at all, but a row can be ticked before it is cancelled elsewhere).
   const selectedConfirmable = selectedRows.filter((row) => {
     const state = ackStateOf(row);
-    return (state === 'awaiting' || state === 'changed') && row.state !== 'cancelled';
+    return (
+      (state === 'awaiting' || state === 'changed') &&
+      row.state !== 'cancelled' &&
+      !row.waiting_for_cs
+    );
   });
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-3): a ticked row waiting for CS is skipped by Confirm.
+  const skippedWaiting = selectedRows.filter((row) => row.waiting_for_cs).length;
   // Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026): ticked rows
   // purchasing HAS signed off - `acknowledged` or `changed` - the reverse of Confirm's
   // own set above. Excludes a cancelled row even if ticked (review round 1, S1): its
@@ -1368,6 +1373,7 @@ export function OrderInquiriesClient({
    * `filter` once "Select all N matching" is taken - the endpoint accepts exactly one. */
   function runConfirm() {
     setConfirmingOpen(false);
+    const skipped = selectAllMatchingActive ? 0 : skippedWaiting;
     acknowledge.mutate(
       selectAllMatchingActive
         ? { filter: listFilters, horizon: horizonRequest }
@@ -1376,6 +1382,13 @@ export function OrderInquiriesClient({
         onSuccess: () => {
           setRowSelection({});
           setSelectAllMatchingActive(false);
+          if (skipped > 0) {
+            toast.warning(
+              skipped === 1
+                ? '1 row is waiting for CS and was skipped'
+                : `${skipped} rows are waiting for CS and were skipped`,
+            );
+          }
         },
       },
     );
