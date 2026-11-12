@@ -1,7 +1,7 @@
 # Behaviour card: Order Change Notice (OCN-ORDER-CHANGE-NOTICE)
 
-Status: Gate 1, card v2 12 Nov 2026 (crew answers on v1 folded in, section 8). Waits for the owner on d1, d2
-and approval of card + mock v2. Size L, full track (migration, new SLA
+Status: Gate 1, card v2 12 Nov 2026 (crew answers on v1 folded in, section 8). d2 decided (yes). Waits for
+the owner on d1 and approval of card + mock v2. Size L, full track (migration, new SLA
 rows, portal kind). Mock: `documentation/mockups/ocn/index.html` (Gate 2, filed separately).
 Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Read from `main` aa824637.
 Every name, PO number and item code below is invented (public repo).
@@ -215,7 +215,8 @@ Open, with the owner now:
 - **d1** CS and Purchasing comments before approval. Crew recommends: both steps start in parallel on
   submit, and Send for approval waits for both comments (refused with a plain reason naming the missing
   comment). Drawn that way in mock v2 (tag d1).
-- **d2** amendment publish waits for its OCN's approval. Crew recommends yes; that is today's rule
+- **d2 DECIDED (owner, 12 Nov ~23:12: "yes that's the point")**: a change to a published project SO waits
+  for its OCN's approval before it publishes and updates AutoCount; that is today's rule
   (`project_so_delta_service.py:791`), and the OCN's approval becomes what sets `approver_id` /
   `approved_at`. Drawn in mock v2 frame 5 (tag d2).
 - Data (answered, 12 Nov prod clone): `projects.order_change_notices` has 0 rows, so the migration
