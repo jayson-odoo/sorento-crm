@@ -89,7 +89,8 @@ def did_you_mean(
     for row in candidates or []:
         if not isinstance(row, dict):
             continue
-        code = row.get("product") or row.get("value") or row.get("label")
+        # `code`: a row of `answer.did_you_mean_by_token` (a missed code beside found ones).
+        code = row.get("product") or row.get("value") or row.get("label") or row.get("code")
         if not code or not row.get("uuid"):
             continue
         if row.get("entity_type") not in (None, "product"):

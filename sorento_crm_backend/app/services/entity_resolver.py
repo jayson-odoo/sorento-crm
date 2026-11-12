@@ -3370,7 +3370,8 @@ def _trgm_lookup(
                                (left({n_code}, length(:pn)) = :pn) AS is_variant
                         FROM products
                         WHERE {n_code} % :pn
-                          AND {n_code} <> :pn{scope_sql}
+                          AND {n_code} <> :pn
+                          AND is_active IS TRUE{scope_sql}
                         ORDER BY is_variant DESC, sim DESC, product_code
                         LIMIT :n
                         """
@@ -3378,7 +3379,8 @@ def _trgm_lookup(
                     {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             # A did-you-mean must not offer a placeholder the exact tier just
-            # refused to answer with.
+            # refused to answer with, nor an inactive code (CHATBOT-CODE-MATCH AC-20,
+            # the `is_active` clause above, as `_family_alternatives` reads it).
             visible = _chat_visible_product_ids(db, [r.id for r in rows])
             for r in rows:
                 if str(r.id) not in visible:

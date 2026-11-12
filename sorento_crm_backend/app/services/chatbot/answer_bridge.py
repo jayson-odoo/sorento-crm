@@ -2299,14 +2299,27 @@ def _dealer_did_you_mean(
         for e in ((parser or {}).get("entities") or [])
         if isinstance(e, Mapping) and e.get("hint") in (None, "product")
     ]
-    typed = next(
+    from app.services.chatbot.turn.state import token_key
+
+    token = next(
         (
             c.get("for_raw")
             for c in (offer.get("dym_candidates") or [])
             if isinstance(c, Mapping) and c.get("for_raw")
         ),
         None,
-    ) or next((e.get("raw") for e in named if e.get("raw")), "")
+    )
+    # `for_raw` is the RESOLVER's token (dashes and spaces folded off); the dealer is shown
+    # what they typed, as the business lane's own did-you-mean quotes it (`raw_of_tok`).
+    typed = next(
+        (
+            e.get("raw")
+            for e in named
+            if e.get("raw") and token_key(token) in (token_key(e.get("raw")), token_key(e.get("canonical_code")))
+        ),
+        None,
+    ) if token else None
+    typed = typed or token or next((e.get("raw") for e in named if e.get("raw")), "")
     quantities = {
         int(e["quantity"])
         for e in named

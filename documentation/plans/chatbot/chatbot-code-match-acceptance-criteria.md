@@ -23,7 +23,8 @@ marker or default size.
   the miss gets its own did-you-mean from the same function as AC-10.
 - AC-16 Exact code unchanged: reply byte-identical to main (staff and dealer).
 - AC-20 An inactive or chat-hidden placeholder close code is never offered (dealer and staff).
-- AC-21 Dealer says "no" to an offer: "Couldn't find X." then the refer line; nothing answered.
+- AC-21 Dealer says "no" to an offer: today's reply stays (the refer line alone, owner hand test ht26); nothing answered,
+  the code is not offered again.
 - AC-22 Dealer says "yes" / "1": the offered code is answered with the carried quantity.
 - AC-17 Every miss writes a `code_candidates` trace entry: typed token, candidate codes in offered order, tier,
   similarity, and `answered` or `offered`.

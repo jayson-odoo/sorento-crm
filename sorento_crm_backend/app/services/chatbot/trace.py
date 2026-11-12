@@ -474,3 +474,55 @@ def resolve_event(
     if not words and not event["unplaced"] and not event["not_checked"]:
         return None
     return event
+
+
+def code_candidates_events(
+    payload: dict[str, Any] | None,
+    *,
+    unplaced: dict[str, str] | None,
+    suggestions: dict[str, list[dict[str, Any]]] | None,
+    question: Any = None,
+) -> list[dict[str, Any]]:
+    """CHATBOT-CODE-MATCH R6: one `code_candidates` event per product code this turn missed.
+
+    `unplaced` is the turn's missed tokens (folded key to the word as typed), `suggestions`
+    the close codes each was offered from (`answer.did_you_mean_by_token`, keyed by the
+    resolver's token), `question` the pick the reply stored. Per miss: the typed word, the
+    candidates (code, the resolver's match tier and similarity) with the offered ones first
+    in offered order, and `offered` when the reply's pick holds one of them, else `answered`.
+    Codes only, never a row id.
+    """
+    from app.services.chatbot.turn.state import token_key
+
+    resolved = (payload or {}).get("resolved") if isinstance(payload, dict) else None
+    resolved = resolved if isinstance(resolved, dict) else {}
+    how: dict[str, tuple[Any, Any]] = {}
+    for resolution in resolved.get("resolutions") or []:
+        if not isinstance(resolution, dict):
+            continue
+        for match in [*(resolution.get("matches") or []), *(resolution.get("alternatives") or [])]:
+            if isinstance(match, dict) and match.get("uuid"):
+                how.setdefault(str(match["uuid"]), (match.get("match_tier"), match.get("similarity")))
+    options = getattr(question, "options", None) or []
+    offered = [str(o.get("code")) for o in options if isinstance(o, dict) and o.get("code")]
+    by_key = {token_key(token): rows for token, rows in (suggestions or {}).items()}
+    events: list[dict[str, Any]] = []
+    for typed in dict.fromkeys((unplaced or {}).values()):
+        rows = [r for r in by_key.get(token_key(typed)) or [] if isinstance(r, dict) and r.get("code")]
+        rows.sort(key=lambda r: offered.index(str(r["code"])) if str(r["code"]) in offered else len(offered))
+        candidates = [
+            {
+                "code": str(r["code"]),
+                "tier": how.get(str(r.get("uuid")), (None, None))[0],
+                "similarity": how.get(str(r.get("uuid")), (None, None))[1],
+            }
+            for r in rows
+        ]
+        events.append(
+            {
+                "typed": typed,
+                "candidates": candidates,
+                "outcome": "offered" if any(c["code"] in offered for c in candidates) else "answered",
+            }
+        )
+    return events
