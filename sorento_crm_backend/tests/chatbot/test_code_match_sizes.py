@@ -69,15 +69,17 @@ def _seed_sizes(
 
 
 def _entry(text: str, code: str) -> str:
-    """The candidate's own entry: the line holding `code` as a whole code, and the lines under it up to the next
-    numbered option. Empty when the code is not in the reply."""
+    """The candidate's own entry, read from the numbered options only (the "Couldn't find ..." header lines are
+    skipped): the numbered line holding `code` as a whole code, and the lines under it up to the next numbered
+    option. Empty when no numbered option holds the code."""
     lines = text.splitlines()
+    numbered = re.compile(r"\s*\d+[.)]\s")
     pattern = re.compile(rf"(?<![A-Za-z0-9-]){re.escape(code)}(?![A-Za-z0-9-])")
     for i, line in enumerate(lines):
-        if pattern.search(line):
+        if numbered.match(line) and pattern.search(line):
             out = [line]
             for follower in lines[i + 1 :]:
-                if re.match(r"\s*\d+[.)]\s", follower):
+                if numbered.match(follower):
                     break
                 out.append(follower)
             return "\n".join(out)
@@ -217,7 +219,9 @@ def test_ac7b_a_size_the_parser_read_that_no_candidate_holds_is_never_the_bare_n
     text = c.say(f"{FAM} 400mm stock", _head_plus_size(400, "mm"))
     # A "None with size ..." clause may appear only inside a reply that leads with "Couldn't find" and offers the close
     # codes with their stored sizes; never bare, never followed by an answer for the code with no stored size.
-    assert text.startswith("Couldn't find"), text
+    # The code exists but no member holds the size: the header names what is missing, not the code itself.
+    assert text.startswith(f"Couldn't find {FAM} with size 400 mm. Did you mean:"), text
+    assert "None with size" not in text, text
     assert "Size: 300 mm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
     assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
 
@@ -232,8 +236,8 @@ def test_ac26_the_none_with_size_line_takes_its_unit_from_the_registry_key(sessi
     if who == "staff":
         _as_staff(c)
     text = c.say(f"{FAM} 30cm stock", _head_plus_size(30, "cm"))
-    assert text.startswith("Couldn't find"), text
-    assert "None with size 30 cm." in text, text
+    assert text.startswith(f"Couldn't find {FAM} with size 30 cm. Did you mean:"), text
+    assert "None with size" not in text, text
     assert "Size: 40 cm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
     assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
     assert " mm" not in text, text
