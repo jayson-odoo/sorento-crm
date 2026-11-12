@@ -88,7 +88,6 @@ class FoundryxAutocountClient:
     """
 
     def __init__(self, db: Session) -> None:
-        self.trace_headers = {}  # per instance; set by trace_writes
         row = db.query(Integration).filter(Integration.name == _INTEGRATION_NAME).first()
         self._resolve(db, row)
 
@@ -118,9 +117,8 @@ class FoundryxAutocountClient:
             )
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
-
-    #: Sent on every WRITE (never a read): `X-Request-ID` and the actor, set by `trace_writes`.
-    trace_headers: dict[str, str] = {}
+        #: Sent on every WRITE (never a read): `X-Request-ID` and the actor, set by `trace_writes`.
+        self.trace_headers: dict[str, str] = {}
 
     def trace_writes(self, request_id: str, actor: Optional[dict]) -> "FoundryxAutocountClient":
         """Every write this client sends carries the press's `X-Request-ID` and the person who

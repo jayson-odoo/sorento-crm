@@ -227,10 +227,15 @@ def _refused_text(answer: Dict[str, Any]) -> str:
     return "AutoCount refused with no reason given. Nothing was changed."
 
 
+def _cap(value: Any, size: int) -> Optional[str]:
+    """A value AutoCount sent, cut to its column, so a write that landed never fails at flush."""
+    return str(value)[:size] if value else None
+
+
 def _safe_key(key: Any) -> str:
     """A DocKey is digits; anything else never reaches a gateway path."""
     text = str(key or "").strip()
-    if not text.isdigit():
+    if not (text.isascii() and text.isdigit()):
         raise AppException(
             status_code=409,
             message="The AutoCount document key is not valid.",
@@ -665,7 +670,7 @@ class ProjectAutocountWriteService:
     def _key_of(answer: Dict[str, Any]) -> Optional[str]:
         document = answer.get("document") or {}
         key = answer.get("docKey") if answer.get("docKey") is not None else document.get("DocKey")
-        return str(key) if key is not None else None
+        return str(key)[:64] if key is not None else None
 
     # ------------------------------------------------------------ shared checks
 
@@ -900,10 +905,10 @@ class ProjectAutocountWriteService:
         result = self._interpret(answer, verb="created", debtor=sent["header"]["debtorCode"])
         if self._is_done(answer) or _landed(answer):
             document = answer.get("document") or {}
-            order.autocount_doc_no = answer.get("docNo") or document.get("DocNo") or result["doc_no"]
+            order.autocount_doc_no = _cap(answer.get("docNo") or document.get("DocNo") or result["doc_no"], 80)
             order.autocount_doc_key = self._key_of(answer)
             order.autocount_book = book
-            order.autocount_last_modified = document.get("LastModified")
+            order.autocount_last_modified = self._held_last_modified(answer)
             self.db.flush()
             if self._is_done(answer) and sent["lines"] != body["lines"]:
                 # Review B1: an earlier press's saved body landed, not today's lines.
@@ -981,7 +986,7 @@ class ProjectAutocountWriteService:
         held_doc = (held.get("document") or held) if held else None
         if held_doc is not None:
             if not expected:
-                expected = held_doc.get("LastModified")
+                expected = self._held_last_modified(held)
                 doc_date = _iso_date(held_doc.get("DocDate"))
             if _so_holds_edits(held_doc, edits):
                 final = self._blank("done", "", order.autocount_doc_no)
@@ -1281,9 +1286,9 @@ class ProjectAutocountWriteService:
         return result
 
     def _store_sent(self, document, issue_id: Optional[str], answer: Dict[str, Any]) -> None:
-        document.autocount_doc_no = answer.get("docNo") or (answer.get("document") or {}).get("DocNo") or document.autocount_doc_no
+        document.autocount_doc_no = _cap(answer.get("docNo") or (answer.get("document") or {}).get("DocNo"), 80) or document.autocount_doc_no
         document.autocount_doc_key = self._key_of(answer) or document.autocount_doc_key
-        document.autocount_last_modified = (answer.get("document") or {}).get("LastModified")
+        document.autocount_last_modified = self._held_last_modified(answer)
         document.autocount_issue_id = issue_id
         self.db.flush()
 
@@ -1416,7 +1421,7 @@ class ProjectAutocountWriteService:
                 return refused
             document.autocount_edit_issue_id = issue.id
             document.autocount_last_modified = (
-                (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
+                self._held_last_modified(answer) or document.autocount_last_modified
             )
             self.db.flush()
             last = answer
@@ -1448,7 +1453,7 @@ class ProjectAutocountWriteService:
                 return refused
             last = answer
             document.autocount_last_modified = (
-                (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
+                self._held_last_modified(answer) or document.autocount_last_modified
             )
             self.db.flush()
         if adds:
@@ -1469,7 +1474,7 @@ class ProjectAutocountWriteService:
                 removed.append(d)
                 last = answer
                 document.autocount_last_modified = (
-                    (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
+                    self._held_last_modified(answer) or document.autocount_last_modified
                 )
                 self.db.flush()
         return finish(last)
@@ -1546,7 +1551,7 @@ class ProjectAutocountWriteService:
         else:
             return result
         record.autocount_last_modified = (
-            (answer.get("document") or {}).get("LastModified") or record.autocount_last_modified
+            self._held_last_modified(answer) or record.autocount_last_modified
         )
         record.autocount_cancelled_at = datetime.utcnow()
         record.autocount_cancelled_by = (actor or {}).get("id")

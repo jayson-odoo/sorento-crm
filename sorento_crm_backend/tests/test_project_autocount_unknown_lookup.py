@@ -229,3 +229,37 @@ def test_doc_stale_message_is_unchanged_when_autocount_does_not_hold_the_change(
 
     assert body["outcome"] == "refused"
     assert body["message"].startswith("Changed in AutoCount since 01/10/2026.")
+
+
+def test_a_held_date_but_not_the_qty_still_sends_the_whole_patch(so_api, fake_ss):
+    """Reviewer kill test K5: the qty half of the check. AutoCount holds the new date but the old
+    qty, so the change is not there and the PATCH must go."""
+    client, db, world = so_api
+    amendment = _so_amendment(db, world)
+    half = done_body(
+        details=[
+            detail(DTL_1, "X1", "100", "392.85", "BRW-BB", "2026-07-01", 1),
+            detail(DTL_2, "X2", "20", "50.00", "MWH-BB", "2027-01-07", 2),
+        ],
+        last_modified=LAST_MODIFIED,
+    )
+    fake_ss.answers[("GET", DOC_PATH)] = (200, half)
+    fake_ss.answers[("PATCH", DOC_PATH)] = (200, _so_landed())
+
+    assert client.post(so_url(amendment)).json()["outcome"] == "done"
+    [patch] = fake_ss.to("PATCH", DOC_PATH)
+    assert {line["dtlKey"] for line in fake_ss.body(patch)["lines"]} == {DTL_1, DTL_2}
+
+
+def test_an_overlong_value_from_autocount_is_cut_to_its_column_not_failed(so_api, fake_ss):
+    """Security review: a write that landed must never fail at flush on a value AutoCount sent."""
+    client, db, world = so_api
+    amendment = _so_amendment(db, world)
+    fake_ss.answers[("GET", DOC_PATH)] = (200, _so_before())
+    landed = _so_landed()
+    landed["document"]["LastModified"] = "2026-11-12T08:15:00" + "0" * 200
+    fake_ss.answers[("PATCH", DOC_PATH)] = (200, landed)
+
+    assert client.post(so_url(amendment)).json()["outcome"] == "done"
+    db.refresh(world.order)
+    assert len(world.order.autocount_last_modified) == 64
