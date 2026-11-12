@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -38,6 +39,10 @@ export function NonCancellableOverrideDialog({
       <DialogContent className="max-h-[92dvh] w-full max-w-md overflow-hidden">
         <DialogHeader>
           <DialogTitle>Non-cancellable lines</DialogTitle>
+          {/* Named for screen readers only: the line list below says the rest on screen. */}
+          <DialogDescription className="sr-only">
+            The lines below cannot be cancelled or reduced without a reason.
+          </DialogDescription>
         </DialogHeader>
 
         <form

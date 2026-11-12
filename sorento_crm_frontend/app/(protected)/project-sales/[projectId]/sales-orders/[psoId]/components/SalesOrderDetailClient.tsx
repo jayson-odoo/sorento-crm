@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import AuditTrail from '@/components/audit/AuditTrail';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import {
   AlertDialog,
@@ -131,8 +132,8 @@ export function SalesOrderDetailClient({
   const [dismissing, setDismissing] = React.useState<FlagItem | null>(null);
   // 'auto' is the landing value (no `tab` param): the open tab is then derived from the order
   // below. Picking Lines or AutoCount writes `?tab=` so the pager carries it to the next order.
-  const [urlTab, setTab] = useUrlTab<'auto' | 'lines' | 'autocount'>({
-    tabs: ['lines', 'autocount'],
+  const [urlTab, setTab] = useUrlTab<'auto' | 'lines' | 'autocount' | 'history'>({
+    tabs: ['lines', 'autocount', 'history'],
     defaultTab: 'auto',
   });
   const [regrouping, setRegrouping] = React.useState(false);
@@ -647,6 +648,7 @@ export function SalesOrderDetailClient({
               ? `AutoCount differences (${divergence.differing_count})`
               : 'AutoCount differences'}
           </TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="lines" className="min-w-0 space-y-3">
@@ -695,6 +697,12 @@ export function SalesOrderDetailClient({
               divergence ? `/project-sales/${projectId}/sales-orders/${psoId}/divergence` : null
             }
           />
+        </TabsContent>
+
+        {/* Every tracked action on this order, its lines' included (they roll up to it), on the
+            one shared history component: a Non-cancellable override shows here with its reason. */}
+        <TabsContent value="history" className="min-w-0">
+          <AuditTrail entityType="project_sales_orders" entityId={psoId} title="History" />
         </TabsContent>
       </Tabs>
 

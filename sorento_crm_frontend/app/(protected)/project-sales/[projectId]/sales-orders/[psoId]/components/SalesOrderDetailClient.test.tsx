@@ -40,6 +40,14 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(originParam ? { from: originParam } : ''),
 }));
 
+const auditTrail = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
+vi.mock('@/components/audit/AuditTrail', () => ({
+  default: (props: Record<string, unknown>) => {
+    auditTrail.props.push(props);
+    return <div data-testid="audit-trail">{String(props.title)}</div>;
+  },
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
@@ -993,7 +1001,7 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
     expect(screen.queryByRole('tab', { name: /Activity/ })).not.toBeInTheDocument();
   });
 
-  it('S7-2: two tabs, Lines and AutoCount differences, and no Findings tab', async () => {
+  it('S7-2: Lines, AutoCount differences and History (NON-CANCELLABLE-ITEMS), no Findings tab', async () => {
     getProjectSalesOrder.mockResolvedValue(detail({ findings: [HARD] }));
 
     renderDetail();
@@ -1002,6 +1010,7 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Lines',
       'AutoCount differences',
+      'History',
     ]);
     expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
     expect(screen.queryByRole('tab', { name: /Findings/ })).not.toBeInTheDocument();
@@ -1157,5 +1166,17 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
     expect(flag).toHaveAttribute('title', 'Sales agent LCL has no location group.');
     expect(screen.queryByText(/Apply to all lines/)).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /warehouse/i })).not.toBeInTheDocument();
+  });
+
+  it('NON-CANCELLABLE: has a History tab on the shared history component for this order', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+    renderDetail();
+    await screen.findByText('SRT382-6');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'History' }), { button: 0 });
+    expect(await screen.findByTestId('audit-trail')).toHaveTextContent('History');
+    expect(auditTrail.props.at(-1)).toMatchObject({
+      entityType: 'project_sales_orders',
+      entityId: 'so-1',
+    });
   });
 });
