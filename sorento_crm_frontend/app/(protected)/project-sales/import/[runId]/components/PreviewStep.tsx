@@ -6,6 +6,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { RUN_PERMISSION, useProjectImportMutations } from '../../../_shared/hooks/useProjectImport';
 import type {
   ProjectImportKind,
+  ProjectImportLineKey,
   ProjectImportRun,
 } from '../../../_shared/types/projectImport.types';
 import { OutcomeTiles, ReportRowsGrid } from './ReportRows';
@@ -20,7 +21,7 @@ export function PreviewStep({
   className,
 }: {
   run: ProjectImportRun;
-  onOpenLine: (kind: ProjectImportKind) => void;
+  onOpenLine: (kind: ProjectImportKind, line?: ProjectImportLineKey | null) => void;
   className?: string;
 }) {
   const canRun = useHasPermission(RUN_PERMISSION);
@@ -47,7 +48,9 @@ export function PreviewStep({
         listingKey="projects.import.view::preview-rows"
         onRowClick={(row) => {
           // The server names the Values tab that unblocks the row (`blocking_kind`).
-          if (row.outcome === 'needs_review' && row.blocking_kind) onOpenLine(row.blocking_kind);
+          if (row.outcome === 'needs_review' && row.blocking_kind) {
+            onOpenLine(row.blocking_kind, row.blocking_line ?? null);
+          }
         }}
       />
     </div>

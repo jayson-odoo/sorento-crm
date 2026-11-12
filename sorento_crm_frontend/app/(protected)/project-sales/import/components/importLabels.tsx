@@ -40,6 +40,12 @@ export const OUTCOME_LABELS: Record<ProjectImportOutcome, string> = {
   error: 'Errors',
 };
 
+/** The tiles once the run has imported: what it did, in the past tense. */
+export const OUTCOME_DONE_LABELS: Record<ProjectImportOutcome, string> = {
+  ...OUTCOME_LABELS,
+  created: 'Created',
+};
+
 /** Row labels (one row), next to the tile labels (a count) above. */
 export const OUTCOME_ROW_LABELS: Record<ProjectImportOutcome, string> = {
   created: 'Create',

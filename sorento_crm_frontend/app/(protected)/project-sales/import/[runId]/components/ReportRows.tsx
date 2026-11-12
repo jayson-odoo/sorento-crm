@@ -31,6 +31,7 @@ import type {
   ProjectImportRun,
 } from '../../../_shared/types/projectImport.types';
 import {
+  OUTCOME_DONE_LABELS,
   OUTCOME_LABELS,
   OUTCOME_ROW_LABELS,
 } from '../../components/importLabels';
@@ -42,12 +43,20 @@ const OUTCOME_OPTIONS = (Object.keys(OUTCOME_ROW_LABELS) as ProjectImportOutcome
   label: OUTCOME_ROW_LABELS[value],
 }));
 
-export function OutcomeTiles({ counts }: { counts: ProjectImportCounts | null | undefined }) {
+export function OutcomeTiles({
+  counts,
+  done = false,
+}: {
+  counts: ProjectImportCounts | null | undefined;
+  /** The import has run: the tiles say what it did ("Created"), not what it will do. */
+  done?: boolean;
+}) {
+  const labels = done ? OUTCOME_DONE_LABELS : OUTCOME_LABELS;
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       {TILES.map((outcome) => (
         <div key={outcome} className="rounded-lg border bg-card p-3">
-          <div className="text-xs text-muted-foreground">{OUTCOME_LABELS[outcome]}</div>
+          <div className="text-xs text-muted-foreground">{labels[outcome]}</div>
           <div className="text-xl font-semibold tabular-nums">{counts?.[outcome] ?? 0}</div>
         </div>
       ))}
@@ -101,31 +110,33 @@ export function ReportRowsGrid({
 
   const columns = React.useMemo<ColumnDef<ProjectImportReportRow>[]>(
     () => [
+      // Sized to fit the 1280 content width with the sidebar open (browser pass D3): PS no. and
+      // PO date whole, Outcome and Reason in view; long names truncate with a title.
       {
         accessorKey: 'sheet',
         header: ({ column }) => <DataGridColumnHeader title="Sheet" column={column} />,
-        size: 100,
+        size: 72,
         meta: { headerTitle: 'Sheet', skeleton: <Skeleton className="h-4 w-14" /> },
         cell: ({ row }) => <span className="block truncate">{row.original.sheet.trim()}</span>,
       },
       {
         accessorKey: 'row_number',
         header: ({ column }) => <DataGridColumnHeader title="Row" column={column} />,
-        size: 70,
+        size: 60,
         meta: { headerTitle: 'Row' },
         cell: ({ row }) => <span className="tabular-nums">{row.original.row_number}</span>,
       },
       {
         accessorKey: 'ps_number',
         header: ({ column }) => <DataGridColumnHeader title="PS no." column={column} />,
-        size: 110,
+        size: 120,
         meta: { headerTitle: 'PS no.' },
         cell: ({ row }) => <span className="font-medium">{row.original.ps_number}</span>,
       },
       {
         accessorKey: 'customer',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
-        size: 220,
+        size: 120,
         meta: { headerTitle: 'Customer' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.customer ?? ''}>
@@ -136,7 +147,7 @@ export function ReportRowsGrid({
       {
         accessorKey: 'project',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
-        size: 220,
+        size: 120,
         meta: { headerTitle: 'Project' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.project ?? ''}>
@@ -147,7 +158,7 @@ export function ReportRowsGrid({
       {
         accessorKey: 'po_number',
         header: ({ column }) => <DataGridColumnHeader title="PO no." column={column} />,
-        size: 140,
+        size: 100,
         meta: { headerTitle: 'PO no.' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.po_number ?? ''}>
@@ -158,14 +169,14 @@ export function ReportRowsGrid({
       {
         accessorKey: 'po_date',
         header: ({ column }) => <DataGridColumnHeader title="PO date" column={column} />,
-        size: 110,
+        size: 120,
         meta: { headerTitle: 'PO date' },
         cell: ({ row }) => formatDateSafe(row.original.po_date, ''),
       },
       {
         accessorKey: 'outcome',
         header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
-        size: 130,
+        size: 105,
         meta: { headerTitle: 'Outcome' },
         cell: ({ row }) => OUTCOME_ROW_LABELS[row.original.outcome] ?? row.original.outcome,
       },
@@ -173,7 +184,7 @@ export function ReportRowsGrid({
         id: 'reason',
         accessorFn: (row) => row.message || (row.labels ?? []).join('; '),
         header: ({ column }) => <DataGridColumnHeader title="Reason" column={column} />,
-        size: 300,
+        size: 125,
         meta: { headerTitle: 'Reason' },
         cell: ({ row }) => {
           const text = row.original.message || (row.original.labels ?? []).join('; ');

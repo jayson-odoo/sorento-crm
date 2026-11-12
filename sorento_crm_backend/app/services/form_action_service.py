@@ -114,6 +114,15 @@ def _handler_payload(payload: Optional[dict]) -> dict:
     return handler
 
 
+def _action_words(action_key: str) -> str:
+    """The action's own plain label for its History lines ("Revert import"), never the slug;
+    "Action" for one registered without a label, as these lines always read."""
+    from app.services.form_action_registry import get_action
+
+    action = get_action(action_key)
+    return (action.label if action is not None and action.label else None) or "Action"
+
+
 def _audit(
     db: Session,
     row: "SlaFormAction",
@@ -296,7 +305,7 @@ class FormActionService:
                 "UPDATE",
                 user_id=actor_id,
                 description=(
-                    f"Action requested ({action_key}); held {grace_seconds}s before applying"
+                    f"{_action_words(action_key)} requested; held {grace_seconds}s before applying"
                 ),
                 new_values={"action_key": action_key, "commit_at": str(row.commit_at)},
             )
@@ -535,7 +544,7 @@ class FormActionService:
             row,
             "UPDATE",
             user_id=row.requested_by_id,
-            description=f"Action applied ({row.action_key})",
+            description=f"{_action_words(row.action_key)} applied",
         )
         return result
 

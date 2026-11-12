@@ -876,6 +876,7 @@ def _write_rows(db: Session, run: ImportJob, report_rows: list[dict], ledger: li
             identity={
                 "sheet": r["sheet"], "ps_number": r["ps_number"], "customer": r["customer"],
                 "project": r["project"], "po_number": r["po_number"], "po_date": r["po_date"],
+                "developer": r.get("developer"),
                 "codes": ",".join(r["codes"]),
             },
         )
@@ -1323,6 +1324,17 @@ def blocking_kind(outcome: Optional[str], codes: list[str]) -> Optional[str]:
     return next((_BLOCKING_KIND[c] for c in codes if c in _BLOCKING_KIND), None)
 
 
+def blocking_line(kind: Optional[str], customer: Any, project: Any, developer: Any) -> Optional[dict]:
+    """The Values line that blocks a row, in the keys `/lines` lists (browser pass D4)."""
+    if kind == KIND_CUSTOMER:
+        return {"kind": kind, "customer_value_key": "", "value_key": fold(customer)}
+    if kind == KIND_PROJECT:
+        return {"kind": kind, "customer_value_key": fold(customer), "value_key": fold(project)}
+    if kind == KIND_DEVELOPER:
+        return {"kind": kind, "customer_value_key": "", "value_key": fold(developer)}
+    return None
+
+
 def _report_row(p: _Plan) -> dict:
     r = p.row
     message = p.message or "; ".join(oc.label_for(c) for c in p.codes) or oc.label_for(p.outcome)
@@ -1338,6 +1350,10 @@ def _report_row(p: _Plan) -> dict:
         "codes": list(p.codes),
         "labels": [oc.label_for(c) for c in p.codes],
         "blocking_kind": blocking_kind(p.outcome, p.codes),
+        "blocking_line": blocking_line(
+            blocking_kind(p.outcome, p.codes), r.customer, r.project_name, r.developer
+        ),
+        "developer": r.developer,
         "message": message,
     }
 
@@ -1781,6 +1797,13 @@ def list_rows(
             "blocking_kind": blocking_kind(
                 oc.OUTCOME_ERROR if row.outcome == oc.OUTCOME_FAILED else row.outcome,
                 [c for c in (ident.get("codes") or "").split(",") if c],
+            ),
+            "blocking_line": blocking_line(
+                blocking_kind(
+                    oc.OUTCOME_ERROR if row.outcome == oc.OUTCOME_FAILED else row.outcome,
+                    [c for c in (ident.get("codes") or "").split(",") if c],
+                ),
+                ident.get("customer"), ident.get("project"), ident.get("developer"),
             ),
             "message": row.message,
         })

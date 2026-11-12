@@ -81,7 +81,7 @@ export function LineChoiceDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <DialogContent className="w-full max-w-md">
+      <DialogContent className="w-full max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>

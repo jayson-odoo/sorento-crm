@@ -118,14 +118,14 @@ export function ProjectImportListClient() {
       {
         accessorKey: 'run_no',
         header: ({ column }) => <DataGridColumnHeader title="Run no." column={column} />,
-        size: 120,
+        size: 100,
         meta: { headerTitle: 'Run no.', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <span className="font-medium">{row.original.run_no}</span>,
       },
       {
         accessorKey: 'filename',
         header: ({ column }) => <DataGridColumnHeader title="File" column={column} />,
-        size: 280,
+        size: 175,
         meta: { headerTitle: 'File', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.filename ?? ''}>
@@ -136,7 +136,7 @@ export function ProjectImportListClient() {
       {
         accessorKey: 'uploaded_by',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded by" column={column} />,
-        size: 170,
+        size: 130,
         meta: { headerTitle: 'Uploaded by', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.uploaded_by ?? ''}>
@@ -147,42 +147,42 @@ export function ProjectImportListClient() {
       {
         accessorKey: 'uploaded_at',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded on" column={column} />,
-        size: 130,
+        size: 115,
         meta: { headerTitle: 'Uploaded on', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => formatDateSafe(row.original.uploaded_at),
       },
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        size: 120,
+        size: 105,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
         cell: ({ row }) => <RunStatusBadge status={row.original.status} />,
       },
       {
         accessorKey: 'rows',
         header: ({ column }) => <DataGridColumnHeader title="Rows" column={column} />,
-        size: 90,
+        size: 70,
         meta: { headerTitle: 'Rows' },
         cell: ({ row }) => <Num value={row.original.rows} />,
       },
       {
         accessorKey: 'created',
         header: ({ column }) => <DataGridColumnHeader title="Created" column={column} />,
-        size: 100,
+        size: 80,
         meta: { headerTitle: 'Created' },
         cell: ({ row }) => <Num value={row.original.created} />,
       },
       {
         accessorKey: 'skipped',
         header: ({ column }) => <DataGridColumnHeader title="Skipped" column={column} />,
-        size: 100,
+        size: 80,
         meta: { headerTitle: 'Skipped' },
         cell: ({ row }) => <Num value={row.original.skipped} />,
       },
       {
         accessorKey: 'to_review',
         header: ({ column }) => <DataGridColumnHeader title="To review" column={column} />,
-        size: 110,
+        size: 85,
         meta: { headerTitle: 'To review' },
         cell: ({ row }) => <Num value={row.original.to_review} />,
       },

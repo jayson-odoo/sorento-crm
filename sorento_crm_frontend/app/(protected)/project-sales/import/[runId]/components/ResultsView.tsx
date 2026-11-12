@@ -29,7 +29,7 @@ export function ResultsView({ run }: { run: ProjectImportRun }) {
           <p className="text-sm text-muted-foreground">Importing…</p>
         ) : (
           <>
-            <OutcomeTiles counts={counts} />
+            <OutcomeTiles counts={counts} done={run.status !== 'previewed'} />
             {run.revert_result && run.revert_result.kept.length > 0 && (
               <div className="rounded-lg border p-3 text-sm">
                 <p className="font-medium">Kept, changed since the import</p>
@@ -40,7 +40,10 @@ export function ResultsView({ run }: { run: ProjectImportRun }) {
                 </ul>
               </div>
             )}
-            <OutcomeBreakdownCard result={(run.result ?? null) as ImportJobResultEnvelope | null} />
+            <OutcomeBreakdownCard
+              result={(run.result ?? null) as ImportJobResultEnvelope | null}
+              showCodes={false}
+            />
             <ReportRowsGrid run={run} listingKey="projects.import.view::result-rows" />
           </>
         )}

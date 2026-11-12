@@ -42,6 +42,7 @@ import type {
   ProjectImportAction,
   ProjectImportKind,
   ProjectImportLine,
+  ProjectImportLineKey,
   ProjectImportRun,
 } from '../../../_shared/types/projectImport.types';
 import { KIND_TABS } from '../../components/importLabels';
@@ -80,11 +81,14 @@ export function ValuesStep({
   kind: kindProp,
   onKindChange,
   readOnly: readOnlyProp = false,
+  focusLine = null,
 }: {
   run: ProjectImportRun;
   kind?: ProjectImportKind;
   onKindChange?: (kind: ProjectImportKind) => void;
   readOnly?: boolean;
+  /** The line a needs-review row points at (browser pass D4): opened searched to it. */
+  focusLine?: ProjectImportLineKey | null;
 }) {
   const [ownKind, setOwnKind] = React.useState<ProjectImportKind>(kindProp ?? 'customer');
   const kind = kindProp ?? ownKind;
@@ -93,11 +97,29 @@ export function ValuesStep({
     onKindChange?.(next);
   };
   const summary = useProjectImportLinesSummary(run.id);
-  const { value: search, setValue: setSearch, debouncedValue, isSettling } = useDebouncedSearch();
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue,
+    isSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   // A user without projects.import.run reads the values and sets none (review M4).
   const canRun = useHasPermission(RUN_PERMISSION);
   const readOnly = readOnlyProp || !canRun;
   const [status, setStatus] = React.useState<string[]>([]);
+  // A search belongs to one tab: switching kind starts the next tab clean.
+  React.useEffect(() => {
+    resetSearch('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
+  // Opened from a needs-review row: that line, searched by its value, every status shown.
+  React.useEffect(() => {
+    if (!focusLine) return;
+    resetSearch(focusLine.value_key);
+    setStatus([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusLine]);
   const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = React.useState<SortingState>([{ id: 'rows', desc: true }]);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -245,7 +267,12 @@ export function ValuesStep({
         },
       },
     );
-    return out;
+    // The value and its link first (browser pass D8): on a phone the picker is in view
+    // without scrolling the grid sideways.
+    const order = ['select', 'value_text', 'status', 'customer_text', 'rows', 'set_at'];
+    const keyOf = (col: ColumnDef<ProjectImportLine>) =>
+      String(col.id ?? (col as { accessorKey?: string }).accessorKey ?? '');
+    return [...out].sort((a, b) => order.indexOf(keyOf(a)) - order.indexOf(keyOf(b)));
     // `choose` reads the current kind; the columns are rebuilt whenever it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, readOnly, actions]);

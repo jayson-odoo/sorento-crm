@@ -66,7 +66,7 @@ export function CreateImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-lg">
+      <DialogContent className="w-full max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>New project import</DialogTitle>
         </DialogHeader>

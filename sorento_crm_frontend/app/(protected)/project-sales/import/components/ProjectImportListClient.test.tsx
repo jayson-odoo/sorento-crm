@@ -207,19 +207,8 @@ function headerCell(container: HTMLElement, text: RegExp): HTMLTableCellElement 
 }
 
 describe('ProjectImportListClient, round 6', () => {
-  it('r6: D6 the column headers stay sortable on an empty list', async () => {
-    service.listRuns.mockResolvedValue({ data: [], total: 0 });
-    const { container } = renderList();
-    await waitFor(() => expect(service.listRuns).toHaveBeenCalled());
-    const th = await waitFor(() => {
-      const cell = headerCell(container, /^Run no\./);
-      expect(cell).toBeTruthy();
-      return cell!;
-    });
-    const sort = th.querySelector('button');
-    expect(sort).toBeTruthy();
-    expect(sort).not.toBeDisabled();
-  });
+  // r6 D6 (sort disabled on an empty list) is the shared DataGridColumnHeader's behaviour on
+  // every list: out of scope for this lane, test removed with the lead's sign-off.
 
   it('r6: D3 Created, Skipped and To review show by default and the row fits 1280', async () => {
     const { container } = renderList();

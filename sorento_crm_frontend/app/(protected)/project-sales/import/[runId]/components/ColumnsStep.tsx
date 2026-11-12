@@ -16,7 +16,14 @@ import type { ProjectImportRun } from '../../../_shared/types/projectImport.type
 const REQUIRED = ['ps_number', 'customer', 'po_number'];
 
 /** The Columns step (AC-PI-09..11): the headings of the first ticked sheet, one field each. */
-export function ColumnsStep({ run }: { run: ProjectImportRun }) {
+export function ColumnsStep({
+  run,
+  onSaved,
+}: {
+  run: ProjectImportRun;
+  /** Saved: the run page moves on to Values (browser pass D1). */
+  onSaved?: () => void;
+}) {
   const { columns } = useProjectImportMutations(run.id);
   // The field list and its words come from the server (`field_labels`); no copy here.
   const fields = React.useMemo<ImportMappingField[]>(
@@ -59,10 +66,13 @@ export function ColumnsStep({ run }: { run: ProjectImportRun }) {
     for (const field of Object.keys(run.columns ?? {})) {
       if (!(field in chosen)) chosen[field] = IGNORE_FIELD;
     }
-    columns.mutate({
-      sheets: run.sheets.filter((s) => s.ticked).map((s) => s.name),
-      columns: chosen,
-    });
+    columns.mutate(
+      {
+        sheets: run.sheets.filter((s) => s.ticked).map((s) => s.name),
+        columns: chosen,
+      },
+      { onSuccess: () => onSaved?.() },
+    );
   };
 
   return (

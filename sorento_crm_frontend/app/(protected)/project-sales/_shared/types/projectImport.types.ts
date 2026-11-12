@@ -75,6 +75,12 @@ export interface ProjectImportRun extends ProjectImportRunRow {
   error?: string | null;
 }
 
+export interface ProjectImportLineKey {
+  kind: ProjectImportKind;
+  customer_value_key: string;
+  value_key: string;
+}
+
 export interface ProjectImportLine {
   kind: ProjectImportKind;
   customer_value_key: string;
@@ -125,6 +131,8 @@ export interface ProjectImportReportRow {
   labels?: string[];
   /** The Values tab that unblocks a needs-review row, from the server. */
   blocking_kind?: ProjectImportKind | null;
+  /** The exact Values line that unblocks it, in the keys `/lines` lists. */
+  blocking_line?: ProjectImportLineKey | null;
   message: string | null;
 }
 

@@ -19,7 +19,11 @@ import {
   useProjectImportMutations,
   useProjectImportRun,
 } from '../../../_shared/hooks/useProjectImport';
-import type { ProjectImportKind, ProjectImportRun } from '../../../_shared/types/projectImport.types';
+import type {
+  ProjectImportKind,
+  ProjectImportLineKey,
+  ProjectImportRun,
+} from '../../../_shared/types/projectImport.types';
 import { RunStatusBadge } from '../../components/importLabels';
 import { ColumnsStep } from './ColumnsStep';
 import { PreviewStep } from './PreviewStep';
@@ -50,6 +54,7 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   const canRun = useHasPermission(RUN_PERMISSION);
   const [tab, setTab] = React.useState<TabId | null>(null);
   const [kind, setKind] = React.useState<ProjectImportKind>('customer');
+  const [focusLine, setFocusLine] = React.useState<ProjectImportLineKey | null>(null);
   const { preview, importRun } = useProjectImportMutations(runId);
 
   const revertable = canRun && run?.status === 'imported';
@@ -62,7 +67,12 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
     surface: 'inline',
     watchFromMount: true,
     successMessage: 'Import reverted',
-    invalidateKeys: [[PROJECT_IMPORT_RUN_KEY, runId], [PROJECT_IMPORT_RUNS_KEY]],
+    // The History reads the run's audit trail: refreshed when the revert lands (D7).
+    invalidateKeys: [
+      [PROJECT_IMPORT_RUN_KEY, runId],
+      [PROJECT_IMPORT_RUNS_KEY],
+      ['audit-logs', 'project_import_run', runId],
+    ],
   });
 
   // A status change (preview, import, revert) moves the page to the step it now stands on.
@@ -95,11 +105,12 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   const editable = run.status === 'draft' || run.status === 'previewed';
   const current: TabId = tab ?? (step === 'import' ? 'values' : step);
 
-  const primary = !canRun ? undefined : step === 'values' && editable ? (
+  // One main button per step (D2): Preview on Values, Import on Preview; Columns has its Next.
+  const primary = !canRun ? undefined : current === 'values' && step === 'values' && editable ? (
     <Button onClick={() => preview.mutate()} disabled={preview.isPending}>
       Preview
     </Button>
-  ) : step === 'preview' ? (
+  ) : current === 'preview' && step === 'preview' ? (
     <Button onClick={() => importRun.mutate()} disabled={importRun.isPending}>
       Import
     </Button>
@@ -189,16 +200,26 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
           <TabsContent value="columns">
-            <ColumnsStep run={run} />
+            <ColumnsStep run={run} onSaved={() => setTab('values')} />
           </TabsContent>
           <TabsContent value="values">
-            <ValuesStep run={run} kind={kind} onKindChange={setKind} readOnly={!editable} />
+            <ValuesStep
+              run={run}
+              kind={kind}
+              onKindChange={(next) => {
+                setKind(next);
+                setFocusLine(null);
+              }}
+              readOnly={!editable}
+              focusLine={focusLine}
+            />
           </TabsContent>
           <TabsContent value="preview">
             <PreviewStep
               run={run}
-              onOpenLine={(next) => {
+              onOpenLine={(next, line) => {
                 setKind(next);
+                setFocusLine(line ?? null);
                 setTab('values');
               }}
             />
