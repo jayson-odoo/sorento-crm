@@ -42,7 +42,11 @@ export interface UsePurchaseOrdersParams {
 export function purchaseOrdersListQueryKey(
   params: UsePurchaseOrdersParams,
 ): QueryKey {
-  return ['scm', 'purchase-orders', params];
+  // One search value keys as a string, however it was held: chips `['PO1']` and typed `PO1`
+  // are the same request, so they share one cache entry.
+  const q = params.searchQuery;
+  const searchQuery = Array.isArray(q) ? (q.length > 1 ? q : (q[0] ?? '')) : q;
+  return ['scm', 'purchase-orders', { ...params, searchQuery }];
 }
 
 /** The list query a detail URL describes, in the shape the list passes. */
