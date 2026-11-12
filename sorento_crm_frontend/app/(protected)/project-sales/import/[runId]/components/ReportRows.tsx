@@ -117,7 +117,11 @@ export function ReportRowsGrid({
         header: ({ column }) => <DataGridColumnHeader title="Sheet" column={column} />,
         size: 72,
         meta: { headerTitle: 'Sheet', skeleton: <Skeleton className="h-4 w-14" /> },
-        cell: ({ row }) => <span className="block truncate">{row.original.sheet.trim()}</span>,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.sheet.trim()}>
+            {row.original.sheet.trim()}
+          </span>
+        ),
       },
       {
         accessorKey: 'row_number',
@@ -128,6 +132,9 @@ export function ReportRowsGrid({
       },
       {
         accessorKey: 'ps_number',
+        // Sized to fit and fixed: the grid truncates a resizable cell, and this one must
+        // always read whole (browser pass N1 / N2).
+        enableResizing: false,
         header: ({ column }) => <DataGridColumnHeader title="PS no." column={column} />,
         size: 120,
         meta: { headerTitle: 'PS no.' },
@@ -168,6 +175,9 @@ export function ReportRowsGrid({
       },
       {
         accessorKey: 'po_date',
+        // Sized to fit and fixed: the grid truncates a resizable cell, and this one must
+        // always read whole (browser pass N1 / N2).
+        enableResizing: false,
         header: ({ column }) => <DataGridColumnHeader title="PO date" column={column} />,
         size: 120,
         meta: { headerTitle: 'PO date' },

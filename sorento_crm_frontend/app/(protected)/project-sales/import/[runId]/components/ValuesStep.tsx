@@ -195,7 +195,7 @@ export function ValuesStep({
       {
         accessorKey: 'value_text',
         header: ({ column }) => <DataGridColumnHeader title="Value in file" column={column} />,
-        size: 260,
+        size: 240,
         meta: { headerTitle: 'Value in file', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="block truncate font-medium" title={row.original.value_text ?? ''}>

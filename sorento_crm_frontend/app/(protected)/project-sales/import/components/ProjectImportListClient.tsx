@@ -117,15 +117,18 @@ export function ProjectImportListClient() {
     () => [
       {
         accessorKey: 'run_no',
+        // Sized to fit and fixed: the grid truncates a resizable cell, and this one must
+        // always read whole (browser pass N1 / N2).
+        enableResizing: false,
         header: ({ column }) => <DataGridColumnHeader title="Run no." column={column} />,
-        size: 100,
+        size: 120,
         meta: { headerTitle: 'Run no.', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <span className="font-medium">{row.original.run_no}</span>,
       },
       {
         accessorKey: 'filename',
         header: ({ column }) => <DataGridColumnHeader title="File" column={column} />,
-        size: 175,
+        size: 140,
         meta: { headerTitle: 'File', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.filename ?? ''}>
@@ -136,7 +139,7 @@ export function ProjectImportListClient() {
       {
         accessorKey: 'uploaded_by',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded by" column={column} />,
-        size: 130,
+        size: 120,
         meta: { headerTitle: 'Uploaded by', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.uploaded_by ?? ''}>
@@ -154,7 +157,7 @@ export function ProjectImportListClient() {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        size: 105,
+        size: 130,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
         cell: ({ row }) => <RunStatusBadge status={row.original.status} />,
       },

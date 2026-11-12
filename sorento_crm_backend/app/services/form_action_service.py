@@ -45,6 +45,7 @@ from app.models.base import (
     get_company_scope,
 )
 from app.services.error_handler import AppException, handle_conflict, handle_not_found
+from app.utils.date_format import fmt_datetime
 from app.services.form_action_registry import action_for
 
 logger = logging.getLogger(__name__)
@@ -304,10 +305,12 @@ class FormActionService:
                 row,
                 "UPDATE",
                 user_id=actor_id,
+                # Plain words only: the History prints the description AND any value diff, so
+                # the action key and the raw commit time stay out of both (browser pass N3).
                 description=(
-                    f"{_action_words(action_key)} requested; held {grace_seconds}s before applying"
+                    f"{_action_words(action_key)} requested; held {grace_seconds}s, "
+                    f"applies at {fmt_datetime(row.commit_at)}"
                 ),
-                new_values={"action_key": action_key, "commit_at": str(row.commit_at)},
             )
             return DispatchResult(
                 deferred=True,
@@ -599,7 +602,7 @@ class FormActionService:
             row,
             "UPDATE",
             user_id=actor_id,
-            description=f"Action withdrawn during its grace window ({row.action_key}); nothing was sent",
+            description=f"{_action_words(row.action_key)} withdrawn during its grace window; nothing was sent",
         )
         return row
 
