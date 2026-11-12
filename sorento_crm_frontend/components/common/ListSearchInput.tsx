@@ -10,7 +10,11 @@ import {
 import { LoaderCircle, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { addSearchChips, MAX_SEARCH_CHIPS, splitPastedSearch } from '@/lib/searchChips';
+import {
+  addSearchChips,
+  MAX_SEARCH_CHIPS,
+  splitPastedSearch,
+} from '@/lib/searchChips';
 import { cn } from '@/lib/utils';
 
 export interface ListSearchInputProps {
@@ -202,7 +206,8 @@ function ChipsSearchInput({
     let used = 0;
     let count = 0;
     for (let i = 0; i < chips.length; i += 1) {
-      const width = (chipWidths.current.get(chips[i]) ?? MORE_CHIP_WIDTH * 3) + CHIP_GAP;
+      const width =
+        (chipWidths.current.get(chips[i]) ?? MORE_CHIP_WIDTH * 3) + CHIP_GAP;
       const tail = i < chips.length - 1 ? more : 0;
       if (used + width + tail > room) break;
       used += width;
@@ -223,7 +228,8 @@ function ChipsSearchInput({
 
   const add = (incoming: string[]) => {
     const out = addSearchChips(chips, incoming, MAX_SEARCH_CHIPS);
-    if (out.chips.length !== chips.length || out.capped) setChips(out.chips, out.capped);
+    if (out.chips.length !== chips.length || out.capped)
+      setChips(out.chips, out.capped);
   };
 
   const remove = (index: number) => {
@@ -324,7 +330,10 @@ function ChipsSearchInput({
             aria-hidden
           />
         ) : (
-          <Search className="size-4 text-muted-foreground absolute start-3 top-[8px]" aria-hidden />
+          <Search
+            className="size-4 text-muted-foreground absolute start-3 top-[8px]"
+            aria-hidden
+          />
         )}
         {shown.map((chip, index) => (
           <span
@@ -366,7 +375,9 @@ function ChipsSearchInput({
           id={id}
           type={type}
           data-testid={testId}
-          placeholder={chips.length ? (open ? 'Add another...' : '') : placeholder}
+          placeholder={
+            chips.length ? (open ? 'Add another...' : '') : placeholder
+          }
           aria-label={ariaLabel ?? placeholder}
           title={title}
           value={value}
@@ -393,11 +404,10 @@ function ChipsSearchInput({
           </Button>
         )}
         {open && chips.length > 0 && (
-          <div
-            className="flex basis-full items-center justify-between border-t border-border pt-1 text-xs text-muted-foreground"
-          >
+          <div className="flex basis-full items-center justify-between border-t border-border pt-1 text-xs text-muted-foreground">
             <span>
-              {chips.length} values{capped ? `, first ${MAX_SEARCH_CHIPS} kept` : ''}
+              {chips.length} {chips.length === 1 ? 'value' : 'values'}
+              {capped ? `, first ${MAX_SEARCH_CHIPS} kept` : ''}
             </span>
             <button
               type="button"
