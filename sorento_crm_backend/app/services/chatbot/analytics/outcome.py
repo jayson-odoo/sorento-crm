@@ -22,14 +22,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.chatbot.turn.pending import ROSTER_KINDS
+from app.services.chatbot.turn.pending import is_roster
 
-#: Question kinds that ask the customer which one they meant: the roster picks
-#: (`turn/pending.ROSTER_KINDS`) less `top_selling_pick`, whose list IS the answer (a ranking,
-#: with an offer to show a row's detail). Escalation offers (`team_pick`, `member_offer`,
-#: `company_pick`) and drill-down offers (`outstanding_detail`, `sales_report_detail`) ride
-#: after an answer, so they are not here.
-_WHICH_ONE_KINDS = ROSTER_KINDS - {"top_selling_pick"}
+#: A roster kind whose list IS the answer (a ranking, with an offer to show a row's detail),
+#: so it asks nothing about the ask.
+_RANKING_KIND = "top_selling_pick"
 
 #: Outcomes that mean the bot let the customer down (the report's `failed` measure). A
 #: refusal by policy, a handover and a clarifying question are the bot working as designed.
@@ -166,10 +163,14 @@ def _state(turn: dict[str, Any]) -> dict[str, Any]:
 
 
 def _asks_which_one(turn: dict[str, Any]) -> bool:
-    """The reply ended in a which-one pick (`replied.facts.asking`, the answer's
-    `question.kind`, is one of `_WHICH_ONE_KINDS`): the customer is asked to choose what
-    they meant. Escalation and drill-down offers ride after an answer and are not this."""
-    return _dict((_stage(turn, "replied") or {}).get("facts")).get("asking") in _WHICH_ONE_KINDS
+    """The reply ended in a which-one pick: the customer is asked to choose what they meant.
+    `replied.facts.asking` (the answer's `question.kind`) is a roster kind
+    (`turn/pending.is_roster`, which also covers the `<entity_kind>_pick` / `_ask` kinds the
+    narrower mints at runtime), less the ranking. Escalation offers (`team_pick`,
+    `member_offer`, `company_pick`) and drill-down offers (`outstanding_detail`,
+    `sales_report_detail`) ride after an answer, and `is_roster` says no to them."""
+    asking = _dict((_stage(turn, "replied") or {}).get("facts")).get("asking")
+    return isinstance(asking, str) and asking != _RANKING_KIND and is_roster(asking)
 
 
 def _asks_quantity(turn: dict[str, Any]) -> bool:
