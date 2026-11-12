@@ -291,7 +291,7 @@ def test_ac_pi_16_allowed_actions_per_kind_are_accepted(world):
     customer = seed_customer(w.db, w.company_id, f"{MARKER} CUSTOMER ONE")
     party = seed_party(w.db, w.company_id, f"{MARKER} DEV PARTY")
     project = seed_project(w.db, w.company_id, w.admin_id, f"{MARKER} EXISTING TOWER")
-    person = seed_user(w.db, f"{MARKER} Alvin")
+    person = seed_user(w.db, f"{MARKER} Alvin", w.company_id)
     w.db.commit()
     run = new_run(w, make_book({"JAN'26": BOOK_ROWS}))
     s = _svc()

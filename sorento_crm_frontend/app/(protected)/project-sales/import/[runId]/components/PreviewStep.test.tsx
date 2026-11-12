@@ -30,10 +30,31 @@ if (!window.matchMedia) {
   });
 }
 
+// Round 5 (REV-M4): the screen reads projects.import.run. Every test runs with both
+// permissions unless it says otherwise.
+const perms = vi.hoisted(() => ({
+  set: new Set<string>(['projects.import.view', 'projects.import.run']),
+}));
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    permissions: [...perms.set],
+    permissionSet: perms.set,
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    error: null,
+    refetch: () => {},
+  }),
+  useHasPermission: (slug: string) => perms.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => perms.set.has(s)),
+  PERMISSIONS_QUERY_KEY: ['my-permissions'],
+}));
+const nav = vi.hoisted(() => ({ search: '' }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/import/run-1',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
@@ -133,9 +154,16 @@ function renderStep() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  perms.set = new Set(['projects.import.view', 'projects.import.run']);
+  nav.search = '';
   service.listRows.mockResolvedValue({ data: rows, total: rows.length });
   service.startImport.mockResolvedValue({ job_id: 'job-1' });
 });
+
+async function openFiltersIfAny(user: ReturnType<typeof userEvent.setup>) {
+  const button = screen.queryByRole('button', { name: /^Filters/ });
+  if (button) await user.click(button);
+}
 
 describe('PreviewStep', () => {
   it('shows the outcome tiles from preview_counts', async () => {
@@ -156,21 +184,12 @@ describe('PreviewStep', () => {
     }
   });
 
-  it('has exactly one primary button, and it reads Import', async () => {
-    const { container } = renderStep();
-    await screen.findByText('PS26-0001');
-    const primaries = Array.from(container.querySelectorAll('button')).filter((b) =>
-      /(^|\s)bg-primary(\s|$)/.test(b.className)
-    );
-    expect(primaries).toHaveLength(1);
-    expect(primaries[0].textContent?.trim()).toBe('Import');
-  });
-
   it('choosing two outcomes asks listRows for both', async () => {
     const user = userEvent.setup();
     renderStep();
     await screen.findByText('PS26-0001');
 
+    await openFiltersIfAny(user);
     await user.selectOptions(screen.getByLabelText(/Outcome/i), ['needs_review', 'error']);
 
     await waitFor(() => {
@@ -217,6 +236,7 @@ describe('PreviewStep', () => {
 
     const row = (await screen.findByText('PS26-0009')).closest('tr')!;
     expect(row.textContent).toContain(label);
+    await openFiltersIfAny(userEvent.setup());
     const reason = screen.getByLabelText(/Reason/i) as HTMLSelectElement;
     expect(Array.from(reason.options).map((o) => o.textContent)).toContain(label);
     // Neither the raw code nor a humanised guess of it is shown.
@@ -228,5 +248,60 @@ describe('PreviewStep', () => {
     renderStep();
     await user.click(await screen.findByText('PS26-0005'));
     expect(onOpenLine).not.toHaveBeenCalled();
+  });
+});
+
+describe('PreviewStep, round 5', () => {
+  it('r5: Outcome, Reason and Sheet sit inside the toolbar Filters control (REV-minor4)', async () => {
+    const user = userEvent.setup();
+    renderStep();
+    await screen.findByText('PS26-0001');
+    expect(screen.queryByLabelText(/^Outcome$/i)).toBeNull();
+    await user.click(screen.getByRole('button', { name: /^Filters/ }));
+    expect(await screen.findByLabelText(/^Outcome$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Reason$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Sheet$/i)).toBeInTheDocument();
+  });
+
+  it('r5: the outcome tiles include Updated (REV-minor5)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PreviewStep
+          run={{ ...run, preview_counts: { ...run.preview_counts, updated: 5 } } as never}
+          onOpenLine={onOpenLine}
+        />
+      </QueryClientProvider>
+    );
+    await screen.findByText('PS26-0001');
+    const tile = screen
+      .getAllByText(/^Updated$/i)
+      .map((el) => el.parentElement)
+      .find((p) => (p?.textContent ?? '').includes('5'));
+    expect(tile).toBeTruthy();
+  });
+
+  it('r5: the step body has no primary button: Import sits in the page header (REV-minor11)', async () => {
+    const { container } = renderStep();
+    await screen.findByText('PS26-0001');
+    const primaries = Array.from(container.querySelectorAll('button')).filter((b) =>
+      /(^|\s)bg-primary(\s|$)/.test(b.className)
+    );
+    expect(primaries).toHaveLength(0);
+  });
+
+  it.each([
+    ['PS26-0101', ['zz_unknown_block'], 'developer'],
+    ['PS26-0102', ['customer_unmapped'], 'project'],
+  ])('r5: row %s opens the kind the API names in blocking_kind (REV-minor8)', async (ps, codes, kind) => {
+    const user = userEvent.setup();
+    service.listRows.mockResolvedValue({
+      data: [{ ...reportRow(ps, 'needs_review', codes, 7), blocking_kind: kind, labels: ['x'] }],
+      total: 1,
+    });
+    renderStep();
+    await user.click(await screen.findByText(ps));
+    await waitFor(() => expect(onOpenLine).toHaveBeenCalledTimes(1));
+    expect(onOpenLine.mock.calls[0][0]).toBe(kind);
   });
 });

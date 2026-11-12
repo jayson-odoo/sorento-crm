@@ -150,12 +150,19 @@ def memory_storage(monkeypatch):
 # --------------------------------------------------------------------------- seeding
 
 
-def seed_user(db, name: str) -> str:
+def seed_user(db, name: str, company_id: Optional[str] = None, *, active: bool = True) -> str:
+    """A user; ACTIVE by default, with a grant in `company_id` when one is given (a person
+    target must be an active user granted in the run's company, SEC-S2)."""
+    from app.models.company import UserCompany
     from app.models.user import User
 
     user_id = _uid()
-    db.add(User(id=user_id, email=f"{user_id}@zzt.test", name=name))
+    db.add(User(id=user_id, email=f"{user_id}@zzt.test", name=name,
+                status="ACTIVE" if active else "INACTIVE"))
     db.flush()
+    if company_id:
+        db.add(UserCompany(user_id=user_id, company_id=company_id))
+        db.flush()
     return user_id
 
 
@@ -262,7 +269,7 @@ def world(memory_storage):
         )
         with company_scope(db, frozenset({company_id})):
             project_seed_service.run(db, company_id=company_id)
-            admin_id = seed_user(db, f"{MARKER} Importer")
+            admin_id = seed_user(db, f"{MARKER} Importer", company_id)
             db.commit()
             yield World(db=db, company_id=company_id, admin_id=admin_id, storage=memory_storage)
 

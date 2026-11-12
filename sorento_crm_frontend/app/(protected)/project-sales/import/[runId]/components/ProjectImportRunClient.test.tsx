@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 if (!window.matchMedia) {
@@ -30,10 +30,31 @@ if (!window.matchMedia) {
   });
 }
 
+// Round 5 (REV-M4): the screen reads projects.import.run. Every test runs with both
+// permissions unless it says otherwise.
+const perms = vi.hoisted(() => ({
+  set: new Set<string>(['projects.import.view', 'projects.import.run']),
+}));
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    permissions: [...perms.set],
+    permissionSet: perms.set,
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    error: null,
+    refetch: () => {},
+  }),
+  useHasPermission: (slug: string) => perms.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => perms.set.has(s)),
+  PERMISSIONS_QUERY_KEY: ['my-permissions'],
+}));
+const nav = vi.hoisted(() => ({ search: '' }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/import/run-1',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
   useParams: () => ({}),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -135,6 +156,8 @@ function renderRun() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  perms.set = new Set(['projects.import.view', 'projects.import.run']);
+  nav.search = '';
   deferred.props = [];
   service.getLinesSummary.mockResolvedValue({
     customer: { total: 0, todo: 0 },
@@ -195,5 +218,92 @@ describe('ProjectImportRunClient', () => {
     const { container } = renderRun();
     expect((await screen.findAllByText('PIM-0003')).length).toBeGreaterThan(0);
     expect(container.textContent ?? '').not.toMatch(UUID_RE);
+  });
+});
+
+function headerRoot(): HTMLElement {
+  // PageHeader: the breadcrumb trail and the actions share one toolbar root.
+  const crumb = screen.getAllByText('Project import').find((el) => el.closest('nav'))!;
+  let el: HTMLElement | null = crumb.closest('nav');
+  while (el && !el.querySelector('button')) el = el.parentElement;
+  return el!;
+}
+
+describe('ProjectImportRunClient, round 5', () => {
+  it.each([
+    ['draft', {}],
+    ['draft', { missing_columns: ['customer'] }],
+    ['previewed', {}],
+    ['imported', {}],
+  ])('r5: the History tab is there on a %s run (REV-M3)', async (status, extra) => {
+    service.getRun.mockResolvedValue(run(status, extra));
+    renderRun();
+    expect(await screen.findByText(/^History$/)).toBeInTheDocument();
+  });
+
+  it('r5: a view-only user gets no Preview, Import or Revert (REV-M4)', async () => {
+    perms.set = new Set(['projects.import.view']);
+    for (const status of ['draft', 'previewed', 'imported']) {
+      deferred.props = [];
+      service.getRun.mockResolvedValue(run(status));
+      const view = renderRun();
+      await screen.findAllByText('PIM-0003');
+      // The header holds the page's actions (the step switcher's own "Preview" tab is not one).
+      const header = headerRoot();
+      expect(within(header).queryAllByRole('button', { name: /^Preview$/ })).toHaveLength(0);
+      expect(within(header).queryAllByRole('button', { name: /^Import$/ })).toHaveLength(0);
+      expect(screen.queryAllByRole('button', { name: /^Import$/ })).toHaveLength(0);
+      expect(screen.queryByText(/^Revert$/)).toBeNull();
+      expect(deferred.props.some((p) => /revert/i.test(String(p.verb ?? '')))).toBe(false);
+      view.unmount();
+    }
+  });
+
+  it('r5: with the run permission the Preview and Import buttons are there', async () => {
+    service.getRun.mockResolvedValue(run('draft'));
+    const first = renderRun();
+    await screen.findAllByText('PIM-0003');
+    expect(within(headerRoot()).getByRole('button', { name: /^Preview$/ })).toBeInTheDocument();
+    first.unmount();
+    service.getRun.mockResolvedValue(run('previewed'));
+    renderRun();
+    await screen.findAllByText('PIM-0003');
+    expect(within(headerRoot()).getByRole('button', { name: /^Import$/ })).toBeInTheDocument();
+  });
+
+  it('r5: on Preview the Import button sits in the page header (REV-minor11)', async () => {
+    service.getRun.mockResolvedValue(run('previewed'));
+    renderRun();
+    await screen.findAllByText('PIM-0003');
+    const header = headerRoot();
+    expect(within(header).getByRole('button', { name: /^Import$/ })).toBeInTheDocument();
+  });
+
+  it('r5: the file name is in the page header (REV-minor11)', async () => {
+    service.getRun.mockResolvedValue(run('previewed'));
+    renderRun();
+    await screen.findAllByText('PIM-0003');
+    expect(headerRoot().textContent).toContain('SO SUMMARY 2026.xlsx');
+  });
+
+  it('r5: prev/next follows the list filters and sort carried in the URL (REV-M2)', async () => {
+    nav.search = `page=1&limit=25&sort=filename&dir=asc&query=SUMMARY&status=imported&from=${RUN_ID}`;
+    service.getRun.mockResolvedValue(run('previewed'));
+    service.listRuns.mockResolvedValue({ data: [run('previewed')], total: 1 });
+    renderRun();
+    await screen.findAllByText('PIM-0003');
+    await waitFor(() =>
+      expect(
+        service.listRuns.mock.calls.some(([grid, filters]) => {
+          const sort = grid?.sorting?.[0];
+          return (
+            sort?.id === 'filename' &&
+            sort?.desc === false &&
+            grid?.searchQuery === 'SUMMARY' &&
+            JSON.stringify(filters ?? {}).includes('imported')
+          );
+        })
+      ).toBe(true)
+    );
   });
 });

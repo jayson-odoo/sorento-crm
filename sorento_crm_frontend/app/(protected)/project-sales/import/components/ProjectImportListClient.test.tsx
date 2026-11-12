@@ -27,10 +27,31 @@ if (!window.matchMedia) {
 }
 
 const push = vi.fn();
+// Round 5 (REV-M4): the screen reads projects.import.run. Every test runs with both
+// permissions unless it says otherwise.
+const perms = vi.hoisted(() => ({
+  set: new Set<string>(['projects.import.view', 'projects.import.run']),
+}));
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    permissions: [...perms.set],
+    permissionSet: perms.set,
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    error: null,
+    refetch: () => {},
+  }),
+  useHasPermission: (slug: string) => perms.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => perms.set.has(s)),
+  PERMISSIONS_QUERY_KEY: ['my-permissions'],
+}));
+const nav = vi.hoisted(() => ({ search: '' }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/import',
   useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
@@ -84,6 +105,8 @@ function renderList() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  perms.set = new Set(['projects.import.view', 'projects.import.run']);
+  nav.search = '';
   service.listRuns.mockResolvedValue({ data: runs, total: 1 });
 });
 
@@ -123,5 +146,46 @@ describe('ProjectImportListClient', () => {
     const { container } = renderList();
     await screen.findByText('PIM-0001');
     expect(container.textContent ?? '').not.toMatch(UUID_RE);
+  });
+});
+
+describe('ProjectImportListClient, round 5', () => {
+  it('r5: a view-only user sees no Create (REV-M4)', async () => {
+    perms.set = new Set(['projects.import.view']);
+    renderList();
+    await screen.findByText('PIM-0001');
+    expect(screen.queryAllByRole('button', { name: /^Create$/ })).toHaveLength(0);
+  });
+
+  it('r5: the list restores search, filter, sort and page from the URL (REV-M2)', async () => {
+    nav.search = 'page=2&limit=25&sort=filename&dir=asc&query=SUMMARY&status=imported';
+    renderList();
+    await waitFor(() =>
+      expect(
+        service.listRuns.mock.calls.some(([grid, filters]) => {
+          const sort = grid?.sorting?.[0];
+          return (
+            grid?.pageIndex === 1 &&
+            sort?.id === 'filename' &&
+            sort?.desc === false &&
+            grid?.searchQuery === 'SUMMARY' &&
+            JSON.stringify(filters ?? {}).includes('imported')
+          );
+        })
+      ).toBe(true)
+    );
+  });
+
+  it('r5: a row opened from a filtered, sorted list carries that state to the run (REV-M2)', async () => {
+    nav.search = 'page=1&limit=25&sort=filename&dir=asc&query=SUMMARY&status=imported';
+    renderList();
+    fireEvent.click(await screen.findByText('PIM-0001'));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const href = String(push.mock.calls[0][0]);
+    expect(href).toContain(`/project-sales/import/${RUN_ID}`);
+    const params = new URLSearchParams(href.split('?')[1] ?? '');
+    expect(params.get('sort')).toBe('filename');
+    expect(params.get('query')).toBe('SUMMARY');
+    expect(params.get('status')).toContain('imported');
   });
 });

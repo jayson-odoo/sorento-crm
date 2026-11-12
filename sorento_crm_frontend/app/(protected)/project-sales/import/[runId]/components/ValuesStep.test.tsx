@@ -30,10 +30,31 @@ if (!window.matchMedia) {
   });
 }
 
+// Round 5 (REV-M4): the screen reads projects.import.run. Every test runs with both
+// permissions unless it says otherwise.
+const perms = vi.hoisted(() => ({
+  set: new Set<string>(['projects.import.view', 'projects.import.run']),
+}));
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    permissions: [...perms.set],
+    permissionSet: perms.set,
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    error: null,
+    refetch: () => {},
+  }),
+  useHasPermission: (slug: string) => perms.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => perms.set.has(s)),
+  PERMISSIONS_QUERY_KEY: ['my-permissions'],
+}));
+const nav = vi.hoisted(() => ({ search: '' }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/import/run-1',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
@@ -48,6 +69,15 @@ vi.mock('@/lib/api', () => ({
     json: async () => ({ data: [], items: [], total: 0 }),
   })),
 }));
+
+vi.mock('@/components/common/SearchableMultiSelect', () => {
+  const Stand = (p: { 'aria-label'?: string; placeholder?: string }) => {
+    const label = String(p['aria-label'] ?? p.placeholder ?? '');
+    const id = /status|show/i.test(label) ? 'multi-select-status' : 'multi-select';
+    return <div data-testid={id} aria-label={label} />;
+  };
+  return { SearchableMultiSelect: Stand, default: Stand };
+});
 
 const service = vi.hoisted(() => ({
   getLinesSummary: vi.fn(),
@@ -127,6 +157,8 @@ function textMatch(re: RegExp) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  perms.set = new Set(['projects.import.view', 'projects.import.run']);
+  nav.search = '';
   service.getLinesSummary.mockResolvedValue({
     customer: { total: 4, todo: 3 },
     project: { total: 12, todo: 12 },
@@ -194,5 +226,36 @@ describe('ValuesStep', () => {
     const { container } = renderStep();
     await screen.findByText('CUSTOMER 001 SDN BHD');
     expect(container.textContent ?? '').not.toMatch(UUID_RE);
+  });
+});
+
+async function openFiltersIfAny(user: ReturnType<typeof userEvent.setup>) {
+  const button = screen.queryByRole('button', { name: /^Filters/ });
+  if (button) await user.click(button);
+}
+
+describe('ValuesStep, round 5', () => {
+  it('r5: a view-only user gets no tick boxes, no Set to and no pickers (REV-M4)', async () => {
+    perms.set = new Set(['projects.import.view']);
+    renderStep();
+    await screen.findByText('CUSTOMER 002 SDN BHD');
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Set to/i })).toBeNull();
+    expect(screen.queryAllByRole('button', { name: /^Change /i })).toHaveLength(0);
+  });
+
+  it('r5: the Values grid offers Columns (REV-minor4)', async () => {
+    renderStep();
+    await screen.findByText('CUSTOMER 002 SDN BHD');
+    expect(screen.getByRole('button', { name: /Columns/ })).toBeInTheDocument();
+  });
+
+  it('r5: the status filter is a multi-select (REV-minor4)', async () => {
+    const user = userEvent.setup();
+    renderStep();
+    await screen.findByText('CUSTOMER 002 SDN BHD');
+    await openFiltersIfAny(user);
+    const filter = await screen.findByTestId('multi-select-status');
+    expect(filter).toBeInTheDocument();
   });
 });

@@ -200,8 +200,8 @@ def test_ac_pi_22_lines_created_with_the_same_title_become_one_project(world):
     from app.models.projects import ProjectSalesProfile
 
     w = world
-    alvin = seed_user(w.db, f"{MARKER} Alvin")
-    bella = seed_user(w.db, f"{MARKER} Bella")
+    alvin = seed_user(w.db, f"{MARKER} Alvin", w.company_id)
+    bella = seed_user(w.db, f"{MARKER} Bella", w.company_id)
     customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
     w.db.commit()
     run = new_run(w, make_book({"JAN'26": [
@@ -857,7 +857,7 @@ def _posted_invoice(w, customer):
 
 def test_ac_pi_34_no_notification_or_outbound_and_the_invoiced_total_is_unchanged(world):
     w = world
-    alvin = seed_user(w.db, f"{MARKER} Alvin")
+    alvin = seed_user(w.db, f"{MARKER} Alvin", w.company_id)
     customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
     core = seed_core_so(w.db, w.company_id, "SO470001", customer)
     _posted_invoice(w, customer)
