@@ -541,8 +541,14 @@ def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any
     except Exception:  # noqa: BLE001 - a failed lookup answers as today
         logger.warning("chatbot: the near-code check did not score %r against %r", pick, raw, exc_info=True)
         return None
+    from app.models.product import Product, offerable_products
+
     for row in own.get("matches") or []:
         if isinstance(row, dict) and token_key(str(row.get("canonical_code") or "")) == wanted:
+            # Owner Q3 / AC-20: a pick the chat may not offer (inactive or discontinued) is set
+            # aside but never offered (`resolve_gate.pick_near_code_first` reads the flag).
+            if row.get("uuid") and not db.query(Product.id).filter(Product.id == str(row["uuid"]), offerable_products()).first():
+                row = {**row, "display": {**(row.get("display") or {}), "offerable": False}}
             # The resolver's row for the pick, offered as the raw's trigram neighbour with its score
             # (D1 and the probe planner never offer an `exact` row: it would have resolved).
             return {**row, "match_tier": "trgm", "similarity": float(score)}

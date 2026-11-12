@@ -382,12 +382,12 @@ def product_suggestions(db: Any, code: str) -> list[str]:
     """
     from app.services.entity_resolver import (
         ENTITY_MISS_SUGGEST_FLOOR,
-        _drop_inactive_products,
+        _drop_unofferable_products,
         _trgm_lookup,
     )
 
     with db.begin_nested():
-        hits = _drop_inactive_products(db, _trgm_lookup(db, code, frozenset({"product"})))
+        hits = _drop_unofferable_products(db, _trgm_lookup(db, code, frozenset({"product"})))
     codes: list[str] = []
     for hit in hits:
         if hit.entity_type != "product" or (hit.similarity or 0.0) < ENTITY_MISS_SUGGEST_FLOOR:

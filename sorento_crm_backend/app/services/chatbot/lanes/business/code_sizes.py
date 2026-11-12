@@ -67,7 +67,12 @@ def _stored_matches(db: Any, rows: list[Any], typed: str) -> list[dict[str, Any]
     order (`answer.typed_code_parts`, the slice 2 rule, read in the query before its bound)."""
     from sqlalchemy import Float, and_, case, cast, func, or_
 
-    from app.models.product import Product, ProductCategory, chat_searchable_products
+    from app.models.product import (
+        Product,
+        ProductCategory,
+        chat_searchable_products,
+        offerable_products,
+    )
     from app.models.product_spec import ProductSpecifications
     from app.services.chatbot.lanes.business.answer import typed_code_parts
 
@@ -100,7 +105,7 @@ def _stored_matches(db: Any, rows: list[Any], typed: str) -> list[dict[str, Any]
                 .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
                 .outerjoin(categories, categories.c.id == Product.category_id)
                 .filter(
-                    Product.is_active.is_(True),
+                    offerable_products(),
                     chat_searchable_products(),
                     folded_code.like("%" + "%".join(escaped) + "%", escape="\\"),
                     or_(*conditions),
@@ -212,7 +217,10 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
     so a family of one is still offered; the route's separate "None with size" clause is then
     said by the header and dropped."""
     from app.services.chatbot.turn.state import token_key
-    from app.services.entity_resolver import _prefix_probe_product
+    from app.services.entity_resolver import (
+        _drop_unofferable_products,
+        _prefix_probe_product,
+    )
 
     asked = _asked_size(parser)
     if asked is None:
@@ -246,12 +254,8 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         family: list[dict[str, Any]] = []
         for probe in dict.fromkeys([typed, str(exact[0]["canonical_code"])]):
             with db.begin_nested():
-                probed = _prefix_probe_product(db, probe)
-            family = [
-                _row(p.canonical_code, str(p.uuid), "family")
-                for p in probed
-                if p.uuid and p.canonical_code and (p.display or {}).get("is_active") is not False
-            ]
+                probed = _drop_unofferable_products(db, _prefix_probe_product(db, probe))
+            family = [_row(p.canonical_code, str(p.uuid), "family") for p in probed if p.uuid and p.canonical_code]
             if family:
                 break
         family = family or [_row(str(exact[0]["canonical_code"]), str(exact[0]["uuid"]), "family")]
@@ -280,7 +284,7 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
     The fallback for a miss with no other candidate (`annotate`)."""
     from sqlalchemy import func
 
-    from app.models.product import Product, chat_searchable_products
+    from app.models.product import Product, chat_searchable_products, offerable_products
     from app.services.chatbot.lanes.business.answer import typed_code_parts
 
     parts = list(dict.fromkeys(typed_code_parts(typed)))
@@ -292,7 +296,7 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
         found = (
             db.query(Product.id, Product.product_code)
             .filter(
-                Product.is_active.is_(True),
+                offerable_products(),
                 chat_searchable_products(),
                 *(folded_code.like(f"%{p}%", escape="\\") for p in escaped),
             )

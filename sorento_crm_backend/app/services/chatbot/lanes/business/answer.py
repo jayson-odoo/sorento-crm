@@ -5036,7 +5036,7 @@ def _set_then_its_members(keep: list, first: int, close: list) -> list:
             "match_tier": "set_member",
             "similarity": jsc.get(product_set, "similarity"),
         }
-        for m in _set_members(product_set)
+        for m in _offerable_members(product_set)
     ]
     group = [product_set, *members]
     codes = {jsc.get(g, "canonical_code") for g in group}
@@ -5099,6 +5099,18 @@ def _set_members(product_set: Any) -> list[dict[str, Any]]:
         for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
         if isinstance(m, dict) and jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(jsc.get(m, "product_code"))
     ]
+
+
+def _offerable_members(product_set: Any) -> list[dict[str, Any]]:
+    """`_set_members` a did-you-mean may offer on their own (owner Q3: a discontinued member,
+    `display.members[].is_discontinued`, is never offered)."""
+    display = jsc.get(product_set, "display")
+    stopped = {
+        jsc.js_string(jsc.get(m, "uuid"))
+        for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
+        if isinstance(m, dict) and jsc.get(m, "is_discontinued") is True
+    }
+    return [m for m in _set_members(product_set) if jsc.js_string(m["uuid"]) not in stopped]
 
 
 #: The entity kinds whose did-you-mean is a code, ranked by the typed parts it holds.

@@ -3079,18 +3079,21 @@ def _family_alternatives(
         return []
 
 
-def _drop_inactive_products(db: Session, hits: list[ResolvedEntity]) -> list[ResolvedEntity]:
-    """`hits` minus inactive products (one bounded IN query); other types pass through."""
+def _drop_unofferable_products(db: Session, hits: list[ResolvedEntity]) -> list[ResolvedEntity]:
+    """`hits` minus the products the chat may not offer (`offerable_products`: inactive or
+    discontinued, one bounded IN query); other types pass through."""
+    from app.models.product import offerable_products
+
     ids = [str(h.uuid) for h in hits if h.entity_type == "product" and h.uuid]
     if not ids:
         return hits
-    active = {
+    offerable = {
         str(pid)
         for (pid,) in db.query(Product.id)
-        .filter(Product.id.in_(ids), Product.is_active.is_(True))
+        .filter(Product.id.in_(ids), offerable_products())
         .all()
     }
-    return [h for h in hits if h.entity_type != "product" or str(h.uuid) in active]
+    return [h for h in hits if h.entity_type != "product" or str(h.uuid) in offerable]
 
 
 def _embedding_scope_sql(db: Session) -> tuple[str, dict[str, Any]]:
@@ -6040,7 +6043,7 @@ def resolve_references(
             if member_uuids:
                 hits = [h for h in hits if str(h.uuid) not in member_uuids]
         if alternatives_active_only:
-            hits = _drop_inactive_products(db, hits)
+            hits = _drop_unofferable_products(db, hits)
         alternatives = [
             h for h in hits if (h.similarity or 0.0) >= ENTITY_MISS_SUGGEST_FLOOR
         ]
@@ -6056,6 +6059,8 @@ def resolve_references(
         )
         if family_key:
             family = _family_alternatives(db, tr.token, family_key, alternatives_active_only)
+            if alternatives_active_only:
+                family = _drop_unofferable_products(db, family)
             family_ids = {h.uuid for h in family}
             alternatives = family + [h for h in alternatives if h.uuid not in family_ids]
         tr.alternatives = alternatives[:_ALTERNATIVES_CAP]
