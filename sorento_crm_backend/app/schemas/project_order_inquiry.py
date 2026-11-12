@@ -1522,7 +1522,7 @@ class OrderInquiryHeaderOut(BaseModel):
     lines_to_confirm: int = 0
     qty_total: str = "0"
     #: DERIVED, never stored (AC-LS-02): `lines_to_confirm > 0`.
-    status: Literal["outstanding", "completed"] = "outstanding"
+    status: Literal["outstanding", "completed", "waiting_for_cs"] = "outstanding"
     #: OI-STAGED-NOTIFY (AC-SN-30): the OI's earliest reserve status, null when it has no
     #: reserve request rows; `parked_by_name` names who parked it while it is parked.
     reserve_status: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None

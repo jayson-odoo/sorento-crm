@@ -148,6 +148,8 @@ WorklistSort = Literal[
     "spo_number",
     "agent_code",
     "verb",
+    # OI-WHOLE-SO-CANCEL v2 (H2): the Status column.
+    "status",
 ]
 
 WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

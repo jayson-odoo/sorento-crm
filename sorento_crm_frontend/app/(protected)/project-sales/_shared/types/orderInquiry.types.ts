@@ -1449,7 +1449,7 @@ export interface OrderInquiryBulkRejectResult {
  * backend response models field for field.
  */
 
-export type OrderInquiryHeaderStatus = 'outstanding' | 'completed';
+export type OrderInquiryHeaderStatus = 'outstanding' | 'completed' | 'waiting_for_cs';
 
 /** One row of the Documents view (AC-HL-02). */
 export interface OrderInquiryHeader {

@@ -54,6 +54,7 @@ from app.schemas.project_order_inquiry import (
 )
 from app.services.error_handler import AppException
 from app.services.oi_row_visibility import live_row_clause
+from app.services.oi_waiting_for_cs import waiting_for_cs_clause
 from app.utils.multi_value import multi_text, multi_values
 from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.scm import spo_supply
@@ -232,6 +233,10 @@ class OrderInquiryHeaderService:
                 func.bool_or(
                     and_(live_row_clause(), OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)))
                 ).label("waiting"),
+                # OI-WHOLE-SO-CANCEL v2 (H1): a live row whose SO line has a change waiting for CS.
+                func.bool_or(and_(live_row_clause(), waiting_for_cs_clause())).label(
+                    "waiting_cs"
+                ),
                 func.sum(live_buy_qty).label("qty"),
             )
             .select_from(OrderInquiryRow)
@@ -254,6 +259,9 @@ class OrderInquiryHeaderService:
                 func.count()
                 .filter(and_(per_line.c.has_live.is_(True), per_line.c.waiting.is_(True)))
                 .label("lines_to_confirm"),
+                func.count()
+                .filter(and_(per_line.c.has_live.is_(True), per_line.c.waiting_cs.is_(True)))
+                .label("lines_waiting_cs"),
                 func.sum(per_line.c.qty).label("qty_total"),
             )
             .group_by(per_line.c.order_inquiry_id)
@@ -313,7 +321,12 @@ class OrderInquiryHeaderService:
         lines_total = func.coalesce(agg.c.lines_total, 0)
         lines_to_confirm = func.coalesce(agg.c.lines_to_confirm, 0)
         qty_total = func.coalesce(agg.c.qty_total, 0)
-        status_expr = case((lines_to_confirm > 0, "outstanding"), else_="completed")
+        lines_waiting_cs = func.coalesce(agg.c.lines_waiting_cs, 0)
+        status_expr = case(
+            (lines_waiting_cs > 0, "waiting_for_cs"),
+            (lines_to_confirm > 0, "outstanding"),
+            else_="completed",
+        )
         ragg = self._reserve_agg()
         requester_user = aliased(User)
         parker_user = aliased(User)
@@ -375,9 +388,9 @@ class OrderInquiryHeaderService:
             base = base.filter(flag.is_(True))
 
         if state == "outstanding":
-            base = base.filter(lines_to_confirm > 0)
+            base = base.filter((lines_to_confirm > 0) | (lines_waiting_cs > 0))
         elif state == "completed":
-            base = base.filter(lines_to_confirm == 0)
+            base = base.filter((lines_to_confirm == 0) & (lines_waiting_cs == 0))
         elif state != "all":
             raise AppException(
                 422, f"'{state}' is not a state. Use outstanding, completed or all.",

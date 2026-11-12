@@ -177,6 +177,8 @@ SORTABLE_FIELDS = frozenset(
         "spo_number",
         "agent_code",
         "verb",
+        # OI-WHOLE-SO-CANCEL v2 (H2): the Status column.
+        "status",
     }
 )
 
@@ -917,6 +919,16 @@ _ACK_USER = aliased(User)
 _REJECT_USER = aliased(User)
 _OVERRIDE_USER = aliased(User)
 
+#: OI-WHOLE-SO-CANCEL v2 (H2): the Status column's sort key, the same words `status_label` prints.
+_STATUS_SORT = case(
+    (_WAITING_FOR_CS, "Waiting for CS"),
+    (_SO_CANCELLED, "SO cancelled"),
+    (_LINE_CANCELLED, "Line cancelled"),
+    (OrderInquiryRow.ack_state == ACK_ACKNOWLEDGED, "Done"),
+    (OrderInquiryRow.ack_state == ACK_REJECTED, "Rejected"),
+    else_="To order",
+)
+
 _SORT_EXPRESSIONS = {
     "inquiry_no": OrderInquiry.inquiry_no,
     "so_date": _SO_DATE,
@@ -939,6 +951,7 @@ _SORT_EXPRESSIONS = {
     # `agent` already does, `verb` and `spo_number` are new (18 Sep 2026 bug report).
     "agent_code": SalesAgent.sales_agent,
     "verb": OrderInquiryRow.verb,
+    "status": _STATUS_SORT,
     "spo_number": _SPO_SORT_KEY,
 }
 
