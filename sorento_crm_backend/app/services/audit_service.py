@@ -59,6 +59,8 @@ _REDACT_PREFIXES = ("api_key",)
 _TOUCH_COLUMNS = frozenset({
     "updated_at", "last_used_at", "last_sign_in_at", "last_seen_at", "last_activity_at",
     "last_synced_at", "synced_at", "last_run_at", "storage_checked_at",
+    # price_tag_requests: the data-changes cache, rewritten by whoever opens the page.
+    "data_changed_tag_count", "data_checked_at",
 })
 
 
