@@ -5,9 +5,9 @@
  * The REAL `useOrders` -> `fetchOrdersPage` chain runs and only `apiFetch` is stubbed, so the
  * assertions read the actual request. `fetchOrdersPage` has two transports: the plain list
  * (GET /api/v1/order-management/orders, `query`) and, with an advanced filter, POST
- * /api/v1/list-query/search, whose `quick_search` becomes a LIST of strings. The first three
- * tests read the search values off whichever one the list sent; the fourth pins the list-query
- * body.
+ * /api/v1/list-query/search, whose `quick_search` becomes a LIST of strings. Without an
+ * advanced filter the chips ride the GET as repeated `query` (coordinator ruling, 12 Nov); the
+ * last test pins the list-query body.
  * Red first: the list passes no chips to `ListSearchInput` and sends one value.
  */
 import React from 'react';
@@ -232,7 +232,9 @@ describe('OrdersList search chips', () => {
     await user.type(searchBox(), 'Fakeco');
 
     await waitFor(() => {
-      const { values } = lastListRequest();
+      const { transport, values } = lastListRequest();
+      // No advanced filter: the plain list's GET, one repeated `query` per value.
+      expect(transport).toBe('get');
       expect(values).toHaveLength(3);
       expect(values).toEqual(
         expect.arrayContaining(['DO2611001', 'Acme Trading', 'Fakeco']),
@@ -251,7 +253,9 @@ describe('OrdersList search chips', () => {
       screen.getByRole('button', { name: 'Remove Acme, Trading' }),
     ).toBeInTheDocument();
     await waitFor(() => {
-      expect(lastListRequest().values).toEqual(['DO2611001', 'Acme, Trading']);
+      const last = lastListRequest();
+      expect(last.transport).toBe('get');
+      expect(last.values).toEqual(['DO2611001', 'Acme, Trading']);
     });
     expect(searchBox()).toHaveValue('');
   });

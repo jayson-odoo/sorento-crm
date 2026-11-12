@@ -19,7 +19,7 @@ import pytest
 from app.models.list_query_metadata import ListQueryField, ListQueryResource
 from app.models.order import Customer, Order
 from app.services.user_service import UserPermissionService
-from tests._multi_filter_client import open_client
+from tests._multi_filter_client import get, open_client
 from tests._pg_fixture import blank_session, unique_code
 
 SEARCH = "/api/v1/list-query/search"
@@ -202,3 +202,80 @@ def test_export_more_than_200_values_is_422(client, seeded):
                                      "quick_search": [f"ZZV{i:03d}" for i in range(201)]})
     assert resp.status_code == 422, resp.text
     assert "at most 200 values" in resp.text
+
+
+# ---- the plain list: GET /api/v1/order-management/orders with repeated `query` -------------------------
+# The Delivery orders list without an advanced filter reads this route (`orderService.ts:25`);
+# route `app/api/v1/order_management/orders.py:296-300` (`get_orders`, `query: Optional[str]`)
+# hands `query` to `OrderService.list_orders` (`orders.py:570-573`), whose search clause is
+# `app/services/order_service.py:1089-1136`.
+
+ORDERS = "/api/v1/order-management/orders"
+
+
+def _get(client, values, **extra):
+    return get(client, ORDERS, [("limit", 200), *[("query", v) for v in values], *extra.items()])
+
+
+def _get_list(client, values):
+    resp = _get(client, values)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_get_repeated_query_returns_the_union(client, seeded):
+    s = seeded
+    body = _get_list(client, [s["alpha"].order_number, s["bravo"].order_number])
+    assert _numbers(body) == _n(s, "alpha", "bravo")
+    assert body["pagination"]["total"] == 2
+
+
+def test_get_each_value_matched_over_number_debtor_customer_and_debtor_code(client, seeded):
+    s, tag = seeded, seeded["tag"]
+    body = _get_list(client, [s["alpha"].order_number, "Acme, Trading", f"{tag} Fakeco Holdings", f"{tag}DCZZ"])
+    assert _numbers(body) == _n(s, "alpha", "comma", "by_customer", "by_debtor_code")
+
+
+def test_get_single_query_behaves_as_today(client, seeded):
+    s = seeded
+    body = _get_list(client, [s["alpha"].order_number])
+    assert _numbers(body) == _n(s, "alpha")
+    assert body["pagination"]["total"] == 1
+
+
+def test_get_comma_inside_a_value_is_one_value(client, seeded):
+    s = seeded
+    # Split on the comma, "Acme" would also find DELTA and "Trading" ECHO.
+    body = _get_list(client, ["Acme, Trading", s["alpha"].order_number])
+    assert _numbers(body) == _n(s, "comma", "alpha")
+
+
+def test_get_blank_and_case_duplicate_values_are_ignored(client, seeded):
+    s = seeded
+    a = s["alpha"].order_number
+    body = _get_list(client, [a, "", "  ", a.lower(), s["bravo"].order_number])
+    assert _numbers(body) == _n(s, "alpha", "bravo")
+    assert body["pagination"]["total"] == 2
+
+
+def test_get_more_than_200_values_is_422(client, seeded):
+    resp = _get(client, [f"ZZV{i:03d}" for i in range(201)])
+    assert resp.status_code == 422, resp.text
+    assert "at most 200 values" in resp.text
+
+
+def test_get_exactly_200_values_is_accepted(client, seeded):
+    s = seeded
+    values = [s["bravo"].order_number] + [f"ZZV{i:03d}" for i in range(199)]
+    assert _numbers(_get_list(client, values)) == _n(s, "bravo")
+
+
+def test_get_a_value_over_100_characters_is_422(client, seeded):
+    resp = _get(client, ["DO1", "X" * 101])
+    assert resp.status_code == 422, resp.text
+    assert "100" in resp.text, resp.text
+
+
+def test_get_a_value_of_exactly_100_characters_is_accepted(client, seeded):
+    s = seeded
+    assert _numbers(_get_list(client, [s["alpha"].order_number, "Z" * 100])) == _n(s, "alpha")
