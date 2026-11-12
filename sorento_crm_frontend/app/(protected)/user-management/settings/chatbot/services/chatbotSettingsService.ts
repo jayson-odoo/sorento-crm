@@ -39,6 +39,10 @@ export interface ChatbotSettings {
   chatbot_direct_ingress_mode: ChatbotDirectIngressMode;
   /** respond.io contact ids, one per line, for the `contacts` mode. */
   chatbot_direct_ingress_contacts: string | null;
+  /** N8N-RETIRE-A: who sends the bot's replies, n8n or the CRM. */
+  chatbot_reply_sender_mode: ChatbotReplySenderMode;
+  /** respond.io contact ids, one per line, for the `contacts` mode. */
+  chatbot_reply_sender_contacts: string | null;
   /** CLOSED-LISTS-INDEX-MODE: full lists in the prompt, or per-turn matches. */
   chatbot_closed_lists_mode: ChatbotClosedListsMode;
   /** CHAT-COMPOSER: the stored reply composer switch (an env var can override it). */
@@ -50,6 +54,10 @@ export interface ChatbotSettings {
 export type ChatbotDirectIngressMode = 'off' | 'contacts' | 'all';
 
 const DIRECT_INGRESS_MODES: readonly ChatbotDirectIngressMode[] = ['off', 'contacts', 'all'];
+
+export type ChatbotReplySenderMode = 'n8n' | 'contacts' | 'all';
+
+const REPLY_SENDER_MODES: readonly ChatbotReplySenderMode[] = ['n8n', 'contacts', 'all'];
 
 export type ChatbotClosedListsMode = 'block' | 'index';
 
@@ -77,6 +85,8 @@ const FALLBACKS: ChatbotSettings = {
   chatbot_unsupported_domains: [],
   chatbot_direct_ingress_mode: 'off',
   chatbot_direct_ingress_contacts: null,
+  chatbot_reply_sender_mode: 'n8n',
+  chatbot_reply_sender_contacts: null,
   chatbot_closed_lists_mode: 'block',
   chatbot_composer_enabled: false,
   chatbot_parser_max_output_tokens: 8192,
@@ -98,6 +108,15 @@ function pickChatbotSettings(row: Record<string, unknown> | null | undefined): C
     chatbot_direct_ingress_contacts:
       typeof row?.chatbot_direct_ingress_contacts === 'string'
         ? row.chatbot_direct_ingress_contacts
+        : null,
+    chatbot_reply_sender_mode: REPLY_SENDER_MODES.includes(
+      row?.chatbot_reply_sender_mode as ChatbotReplySenderMode,
+    )
+      ? (row?.chatbot_reply_sender_mode as ChatbotReplySenderMode)
+      : FALLBACKS.chatbot_reply_sender_mode,
+    chatbot_reply_sender_contacts:
+      typeof row?.chatbot_reply_sender_contacts === 'string'
+        ? row.chatbot_reply_sender_contacts
         : null,
     chatbot_closed_lists_mode: CLOSED_LISTS_MODES.includes(
       row?.chatbot_closed_lists_mode as ChatbotClosedListsMode,

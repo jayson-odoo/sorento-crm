@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatbotTurnResponse(BaseModel):
@@ -38,6 +38,13 @@ class ChatbotTurnResponse(BaseModel):
     retry_requested_at: datetime | None = None
     # The stage records the timeline renders. `[]` when the engine wrote none.
     trace: list[dict[str, Any]] = []
+
+    @field_validator("trace", mode="before")
+    @classmethod
+    def _trace_none_is_empty(cls, value: Any) -> Any:
+        # The column is nullable: a turn that failed before the engine wrote a record has NULL.
+        return [] if value is None else value
+
     # The answer the turn returned: `{ctx, item, actions}` today, `{reply, actions}` from
     # S3. Null on a turn that failed or is still running.
     response: dict[str, Any] | None = None

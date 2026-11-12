@@ -41,6 +41,8 @@ const OFF_TIMELINE_STAGE_LABELS: Record<string, string> = {
   // gave up waiting. "Failed at Handover" is what an operator can act on; "delegated"
   // would read as a state it is still in.
   delegated: 'Handover',
+  // The CRM sender could not tell whether a part reached the customer.
+  send_unconfirmed: 'Not confirmed',
 };
 
 export function stageLabel(stage: string | null | undefined): string {
@@ -99,6 +101,7 @@ export interface TurnHeadline {
  */
 export function turnHeadline(turn: ChatbotTurn): TurnHeadline {
   if (turn.status === 'failed') {
+    if (turn.stage === 'send_unconfirmed') return { word: 'Not confirmed', tone: 'failed' };
     return { word: `Failed at ${stageLabel(turn.stage ?? 'received')}`, tone: 'failed' };
   }
   if (turn.status === 'queued' || turn.status === 'processing') {
