@@ -64,9 +64,12 @@ class FakeClient:
     other call succeeds with a message id.
     """
 
-    def __init__(self, script: dict | None = None):
+    def __init__(self, script: dict | None = None, *, lookup=None, message_id=None):
         self.calls: list[tuple] = []
+        self.lookups: list[tuple] = []
         self.script = script or {}
+        self.lookup = lookup if lookup is not None else []
+        self.message_id = message_id
 
     def _do(self, name, *args, **kwargs):
         n = len(self.calls)
@@ -74,7 +77,13 @@ class FakeClient:
         exc = self.script.get(n)
         if exc is not None:
             raise exc
-        return {"messageId": n + 1}
+        return {"messageId": self.message_id if self.message_id is not None else n + 1}
+
+    def list_messages(self, identifier, limit=50, cursor=None):
+        self.lookups.append((identifier, limit))
+        if isinstance(self.lookup, Exception):
+            raise self.lookup
+        return {"items": list(self.lookup), "pagination": {}}
 
     def send_message(self, *a, **k):
         return self._do("send_message", *a, **k)
