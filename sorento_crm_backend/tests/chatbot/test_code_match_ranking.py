@@ -17,6 +17,7 @@ from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
 from tests.chatbot._avail_mode_console import Stock
 from tests.chatbot._r9_engine_console import answer, product, reply, stock
+from tests.chatbot._turn_helpers import entity
 from tests.chatbot.test_code_match_dealer_offers import TICK, Console, _console, _option_codes
 from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
 
@@ -146,19 +147,48 @@ def test_ac19_a_digits_first_token_reaches_its_catalogue_code(session_factory, m
     assert "Couldn't find:" not in staff, staff
 
 
-def test_ac19_a_letters_only_token_reaches_its_catalogue_code(session_factory, monkeypatch, stub_access):  # noqa: F811
-    code = "ABCDE"  # typed ABCDF: trigram 0.500
-    c = _console(session_factory, monkeypatch, stub_access, [code], **_facts(code))
-    text = c.say("ABCDF x 2", stock(product("ABCDF", 2)))
-    assert code in text, text
-    assert REFER_TO_SALESMAN not in text, text
-    assert _option_codes(c) == [code], c.stored_question
-
-
-def test_ac19_a_letters_only_token_reaches_its_catalogue_code_for_staff(session_factory, monkeypatch, stub_access):  # noqa: F811
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac19_a_letters_only_product_token_is_offered_its_catalogue_code_never_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """Owner Q1 = (b), 13 Nov: a letters-only word the parser hands as a PRODUCT that looks like a mistyped code gets
+    a "Did you mean" offer. ABCDF against ABCDE: trigram 0.500."""
     code = "ABCDE"
-    c = _console(session_factory, monkeypatch, stub_access, [code])
-    _as_staff(c)
-    staff = c.say("ABCDF x 2", stock(product("ABCDF", 2)))
-    assert code in staff and "Did you mean" in staff, staff
-    assert _option_codes(c) == [code], c.stored_question
+    c = _console(session_factory, monkeypatch, stub_access, [code], **_facts(code))
+    if who == "staff":
+        _as_staff(c)
+    text = c.say("ABCDF x 2", stock(product("ABCDF", 2)))
+    if who == "dealer":
+        assert f"Couldn't find ABCDF. Did you mean {code}?" in text, text
+    else:
+        assert 'Couldn\'t find "ABCDF" (product). Did you mean' in text and code in text, text
+    assert TICK not in text and "Got stock" not in text and "How many units of" not in text and "Stock summary" not in text, text
+    assert REFER_TO_SALESMAN not in text or who == "staff", text
+    if who == "dealer":
+        assert _option_codes(c) == [code], c.stored_question
+        assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == f"{code} x 2: {TICK} Got stock."
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac19g_ordinary_words_the_parser_types_as_a_category_are_not_offered_a_code(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """The 28 Sep digit rule stays for ordinary words: "basin" typed as a category is not a mistyped code, and a word
+    that exactly equals a code but is typed as a category ("sorento") is not read as that code either."""
+    codes = ["BASINO", "SORENTO"]
+    c = _console(session_factory, monkeypatch, stub_access, codes, **_facts(*codes))
+    if who == "staff":
+        _as_staff(c)
+    tail = REFER_TO_SALESMAN if who == "dealer" else "Would you like me to escalate to warehouse team?"
+    sep = "\n\n" if who == "dealer" else " "
+    for word in ("basin", "sorento"):
+        c.state = None
+        text = c.say(f"{word} stock", stock(entity(word, hint="category")))
+        # Today's reply, measured before the Q1 change: the word is a product type nothing holds.
+        assert text == f"Here's what you want: {word}\n\nCouldn't find: {word} (product type).{sep}{tail}", (word, text)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac19h_a_letters_only_product_token_with_no_code_in_range_keeps_todays_miss(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, ["ABCDE"], **_facts("ABCDE"))
+    if who == "staff":
+        _as_staff(c)
+    text = c.say("QQXZW x 2", stock(product("QQXZW", 2)))
+    assert "Couldn't find" in text and "QQXZW" in text, text
+    assert "Did you mean" not in text, text
