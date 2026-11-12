@@ -32,6 +32,11 @@ def test_r7_a_notice_status_move_reads_in_words():
     assert got == "Status: Approved → Done"
 
 
+def test_r7_an_approval_only_move_gets_no_code_summary():
+    got = _derive_description(_row("order_change_notice", {"approval_status": None}, {"approval_status": "pending"}))
+    assert got is None  # the trail's own field line says "Approval status: (empty) -> pending"
+
+
 def test_r7_a_held_notice_move_reads_by_its_name():
     assert _derive_description(_row("order_change_notice", description="Action applied (ocn.finalize)")) == (
         "Mark done applied"
@@ -59,4 +64,4 @@ def test_r7_the_history_route_words_a_real_done(ocn, sla):
     assert res.status_code == 200, res.text
     said = [r["description"] for r in res.json()["data"] if r["description"]]
     assert "Status: Approved → Done" in said
-    assert not any("processed_by_cs" in s or "(ocn." in s for s in said)
+    assert not any("processed_by_cs" in s or "(ocn." in s or "approval_status" in s for s in said)

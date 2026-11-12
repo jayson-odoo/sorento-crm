@@ -257,6 +257,10 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
         frm, to = old.get("status"), new.get("status")
         said = words[0]
         return f"Status: {said.get(frm, frm) if frm else '∅'} → {said.get(to, to)}"
+    if words:
+        # No summary for any other move: the field lines already say it in words
+        # ("Approval status: (empty) -> pending"), never "approval_status: ∅ -> pending".
+        return None
     for key in ("status", "approval_status", "order_status"):
         if key in new and new.get(key) != old.get(key):
             frm = old.get(key)

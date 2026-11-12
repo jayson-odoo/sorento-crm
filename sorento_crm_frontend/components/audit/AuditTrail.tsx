@@ -27,9 +27,10 @@ const STATUS_SUMMARY_KEYS = ['status', 'approval_status', 'order_status'];
 
 function summaryCovers(change: AuditFieldChange, entry: AuditLogEntry, summary: string): boolean {
   // The status-engine summary names the labels: "Status: Draft → Submitted".
+  if (change.key === 'status_id') return /^Status(:| changed to)/.test(summary);
   // So does a record whose status is a code the backend words for it (the order change notice:
   // "Status: Approved → Done"), so the stored code never shows under it.
-  if (change.key === 'status_id' || change.key === 'status') return /^Status(:| changed to)/.test(summary);
+  if (change.key === 'status' && /^Status: /.test(summary)) return true;
   if (!STATUS_SUMMARY_KEYS.includes(change.key)) return false;
   const to = entry.new_values?.[change.key];
   // The backend prints a cleared value as "None".
