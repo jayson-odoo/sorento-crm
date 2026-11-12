@@ -44,6 +44,8 @@ CREATE = "procurement.order_change_notices.create"
 EDIT = "procurement.order_change_notices.edit"
 DELETE = "procurement.order_change_notices.delete"
 APPROVE = "procurement.order_change_notices.approve"
+#: Customer service's Done, apart from `.edit` (security review M3: the PR's `process` grants it).
+PROCESS = "procurement.order_change_notices.process"
 REPORT = "procurement.order_change_notices.report"
 
 DRAFT = "draft"
@@ -99,20 +101,27 @@ class Actor:
     can_create: bool = False
     can_edit: bool = False
     can_approve: bool = False
+    can_process: bool = False
     can_delete: bool = False
     #: `.view_own` without the view-all grants: the notices they raised or are named on.
     own_only: bool = False
 
 
+#: The grants that see every notice: viewing all, and the people who act on others' notices
+#: (an editor, an approver, customer service). Ownership never stands in for these.
+VIEW_ALL_SLUGS = frozenset({VIEW, EDIT, APPROVE, PROCESS})
+
+
 def actor_from_slugs(user_id: Optional[str], slugs: Iterable[str]) -> Actor:
     s = set(slugs)
-    can_view_all = bool(s & {VIEW, EDIT, APPROVE})
+    can_view_all = bool(s & VIEW_ALL_SLUGS)
     return Actor(
         user_id=str(user_id) if user_id else None,
         can_view_all=can_view_all,
         can_create=CREATE in s,
         can_edit=EDIT in s,
         can_approve=APPROVE in s,
+        can_process=PROCESS in s,
         can_delete=DELETE in s,
         own_only=VIEW_OWN in s and not can_view_all,
     )
@@ -285,11 +294,29 @@ def can_view(actor: Actor) -> bool:
 
 
 def assert_can_view(row: OrderChangeNotice, actor: Actor) -> None:
-    if actor.can_view_all or is_mine(row, actor):
+    """Who may read this notice. A grant is always needed: `.view` (or a grant that acts on
+    others' notices) sees every notice; `.view_own` sees the ones they raised or are named on,
+    and another's reads as not found. Being the raiser or named never stands in for a grant
+    (security review M2)."""
+    if actor.can_view_all:
         return
     if actor.own_only:
+        if is_mine(row, actor):
+            return
         raise handle_not_found("Order change notice", str(row.id))
     raise _forbidden("You do not have access to this order change notice.")
+
+
+def reader_for(db: Session, ocn_id: Any, user_id: Optional[str]) -> OrderChangeNotice:
+    """The ONE reader check for every surface of a notice (detail, Conversation, SLA tab,
+    History): load it in the caller's company, build their actor, apply `assert_can_view`.
+    404 when it is not in their company (or not theirs under view_own), 403 without a grant."""
+    actor = actor_for_user(db, user_id)
+    if not can_view(actor):
+        raise _forbidden("You do not have access to order change notices.")
+    row = get_for(db, ocn_id)
+    assert_can_view(row, actor)
+    return row
 
 
 def _visible(query, actor: Actor):
@@ -419,7 +446,8 @@ def create_draft(
 
 
 def _assert_may_edit(row: OrderChangeNotice, actor: Actor, verb: str) -> None:
-    if not (_is_raiser(row, actor) or actor.can_edit):
+    """The raiser edits their own notice while they hold `.create`; `.edit` edits any."""
+    if not ((_is_raiser(row, actor) and actor.can_create) or actor.can_edit):
         raise _forbidden(f"Only the raiser or an order change notice editor can {verb} this notice.")
 
 
@@ -446,13 +474,25 @@ def _require_project_setting(db: Session) -> bool:
     return bool(getattr(setting, "order_change_notice_require_project", False)) if setting else False
 
 
+def carries_change_rows(row: OrderChangeNotice) -> bool:
+    """An amendment-born notice whose change table has rows: the table is its line items."""
+    return row.source == SOURCE_AMENDMENT and bool((row.change_table_json or {}).get("rows"))
+
+
 def validate_submit(db: Session, row: OrderChangeNotice) -> None:
+    """The one Submit rule set (the form mirrors it): the type of change; the customer and the
+    customer PO, and at least one line, unless the notice carries an amendment's change rows;
+    the project when the setting asks for it."""
     if row.change_type_id is None or _active_type(db, row.change_type_id) is None:
-        raise _invalid("change_type_id", "Choose the change type before you submit.")
-    # An amendment-born notice carries its change table instead of typed lines.
-    from_amendment = row.source == SOURCE_AMENDMENT and bool((row.change_table_json or {}).get("rows"))
-    if not row.lines and not from_amendment:
-        raise _invalid("lines", "Add at least one product line before you submit.")
+        raise _invalid("change_type_id", "Choose the type of change.")
+    from_amendment = carries_change_rows(row)
+    if not from_amendment:
+        if not (row.customer_name or "").strip() and row.customer_id is None:
+            raise _invalid("customer_name", "Enter the customer name.")
+        if not (row.customer_po_no or "").strip():
+            raise _invalid("customer_po_no", "Enter the customer PO no.")
+        if not row.lines:
+            raise _invalid("lines", "Add at least one line item.")
     if row.project_id is None and _require_project_setting(db):
         raise _invalid("project_id", "Choose the project before you submit.")
 
@@ -474,6 +514,7 @@ def submit(db: Session, row: OrderChangeNotice, *, actor: Actor) -> str:
         row.approved_at = None
         row.approved_by = None
         row.approver_id = None
+        row.rejected_by_id = None
     db.flush()
     return "submit"
 
@@ -542,7 +583,7 @@ def mark_done(
     db: Session, row: OrderChangeNotice, *, actor: Actor, cs_comment: Optional[str] = None
 ) -> Optional[str]:
     """Customer service: an approved notice is Done, with an optional comment."""
-    if not actor.can_edit:
+    if not actor.can_process:
         raise _forbidden("You cannot mark order change notices done.")
     if _status(row) == DONE:
         return None  # already done: nothing moves, nothing is emitted
@@ -579,6 +620,14 @@ def revise(db: Session, row: OrderChangeNotice, *, actor: Actor, reason: Optiona
     text = _clean(reason)
     if not text:
         raise _invalid("reason", "Say what changed, and why.")
+    _back_to_draft(db, row, text)
+    return None
+
+
+def _back_to_draft(db: Session, row: OrderChangeNotice, reason: str) -> None:
+    """Revise's writes, shared with an amendment that picks an approved notice: back to draft at
+    the next revision, the approval stamp cleared, the open stages voided (audited by the row
+    listener, like every write)."""
     row.status = DRAFT
     row.revision_no = (row.revision_no or 0) + 1
     row.approval_status = None
@@ -588,9 +637,8 @@ def revise(db: Session, row: OrderChangeNotice, *, actor: Actor, reason: Optiona
     row.approval_comments = None
     row.rejected_by_id = None
     row.requested_approval_by_user_id = None
-    _void_sla(db, row, f"Revised: {text}", void_reason="withdrawn")
+    _void_sla(db, row, f"Revised: {reason}", void_reason="withdrawn")
     db.flush()
-    return None
 
 
 # ------------------------------------------------------------------ SLA and notices
