@@ -1293,6 +1293,15 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         nullable=True,
     )
 
+    # QUOTE-DUPLICATE-PARTY: the document this one was duplicated from for another party (the
+    # header's "Copied from" link). Not ``source_issue_id``, which means "the quotation made from
+    # this proposal" and feeds the below-proposal approval check.
+    copied_from_document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1301,6 +1310,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_quotation_documents_project", "project_id"),
+        Index("ix_quotation_documents_copied_from", "copied_from_document_id"),
         Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
         CheckConstraint("kind IN ('proposal', 'quotation')", name="ck_quotation_documents_kind"),
@@ -1390,7 +1400,8 @@ class QuotationDocumentSnapshot(Base):
 
     The form's whole state, in the shape the form holds it, so Restore can load it straight back.
     Immutable once written (``PageVersion``'s rule). ``draft_id`` carries an entry made before its
-    proposal had a number; the first Save moves it onto the new document.
+    proposal had a number; the first Save moves it onto the new document. ``event`` (QUOTE-DUPLICATE-
+    PARTY) is a line with a note and no restorable state (``doc`` = ``{}``).
 
     Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only
     through its document (or its owner's private draft), and every read goes through that first.
@@ -1401,7 +1412,7 @@ class QuotationDocumentSnapshot(Base):
     __table_args__ = (
         Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
         CheckConstraint(
-            "kind IN ('saved', 'before_restore', 'conflict')",
+            "kind IN ('saved', 'before_restore', 'conflict', 'event')",
             name="ck_quotation_document_snapshots_kind",
         ),
         {"schema": "projects"},
