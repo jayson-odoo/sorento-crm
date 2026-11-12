@@ -67,6 +67,29 @@ export function ProjectImportListClient() {
   });
 
   const grid = { ...pagination, sorting, searchQuery: debouncedValue };
+  // The list keeps its whole state in the address bar as it changes (page, sort, search and
+  // filters), so a reload or Back lands on the same list: the same query string a row click
+  // carries to the run, written the way the contacts list does. Not on mount: the URL is the
+  // input then, `useListStateFromUrl` has just read it.
+  const listSearch = buildDetailSearch(grid, {
+    status: status.length ? joinMulti(status) : undefined,
+    uploaded_by: uploadedBy.length ? joinMulti(uploadedBy) : undefined,
+  });
+  const writtenSearch = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (writtenSearch.current === null) {
+      writtenSearch.current = listSearch;
+      return;
+    }
+    if (writtenSearch.current === listSearch) return;
+    writtenSearch.current = listSearch;
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${window.location.pathname}${listSearch ? `?${listSearch}` : ''}`,
+    );
+  }, [listSearch]);
+
   const rowHref = (row: ProjectImportRunRow) => {
     const query = buildDetailSearch(grid, {
       status: status.length ? joinMulti(status) : undefined,
