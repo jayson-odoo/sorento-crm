@@ -163,6 +163,21 @@ def test_switch_n8n_posts_to_n8n_and_never_calls_crm_sender(db, factory, workspa
     post.assert_called_once()
     assert post.call_args.args[0] == SENDER_URL
     crm.assert_not_called()
+    # UAC 1: same body, same header, one log row, as on main.
+    assert set(post.call_args.kwargs["json"]) == {
+        "turn_id", "contact_id", "is_test", "duplicate", "delegate",
+        "branch_kind", "actions", "reply", "ctx",
+    }
+    assert post.call_args.kwargs["json"]["turn_id"] == turn_id
+    assert post.call_args.kwargs["headers"][direct_ingress.SENDER_KEY_HEADER] == "ZZT-key"
+    rows = (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_id == turn_id, IntegrationLog.integration_channel == "chatbot_sender")
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].endpoint == SENDER_URL and rows[0].status == "success" and rows[0].status_code == 200
+    assert "crm" not in (rows[0].request_payload or "").split('"sender"')[-1][:8]
 
 
 def test_switch_covering_contact_uses_crm_sender_and_never_posts(db, factory, workspace, monkeypatch):
@@ -323,8 +338,10 @@ def api(db, monkeypatch):
     )
     monkeypatch.setattr(UserPermissionService, "get_user_permission_slugs", lambda self, uid: set(allow))
     monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    client = TestClient(app, raise_server_exceptions=False)
+    client.actor_id = actor["id"]
     try:
-        yield TestClient(app, raise_server_exceptions=False)
+        yield client
     finally:
         app.dependency_overrides.clear()
 
@@ -597,7 +614,7 @@ def _sent_event(message_id=123):
 def test_webhook_picks_the_turn_id_from_the_redis_key(db, fake_redis):
     from app.api.v1.public.respond_webhook import map_webhook_message
 
-    turn_id = str(uuid.uuid4())
+    turn_id = _turn(db)  # a real turn of the same contact
     fake_redis.store["chatbot:sent-msg:123"] = turn_id.encode()
     row = map_webhook_message(_sent_event(), db)
     assert row is not None and row.type == "outgoing"
@@ -610,3 +627,329 @@ def test_webhook_without_a_redis_key_leaves_the_turn_id_empty(db, fake_redis):
     row = map_webhook_message(_sent_event(777), db)
     assert row is not None
     assert row.chatbot_turn_id is None
+
+
+# --------------------------------------------------------------------------- #
+# Round 4
+# --------------------------------------------------------------------------- #
+
+
+def _n8n_log(db, turn_id):
+    db.add(
+        IntegrationLog(
+            integration_channel="chatbot_sender",
+            business_table="chatbot.turns",
+            business_id=turn_id,
+            direction="outbound",
+            endpoint=SENDER_URL,
+            http_method="POST",
+            request_payload=json.dumps({"turn_id": turn_id, "contact_id": CONTACT, "actions": []}),
+            status="failed",
+            status_code=500,
+            error_message="The chatbot sender refused the reply (HTTP 500).",
+        )
+    )
+    db.commit()
+
+
+def _held_by_staff(monkeypatch, fake=None):
+    from app.services.chatbot import direct_ingress
+
+    record = {"id": CONTACT, "custom_fields": [{"name": "is_human_intervened", "value": True}]}
+    monkeypatch.setattr(direct_ingress, "_lookup_contact", lambda db, c: record)
+    if fake is not None:
+        fake.contact = record
+
+
+# T3 ------------------------------------------------------------------------ #
+
+
+def test_t3_failed_turn_with_an_n8n_sender_row_stays_on_n8n_retry(
+    api, db, workspace, fake_respond, session_patch, monkeypatch
+):
+    from app.services.chatbot import dispatch
+
+    _settings(db, chatbot_reply_sender_mode="all")  # the switch moved after the turn went via n8n
+    reinject = MagicMock()
+    monkeypatch.setattr(dispatch, "reinject_envelope", reinject)
+    monkeypatch.setattr("app.api.v1.system.chatbot.reinject_envelope", reinject)
+    turn_id = _turn(db, actions=TWO_PARTS, status="failed", stage="send_unconfirmed", error="x")
+    _n8n_log(db, turn_id)
+
+    resp = api.post(f"{TURNS_BASE}/{turn_id}/retry")
+    assert resp.status_code == 200, resp.text
+    reinject.assert_called_once()
+    assert fake_respond["client"].calls == []
+
+
+def test_t3_turn_with_no_sender_rows_follows_the_switch(
+    api, db, workspace, fake_respond, session_patch, monkeypatch
+):
+    from app.services.chatbot import dispatch
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    reinject = MagicMock()
+    monkeypatch.setattr(dispatch, "reinject_envelope", reinject)
+    monkeypatch.setattr("app.api.v1.system.chatbot.reinject_envelope", reinject)
+    turn_id = _turn(db, actions=TWO_PARTS, status="failed", stage="sent", error="x")
+
+    resp = api.post(f"{TURNS_BASE}/{turn_id}/retry")
+    assert resp.status_code == 200, resp.text
+    assert fake_respond["client"].names() == ["send_message", "send_message"]
+    reinject.assert_not_called()
+
+
+# T5 ------------------------------------------------------------------------ #
+
+
+def test_t5_crm_try_again_leaves_the_trace_note_and_the_audit_row(
+    api, db, workspace, fake_respond, session_patch
+):
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id = _failed_crm_turn(db)
+    assert api.post(f"{TURNS_BASE}/{turn_id}/retry").status_code == 200
+
+    db.expire_all()
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+    notes = [t for t in (row.trace or []) if t.get("summary") == "Retry requested by an operator."]
+    assert len(notes) == 1
+    assert notes[0]["facts"]["requested_by"] == api.actor_id
+
+    audit = (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_id == turn_id, IntegrationLog.integration_channel == "n8n")
+        .all()
+    )
+    assert len(audit) == 1
+    assert audit[0].endpoint.endswith(f"/turns/{turn_id}/retry")
+    assert json.loads(audit[0].request_payload)["requested_by"] == api.actor_id
+
+
+# T8 ------------------------------------------------------------------------ #
+
+
+def _assert_refused_without_sending(api, db, turn_id, fake):
+    resp = api.post(f"{TURNS_BASE}/{turn_id}/retry")
+    assert resp.status_code == 409, resp.text
+    assert resp.text and "Traceback" not in resp.text
+    assert fake.calls == [], "nothing may be sent"
+    db.expire_all()
+    assert db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one().status == "failed"
+
+
+def test_t8a_try_again_is_refused_while_staff_hold_the_contact(
+    api, db, workspace, fake_respond, session_patch, monkeypatch
+):
+    _settings(db, chatbot_reply_sender_mode="all")
+    _held_by_staff(monkeypatch, fake_respond["client"])
+    turn_id = _failed_crm_turn(db)
+    _assert_refused_without_sending(api, db, turn_id, fake_respond["client"])
+
+
+def test_t8b_try_again_is_refused_after_24_hours(api, db, workspace, fake_respond, session_patch):
+    _settings(db, chatbot_reply_sender_mode="all")
+    turn_id = _failed_crm_turn(db)
+    db.execute(
+        text("UPDATE chatbot.turns SET finished_at = now() - interval '25 hours' WHERE id = :i"),
+        {"i": turn_id},
+    )
+    db.commit()
+    _assert_refused_without_sending(api, db, turn_id, fake_respond["client"])
+
+
+def test_t8c_try_again_is_refused_off_the_default_workspace(
+    api, db, workspace, fake_respond, session_patch, monkeypatch
+):
+    from app.services.chatbot import direct_ingress
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    monkeypatch.setattr(direct_ingress, "_on_default_workspace", lambda db, c: False)
+    turn_id = _failed_crm_turn(db)
+    _assert_refused_without_sending(api, db, turn_id, fake_respond["client"])
+
+
+# T9 ------------------------------------------------------------------------ #
+
+
+def test_t9_webhook_ignores_the_redis_turn_of_a_different_contact(db, fake_redis):
+    from app.api.v1.public.respond_webhook import map_webhook_message
+
+    other = ChatbotTurn(contact_respond_id="900000999", envelope={}, status="done")
+    db.add(other)
+    db.commit()
+    fake_redis.store["chatbot:sent-msg:123"] = str(other.id).encode()
+    row = map_webhook_message(_sent_event(), db)  # the event is for CONTACT
+    assert row is not None
+    assert row.chatbot_turn_id is None
+
+
+# T10 ----------------------------------------------------------------------- #
+
+
+def test_t10_success_row_keeps_only_the_message_id_and_status(db, factory, fake_redis):
+    from app.services.chatbot import crm_sender
+
+    turn_id = _turn(db)
+    contact_record = {"id": 9, "phone": "+60123456789", "firstName": "Zedekiah", "email": "z@zzt.test"}
+    fake = FakeClient(responses={"update_contact": contact_record, "send_message": {
+        "messageId": 123, "contact": contact_record}})
+    crm_sender.send(
+        factory,
+        turn_id=turn_id,
+        contact_id=CONTACT,
+        actions=[
+            {"kind": "send_message", "text": "hello"},
+            {"kind": "update_contact_fields", "fields": {"a": "1"}},
+        ],
+        client=fake,
+    )
+    rows = (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_id == turn_id, IntegrationLog.integration_channel == "chatbot_sender")
+        .all()
+    )
+    assert len(rows) == 2
+    for row in rows:
+        blob = row.response_payload or ""
+        assert "60123456789" not in blob and "Zedekiah" not in blob and "zzt.test" not in blob
+        if blob:
+            assert set(json.loads(blob)) <= {"messageId", "status_code"}
+    message_row = next(r for r in rows if "123" in (r.response_payload or ""))
+    assert json.loads(message_row.response_payload) == {"messageId": 123, "status_code": 200}
+
+
+# T11 ----------------------------------------------------------------------- #
+
+
+def test_t11_redis_set_failing_still_links_the_chat_row(db, factory, monkeypatch):
+    from app.services.chatbot import crm_sender
+
+    class SetFails:
+        def set(self, *a, **k):
+            raise ConnectionError("redis down")
+
+        setex = set
+
+        def get(self, key):
+            return None
+
+    monkeypatch.setattr("app.services.queue_service.redis_conn", SetFails())
+    turn_id = _turn(db)
+    _seed_outgoing_chat_row(db)
+    crm_sender.send(
+        factory,
+        turn_id=turn_id,
+        contact_id=CONTACT,
+        actions=[{"kind": "send_message", "text": "hello"}],
+        client=FakeClient(message_id=123),
+    )
+    linked = db.execute(
+        text("SELECT chatbot_turn_id FROM chat_histories WHERE contact_id = :c AND message_id = '123'"),
+        {"c": CONTACT},
+    ).scalar()
+    assert linked == turn_id
+
+
+# T6 / T7: the drain on the CRM path ---------------------------------------- #
+
+
+def _claimed_row(db):
+    from datetime import datetime
+
+    from app.services.chatbot import inbox_queue
+
+    turn = ChatbotTurn(
+        contact_respond_id=CONTACT,
+        envelope={"message": {"messageId": "m-1", "message": {"type": "text", "text": "hi"}}, "contact": {}},
+        status="processing",
+        stage="received",
+        trace=inbox_queue.INBOX_MARKER,
+        started_at=datetime.utcnow(),
+    )
+    db.add(turn)
+    db.commit()
+    db.refresh(turn)
+    return str(turn.id), turn.started_at
+
+
+def _drain_one(db, factory, monkeypatch, run_turn):
+    from app.services.chatbot import direct_ingress, engine, inbox_queue
+
+    turn_id, claimed_at = _claimed_row(db)
+    monkeypatch.setattr(direct_ingress, "_lookup_contact", lambda d, c: {"id": c, "custom_fields": []})
+    monkeypatch.setattr(inbox_queue, "_routed_to_agent", lambda *a, **k: None)
+    monkeypatch.setattr(inbox_queue, "RESEND_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr(engine, "run_turn", run_turn)
+    inbox_queue._run_row(turn_id, claimed_at, CONTACT, factory)
+    db.expire_all()
+    return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+
+
+def _answer(actions):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        status="done", stage="replied", duplicate=False, actions=actions,
+        reply={"text": "x", "quick_replies": None}, branch_kind=None, ctx=None,
+    )
+
+
+def test_t6_a_failed_engine_turn_sends_the_failure_reply_through_the_crm_sender(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from app.services.chatbot import engine
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    _drain_one(
+        db, factory, monkeypatch,
+        lambda *a, **k: engine._failed_result("t", "understood", "boom", [], False),
+    )
+    sent = [c[1][1] for c in fake_respond["client"].calls if c[0] == "send_message"]
+    assert sent == [CHATBOT_REPLY_TURN_FAILED]
+
+
+def test_t6_an_engine_that_raises_still_sends_the_failure_reply(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+
+    _settings(db, chatbot_reply_sender_mode="all")
+
+    def boom(*a, **k):
+        raise RuntimeError("engine blew up")
+
+    _drain_one(db, factory, monkeypatch, boom)
+    sent = [c[1][1] for c in fake_respond["client"].calls if c[0] == "send_message"]
+    assert sent == [CHATBOT_REPLY_TURN_FAILED]
+
+
+def test_t7_repeated_refusals_end_failed_at_sent_with_the_refusal_reason(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from app.services.chatbot import inbox_queue
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    fake_respond["client"] = FakeClient(always=_status_error(400))
+    row = _drain_one(
+        db, factory, monkeypatch, lambda *a, **k: _answer([{"kind": "send_message", "text": "hi"}])
+    )
+    assert len(fake_respond["client"].calls) == inbox_queue.MAX_SEND_ATTEMPTS
+    assert row.status == "failed"
+    assert row.stage == "sent"
+    assert "refused" in (row.error or "").lower()
+
+
+def test_t7_unknown_outcome_with_a_failed_lookup_still_ends_at_send_unconfirmed(
+    db, factory, workspace, fake_respond, monkeypatch
+):
+    from app.services.chatbot import inbox_queue
+
+    _settings(db, chatbot_reply_sender_mode="all")
+    fake_respond["client"] = FakeClient(always=httpx.ReadTimeout("slow"), lookup=httpx.ConnectError("down"))
+    row = _drain_one(
+        db, factory, monkeypatch, lambda *a, **k: _answer([{"kind": "send_message", "text": "hi"}])
+    )
+    assert len(fake_respond["client"].calls) == 1
+    assert row.status == "failed"
+    assert row.stage == inbox_queue.SEND_UNCONFIRMED_STAGE

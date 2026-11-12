@@ -64,19 +64,29 @@ class FakeClient:
     other call succeeds with a message id.
     """
 
-    def __init__(self, script: dict | None = None, *, lookup=None, message_id=None):
+    def __init__(
+        self, script: dict | None = None, *, lookup=None, message_id=None, always=None, responses=None
+    ):
         self.calls: list[tuple] = []
         self.lookups: list[tuple] = []
         self.script = script or {}
         self.lookup = lookup if lookup is not None else []
         self.message_id = message_id
+        self.always = always  # raised on EVERY send call when set
+        self.responses = responses or {}  # method name -> response body
+        self.contact = {"id": CONTACT, "custom_fields": []}
+
+    def get_contact_by_identifier(self, identifier):
+        return self.contact
 
     def _do(self, name, *args, **kwargs):
         n = len(self.calls)
         self.calls.append((name, args, kwargs))
-        exc = self.script.get(n)
+        exc = self.always or self.script.get(n)
         if exc is not None:
             raise exc
+        if name in self.responses:
+            return self.responses[name]
         return {"messageId": self.message_id if self.message_id is not None else n + 1}
 
     def list_messages(self, identifier, limit=50, cursor=None):
@@ -569,6 +579,17 @@ def _outgoing_attachment(url, *, age_seconds=0):
     }
 
 
+def _outgoing_quick_reply(title, replies, *, age_seconds=0):
+    """The item as what `send_quick_reply` posted: type quick_reply, the words in `title`, no `text`."""
+    ms = int((time.time() - age_seconds) * 1000)
+    return {
+        "messageId": ms * 1000,
+        "traffic": "outgoing",
+        "timestamp": ms,
+        "message": {"type": "quick_reply", "title": title, "replies": replies},
+    }
+
+
 _NEXT = {"kind": "assign_conversation", "respond_user_id": "9"}
 
 
@@ -590,7 +611,7 @@ def test_unknown_text_found_in_conversation_counts_as_sent(db, factory, turn_id,
 def test_unknown_quick_reply_found_in_conversation_counts_as_sent(db, factory, turn_id):
     from app.services.chatbot import direct_ingress
 
-    fake = FakeClient({0: httpx.ReadTimeout("slow")}, lookup=[_outgoing_text("Pick one")])
+    fake = FakeClient({0: httpx.ReadTimeout("slow")}, lookup=[_outgoing_quick_reply("Pick one", ["A", "B"])])
     actions = [{"kind": "send_message", "text": "Pick one", "quick_replies": "A,B"}, _NEXT]
     assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_OK
     assert fake.names() == ["send_quick_reply", "set_conversation_assignee"]
@@ -687,3 +708,115 @@ def test_unknown_on_comment_is_timeout_with_no_lookup(db, factory, turn_id):
     assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_TIMEOUT
     assert fake.names() == ["create_comment"]
     assert fake.lookups == []
+
+
+# --------------------------------------------------------------------------- #
+# Round 4 T1: an earlier unknown attempt is looked up BEFORE the step is sent again
+# --------------------------------------------------------------------------- #
+
+_ONE = [{"kind": "send_message", "text": "Hello customer"}]
+
+
+def _first_attempt_unknown(factory, turn_id, actions=None):
+    """Leave the step failed with an unknown outcome: it timed out and the lookup failed."""
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow")}, lookup=httpx.ConnectError("down"))
+    assert _run(factory, turn_id, actions or _ONE, fake) == direct_ingress.SEND_TIMEOUT
+    return fake
+
+
+def test_retry_after_unknown_finds_the_message_and_does_not_send_again(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    _first_attempt_unknown(factory, turn_id)
+    second = FakeClient(lookup=[_outgoing_text("Hello customer")])
+    assert _run(factory, turn_id, _ONE, second) == direct_ingress.SEND_OK
+    assert second.calls == [], "the part reached the customer; it must not go out twice"
+    assert len(second.lookups) == 1
+    latest = _logs(db, turn_id)[-1]
+    assert latest.status == "success" and _payload(latest).get("confirmed_by") == "lookup"
+
+
+def test_retry_after_unknown_not_found_sends_the_step(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    _first_attempt_unknown(factory, turn_id)
+    second = FakeClient(lookup=[_outgoing_text("something else")])
+    assert _run(factory, turn_id, _ONE, second) == direct_ingress.SEND_OK
+    assert len(second.lookups) == 1
+    assert second.names() == ["send_message"]
+
+
+def test_retry_after_a_plain_refusal_sends_without_a_lookup(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    refused = FakeClient({0: _status_error(400)})
+    assert _run(factory, turn_id, _ONE, refused) == direct_ingress.SEND_REFUSED
+    second = FakeClient()
+    assert _run(factory, turn_id, _ONE, second) == direct_ingress.SEND_OK
+    assert second.lookups == []
+    assert second.names() == ["send_message"]
+
+
+def test_retry_after_a_stamped_step_with_no_result_looks_up_first(db, factory, turn_id):
+    """A step stamped `processing` whose result was never logged (the process died mid-request)."""
+    from app.models.integration import IntegrationLog
+    from app.services.chatbot import direct_ingress
+
+    db.add(
+        IntegrationLog(
+            integration_channel="chatbot_sender",
+            business_table="chatbot.turns",
+            business_id=turn_id,
+            direction="outbound",
+            endpoint="respond.io:send_message",
+            http_method="POST",
+            request_payload=json.dumps({"sender": "crm", "step": "0.0", "kind": "send_message"}),
+            status="processing",
+        )
+    )
+    db.commit()
+    second = FakeClient(lookup=[_outgoing_text("Hello customer")])
+    assert _run(factory, turn_id, _ONE, second) == direct_ingress.SEND_OK
+    assert second.calls == []
+    assert len(second.lookups) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Round 4 T2: the quick-reply message is found by its title
+# --------------------------------------------------------------------------- #
+
+
+def test_timed_out_quick_reply_is_found_by_title_and_not_resent(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    item = _outgoing_quick_reply("Pick one", ["A", "B"])
+    assert "text" not in item["message"]
+    fake = FakeClient({0: _status_error(503)}, lookup=[item])
+    actions = [{"kind": "send_message", "text": "Pick one", "quick_replies": ["A", "B"]}]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_OK
+    assert fake.names() == ["send_quick_reply"]
+
+
+# --------------------------------------------------------------------------- #
+# Round 4 T4: a lost SUCCESS row stops the run
+# --------------------------------------------------------------------------- #
+
+
+def test_failure_to_write_a_success_row_returns_http_error_and_stops(db, factory, turn_id, monkeypatch):
+    from app.services.chatbot import direct_ingress
+    from app.services.integration_service import IntegrationLogService
+
+    original = IntegrationLogService.create_integration_log
+
+    def flaky(self, data, *a, **k):
+        if data.status == "success":
+            raise RuntimeError("log table unavailable")
+        return original(self, data, *a, **k)
+
+    monkeypatch.setattr(IntegrationLogService, "create_integration_log", flaky)
+    fake = FakeClient()
+    actions = [{"kind": "send_message", "text": "first"}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_HTTP_ERROR
+    assert fake.names() == ["send_message"], "no later step once a send cannot be recorded"
