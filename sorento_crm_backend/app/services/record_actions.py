@@ -520,6 +520,27 @@ register(
 )
 
 
+
+def _remove_user_passkey(db: Session, payload: dict):
+    from app.services.passkey_service import remove_passkey
+
+    return remove_passkey(db, _entity_id(payload))
+
+
+# PASSKEY-LOGIN AC-24 / AC-31: one removal for both the Passkeys card and the admin's
+# Sign-in card. `permission` is what removing SOMEONE ELSE'S passkey needs; your own needs
+# nothing extra (the park route checks ownership first, `pending_actions.create_pending_action`).
+register(
+    FormAction(
+        key="user_passkey.delete",
+        entity_types=("user_passkey",),
+        execute=_remove_user_passkey,
+        window=WINDOW_DESTRUCTIVE,
+        permission="user_management.users.edit",
+        label="Remove passkey",
+    )
+)
+
 # --------------------------------------------------------------------------------------
 # S6b - the sweep of what still confirmed in a dialog.
 #
