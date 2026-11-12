@@ -107,7 +107,13 @@ function appendListState<TData>(href: string, table: Table<TData>, row: Row<TDat
   const { path, search: ownSearch, hash } = splitHref(href);
   const params = listStateParams(table);
   if (ownSearch) {
-    for (const [key, value] of new URLSearchParams(ownSearch)) params.set(key, value);
+    const own = new URLSearchParams(ownSearch);
+    // The href's own keys win, every value of a repeated one in order (getAll: `query`
+    // repeats once per search chip), each key written once.
+    for (const key of new Set(own.keys())) {
+      params.delete(key);
+      for (const value of own.getAll(key)) params.append(key, value);
+    }
   }
   const restoreId = rowRestoreId(table, row, href);
   if (restoreId) params.set('from', restoreId);
