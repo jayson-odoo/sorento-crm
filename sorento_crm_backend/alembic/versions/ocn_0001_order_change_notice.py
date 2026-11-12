@@ -29,7 +29,7 @@ The table has no rows on the 12 Nov production copy, so nothing is backfilled.
 Plan: documentation/plans/procurement/PLAN-ocn-order-change-notice-12nov.md.
 
 Revision ID: ocn_0001_order_change_notice
-Revises: so_search_trgm_0001
+Revises: prr_0001_si_npa_project
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "ocn_0001_order_change_notice"
-down_revision = "so_search_trgm_0001"
+down_revision = "prr_0001_si_npa_project"
 branch_labels = None
 depends_on = None
 
