@@ -73,7 +73,6 @@ import {
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
-  type ProjectLookupItem,
   statusLabel,
   submitVerb,
 } from '../lib/portal-client';
@@ -98,6 +97,7 @@ import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
+import { PortalProjectCombobox } from './PortalProjectCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
@@ -117,10 +117,7 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
-import {
-  PROJECT_NAME_MAX_LENGTH,
-  projectDisplayName,
-} from '@/app/(protected)/project-sales/_shared/lib/projectName';
+import { PROJECT_NAME_MAX_LENGTH } from '@/app/(protected)/project-sales/_shared/lib/projectName';
 import { complaintStatusLabel } from '@/lib/complaint-status';
 import {
   InquiryApplicationsList,
@@ -3424,23 +3421,12 @@ function FieldControl({
       );
     case 'project-async':
       return (
-        <AsyncCombobox<ProjectLookupItem>
+        <PortalProjectCombobox
           id={field.name}
           value={stringValue}
           onChange={(v) => onChange(v)}
-          fetchOptions={(q) => client.lookupProjects(q)}
-          optionValue={(o) => o.id}
-          optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
-          // A registered project is picked, never typed: the column is a UUID FK, so
-          // free text would reach the server as an id and fail there instead of here.
-          allowFreeText={false}
           displayValue={displayValue}
-          // The company on every row (AC-F4a): a contact mapped to two of them cannot
-          // otherwise tell two similarly-named phases apart.
-          optionMeta={(o) => o.company_name ?? ''}
-          placeholder={
-            field.placeholder ?? 'Search your registered projects...'
-          }
+          placeholder={field.placeholder}
           disabled={disabled}
         />
       );

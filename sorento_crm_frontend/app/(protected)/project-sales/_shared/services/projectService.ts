@@ -36,7 +36,8 @@ import type {
   PriceFloorRule,
   PriceFloorRuleBody,
   ProjectDashboard,
-  ProjectSponsorship,
+  RelatedRecordsParams,
+  RelatedRecordsResponse,
   SponsorshipRollup,
   ProjectPurchaseOrder,
   ProjectPurchaseOrderBody,
@@ -1389,14 +1390,19 @@ export async function deletePurchaseOrderLine(poId: string, lineId: string): Pro
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to remove the line'));
 }
 
-export async function listProjectSponsorships(
+/** PROJECT-RELATED-RECORDS: the project's linked records, sorted, searched, filtered and
+ *  paged on the server. */
+export async function listProjectRelatedRecords(
   projectId: string,
-): Promise<ProjectSponsorship[]> {
-  const response = await apiFetch(`${BASE}/projects/${projectId}/sponsorships`);
+  params: RelatedRecordsParams,
+): Promise<RelatedRecordsResponse> {
+  const search = buildDataGridParams(params, { type: params.types, status: params.statuses });
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/related-records?${search.toString()}`,
+  );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load sponsorships'));
-  const body: ListEnvelope<ProjectSponsorship> = await response.json();
-  return body.data;
+    throw new Error(await extractApiError(response, 'Failed to load the related records'));
+  return response.json();
 }
 
 export async function getSponsorshipRollup(projectId: string): Promise<SponsorshipRollup> {

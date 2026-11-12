@@ -210,7 +210,8 @@ def list_related_records(
     """One UNION ALL of the visible types' linked rows, filtered, sorted and paged in SQL.
 
     `type_counts` ignores the type, status and search filters (the tab badge); a type the
-    viewer may not see is absent from the rows, `type_counts` and `types` alike.
+    viewer may not see is absent from the rows, `type_counts` and `types` alike. `statuses`
+    are the raw statuses of those rows (the Status filter's options), also unfiltered.
     """
     visible = visible_types(perms)
     labels = {rt.kind: rt.label for rt, _ in visible}
@@ -221,19 +222,27 @@ def list_related_records(
         "empty": True,
         "type_counts": {},
         "types": types_out,
+        "statuses": [],
     }
     if not visible:
         return empty
 
+    # One pass over every visible linked row: the per-type counts (the tab badge) and the
+    # statuses the Status filter offers, both with no filter applied.
     every = union_all(*[_linked(rt, me, access, project_id) for rt, access in visible]).subquery("related")
-    type_counts = {
-        kind: int(n)
-        for kind, n in db.execute(select(every.c.kind, func.count()).group_by(every.c.kind)).all()
-    }
+    type_counts: Dict[str, int] = {}
+    status_set = set()
+    for kind, status, n in db.execute(
+        select(every.c.kind, every.c.status, func.count()).group_by(every.c.kind, every.c.status)
+    ).all():
+        type_counts[kind] = type_counts.get(kind, 0) + int(n)
+        if status:
+            status_set.add(status)
+    statuses_out = sorted(status_set)
 
     wanted = [(rt, access) for rt, access in visible if not types or rt.kind in set(types)]
     if not wanted:
-        return {**empty, "type_counts": type_counts}
+        return {**empty, "type_counts": type_counts, "statuses": statuses_out}
     rows = union_all(*[_linked(rt, me, access, project_id) for rt, access in wanted]).subquery("rows")
     conditions = []
     if statuses:
@@ -279,6 +288,7 @@ def list_related_records(
         "empty": not data,
         "type_counts": type_counts,
         "types": types_out,
+        "statuses": statuses_out,
     }
 
 

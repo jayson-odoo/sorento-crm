@@ -952,12 +952,22 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
     holds."""
     inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
     current = _exact_current_code(db, inquiry.product_code)
+    project = (
+        db.query(Project.project_code, Project.title).filter(Project.id == inquiry.project_id).first()
+        if inquiry.project_id
+        else None
+    )
     return {
         "stock_inquiry_id": str(inquiry.id),
         "stock_inquiry_number": inquiry.inquiry_number,
         "customer_id": None,
         "customer_name": _clean(inquiry.project_customer),
         "project_name": _clean(inquiry.project_name),
+        # PROJECT-RELATED-RECORDS AC-C4: the inquiry's project starts picked; the person may
+        # change or clear it.
+        "project_id": inquiry.project_id if project else None,
+        "project_code": project[0] if project else None,
+        "project_title": project[1] if project else None,
         "needed_by": _parse_date(inquiry.delivery_date),
         "remark": _clean(inquiry.remark),
         "current_product_ids": current,

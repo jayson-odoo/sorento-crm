@@ -80,7 +80,6 @@ import {
   createPurchaseOrderLine,
   updatePurchaseOrderLine,
   deletePurchaseOrderLine,
-  listProjectSponsorships,
   getSponsorshipRollup,
   getProjectDashboard,
   createLead,
@@ -1886,13 +1885,9 @@ export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
 
 export const SPONSORSHIPS_KEY = 'project-sponsorships';
 
-export function useProjectSponsorships(projectId: string | undefined) {
-  return useQuery({
-    queryKey: [SPONSORSHIPS_KEY, projectId],
-    queryFn: () => listProjectSponsorships(projectId as string),
-    enabled: Boolean(projectId),
-  });
-}
+// PROJECT-RELATED-RECORDS: defined in its own module so the project page's always-visible
+// tab badge can read it without this whole module; re-exported here for the panel.
+export { RELATED_RECORDS_KEY, useProjectRelatedRecords } from './useProjectRelatedRecords';
 
 export function useSponsorshipRollup(projectId: string | undefined) {
   return useQuery({

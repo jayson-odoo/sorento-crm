@@ -1921,6 +1921,8 @@ class RelatedRecordsResponse(ListResponse[RelatedRecordRow]):
 
     type_counts: Dict[str, int] = Field(default_factory=dict)
     types: List[RelatedRecordType] = Field(default_factory=list)
+    #: The raw statuses of the visible linked rows, unfiltered: the Status filter's options.
+    statuses: List[str] = Field(default_factory=list)
 
 
 class SponsorshipConversionResponse(BaseModel):
