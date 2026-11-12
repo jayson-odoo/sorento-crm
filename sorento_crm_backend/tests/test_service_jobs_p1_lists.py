@@ -182,10 +182,14 @@ def test_e2_columns_unassigned_first_then_active_technicians_with_a_job_that_day
     names = [col["technician_name"] for col in board["columns"]]
     assert names[0] == "Unassigned"
     assert f"{tag} busy" in names
-    assert f"{tag} idle" not in names and f"{tag} gone" not in names
+    # Fix round 2 (R2-3): a column for EVERY technician with a job that day, archived ones included;
+    # only a job with no technician is Unassigned.
+    assert f"{tag} idle" not in names and f"{tag} gone" in names
     assert [j["id"] for j in _col(board, f"{tag} busy")["jobs"]] == [early.id, late.id]
     assert [j["id"] for j in _col(board, "Unassigned")["jobs"] if j["id"] == nobody.id] == [nobody.id]
     assert other_day.id not in {j["id"] for col in board["columns"] for j in col["jobs"]}
+    assert nobody.id in [j["id"] for j in _col(board, "Unassigned")["jobs"]]
+    assert len(_col(board, f"{tag} gone")["jobs"]) == 1
 
 
 def test_e2_day_is_the_myt_day(env):
