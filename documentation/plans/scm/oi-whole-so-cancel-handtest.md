@@ -1,5 +1,7 @@
 # OI-WHOLE-SO-CANCEL hand test (v2: Waiting for CS)
 
+No Excel step: the owner ruled "no change to the exports" (12 Nov); the Lines export columns wait for crew's confirmation.
+
 ## URL
 crew test copy
 
@@ -38,11 +40,10 @@ curl -s -X POST "http://localhost:<be port>/api/v1/external/ingest/sales_orders/
 4. Click the Status column header twice (sort up, then down).
 5. Tick SO-A's line and one ordinary line of another order, click Confirm, then confirm in the popup.
 6. Tick only SO-A's line and look at Confirm.
-7. Export the Lines view to Excel and open it.
-8. Click Fulfilment Planning in the sidebar, search SO-A, open it, confirm it with the board's Confirm.
-9. Search SO-B, open it, click "Apply AutoCount change", then Apply in the popup.
-10. Back on Order Inquiries, open OI-A and OI-B and their History tabs.
-11. Repeat steps 1-3 at phone width (375 px).
+7. Click Fulfilment Planning in the sidebar, search SO-A, open it, confirm it with the board's Confirm.
+8. Search SO-B, open it, click "Apply AutoCount change", then Apply in the popup.
+9. Back on Order Inquiries, open OI-A and OI-B and their History tabs.
+10. Repeat steps 1-3 at phone width (375 px).
 
 ## Expected
 1. Step 2: OI-A and OI-B both read "Waiting for CS" (not Completed), under Outstanding.
@@ -51,13 +52,11 @@ curl -s -X POST "http://localhost:<be port>/api/v1/external/ingest/sales_orders/
 3. Step 4: the rows sort by the Status words, both directions.
 4. Step 5: only the ordinary line is confirmed; a notice reads "1 row is waiting for CS and was skipped".
 5. Step 6: Confirm reads "Confirm (0)" and is disabled.
-6. Step 7: the sheet has STATUS, WAS QTY, WAS DATE; SO-A's row reads STATUS "Waiting for CS", DELIVERY DATE
-   D-new and WAS DATE D-old, both dd/mm/yyyy.
-7. Step 8: the result names SO-A (no long code); OI-A goes back to Outstanding with the line "To order" for
+6. Step 7: the result names SO-A (no long code); OI-A goes back to Outstanding with the line "To order" for
    purchasing (changed); purchasing's handover lists the line as DELAY.
-8. Step 9: the result reads "SO-B: applied the AutoCount change ..."; SO-B leaves the planning list; purchasing's
+7. Step 8: the result reads "SO-B: applied the AutoCount change ..."; SO-B leaves the planning list; purchasing's
    handover lists SO-B's lines as CANCEL ALL.
-9. Step 10: OI-A History shows "Reconfirmed"; OI-B's rows are Cancelled with "Cancelled <item>" once per row,
+8. Step 9: OI-A History shows "Reconfirmed"; OI-B's rows are Cancelled with "Cancelled <item>" once per row,
    dated dd/mm/yyyy.
-10. Step 11: same as Expected 1 and 2, no sideways scrolling.
-11. On the test copy the handover emails are queued only, nothing is delivered.
+9. Step 10: same as Expected 1 and 2, no sideways scrolling.
+10. On the test copy the handover emails are queued only, nothing is delivered.

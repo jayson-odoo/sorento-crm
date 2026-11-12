@@ -63,3 +63,7 @@ qty, line removed, whole-SO cancel, SO delete. The 30 Oct auto-done at sync is s
 - AC-V2-4b (crew, Q3 multi-row (a)) A line with more than one live OI row keeps each row's confirmed qty in OI
   Qty; the SO Qty column shows the line's new qty with "Was <old>" (`so_line_qty` / `previous_so_line_qty`);
   the rows read "Waiting for CS" until CS's Confirm re-splits. No spreading rule.
+- AC-V2-6 amended (owner 12 Nov ~14:57, "no change to the exports"): the per-project export keeps exactly its
+  golden eight headings (AC-I5). The Lines list export's STATUS / WAS QTY / WAS DATE sit in ONE commit of their
+  own (a `git revert` of the commit that takes them out), pending crew's confirmation with the owner; reverting
+  that one commit leaves the Lines export exactly as on main.
