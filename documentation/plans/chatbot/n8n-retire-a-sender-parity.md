@@ -36,7 +36,7 @@ VERBATIM-PENDING are swapped for the live text when crew answers.
 | 23 | url containing `cdn-sorento` -> 1 h presigned URL; else as is | same, in-process presign | same | | parity |
 | 24 | type by mime: image / video / else file | attachmentType, then mime; audio as audio | AGREED DIFFERENCE (live entries carry no mimeType, backlog H47, so n8n sends photos as documents). One function: `_attachment_type` | | existing |
 | 25 | sends the file name | same | same | | parity |
-| 26 | file send retried 3 times, 1 s | drain retries from the failed step, then the link fallback (row 27) | AGREED DIFFERENCE (same count, already built). One function: the drain's `MAX_SEND_ATTEMPTS` path | | existing |
+| 26 | file send retried 3 times, 1 s | a respond.io refusal (4xx) of a file goes straight to the link fallback (row 27: n8n's in-place tries cannot change a 4xx); a connection failure or unknown outcome is retried by the drain up to 3 times from that file (a link would fail the same way) | AGREED DIFFERENCE (same count, already built). One function: the drain's `MAX_SEND_ATTEMPTS` path | | existing |
 | 27 | a file that still fails -> its link sent as a text message, run continues | same | same | | parity |
 | 28 | text before files | same | same | | existing |
 | 31 | engine failure: n8n sub-error-logger sentence | the same sentence (VERBATIM-PENDING) | same | | parity |
