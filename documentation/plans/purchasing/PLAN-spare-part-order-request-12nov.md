@@ -1,6 +1,6 @@
 # PLAN: Spare-part order request (stock replenishment, no SO)
 
-Status: Plan, mock v2 + card v2 filed as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
+Status: Plan, mock v4 + card v3 filed as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
 
 Lane: SPARE-PART-ORDER-REQUEST.
 
@@ -89,4 +89,5 @@ See the crew-ask comment on PR #2381. Answers are recorded here once relayed.
 - Mock v1 note 2: reuse list posted as a crew-note on PR #2381.
 - Mock v1 note 3: request detail laid out like the Sales Order screen (`sorento_crm_frontend/app/(protected)/scm/sales-orders/[id]/components/SalesOrderDetail.tsx`: header card `:1745`, tabs `:1881`, General cards `:1921`/`:2156`/`:2196`; local `Field` `:256` lifted to a shared component). Mock v2.
 - Mock v1 note 4: request type Spare part / Consignment; OI `inquiry_type` values `sales_order` | `spare_part_request` | `consignment_request`; consignment reuses `ConsignmentBadge` (`app/(protected)/scm/lib/docType.ts`). Differences asked as card v2 Q5.
-- Card v2 questions 1-5: (pending)
+- Mock notes 5-7 (12 Nov 18:54): stock per line = `sorento_crm_frontend/app/(protected)/project-sales/_shared/components/OrderInquiryStockGrid.tsx` as is (wired at `order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:471-510`); attachments = `_shared/components/SoLineAttachmentsButton.tsx` (mock v2's thumbnail strip was NOT it; switched); the request opens on the existing OI page `order-inquiries/[id]/components/OrderInquiryDetail.tsx` (header `:771`, tabs `:1001-1019`), fields in `OrderInquiryGeneralTab.tsx`, lines in `OrderInquiryLinesTab.tsx`. The SO-style layout of mock v2 is dropped. Consequence: card question 1 flips to ONE record (the request is an OI of type spare_part_request / consignment_request with draft and pending_approval states before purchasing sees it). Mock v4 + card v3 filed.
+- Card v3 questions 1-5: (pending)
