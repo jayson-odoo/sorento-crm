@@ -165,3 +165,24 @@ def test_ac_wc_9c_the_board_confirm_retires_the_rows_after_an_so_delete(env, mon
     w = _world(env, "delete")
     calls = _confirm_through_the_board_route(env, monkeypatch, w)
     _assert_rows_cancelled_once_and_one_cancel_mail(env, w["rows"], calls)
+
+
+# ============================================================================ AC-WC-9d
+def _assert_board_names_the_order_with_its_planning_record_and_batch(env, w):
+    """The FE posts the Confirm only for an order standing in `orders`; with `orders: []`
+    it answers "is not being planned yet". `_standings` emits project_sales_order_id (the
+    planning record) and pending_change_batch_id per order."""
+    orders = _board(env, w)["orders"]
+    mine = [o for o in orders if o["so_number"] == w["so_number"]]
+    assert len(mine) == 1 and len(orders) == 1, orders
+    assert mine[0]["project_sales_order_id"] == w["pso_id"], mine[0]
+    batch = str(_cancelled_rows(env, w["line_x"])[0].batch_id)
+    assert mine[0]["pending_change_batch_id"] == batch, mine[0]
+
+
+def test_ac_wc_9d_the_board_names_a_header_cancelled_order_with_record_and_batch(env):
+    _assert_board_names_the_order_with_its_planning_record_and_batch(env, _world(env, "push"))
+
+
+def test_ac_wc_9d_the_board_names_a_deleted_order_with_record_and_batch(env):
+    _assert_board_names_the_order_with_its_planning_record_and_batch(env, _world(env, "delete"))

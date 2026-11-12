@@ -1740,6 +1740,41 @@ describe('FulfilmentBoardPanel: states', () => {
     expect(await screen.findByTestId('board-confirm')).toBeEnabled();
   });
 
+  /**
+   * AC-WC-9d: with the order standing the backend now sends (project_sales_order_id + the
+   * pending batch), the header Confirm walks the guide and posts that order and batch.
+   */
+  it('AC-WC-9d: Confirm on an order with only pending cancelled lines posts its planning record and batch', async () => {
+    currentSearchParams = new URLSearchParams('view=list&scope=all');
+    const base = withContribution(
+      boardOf([demand()]),
+      () => true,
+      (entry) => ({ ...entry, qty: '0', cancelled: true, pending_change_batch_id: 'b1' }),
+    );
+    getPlanningBoard.mockResolvedValue({
+      ...base,
+      cells: [],
+      line_count: 0,
+      orders: base.orders.map((order) => ({
+        ...order,
+        project_sales_order_id: 'pso-so-a',
+        pending_change_batch_id: 'b1',
+      })),
+    });
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1, lines_confirmed: [] }],
+    });
+
+    renderPanel(['SO403340']);
+    await pressPreviewThenConfirm();
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    expect(body.orders).toHaveLength(1);
+    expect(body.orders[0].pso_id).toBe('pso-so-a');
+    expect(body.orders[0].batch_id).toBe('b1');
+  });
+
   it('does not flash an empty or error state while loading', () => {
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
 
