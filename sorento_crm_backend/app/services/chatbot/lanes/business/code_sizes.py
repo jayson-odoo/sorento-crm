@@ -304,21 +304,39 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
 
 def _single_substring_is_an_offer(resolved: dict[str, Any]) -> None:
     """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
-    lone substring hit, the typed code is not its prefix: "C21120UW-2-MY" inside
-    BRC21120UW-2-MY) is offered as "Did you mean X?", never answered. A lone prefix hit stays
-    answered; several substring hits stay today's which-one picker."""
-    unresolved = resolved.get("unresolved_tokens")
-    for res in resolved.get("resolutions") or []:
-        if not isinstance(res, dict) or res.get("resolved") is not True:
+    lone hit the typed code is not the prefix of: "C21120UW-2-MY" inside BRC21120UW-2-MY) is
+    offered as "Did you mean X?", never answered. A lone prefix hit stays answered; several
+    hits stay today's which-one picker. Read per token (OR mode) or on the one token's rows
+    (AND mode), folded as the resolver folds (`turn_state.token_key`)."""
+    from app.services.chatbot.turn.state import token_key
+
+    def inside_only(token: Any, rows: list[Any]) -> dict[str, Any] | None:
+        rows = [m for m in rows if isinstance(m, dict)]
+        if len(rows) != 1 or rows[0].get("entity_type") != "product":
+            return None
+        code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
+        return rows[0] if typed and typed in code and not code.startswith(typed) else None
+
+    named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
+        (res, res.get("token"), res.get("matches") or [])
+        for res in resolved.get("resolutions") or []
+        if isinstance(res, dict) and res.get("resolved") is True
+    ]
+    tokens = resolved.get("tokens") or []
+    if isinstance(resolved.get("intersection"), list) and len(tokens) == 1:
+        named.append((None, tokens[0], resolved["intersection"]))
+    for res, token, rows in named:
+        hit = inside_only(token, rows)
+        if hit is None:
             continue
-        matches = [m for m in res.get("matches") or [] if isinstance(m, dict)]
-        if len(matches) != 1 or matches[0].get("entity_type") != "product" or matches[0].get("match_tier") != "substring":
-            continue
-        res.update({"resolved": False, "ambiguous": False, "matches": [], "alternatives": [matches[0]]})
-        if not isinstance(unresolved, list):
-            unresolved = resolved["unresolved_tokens"] = []
-        if res.get("token") not in unresolved:
-            unresolved.append(res.get("token"))
+        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": [hit]}
+        if res is not None:
+            res.update(miss)
+        else:
+            resolved.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [miss]})
+        unresolved = resolved.setdefault("unresolved_tokens", [])
+        if token not in unresolved:
+            unresolved.append(token)
 
 
 def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
