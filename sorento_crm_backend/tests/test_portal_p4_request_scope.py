@@ -181,14 +181,7 @@ def test_p4_5_no_linked_contact_sees_nothing(scene, kind):
 ALLOWED = {
     "stock_inquiry": {("GET", ""), ("GET", "/{inquiry_id}"), ("GET", "/{inquiry_id}/revisions")},
     "purchase_request": {("GET", ""), ("GET", "/{request_id}"), ("GET", "/{request_id}/revisions")},
-    "complaint": {
-        ("GET", ""),
-        ("GET", "/{complaint_id}"),
-        ("GET", "/{complaint_id}/fulfilment-orders"),
-        # AFTER-SALES-P1: scoped by service_job_service.limit_for (404 on someone else's complaint).
-        ("GET", "/{complaint_id}/service-jobs"),
-        ("POST", "/{complaint_id}/service-jobs"),
-    },
+    "complaint": {("GET", ""), ("GET", "/{complaint_id}"), ("GET", "/{complaint_id}/fulfilment-orders")},
 }
 ROUTERS = {"stock_inquiry": SI, "purchase_request": PR_URL, "complaint": CMP}
 

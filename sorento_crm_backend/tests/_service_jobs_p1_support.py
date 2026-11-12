@@ -1,21 +1,18 @@
-"""Shared world for the AFTER-SALES-P1 (service jobs) red tests.
+"""Shared world for the AFTER-SALES-P1 (service jobs) tests.
 
-Contract the coder must satisfy (from PLAN-service-jobs-p1-12nov.md, Data + API):
+Contract (PLAN-service-jobs-p1-12nov.md, owner ruling 12 Nov: the live Complaints module is untouched):
 
 * models   `app.models.service_jobs.ServiceJob`, `app.models.service_jobs.Technician`
 * seeds    `app.services.service_job_status_graph.seed_service_job_status_graph(db)` (7 statuses,
            12 transitions, entity_type "service_job") and
            `app.services.numbering_defaults.seed_service_job_rule(connection, *, company_id=None)`
-           (doc_type `numbering_defaults.SERVICE_JOB_DOC_TYPE == "service_job"`)
-* routes   under `/api/v1/complaints-management`
-* wire     a job serialises `id, job_number, complaint_id, complaint_number, customer_name, city,
-           status` (the status KEY, e.g. "on_the_way"), `status_label, technician_id, technician_name,
-           scheduled_from, scheduled_to, customer_agreed_by, arrived_at, completed_at, verified_at`.
+* routes   under `/api/v1/after-sales` behind the `after_sales` module guard
+* wire     a job serialises `id, job_number, complaint_id, complaint_number, customer_name,
+           contact_name, contact_phone, city, site_*, problem, status` (the status KEY),
+           `status_label, technician_id, technician_name, scheduled_from, scheduled_to,
+           customer_agreed_by, arrived_at, completed_at, verified_at`.
            Lists are `{"data": [...], "pagination": {"total", "page", "limit"}}`.
 * errors   missing/blank confirm field -> 422 naming the field; illegal move -> 409.
-
-Models are imported lazily inside helpers so that, while the slice is red, each test fails on
-its own `ModuleNotFoundError` instead of one collection error hiding all of them.
 """
 from __future__ import annotations
 
@@ -34,15 +31,13 @@ from app.rbac.permission_registry import PERMISSION_REGISTRY
 from ._own_scope_support import acting, sorento, user
 from ._pg_fixture import blank_session, unique_code
 
-BASE = "/api/v1/complaints-management"
+BASE = "/api/v1/after-sales"
 JOBS = f"{BASE}/service-jobs"
 TECHS = f"{BASE}/technicians"
-COMPLAINTS = f"{BASE}/complaints"
-RESOLUTIONS = f"{BASE}/complaint-resolutions"
 
-VIEW = "complaint_management.service_jobs.view"
-DISPATCH = "complaint_management.service_jobs.dispatch"
-MANAGE = "complaint_management.technicians.manage"
+VIEW = "after_sales.service_jobs.view"
+DISPATCH = "after_sales.service_jobs.dispatch"
+MANAGE = "after_sales.technicians.manage"
 NEW_SLUGS = {VIEW, DISPATCH, MANAGE}
 ALL_PERMS = {e["slug"] for e in PERMISSION_REGISTRY} | NEW_SLUGS
 
@@ -125,7 +120,7 @@ _seq = [0]
 
 def make_job(
     env: Env,
-    complaint: Complaint,
+    complaint: Optional[Complaint] = None,
     key: str = "proposed",
     *,
     technician=None,
@@ -133,6 +128,8 @@ def make_job(
     scheduled_to: Optional[datetime] = None,
     agreed_by: Optional[str] = None,
     job_number: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    **fields,
 ):
     """Insert a job row directly, in any status (the API path to a state is tested elsewhere)."""
     from app.models.service_jobs import ServiceJob
@@ -141,7 +138,8 @@ def make_job(
     row = ServiceJob(
         id=str(uuid.uuid4()),
         job_number=job_number or f"SVT{uuid.uuid4().hex[:6]}-{_seq[0]:04d}",
-        complaint_id=complaint.id,
+        complaint_id=complaint.id if complaint is not None else None,
+        customer_name=customer_name or f"ZZT Customer {_seq[0]}",
         status_id=status_id(env, key),
         technician_id=technician.id if technician is not None else None,
         scheduled_from=scheduled_from,
@@ -149,6 +147,7 @@ def make_job(
         customer_agreed_by=agreed_by,
         company_id=env.company_id,
         created_by=env.actor_id,
+        **fields,
     )
     env.db.add(row)
     env.db.flush()

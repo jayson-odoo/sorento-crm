@@ -1,9 +1,8 @@
-"""AFTER-SALES-P1 fix round 1 (reviewer + security-reviewer findings), red first.
+"""AFTER-SALES-P1 fix round 1 findings that survive the standalone module (owner ruling 12 Nov).
 
-B-1 History for non-admins, B-2 raise only on a CHANGED flagged resolution, S-1 waiting board,
-S-2 scope fails closed, S-3 assistant scope, S-4 brand scope, S-5 cross-company live job and
-assign, S-6 numbering self-seeds, S-7 History shows technician names, S-9 technician guard,
-S-12 clearing a Site field, nit: resolutions sort by the flag.
+B-1 History for non-admins, S-1 waiting board, S-5 cross-company live job and assign, S-6 numbering
+self-seeds, S-7 History shows technician names, S-9 technician guard. The complaint-coupled ones
+(re-raise on save, complaint scope, brand scope, site on the complaint) are gone with the coupling.
 """
 from __future__ import annotations
 
@@ -18,10 +17,8 @@ from app.models.company import Company
 from ._pg_fixture import unique_code
 from ._service_jobs_p1_support import (
     ALL_PERMS,
-    COMPLAINTS,
     DISPATCH,
     JOBS,
-    RESOLUTIONS,
     VIEW,
     api,
     audit_rows,
@@ -35,17 +32,6 @@ from ._service_jobs_p1_support import (
 
 AUDIT = "/api/v1/audit/logs/"
 CVIEW = "complaint_management.complaints.view"
-COWN = "complaint_management.complaints.view_own"
-
-
-def raise_url(cid):
-    return f"{COMPLAINTS}/{cid}/service-jobs"
-
-
-def _resolution(client, flag=True):
-    r = client.post(f"{RESOLUTIONS}/", json={"name": f"ZZT fx {uuid.uuid4().hex[:8]}", "requires_service_job": flag})
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
 
 
 # ------------------------------------------------------------------ B-1
@@ -63,23 +49,6 @@ def test_b1_history_of_a_job_is_refused_without_the_permission(env):
     with api(env, {CVIEW}) as client:
         r = client.get(AUDIT, params={"entity_type": "service_jobs", "entity_id": job.id})
     assert r.status_code in (403, 404), r.text
-
-
-# ------------------------------------------------------------------ B-2
-
-def test_b2_resaving_a_complaint_does_not_re_raise_a_cancelled_job(env):
-    c = make_complaint(env, "b2")
-    with api(env) as client:
-        res = _resolution(client)
-        assert client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": res}).status_code == 200
-        (job,) = live_jobs(env, c.id)
-        assert client.post(f"{JOBS}/{job.id}/transition", json={"to": "cancelled", "reason": "x"}).status_code == 200
-        again = client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": res, "site_city": "Ipoh"})
-        assert again.status_code == 200, again.text
-        assert live_jobs(env, c.id) == []
-        other = _resolution(client)
-        assert client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": other}).status_code == 200
-        assert len(live_jobs(env, c.id)) == 1
 
 
 # ------------------------------------------------------------------ S-1
@@ -105,70 +74,6 @@ def test_s1_board_lists_every_proposed_job_as_waiting_oldest_first(env):
             assert got == [older.id, dated.id, newer.id], (day, got)
 
 
-# ------------------------------------------------------------------ S-2
-
-def test_s2_no_complaints_access_means_no_rows(env):
-    c = make_complaint(env, "s2")
-    job = make_job(env, c, "proposed")
-    with api(env, {VIEW}) as client:
-        assert [r["id"] for r in client.get(JOBS, params={"limit": 200}).json()["data"]] == []
-        assert client.get(f"{JOBS}/{job.id}").status_code == 404
-        assert client.get(f"{COMPLAINTS}/{c.id}/service-jobs").status_code == 404
-        board = client.get(f"{JOBS}/board", params={"day": "2026-11-20"}).json()
-        assert all(not col["jobs"] for col in board["columns"]) and board["waiting"] == []
-
-
-# ------------------------------------------------------------------ S-3
-
-def _assistant(env, perms, contact_id=None):
-    from tests.chatbot.agent._seed import seed_user
-    from app.services.assistant_registry import query
-
-    uid = seed_user(env.db, contact_pk=contact_id, slugs=perms)
-    return lambda: query.run_query(env.db, uid, {"entity": "service_job", "limit": 100})
-
-
-def test_s3_assistant_service_jobs_need_the_view_slug(env):
-    from app.services.assistant_registry import query
-
-    job = make_job(env, make_complaint(env, "s3a"), "proposed")
-    ask = _assistant(env, [COWN])
-    with pytest.raises(query.QueryRefused):
-        ask()
-    ask = _assistant(env, [VIEW])
-    assert job.id not in {r.get("id") for r in ask()["rows"]}
-
-
-def test_s3_assistant_view_plus_complaints_own_sees_only_own(env):
-    from ._own_scope_support import contact
-
-    mine, theirs = contact(env.db, "AS1"), contact(env.db, "AS2")
-    a = make_job(env, make_complaint(env, "s3m", contact_id=mine.id, space_id="z"), "proposed")
-    b = make_job(env, make_complaint(env, "s3t", contact_id=theirs.id, space_id="z"), "proposed")
-    ids = {r.get("id") for r in _assistant(env, [VIEW, COWN], mine.id)()["rows"]}
-    assert a.id in ids and b.id not in ids
-    ids_all = {r.get("id") for r in _assistant(env, [VIEW, CVIEW])()["rows"]}
-    assert {a.id, b.id} <= ids_all
-
-
-# ------------------------------------------------------------------ S-4
-
-def test_s4_brand_scoped_context_hides_jobs_without_an_in_scope_complaint(env):
-    from app.models.base import set_brand_scope
-
-    c = make_complaint(env, "s4")
-    job = make_job(env, c, "proposed")
-    with api(env) as client:
-        assert job.id in [r["id"] for r in client.get(JOBS, params={"limit": 200}).json()["data"]]
-        set_brand_scope(env.db, frozenset({str(uuid.uuid4())}))
-        try:
-            assert job.id not in [r["id"] for r in client.get(JOBS, params={"limit": 200}).json()["data"]]
-            assert client.get(f"{JOBS}/{job.id}").status_code == 404
-            assert client.post(raise_url(c.id)).status_code == 404
-        finally:
-            set_brand_scope(env.db, None)
-
-
 # ------------------------------------------------------------------ S-5
 
 def _company_b(env):
@@ -178,20 +83,20 @@ def _company_b(env):
     return row.id
 
 
-def test_s5_a_live_job_in_another_company_blocks_a_second_raise(env):
+def test_s5_a_live_job_in_another_company_blocks_a_second_create(env):
     from app.models.service_jobs import ServiceJob
 
     c = make_complaint(env, "s5")
     other = _company_b(env)
     env.db.add(ServiceJob(
         id=str(uuid.uuid4()), job_number=f"SVT-{uuid.uuid4().hex[:8]}", complaint_id=c.id,
-        status_id=status_id(env, "proposed"), company_id=other, created_by=env.actor_id,
+        customer_name="ZZT other", status_id=status_id(env, "proposed"), company_id=other, created_by=env.actor_id,
     ))
     env.db.flush()
     with api(env) as client:
-        r = client.post(raise_url(c.id))
+        r = client.post(JOBS, json={"customer_name": "ZZT x", "complaint_id": c.id})
     assert r.status_code == 409, r.text
-    assert "another company" in r.text
+    assert "already has a live service job" in r.text
 
 
 def test_s5_assign_refuses_a_technician_of_another_company(env):
@@ -214,9 +119,8 @@ def test_s5_assign_refuses_a_technician_of_another_company(env):
 def test_s6_raise_seeds_a_missing_numbering_rule(env):
     env.db.execute(text("delete from document_numbering_rules where doc_type = 'service_job'"))
     env.db.flush()
-    c = make_complaint(env, "s6")
     with api(env) as client:
-        r = client.post(raise_url(c.id))
+        r = client.post(JOBS, json={"customer_name": "ZZT s6"})
     assert r.status_code == 201, r.text
     assert r.json()["job_number"].startswith("SV")
 
@@ -246,23 +150,3 @@ def test_s9_arriving_needs_a_technician(env, frm, to):
     assert "Assign a technician first." in r.text
 
 
-# ------------------------------------------------------------------ S-12
-
-def test_s12_a_site_field_can_be_cleared_with_null(env):
-    c = make_complaint(env, "s12", site_city="Ipoh")
-    with api(env) as client:
-        assert client.put(f"{COMPLAINTS}/{c.id}", json={"site_city": None}).status_code == 200
-        assert client.get(f"{COMPLAINTS}/{c.id}").json()["site_city"] is None
-
-
-# ------------------------------------------------------------------ nit
-
-def test_resolutions_sort_by_requires_service_job(env):
-    tag = uuid.uuid4().hex[:6]
-    with api(env) as client:
-        for letter, flag in (("a", False), ("b", True), ("c", False)):
-            r = client.post(f"{RESOLUTIONS}/", json={"name": f"ZZT srt {tag} {letter}", "requires_service_job": flag})
-            assert r.status_code == 201
-        rows = client.get(f"{RESOLUTIONS}/", params={"query": f"ZZT srt {tag}", "sort": "requires_service_job", "dir": "desc"}).json()["data"]
-    flags = [r["requires_service_job"] for r in rows]
-    assert flags == sorted(flags, reverse=True) and flags[0] is True

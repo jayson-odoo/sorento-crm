@@ -260,10 +260,9 @@ def test_c5_dispatch_alone_without_view_still_moves(env):
 # ------------------------------------------------------------------ C6
 
 def test_c6_create_confirm_assign_and_move_each_write_an_audit_row_on_the_job(env):
-    c = make_complaint(env, "c6")
     tech = make_tech(env)
     with api(env) as client:
-        job_id = client.post(f"/api/v1/complaints-management/complaints/{c.id}/service-jobs").json()["id"]
+        job_id = client.post(JOBS, json={"customer_name": "ZZT c6 customer"}).json()["id"]
         n_created = len(audit_rows(env, job_id))
         assert n_created >= 1
         assert audit_rows(env, job_id)[0].action == "CREATE"

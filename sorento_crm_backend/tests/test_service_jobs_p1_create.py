@@ -1,5 +1,7 @@
-"""AFTER-SALES-P1 red tests: Site on the complaint (A1), raising a job (B1-B8), resolution flag (G1),
-guards (H1, H2). UAC: documentation/plans/after-sales/service-jobs-p1-acceptance-criteria.md
+"""AFTER-SALES-P1 tests: creating a service job (standalone module, owner ruling 12 Nov).
+
+A job carries its own customer, contact, site and problem; the related complaint is optional.
+Visibility is the after_sales permissions and the company filter only.
 """
 from __future__ import annotations
 
@@ -12,11 +14,9 @@ import pytest
 
 from ._service_jobs_p1_support import (
     ALL_PERMS,
-    COMPLAINTS,
     DISPATCH,
     JOBS,
     MANAGE,
-    RESOLUTIONS,
     VIEW,
     api,
     env,  # noqa: F401  (fixture)
@@ -27,178 +27,161 @@ from ._service_jobs_p1_support import (
     seeded_env,
 )
 
-SITE = {
+BODY = {
+    "customer_name": "Ms Lim Trading",
+    "contact_name": "Ms Lim",
+    "contact_phone": "012-345 6789",
     "site_address_line1": "12 Jalan Damai",
     "site_address_line2": "Taman Seri",
     "site_postcode": "47500",
     "site_city": "Subang Jaya",
     "site_state": "Selangor",
     "site_country": "Malaysia",
-    "site_contact_name": "Ms Lim",
-    "site_contact_phone": "+60127770099",
-    "site_latitude": 3.0567,
-    "site_longitude": 101.5851,
+    "problem": "Basin leaks at the trap",
 }
 
 
-def raise_url(complaint_id):
-    return f"{COMPLAINTS}/{complaint_id}/service-jobs"
+def create(client, **over):
+    return client.post(JOBS, json={**BODY, **over})
 
-
-# ------------------------------------------------------------------ permissions registered
 
 def test_new_permissions_are_registered():
     from app.rbac.permission_registry import PERMISSION_REGISTRY
 
     slugs = {e["slug"] for e in PERMISSION_REGISTRY}
     assert {VIEW, DISPATCH, MANAGE} <= slugs
+    assert not any(s.startswith("complaint_management.service_jobs") for s in slugs)
 
 
-# ------------------------------------------------------------------ A1
+def test_the_module_is_registered_with_its_permission_prefix():
+    from app.modules.runtime.module_manifest import MODULE_MANIFEST
+    from app.modules.runtime.permission_module_map import module_for_permission
 
-def test_a1_site_fields_save_through_complaint_update_and_come_back_on_get(env):
-    c = make_complaint(env, "A1")
+    assert "after_sales" in MODULE_MANIFEST
+    assert module_for_permission(VIEW) == "after_sales"
+
+
+# ------------------------------------------------------------------ create
+
+
+def test_create_makes_a_proposed_numbered_job_with_its_own_details(env):
     with api(env) as client:
-        put = client.put(f"{COMPLAINTS}/{c.id}", json=SITE)
-        assert put.status_code == 200, put.text
-        got = client.get(f"{COMPLAINTS}/{c.id}")
-        assert got.status_code == 200, got.text
-        body = got.json()
-        for key, value in SITE.items():
-            assert key in body, f"complaint GET dropped {key} (response_model drops undeclared fields)"
-            assert body[key] == value, key
-
-
-# ------------------------------------------------------------------ B1, B2, B4, B5
-
-def test_b1_raise_creates_a_proposed_numbered_job(env):
-    c = make_complaint(env, "B1")
-    with api(env) as client:
-        r = client.post(raise_url(c.id))
+        r = create(client)
         assert r.status_code == 201, r.text
         body = r.json()
-        yy_mm = datetime.now().strftime("%y/%m")
-        assert re.fullmatch(rf"SV{yy_mm}-\d{{4}}", body["job_number"]), body["job_number"]
-        assert body["status"] == "proposed"
-        assert body["complaint_id"] == c.id
-    job = reload_job(env, body["id"])
-    assert job.company_id == str(env.company_id)
+    yy_mm = datetime.now().strftime("%y/%m")
+    assert re.fullmatch(rf"SV{yy_mm}-\d{{4}}", body["job_number"]), body["job_number"]
+    assert body["status"] == "proposed"
+    assert body["customer_name"] == "Ms Lim Trading"
+    assert body["city"] == "Subang Jaya"
+    assert body["site_country"] == "Malaysia"
+    assert body["problem"] == "Basin leaks at the trap"
+    assert body["complaint_id"] is None and body["complaint_number"] is None
+    assert reload_job(env, body["id"]).company_id == str(env.company_id)
 
 
-def test_b2_raise_again_returns_the_live_job_with_200(env):
-    c = make_complaint(env, "B2")
+def test_customer_name_is_required(env):
     with api(env) as client:
-        first = client.post(raise_url(c.id))
-        second = client.post(raise_url(c.id))
-    assert first.status_code == 201, first.text
-    assert second.status_code == 200, second.text
-    assert second.json()["id"] == first.json()["id"]
+        for bad in ("", "   "):
+            assert create(client, customer_name=bad).status_code == 422
+        assert client.post(JOBS, json={"problem": "x"}).status_code == 422
+
+
+def test_a_related_complaint_is_optional_and_shown_by_number(env):
+    c = make_complaint(env, "rel")
+    with api(env) as client:
+        r = create(client, complaint_id=c.id)
+        assert r.status_code == 201, r.text
+        assert r.json()["complaint_number"] == c.complaint_number
+        assert create(client, complaint_id=str(uuid.uuid4())).status_code == 422
+
+
+def test_a_second_live_job_for_the_same_complaint_is_409(env):
+    c = make_complaint(env, "two")
+    with api(env) as client:
+        assert create(client, complaint_id=c.id).status_code == 201
+        again = create(client, complaint_id=c.id)
+        assert again.status_code == 409, again.text
+        assert "already has a live service job" in again.text
+        assert create(client).status_code == 201  # no complaint: no limit
     assert len(live_jobs(env, c.id)) == 1
 
 
 @pytest.mark.parametrize("dead", ["cancelled", "verified"])
-def test_b4_a_dead_job_does_not_block_a_new_one(env, dead):
-    c = make_complaint(env, "B4")
-    old = make_job(env, c, dead)
+def test_a_dead_job_does_not_block_a_new_one(env, dead):
+    c = make_complaint(env, "dead")
+    make_job(env, c, dead)
     with api(env) as client:
-        r = client.post(raise_url(c.id))
-    assert r.status_code == 201, r.text
-    assert r.json()["id"] != old.id
-    assert len(live_jobs(env, c.id)) == 1
+        assert create(client, complaint_id=c.id).status_code == 201
 
 
 @pytest.mark.parametrize("complaint_status", ["new", "resolved", "closed", "voided", "rejected"])
-def test_b5_raise_works_on_a_complaint_in_any_status(env, complaint_status):
-    c = make_complaint(env, "B5", status=complaint_status)
+def test_any_complaint_status_can_be_related(env, complaint_status):
+    c = make_complaint(env, "st", status=complaint_status)
     with api(env) as client:
-        r = client.post(raise_url(c.id))
-    assert r.status_code == 201, r.text
+        assert create(client, complaint_id=c.id).status_code == 201
 
 
-def test_raise_on_unknown_complaint_is_404(env):
-    with api(env) as client:
-        assert client.post(raise_url(uuid.uuid4())).status_code == 404
-
-
-# ------------------------------------------------------------------ B8
-
-def test_b8_raise_needs_dispatch_permission(env):
-    c = make_complaint(env, "B8")
+def test_create_needs_dispatch(env):
     with api(env, {VIEW}) as client:
-        assert client.post(raise_url(c.id)).status_code == 403
+        assert create(client).status_code == 403
     with api(env, set()) as client:
-        assert client.post(raise_url(c.id)).status_code == 403
-    assert live_jobs(env, c.id) == []
+        assert create(client).status_code == 403
 
 
-# ------------------------------------------------------------------ G1, B6, B7
+def test_visibility_is_the_module_permission_only(env):
+    """No coupling to complaint permissions: view alone sees every job, a related complaint included."""
+    c = make_complaint(env, "vis")
+    job = make_job(env, c, "proposed")
+    with api(env, {VIEW}) as client:
+        ids = [r["id"] for r in client.get(JOBS, params={"limit": 200}).json()["data"]]
+        assert job.id in ids
+        got = client.get(f"{JOBS}/{job.id}")
+        assert got.status_code == 200 and got.json()["complaint_number"] == c.complaint_number
+    with api(env, set()) as client:
+        assert client.get(JOBS).status_code == 403
 
-def _resolution(client, name, flag):
-    r = client.post(f"{RESOLUTIONS}/", json={"name": name, "requires_service_job": flag})
-    assert r.status_code == 201, r.text
-    return r.json()
 
-
-def test_g1_resolution_flag_defaults_off_saves_lists_and_updates(env):
+def test_edit_changes_the_details_in_the_same_shape(env):
     with api(env) as client:
-        plain = client.post(f"{RESOLUTIONS}/", json={"name": f"ZZT plain {uuid.uuid4().hex[:6]}"})
-        assert plain.status_code == 201, plain.text
-        assert plain.json()["requires_service_job"] is False
-        flagged = _resolution(client, f"ZZT flagged {uuid.uuid4().hex[:6]}", True)
-        assert flagged["requires_service_job"] is True
-        rows = client.get(f"{RESOLUTIONS}/", params={"limit": 200, "query": "ZZT"}).json()["data"]
-        by_id = {r["id"]: r for r in rows}
-        assert by_id[flagged["id"]]["requires_service_job"] is True
-        assert by_id[plain.json()["id"]]["requires_service_job"] is False
-        up = client.put(f"{RESOLUTIONS}/{flagged['id']}", json={"requires_service_job": False})
-        assert up.status_code == 200, up.text
-        assert up.json()["requires_service_job"] is False
-
-
-def test_b6_resolution_with_flag_raises_a_job_and_is_idempotent(env):
-    c = make_complaint(env, "B6")
-    with api(env) as client:
-        res = _resolution(client, f"ZZT flag {uuid.uuid4().hex[:6]}", True)
-        r = client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": res["id"]})
+        job = create(client).json()
+        r = client.put(f"{JOBS}/{job['id']}", json={"customer_name": "Mr Tan", "site_city": "Ipoh", "problem": None})
         assert r.status_code == 200, r.text
-        assert len(live_jobs(env, c.id)) == 1
-        again = client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": res["id"], "customer_name": "ZZT Again"})
-        assert again.status_code == 200, again.text
-    assert len(live_jobs(env, c.id)) == 1
+        assert r.json()["customer_name"] == "Mr Tan" and r.json()["city"] == "Ipoh" and r.json()["problem"] is None
+        assert client.put(f"{JOBS}/{job['id']}", json={"customer_name": "  "}).status_code == 422
+    with api(env, {VIEW}) as client:
+        assert client.put(f"{JOBS}/{job['id']}", json={"site_city": "x"}).status_code == 403
 
 
-def test_b6_complaint_save_never_fails_when_the_job_cannot_be_raised():
-    """No graph and no numbering rule seeded: the raise cannot succeed, the save still must."""
-    from ._pg_fixture import blank_session
-    from ._own_scope_support import sorento, user
-    from app.models.base import company_scope
-    from ._service_jobs_p1_support import Env
-
-    with blank_session() as db:
-        company_id = sorento(db)
-        e = Env(db, company_id, user(db, "P1 Unseeded"))
-        with company_scope(db, frozenset({company_id})):
-            c = make_complaint(e, "B6x")
-            with api(e) as client:
-                res = _resolution(client, f"ZZT flag {uuid.uuid4().hex[:6]}", True)
-                r = client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": res["id"]})
-                assert r.status_code == 200, r.text
-            assert db.execute(__import__("sqlalchemy").text("select count(*) from service_jobs")).scalar() == 0
-
-
-def test_b7_unflagged_or_cleared_resolution_never_creates_or_deletes_a_job(env):
-    c = make_complaint(env, "B7")
+def test_edit_cannot_relate_a_complaint_that_already_has_a_live_job(env):
+    c = make_complaint(env, "edit")
+    make_job(env, c, "proposed")
     with api(env) as client:
-        plain = _resolution(client, f"ZZT plain {uuid.uuid4().hex[:6]}", False)
-        assert client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": plain["id"]}).status_code == 200
-        assert live_jobs(env, c.id) == []
-        job = make_job(env, c, "proposed")
-        flagged = _resolution(client, f"ZZT flag {uuid.uuid4().hex[:6]}", True)
-        assert client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": flagged["id"]}).status_code == 200
-        assert [j.id for j in live_jobs(env, c.id)] == [job.id]
-        cleared = client.put(f"{COMPLAINTS}/{c.id}", json={"resolution_id": None})
-        assert cleared.status_code == 200, cleared.text
-    assert [j.id for j in live_jobs(env, c.id)] == [job.id]
+        other = create(client).json()
+        assert client.put(f"{JOBS}/{other['id']}", json={"complaint_id": c.id}).status_code == 409
+
+
+# ------------------------------------------------------------------ phone
+
+
+@pytest.mark.parametrize("bad", ["abc", "123", "01"])
+def test_a_bad_contact_phone_is_422(env, bad):
+    with api(env) as client:
+        r = create(client, contact_phone=bad)
+        assert r.status_code == 422, r.text
+        assert "Enter a valid phone number" in r.text
+
+
+def test_a_good_contact_phone_is_stored_e164_and_shown_local(env):
+    with api(env) as client:
+        body = create(client, contact_phone="012-345 6789").json()
+    assert body["contact_phone"] == "+60123456789"
+    assert body["contact_phone_display"] == "012-345 6789"
+
+
+def test_a_blank_contact_phone_stays_blank(env):
+    with api(env) as client:
+        assert create(client, contact_phone="").json()["contact_phone"] is None
 
 
 # ------------------------------------------------------------------ B3 (real concurrency)
@@ -278,7 +261,7 @@ def test_b3_two_concurrent_raises_leave_exactly_one_live_job():
         def worker():
             c = TestClient(app)
             barrier.wait()
-            out.append(c.post(raise_url(complaint_id)))
+            out.append(c.post(JOBS, json={**BODY, 'complaint_id': complaint_id}))
 
         try:
             threads = [threading.Thread(target=worker) for _ in range(2)]
@@ -289,8 +272,7 @@ def test_b3_two_concurrent_raises_leave_exactly_one_live_job():
             app.dependency_overrides.clear()
 
         assert len(out) == 2
-        assert all(r.status_code in (200, 201) for r in out), [(r.status_code, r.text) for r in out]
-        assert len({r.json()["id"] for r in out}) == 1
+        assert sorted(r.status_code for r in out) == [201, 409], [(r.status_code, r.text) for r in out]
         live = setup.execute(
             text(
                 "select count(*) from service_jobs j join statuses s on s.id = j.status_id "
@@ -339,7 +321,7 @@ def test_h1_job_list_respects_the_limit_cap(env, path):
 
 # ------------------------------------------------------------------ H2
 
-def test_h2_fresh_bootstrap_seeds_can_raise_and_confirm():
+def test_h2_fresh_bootstrap_seeds_can_create_and_confirm():
     """Graph and numbering come from the seeders `scripts/bootstrap_env.py` runs, not migration data."""
     import inspect
 
@@ -350,9 +332,8 @@ def test_h2_fresh_bootstrap_seeds_can_raise_and_confirm():
     assert "seed_service_job_rule" in src, "bootstrap_env must seed the service_job numbering rule"
 
     with seeded_env() as e:
-        c = make_complaint(e, "H2")
         with api(e) as client:
-            job = client.post(raise_url(c.id))
+            job = client.post(JOBS, json=BODY)
             assert job.status_code == 201, job.text
             ok = client.post(
                 f"{JOBS}/{job.json()['id']}/confirm",

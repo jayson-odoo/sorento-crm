@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ._own_scope_support import contact, user
 from ._service_jobs_p1_support import (
     ALL_PERMS,
     JOBS,
@@ -37,14 +36,12 @@ def _seed_five(env):
     base = datetime(2026, 11, 20, 2, 0)
     for r in INSERT_ORDER:
         L = LETTERS[r - 1]
-        c = make_complaint(
-            env, "ls", complaint_number=f"{tag}-c{L}", customer_name=f"{tag} cust {L}", site_city=f"{tag} city {L}",
-        )
+        c = make_complaint(env, "ls", complaint_number=f"{tag}-c{L}")
         tech = make_tech(env, f"{tag} tech {L}")
         status = ["proposed", "confirmed", "on_the_way", "arrived", "completed"][r - 1]
         jobs[r] = make_job(
             env, c, status, technician=tech, scheduled_from=base + timedelta(hours=r),
-            job_number=f"SVT-{tag}-{L}",
+            job_number=f"SVT-{tag}-{L}", customer_name=f"{tag} cust {L}", site_city=f"{tag} city {L}",
         )
     return tag, jobs
 
@@ -222,37 +219,11 @@ def test_e3_waiting_is_every_proposed_job_oldest_raised_first_whatever_the_day(e
             assert mine == [older.id, newer.id], (day, mine)
 
 
-# ------------------------------------------------------------------ H3 scope
+# ------------------------------------------------------------------ visibility
 
-def _scoped_world(env):
-    ca, cb = contact(env.db, "CA scope"), contact(env.db, "CB scope")
-    a, b = user(env.db, "Scope A", ca.id), user(env.db, "Scope B", cb.id)
-    mine = make_complaint(env, "sm", contact_id=ca.id, space_id="zzt-space")
-    theirs = make_complaint(env, "st", contact_id=cb.id, space_id="zzt-space")
-    return a, mine, theirs, make_job(env, mine, "proposed"), make_job(env, theirs, "proposed")
-
-
-def _limited():
-    return (ALL_PERMS - {"complaint_management.complaints.view", "complaint_management.complaints.view_own"}) | {
-        "complaint_management.complaints.view_own"
-    }
-
-
-def test_h3_view_own_holder_sees_only_jobs_of_their_own_complaints(env):
-    a, mine, theirs, my_job, their_job = _scoped_world(env)
-    with api(env, _limited(), user_id=a) as client:
-        assert _ids(client.get(JOBS, params={"limit": 200})) == [my_job.id]
-        assert client.get(f"{JOBS}/{my_job.id}").status_code == 200
-        assert client.get(f"{JOBS}/{their_job.id}").status_code == 404
-        assert client.get(f"/api/v1/complaints-management/complaints/{mine.id}/service-jobs").status_code == 200
-        assert client.get(f"/api/v1/complaints-management/complaints/{theirs.id}/service-jobs").status_code == 404
-        assert client.post(f"/api/v1/complaints-management/complaints/{theirs.id}/service-jobs").status_code == 404
-        assert client.post(f"{JOBS}/{their_job.id}/transition", json={"to": "cancelled", "reason": "x"}).status_code == 404
-
-
-def test_h3_complaints_view_holder_sees_every_job(env):
-    a, mine, theirs, my_job, their_job = _scoped_world(env)
-    perms = ALL_PERMS | {"complaint_management.complaints.view"}
-    with api(env, perms, user_id=a) as client:
-        got = set(_ids(client.get(JOBS, params={"limit": 200})))
-    assert {my_job.id, their_job.id} <= got
+def test_a_job_with_no_related_complaint_lists_and_sorts_with_a_blank_complaint_number(env):
+    tag = unique_code("NC", alpha=True)
+    job = make_job(env, None, "proposed", customer_name=f"{tag} cust")
+    with api(env) as client:
+        rows = client.get(JOBS, params={"query": tag, "sort": "complaint_number", "dir": "asc"}).json()["data"]
+    assert [r["id"] for r in rows] == [job.id] and rows[0]["complaint_number"] is None

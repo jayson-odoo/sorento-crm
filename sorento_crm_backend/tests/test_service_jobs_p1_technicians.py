@@ -33,7 +33,7 @@ def test_f2_create_get_update(env):
         assert r.status_code in (200, 201), r.text
         body = r.json()
         assert body["name"] == n and body["employment_type"] == "contractor" and body["is_active"] is True
-        up = client.put(f"{TECHS}/{body['id']}", json={"name": n + "x", "employment_type": "employee", "phone": "+60999"})
+        up = client.put(f"{TECHS}/{body['id']}", json={"name": n + "x", "employment_type": "employee", "phone": "+60198765432"})
         assert up.status_code == 200, up.text
         assert up.json()["name"] == n + "x" and up.json()["employment_type"] == "employee"
         assert n + "x" in _names(client.get(TECHS, params={"query": n}))
@@ -118,3 +118,24 @@ def test_f3_delete_needs_manage(env):
     t = make_tech(env)
     with api(env, {VIEW}) as client:
         assert client.delete(f"{TECHS}/{t.id}").status_code == 403
+
+
+# ------------------------------------------------------------------ phone (same check as project sales)
+
+@pytest.mark.parametrize("bad", ["abc", "123"])
+def test_a_bad_phone_is_422_on_create_and_update(env, bad):
+    with api(env) as client:
+        r = client.post(TECHS, json={"name": unique_code("T"), "employment_type": "employee", "phone": bad})
+        assert r.status_code == 422 and "Enter a valid phone number" in r.text
+        good = client.post(TECHS, json={"name": unique_code("T"), "employment_type": "employee"}).json()
+        assert client.put(f"{TECHS}/{good['id']}", json={"phone": bad}).status_code == 422
+
+
+def test_a_good_phone_is_stored_e164_and_displayed_local(env):
+    with api(env) as client:
+        body = client.post(
+            TECHS, json={"name": unique_code("T"), "employment_type": "employee", "phone": "012-345 6789"}
+        ).json()
+        assert body["phone"] == "+60123456789" and body["phone_display"] == "012-345 6789"
+        up = client.put(f"{TECHS}/{body['id']}", json={"phone": ""})
+        assert up.status_code == 200 and up.json()["phone"] is None
