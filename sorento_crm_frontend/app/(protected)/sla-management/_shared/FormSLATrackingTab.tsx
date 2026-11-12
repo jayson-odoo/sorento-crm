@@ -31,7 +31,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import {
-  formatDateTime,
+  formatDateTimeInMalaysia,
   formatDuration,
   formatDurationWithSeconds,
   parseDateTimeAsUTC,
@@ -218,7 +218,7 @@ export default function FormSLATrackingTab({
           <DataGridColumnHeader title="Initiated At" column={column} />
         ),
         cell: ({ row }) =>
-          formatDateTime(parseDateTimeAsUTC(row.original.initiated_at)),
+          formatDateTimeInMalaysia(parseDateTimeAsUTC(row.original.initiated_at)),
         size: 170,
       },
       {
@@ -232,7 +232,7 @@ export default function FormSLATrackingTab({
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(o.due_at))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(o.due_at))}
               </div>
               {overdue && (
                 <div className="flex items-center gap-1 text-xs text-destructive">
@@ -258,7 +258,7 @@ export default function FormSLATrackingTab({
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(dueRes))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(dueRes))}
               </div>
               {overdue && (
                 <div className="flex items-center gap-1 text-xs text-destructive">

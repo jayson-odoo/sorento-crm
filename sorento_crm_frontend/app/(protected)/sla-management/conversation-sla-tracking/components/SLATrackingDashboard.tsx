@@ -80,8 +80,7 @@ export default function SLATrackingDashboard() {
     },
     xaxis: {
       categories: metrics.response_resolution_trends.map((t) => {
-        const date = new Date(t.date);
-        return formatDateInMalaysia(date);
+        return formatDateInMalaysia(t.date);
       }),
       axisBorder: { show: false },
       axisTicks: { show: false },

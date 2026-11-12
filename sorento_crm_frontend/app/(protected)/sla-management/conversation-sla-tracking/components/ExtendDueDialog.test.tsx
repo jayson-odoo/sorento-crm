@@ -18,6 +18,7 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), info:
 // Keep date formatting deterministic + simple for assertions.
 vi.mock('@/lib/helpers', () => ({
   formatDateTime: (d: Date) => `FMT:${d.toISOString()}`,
+  formatDateTimeInMalaysia: (d: Date) => `FMT:${d.toISOString()}`,
   parseDateTimeAsUTC: (s: string) => new Date(s.endsWith('Z') ? s : `${s}Z`),
 }));
 

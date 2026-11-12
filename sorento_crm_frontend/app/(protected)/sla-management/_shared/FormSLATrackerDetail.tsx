@@ -45,7 +45,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  formatDateTime,
+  formatDateTimeInMalaysia,
   formatDuration,
   formatDurationWithSeconds,
   parseDateTimeAsUTC,
@@ -403,7 +403,7 @@ export default function FormSLATrackerDetail({
                       <div>
                         <p className="text-sm text-muted-foreground">Initiated At</p>
                         <p className="font-medium">
-                          {formatDateTime(parseDateTimeAsUTC(tracking.initiated_at))}
+                          {formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.initiated_at))}
                         </p>
                       </div>
                       <div>
@@ -411,7 +411,7 @@ export default function FormSLATrackerDetail({
                           Current Tier Started At
                         </p>
                         <p className="font-medium">
-                          {formatDateTime(
+                          {formatDateTimeInMalaysia(
                             parseDateTimeAsUTC(tracking.current_tier_started_at),
                           )}
                         </p>
@@ -421,7 +421,7 @@ export default function FormSLATrackerDetail({
                           Due at (response)
                         </p>
                         <p className="font-medium">
-                          {formatDateTime(parseDateTimeAsUTC(tracking.due_at))}
+                          {formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.due_at))}
                         </p>
                       </div>
                       {(tracking.due_at_resolution ?? tracking.resolution_due_at) && (
@@ -430,7 +430,7 @@ export default function FormSLATrackerDetail({
                             Due at (resolution)
                           </p>
                           <p className="font-medium">
-                            {formatDateTime(
+                            {formatDateTimeInMalaysia(
                               parseDateTimeAsUTC(
                                 tracking.due_at_resolution ??
                                   tracking.resolution_due_at!,
@@ -443,7 +443,7 @@ export default function FormSLATrackerDetail({
                         <div>
                           <p className="text-sm text-muted-foreground">Escalated At</p>
                           <p className="font-medium">
-                            {formatDateTime(parseDateTimeAsUTC(tracking.escalated_at))}
+                            {formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.escalated_at))}
                           </p>
                         </div>
                       )}
@@ -520,7 +520,7 @@ export default function FormSLATrackerDetail({
                         <p className="text-sm text-muted-foreground">Responded At</p>
                         <p className="font-medium">
                           {tracking.responded_at
-                            ? formatDateTime(
+                            ? formatDateTimeInMalaysia(
                                 parseDateTimeAsUTC(tracking.responded_at),
                               )
                             : '-'}
@@ -609,7 +609,7 @@ export default function FormSLATrackerDetail({
                         <p className="text-sm text-muted-foreground">Resolved At</p>
                         <p className="font-medium">
                           {tracking.resolved_at
-                            ? formatDateTime(parseDateTimeAsUTC(tracking.resolved_at))
+                            ? formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.resolved_at))
                             : '-'}
                         </p>
                       </div>

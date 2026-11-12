@@ -196,8 +196,8 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       toast.success('Event log deleted successfully');
       setDeleteDialogOpen(false);
       setLogToDelete(null);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete event log');
+    } catch (error: unknown) {
+      toast.error(error instanceof Error && error.message ? error.message : 'Failed to delete event log');
     }
   };
 
