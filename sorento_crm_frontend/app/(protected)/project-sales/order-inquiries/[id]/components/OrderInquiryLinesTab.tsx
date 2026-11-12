@@ -436,7 +436,9 @@ export function OrderInquiryLinesTab({
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
         allLineRows.length === 0
-          ? 'Nothing was raised on this order inquiry.'
+          ? lines.length > 0 && lines.every((row) => row.state === 'cancelled')
+            ? 'Every line on this order inquiry is cancelled.'
+            : 'Nothing was raised on this order inquiry.'
           : (stateFilter.length > 0 || requestFilter.length > 0) && rows.length === 0
             ? 'No line matches the filter.'
             : 'No product matches that search.'
