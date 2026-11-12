@@ -46,7 +46,9 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
 
   it("opens a site: its name, our stage, final negotiation, state, its own timeline, value and the project's page", () => {
     render(<TownLightbox snapshot={FULL as never} target={{ kind: 'site', key: 'p1' }} onClose={() => undefined} />);
-    expect(screen.getByText('Residensi Alpha · P-0101')).toBeTruthy();
+    expect(screen.getByRole('dialog').querySelector('h2')?.textContent).toBe('Residensi Alpha');
+    expect(screen.getByText('Code')).toBeTruthy();
+    expect(screen.getByText('P-0101')).toBeTruthy();
     expect(screen.getAllByText('Quoted').length).toBeGreaterThan(0);
     expect(screen.getByText('Johor')).toBeTruthy();
     expect(screen.getByText(/Launch Mar 2025 · Delivery Mar 2028 · 56% of the way/)).toBeTruthy();
@@ -114,7 +116,9 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     const { unmount } = render(<TownLightbox snapshot={snap as never} target={{ kind: 'site', key: 'p1' }} onClose={() => undefined} />);
     const title = screen.getByRole('dialog').querySelector('h2 [title]') as HTMLElement;
     expect(title.className).toMatch(/line-clamp-2/);
-    expect(title.getAttribute('title')).toBe(`${long} · P-0101`);
+    expect(title.getAttribute('title')).toBe(long);
+    // crew pass (12 Nov): the code has its own row, so no clamp can cut it
+    expect(screen.getByText('P-0101')).toBeTruthy();
     unmount();
     render(<TownLightbox snapshot={snap as never} target={{ kind: 'projects' }} onClose={() => undefined} />);
     const row = screen.getByRole('dialog').querySelector('td [title]') as HTMLElement;
@@ -129,5 +133,12 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     render(<TownLightbox snapshot={snap as never} target={{ kind: 'bought' }} onClose={() => undefined} />);
     expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/);
     error.mockRestore();
+  });
+
+  it('always lists the estimated value for a full viewer, "-" when the project has none', () => {
+    const snap = { ...FULL, projects: { ...FULL.projects, sites: [{ ...SITE, estimated_value: null }] } };
+    render(<TownLightbox snapshot={snap as never} target={{ kind: 'site', key: 'p1' }} onClose={() => undefined} />);
+    const row = screen.getByText('Estimated value').closest('tr') as HTMLElement;
+    expect(row.textContent).toMatch(/Estimated value-$/);
   });
 });

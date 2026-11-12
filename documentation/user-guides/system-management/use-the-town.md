@@ -46,8 +46,8 @@ its sales profile.
 
 Hover anything for its name and one key number. Click it for its details:
 
-1. **A project site**: its name and code, **Stage** (named as on the project page), **Final negotiation**, **State**, **Timeline** (for example
-   *Launch Mar 2025 · Delivery Mar 2028 · 56% of the way*) and **Estimated value**. **Open project** opens the
+1. **A project site**: its name as the title (a long name shows in full on hover or the eye), then **Code**, **Stage** (named as on the project page), **Final negotiation**, **State**, **Timeline** (for example
+   *Launch Mar 2025 · Delivery Mar 2028 · 56% of the way*) and **Estimated value** (*-* when none). **Open project** opens the
    project.
 2. **A glass tower**: the customer, **State**, **Open projects** and **Project invoices today**.
 3. **The sign *+N more projects · +N dormant*** near the Selangor sites: how many projects are open, how many the

@@ -200,17 +200,20 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       const site = snapshot.projects?.sites.find((s) => s.key === target.key);
       if (!site) return { title: 'Project site', meta: '', content: null };
       return {
-        title: siteTitle(site),
+        // the name alone as the title (it clamps; a project name can run to hundreds of characters) and the
+        // code on its own row, where no clamp can cut it (crew pass, 12 Nov)
+        title: site.name ?? 'Project site',
         meta: `${stageLabel(site)}${site.final_negotiation ? ' · final negotiation' : ''}`,
         content: (
           <>
             <Rows
               rows={[
+                ...(site.code ? ([['Code', site.code]] as [string, ReactNode][]) : []),
                 ['Stage', stageLabel(site)],
                 ['Final negotiation', site.final_negotiation ? 'Yes' : 'No'],
                 ['State', site.state ?? 'State not set'],
                 ['Timeline', siteTimeline(site, snapshot.day)],
-                ...(site.estimated_value ? ([['Estimated value', rm(site.estimated_value)]] as [string, ReactNode][]) : []),
+                ...(full ? ([['Estimated value', site.estimated_value ? rm(site.estimated_value) : '-']] as [string, ReactNode][]) : []),
               ]}
             />
             {site.name ? link(`/project-sales/${site.key}`, 'Open project') : null}
