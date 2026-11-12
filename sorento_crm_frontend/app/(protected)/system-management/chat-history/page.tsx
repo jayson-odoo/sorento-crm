@@ -73,10 +73,17 @@ function LatencyCell({ seconds }: { seconds: number | null }) {
   );
 }
 
+function defaultDateRange() {
+  return {
+    from: malaysiaCivilYyyyMmDdFromApi(Date.now() - 86_400_000) ?? '',
+    to: todayMalaysiaYyyyMmDd(),
+  };
+}
+
 export default function ChatHistoryPage() {
   // Default to yesterday through today (whole Malaysia days) - an unbounded scan of this table is never the intent.
-  const [dateFrom, setDateFrom] = useState(() => malaysiaCivilYyyyMmDdFromApi(Date.now() - 86_400_000) ?? '');
-  const [dateTo, setDateTo] = useState(() => todayMalaysiaYyyyMmDd());
+  const [dateFrom, setDateFrom] = useState(() => defaultDateRange().from);
+  const [dateTo, setDateTo] = useState(() => defaultDateRange().to);
   const [direction, setDirection] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
   // AC-255. Narrows the LIST to contacts whose chatbot turns failed in this range.
@@ -333,8 +340,14 @@ export default function ChatHistoryPage() {
                     from={dateFrom}
                     to={dateTo}
                     onChange={({ from, to }) => {
-                      setDateFrom(from ?? '');
-                      setDateTo(to ?? '');
+                      if (!from && !to) {
+                        const d = defaultDateRange();
+                        setDateFrom(d.from);
+                        setDateTo(d.to);
+                      } else {
+                        setDateFrom(from ?? '');
+                        setDateTo(to ?? '');
+                      }
                       resetPage();
                     }}
                   />
