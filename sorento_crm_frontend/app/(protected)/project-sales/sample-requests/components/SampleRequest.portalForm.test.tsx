@@ -31,7 +31,7 @@ vi.mock('@/hooks/usePublicViewLinksEnabled', () => ({ usePublicViewLinksEnabled:
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
-vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => 'u-owner' }));
+vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => 'u-owner', useEffectiveUserName: () => 'Ann Sales' }));
 vi.mock('@/hooks/useDeferredAction', () => ({ useDeferredAction: () => ({ countdown: null, isBlocked: false, start: vi.fn() }) }));
 vi.mock('@/app/(protected)/project-sales/_shared/components/OrderInquiryStockGrid', () => ({ OrderInquiryStockGrid: () => null }));
 vi.mock('@/app/(protected)/sla-management/_shared/formSLAService', () => ({ getFormSLATrackers: async () => [], escalateFormTracking: vi.fn() }));
@@ -255,6 +255,8 @@ describe('limited user, a refused save shows the message', () => {
 describe('staff keep today\'s Sample Request screens', () => {
   it('staff New is the CRM form: Add row, nothing sent to my-requests', async () => {
     mountForm(STAFF);
+    // Owner 12 Nov: sections start collapsed; the guided CRM form is there with its Items section.
+    fireEvent.click(await screen.findByRole('button', { name: /^Items/ }));
     expect(await screen.findByRole('button', { name: /Add row/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Submit sample request' })).toBeNull();
     expect(where((c) => c.url.startsWith('/api/v1/my-requests'))).toHaveLength(0);

@@ -9,12 +9,17 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: nav.push, replace: vi.fn(), back: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.search),
+}));
+
+vi.mock('@/hooks/useEffectiveUserId', () => ({
+  useEffectiveUserId: () => 'u-1',
+  useEffectiveUserName: () => 'Aiman Hakim',
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -91,6 +96,13 @@ const ensureRow = (): HTMLElement => {
   return rows()[0];
 };
 const labelNode = (re: RegExp): HTMLElement => screen.getAllByText(re)[0];
+/** Owner 12 Nov: every section starts collapsed; open them all to work in the form. */
+function openAll() {
+  for (const title of ['Customer & project', 'Ship to', 'Items', 'Delivery']) {
+    const trigger = screen.queryByRole('button', { name: new RegExp(`^${title}`) });
+    if (trigger && trigger.getAttribute('aria-expanded') === 'false') fireEvent.click(trigger);
+  }
+}
 
 /** Types into a row's product search, whether it is a text input or a select trigger. */
 function searchProduct(row: HTMLElement, text: string) {
@@ -131,6 +143,7 @@ describe('SAMPLE-REQUEST-V2 the guided form', () => {
       (t) => screen.getAllByText(t, { selector: 'span' })[0],
     );
     await screen.findByText('Customer & project');
+    openAll();
     for (let i = 0; i < order.length - 1; i += 1) {
       expect(order[i].compareDocumentPosition(order[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
@@ -140,6 +153,7 @@ describe('SAMPLE-REQUEST-V2 the guided form', () => {
   it('drops For, the free contact phone / note, and the empty Consignment / PO numbers', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     expect(screen.queryByLabelText(/^For\b/)).toBeNull();
     expect(screen.queryByText(/^Contact Phone/)).toBeNull();
     expect(screen.queryByLabelText(/note/i)).toBeNull();
@@ -150,6 +164,7 @@ describe('SAMPLE-REQUEST-V2 the guided form', () => {
   it('has no Quotation, Or (alternative) or Immediate arrangement anywhere', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     clickAddRow();
     const text = document.body.textContent ?? '';
     expect(text).not.toMatch(/quotation/i);
@@ -157,9 +172,10 @@ describe('SAMPLE-REQUEST-V2 the guided form', () => {
     expect(text).not.toMatch(/immediate/i);
   });
 
-  it('has the footer fields, Save as draft, and Preview as the only main button', async () => {
+  it('has the footer fields, Save as draft, and Submit as the only main button', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     for (const name of ['Deliver-Van', 'Self-Deliver', 'Self-Collection']) {
       expect(screen.getByRole('radio', { name })).toBeTruthy();
     }
@@ -167,14 +183,15 @@ describe('SAMPLE-REQUEST-V2 the guided form', () => {
     expect(labelNode(/^Goods Taken From/)).toBeTruthy();
     expect(labelNode(/^Purpose/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /^save as draft$/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^preview$/i })).toBeTruthy();
-    // Submit lives in the preview popup only (one main button per screen).
-    expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeTruthy();
+    // Owner 12 Nov: no Preview step here (only price tags have one).
+    expect(screen.queryByRole('button', { name: /^preview$/i })).toBeNull();
   });
 
   it('the delivery date is the dd/mm/yyyy picker, not a native date input', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     expect(document.querySelector('input[type="date"]')).toBeNull();
     expect(screen.getByPlaceholderText('DD/MM/YYYY')).toBeTruthy();
   });
@@ -184,6 +201,7 @@ describe('AC-SR-80 the line table', () => {
   it('has the Item Code, Qty and Remark headers and Add row appends a product row', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     clickAddRow();
     expect(screen.getAllByText(/^Item Code/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/^Qty$/).length).toBeGreaterThan(0);
@@ -197,6 +215,7 @@ describe('AC-SR-80 the line table', () => {
   it('keeps the board in row 1 as a checkbox with a label, never as a product row', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const board = screen.getByRole('checkbox', { name: /mount & label sample board/i });
     expect(board.closest('[data-testid="sample-request-line"]')).toBeNull();
     const before = rows().length;
@@ -210,6 +229,7 @@ describe('AC-SR-11 product search lists and never picks', () => {
   it('"tpe9101" lists TPE-9101 and leaves the row empty until it is clicked', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const row = ensureRow();
     searchProduct(row, 'tpe9101');
 
@@ -226,6 +246,7 @@ describe('AC-SR-12 product not in the list', () => {
   it('shows the card sentence and adds nothing', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const row = ensureRow();
     const before = rows().length;
     searchProduct(row, 'B2155-BLUE-NL');
@@ -244,7 +265,8 @@ describe('AC-SR-02 / AC-SR-03 Preview names the missing field', () => {
   it('without a Request Delivery Date shows an error naming it and does not save', async () => {
     renderForm();
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    openAll();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
 
     const messages = await screen.findAllByText(
       (content, el) =>
@@ -255,13 +277,14 @@ describe('AC-SR-02 / AC-SR-03 Preview names the missing field', () => {
     expect(messages.length).toBeGreaterThan(0);
     expect(mut.createAsync).not.toHaveBeenCalled();
     expect(mut.submitAsync).not.toHaveBeenCalled();
-    expect(screen.queryByText('Preview sample request')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('without a delivery mode shows "Choose a delivery mode"', async () => {
     renderForm();
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    openAll();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(await screen.findByText(/choose a delivery mode/i)).toBeTruthy();
     expect(mut.createAsync).not.toHaveBeenCalled();
   });
@@ -269,7 +292,8 @@ describe('AC-SR-02 / AC-SR-03 Preview names the missing field', () => {
   it('without a ship-to party says who the samples go to (rule 2)', async () => {
     renderForm();
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    openAll();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(await screen.findByText('Pick who the samples go to')).toBeTruthy();
   });
 });
@@ -278,6 +302,7 @@ describe('rule 1: the customer is an AutoCount debtor', () => {
   it('a typed name that matches no debtor is not kept', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const customer = screen.getByLabelText(/^Customer/) as HTMLInputElement;
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'Walk-in Trading' } });
@@ -289,7 +314,7 @@ describe('rule 1: the customer is an AutoCount debtor', () => {
     await waitFor(() => expect(mut.createAsync).toHaveBeenCalled());
     expect(mut.createAsync.mock.calls[0][0]).toMatchObject({ customer_id: null });
     expect(mut.createAsync.mock.calls[0][0]).not.toHaveProperty('customer_name');
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(await screen.findByText('Pick the customer')).toBeTruthy();
   });
 
@@ -305,6 +330,7 @@ describe('rule 1: the customer is an AutoCount debtor', () => {
     ]);
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const customer = screen.getByLabelText(/^Customer/);
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'perkasa' } });
@@ -346,20 +372,14 @@ const READY_DRAFT = {
   ],
 };
 
-describe('Preview, then Submit in the popup', () => {
-  it('opens the preview with the request as the sample team reads it, and Submit sends it', async () => {
+describe('Submit (no Preview step, owner 12 Nov)', () => {
+  it('Submit saves the request as shown and submits it', async () => {
     mut.existing = READY_DRAFT;
     mut.updateAsync.mockResolvedValue({ id: 'sr-1', request_no: 'SR-000231' });
     renderForm({ requestId: 'sr-1' });
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Preview sample request')).toBeTruthy();
-    expect(within(dialog).getByText(/Bintang Trading Sdn Bhd/)).toBeTruthy();
-    expect(within(dialog).getByText(/Mei Ling Tan, 012-345 6789/)).toBeTruthy();
-    expect(mut.updateAsync).not.toHaveBeenCalled();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: /^submit$/i }));
+    openAll();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() => expect(mut.submitAsync).toHaveBeenCalledWith('sr-1'));
     const body = mut.updateAsync.mock.calls[0][0].data;
     expect(body).toMatchObject({
@@ -368,8 +388,7 @@ describe('Preview, then Submit in the popup', () => {
       delivery_date: '2026-11-18',
       delivery_mode: 'driver',
     });
-    // Rules 3-4: the staff form never writes For or the contact note; the server prints the
-    // party name and the contact from the party.
+    // Rules 3-4: the staff form never writes For or the contact note.
     expect(body).not.toHaveProperty('scope_note');
     expect(body).not.toHaveProperty('site_contact_note');
     expect(body).not.toHaveProperty('customer_name');
@@ -384,6 +403,7 @@ describe('crew pass 11 Nov: Edit matches Create', () => {
     mut.existing = { ...READY_DRAFT, project_id: pid, project_code: 'PPF2611001', project_name: 'Seri Murni' };
     renderForm({ requestId: 'sr-1' });
     await screen.findByText('Customer & project');
+    openAll();
     expect(screen.getByText('PPF2611001 - Seri Murni')).toBeTruthy();
     expect(document.getElementById('sr-project')).toBeNull();
   });
@@ -392,6 +412,7 @@ describe('crew pass 11 Nov: Edit matches Create', () => {
     mut.existing = { ...READY_DRAFT, project_id: '11111111-2222-3333-4444-555555555555', project_code: 'PPF2611001', project_name: 'Seri Murni' };
     renderForm({ requestId: 'sr-1' });
     await screen.findByText('Customer & project');
+    openAll();
     expect(document.getElementById('sr-project')).not.toBeNull();
   });
 });
@@ -403,14 +424,15 @@ describe('owner 16:30: every exit returns to where the person started', () => {
     mut.updateAsync.mockResolvedValue({ id: 'sr-1', request_no: 'SR-000231' });
     renderForm({ requestId: 'sr-1' });
     await screen.findByText('Customer & project');
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /^submit$/i }));
+    openAll();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/pr-1?tab=sample-requests'));
   });
 
   it('Save as draft without an origin goes to the Sample Requests list', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
   });
@@ -419,6 +441,7 @@ describe('owner 16:30: every exit returns to where the person started', () => {
     nav.search = `from=${encodeURIComponent('https://evil.example/x')}`;
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/project-sales/sample-requests'));
   });
@@ -441,6 +464,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
   it('a blank Quantity sends nothing and shows the sentence', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const row = await pickProduct();
     fireEvent.change(within(row).getByLabelText('Quantity'), { target: { value: '' } });
     draft();
@@ -451,6 +475,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
   it('a Quantity of 0 sends nothing and shows the sentence', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const row = await pickProduct();
     fireEvent.change(within(row).getByLabelText('Quantity'), { target: { value: '0' } });
     draft();
@@ -461,6 +486,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
   it('a bad-input Quantity sends nothing and shows the sentence', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     const row = await pickProduct();
     typeBadInput(within(row).getByLabelText('Quantity'));
     draft();
@@ -471,6 +497,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
   it('a blank Loan Period sends nothing and shows the sentence', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     await pickProduct();
     fireEvent.change(screen.getByLabelText('Loan Period'), { target: { value: '' } });
     draft();
@@ -481,6 +508,7 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
   it('a bad-input Loan Period sends nothing and shows the sentence', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     await pickProduct();
     typeBadInput(screen.getByLabelText('Loan Period'));
     draft();
@@ -491,9 +519,64 @@ describe('number fields round 9: Save as draft refuses a bad quantity or loan pe
   it('S1 guard: a refused Preview with a blank Loan Period shows the sentence under the box', async () => {
     renderForm();
     await screen.findByText('Customer & project');
+    openAll();
     fireEvent.change(screen.getByLabelText('Loan Period'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(await screen.findByText(SENTENCE)).toBeTruthy();
     nothingSent();
+  });
+});
+
+
+describe('owner hand test 12 Nov: collapsed sections, separate fields, proposal contact pattern, no Preview', () => {
+  const SECTIONS = ['Customer & project', 'Ship to', 'Items', 'Delivery'];
+
+  it('every section starts collapsed, new and edit alike', async () => {
+    renderForm();
+    await screen.findByText('Customer & project');
+    for (const title of SECTIONS) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${title}`) }).getAttribute('aria-expanded')).toBe('false');
+    }
+    cleanup();
+    mut.existing = READY_DRAFT;
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    for (const title of SECTIONS) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${title}`) }).getAttribute('aria-expanded')).toBe('false');
+    }
+  });
+
+  it('Requested by shows the person name and the Date is its own field, with no dot delimiter', async () => {
+    renderForm();
+    await screen.findByText('Customer & project');
+    openAll();
+    expect(screen.getByText('Requested by')).toBeTruthy();
+    expect(screen.getByText('Aiman Hakim')).toBeTruthy();
+    expect(screen.getByText('Date')).toBeTruthy();
+    expect(screen.queryByText(/^You\b/)).toBeNull();
+    expect(document.body.textContent ?? '').not.toContain(' \u00b7 ');
+  });
+
+  it('Choose contacts sits on the Contact person label row (the proposal pattern), the person is an input', async () => {
+    mut.existing = READY_DRAFT;
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    openAll();
+    const input = screen.getByLabelText('Contact person') as HTMLInputElement;
+    expect(input.tagName).toBe('INPUT');
+    expect(input.value).toBe('Mei Ling Tan');
+    const row = screen.getByText('Contact person').parentElement as HTMLElement;
+    expect(within(row).getByRole('button', { name: 'Choose contacts' })).toBeTruthy();
+  });
+
+  it('there is no Preview: Submit is the main button and submits directly', async () => {
+    mut.existing = READY_DRAFT;
+    mut.updateAsync.mockResolvedValue({ id: 'sr-1', request_no: 'SR-000231' });
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    expect(screen.queryByRole('button', { name: /^preview$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    await waitFor(() => expect(mut.submitAsync).toHaveBeenCalledWith('sr-1'));
+    expect(screen.queryByText('Preview sample request')).toBeNull();
   });
 });

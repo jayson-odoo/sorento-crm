@@ -100,6 +100,7 @@ export function QuotationAttnChooser({
   partyEmail,
   locked,
   autoPick = false,
+  title = (name: string) => `Attn at ${name}`,
   onChange,
 }: {
   value: QuotationDocumentBody;
@@ -109,6 +110,8 @@ export function QuotationAttnChooser({
   locked: boolean;
   /** A party just picked: its only contact becomes the Attn without opening the popup. */
   autoPick?: boolean;
+  /** The popup's title; the sample request's Contact person reuses this chooser (SAMPLE-REQUEST-V2). */
+  title?: (partyName: string) => string;
   onChange: (patch: QuotationDocumentBody) => void;
 }) {
   const partyId = value.recipient_party_id ?? '';
@@ -217,7 +220,7 @@ export function QuotationAttnChooser({
       {/* Mounted once the contacts have answered: the popup takes its ticks when it opens. */}
       {open && !contacts.isLoading && (
         <PartyContactsDialog
-          title={(name) => `Attn at ${name}`}
+          title={title}
           parties={[{ partyId, name: partyName }]}
           picks={{ [partyId]: attn.ids }}
           canEdit={canEdit}

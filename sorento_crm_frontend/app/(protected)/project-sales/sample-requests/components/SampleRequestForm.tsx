@@ -13,14 +13,6 @@ import { useRouter } from 'next/navigation';
 import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -36,25 +28,21 @@ import {
   SampleRequestQuotationPicker,
 } from '@/components/common/SampleRequestQuotationSource';
 import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
-import { useHasPermission } from '@/hooks/usePermissions';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { SampleRequestError } from '@/types/sampleRequest';
 import {
   DELIVERY_MODE_LABELS,
-  GOODS_FROM_LABELS,
 } from '@/types/sampleRequest';
 import {
   EMPTY_FORM,
   blankLine,
-  goodsFromTicks,
   productSource,
   staffPayloadFromState,
   stateFromDetail,
   numberErrors,
   validateStaff,
-  withShipToContacts,
   withShipToParty,
   type FormState,
 } from '@/lib/sample-request-form';
@@ -64,13 +52,13 @@ import { searchProjectsForLink } from '@/app/(protected)/complaint-management/co
 import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { useProject, usePartyContacts, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
+import { useProject, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
+import { useEffectiveUserName } from '@/hooks/useEffectiveUserId';
+import { QuotationAttnChooser } from '../../[projectId]/quotation-documents/components/QuotationRecipientPicker';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
 import { projectFromOrigin } from './SampleRequestPageHeader';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { ProjectPartyPicker } from '../../_shared/components/ProjectPartyPicker';
-import { PartyContactsDialog } from '../../_shared/components/PartyContactsDialog';
-import type { PartyContact } from '../../_shared/types/project.types';
 import {
   useSampleRequestMutations,
   useSampleRequestQuery,
@@ -176,15 +164,14 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   const { create, update, submit } = useSampleRequestMutations();
   const existing = useSampleRequestQuery(requestId ?? null);
   const { data: switches } = useSampleRequestSwitches();
-  const canEditParties = useHasPermission('projects.parties.edit');
+  const userName = useEffectiveUserName();
   const roleLabel = usePartyRoleLabel();
   const [state, setState] = useState<FormState>({ ...EMPTY_FORM, lines: [blankLine()] });
   const [hydrated, setHydrated] = useState(!requestId);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [contactsOpen, setContactsOpen] = useState(false);
-  const [open, setOpen] = useState({ customer: true, shipTo: true, items: true, delivery: true });
+  // Owner hand test 12 Nov: every section starts collapsed (its one-line summary shows).
+  const [open, setOpen] = useState({ customer: false, shipTo: false, items: false, delivery: false });
 
   const set = useCallback(
     <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -197,7 +184,6 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   );
   const project = useProject(state.project_id || undefined);
   const siteAddress = project.data?.address ?? null;
-  const contacts = usePartyContacts(state.ship_to_party_id || null);
 
   // A request from a quotation offers only that quotation's products (SFQ-27).
   const sourceDoc = state.quotation_document_id;
@@ -281,7 +267,8 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     }
   };
 
-  const handlePreview = () => {
+  /** Submit is the main button (owner 12 Nov: no Preview here, only price tags have one). */
+  const handleSubmit = async () => {
     setServerMessage(null);
     const found = validateStaff(state, { requireProject: switches?.requireProject });
     setErrors(found);
@@ -297,35 +284,17 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
       }));
       return;
     }
-    setPreviewOpen(true);
-  };
-
-  const handleSubmit = async () => {
-    setServerMessage(null);
     try {
       const saved = await save();
       const done = await submit.mutateAsync(saved.id);
       toast.success(`Sample request ${done?.request_no ?? saved.request_no} submitted`);
-      setPreviewOpen(false);
       leave(BASE_PATH);
     } catch (e) {
-      // A refused submit closes the popup so the form shows the problem.
-      setPreviewOpen(false);
       explain(e);
     }
   };
 
-  async function applyContacts(ids: string[]) {
-    // A contact added inside the popup may not be in the cached list yet: read it fresh then.
-    let list: PartyContact[] = contacts.data ?? [];
-    if (ids.some((id) => !list.some((c) => c.id === id))) {
-      list = (await contacts.refetch()).data ?? list;
-    }
-    const rows = ids
-      .map((id) => list.find((c) => c.id === id))
-      .filter((c): c is PartyContact => Boolean(c));
-    setState((prev) => withShipToContacts(prev, rows));
-  }
+
 
   if (requestId && (existing.isLoading || !hydrated)) {
     return (
@@ -347,7 +316,6 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   const customerText = state.customer_id ? state.customer_label : '';
   const roleText = state.ship_to_role ? roleLabel(state.ship_to_role) : '';
   const pickedLines = state.lines.filter((l) => l.product_id);
-  const contactText = [state.site_contact_name, state.site_contact_phone].filter(Boolean).join(', ');
   const shipToText = state.ship_to_name
     ? `${state.ship_to_name}${roleText ? ` (${roleText})` : ''}`
     : '';
@@ -356,7 +324,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     state.delivery_mode ? DELIVERY_MODE_LABELS[state.delivery_mode] : '',
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(', ');
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-3">
@@ -367,8 +335,9 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
       </div>
 
       <FormSection
+        keepMounted
         title="Customer & project"
-        summary={[customerText, projectText].filter(Boolean).join(' · ')}
+        summary={[customerText, projectText].filter(Boolean).join(', ')}
         open={open.customer}
         onOpenChange={(v) => setOpen((o) => ({ ...o, customer: v }))}
       >
@@ -454,22 +423,20 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               />
             </Field>
           )}
+          {/* The creator, by name, and the date as its own field (owner 12 Nov). */}
           <Field label="Requested by">
-            <ReadValue>
-              {[
-                record?.salesperson_name ?? 'You',
-                formatDateInMalaysia(record?.request_date ?? new Date()),
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </ReadValue>
+            <ReadValue>{record?.salesperson_name ?? userName ?? '-'}</ReadValue>
+          </Field>
+          <Field label="Date">
+            <ReadValue>{formatDateInMalaysia(record?.request_date ?? new Date())}</ReadValue>
           </Field>
         </div>
       </FormSection>
 
       <FormSection
+        keepMounted
         title="Ship to"
-        summary={[shipToText, state.site_contact_name].filter(Boolean).join(' · ')}
+        summary={[shipToText, state.site_contact_name].filter(Boolean).join(', ')}
         open={open.shipTo}
         onOpenChange={(v) => setOpen((o) => ({ ...o, shipTo: v }))}
       >
@@ -517,28 +484,50 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               onChange={(e) => set('ship_to_address', e.target.value)}
             />
           </Field>
-          <Field label="Contact person">
-            <div className="flex min-h-9 items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
-              <span className="min-w-0 truncate" title={contactText}>
-                {contactText || <span className="text-muted-foreground">No contact picked</span>}
-              </span>
-              {state.ship_to_party_id && (
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="h-auto shrink-0 p-0"
-                  onClick={() => setContactsOpen(true)}
-                >
-                  Choose contact
-                </Button>
-              )}
+          {/* The proposal's own Attn pattern (owner 12 Nov): "Choose contacts" on the label row, the
+              same chooser and popup, the contact person an input under it. */}
+          <div className="min-w-0 space-y-1.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <Label htmlFor="sr-contact-person">Contact person</Label>
+              <QuotationAttnChooser
+                title={(name: string) => `Contacts at ${name}`}
+                value={{
+                  recipient_party_id: state.ship_to_party_id || null,
+                  attn_name: state.site_contact_name || null,
+                  attn_contact_ids: state.ship_to_contact_ids,
+                  recipient_phone_snapshot: state.site_contact_phone || null,
+                }}
+                partyName={state.ship_to_name}
+                locked={false}
+                autoPick
+                onChange={(next) =>
+                  setState((prev) => ({
+                    ...prev,
+                    ship_to_contact_ids: next.attn_contact_ids ?? prev.ship_to_contact_ids,
+                    site_contact_name:
+                      'attn_name' in next ? (next.attn_name ?? '') : prev.site_contact_name,
+                    site_contact_phone:
+                      'recipient_phone_snapshot' in next
+                        ? (next.recipient_phone_snapshot ?? '')
+                        : prev.site_contact_phone,
+                  }))
+                }
+              />
             </div>
-          </Field>
+            <Input
+              id="sr-contact-person"
+              value={state.site_contact_name}
+              onChange={(e) => set('site_contact_name', e.target.value)}
+            />
+            {state.site_contact_phone && (
+              <p className="text-xs text-muted-foreground">Phone {state.site_contact_phone}</p>
+            )}
+          </div>
         </div>
       </FormSection>
 
       <FormSection
+        keepMounted
         title="Items"
         summary={
           pickedLines.length
@@ -584,6 +573,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
       </FormSection>
 
       <FormSection
+        keepMounted
         title="Delivery"
         summary={deliveryText}
         open={open.delivery}
@@ -616,83 +606,14 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
 
       <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={handleSaveDraft} disabled={saving}>
-          {saving && !previewOpen && <Loader2 className="mr-1 size-4 animate-spin" />}
           Save as draft
         </Button>
-        <Button type="button" onClick={handlePreview} disabled={saving}>
-          Preview
+        <Button type="button" onClick={() => void handleSubmit()} disabled={saving}>
+          {saving && <Loader2 className="mr-1 size-4 animate-spin" />}
+          Submit
         </Button>
       </div>
 
-      {contactsOpen && state.ship_to_party_id && (
-        <PartyContactsDialog
-          parties={[{ partyId: state.ship_to_party_id, name: state.ship_to_name }]}
-          picks={{ [state.ship_to_party_id]: state.ship_to_contact_ids }}
-          canEdit={canEditParties}
-          onSave={(next) => void applyContacts(next[state.ship_to_party_id] ?? [])}
-          onClose={() => setContactsOpen(false)}
-        />
-      )}
-
-      <Dialog open={previewOpen} onOpenChange={(v) => !saving && setPreviewOpen(v)}>
-        <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>Preview sample request</DialogTitle>
-          </DialogHeader>
-          <DialogBody>
-            <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-[150px_1fr]">
-              <dt className="text-muted-foreground">Customer</dt>
-              <dd className="break-words">{customerText || '-'}</dd>
-              <dt className="text-muted-foreground">Project</dt>
-              <dd className="break-words">{projectText || '-'}</dd>
-              <dt className="text-muted-foreground">Ship to</dt>
-              <dd className="break-words">
-                {shipToText || '-'}
-                {state.ship_to_address && (
-                  <span className="block whitespace-pre-line text-muted-foreground">
-                    {state.ship_to_address}
-                  </span>
-                )}
-              </dd>
-              <dt className="text-muted-foreground">Contact</dt>
-              <dd className="break-words">{contactText || '-'}</dd>
-              <dt className="text-muted-foreground">Deliver by</dt>
-              <dd>{deliveryText || '-'}</dd>
-              <dt className="text-muted-foreground">Loan</dt>
-              <dd>
-                {state.loan_value} {state.loan_unit === 'days' ? 'days' : 'months'},{' '}
-                {GOODS_FROM_LABELS[goodsFromTicks(state.goods_demo, state.goods_new)]}
-              </dd>
-              <dt className="text-muted-foreground">Items</dt>
-              <dd className="min-w-0">
-                <ul className="space-y-0.5">
-                  {pickedLines.map((l) => (
-                    <li key={l.key} className="truncate" title={l.label}>
-                      {l.qty} x {l.label}
-                      {l.remark ? ` (${l.remark})` : ''}
-                    </li>
-                  ))}
-                  {state.board_mounting && <li>Board: {state.board_label}</li>}
-                </ul>
-              </dd>
-            </dl>
-          </DialogBody>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPreviewOpen(false)}
-              disabled={saving}
-            >
-              Back to edit
-            </Button>
-            <Button type="button" onClick={handleSubmit} disabled={saving}>
-              {saving && <Loader2 className="mr-1 size-4 animate-spin" />}
-              Submit
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

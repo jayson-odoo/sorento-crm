@@ -651,13 +651,15 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <h2 className="break-words text-2xl font-bold">Sample Request - {r.request_no}</h2>
-          <p className="text-sm text-muted-foreground">
-            {r.submitted_at ? 'Submitted' : 'Created'}: {stamp ? formatDateInMalaysia(stamp) : '-'}
-            {' · '}
+          {/* Separate items, no dot delimiter (owner hand test 12 Nov). */}
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>
+              {r.submitted_at ? 'Submitted' : 'Created'}: {stamp ? formatDateInMalaysia(stamp) : '-'}
+            </span>
             <span className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}>
               {r.status_label}
             </span>
-          </p>
+          </div>
         </div>
         <DetailActions
           pager={{
@@ -773,7 +775,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             Sample Request
           </h2>
           <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2 [&>div]:min-w-0 [&_p]:break-words">
-            <Field label="Salesperson">{r.salesperson_name}</Field>
+            <Field label="Requested by">{r.salesperson_name}</Field>
             <div>
               <p className="text-sm text-muted-foreground">Customer</p>
               <p className="flex flex-wrap items-center gap-2 font-medium">
