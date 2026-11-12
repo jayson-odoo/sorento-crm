@@ -7,7 +7,7 @@ trigram index covers them yet (prod may carry migration 169's). Built CONCURRENT
 keep going while the indexes build.
 
 Revision ID: so_search_trgm_0001
-Revises: qdp_0001_duplicate_party
+Revises: il_0002_integration_log_search
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "so_search_trgm_0001"
-down_revision = "qdp_0001_duplicate_party"
+down_revision = "il_0002_integration_log_search"
 branch_labels = None
 depends_on = None
 
