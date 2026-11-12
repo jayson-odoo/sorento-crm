@@ -102,3 +102,31 @@ describe('addSearchChips (F2, F9)', () => {
     expect(addSearchChips(['A'], ['B', 'C'], 2)).toEqual({ chips: ['A', 'B'], capped: true });
   });
 });
+
+describe('one search value is at most 100 characters (backend 422s a longer one)', () => {
+  const long = (head: string) => head.repeat(100) + 'Z'.repeat(50); // 150 characters
+
+  it('exports MAX_SEARCH_VALUE_LENGTH = 100', async () => {
+    const lib = (await import('./searchChips')) as Record<string, unknown>;
+    expect(lib.MAX_SEARCH_VALUE_LENGTH).toBe(100);
+  });
+
+  it('a 150-character value becomes a 100-character chip (cut after the trim)', () => {
+    const { chips } = addSearchChips([], [`   ${long('a')}   `]);
+    expect(chips).toEqual(['a'.repeat(100)]);
+  });
+
+  it('two values equal in their first 100 characters dedupe to one, case-insensitively', () => {
+    const { chips } = addSearchChips([], ['b'.repeat(100) + 'X', 'B'.repeat(100) + 'Y']);
+    expect(chips).toEqual(['b'.repeat(100)]);
+  });
+
+  it('a long value whose first 100 characters are an existing chip adds nothing', () => {
+    const { chips } = addSearchChips(['c'.repeat(100)], [long('c')]);
+    expect(chips).toEqual(['c'.repeat(100)]);
+  });
+
+  it('a value of exactly 100 characters is kept whole', () => {
+    expect(addSearchChips([], ['d'.repeat(100)]).chips).toEqual(['d'.repeat(100)]);
+  });
+});

@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -342,5 +342,37 @@ describe('SalesOrdersGrid search chips: emptied text settles at once', () => {
     const after = queriesFrom(before);
     expect(after.filter((q) => q.includes('Fak'))).toEqual([]);
     expect(after.every((q) => q.length === 1 && q[0] === 'Fakeco')).toBe(true);
+  });
+});
+
+describe('SalesOrdersGrid search: a value is cut to 100 characters before it is sent', () => {
+  const TYPED = 'q'.repeat(100) + 'r'.repeat(50); // 150 characters, no digits / commas / spaces
+
+  it('typed text over 100 characters is sent cut to 100; the box still shows what was typed', async () => {
+    const user = userEvent.setup();
+    renderGrid();
+    await screen.findByText('SO900001');
+
+    // One change event: 150 keystrokes through the whole grid take ~8 s in jsdom.
+    await user.click(searchBox());
+    fireEvent.change(searchBox(), { target: { value: TYPED } });
+    await waitFor(() => expect(lastListRequest().getAll('query')).toEqual(['q'.repeat(100)]));
+    expect(listRequests().every((r) => r.getAll('query').every((q) => q.length <= 100))).toBe(true);
+    expect(searchBox()).toHaveValue(TYPED);
+  });
+
+  it('Enter on it makes a 100-character chip and the request carries 100 characters', async () => {
+    const user = userEvent.setup();
+    renderGrid();
+    await screen.findByText('SO900001');
+
+    await user.click(searchBox());
+    fireEvent.change(searchBox(), { target: { value: TYPED } });
+    await user.keyboard('{Enter}');
+    expect(
+      await screen.findByRole('button', { name: `Remove ${'q'.repeat(100)}` }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(lastListRequest().getAll('query')).toEqual(['q'.repeat(100)]));
+    expect(listRequests().every((r) => r.getAll('query').every((q) => q.length <= 100))).toBe(true);
   });
 });
