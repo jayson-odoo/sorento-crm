@@ -652,3 +652,25 @@ def test_the_route_is_on_the_project_own_scope_pin_list():
 
     pinned = (Path(__file__).parent / "portal_p2_allowed_routes.txt").read_text().split("\n")
     assert "GET /projects/{project_id}/related-records" in pinned
+
+
+# ------------------------------------------------------------------ fix round 7: the Malaysia day
+
+
+def test_the_date_is_the_malaysia_day_not_the_utc_day(scene):
+    """created_at / submitted_at are naive UTC; the grid's Date is the calendar day in
+    Asia/Kuala_Lumpur (UTC+8), as every other screen reads it. 23:30 UTC on the 12th is 07:30 on
+    the 13th in Malaysia; 15:00 UTC on the 12th is 23:00 on the 12th."""
+    db, p = scene["db"], scene["p"]
+    company_id = scene["company_id"]
+    early_si = _si(db, p.id, inquiry_number="ZZT-SI-MYT1", created_at=datetime(2026, 11, 12, 23, 30))
+    late_si = _si(db, p.id, inquiry_number="ZZT-SI-MYT2", created_at=datetime(2026, 11, 12, 15, 0))
+    with company_scope(db, frozenset({company_id})):
+        npa = _npa(db, company_id, p.id, application_no="NPA-990011",
+                   submitted_at=datetime(2026, 11, 12, 22, 0), created_at=datetime(2026, 11, 10, 1, 0))
+    with acting(db, _viewer(db), FULL) as client:
+        body = _get(client, p.id)
+    dates = {row["id"]: row["date"] for row in body["data"]}
+    assert dates[str(early_si.id)] == "2026-11-13"
+    assert dates[str(npa.id)] == "2026-11-13"
+    assert dates[str(late_si.id)] == "2026-11-12"
