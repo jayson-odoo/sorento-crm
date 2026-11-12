@@ -330,7 +330,28 @@ def _trgm_index_by_column(conn) -> dict[tuple[str, str], list[str]]:
     return out
 
 
-def test_d2_migrated_db_has_a_plain_trgm_index_on_every_searched_column():
+@pytest.fixture(scope="module")
+def search_indexes_applied():
+    """The migration's own upgrade body, applied to the test DB first.
+
+    CI and the release sweep build the test DB with `scripts.bootstrap_env` (create_all + stamp),
+    so `so_search_trgm_0001` never runs there and its indexes do not exist. This runs the same
+    steps the migration does (its `_has_trgm_index`, then `online_index.ensure_indexes_online`),
+    which is a no-op on a DB alembic already migrated."""
+    from app.database import engine
+    from app.utils import online_index
+
+    mig = _load_migration()
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        wanted = online_index.SALES_ORDER_SEARCH_INDEXES + tuple(
+            index for index in mig.SHARED_INDEXES
+            if not mig._has_trgm_index(conn, index[0], mig._column(index[2]))
+        )
+        assert online_index.ensure_indexes_online(conn, wanted), "search indexes did not build"
+
+
+def test_d2_migrated_db_has_a_plain_trgm_index_on_every_searched_column(search_indexes_applied):
     from app.database import engine
 
     with engine.connect() as conn:
@@ -769,7 +790,7 @@ def real_db():
         conn.close()
 
 
-def test_p4_count_query_uses_bitmap_trgm_indexes_not_a_seq_scan(real_db):
+def test_p4_count_query_uses_bitmap_trgm_indexes_not_a_seq_scan(search_indexes_applied, real_db):
     from app.services.scm.sales_order_service import SalesOrderService
 
     db = real_db
