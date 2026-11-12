@@ -39,7 +39,7 @@ import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUserLookup } from '@/services/userSelectService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
-import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
@@ -317,7 +317,7 @@ function StaffPurchaseRequestsList({
         ),
         cell: ({ row }) =>
           row.original.submitted_at
-            ? formatDate(new Date(row.original.submitted_at))
+            ? formatDateInMalaysia(row.original.submitted_at)
             : '-',
         size: 140,
         meta: { headerTitle: 'Submitted date', skeleton: <Skeleton className="h-4 w-24" /> },

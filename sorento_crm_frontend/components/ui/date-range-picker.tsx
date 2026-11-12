@@ -173,7 +173,7 @@ export function DateRangePicker({
   };
 
   return (
-    <div className={cn('flex gap-2', className)}>
+    <div className={cn('flex w-full gap-2', className)}>
       <Input
         id={id}
         type="text"
@@ -189,7 +189,7 @@ export function DateRangePicker({
         }}
         disabled={disabled}
         aria-label={ariaLabel}
-        className="flex-1"
+        className="flex-1 min-w-0"
         autoComplete="off"
       />
       <Popover open={open} onOpenChange={setOpen}>

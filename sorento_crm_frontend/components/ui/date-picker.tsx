@@ -140,7 +140,7 @@ export function DatePicker({
         }}
         disabled={disabled}
         aria-label={ariaLabel}
-        className={cn('flex-1', inputClassName)}
+        className={cn('min-w-0 flex-1', inputClassName)}
         autoComplete="off"
       />
       <Popover open={open} onOpenChange={setOpen}>
