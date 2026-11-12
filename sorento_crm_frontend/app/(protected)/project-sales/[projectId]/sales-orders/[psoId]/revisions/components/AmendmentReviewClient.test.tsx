@@ -451,7 +451,7 @@ describe('AmendmentReviewClient, once the amendment is created', () => {
    *  overrides lands in the delta, as the API carries it. */
   function amendmentDetail(overrides: Record<string, unknown> = {}) {
     const { rows, ...rest } = overrides as { rows?: unknown[] } & Record<string, unknown>;
-    const { rows: _previewRows, unmatched, from, to, verb_summary } = preview();
+    const { unmatched, from, to, verb_summary } = preview();
     return {
       id: 'am-1',
       project_sales_order_id: 'so-1',
