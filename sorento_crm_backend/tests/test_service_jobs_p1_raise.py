@@ -82,7 +82,7 @@ def test_b1_raise_creates_a_proposed_numbered_job(env):
         assert body["status"] == "proposed"
         assert body["complaint_id"] == c.id
     job = reload_job(env, body["id"])
-    assert job.company_id == c.company_id
+    assert job.company_id == str(env.company_id)
 
 
 def test_b2_raise_again_returns_the_live_job_with_200(env):
