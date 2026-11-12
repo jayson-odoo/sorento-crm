@@ -303,11 +303,17 @@ def all_sheet_rows(file_data: bytes) -> list[tuple]:
         wb.close()
 
 
-def every_sheet_rows(file_data: bytes) -> list[list[tuple]]:
+def every_sheet_rows(
+    file_data: bytes, *, max_col: Optional[int] = None, max_row: Optional[int] = None
+) -> list[list[tuple]]:
     """Every sheet's rows, materialised, workbook closed - for a reader that does not yet
     know which sheet carries what it is looking for (`supplier_document_service.classify()`'s
     header-shape fallback, review round 1), unlike `sheet_rows`'s "first/active sheet only"
-    contract that every other reader here relies on."""
+    contract that every other reader here relies on.
+
+    `max_col` / `max_row` bound an xlsx read: openpyxl's read-only mode pads every row to
+    the sheet's DECLARED `<dimension>`, so an upload declaring A1:XFD1048576 would otherwise
+    be materialised in full (the project import caps both, security review S1)."""
     if file_data[:8] == _OLE2_MAGIC:
         import xlrd
 
@@ -322,7 +328,7 @@ def every_sheet_rows(file_data: bytes) -> list[list[tuple]]:
     wb = openpyxl.load_workbook(BytesIO(file_data), data_only=True, read_only=True)
     try:
         return [
-            [tuple(row) for row in ws.iter_rows(values_only=True)]
+            [tuple(row) for row in ws.iter_rows(values_only=True, max_col=max_col, max_row=max_row)]
             for ws in wb.worksheets
         ]
     finally:

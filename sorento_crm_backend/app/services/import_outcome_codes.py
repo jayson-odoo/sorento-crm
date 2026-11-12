@@ -231,6 +231,8 @@ SO_NOT_SYNCED = "so_not_synced"
 PO_NUMBER_NUMERIC = "po_number_numeric"
 DATE_OTHER_YEAR = "date_other_year"
 DATE_OTHER_MONTH = "date_other_month"
+#: AC-PI-31b: a PO date typed as text no format reads; imported with no date.
+PO_DATE_UNREADABLE = "po_date_unreadable"
 OWNER_DEFAULTED = "owner_defaulted"
 CLASH_CHECK_SKIPPED = "clash_check_skipped"
 MISSING_HEADER = "missing_header"
@@ -320,6 +322,7 @@ LABELS: dict[str, str] = {
     PO_NUMBER_NUMERIC: "PO number was a number cell",
     DATE_OTHER_YEAR: "PO date not in 2026",
     DATE_OTHER_MONTH: "PO date in another month than its sheet",
+    PO_DATE_UNREADABLE: "PO date could not be read, imported without one",
     OWNER_DEFAULTED: "Owner set to the importing user",
     CLASH_CHECK_SKIPPED: "Duplicate check skipped (linked by a person)",
     MISSING_HEADER: "Sheet is missing a required heading",

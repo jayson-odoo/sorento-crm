@@ -142,7 +142,8 @@ def save_columns(
 def list_lines(
     run_id: str,
     kind: str = Query(...),
-    status: Optional[str] = Query(None),
+    # Several are OR-ed (`status=todo,set` or repeated), the Values "Show" multi-select.
+    status: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
@@ -154,7 +155,8 @@ def list_lines(
     try:
         run = service.get_run(db, run_id)
         return service.page_lines(
-            db, run, kind=kind, status=status, query=query, sort=sort, direction=dir,
+            db, run, kind=kind, status=multi_values(status, "status"), query=query,
+            sort=sort, direction=dir,
             page=page, limit=limit,
         )
     except Exception as exc:

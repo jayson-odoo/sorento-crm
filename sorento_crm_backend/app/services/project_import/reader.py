@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional, Union
 
 from app.services.import_alias_service import IGNORE_FIELD, normalize_header
 from app.services.scm.outstanding_reader import every_sheet_rows, to_date
+from app.utils.date_format import fmt_date
 
 DOC_TYPE = "project_po_register"
 
@@ -42,7 +43,24 @@ FIELDS: tuple[str, ...] = (
     "remarks",
 )
 REQUIRED_FIELDS: tuple[str, ...] = ("ps_number", "customer", "po_number")
-FIELD_LABELS = {"ps_number": "PS number", "customer": "Customer", "po_number": "PO number"}
+#: Screen labels for the field keys, sent to the frontend (`field_labels`) so it keeps no copy.
+FIELD_LABELS: dict[str, str] = {
+    "ps_number": "PS number",
+    "salesperson": "Salesperson",
+    "customer_service": "Customer service",
+    "customer": "Customer",
+    "project_name": "Project name",
+    "developer": "Developer",
+    "po_number": "PO number",
+    "po_value": "PO value",
+    "po_date": "PO date",
+    "amended_date": "Amended date",
+    "schedule": "Schedule",
+    "delivery": "Delivery",
+    "outstanding": "Outstanding",
+    "so_number": "SO number",
+    "remarks": "Remarks",
+}
 
 #: The register's own headings (and their plain spellings), so its first upload needs no
 #: column choice. A saved choice in `import_field_alias` wins over these.
@@ -65,7 +83,19 @@ DEFAULT_HEADERS: dict[str, tuple[str, ...]] = {
 }
 
 PS_RE = re.compile(r"^PS(\d\d)-\d{4}$")
-SO_RE = re.compile(r"^SO\d{6}$", re.IGNORECASE)
+SO_RE = re.compile(r"\bSO\d{6}\b", re.IGNORECASE)
+
+# Upload caps (security review S1): what an xlsx may expand to before openpyxl touches it,
+# and how much of each sheet is read. The register is about 1,400 rows over 9 sheets, AK wide.
+MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 100
+MAX_COLUMNS = 60
+MAX_ROWS_PER_SHEET = 20_000
+MAX_SHEETS = 30
+
+
+class WorkbookRefused(ValueError):
+    """An upload over a cap. The message is plain and safe to show."""
 
 #: How far down a sheet the heading row may sit.
 _HEADER_SCAN_ROWS = 30
@@ -134,12 +164,16 @@ class SourceRow:
     po_value: Optional[Decimal] = None
     value_dash: bool = False
     po_date: Optional[date] = None
+    #: The PO date cell as typed when it was text no format reads (flagged, never guessed).
+    po_date_text: Optional[str] = None
     amended: Union[date, str, None] = None
     schedule: Optional[str] = None
     delivery: Union[date, str, None] = None
     outstanding: Optional[str] = None
     so_cell: Optional[str] = None
     so_numbers: list[str] = field(default_factory=list)
+    #: Column N text that is not an SO number ("refer PS26-0022"), kept for the PO notes.
+    so_note: Optional[str] = None
     remarks: Optional[str] = None
 
 
@@ -161,10 +195,8 @@ def _text(value: Any) -> Optional[str]:
         return None
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    if isinstance(value, datetime):
-        return value.strftime("%d/%m/%Y")
-    if isinstance(value, date):
-        return value.strftime("%d/%m/%Y")
+    if isinstance(value, (datetime, date)):
+        return fmt_date(value.date() if isinstance(value, datetime) else value)
     text = str(value).strip()
     return text or None
 
@@ -204,25 +236,67 @@ def _amount(value: Any) -> tuple[Optional[Decimal], bool]:
 
 
 def so_numbers(cell: Optional[str]) -> list[str]:
-    """Each `SO` + 6 digits token of a column N cell split on `,`."""
+    """Each `SO` + 6 digits number in a column N cell, in order, once each."""
     if not cell:
         return []
-    return [t.strip().upper() for t in cell.split(",") if SO_RE.match(t.strip())]
+    out: list[str] = []
+    for token in SO_RE.findall(cell):
+        if token.upper() not in out:
+            out.append(token.upper())
+    return out
+
+
+def so_note(cell: Optional[str]) -> Optional[str]:
+    """What a column N cell says besides its SO numbers ("refer PS26-0022"), or None."""
+    if not cell:
+        return None
+    rest = SO_RE.sub(" ", cell)
+    rest = " ".join(rest.replace(",", " ").split())
+    return rest or None
+
+
+def check_workbook(content: bytes) -> None:
+    """Refuse an upload over a cap BEFORE openpyxl reads it (security review S1)."""
+    import zipfile
+
+    try:
+        infos = zipfile.ZipFile(BytesIO(content)).infolist()
+    except zipfile.BadZipFile as exc:
+        raise WorkbookRefused("The file could not be read as a workbook.") from exc
+    expanded = sum(i.file_size for i in infos)
+    packed = sum(i.compress_size for i in infos) or 1
+    if expanded > MAX_UNCOMPRESSED_BYTES or expanded / packed > MAX_COMPRESSION_RATIO:
+        raise WorkbookRefused("The workbook is too large to read.")
+    import openpyxl
+
+    wb = openpyxl.load_workbook(BytesIO(content), read_only=True)
+    try:
+        if len(wb.sheetnames) > MAX_SHEETS:
+            raise WorkbookRefused(f"The workbook has more than {MAX_SHEETS} sheets.")
+        for ws in wb.worksheets:
+            if (ws.max_row or 0) > MAX_ROWS_PER_SHEET:
+                raise WorkbookRefused(
+                    f"A sheet is larger than {MAX_ROWS_PER_SHEET:,} rows. Clear the unused rows and upload it again."
+                )
+    finally:
+        wb.close()
 
 
 # --------------------------------------------------------------------------- workbook
 
 
 def _sheets(content: bytes) -> list[tuple[str, list[tuple]]]:
-    """(name as written, rows) per sheet, in workbook order."""
+    """(name as written, rows) per sheet, in workbook order, within the caps."""
     import openpyxl
+
+    check_workbook(content)
 
     wb = openpyxl.load_workbook(BytesIO(content), read_only=True)
     try:
         names = list(wb.sheetnames)
     finally:
         wb.close()
-    return list(zip(names, every_sheet_rows(content)))
+    return list(zip(names, every_sheet_rows(content, max_col=MAX_COLUMNS, max_row=MAX_ROWS_PER_SHEET)))
 
 
 def _cell(row: tuple, pos: Optional[int]) -> Any:
@@ -341,12 +415,18 @@ def read_rows(content: bytes, *, sheets: list[str], columns: dict[str, str]) -> 
                 po_value=value,
                 value_dash=dash,
                 po_date=None if _blank(po_date_cell) else to_date(po_date_cell),
+                po_date_text=(
+                    _text(po_date_cell)
+                    if not _blank(po_date_cell) and to_date(po_date_cell) is None
+                    else None
+                ),
                 amended=_date_or_text(get("amended_date")),
                 schedule=_text(get("schedule")),
                 delivery=_date_or_text(get("delivery")),
                 outstanding=_text(get("outstanding")),
                 so_cell=so_cell,
                 so_numbers=so_numbers(so_cell),
+                so_note=so_note(so_cell),
                 remarks=_text(get("remarks")),
             ))
     return result

@@ -608,8 +608,8 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     # PROJECT-MIGRATION-TOOL (PLAN-project-import-12nov.md): the in-app import of the PO
-    # register workbook. Granted to no role: admin and superadmin pass by bypass, so a run,
-    # which can create hundreds of projects, is admin-only until someone grants it.
+    # register workbook. Migration pimp_0001 grants both to the superadmin and admin roles
+    # (who also pass by bypass); any other role gets them only when someone grants them.
     {
         "slug": "projects.import.view",
         "name": "View Project Imports",

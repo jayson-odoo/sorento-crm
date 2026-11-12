@@ -54,8 +54,6 @@ from app.models.projects import (
     Project,
     ProjectParty,
     ProjectPurchaseOrder,
-    ProjectPurchaseOrderLine,
-    ProjectQuotation,
     ProjectSalesProfile,
 )
 from app.models.user import User
@@ -66,6 +64,7 @@ from app.services.import_outcome import ImportOutcome
 from app.services.project_import import reader
 from app.services.project_import.reader import fold
 from app.services.queue_service import enqueue_job
+from app.utils.date_format import fmt_date
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +89,9 @@ ALLOWED_ACTIONS = {
     KIND_DEVELOPER: (ACTION_LINK, ACTION_CREATE, ACTION_NONE),
     KIND_PERSON: (ACTION_LINK, ACTION_NONE),
 }
+
+#: `import_value_maps.value_key` / `customer_value_key` are String(255).
+MAX_VALUE_KEY = 255
 
 ENTITY_PROJECT = "project"
 ENTITY_PROFILE = "project_sales_profile"
@@ -205,6 +207,8 @@ def create_run(db: Session, *, company_id: str, user_id: str, filename: str, con
     _check_upload(filename, content)
     try:
         probes = reader.probe(content, field_for=reader.field_resolver(db))
+    except reader.WorkbookRefused as exc:
+        raise AppException(422, str(exc), code="project_import_too_large")
     except Exception as exc:  # noqa: BLE001 - the person who uploaded it reads the answer
         logger.info("project import upload unreadable: %s", type(exc).__name__)
         raise AppException(
@@ -287,10 +291,23 @@ def save_columns(db: Session, run: ImportJob, *, sheets: list[str], columns: dic
     # A field not sent keeps the heading it has (auto-matched at upload, or chosen before); a
     # sent heading overrides it, and a sent "ignore" leaves the field with no column. Only a
     # field with neither is missing. `{"ignore": heading}` marks a heading as nothing.
-    clean: dict[str, str] = dict(meta.get("columns") or {})
+    in_file = {
+        normalize_header(col.get("header"))
+        for sheet in probe for col in (sheet.get("columns") or [])
+    }
     for key, header in (columns or {}).items():
         if key not in reader.FIELDS and key != IGNORE_FIELD:
             raise AppException(422, f"Unknown field: {key}.", code="project_import_field_unknown")
+        if header and str(header).strip() and str(header) != IGNORE_FIELD and (
+            normalize_header(header) not in in_file
+        ):
+            # Checked before anything is saved: a choice names a heading of THIS file, so the
+            # shared alias table only ever learns headings someone actually uploaded (S N2).
+            raise AppException(
+                422, "A chosen column is not a heading in this file.", code="project_import_heading_unknown"
+            )
+    clean: dict[str, str] = dict(meta.get("columns") or {})
+    for key, header in (columns or {}).items():
         if header is None or not str(header).strip():
             continue
         header = str(header)
@@ -419,7 +436,16 @@ def _so_customers(rows: list[reader.SourceRow], so_map: dict[str, SalesOrder]) -
     return out
 
 
-def _labels(db: Session, kind: str, ids: set[str]) -> dict[str, str]:
+def _people_of(db: Session, company_id: Any, ids: set[str]) -> list[User]:
+    """The ACTIVE users among `ids` with a grant in `company_id` (security S2): the only people
+    a line may link to, and the only names a line may show."""
+    from app.services.company_scope_resolver import resolve_user_grant_ids
+
+    users = db.query(User).filter(User.id.in_(ids), User.status == "ACTIVE").all() if ids else []
+    return [u for u in users if str(company_id) in {str(c) for c in resolve_user_grant_ids(db, str(u.id))}]
+
+
+def _labels(db: Session, kind: str, ids: set[str], company_id: Any = None) -> dict[str, str]:
     ids = {i for i in ids if i and _is_uuid(i)}
     if not ids:
         return {}
@@ -432,7 +458,7 @@ def _labels(db: Session, kind: str, ids: set[str]) -> dict[str, str]:
         }
     if kind == KIND_DEVELOPER:
         return {str(p.id): p.name for p in db.query(ProjectParty).filter(ProjectParty.id.in_(ids))}
-    return {str(u.id): u.name or u.email for u in db.query(User).filter(User.id.in_(ids))}
+    return {str(u.id): u.name or "" for u in _people_of(db, company_id, ids)}
 
 
 def _is_uuid(value: Any) -> bool:
@@ -443,7 +469,9 @@ def _is_uuid(value: Any) -> bool:
         return False
 
 
-def list_lines(db: Session, run: ImportJob, *, kind: str, status: Optional[str] = None) -> list[dict]:
+def list_lines(
+    db: Session, run: ImportJob, *, kind: str, status: Optional[str | list[str]] = None
+) -> list[dict]:
     """One line per distinct folded value of `kind` in the run, with its saved choice."""
     if kind not in KINDS:
         raise AppException(422, "Unknown line kind.", code="project_import_kind_unknown")
@@ -457,7 +485,7 @@ def list_lines(db: Session, run: ImportJob, *, kind: str, status: Optional[str] 
     out = []
     for (ck, vk), info in lines.items():
         out.append(_line_dict(kind, ck, vk, info, maps.get((kind, ck, vk)), so_customers.get(vk)))
-    labels = _labels(db, kind, {l["target_id"] for l in out if l["target_id"]})
+    labels = _labels(db, kind, {l["target_id"] for l in out if l["target_id"]}, run.company_id)
     setter_ids = {l["_set_by"] for l in out if l.get("_set_by")}
     setters = (
         {str(u.id): u.name or u.email for u in db.query(User).filter(User.id.in_(setter_ids))}
@@ -469,7 +497,8 @@ def list_lines(db: Session, run: ImportJob, *, kind: str, status: Optional[str] 
         line["target_label"] = labels.get(line["target_id"]) if line["target_id"] else None
         line["set_by_name"] = setters.get(set_by) if set_by else None
     if status:
-        out = [l for l in out if l["status"] == status]
+        wanted = {status} if isinstance(status, str) else set(status)
+        out = [l for l in out if l["status"] in wanted]
     out.sort(key=lambda l: (l["customer_value_key"], l["value_key"]))
     return out
 
@@ -519,7 +548,7 @@ def _assert_target(db: Session, run: ImportJob, kind: str, target_id: Optional[s
             ProjectParty.id == target_id, ProjectParty.company_id == company
         ).first()
     else:
-        found = db.query(User.id).filter(User.id == target_id).first()
+        found = _people_of(db, company, {str(target_id)}) or None
     if found is None:
         raise refused
 
@@ -536,6 +565,7 @@ def set_line(
     new_title: Optional[str] = None,
     user_id: str,
     record_history: bool = True,
+    lines: Optional[dict] = None,
 ) -> dict:
     """Store (or replace) the one saved choice for a line (AC-PI-16). `record_history=False` is
     the bulk set's own call: it writes one entry for the whole set instead."""
@@ -546,8 +576,16 @@ def set_line(
         raise AppException(422, f"A {kind} line cannot be set to {action}.", code="project_import_action_invalid")
     ck = fold(customer_value_key) if kind == KIND_PROJECT else ""
     vk = fold(value_key)
-    read = _read(run)
-    info = _collect_lines(read.rows)[kind].get((ck, vk))
+    if len(ck) > MAX_VALUE_KEY or len(vk) > MAX_VALUE_KEY:
+        raise AppException(
+            422,
+            f"This value is longer than {MAX_VALUE_KEY} characters, so it cannot be saved. "
+            "Shorten it in the file and upload it again.",
+            code="project_import_value_too_long",
+        )
+    if lines is None:
+        lines = _collect_lines(_read(run).rows)[kind]
+    info = lines.get((ck, vk))
     if info is None:
         shown = f"{ck} / {vk}" if ck else vk
         raise AppException(422, f"{shown} is not a {kind} value in this file.", code="project_import_line_unknown")
@@ -589,7 +627,10 @@ def set_line(
     line.pop("_set_by_id", None)
     setter = db.query(User).filter(User.id == str(user_id)).first() if user_id else None
     line["set_by_name"] = (setter.name or setter.email) if setter else None
-    line["target_label"] = _labels(db, kind, {line["target_id"]}).get(line["target_id"]) if line["target_id"] else None
+    line["target_label"] = (
+        _labels(db, kind, {line["target_id"]}, run.company_id).get(line["target_id"])
+        if line["target_id"] else None
+    )
     return line
 
 
@@ -604,15 +645,26 @@ def bulk_set(
     new_title: Optional[str] = None,
     user_id: str,
 ) -> list[dict]:
-    """One action on every listed line, through `set_line` once per line. All or nothing."""
+    """One action on every listed line, through `set_line` once per line. All or nothing.
+
+    A bulk "create" on project lines with no common title gives each line its own text as
+    its title, so N lines make N projects (AC-PI-31a); one title makes them one project."""
+    if kind not in KINDS:
+        raise AppException(422, "Unknown line kind.", code="project_import_kind_unknown")
+    lines = _collect_lines(_read(run).rows)[kind]
+    own_titles = kind == KIND_PROJECT and action == ACTION_CREATE and not (new_title or "").strip()
     savepoint = db.begin_nested()
     out = []
     try:
         for customer_value_key, value_key in keys:
+            title = new_title
+            if own_titles:
+                info = lines.get(((fold(customer_value_key) or ""), fold(value_key)))
+                title = (info or {}).get("value_text") or value_key
             out.append(set_line(
                 db, run, kind=kind, value_key=value_key, customer_value_key=customer_value_key or "",
-                action=action, target_id=target_id, new_title=new_title, user_id=user_id,
-                record_history=False,
+                action=action, target_id=target_id, new_title=title, user_id=user_id,
+                record_history=False, lines=lines,
             ))
         _history(db, run, user_id, "values_set", _value_words(kind, action, len(out)))
     except Exception:
@@ -682,7 +734,7 @@ def _is_cancelled(r: reader.SourceRow) -> bool:
 
 
 def _fmt(value: Any) -> str:
-    return value.strftime("%d/%m/%Y") if isinstance(value, date) else str(value)
+    return fmt_date(value) if isinstance(value, date) else str(value)
 
 
 def _notes(r: reader.SourceRow) -> str:
@@ -701,8 +753,8 @@ def _notes(r: reader.SourceRow) -> str:
     waive = bool(r.remarks and _WAIVE_RE.match(r.remarks.strip()))
     if waive:
         lines.append("Waive transport charge")
-    if r.so_cell and not r.so_numbers:
-        lines.append(f"SO note: {r.so_cell}")
+    if r.so_note:
+        lines.append(f"SO note: {r.so_note}")
     if r.remarks and not waive:
         lines.append(f"Remarks: {r.remarks}")
     return "\n".join(lines)
@@ -712,6 +764,8 @@ def _flags(r: reader.SourceRow, so_map: dict[str, SalesOrder]) -> list[str]:
     out = []
     if r.po_number_numeric:
         out.append(oc.PO_NUMBER_NUMERIC)
+    if r.po_date_text:
+        out.append(oc.PO_DATE_UNREADABLE)
     if r.po_date is not None:
         year = 2000 + int(reader.PS_RE.match(r.ps_number).group(1))
         if r.po_date.year != year:
@@ -758,7 +812,7 @@ def _run(db: Session, run: ImportJob, *, user_id: str, persist: bool) -> dict:
     with actor_scope(actor, db=db):
         savepoint = None if persist else db.begin_nested()
         try:
-            report_rows, ledger = _process(db, run, read, user_id=str(user_id), persist=persist)
+            report_rows, ledger, extras = _process(db, run, read, user_id=str(user_id), persist=persist)
         finally:
             if savepoint is not None and savepoint.is_active:
                 savepoint.rollback()
@@ -777,10 +831,12 @@ def _run(db: Session, run: ImportJob, *, user_id: str, persist: bool) -> dict:
     meta["sheet_errors"] = list(read.sheet_errors)
     if persist:
         marker = db.execute(sa.select(sa.cast(sa.func.now(), sa.DateTime(timezone=False)))).scalar()
+        meta.update(extras)
         meta.update({"phase": PHASE_IMPORTED, "result_counts": report["counts"],
                      "result_codes": report["codes"], "imported_at": marker.isoformat()})
         now = datetime.utcnow()
         run.status = JobStatus.FINISHED.value
+        run.error = None
         run.completed_at = now
         run.processed_rows = len(report_rows)
         run.successful_rows = sum(counts.get(o, 0) for o in ("created", "updated", "unchanged"))
@@ -907,11 +963,16 @@ def _process(db: Session, run: ImportJob, read: reader.ReadResult, *, user_id: s
                 _new_row(ctx, p)
         report.append(_report_row(p))
 
+    extras: dict = {}
     if persist:
-        _rewrite_created_lines(db, ctx, user_id)
+        extras["rewritten_line_ids"] = _rewrite_created_lines(db, ctx, user_id)
+        # What existed under the created records when the run finished (its own rows, made by
+        # the CRM's own rules: activity, status history, mirrored SO lines). Revert keeps any
+        # record that has a child outside this set (security B1).
+        extras["import_children"] = sorted(_child_keys_of(db, ledger, flat=True))
     order = {(r.sheet, r.row_number): i for i, r in enumerate(read.rows)}
     report.sort(key=lambda x: order.get((x["sheet"], x["row_number"]), 0))
-    return report, ledger
+    return report, ledger, extras
 
 
 def _resolve(db: Session, p: _Plan, maps: dict, so_customers: dict) -> None:
@@ -1243,6 +1304,25 @@ def _existing_row(ctx: _Ctx, p: _Plan) -> None:
         p.outcome, p.codes = "unchanged", changed + p.flags
 
 
+_BLOCKING_KIND = {
+    oc.CUSTOMER_UNMAPPED: KIND_CUSTOMER,
+    oc.CUSTOMER_CONFLICT: KIND_CUSTOMER,
+    oc.PROJECT_UNMAPPED: KIND_PROJECT,
+    oc.REGISTRATION_LOCK: KIND_PROJECT,
+    oc.PO_NUMBER_TAKEN: KIND_PROJECT,
+    oc.DEVELOPER_UNMAPPED: KIND_DEVELOPER,
+    oc.DEVELOPER_CONFLICT: KIND_DEVELOPER,
+    oc.DEVELOPER_EXISTS: KIND_DEVELOPER,
+}
+
+
+def blocking_kind(outcome: Optional[str], codes: list[str]) -> Optional[str]:
+    """The Values tab that unblocks a needs-review row: the kind of its FIRST blocking code."""
+    if outcome != oc.OUTCOME_NEEDS_REVIEW:
+        return None
+    return next((_BLOCKING_KIND[c] for c in codes if c in _BLOCKING_KIND), None)
+
+
 def _report_row(p: _Plan) -> dict:
     r = p.row
     message = p.message or "; ".join(oc.label_for(c) for c in p.codes) or oc.label_for(p.outcome)
@@ -1257,21 +1337,27 @@ def _report_row(p: _Plan) -> dict:
         "outcome": p.outcome,
         "codes": list(p.codes),
         "labels": [oc.label_for(c) for c in p.codes],
+        "blocking_kind": blocking_kind(p.outcome, p.codes),
         "message": message,
     }
 
 
-def _rewrite_created_lines(db: Session, ctx: _Ctx, user_id: str) -> None:
-    """AC-PI-22/23: a "create" line now links to what the run made, so a later file adds to it."""
+def _rewrite_created_lines(db: Session, ctx: _Ctx, user_id: str) -> list[str]:
+    """AC-PI-22/23: a "create" line now links to what the run made, so a later file adds to it.
+    Returns the ids of the lines it rewrote: revert puts back exactly those (review RB1)."""
     made = {key: g.project for key, g in ctx.groups.items() if g.project is not None}
+    rewritten: list[str] = []
     for m in ctx.maps.values():
         if m.action != ACTION_CREATE:
             continue
         if m.kind == KIND_PROJECT and fold(m.new_title) in made:
             m.action, m.target_id = ACTION_LINK, str(made[fold(m.new_title)].id)
+            rewritten.append(str(m.id))
         elif m.kind == KIND_DEVELOPER and m.value_key in ctx.created_parties:
             m.action, m.target_id = ACTION_LINK, ctx.created_parties[m.value_key]
+            rewritten.append(str(m.id))
     db.flush()
+    return rewritten
 
 
 def start_import(db: Session, run: ImportJob, *, user_id: str) -> str:
@@ -1282,13 +1368,18 @@ def start_import(db: Session, run: ImportJob, *, user_id: str) -> str:
     _assert_phase(run, (PHASE_DRAFT, PHASE_PREVIEWED), "be imported")
     meta = _meta(run)
     meta.update({"phase": PHASE_IMPORTING, "started_by": str(user_id)})
+    run.error = None
     _save_meta(db, run, meta)
+    # Committed BEFORE the job is queued (security S3): a worker that picks it up at once
+    # must find the run importing, started by this user, never the state before this call.
+    db.commit()
     try:
         job = enqueue_job(process_project_import, str(run.id), queue_name="imports", job_id=str(run.job_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning("project import %s could not be queued: %s", run.id, type(exc).__name__)
         meta["phase"] = PHASE_PREVIEWED if meta.get("preview_counts") else PHASE_DRAFT
         _save_meta(db, run, meta)
+        db.commit()
         raise AppException(503, "The import could not be queued. Try again.", code="project_import_queue_failed")
     run.job_id = str(job.id)
     run.status = JobStatus.QUEUED.value
@@ -1299,8 +1390,89 @@ def start_import(db: Session, run: ImportJob, *, user_id: str) -> str:
 # --------------------------------------------------------------------------- revert
 
 
+def _entity_tables() -> dict:
+    return {
+        ENTITY_PROJECT: Project.__table__,
+        ENTITY_PO: ProjectPurchaseOrder.__table__,
+        ENTITY_PARTY: ProjectParty.__table__,
+        ENTITY_PSO: ProjectSalesOrder.__table__,
+    }
+
+
+_CHILD_FKS: dict[str, list] = {}
+
+
+def _cascading_children(table) -> list[tuple]:
+    """Every (child table, FK column, cascades) with a foreign key to `table.id`, read off the
+    SQLAlchemy metadata, so a table added tomorrow is covered the day it lands (security B1).
+    Not a hand list. CASCADE / SET NULL children are what a delete would remove or orphan;
+    a plain (RESTRICT) child would refuse the delete, so it counts too. Only CASCADE recurses."""
+    key = table.fullname
+    if key not in _CHILD_FKS:
+        from app.database import Base
+
+        found = []
+        for child in Base.metadata.tables.values():
+            for fk in child.foreign_keys:
+                rule = (fk.ondelete or "").upper()
+                if fk.column.table is table and fk.column.name == "id":
+                    found.append((child, fk.parent, rule == "CASCADE"))
+        _CHILD_FKS[key] = found
+    return _CHILD_FKS[key]
+
+
+def _row_key(table, mapping) -> str:
+    if "id" in table.c:
+        return f"{table.fullname}:{mapping['id']}"
+    return table.fullname + ":" + ",".join(str(mapping[c.name]) for c in table.primary_key.columns)
+
+
+def _child_keys_of(db: Session, ledger: list[dict], *, flat: bool):
+    """The rows under the ledger's records: every row reachable through a CASCADE / SET NULL
+    foreign key, recursing through CASCADE (a row a delete would remove or orphan). `flat`
+    gives one set; otherwise {record id: set of row keys}."""
+    by_root: dict[str, set[str]] = defaultdict(set)
+    tables = _entity_tables()
+    roots: dict[str, dict[str, str]] = defaultdict(dict)
+    for entry in ledger:
+        table = tables.get(entry["entity_type"])
+        if table is not None:
+            roots[table.fullname][str(entry["entity_id"])] = str(entry["entity_id"])
+    frontier = [(table, roots[table.fullname]) for table in tables.values() if roots[table.fullname]]
+    seen: set[str] = set()
+    while frontier:
+        parent, root_of = frontier.pop()
+        keys = list(root_of)
+        for child, column, cascades in _cascading_children(parent):
+            wanted = [column] + ([child.c.id] if "id" in child.c else list(child.primary_key.columns))
+            unique = list({c.key: c for c in wanted}.values())
+            nxt: dict[str, str] = {}
+            for start in range(0, len(keys), 500):
+                chunk = keys[start:start + 500]
+                for row in db.execute(sa.select(*unique).where(column.in_(chunk))):
+                    mapping = row._mapping
+                    root = root_of.get(str(mapping[column.key]))
+                    if root is None:
+                        continue
+                    row_key = _row_key(child, {k: mapping[k] for k in mapping.keys()})
+                    by_root[root].add(row_key)
+                    if cascades and "id" in child.c and row_key not in seen:
+                        seen.add(row_key)
+                        nxt[str(mapping["id"])] = root
+            if nxt:
+                frontier.append((child, nxt))
+    if flat:
+        return set().union(*by_root.values()) if by_root else set()
+    return by_root
+
+
 def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
-    """Remove what the run created, children first; keep what changed since (AC-PI-37/38)."""
+    """Remove what the run created, children first; keep what changed since (AC-PI-37/38/37a).
+
+    A record is kept (`revert_kept_edited`) when it was updated after the run, or when ANY row
+    under it (every CASCADE / SET NULL child, from the FK metadata) is neither one of the run's
+    own records nor a row that already stood there when the run finished, or when a PO carries
+    a sales order adopted before the run."""
     from app.services.project_po_service import delete_po
 
     phase = _phase(run)
@@ -1310,15 +1482,21 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
         raise AppException(409, "Only an imported run can be reverted.", code="project_import_not_imported")
     meta = _meta(run)
     marker = datetime.fromisoformat(meta["imported_at"]) if meta.get("imported_at") else None
-    ledger = (
+    ledger_rows = (
         db.query(ImportJobRow)
         .filter(ImportJobRow.import_job_id == run.id, ImportJobRow.entity_id.isnot(None))
         .all()
     )
     ids: dict[str, list[str]] = defaultdict(list)
-    for row in ledger:
+    for row in ledger_rows:
         if row.entity_id not in ids[row.entity_type]:
             ids[row.entity_type].append(row.entity_id)
+    ledger = [{"entity_type": t, "entity_id": i} for t, values in ids.items() for i in values]
+    tables = _entity_tables()
+    own_keys = {f"{tables[t].fullname}:{i}" for t, values in ids.items() if t in tables for i in values}
+    snapshot = set(meta.get("import_children") or [])
+    children = _child_keys_of(db, ledger, flat=False)
+    kept_keys: set[str] = set()
 
     removed: Counter = Counter()
     kept: list[dict] = []
@@ -1327,17 +1505,26 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
         stamp = getattr(record, "updated_at", None)
         return bool(marker and stamp and stamp > marker)
 
-    def keep(entity_type: str, label: str) -> None:
+    def foreign_child(record_id: str) -> bool:
+        return any(
+            key in kept_keys or (key not in snapshot and key not in own_keys)
+            for key in children.get(str(record_id), ())
+        )
+
+    def keep(entity_type: str, record_id: Any, label: str) -> None:
+        if entity_type in tables:
+            kept_keys.add(f"{tables[entity_type].fullname}:{record_id}")
         kept.append({"entity_type": entity_type, "label": label, "reason": oc.REVERT_KEPT_EDITED})
 
     actor = AuditActor(actor_type="user", user_id=str(user_id), real_user_id=str(user_id), job_id=str(run.id))
     with actor_scope(actor, db=db):
+        own_psos = set(ids.get(ENTITY_PSO, []))
         for pso_id in ids.get(ENTITY_PSO, []):
             pso = db.get(ProjectSalesOrder, pso_id)
             if pso is None:
                 continue
-            if edited(pso):
-                keep(ENTITY_PSO, f"Sales order {pso.provisional_ref}")
+            if edited(pso) or foreign_child(pso_id):
+                keep(ENTITY_PSO, pso_id, f"Sales order {pso.provisional_ref}")
                 continue
             db.delete(pso)
             removed[ENTITY_PSO] += 1
@@ -1346,32 +1533,26 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
             po = db.get(ProjectPurchaseOrder, po_id)
             if po is None:
                 continue
-            label = f"PO {po.po_number} ({po.admin_ref})"
-            has_child = (
-                db.query(ProjectPurchaseOrderLine.id).filter(ProjectPurchaseOrderLine.po_id == po.id).first()
-                or db.query(ProjectSalesOrder.id).filter(ProjectSalesOrder.purchase_order_id == po.id).first()
+            adopted_before = any(
+                str(pid) not in own_psos
+                for (pid,) in db.query(ProjectSalesOrder.id).filter(ProjectSalesOrder.purchase_order_id == po.id)
             )
-            if edited(po) or has_child:
-                keep(ENTITY_PO, label)
+            if edited(po) or foreign_child(po_id) or adopted_before:
+                keep(ENTITY_PO, po_id, f"PO {po.po_number} ({po.admin_ref})")
                 continue
             delete_po(db, po=po)
             removed[ENTITY_PO] += 1
-        gone_projects: list[str] = []
+        gone: list[str] = []
         for project_id in ids.get(ENTITY_PROJECT, []):
             project = db.get(Project, project_id)
             if project is None:
                 continue
             label = " ".join(x for x in (project.project_code, project.title) if x)
-            has_child = (
-                db.query(ProjectPurchaseOrder.id).filter(ProjectPurchaseOrder.project_id == project.id).first()
-                or db.query(ProjectSalesOrder.id).filter(ProjectSalesOrder.project_id == project.id).first()
-                or db.query(ProjectQuotation.id).filter(ProjectQuotation.project_id == project.id).first()
-            )
             profile = db.get(ProjectSalesProfile, project.id)
-            if edited(project) or has_child or (profile is not None and edited(profile)):
-                keep(ENTITY_PROJECT, label)
+            if edited(project) or foreign_child(project_id) or (profile is not None and edited(profile)):
+                keep(ENTITY_PROJECT, project_id, label)
                 if profile is not None and str(project.id) in ids.get(ENTITY_PROFILE, []):
-                    keep(ENTITY_PROFILE, f"Sales details of {project.project_code}")
+                    keep(ENTITY_PROFILE, project_id, f"Sales details of {project.project_code}")
                 continue
             if profile is not None:
                 db.delete(profile)
@@ -1379,26 +1560,31 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
             db.delete(project)
             db.flush()
             removed[ENTITY_PROJECT] += 1
-            gone_projects.append(str(project_id))
-        gone_parties: list[str] = []
+            gone.append(str(project_id))
         for party_id in ids.get(ENTITY_PARTY, []):
             party = db.get(ProjectParty, party_id)
             if party is None:
                 continue
             used = db.query(Project.id).filter(Project.developer_party_id == party.id).first()
-            if edited(party) or used:
-                keep(ENTITY_PARTY, party.name)
+            if edited(party) or used or foreign_child(party_id):
+                keep(ENTITY_PARTY, party_id, party.name)
                 continue
             db.delete(party)
             db.flush()
             removed[ENTITY_PARTY] += 1
-            gone_parties.append(str(party_id))
-        # A line that linked to a record now gone goes back to "create", as a person set it.
-        for m in db.query(ProjectImportValueMap).filter(
-            ProjectImportValueMap.company_id == str(run.company_id),
-            ProjectImportValueMap.target_id.in_(gone_projects + gone_parties or [""]),
-        ):
-            m.action, m.target_id = ACTION_CREATE, None
+            gone.append(str(party_id))
+        # Review RB1: the lines this run rewrote (create -> link) go back to create, title and
+        # all; any other line that pointed at a removed record is deleted, so it reads To do.
+        rewritten = set(meta.get("rewritten_line_ids") or [])
+        if gone:
+            for m in db.query(ProjectImportValueMap).filter(
+                ProjectImportValueMap.company_id == str(run.company_id),
+                ProjectImportValueMap.target_id.in_(gone),
+            ):
+                if str(m.id) in rewritten:
+                    m.action, m.target_id = ACTION_CREATE, None
+                else:
+                    db.delete(m)
         db.flush()
 
     result = {"removed": dict(removed), "kept": kept}
@@ -1412,8 +1598,17 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
 
 
 def revert_by_id(db: Session, run_id: str, *, user_id: Optional[str]) -> dict:
-    """The record action's handler: the run read in scope, then `revert`."""
+    """The record action's handler: the run read in scope, then `revert`. The parking user's
+    `projects.import.run` is checked again here, when the window lapses (security N1)."""
+    from app.services.user_service import UserPermissionService
+
     run = get_run(db, run_id)
+    if not user_id or not UserPermissionService(db).check_user_has_permission(
+        str(user_id), "projects.import.run"
+    ):
+        # Not a 4xx: the pending-action runner files a 4xx as "ineligible" (the premise moved
+        # on), while a revert by someone who lost the grant is a refusal, filed as failed.
+        raise PermissionError("Permission required: projects.import.run")
     return revert(db, run, user_id=str(user_id or run.user_id))
 
 
@@ -1447,6 +1642,8 @@ def serialize_run(db: Session, run: ImportJob, *, users: Optional[dict] = None, 
         "skipped": counts.get("skipped", 0),
         "to_review": counts.get(oc.OUTCOME_NEEDS_REVIEW, 0),
         "imported_at": meta.get("imported_at"),
+        # A failed import's plain message (never a traceback); cleared by the next start.
+        "error": run.error if (meta.get("phase") or PHASE_DRAFT) != PHASE_IMPORTED else None,
     }
     if full:
         ticked = {n.strip() for n in meta.get("sheets") or []}
@@ -1459,6 +1656,7 @@ def serialize_run(db: Session, run: ImportJob, *, users: Optional[dict] = None, 
             "result_counts": meta.get("result_counts"),
             "result_codes": meta.get("result_codes"),
             "result": run.result if meta.get("result_counts") else None,
+            "field_labels": dict(reader.FIELD_LABELS),
             "code_labels": {
                 code: oc.label_for(code)
                 for code in {**(meta.get("preview_codes") or {}), **(meta.get("result_codes") or {})}
@@ -1474,7 +1672,7 @@ _RUN_SORTS = ("run_no", "filename", "uploaded_by", "uploaded_at", "status", "row
               "skipped", "to_review")
 _LINE_SORTS = ("value_text", "rows", "customer_text", "set_at", "status")
 _ROW_SORTS = ("sheet", "row_number", "ps_number", "customer", "project", "po_number", "po_date",
-              "outcome")
+              "outcome", "reason")
 
 
 def _sort_and_page(
@@ -1580,8 +1778,13 @@ def list_rows(
             "outcome": oc.OUTCOME_ERROR if row.outcome == oc.OUTCOME_FAILED else row.outcome,
             "codes": [c for c in (ident.get("codes") or "").split(",") if c],
             "labels": [oc.label_for(c) for c in (ident.get("codes") or "").split(",") if c],
+            "blocking_kind": blocking_kind(
+                oc.OUTCOME_ERROR if row.outcome == oc.OUTCOME_FAILED else row.outcome,
+                [c for c in (ident.get("codes") or "").split(",") if c],
+            ),
             "message": row.message,
         })
+        items[-1]["reason"] = items[-1]["message"] or "; ".join(items[-1]["labels"])
     if outcome:
         items = [i for i in items if i["outcome"] in outcome]
     if code:
@@ -1609,7 +1812,7 @@ def page_lines(
     run: ImportJob,
     *,
     kind: str,
-    status: Optional[str] = None,
+    status: Optional[str | list[str]] = None,
     query: Optional[str] = None,
     sort: Optional[str] = None,
     direction: Optional[str] = None,
