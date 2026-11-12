@@ -57,4 +57,10 @@ describe('TechniciansList (S-10)', () => {
     const labels = within(menu).getAllByRole('menuitem').map((i) => (i.textContent || '').trim());
     expect(labels).toEqual(['Edit', 'Archive']);
   });
+
+  it('has the Filters control in the toolbar (R4-2)', async () => {
+    setup();
+    await screen.findByText('Ali');
+    expect(screen.getByRole('button', { name: /Filters/ })).toBeInTheDocument();
+  });
 });

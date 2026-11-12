@@ -98,3 +98,12 @@ describe('ConfirmDateDialog layout (R3-3)', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe('ConfirmDateDialog error placement (R4-3)', () => {
+  it('shows the refusal directly under the Agreed by field', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm date' }));
+    const alert = await screen.findByRole('alert');
+    expect(screen.getByLabelText(/Agreed by/i).parentElement).toContainElement(alert);
+  });
+});
