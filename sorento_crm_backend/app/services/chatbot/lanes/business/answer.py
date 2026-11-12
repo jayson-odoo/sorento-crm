@@ -5390,9 +5390,7 @@ def build_suggest_offer(
     # codes it checked, the scheme or document type not on file of AC-1321 / R6). Its
     # class word ("tap") forward-matched a few product codes, which is the set's own
     # word and not a typo, so it offers no did-you-mean over the top of that sentence -
-    # the same code-shape rule `_unplaced_token_has_neighbours` applies.
-    from app.services.entity_resolver import _CODE_RE
-
+    # the same code-shape rule `_unplaced_token_has_neighbours` applies (`_code_like`).
     zero_set = jsc.get(jsc.get(g, "predicate"), "qualifying_total") == 0
 
     # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
