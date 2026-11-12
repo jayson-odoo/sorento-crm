@@ -326,7 +326,8 @@ def test_preview_rows_and_import_through_the_routes(world, api_client, monkeypat
     assert bulk.status_code == 200, bulk.text
     todo = client.get(f"{BASE}/runs/{run_id}/lines", params={"kind": "customer", "status": "todo"})
     assert todo.status_code == 200
-    todo_rows = todo.json()["data"] if isinstance(todo.json(), dict) else todo.json()
+    body = todo.json()
+    todo_rows = (body.get("items", body.get("data")) if isinstance(body, dict) else body)
     assert [l["value_key"] for l in todo_rows] == ["CUSTOMER 002 SDN BHD"]
 
     preview = client.post(f"{BASE}/runs/{run_id}/preview")
@@ -385,3 +386,293 @@ def test_ac_pi_41_no_name_reaches_a_log_line(world, api_client, caplog):
 
     leaked = [r.getMessage() for r in caplog.records if "SECRETNAME" in r.getMessage().upper()]
     assert leaked == []
+
+
+# --------------------------------------------------------------------------- round 2:
+# server paging, sort and search (owner standing rules: every grid column sorts on the
+# SERVER and the order holds on page 2; every list has search; a "to do" count equals the
+# rows its filter shows).
+
+
+def _norm(value):
+    if value is None or value == "":
+        return None
+    return value.lower() if isinstance(value, str) else value
+
+
+def _assert_sorted(values, desc):
+    """Non-blank values monotonic in the asked direction; blanks grouped at one end."""
+    vals = [_norm(v) for v in values]
+    present = [v for v in vals if v is not None]
+    assert present == sorted(present, reverse=desc), values
+    blanks = [i for i, v in enumerate(vals) if v is None]
+    if blanks:
+        n = len(blanks)
+        assert blanks in (list(range(n)), list(range(len(vals) - n, len(vals)))), values
+
+
+def _assert_grouped(values):
+    seen = []
+    for v in values:
+        if not seen or seen[-1] != v:
+            assert v not in seen, values
+            seen.append(v)
+    return seen
+
+
+def _paged(client, url, params, *, limit, key, ident):
+    """(full list, page 1, page 2): page 1 + page 2 must be the first 2*limit of the full
+    list, in the same order."""
+    full = client.get(url, params={**params, "page": 1, "limit": 200})
+    assert full.status_code == 200, full.text
+    p1 = client.get(url, params={**params, "page": 1, "limit": limit})
+    p2 = client.get(url, params={**params, "page": 2, "limit": limit})
+    assert p1.status_code == 200 and p2.status_code == 200, (p1.text, p2.text)
+    full_items, i1, i2 = full.json()[key], p1.json()[key], p2.json()[key]
+    assert len(full_items) > 2 * limit - 1, "seed more rows than one page"
+    assert len(i1) == limit
+    assert [ident(x) for x in i1 + i2] == [ident(x) for x in full_items[: len(i1) + len(i2)]]
+    assert p1.json()["total"] == full.json()["total"] == len(full_items)
+    return full_items, i1, i2
+
+
+def _lines_book():
+    rows, n = [], 0
+    for i in range(1, 9):
+        for _ in range((i % 3) + 1):
+            n += 1
+            rows.append(row(f"PS26-{n:04d}", customer=f"CUSTOMER {i:03d} SDN BHD",
+                            project_name=f"PROJECT {9 - i:03d}"))
+    return make_book({"JAN'26": rows})
+
+
+@pytest.fixture
+def lines_world(world, api_client):
+    from app.services.project_import import service
+
+    w = world
+    run = new_run(w, _lines_book())
+    for i in (2, 5, 7):  # some lines set, so status and set_at vary
+        service.set_line(w.db, run, kind="customer", value_key=f"CUSTOMER {i:03d} SDN BHD",
+                         action="skip", user_id=w.admin_id)
+    service.set_line(w.db, run, kind="project", customer_value_key="CUSTOMER 003 SDN BHD",
+                     value_key="PROJECT 006", action="skip", user_id=w.admin_id)
+    w.db.commit()
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    return w, run, client, f"{BASE}/runs/{run.id}/lines"
+
+
+def test_ac_pi_46_lines_are_paged_as_items_and_total(lines_world):
+    _w, _run, client, url = lines_world
+
+    pages = [client.get(url, params={"kind": "customer", "page": p, "limit": 3}) for p in (1, 2, 3)]
+
+    for r in pages:
+        assert r.status_code == 200, r.text
+        assert set(r.json()) >= {"items", "total"}
+    assert [len(r.json()["items"]) for r in pages] == [3, 3, 2]
+    assert {r.json()["total"] for r in pages} == {8}
+    keys = [l["value_key"] for r in pages for l in r.json()["items"]]
+    assert len(set(keys)) == 8
+    line = pages[0].json()["items"][0]
+    for field in ("kind", "customer_value_key", "value_key", "value_text", "customer_text",
+                  "rows", "action", "target_id", "target_label", "new_title", "source",
+                  "set_by_name", "set_at", "status"):
+        assert field in line, field
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("kind,sort", [
+    ("customer", "value_text"), ("customer", "rows"), ("customer", "set_at"),
+    ("project", "value_text"), ("project", "customer_text"), ("project", "rows"),
+])
+def test_ac_pi_46_lines_sort_on_the_server_and_hold_across_pages(lines_world, kind, sort,
+                                                                 direction):
+    _w, _run, client, url = lines_world
+
+    full, _p1, _p2 = _paged(
+        client, url, {"kind": kind, "sort": sort, "dir": direction}, limit=3, key="items",
+        ident=lambda l: (l["customer_value_key"], l["value_key"]),
+    )
+
+    _assert_sorted([l[sort] for l in full], direction == "desc")
+
+
+def test_ac_pi_46_lines_sort_by_status_groups_and_flips_with_dir(lines_world):
+    _w, _run, client, url = lines_world
+
+    groups = {}
+    for direction in ("asc", "desc"):
+        full, _p1, _p2 = _paged(
+            client, url, {"kind": "customer", "sort": "status", "dir": direction}, limit=3,
+            key="items", ident=lambda l: l["value_key"],
+        )
+        groups[direction] = _assert_grouped([l["status"] for l in full])
+    assert sorted(groups["asc"]) == ["set", "todo"]
+    assert groups["desc"] == list(reversed(groups["asc"]))
+
+
+def test_ac_pi_46_lines_search_matches_value_or_customer_text_and_links_nothing(lines_world):
+    from app.models.project_import import ProjectImportValueMap
+
+    w, _run, client, url = lines_world
+    maps_before = w.db.query(ProjectImportValueMap).count()
+
+    customers = client.get(url, params={"kind": "customer", "query": "003 sdn"}).json()
+    assert [l["value_key"] for l in customers["items"]] == ["CUSTOMER 003 SDN BHD"]
+    assert customers["total"] == 1
+    # "005" is CUSTOMER 005's pair (customer_text) and PROJECT 005, under CUSTOMER 004.
+    projects = client.get(url, params={"kind": "project", "query": "005"}).json()
+    assert sorted((l["customer_value_key"], l["value_key"]) for l in projects["items"]) == [
+        ("CUSTOMER 004 SDN BHD", "PROJECT 005"),
+        ("CUSTOMER 005 SDN BHD", "PROJECT 004"),
+    ]
+    assert projects["total"] == 2
+    # Searching is reading: no line is set by it.
+    assert all(l["status"] == "todo" for l in projects["items"])
+    assert w.db.query(ProjectImportValueMap).count() == maps_before
+
+
+def test_ac_pi_46_todo_total_equals_the_summary_count_per_kind(lines_world):
+    _w, _run, client, url = lines_world
+
+    summary = client.get(f"{url}/summary")
+    assert summary.status_code == 200, summary.text
+    body = summary.json()
+    assert set(body) == {"customer", "project", "developer", "person"}
+    for kind in ("customer", "project", "developer", "person"):
+        todo = client.get(url, params={"kind": kind, "status": "todo", "limit": 1}).json()
+        every = client.get(url, params={"kind": kind, "limit": 1}).json()
+        assert body[kind]["todo"] == todo["total"], kind
+        assert body[kind]["total"] == every["total"], kind
+    assert body["customer"] == {"total": 8, "todo": 5}
+    assert body["project"] == {"total": 8, "todo": 7}
+    assert body["developer"] == {"total": 0, "todo": 0}
+
+
+# --------------------------------------------------------------------------- rows
+
+
+@pytest.fixture
+def rows_world(world, api_client):
+    from datetime import datetime
+
+    from app.services.project_import import service
+
+    w = world
+    apr = [row(f"PS26-{472 + i:04d}", customer=f"CUSTOMER {10 - i:03d} SDN BHD",
+               project_name=None if i % 3 == 0 else f"PROJECT {i:03d}",
+               po_number=f"PO-{(i * 7) % 10:02d}{i}", po_date=datetime(2026, 4, 1 + (i * 5) % 27),
+               po_value="-" if i == 4 else 100)
+           for i in range(6)]
+    may = [row(f"PS26-{688 + i:04d}", customer=f"CUSTOMER {20 + i:03d} SDN BHD",
+               project_name=f"PROJECT {30 - i:03d}", po_number=f"PO-{i}{(i * 3) % 10}",
+               po_date=None if i == 2 else datetime(2026, 5, 2 + i))
+           for i in range(5)]
+    may.append({"ps_number": "PS26-0693"})  # placeholder
+    run = new_run(w, make_book({"APR'26": apr, "MAY'26": may}))
+    service.preview(w.db, run, user_id=w.admin_id)
+    w.db.commit()
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    return w, run, client, f"{BASE}/runs/{run.id}/rows"
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("sort", ["sheet", "row_number", "ps_number", "customer", "project",
+                                  "po_number", "po_date", "outcome"])
+def test_ac_pi_47_rows_sort_on_the_server_and_hold_across_pages(rows_world, sort, direction):
+    _w, _run, client, url = rows_world
+
+    full, _p1, _p2 = _paged(
+        client, url, {"sort": sort, "dir": direction}, limit=4, key="data",
+        ident=lambda r: (r["sheet"], r["row_number"]),
+    )
+
+    assert len(full) == 12
+    _assert_sorted([r[sort] for r in full], direction == "desc")
+
+
+def test_ac_pi_47_rows_sort_flips_with_dir(rows_world):
+    _w, _run, client, url = rows_world
+
+    asc = client.get(url, params={"sort": "ps_number", "dir": "asc", "limit": 200}).json()["data"]
+    desc = client.get(url, params={"sort": "ps_number", "dir": "desc", "limit": 200}).json()["data"]
+
+    assert [r["ps_number"] for r in asc] == list(reversed([r["ps_number"] for r in desc]))
+    assert asc[0]["ps_number"] == "PS26-0472"
+
+
+# --------------------------------------------------------------------------- runs
+
+
+@pytest.fixture
+def runs_world(world, api_client):
+    from app.services.project_import import service
+
+    w = world
+    users = [w.admin_id, seed_user_named(w, "ZZT-PIM Bella"), seed_user_named(w, "ZZT-PIM Carl")]
+    made = []
+    for i in range(7):
+        rows_ = [row(f"PS26-{n:04d}", customer=f"CUSTOMER {n:03d} SDN BHD",
+                     project_name=None if n % 2 else "PROJECT 1")
+                 for n in range(1, 2 + (i * 3) % 7)]
+        run = new_run(w, make_book({"JAN'26": rows_}), filename=f"run {chr(97 + (i * 5) % 7)}.xlsx",
+                      user_id=users[i % 3])
+        if i % 2:
+            service.preview(w.db, run, user_id=users[i % 3])
+        made.append(run)
+    w.db.commit()
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    return w, made, users, client
+
+
+def seed_user_named(w, name):
+    from ._project_import_support import seed_user
+
+    return seed_user(w.db, name)
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("sort", ["run_no", "filename", "uploaded_by", "uploaded_at", "status",
+                                  "rows", "created", "skipped", "to_review"])
+def test_ac_pi_43_runs_sort_on_the_server_and_hold_across_pages(runs_world, sort, direction):
+    _w, _made, _users, client = runs_world
+
+    full, _p1, _p2 = _paged(
+        client, f"{BASE}/runs", {"sort": sort, "dir": direction}, limit=3, key="data",
+        ident=lambda r: r["id"],
+    )
+
+    assert len(full) == 7
+    _assert_sorted([r[sort] for r in full], direction == "desc")
+
+
+def test_ac_pi_43_runs_sort_by_run_no_flips_with_dir(runs_world):
+    _w, _made, _users, client = runs_world
+
+    asc = client.get(f"{BASE}/runs", params={"sort": "run_no", "dir": "asc"}).json()["data"]
+    desc = client.get(f"{BASE}/runs", params={"sort": "run_no", "dir": "desc"}).json()["data"]
+
+    assert [r["run_no"] for r in asc] == [f"PIM-{n:04d}" for n in range(1, 8)]
+    assert [r["run_no"] for r in desc] == [f"PIM-{n:04d}" for n in range(7, 0, -1)]
+
+
+def test_ac_pi_43_status_and_uploaded_by_filters_are_multi_select_and_combine(runs_world):
+    _w, made, users, client = runs_world
+    url = f"{BASE}/runs"
+
+    def ids(params):
+        r = client.get(url, params=params)
+        assert r.status_code == 200, r.text
+        return {x["id"] for x in r.json()["data"]}
+
+    status_of = {str(r.id): ("previewed" if i % 2 else "draft") for i, r in enumerate(made)}
+    user_of = {str(r.id): users[i % 3] for i, r in enumerate(made)}
+
+    assert ids({"status": ["draft", "previewed"]}) == set(status_of)
+    assert ids({"status": "previewed"}) == {k for k, v in status_of.items() if v == "previewed"}
+    two = {users[0], users[1]}
+    assert ids({"uploaded_by": list(two)}) == {k for k, v in user_of.items() if v in two}
+    both = ids({"status": "previewed", "uploaded_by": list(two)})
+    assert both == {k for k in status_of if status_of[k] == "previewed" and user_of[k] in two}
+    assert both and both != ids({"status": "previewed"})
