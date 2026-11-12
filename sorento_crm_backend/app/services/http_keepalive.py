@@ -18,6 +18,8 @@ from typing import Any
 import httpx
 
 KEEPALIVE_EXPIRY_SECONDS = 30.0
+#: The real class, read once: a patched `httpx.Client` is a stand-in, not a shared client.
+_REAL_CLIENT = httpx.Client
 
 #: name -> (pid, the `httpx.Client` constructor it was built with, the client)
 _clients: dict[str, tuple[int, Any, Any]] = {}
@@ -55,14 +57,17 @@ def reset() -> None:
 
 
 class Borrowed:
-    """`with Borrowed(client) as c:` hands out a shared client without closing it at the end of the block, so a call
-    site written for a per-call client (`with httpx.Client(...) as c:`) keeps its shape."""
+    """`with Borrowed(client) as c:` lends a shared client without closing it at the end of the block, so a call site
+    written for a per-call client (`with httpx.Client(...) as c:`) keeps its shape. Anything that is not a real
+    `httpx.Client` (a test's stand-in from a patched constructor) is used as its own context manager, exactly as the
+    per-call client was."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        self._shared = isinstance(client, _REAL_CLIENT)
 
     def __enter__(self) -> Any:
-        return self._client
+        return self._client if self._shared else self._client.__enter__()
 
-    def __exit__(self, *exc: Any) -> None:
-        return None
+    def __exit__(self, *exc: Any) -> Any:
+        return None if self._shared else self._client.__exit__(*exc)
