@@ -138,13 +138,13 @@ def _send_outcome(factory, turn_id):
 
 
 def _give_n8n_sender(db, workspace, monkeypatch):
-    from app.schemas.respond_workspace import RespondWorkspaceUpdate
-    from app.services.respond_workspace_service import RespondWorkspaceService
+    from app.utils.field_encryption import encrypt_secret
 
-    RespondWorkspaceService(db).update(
-        workspace.id,
-        RespondWorkspaceUpdate(chatbot_sender_url=SENDER_URL, chatbot_sender_key="ZZT-key"),
-    )
+    # The sender pair has no field on RespondWorkspaceUpdate (a deliberate split), so the
+    # columns are set directly, as tests/chatbot/test_direct_ingress.py does.
+    workspace.chatbot_sender_url = SENDER_URL
+    workspace.chatbot_sender_key_ciphertext = encrypt_secret("ZZT-key")
+    db.commit()
     monkeypatch.setattr("app.services.chatbot.direct_ingress.assert_safe_outbound_url", lambda *a, **k: None)
 
 
