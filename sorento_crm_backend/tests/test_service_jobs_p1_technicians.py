@@ -1,0 +1,120 @@
+"""AFTER-SALES-P1 red tests: technicians API (UAC F1-F3).
+
+List sort keys: name, phone, employment_type, is_active. Body: {name, phone?, employment_type
+(employee|contractor), is_active?}. DELETE answers 200 or 204; 409 with "in use" when any job
+references the technician.
+"""
+from __future__ import annotations
+
+import pytest
+
+from ._pg_fixture import unique_code
+from ._service_jobs_p1_support import (
+    MANAGE,
+    TECHS,
+    VIEW,
+    api,
+    env,  # noqa: F401
+    make_complaint,
+    make_job,
+    make_tech,
+)
+
+
+def _names(resp):
+    assert resp.status_code == 200, resp.text
+    return [r["name"] for r in resp.json()["data"]]
+
+
+def test_f2_create_get_update(env):
+    n = unique_code("Tech")
+    with api(env) as client:
+        r = client.post(TECHS, json={"name": n, "phone": "+60111222333", "employment_type": "contractor"})
+        assert r.status_code in (200, 201), r.text
+        body = r.json()
+        assert body["name"] == n and body["employment_type"] == "contractor" and body["is_active"] is True
+        up = client.put(f"{TECHS}/{body['id']}", json={"name": n + "x", "employment_type": "employee", "phone": "+60999"})
+        assert up.status_code == 200, up.text
+        assert up.json()["name"] == n + "x" and up.json()["employment_type"] == "employee"
+        assert n + "x" in _names(client.get(TECHS, params={"query": n}))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"phone": "1"}, {"name": "   ", "employment_type": "employee"}, {"name": "X", "employment_type": "wizard"}],
+)
+def test_f2_validation_is_422(env, payload):
+    with api(env) as client:
+        assert client.post(TECHS, json=payload).status_code == 422
+
+
+def test_f2_auth_denial(env):
+    with api(env, {VIEW}) as client:
+        assert client.post(TECHS, json={"name": "X", "employment_type": "employee"}).status_code == 403
+        assert client.get(TECHS).status_code == 200
+    with api(env, set()) as client:
+        assert client.get(TECHS).status_code == 403
+    with api(env, {MANAGE}) as client:
+        assert client.post(TECHS, json={"name": unique_code("T"), "employment_type": "employee"}).status_code in (200, 201)
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("column", ["name", "phone", "employment_type", "is_active"])
+def test_f1_every_column_sorts_on_the_server(env, column, direction):
+    tag = unique_code("TS", alpha=True)
+    spec = [  # (name, phone, kind, active) ranked 1..3 on every column
+        (f"{tag} c", "+60333", "employee", True),
+        (f"{tag} a", "+60111", "contractor", False),
+        (f"{tag} b", "+60222", "employee", True),
+    ]
+    rows = []
+    for name, phone, kind, active in spec:
+        t = make_tech(env, name, active=active, kind=kind)
+        t.phone = phone
+        rows.append(t)
+    env.db.flush()
+    with api(env) as client:
+        r = client.get(TECHS, params={"query": tag, "sort": column, "dir": direction, "limit": 50})
+    assert r.status_code == 200, r.text
+    got = [x[column] for x in r.json()["data"]]
+    assert got == sorted(got, reverse=(direction == "desc")), got
+    assert len(got) == 3
+
+
+def test_f1_search_by_name(env):
+    tag = unique_code("TQ", alpha=True)
+    make_tech(env, f"{tag} one")
+    make_tech(env, "ZZT other person")
+    with api(env) as client:
+        assert _names(client.get(TECHS, params={"query": tag})) == [f"{tag} one"]
+
+
+def test_f1_list_limit_cap(env):
+    with api(env) as client:
+        assert client.get(TECHS, params={"limit": 1000000}).status_code == 422
+
+
+def test_f3_delete_unused_technician(env):
+    t = make_tech(env)
+    with api(env) as client:
+        r = client.delete(f"{TECHS}/{t.id}")
+        assert r.status_code in (200, 204), r.text
+        assert client.get(f"{TECHS}/{t.id}").status_code == 404
+
+
+def test_f3_delete_of_a_technician_on_a_job_is_409_in_use(env):
+    t = make_tech(env)
+    make_job(env, make_complaint(env, "f3"), "confirmed", technician=t)
+    with api(env) as client:
+        r = client.delete(f"{TECHS}/{t.id}")
+        assert r.status_code == 409, r.text
+        assert "in use" in r.text.lower()
+        # archive instead
+        up = client.put(f"{TECHS}/{t.id}", json={"is_active": False})
+        assert up.status_code == 200 and up.json()["is_active"] is False
+
+
+def test_f3_delete_needs_manage(env):
+    t = make_tech(env)
+    with api(env, {VIEW}) as client:
+        assert client.delete(f"{TECHS}/{t.id}").status_code == 403
