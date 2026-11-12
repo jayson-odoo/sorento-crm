@@ -2,6 +2,7 @@ import { NextAuthOptions, Session, User } from 'next-auth';
 import { JWT } from 'next-auth/jwt';
 import CredentialsProvider from 'next-auth/providers/credentials';
 
+import { extractApiError } from '@/lib/api-client';
 import { forwardedForHeader } from '@/lib/forwarded-for';
 import { sessionTokenCookieName } from '@/lib/auth-cookie';
 import {
@@ -272,18 +273,14 @@ const authOptions: NextAuthOptions = {
           );
         }
 
-        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           // PASSKEY_FAILED / PASSKEYS_UNAVAILABLE / RATE_LIMITED are flat { code, message };
           // an inactive account is the /auth/login { detail } 403.
-          const message =
-            (typeof data?.message === 'string' && data.message) ||
-            (typeof data?.detail === 'string' && data.detail) ||
-            "That passkey didn't work. Sign in another way.";
+          const message = await extractApiError(res, "That passkey didn't work. Sign in another way.");
           throw new Error(JSON.stringify({ code: res.status, message }));
         }
 
-        return userFromLoginResponse(data);
+        return userFromLoginResponse(await res.json());
       },
     }),
     ...(devLoginOn ? [devLoginProvider()] : []),

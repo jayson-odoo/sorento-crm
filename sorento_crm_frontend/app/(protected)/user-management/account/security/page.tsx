@@ -13,12 +13,15 @@ import {
 import { comingSoonToast } from '@/components/common/coming-soon-toast';
 import { useAccount } from '../components/account-context';
 import ChangePasswordDialog from './components/change-password-dialog';
+import PasskeysCard from './components/passkeys-card';
 
 export default function Page() {
   const { user } = useAccount();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const hasPassword = Boolean(user.has_password ?? user.hasPassword);
   const passwordButtonLabel = hasPassword ? 'Change password' : 'Set a password';
+  // PASSKEY-LOGIN AC-43: only once an admin has turned passkey sign-in on for this user.
+  const passkeyEnabled = Boolean(user.passkey_enabled ?? user.passkeyEnabled);
 
   return (
     <div className="space-y-6">
@@ -68,6 +71,8 @@ export default function Page() {
         closeDialog={() => setPasswordDialogOpen(false)}
         hasPassword={hasPassword}
       />
+
+      {passkeyEnabled && <PasskeysCard hasPassword={hasPassword} />}
 
       <Card>
         <CardHeader>
