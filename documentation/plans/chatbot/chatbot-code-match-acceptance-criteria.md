@@ -65,6 +65,9 @@ Seed a registry size key scoped to the test category (Q2 a) in mm.
   stored value under more than one: every matching candidate is offered with the key it matched; no key is guessed.
 - AC-26 "None with size N <unit>." takes the unit from the registry key (`lanes/business/answer.py:2872`), e.g. a key in
   cm prints cm.
+- Scope (lead, review round 4): the size rules above apply when the message names exactly ONE product code. A
+  message naming several product codes plus a size keeps main's behaviour (each existing code answered; the size is not
+  paired to a code). Known limitation, follow-up: pair a size to its own code in a multi-code ask.
 - AC-18 `scripts/chatbot_products_without_size.sql` (read-only SELECT): active products in categories with a size key
   and no stored value (code, category); crew runs it on the dev copy.
 
