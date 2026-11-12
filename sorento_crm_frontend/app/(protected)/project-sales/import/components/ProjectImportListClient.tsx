@@ -11,6 +11,13 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -25,11 +32,15 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import { formatDateSafe } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { getUsersSelect } from '@/services/userSelectService';
-import { RUN_PERMISSION, useProjectImportRuns } from '../../_shared/hooks/useProjectImport';
+import {
+  PROJECT_IMPORT_RUNS_KEY,
+  RUN_PERMISSION,
+  useProjectImportRuns,
+} from '../../_shared/hooks/useProjectImport';
 import type { ProjectImportRunRow } from '../../_shared/types/projectImport.types';
 import { CreateImportDialog } from './CreateImportDialog';
 import { RunStatusBadge, STATUS_LABELS } from './importLabels';
@@ -91,6 +102,20 @@ export function ProjectImportListClient() {
     );
   }, [listSearch]);
 
+  // Delete from a row's right-click menu: the same parked action the run page's gear starts,
+  // its countdown in the toast (a row has nowhere to put one). A run that is imported is
+  // reverted first, so it is not offered here.
+  const deleting = useDeferredRowAction({
+    actionKey: 'project_import_run.delete',
+    entityType: 'project_import_run',
+    verb: 'Deleting',
+    successMessage: 'Import deleted',
+    invalidateKeys: [[PROJECT_IMPORT_RUNS_KEY]],
+  });
+  const [menuRun, setMenuRun] = React.useState<ProjectImportRunRow | null>(null);
+  const deletable = (run: ProjectImportRunRow) =>
+    canRun && ['draft', 'previewed', 'reverted'].includes(run.status);
+
   const rowHref = (row: ProjectImportRunRow) => {
     const query = buildDetailSearch(grid, {
       status: status.length ? joinMulti(status) : undefined,
@@ -145,7 +170,8 @@ export function ProjectImportListClient() {
         header: ({ column }) => <DataGridColumnHeader title="Uploaded on" column={column} />,
         size: 115,
         meta: { headerTitle: 'Uploaded on', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => formatDateSafe(row.original.uploaded_at),
+        // A naive UTC stamp from the API: the Malaysia day (round 9).
+        cell: ({ row }) => (row.original.uploaded_at ? formatDateInMalaysia(row.original.uploaded_at) : '-'),
       },
       {
         accessorKey: 'status',
@@ -205,8 +231,19 @@ export function ProjectImportListClient() {
   const activeFilters = (status.length ? 1 : 0) + (uploadedBy.length ? 1 : 0);
 
   return (
-    <>
+    <ContextMenu onOpenChange={(open) => !open && setMenuRun(null)}>
+      <ContextMenuTrigger
+        asChild
+        onContextMenu={(event) => {
+          const id = (event.target as HTMLElement).closest('[data-run-id]')?.getAttribute('data-run-id');
+          const hit = rows.find((r) => r.id === id) ?? null;
+          setMenuRun(hit);
+          if (!hit) event.preventDefault();
+        }}
+      >
+        <div>
       <DataGrid
+        rowAttributes={(row: ProjectImportRunRow) => ({ 'data-run-id': row.id })}
         table={table}
         recordCount={total}
         isLoading={runs.isLoading}
@@ -311,8 +348,23 @@ export function ProjectImportListClient() {
           </CardFooter>
         </Card>
       </DataGrid>
-      {canRun && <CreateImportDialog open={creating} onOpenChange={setCreating} />}
-    </>
+        </div>
+      </ContextMenuTrigger>
+      {menuRun && (
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => router.push(rowHref(menuRun))}>Open</ContextMenuItem>
+          {deletable(menuRun) && (
+            <ContextMenuItem
+              variant="destructive"
+              disabled={deleting.isPending}
+              onSelect={() => deleting.run({ id: menuRun.id, subject: menuRun.run_no })}
+            >
+              Delete
+            </ContextMenuItem>
+          )}
+        </ContextMenuContent>
+      )}      {canRun && <CreateImportDialog open={creating} onOpenChange={setCreating} />}
+    </ContextMenu>
   );
 }
 

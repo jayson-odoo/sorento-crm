@@ -31,7 +31,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import { formatDateSafe } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useProjectImportLines,
   useProjectImportLinesSummary,
@@ -68,7 +68,7 @@ function linkedTo(line: ProjectImportLine): string {
 
 function setBy(line: ProjectImportLine): string {
   if (!line.source) return '';
-  return [SOURCE_WORDS[line.source] ?? '', line.set_by_name, line.set_at ? formatDateSafe(line.set_at) : '']
+  return [SOURCE_WORDS[line.source] ?? '', line.set_by_name, line.set_at ? formatDateInMalaysia(line.set_at) : '']
     .filter(Boolean)
     .join(', ');
 }

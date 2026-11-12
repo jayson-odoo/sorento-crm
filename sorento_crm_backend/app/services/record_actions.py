@@ -3206,6 +3206,24 @@ def _revert_project_import_run(db: Session, payload: dict):
     return project_import.revert_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
 
 
+def _delete_project_import_run(db: Session, payload: dict):
+    from app.services.project_import import service as project_import
+
+    return project_import.delete_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
+
+
+register(
+    FormAction(
+        key="project_import_run.delete",
+        entity_types=("project_import_run",),
+        execute=_delete_project_import_run,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.import.run",
+        label="Delete import",
+    )
+)
+
+
 register(
     FormAction(
         key="project_import_run.revert",

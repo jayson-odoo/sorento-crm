@@ -321,7 +321,9 @@ def _sample(rows: list[tuple], start: int, pos: int) -> Optional[str]:
 
 
 def probe(content: bytes, field_for: Optional[FieldFor] = None) -> list[SheetProbe]:
-    """Every sheet with its headings as written, one sample each, and its PS row count."""
+    """Every sheet with its headings as written, one sample each, and its PS row count: EVERY
+    PS-numbered row, a numbered blank placeholder included, so a preview's outcomes add up to
+    it (round 9)."""
     field_for = field_for or field_resolver()
     out: list[SheetProbe] = []
     for name, rows in _sheets(content):
@@ -347,10 +349,9 @@ def probe(content: bytes, field_for: Optional[FieldFor] = None) -> list[SheetPro
                 })
         if has_ps:
             ps_pos = next(c["position"] for c in columns if c["field"] == "ps_number")
-            cust_pos = next((c["position"] for c in columns if c["field"] == "customer"), None)
             for row in rows[header_idx + 1:]:
                 ps = _text(_cell(row, ps_pos))
-                if ps and PS_RE.match(ps) and not _blank(_cell(row, cust_pos)):
+                if ps and PS_RE.match(ps):
                     row_count += 1
         out.append(SheetProbe(
             name=name, name_trimmed=name.strip(), has_ps_heading=has_ps, row_count=row_count,

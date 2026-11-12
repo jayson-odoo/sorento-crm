@@ -450,7 +450,12 @@ def _labels(db: Session, kind: str, ids: set[str], company_id: Any = None) -> di
     if not ids:
         return {}
     if kind == KIND_CUSTOMER:
-        return {str(c.id): c.customer_name or c.customer_code for c in db.query(Customer).filter(Customer.id.in_(ids))}
+        # "<name> (<debtor code>)": two accounts of one shop share a name, never a code.
+        return {
+            str(c.id): f"{c.customer_name} ({c.customer_code})" if c.customer_name and c.customer_code
+            else (c.customer_name or c.customer_code)
+            for c in db.query(Customer).filter(Customer.id.in_(ids))
+        }
     if kind == KIND_PROJECT:
         return {
             str(p.id): " ".join(x for x in (p.project_code, p.title) if x)
@@ -1613,9 +1618,10 @@ def revert(db: Session, run: ImportJob, *, user_id: str) -> dict:
     return result
 
 
-def revert_by_id(db: Session, run_id: str, *, user_id: Optional[str]) -> dict:
-    """The record action's handler: the run read in scope, then `revert`. The parking user's
-    `projects.import.run` is checked again here, when the window lapses (security N1)."""
+def _run_for_action(db: Session, run_id: str, user_id: Optional[str]) -> ImportJob:
+    """A parked record action's run, read in scope, with the parking user's
+    `projects.import.run` checked again when the window lapses (security N1). Shared by the
+    revert and delete handlers."""
     from app.services.user_service import UserPermissionService
 
     run = get_run(db, run_id)
@@ -1623,8 +1629,14 @@ def revert_by_id(db: Session, run_id: str, *, user_id: Optional[str]) -> dict:
         str(user_id), "projects.import.run"
     ):
         # Not a 4xx: the pending-action runner files a 4xx as "ineligible" (the premise moved
-        # on), while a revert by someone who lost the grant is a refusal, filed as failed.
+        # on), while an action by someone who lost the grant is a refusal, filed as failed.
         raise PermissionError("Permission required: projects.import.run")
+    return run
+
+
+def revert_by_id(db: Session, run_id: str, *, user_id: Optional[str]) -> dict:
+    """The revert record action's handler."""
+    run = _run_for_action(db, run_id, user_id)
     return revert(db, run, user_id=str(user_id or run.user_id))
 
 
@@ -1633,6 +1645,43 @@ def assert_revertable(db: Session, run_id: str) -> None:
     run = get_run(db, run_id)
     if _phase(run) != PHASE_IMPORTED:
         raise AppException(409, "Only an imported run can be reverted.", code="project_import_not_imported")
+
+
+#: A run may be deleted only while nothing it made stands in the CRM.
+DELETABLE_PHASES = (PHASE_DRAFT, PHASE_PREVIEWED, PHASE_REVERTED)
+
+
+def assert_deletable(db: Session, run_id: str) -> ImportJob:
+    """Park-time (and commit-time) check for the delete action: in scope, and not imported."""
+    run = get_run(db, run_id)
+    if _phase(run) not in DELETABLE_PHASES:
+        raise AppException(
+            422,
+            "This run is imported. Revert it first, then delete it.",
+            code="project_import_delete_imported",
+        )
+    return run
+
+
+def delete_run(db: Session, run: ImportJob, *, user_id: str) -> None:
+    """Remove a draft, previewed or reverted run: the run, its report rows (cascade) and its
+    stored file (best effort, through the storage router). Its History entry stays."""
+    from app.services.storage_router import delete_object_best_effort
+
+    assert_deletable(db, str(run.id))
+    _history(db, run, user_id, "deleted", "Deleted")
+    key, provider = run.source_file_key, run.source_file_provider
+    db.query(ImportJobRow).filter(ImportJobRow.import_job_id == run.id).delete(synchronize_session=False)
+    db.delete(run)
+    db.flush()
+    if key:
+        delete_object_best_effort(provider, key)
+
+
+def delete_by_id(db: Session, run_id: str, *, user_id: Optional[str]) -> None:
+    """The delete record action's handler."""
+    run = _run_for_action(db, run_id, user_id)
+    delete_run(db, run, user_id=str(user_id))
 
 
 # --------------------------------------------------------------------------- listings

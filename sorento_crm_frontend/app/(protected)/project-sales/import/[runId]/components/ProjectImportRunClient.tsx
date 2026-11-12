@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -57,7 +58,10 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   const [focusLine, setFocusLine] = React.useState<ProjectImportLineKey | null>(null);
   const { preview, importRun } = useProjectImportMutations(runId);
 
+  const router = useRouter();
   const revertable = canRun && run?.status === 'imported';
+  const deletable =
+    canRun && (run?.status === 'draft' || run?.status === 'previewed' || run?.status === 'reverted');
   const reverting = useDeferredAction({
     actionKey: 'project_import_run.revert',
     entityType: 'project_import_run',
@@ -73,6 +77,21 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
       [PROJECT_IMPORT_RUNS_KEY],
       ['audit-logs', 'project_import_run', runId],
     ],
+  });
+
+  // Delete (round 9): the same parked-action wiring as revert, for a run that left nothing in
+  // the CRM; the page goes back to the list once it lands.
+  const deleting = useDeferredAction({
+    actionKey: 'project_import_run.delete',
+    entityType: 'project_import_run',
+    entityId: deletable ? runId : null,
+    verb: 'Deleting',
+    subject: run?.run_no ?? '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Import deleted',
+    invalidateKeys: [[PROJECT_IMPORT_RUNS_KEY]],
+    onCommitted: () => router.push('/project-sales/import'),
   });
 
   // A status change (preview, import, revert) moves the page to the step it now stands on.
@@ -105,16 +124,29 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
   const editable = run.status === 'draft' || run.status === 'previewed';
   const current: TabId = tab ?? (step === 'import' ? 'values' : step);
 
-  // One main button per step (D2): Preview on Values, Import on Preview; Columns has its Next.
-  const primary = !canRun ? undefined : current === 'values' && step === 'values' && editable ? (
+  // One main button on every tab (D2, round 9): Columns has its own Next; Values runs the
+  // preview; on Preview and History the run's next step is the header's (Import once
+  // previewed, Preview while a draft).
+  const previewButton = (
     <Button onClick={() => preview.mutate()} disabled={preview.isPending}>
       Preview
     </Button>
-  ) : current === 'preview' && step === 'preview' ? (
+  );
+  const importButton = (
     <Button onClick={() => importRun.mutate()} disabled={importRun.isPending}>
       Import
     </Button>
-  ) : undefined;
+  );
+  const primary =
+    !canRun || !editable || current === 'columns'
+      ? undefined
+      : current === 'values'
+        ? previewButton
+        : step === 'preview'
+          ? importButton
+          : step === 'values'
+            ? previewButton
+            : undefined;
 
   const header = (
     <PageHeader
@@ -157,7 +189,17 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
                       run: () => reverting.start(),
                     },
                   ]
-                : undefined
+                : deletable
+                  ? [
+                      {
+                        key: 'project_import_run.delete',
+                        label: 'Delete',
+                        kind: 'destructive',
+                        disabled: deleting.isBlocked,
+                        run: () => deleting.start(),
+                      },
+                    ]
+                  : undefined
             }
             pendingAction={
               revertable ? (
@@ -166,6 +208,13 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
                   verb="Reverting"
                   subject={run.run_no}
                   onCancel={reverting.cancel}
+                />
+              ) : deletable && deleting.pending ? (
+                <DeferredActionButton
+                  pending={deleting.pending}
+                  verb="Deleting"
+                  subject={run.run_no}
+                  onCancel={deleting.cancel}
                 />
               ) : undefined
             }
