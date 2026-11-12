@@ -364,7 +364,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     }
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     // Every `query` comes back as a chip, so the restored list is the one that was left.
-    setSearchChips(addSearchChips([], state.searchQueries).chips);
+    setSearchChips(addSearchChips([], state.searchQueries ?? []).chips);
     resetSearchQuery('');
   });
 
