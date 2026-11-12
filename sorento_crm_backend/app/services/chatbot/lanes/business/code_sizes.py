@@ -275,8 +275,9 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
     """CHATBOT-CODE-MATCH AC-27 (replay round): the close codes whose folded code holds EVERY
     typed part (`answer.typed_code_parts`), in any order, for a typed code with at least one
     digit part: active, chat-searchable, scoped by the session like every product read,
-    bounded in the query. Offers only ("8152-300-SH" offers SRTWC8152-SH-300 although prefix,
-    substring and trigram miss it); a code missing one part is not one of them."""
+    bounded in the query, closest first. Offers only ("8152-300-SH" offers SRTWC8152-SH-300
+    although prefix, substring and trigram miss it); a code missing one part is not one of them.
+    The fallback for a miss with no other candidate (`annotate`)."""
     from sqlalchemy import func
 
     from app.models.product import Product, chat_searchable_products
@@ -295,7 +296,9 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
                 chat_searchable_products(),
                 *(folded_code.like(f"%{p}%", escape="\\") for p in escaped),
             )
-            .order_by(Product.product_code)
+            # The closest first, by the trigram score on both folded sides, so the bound never
+            # keeps the alphabetically first codes over the nearest ones.
+            .order_by(func.similarity(folded_code, "".join(parts)).desc(), Product.product_code)
             .limit(_STORED_MATCH_CAP)
             .all()
         )
@@ -364,14 +367,9 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
             and (typed := _typed_of(parser, res.get("token")) or res.get(SIZE_CODE)) is not None
         ]
         for res, typed in misses:
-            seen = {
-                str(a.get("uuid"))
-                for a in [*(res.get("alternatives") or []), *(res.get("matches") or [])]
-                if isinstance(a, dict)
-            }
-            extra = [m for m in _all_parts_matches(db, typed) if m["uuid"] not in seen]
-            if extra:
-                res["alternatives"] = [*(res.get("alternatives") or []), *extra]
+            if any(isinstance(a, dict) for a in [*(res.get("alternatives") or []), *(res.get("matches") or [])]):
+                continue  # the any-order tier is the fallback: only for a miss with no other candidate
+            res["alternatives"] = _all_parts_matches(db, typed)
         rows = _size_rows(db) if misses and sized else []
         if not rows:
             return
