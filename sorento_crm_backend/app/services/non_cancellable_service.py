@@ -48,6 +48,13 @@ ACTION_WORDS = {
     "board_cancel_line": "Transferred to Cancel SO",
 }
 AUDIT_EVENT = "non_cancellable_override"
+
+
+def override_words(action: str) -> str:
+    """The action mid-sentence: first letter lowered only, so "Cancel SO" keeps its name."""
+    words = ACTION_WORDS.get(action, action)
+    return words[:1].lower() + words[1:]
+
 ALERT_TYPE = "project_non_cancellable_reduced"
 
 
@@ -592,7 +599,7 @@ def assert_may_reduce(
                 "to_qty": _qty_or_none(r.to_qty),
             },
             description=(
-                f"Non-cancellable override, {ACTION_WORDS.get(action, action).lower()}: "
+                f"Non-cancellable override, {override_words(action)}: "
                 f"{r.label}, {_qty_or_none(r.from_qty)} to {_qty_or_none(r.to_qty)}"
             ),
             company_id=company_id,

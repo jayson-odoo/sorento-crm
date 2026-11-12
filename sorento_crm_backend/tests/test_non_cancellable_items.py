@@ -653,6 +653,13 @@ def test_override_audit_reads_in_plain_words(world, monkeypatch):
     assert row.new_values["action"] == "Quotation line changed"
 
 
+def test_override_audit_keeps_the_cancel_so_name():
+    """Crew pass R10: the board override read "transferred to cancel so"."""
+    assert nc.override_words("board_cancel_line") == "transferred to Cancel SO"
+    assert nc.override_words("quotation_line_change") == "quotation line changed"
+    assert nc.override_words("so_amendment_publish") == "amendment published"
+
+
 def test_quotation_override_shows_in_the_proposal_history(world, monkeypatch):
     """Owner rule: every tracked action shows in the record's one History view."""
     from app.services import project_quotation_service as quotes

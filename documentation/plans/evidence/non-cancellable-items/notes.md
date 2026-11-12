@@ -39,3 +39,18 @@ to Cancel SO dialogs (same shared dialog component as the one walked above).
 - Revert run after that walk (proposal draft + History present): removes every fixture row; run twice, no error;
   re-apply after revert works. audit_logs rows stay (append-only trigger).
 - Create dialog: title and submit read "Create" (vitest NonCancellableRuleDialog.test.tsx).
+
+## Pass 4 (12 Nov, crew pass R10 on f4d7b93d6f): fixture part 2, merged main (#2355 History tab)
+- Fixture part 2 applied twice over part 1. Fulfilment Planning lists ZZT-NC-CORE-1 (selectable); Plan, line 1,
+  Decide > Transfer to Cancel SO, reason, Save, Confirm: pass4-board-block.png, "Non-cancellable lines" lists
+  "ZZT-NC-CORE-1 line 1, 5 to 0"; Override with a reason: "1 of 1 orders confirmed", core line cancelled.
+- pass4-so-history.png: the SO History tab (main's STANDARD-HISTORY-W2 feed, which now carries the override) lists
+  "Non-cancellable override, transferred to Cancel SO: ZZT-NC-CORE-1 line 1, 5 to 0" (pre-fix casing; the feed
+  title now reads "Non-cancellable override: Transferred to Cancel SO", pinned by test_sales_order_history.py).
+- ZZT-NC-Q2 (sent, R1 "ZZT-NC-Q2-A"): Download PDF is enabled; the worker rendered the PDF (upload then failed on
+  the sandbox's missing S3 bucket, as expected here); rendered directly: REMARK before GRAND TOTAL, "Non-cancellable"
+  on ZZT-NC-TUB-A, blank on ZZT-NC-TAP-B.
+- Revert after the board walk: no error, no ZZT-NC row left outside audit_logs (append-only).
+- Create rule dialog, Category dropdown (crew UNVERIFIED item): not reproducible with real mouse clicks at 1280 and
+  375, on a short list and an 80-item list, on a two-line option, on an option hanging below the dialog's edge, and
+  after dragging the list's scrollbar: each click selected the option and the dialog stayed open.
