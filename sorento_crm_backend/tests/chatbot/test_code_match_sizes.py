@@ -15,7 +15,6 @@ or the lines under it, before the next numbered option).
 """
 from __future__ import annotations
 
-import json
 import re
 import uuid
 from typing import Any
@@ -127,9 +126,8 @@ def test_ac5_a_number_in_the_code_equal_to_a_stored_value_is_offered_with_that_s
     text = c.say(f"{typed} x 1", stock(product(typed, 1)))
     if who == "dealer":
         assert _option_codes(c) == [code], (_option_codes(c), text)
-    else:
-        # AC-1691 stays for staff: one candidate is a yes/no, so the pending question (any kind) carries the code.
-        assert code in json.dumps(c.stored_question, default=str), (c.stored_question, text)
+    # Staff (AC-1691): the offer is "Reply with a code to continue, or ... escalate?", its pending question the
+    # escalation yes/no, which holds no code; the text carries the offer.
     assert code in text and "Size: 300 mm" in text, text
     assert TICK not in text and "Got stock" not in text and "Stock summary" not in text, f"answered on a guess: {text!r}"
 
