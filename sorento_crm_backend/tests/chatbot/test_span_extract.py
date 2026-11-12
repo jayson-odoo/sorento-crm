@@ -225,7 +225,7 @@ def test_ac_s2_2_one_span_call_before_the_parser(
     # AC-S2-2 as restated (CHATBOT-SPEED, crew ruling 12 Nov): the call may START while the turn's session is still
     # open (it overlaps the row loading), but never holds one while it waits; the slow-call proof is
     # tests/chatbot/test_chatbot_speed_span_session.py::test_a_slow_span_call_holds_no_session_while_it_waits.
-    assert len(r.opened) == 1, r.opened
+    assert len(r.opened) == 1 and r.opened[0] <= 1, r.opened  # at most the turn's own session, never a second
     assert HDR["brand"] in r.lines and f"- {_brand_label(session_factory)}" in r.lines, r.lines
 
 

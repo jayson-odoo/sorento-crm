@@ -79,7 +79,9 @@ version that carries the span marker. Every other version behaves exactly as tod
   parser. The span call never holds a DB session while it waits; the turn's session closes without waiting on it
   (CHATBOT-SPEED, crew ruling 12 Nov: the call starts on its own thread as soon as its config is read, so the row
   loading overlaps it; the thread gets plain data only, config values and the message text, and opens no session;
-  a failed step or an unread answer drops the result cleanly; `tests/chatbot/test_chatbot_speed_span_session.py`).
+  a failed step or an unread answer drops the result cleanly, with no late write: such a call is billed by the
+  provider but logs no usage row, and happens only when the step fails on a database error after the call started;
+  `tests/chatbot/test_chatbot_speed_span_session.py`).
   Its spans go through `list_resolver.resolve` over the rows the contact may see
   (a dealer: its own customers only; salespeople only when the contact may see them), the same visibility as today.
 - **AC-S2-3 [BE]** The lookup blocks then hold the rows the resolver matched (resolved or ambiguous), plus the rows

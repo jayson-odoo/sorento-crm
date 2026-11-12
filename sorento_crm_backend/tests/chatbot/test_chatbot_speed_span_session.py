@@ -6,7 +6,7 @@ waiting on it. Three conditions, each tested here:
    and opens or uses no session;
 2. when the step before the parser fails, or the turn never reads the answer, the in-flight result is dropped
    cleanly: the thread ends, nothing is written late;
-3. a slow span call (0.5 s) is still in flight when the turn's open-session count returns to 0.
+3. a slow span call (1.5 s) is still in flight when the turn's open-session count returns to 0.
 """
 from __future__ import annotations
 
@@ -70,6 +70,8 @@ def test_the_span_thread_gets_plain_data_and_touches_no_session(
 
 
 # 2. a failed step or an unread answer drops the result cleanly ------------------------------------------------------
+# No late write: the dropped call is billed by the provider but logs no usage row (AC-S2-2 says so). It happens only
+# when the step before the parser fails (a database error) after the call started.
 
 def test_a_failed_prep_drops_the_in_flight_call_cleanly():
     def call(config, message):
@@ -111,7 +113,8 @@ def test_a_slow_span_call_holds_no_session_while_it_waits(
     real_extract = span_extract.extract
 
     def slow(config, message):
-        end = time.monotonic() + 0.5
+        # 1.5 s, well past the rest of the step on a slow CI database, so the sessions close inside the wait.
+        end = time.monotonic() + 1.5
         while time.monotonic() < end:
             samples.append(counting_session_factory.state["open"])
             time.sleep(0.01)

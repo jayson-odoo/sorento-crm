@@ -2299,7 +2299,9 @@ def _start_span_call(config: span_extract.SpanConfig, message: str) -> Callable[
         thread.join(span_extract.SPAN_TIMEOUT_SECONDS + _SPAN_JOIN_GRACE_SECONDS)
         if box:
             return box[0]
-        return span_extract.SpanAnswer(None, {}, int((time.perf_counter() - began) * 1000), "timeout")
+        # Still running: late. Ended with no answer: `extract` raised, which it is written never to do.
+        failure = "timeout" if thread.is_alive() else "call_error"
+        return span_extract.SpanAnswer(None, {}, int((time.perf_counter() - began) * 1000), failure)
 
     return answer
 

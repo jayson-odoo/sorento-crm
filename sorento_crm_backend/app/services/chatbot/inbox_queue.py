@@ -1024,7 +1024,8 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         return _run_agent_row(turn_id, claimed_at, contact, stored, block, factory, decision)
 
     run = _RowRun(turn_id, contact, order_key, claimed_at, factory)
-    # `row_age` was read right after the claim: the time the message waited in the queue.
+    # `row_age` was read right after the claim: the time since the message was stored (after a requeue or a yield this
+    # is the customer's whole wait, earlier attempts included).
     run.timing = {"queued_ms": max(0, int(row_age * 1000)), "lookup_ms": lookup_ms}
     _local.run = run
     try:
