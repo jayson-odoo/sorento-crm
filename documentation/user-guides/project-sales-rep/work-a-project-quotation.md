@@ -366,6 +366,19 @@ What counts as a view:
 Nothing that identifies the reader is kept: no IP address and no name, only the time, the
 revision and the kind of device.
 
+## Certificates for the quoted products (Certification tab)
+
+The quotation's **Certification** tab lists the certificates of the products on the quotation, one
+per row. Click a row to open the certificate. **Right-click** a row (on a phone or tablet, press and
+hold it) for **Open**, **Download** (the certificate file) and **Remove** (takes the certificate off
+this quotation; you have a few seconds to Cancel).
+
+Opening a certificate always takes you straight to its first marked box, whether it is the first
+time you open it or not. Draw, move or delete boxes, then click **Save boxes**. If you try to leave
+with boxes not saved yet (Back to certification, another link, your browser's Back, a refresh or
+closing the tab), you are asked first: **Keep editing** stays on the certificate with your changes,
+**Leave without saving** drops them.
+
 ## Quote in a grid (unit types or levels across, areas or rooms below)
 
 A project bill of quantities often lists the products down the side and the unit types or levels
