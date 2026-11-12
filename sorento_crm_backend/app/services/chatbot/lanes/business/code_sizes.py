@@ -165,25 +165,41 @@ def _size_line(rows: list[Any], facts: tuple[dict[str, Any], str] | None, number
 
 #: The resolution key a size miss carries: the size asked, as "with size 400 mm".
 SIZE_ASKED = "size_asked"
+#: The catalogue code a size miss is about (the code exists; the size is what is missing).
+SIZE_CODE = "size_code"
 
 
-def _asked_size(parser: dict[str, Any]) -> tuple[list[str], float, str] | None:
+def _asked_size(parser: dict[str, Any]) -> tuple[list[str], float, str, str] | None:
     """The one numeric size the parser read apart from a code (a grounded specification
-    entity of this message): the keys it may be under, its value, and "with size 400 mm" in
-    the key's own label and unit (`head/bare_size`). None when there is not exactly one."""
+    entity of this message): the keys it may be under, its value, "with size 400 mm" in the
+    key's own label and unit (`head/bare_size`), and the folded code it was said with. The
+    code is the parser's own pairing: the product entity it read right before the size, else
+    the message's only product code. None when there is not exactly one size, or no code
+    it belongs to."""
+    from app.services.chatbot.turn.state import token_key
+
+    entities = [e for e in jsc.array(jsc.get(parser, "entities")) if isinstance(e, dict)]
     sizes = [
-        e for e in jsc.array(jsc.get(parser, "entities"))
-        if isinstance(e, dict) and e.get("current_message") is not False and e.get("spec_key")
-        and _number(e.get("spec_value")) is not None
+        i for i, e in enumerate(entities)
+        if e.get("current_message") is not False and e.get("spec_key") and _number(e.get("spec_value")) is not None
     ]
     if len(sizes) != 1:
         return None
-    e = sizes[0]
+    e = entities[sizes[0]]
+
+    def is_code(other: dict[str, Any]) -> bool:
+        return other.get("current_message") is not False and jsc.js_string(other.get("hint") or "").lower() == "product"
+
+    before = [x for x in entities[: sizes[0]] if is_code(x)]
+    codes = [x for x in entities if is_code(x)]
+    owner = before[-1] if before else (codes[0] if len(codes) == 1 else None)
+    if owner is None:
+        return None
     value = _number(e.get("spec_value"))
     keys = [str(k) for k in e.get("spec_any_keys") or [e.get("spec_key")] if k]
     label = jsc.js_string(e.get("spec_label") or e.get("spec_key")).strip().lower()
     said = f"with {label} {_plain(value)} {jsc.js_string(e.get('spec_unit') or '').strip()}".strip()
-    return keys, value, said
+    return keys, value, said, token_key(owner.get("canonical_code") or owner.get("raw"))
 
 
 def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
@@ -199,7 +215,7 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
     asked = _asked_size(parser)
     if asked is None:
         return
-    keys, value, said = asked
+    keys, value, said, owner = asked
     # The rows each typed token matched: per token (OR mode), or the one token's rows (AND mode).
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
@@ -210,28 +226,37 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
     if isinstance(resolved.get("intersection"), list) and len(tokens) == 1:
         named.append((None, tokens[0], resolved["intersection"]))
     for res, token, matched in named:
-        typed = _typed_of(parser, token)
+        # A size belongs only to the code it was said with: the row whose code is that code
+        # (the route may have cut a spaced "twc8152 sh uf" to its code word first).
         exact = [
             m for m in matched
             if isinstance(m, dict) and m.get("entity_type") == "product" and m.get("uuid")
-            and token_key(m.get("canonical_code")) == token_key(token)
+            and token_key(m.get("canonical_code")) == owner
         ]
+        typed = _typed_of(parser, token) or (str(exact[0]["canonical_code"]) if exact else None)
         if typed is None or len(exact) != 1:
             continue
         values = (_product_facts(db, [str(exact[0]["uuid"])]).get(str(exact[0]["uuid"])) or ({}, ""))[0]
         if any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys):
             continue  # the code holds the size it was asked with: answered as today
-        with db.begin_nested():
-            probed = _prefix_probe_product(db, typed)
-        family = [
-            _row(p.canonical_code, str(p.uuid), "family")
-            for p in probed
-            if p.uuid and p.canonical_code and (p.display or {}).get("is_active") is not False
-        ]
-        if not family:
-            continue
+        # The code as typed, else as the resolver matched it (a spaced "twc8152 sh uf" probes
+        # as nothing), else the matched code alone: a family of one is still offered.
+        family: list[dict[str, Any]] = []
+        for probe in dict.fromkeys([typed, str(exact[0]["canonical_code"])]):
+            with db.begin_nested():
+                probed = _prefix_probe_product(db, probe)
+            family = [
+                _row(p.canonical_code, str(p.uuid), "family")
+                for p in probed
+                if p.uuid and p.canonical_code and (p.display or {}).get("is_active") is not False
+            ]
+            if family:
+                break
+        family = family or [_row(str(exact[0]["canonical_code"]), str(exact[0]["uuid"]), "family")]
         miss = {
             "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
+            # The code exists; what is missing is the size, so the reply names the code itself.
+            SIZE_CODE: str(exact[0]["canonical_code"]),
         }
         if res is not None:
             res.update(miss)
@@ -260,7 +285,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
             (res, typed)
             for res in resolved.get("resolutions") or []
             if isinstance(res, dict) and res.get("resolved") is not True
-            and (typed := _typed_of(parser, res.get("token"))) is not None
+            and (typed := _typed_of(parser, res.get("token")) or res.get(SIZE_CODE)) is not None
         ]
         rows = _size_rows(db) if misses else []
         if not rows:

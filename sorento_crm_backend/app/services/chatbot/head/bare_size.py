@@ -56,6 +56,27 @@ def _classes(db: "Session", entities: list[dict[str, Any]], held_ids: list[str] 
     return {str(c).casefold() for (c,) in rows if c}
 
 
+def _named_code_classes(db: Session, entities: list[dict[str, Any]]) -> set[str]:
+    """The class of each product code this message names, casefolded: its stored spec class,
+    else its category's class (`chatbot/lanes/business/code_sizes._product_facts`)."""
+    from sqlalchemy import func
+
+    from app.models.product import Product
+    from app.services.chatbot.lanes.business.code_sizes import _product_facts
+    from app.services.chatbot.turn.state import token_key
+
+    codes = {
+        token_key(e.get("canonical_code") or e.get("raw"))
+        for e in entities
+        if e.get("current_message") is not False and str(e.get("hint") or "").strip().lower() == "product"
+    } - {""}
+    if not codes:
+        return set()
+    folded = func.lower(func.regexp_replace(Product.product_code, "[^[:alnum:]]", "", "g"))
+    ids = [str(pid) for (pid,) in db.query(Product.id).filter(folded.in_(sorted(codes))).limit(20).all()]
+    return {cls for _values, cls in _product_facts(db, ids).values() if cls} if ids else set()
+
+
 def _holds(db: "Session", key: str, number: float, classes: set[str]) -> bool:
     """Does any product of the class carry `number` under `key` (an exact numeric match)?"""
     from sqlalchemy import Float, case, cast, func
@@ -137,13 +158,10 @@ def ground_bare(
         # class's own size key ("30 cm", a key held in cm) is read against that key in its
         # own unit, never converted into the dimension keys' unit. Only when such a key
         # exists, so a millimetre key and every other unit read exactly as before.
-        classes = _classes(db, entities, held_ids)
-        # No class known yet (a code the resolver has not read): every size key in that unit is
-        # a candidate, and the stored values decide.
-        candidates = size_key_rows(rows, classes) if classes else [
-            r for r in rows if getattr(r, "matches_bare_size", False) or (getattr(r, "applies_when", None) or {}).get("class")
-        ]
-        own = [r for r in candidates if str(r.unit).casefold() == unit_said]
+        # The class is the message's or the held products' (`_classes`), else the class of the
+        # product code the message names. No class known: today's reading, unchanged.
+        classes = _classes(db, entities, held_ids) or _named_code_classes(db, entities)
+        own = [r for r in size_key_rows(rows, classes) if classes and str(r.unit).casefold() == unit_said]
         for row in own:
             if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
                 return Grounded(row.spec_key, row.label, said, _plain(number), row.unit)
@@ -165,7 +183,7 @@ def ground_bare(
     for row in same_unit:
         if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
             return Grounded(row.spec_key, row.label, said, _plain(number), row.unit)
-    any_keys = [r.spec_key for r in same_unit if getattr(r, "matches_bare_size", False)]
+    any_keys = [r.spec_key for r in same_unit if getattr(r, "matches_bare_size", False) and size_key_applies(r, classes)]
     if any_keys:
         return Grounded(RESERVED_KEY, "Size", said, _plain(number), str(same_unit[0].unit), any_keys=any_keys)
     return None

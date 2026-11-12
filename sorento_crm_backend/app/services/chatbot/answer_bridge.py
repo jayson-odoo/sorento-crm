@@ -2350,6 +2350,8 @@ def _dealer_did_you_mean(
         return (each[0], each[1]) if each is not None else None
     token = next(iter(by_token), None)
     typed = (typed_of(token) if token else None) or token or next((e.get("raw") for e in named if e.get("raw")), "")
+    # CHATBOT-CODE-MATCH R4: a size miss is about a code that exists; the reply names it.
+    typed = offer.get("size_code") or typed
     quantity = dealer_mod.quantity_of(named, token or typed)
     if quantity is None:
         quantity = (parser or {}).get("demand_qty")
