@@ -295,3 +295,28 @@ describe('crew pass round 3 (owner point 1)', () => {
     for (const t of ['Ship to', 'Items', 'Delivery']) expect(expanded(t)).toBe('false');
   });
 });
+
+describe('crew re-pass on d54bb314c1 (step 13): a loaded draft opens only the sections holding values', () => {
+  it('a customer but an empty Ship to: Ship to stays collapsed', async () => {
+    mut.existing = {
+      ...READY_DRAFT, ship_to_party_id: null, ship_to_name: '', ship_to_address: '',
+      site_contact_name: '', site_contact_phone: '', delivery_date: null, delivery_mode: null,
+      lines: [],
+    };
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(expanded('Customer & project')).toBe('true');
+    for (const t of ['Ship to', 'Items', 'Delivery']) expect(expanded(t)).toBe('false');
+  });
+
+  it('a party but no lines: Ship to opens, Items stays collapsed', async () => {
+    mut.existing = { ...READY_DRAFT, delivery_date: null, delivery_mode: null, lines: [] };
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    await waitFor(() => expect(expanded('Ship to')).toBe('true'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(expanded('Items')).toBe('false');
+    expect(expanded('Delivery')).toBe('false');
+  });
+});
