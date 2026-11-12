@@ -302,3 +302,34 @@ def test_ac_v2_6_a_date_changed_waiting_row_exports_status_new_date_and_was_date
         assert len(changed) == 1, (name, mine)
         assert changed[0].get("STATUS") == "Waiting for CS", (name, changed[0])
         assert _as_ddmmyyyy(changed[0].get("WAS DATE")) == "01/01/2027", (name, changed[0])
+
+
+def test_ac_v2_6_the_per_project_export_route_carries_status_and_was_columns(env):
+    """GET /projects/{project_id}/order-inquiry-export (ProjectOrderInquiryService.export_xlsx):
+    the same STATUS / WAS QTY / WAS DATE columns, "Waiting for CS" for a date-changed row."""
+    from app.models.project_so import ProjectSalesOrder
+    from app.services.project_service import register_project
+
+    w = _world(env, "date")
+    project = register_project(
+        env.db,
+        company_id=env.company_a,
+        actor_user_id=_USER_ID,
+        developer_party_id=None,
+        title=f"ZZT waiting project {w.so_number}",
+    )
+    pso = env.db.get(ProjectSalesOrder, str(_so_mirror_row.last[0].project_sales_order_id))
+    pso.project_id = project.id
+    env.db.commit()
+
+    res = env.client.get(f"{BASE}/projects/{project.id}/order-inquiry-export")
+
+    assert res.status_code == 200, res.text
+    header, rows = _sheet_rows(res.content)
+    for column in ("STATUS", "WAS QTY", "WAS DATE"):
+        assert column in header, header
+    mine = [r for r in rows if r.get("ITEM CODE") == "ZZT-CL-PUSH"]
+    assert len(mine) == 1, rows
+    assert mine[0].get("STATUS") == "Waiting for CS", mine[0]
+    assert _as_ddmmyyyy(mine[0].get("DELIVERY DATE")) == "01/02/2027", mine[0]
+    assert _as_ddmmyyyy(mine[0].get("WAS DATE")) == "01/01/2027", mine[0]
