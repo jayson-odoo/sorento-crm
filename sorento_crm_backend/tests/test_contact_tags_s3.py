@@ -459,3 +459,17 @@ def test_a_tag_switching_new_product_application_on_grants_it_to_the_holder_at_a
     rows = db.query(ContactPortalFormOverride).filter_by(contact_id=str(holder.id), form_type="new_product_application").all()
     assert [r.is_enabled for r in rows] == [True]
     assert "new_product_application" in resolve_visible_form_types(db, str(holder.id))
+
+
+def test_settings_catalog_portal_forms_are_every_grantable_kind_in_backend_order(client, db, all_perms):
+    """FORMS-TAG-CARD-FIX-A: the tag card renders this list as is, so it must hold every grantable
+    kind (New Product Application, Sample Request, Project Registration included) in order."""
+    from app.services.portal_form_visibility_service import _KIND_LABELS
+    from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
+
+    resp = client.get(f"{TAGS}/settings-catalog")
+    assert resp.status_code == 200, resp.text
+    forms = resp.json()["portal_forms"]
+    assert [f["value"] for f in forms] == list(GRANTABLE_PORTAL_FORM_TYPES)
+    assert {"new_product_application", "sample_request", "project_registration"} <= {f["value"] for f in forms}
+    assert all(f["label"] == _KIND_LABELS[f["value"]] for f in forms)

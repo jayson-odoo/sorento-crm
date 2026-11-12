@@ -52,14 +52,14 @@ import ContactTagSettings from './ContactTagSettings';
 const SET = { complaint: true, stock_inquiry: true, purchase_request: false, sponsorship_form: true,
   price_tag_request: true, sales_opportunity: false, customer_asks: false, conversation: false };
 
-function render() {
+function render(editing = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   rtlRender(
     <QueryClientProvider client={client}>
       <ContactTagSettings
         tag={{ id: 't1', name: 'Dealer', description: null, is_active: true, sort_order: 0,
           settings: { portal_forms: SET }, contact_count: 0, created_at: '', updated_at: '' } as never}
-        editing
+        editing={editing}
         onDone={vi.fn()}
       />
     </QueryClientProvider>,
@@ -95,5 +95,15 @@ describe('Portal forms group rows', () => {
     render();
     await waitFor(() => expect(rowIds()).toEqual([...LANDING_KINDS]));
     expect(screen.getByTestId('setting-row-sample_request')).toHaveTextContent('Sample Request');
+  });
+
+  it('view mode lists only the set kinds, with the catalog labels', async () => {
+    catalogBody = { portal_forms: CATALOG_FORMS };
+    render(false);
+    await waitFor(() =>
+      expect(screen.getByTestId('setting-row-sales_opportunity')).toHaveTextContent('Sales Opportunities'),
+    );
+    expect(rowIds()).toEqual(Object.keys(SET));
+    expect(screen.queryByTestId('setting-row-new_product_application')).toBeNull();
   });
 });
