@@ -1,42 +1,36 @@
-# UAC: Stock order request (spare parts), routed to purchasing as an Order Inquiry type
+# UAC: Spare part request, an Order Inquiry type routed to purchasing after approval
 
-Status: DRAFT, written against card v3's recommendations (PR #2381): ONE record, the request is an Order Inquiry of type spare_part_request, opened on the existing OI page. Lines tagged
-[Qn] change if the owner answers question n differently. Not a build contract until answers land.
+Status: FINAL (owner approved mock v5 + card v4, 12 Nov 20:14). Contract: `PLAN-spare-part-order-request-12nov.md` "Build contract".
+One record: a spare part request IS an Order Inquiry with `inquiry_type = spare_part_request`.
 
-## Request (requester)
-- R1 A user with `procurement.stock_order_requests.create` can create a request with currency (required, one per request), needed-by date, an optional default location, reason, and one or more product lines.
-- R1a (owner, mock v1 note) Location is per line, like AutoCount: each line has its own location (required on Submit), a new line starts with the header default when one is set, and changing the default never rewrites existing lines. The picker lists locations from `location_stock_service.location_stock_for_product` with stock shown as information only (never caps qty). The OI row carries it in its existing `stock_location`.
-- R1b (owner, mock note 8, 12 Nov 20:00, supersedes note 4) One type only: Spare part request. No Consignment type; no customer field.
-- R1c (owner, mock notes 3 and 7) The request opens on the existing Order Inquiry page: same header card and tabs (Lines, General, Related PO, Related SPO, History); request fields as Request / Approval cards in the General tab layout; lines in the Lines tab with Unit price and Total.
-- R1d (owner, mock note 5) Each line expands to the existing OI stock table (`OrderInquiryStockGrid`), on the form and on the OI page; information only.
-- R1e (owner, mock note 6) Line attachments use `SoLineAttachmentsButton` (paperclip, count, lightbox) on the form and on the OI page.
-- R2 [Q3] Each line picks a catalogue product (searchable by code and name); description fills from the product; quantity > 0 and unit price >= 0 are required on Submit, not while typing.
-- R3 Line total = qty x unit price, worked out server-side and shown; the request total is the sum, in the request currency.
-- R4 Photos attach per line through the same attachment service and lightbox as fulfilment planning (R1e).
-- R5 Save as draft keeps the request editable; Submit moves it to Pending approval level 1 and stamps submitted_at; the number reads `SOR-YYMM-NNNN`.
-- R6 A requester sees their own requests; the list is the standard DataGrid (search, multi-select filters, server sort, columns, Create).
+## Request (requester, slug `procurement.spare_part_requests.create`)
+- R1 Create a request with currency (required), needed-by date, optional default location, reason, and one or more lines. It saves as Draft with an OI number from the same series (`OI-YYMM-NNNN`).
+- R2 Each line: a catalogue product (searchable by code and name; description fills from the product; no free-text line), location (starts with the header default; each line can differ), qty, unit price. Total = qty x unit price, server-side; request total = sum, in the request currency.
+- R3 Each line expands to the existing OI stock table (`OrderInquiryStockGrid`), information only, never caps qty.
+- R4 Each line's photos use fulfilment planning's paperclip + lightbox (`SoLineAttachmentsButton`), stored through the same attachment service.
+- R5 Save as draft keeps it editable. Submit checks: currency, >= 1 line, every line qty > 0, unit price >= 0, location set; problems show next to the field. Submit with no approval stage configured is refused with a plain message for the admin.
+- R6 Edit opens the same form as Create (draft or rejected only).
 
-## Approval [Q2]
-- A1 Approval levels are `form_sla_configs` rows for `stock_order_request`, chained by `next_config_id`; with no row configured, Submit is refused with a plain message telling the admin to set the approval stage.
-- A2 Only an active member of the current stage's team, or an admin, may Approve or Reject; the requester never may, even if a team member. Anyone else gets 403.
-- A3 (owner, mock note 9) While Pending approval the approver may change each line's quantity (including 0), unit price, and photos (add / delete through the same attachment lightbox). The requester's submitted qty and unit price are kept on the line and shown as "was ..." next to a changed value, on the approval screen and on purchasing's view. Every change is a History row (old -> new, by whom). The approver cannot add or remove lines; qty 0 drops a line from what purchasing receives. [Q5]
-- A4 Approve with every line at 0 is refused (422, message next to the action).
-- A5 Reject requires a reason; the request returns to the requester as Rejected, editable; resubmit restarts at level 1.
-- A6 Approve on a non-final level moves to the next level and notifies that team; on the final level the request becomes Approved and locked.
+## Approval (Form SLA stages for `spare_part_request`)
+- A1 Submit moves the request to Pending approval at the first configured stage; the stage's team is notified by the existing SLA machinery.
+- A2 Only a member of the current stage's team, or an admin, can approve, reject or edit; never the requester (403 for anyone else, also by direct API call).
+- A3 While Pending approval the approver can change each line's qty (0 allowed) and unit price, and add or delete photos. The requester's submitted qty and unit price stay on the line and show as "was ..." next to a changed value, on the approval screen and for purchasing. Each change is a History row (old -> new, who, when). The approver cannot add or remove lines.
+- A4 Approve with every line at 0 is refused (422).
+- A5 Reject needs a reason; the request becomes Rejected, the requester edits and resubmits from the first stage.
+- A6 Approve on a non-final stage moves to the next stage; on the final stage the inquiry becomes Raised: lines with qty > 0 go to purchasing, lines at 0 are cancelled.
 
-## Purchasing hand-off [Q1]
-- P1 [Q1] Final approval moves the request's own Order Inquiry from pending_approval to raised (no second record) and is the moment purchasing first sees it; before that, purchasing's list and notifications exclude it. Formerly: final approval raises exactly one Order Inquiry with `inquiry_type` = `spare_part_request`, no sales order, in the same OI number series, in the same transaction as the approval.
-- P2 One OI row per approved line with qty > 0 (verb ORDER, ack awaiting), carrying product code, description, qty, unit price, currency, and a link to the line's photos.
-- P3 Purchasing users (`purchasing%` roles) get the existing order-inquiry notification; no notification goes out before final approval.
-- P4 The Order Inquiries list shows a Type column and a Type multi-select filter; SO-driven inquiries read "Sales order", the new ones "Spare part request"; the SO cell for this type reads "-".
-- P5 OI detail for this type shows requester, approver, approved date, currency, a link to the request, and unit price / total / photo columns; acknowledge and per-row reject work as for SO-driven inquiries.
-- P6 Existing SO-driven inquiries are untouched: the migration backfills `inquiry_type = 'sales_order'`, and a CHECK keeps `project_sales_order_id` required for that type.
+## Purchasing
+- P1 Purchasing sees the inquiry only from Raised: never in its list, counts, exports or notifications while Draft, Pending approval or Rejected.
+- P2 On final approval purchasing gets the existing "Order inquiry" notification once.
+- P3 The Order Inquiries list has a Type column and a Type multi-select filter (Sales order, Spare part request); the S/O no cell reads "-" for this type.
+- P4 The OI page for this type shows the same header card and tabs; General has Request and Approval cards; Lines shows unit price, total, location, photos and the "was" marks; Acknowledge, per-row Reject and PO linking work as for sales-order inquiries.
+- P5 (crew ruling 12 Nov, owner told after) An approved spare part request is NOT customer demand: it changes neither `scm.committed_v` nor the reorder engine's suggestions. It enters SCM only through the PO purchasing raises (incoming like any PO). Mechanism: instruction "Replenish", which those readers ignore.
+- P6 Sales-order inquiries are unchanged: existing rows read type Sales order, a sales order stays required for that type (database check), and every existing OI test still passes.
 
-## Change after approval [Q4]
-- V1 While no OI row is acknowledged, the requester may Revise: the inquiry returns to Draft (leaves purchasing's list) and approval restarts on Submit.
-- V2 Once any row is acknowledged, Revise is not offered and the server refuses it.
+## Change after approval
+- V1 Until purchasing acknowledges any line (and no PO is linked), the requester can Revise: the inquiry returns to Draft, leaves purchasing's list, and approval runs again on Submit.
+- V2 After a line is acknowledged, Revise is not offered and the server refuses it.
 
-## History, permissions, assistant
-- H1 Every tracked action (submit, approve, reject, qty change, OI raised, revise) shows on the request's History tab (shared AuditTrail).
-- H2 New slugs registered in the permission registry: `procurement.stock_order_requests.view`, `.create`, `.approve`.
-- H3 The assistant can list stock order requests and read one (registry entry + two eval prompts), or the PR says why not.
+## History and assistant
+- H1 Submit, approve (per stage), reject, each approver change, revise and the final raise show on the OI History tab.
+- H2 Assistant: OI headers have no assistant reader today (impact check); this lane adds none. The PR says so.
