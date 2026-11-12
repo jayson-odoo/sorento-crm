@@ -15,7 +15,7 @@ SPARE-PART-ORDER-REQUEST (plan documentation/plans/purchasing/PLAN-spare-part-or
 Idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
 
 Revision ID: spr_0001_spare_part_request
-Revises: il_0002_integration_log_search
+Revises: acqs_0001_project_ac_write
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "spr_0001_spare_part_request"
-down_revision = "il_0002_integration_log_search"
+down_revision = "acqs_0001_project_ac_write"
 branch_labels = None
 depends_on = None
 

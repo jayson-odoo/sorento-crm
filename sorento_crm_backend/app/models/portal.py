@@ -56,6 +56,9 @@ class PortalOtpCode(Base):
     attempts = Column(Integer, nullable=False, default=0)
     consumed_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # What the code may be used for (PASSKEY-LOGIN AC-27): 'sign_in' (phone sign-in and the
+    # portal's own verify) or 'reauth' (the re-check before adding a passkey). Never both.
+    purpose = Column(String(20), nullable=False, default="sign_in", server_default="sign_in")
 
     __table_args__ = (
         Index("ix_portal_otp_codes_contact_id", "contact_id"),

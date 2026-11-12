@@ -23,6 +23,9 @@ from app.schemas.auth import (
     PhoneRequestCodeRequest, PhoneRequestCodeResponse, PhoneVerifyRequest,
     PortalLinkRequest,
     SetPasswordRequest,
+    PasskeyStatusResponse, PasskeyOptionsResponse, PasskeyVerifyRequest,
+    PasskeyRegisterOptionsRequest, PasskeyRegisterRequest, PasskeyRenameRequest,
+    PasskeyItem, PasskeyReauthCodeResponse,
 )
 from app.dependencies import get_current_user, get_actor_user_id
 from app.services import user_session_service
@@ -49,7 +52,6 @@ def _verification_token_expired(token_row: VerificationToken, now_naive: datetim
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
     from app.services import login_throttle
-    from app.services.user_session_service import mint_session
 
     ip = client_ip(request)
 
@@ -116,34 +118,21 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             detail="Invalid credentials.",
         )
 
-    if str(getattr(user, "status", "") or "") != "ACTIVE":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account not activated. Please verify your email.",
-        )
+    # The shared tail (ACTIVE check, last_sign_in_at, the 30-day sliding session, the
+    # login shape) is the same for every sign-in method (PASSKEY-LOGIN).
+    from app.services.phone_signin_service import finish_sign_in
 
-    # Successful auth - clear the throttle counter.
-    login_throttle.clear(payload.email, ip)
-
-    # Store naive UTC (DB columns are timezone=False)
-    setattr(user, "last_sign_in_at", datetime.now(timezone.utc).replace(tzinfo=None))
-    db.add(user)
-    db.commit()
-
-    uid = str(getattr(user, "id", "") or "")
-
-    # Mint the opaque 30-day sliding session (same rule as phone sign-in and the portal).
-    session_row = mint_session(
+    response = finish_sign_in(
         db,
-        uid,
+        user,
         user_agent=request.headers.get("user-agent"),
         ip_address=ip,
         auth_method="password",
     )
 
-    from app.services.phone_signin_service import build_login_response
-
-    return build_login_response(db, user, session_row)
+    # Successful auth - clear the throttle counter.
+    login_throttle.clear(payload.email, ip)
+    return response
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
@@ -528,15 +517,11 @@ def revoke_other_sessions(request: Request, current_user: dict = Depends(get_cur
 # --------------------------------------------------------------------------- #
 
 def _rate_limited_response(retry_after_seconds: int) -> JSONResponse:
-    from app.services.phone_signin_service import rate_limited_minutes_message
+    from app.services.phone_signin_service import rate_limited_body
 
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={
-            "code": "RATE_LIMITED",
-            "message": rate_limited_minutes_message(retry_after_seconds),
-            "retry_after_seconds": retry_after_seconds,
-        },
+        content=rate_limited_body(retry_after_seconds),
         headers={"Retry-After": str(retry_after_seconds)},
     )
 
@@ -633,22 +618,10 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
         svc.clear_redis_state(num)
         return login_response
 
-    if reservation.attempts_left == 0:
-        # Fix lane round 2 (reviewer B1): the 5th wrong answer spends the
-        # budget, so it answers the lock itself, not "0 tries left".
-        return _rate_limited_response(svc.check_locked(num) or 900)
-
-    if reservation.attempts_left is not None:
-        tries_word = "try" if reservation.attempts_left == 1 else "tries"
-        content = {
-            "code": "CODE_WRONG",
-            "message": f"That code is not right. {reservation.attempts_left} {tries_word} left.",
-            "attempts_left": reservation.attempts_left,
-        }
-    else:
-        # Redis down: fail open on the count, not on the refusal itself.
-        content = {"code": "CODE_WRONG", "message": "That code is not right."}
-    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
+    status_code, content = svc.wrong_code_refusal(num, reservation, code="CODE_WRONG")
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        return _rate_limited_response(content["retry_after_seconds"])
+    return JSONResponse(status_code=status_code, content=content)
 
 
 @router.post("/portal-link", response_model=LoginResponse)
@@ -755,3 +728,145 @@ def set_password(
     )
 
     return MessageResponse(message="Password saved.")
+
+
+# --------------------------------------------------------------------------- #
+# Passkeys (PASSKEY-LOGIN). Every check lives in app.services.passkey_service;  #
+# these routes rate-limit, pick the real user and shape the response.          #
+# Contract: documentation/plans/identity/passkey-login-12nov-acceptance-criteria.md
+# --------------------------------------------------------------------------- #
+
+def _passkey_rate_limit(bucket: str, ip: str) -> JSONResponse | None:
+    """Per-IP gate for the passkey options route, ONLY when `trusted_proxies` is set.
+
+    Security review M1 (12 Nov): unset, every request carries the proxy's one address, so a
+    single caller could 429 every staff sign-in; the single-use challenge already bounds it.
+    """
+    from app.services import rate_limit
+
+    if not (app_settings.trusted_proxies or "").strip():
+        return None
+    gate = rate_limit.hit(
+        bucket, ip,
+        limit=app_settings.rate_limit_passkey_max,
+        window_seconds=app_settings.rate_limit_passkey_window_seconds,
+    )
+    if gate.allowed:
+        return None
+    return _rate_limited_response(gate.retry_after_seconds or app_settings.rate_limit_passkey_window_seconds)
+
+
+def _passkey_owner(request: Request, current_user: dict, db: Session, *, refuse_impersonation: bool = False) -> User:
+    """The REAL user (the admin while impersonating), whose passkeys these are. Adding one
+    while impersonating is refused, so an admin can never plant a passkey on someone else."""
+    if refuse_impersonation and getattr(request.state, "impersonation_session_id", None):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not available while impersonating.",
+        )
+    user = db.query(User).filter(User.id == get_actor_user_id(request, current_user)).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    return user
+
+
+@router.get("/passkey/status", response_model=PasskeyStatusResponse)
+def passkey_status() -> PasskeyStatusResponse:
+    from app.services import passkey_service
+
+    return PasskeyStatusResponse(enabled=passkey_service.enabled())
+
+
+@router.post("/passkey/options", response_model=PasskeyOptionsResponse)
+def passkey_sign_in_options(request: Request):
+    from app.services import passkey_service
+
+    limited = _passkey_rate_limit("passkey_options", client_ip(request))
+    if limited is not None:
+        return limited
+    return passkey_service.sign_in_options(request.headers.get("origin"))
+
+
+@router.post("/passkey/verify", response_model=LoginResponse)
+def passkey_verify(payload: PasskeyVerifyRequest, request: Request, db: Session = Depends(get_db)):
+    """Called server-to-server by NextAuth's `passkey` provider, which forwards the browser's
+    address; the origin checked is the one stored with the challenge.
+
+    No per-IP rate limit here (AC-14), for the same reason as `/phone/verify` (security round
+    S4): NextAuth calls it server-to-server, and a per-IP bucket is weaker than the real bound,
+    a single-use challenge that lives 300 s plus the passkey's own signature.
+    """
+    from app.services import passkey_service
+
+    ip = client_ip(request)
+    return passkey_service.verify_sign_in(
+        db, payload.challenge_id, payload.credential,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=ip,
+    )
+
+
+@router.get("/passkeys", response_model=list[PasskeyItem])
+def list_own_passkeys(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services import passkey_service
+
+    user = _passkey_owner(request, current_user, db)
+    return [passkey_service.serialize(r) for r in passkey_service.list_own(db, user)]
+
+
+@router.post("/passkeys/reauth-code", response_model=PasskeyReauthCodeResponse)
+def passkey_reauth_code(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services import passkey_service
+
+    user = _passkey_owner(request, current_user, db, refuse_impersonation=True)
+    return passkey_service.send_reauth_code(db, user)
+
+
+@router.post("/passkeys/register/options", response_model=PasskeyOptionsResponse)
+def passkey_registration_options(
+    payload: PasskeyRegisterOptionsRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.services import passkey_service
+
+    user = _passkey_owner(request, current_user, db, refuse_impersonation=True)
+    return passkey_service.registration_options(
+        db, user, request.headers.get("origin"),
+        password=payload.password,
+        phone_code=payload.phone_code,
+        ip_address=client_ip(request),
+    )
+
+
+@router.post("/passkeys", response_model=PasskeyItem, status_code=status.HTTP_201_CREATED)
+def add_passkey(
+    payload: PasskeyRegisterRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.services import passkey_service
+
+    user = _passkey_owner(request, current_user, db, refuse_impersonation=True)
+    row = passkey_service.register(
+        db, user, payload.challenge_id, payload.credential,
+        name=payload.name,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return passkey_service.serialize(row)
+
+
+@router.patch("/passkeys/{passkey_id}", response_model=PasskeyItem)
+def rename_passkey(
+    passkey_id: str,
+    payload: PasskeyRenameRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.services import passkey_service
+
+    user = _passkey_owner(request, current_user, db)
+    return passkey_service.serialize(passkey_service.rename(db, user, passkey_id, payload.name))

@@ -100,8 +100,12 @@ def test_ac1_amount_is_two_decimal_places_even_when_whole(db):
 
 def test_ac1_empty_day_is_zero_not_missing(db):
     snap = _build(db)
-    assert snap["today"] == {"amount": "0.00", "invoice_count": 0, "credit_note_count": 0, "customer_count": 0,
-                            "dealer_customer_count": 0}
+    zero = {"amount": "0.00", "invoice_count": 0}
+    assert snap["today"] == {
+        "amount": "0.00", "invoice_count": 0, "credit_note_count": 0, "customer_count": 0, "dealer_customer_count": 0,
+        # TOWN-PROJECT-CITY: the day split by sales type, present and zero on an empty day
+        "split": {"dealer": zero, "project": zero, "other": zero},
+    }
     assert snap["shops"] == []
 
 

@@ -193,7 +193,17 @@ _ANY_OF_PERMISSIONS: dict = {
 #: Actions whose commit names the admin at the keyboard when one parked it while viewing as the
 #: requester: the salesperson's own deletes from the CRM request pages (PORTAL-P4-REQUESTS D7).
 #: The commit runs after the request, so the admin is stored with the action, server-side.
-_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink", "dealer_access_link.unlink")
+_REAL_USER_ACTIONS = (
+    "my_request.delete",
+    "my_request_attachment.unlink",
+    "dealer_access_link.unlink",
+    "user_passkey.delete",
+)
+
+#: Actions whose REQUESTER is the real user, not the viewed-as one: the admin's own passkeys
+#: stay the admin's while impersonating (PASSKEY-LOGIN AC-20 / AC-24), so the admin parks,
+#: owns and may cancel the removal.
+_REAL_REQUESTER_ACTIONS = ("user_passkey.delete",)
 
 
 #: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID
@@ -286,6 +296,11 @@ def _assert_entity_visible(
         from app.services import dealer_access_screen
 
         dealer_access_screen.own_link(db, str(actor_id or ""), entity_id)  # 404 unless one of the requester's own
+    elif action_key == "user_passkey.delete":
+        from app.services.passkey_service import owner_id
+
+        if owner_id(db, entity_id) is None:
+            raise handle_not_found("Passkey", entity_id)
     elif action_key == "customer_group.delete":
         from app.services.customer_group_service import CustomerGroupService
 
@@ -549,6 +564,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "translation_memory.delete",
     "user.delete",
     "user.unlink_contact",
+    "user_passkey.delete",
     "workflow_definition.delete",
     "workflow_submission.delete",
 })
@@ -718,6 +734,17 @@ def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slu
             )
 
 
+def _is_own_passkey(db: Session, body: "_CreateRequest", real_user_id: str) -> bool:
+    """PASSKEY-LOGIN AC-24: removing your OWN passkey needs no grant; someone else's needs the
+    action's declared `user_management.users.edit`. Ownership is the REAL user's, so an admin
+    viewing as someone else still removes their own passkeys from their own card."""
+    if body.action_key != "user_passkey.delete":
+        return False
+    from app.services.passkey_service import owner_id
+
+    return owner_id(db, body.entity_id) == str(real_user_id)
+
+
 def _window_seconds(row: SlaFormAction) -> Optional[int]:
     """The window as STORED, derived from the two timestamps.
 
@@ -856,7 +883,8 @@ def create_pending_action(
             f"Action {body.action_key!r} does not apply to {body.entity_type!r}."
         )
     actor_id = (current_user or {}).get("id")
-    _assert_permission(db, actor_id, action.key, action.permission)
+    if not _is_own_passkey(db, body, get_actor_user_id(request, current_user)):
+        _assert_permission(db, actor_id, action.key, action.permission)
     _assert_required_payload(body.action_key, body.payload, body.entity_id)
     # A contact belongs to no one company: park (and later commit, under the stored scope)
     # across every company the requester is granted, never more. Restored on exit.
@@ -919,7 +947,11 @@ def create_pending_action(
                 entity_type=body.entity_type,
                 entity_id=str(body.entity_id),
                 payload=payload,
-                actor_id=actor_id,
+                actor_id=(
+                    payload["real_user_id"]
+                    if body.action_key in _REAL_REQUESTER_ACTIONS
+                    else actor_id
+                ),
                 channel=FORM_ACTION_CHANNEL_UI,
                 grace_seconds=window_seconds,
             )
@@ -937,6 +969,7 @@ def create_pending_action(
 @router.post("/{action_id}/cancel", status_code=status.HTTP_200_OK)
 def cancel_pending_action(
     action_id: str,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -953,6 +986,8 @@ def cancel_pending_action(
             # race it - so the overdue action is applied first and `cancel` then 409s.
             _commit_if_due(service, row)
         uid = (current_user or {}).get("id")
+        if row is not None and row.action_key in _REAL_REQUESTER_ACTIONS:
+            uid = get_actor_user_id(request, current_user)
         row = service.cancel(action_id, actor_id=uid, actor_is_admin=_is_admin(db, uid))
         return {"id": str(row.id), "status": row.status}
     except HTTPException:
