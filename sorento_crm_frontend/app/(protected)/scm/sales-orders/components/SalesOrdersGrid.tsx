@@ -1,9 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { addSearchChips } from '@/lib/searchChips';
 import { cn } from '@/lib/utils';
 import {
   ColumnDef,
@@ -80,7 +79,8 @@ import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUpl
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight } from '@/hooks/useDebouncedSearch';
+import { useListChipSearch, useSearchInAddressBar } from '@/hooks/useListChipSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 
@@ -274,23 +274,20 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // sort/filter row and the column row are one row (PLAN-listing-view-memory §3.2).
   const effectiveListingKey = listingKey ?? pathname;
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  const {
-    value: searchInput,
-    setValue: setSearchInput,
-    debouncedValue: searchQuery,
-    isSettling: searchSettling,
-    reset: resetSearchQuery,
-  } = useDebouncedSearch();
   // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; a row matching
   // any of them is listed (the backend's rule, `app/utils/list_search.py`).
-  const [searchChips, setSearchChips] = useState<string[]>([]);
-  const searchTerms = useMemo(
-    () => addSearchChips(searchChips, [searchQuery]).chips,
-    [searchChips, searchQuery],
-  );
-  const searchTermsKey = searchTerms.join('\n');
-  // The address-bar search this list last wrote itself, so reading it back is a no-op.
-  const writtenSearch = useRef<string | null>(null);
+  const {
+    searchInput,
+    setSearchInput,
+    chips: searchChips,
+    setChips: setSearchChips,
+    searchTerms,
+    searchTermsKey,
+    isSettling: searchSettling,
+    restore: restoreSearch,
+    writtenSearch,
+    isOwnWrite,
+  } = useListChipSearch();
 
   // The sort and every filter are remembered per user, per listing. Page number and search
   // text are deliberately NOT remembered (AC-D1/D2).
@@ -359,13 +356,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // Only pagination and search are restored from it now: sort and filter come from the
   // remembered view, which already holds what was active when the row was clicked.
   useListStateFromUrl((state) => {
-    if (writtenSearch.current !== null && window.location.search.slice(1) === writtenSearch.current) {
-      return;
-    }
+    if (isOwnWrite()) return;
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     // Every `query` comes back as a chip, so the restored list is the one that was left.
-    setSearchChips(addSearchChips([], state.searchQueries).chips);
-    resetSearchQuery('');
+    restoreSearch(state.searchQueries);
   });
 
   // Create-only: editing happens on the detail page in place (A5), the same shape as the
@@ -463,26 +457,12 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
 
   // Once the search has changed, the list keeps its whole state in the address bar (Q5b), so a
   // refresh keeps the chips. Not inside an agent's record: that URL is the record's own.
-  const searchTermsSeen = useRef<string | null>(null);
-  const searchTouched = useRef(false);
-  useEffect(() => {
-    if (pinnedToAgent) return;
-    if (searchTermsSeen.current === null) {
-      searchTermsSeen.current = searchTermsKey;
-      return;
-    }
-    if (searchTermsSeen.current !== searchTermsKey) {
-      searchTermsSeen.current = searchTermsKey;
-      searchTouched.current = true;
-    }
-    if (!searchTouched.current || window.location.search.slice(1) === detailSearch) return;
-    writtenSearch.current = detailSearch;
-    window.history.replaceState(
-      window.history.state,
-      '',
-      detailSearch ? `?${detailSearch}` : window.location.pathname,
-    );
-  }, [detailSearch, searchTermsKey, pinnedToAgent]);
+  useSearchInAddressBar({
+    detailSearch,
+    searchTermsKey,
+    enabled: !pinnedToAgent,
+    writtenSearch,
+  });
 
   const detailHref = (so: SalesOrder) =>
     `/scm/sales-orders/${so.id}${detailSearch ? `?${detailSearch}` : ''}`;
@@ -1087,9 +1067,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
               searchSlot={
                 <ListSearchInput
                   value={searchInput}
-                  // Emptied text (a chip committed, Clear) settles at once: a debounced
-                  // stale word would send one more request with it.
-                  onChange={(next) => (next === '' ? resetSearchQuery('') : setSearchInput(next))}
+                  onChange={setSearchInput}
                   chips={searchChips}
                   onChipsChange={setSearchChips}
                   isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
