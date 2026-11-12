@@ -400,9 +400,6 @@ export async function updateAttachment(
     /** User-facing display name (rename). The object key is uuid-segregated + immutable;
      *  only the UI label + Content-Disposition + n8n webhook filename change. */
     stored_filename?: string;
-    /** How a move answers a name clash: 'replace' sends the file already there to Trash,
-     *  'rename' moves under `stored_filename` (also its original name). */
-    on_conflict?: 'replace' | 'rename';
   }
 ): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}`, {
@@ -435,7 +432,7 @@ export async function bulkMoveAttachments(
   attachmentIds: string[],
   directoryId: string | null,
   options: { checkOnly?: boolean; resolutions?: Record<string, AttachmentMoveResolution> } = {}
-): Promise<{ updated: number; not_moved: AttachmentNotMoved[] }> {
+): Promise<{ updated: number; not_moved: AttachmentNotMoved[]; renamed?: number; replaced?: number }> {
   const response = await apiFetch('/api/v1/resource-management/attachments/bulk-move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

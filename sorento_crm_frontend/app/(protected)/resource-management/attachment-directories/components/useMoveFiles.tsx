@@ -138,21 +138,17 @@ export function useMoveFiles() {
         try {
           const result = await bulkMoveAttachments(fileIds, destinationId, { resolutions });
           const left = new Map((result.not_moved ?? []).map((n) => [n.attachment_id, n]));
-          let renamed = 0;
-          let replaced = 0;
           for (const [id, resolution] of Object.entries(resolutions)) {
-            const refused = left.get(id);
             if (resolution.action === 'skip') {
               outcome.skipped.push(names[id]);
               left.delete(id);
-            } else if (!refused) {
-              if (resolution.action === 'rename') renamed += 1;
-              else replaced += 1;
             }
           }
-          outcome.renamed = renamed;
-          outcome.replaced = replaced;
-          outcome.moved += result.updated - renamed - replaced;
+          // The server counts what it renamed / replaced: a clash that vanished before the move
+          // makes a plain move, never a phantom "renamed".
+          outcome.renamed = result.renamed ?? 0;
+          outcome.replaced = result.replaced ?? 0;
+          outcome.moved += result.updated - outcome.renamed - outcome.replaced;
           left.forEach((n) =>
             outcome.notMoved.push({ name: names[n.attachment_id] ?? n.file_name, reason: n.message })
           );

@@ -1664,7 +1664,7 @@ def bulk_move_attachments(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Replacing a file needs the permission to delete files.",
                 )
-        updated, not_moved = service.bulk_move_report(
+        result = service.bulk_move_report(
             body.attachment_ids,
             body.directory_id,
             viewer_id=str(current_user["id"]),
@@ -1675,7 +1675,12 @@ def bulk_move_attachments(
                 db, row.entity_type, row.entity_id, current_user
             ),
         )
-        return AttachmentsBulkMoveResponse(updated=updated, not_moved=not_moved)
+        return AttachmentsBulkMoveResponse(
+            updated=result.updated,
+            not_moved=result.not_moved,
+            renamed=result.renamed,
+            replaced=result.replaced,
+        )
     except HTTPException:
         raise
     except Exception as e:

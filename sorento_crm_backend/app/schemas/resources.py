@@ -336,6 +336,9 @@ class AttachmentsBulkMoveResponse(BaseModel):
     updated: int
     # One bad file never fails the batch: every other file moves and these are named.
     not_moved: list[AttachmentNotMoved] = []
+    # Of `updated`: how many moved under a new name / replaced the file already there.
+    renamed: int = 0
+    replaced: int = 0
 
 
 class UploadedByUser(BaseModel):

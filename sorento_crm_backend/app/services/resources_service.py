@@ -35,6 +35,15 @@ def _is_folder_name_clash(exc: IntegrityError) -> bool:
     return FOLDER_NAME_INDEX in str(getattr(exc, "orig", None) or exc)
 
 
+class BulkMoveResult(tuple):
+    """``(updated, not_moved)`` - unpacks as before - plus what the server renamed / replaced."""
+
+    def __new__(cls, updated: int, not_moved: list, renamed: int = 0, replaced: int = 0):
+        obj = super().__new__(cls, (updated, not_moved))
+        obj.updated, obj.not_moved, obj.renamed, obj.replaced = updated, not_moved, renamed, replaced
+        return obj
+
+
 def uuid_suffix() -> str:
     import uuid as _uuid
 
@@ -2267,7 +2276,9 @@ class AttachmentService:
             ext = "." + ext
         base = re.sub(r" \(\d+\)$", "", base) or base
         for n in range(1, 1000):
-            candidate = f"{base} ({n}){ext}"
+            suffix = f" ({n}){ext}"
+            # The name columns hold 255 characters: shorten the base, never the counter.
+            candidate = f"{base[: max(1, 255 - len(suffix))]}{suffix}"
             if self._name_free(directory_id, candidate, exclude_id):
                 return candidate
         return f"{base} ({uuid_suffix()}){ext}"
@@ -2351,14 +2362,9 @@ class AttachmentService:
             clash = self._folder_clash(target_dir, original_name, exclude_id=attachment.id)
             if clash is not None:
                 if on_conflict == "replace":
-                    replaced = (
-                        self.db.query(Attachment)
-                        .filter(Attachment.id == clash.id)
-                        .with_for_update()
-                        .one()
-                    )
-                    if replaced.is_deleted:
-                        replaced = None  # trashed meanwhile: nothing left to replace
+                    replaced = self._lock_replaceable(clash, target_dir)
+                    if replaced is None:
+                        pass  # trashed or moved meanwhile: nothing left to replace
                     elif is_private_to_others(replaced, actor_id):
                         raise handle_conflict(
                             f"The file in {self._folder_label(target_dir)} with this name is "
@@ -2488,25 +2494,31 @@ class AttachmentService:
             .all()
         )
         if not rows:
-            return 0, []
+            return BulkMoveResult(0, [])
         position = {str(aid): i for i, aid in enumerate(attachment_ids)}
         rows.sort(key=lambda r: position.get(str(r.id), len(position)))
         if check_only:
-            return 0, self._bulk_move_conflicts(rows, directory_id, viewer_id)
+            return BulkMoveResult(0, self._bulk_move_conflicts(rows, directory_id, viewer_id))
         resolutions = {str(k): (v or {}) for k, v in (resolutions or {}).items()}
         dir_service = AttachmentDirectoryService(self.db)
         full_path = dir_service.get_full_directory_path(directory_id) if directory_id else None
         moved: list[Attachment] = []
         not_moved: list[dict] = []
+        renamed_count = replaced_count = 0
         for row in rows:
             row_id, file_name, original = str(row.id), row.stored_filename, row.original_filename
             new_name: Optional[str] = None
             replaced: Optional[Attachment] = None
+            resolution = resolutions.get(row_id) or {}
+            action = resolution.get("action")
+            if action == "skip":
+                # The user chose to leave it: it stays even if its clash went away meanwhile.
+                clash = self._folder_clash(directory_id, original, exclude_id=row_id) if directory_id else None
+                not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
+                continue
             if directory_id and str(row.directory_id or "") != str(directory_id):
                 clash = self._folder_clash(directory_id, original, exclude_id=row_id)
                 if clash is not None:
-                    resolution = resolutions.get(row_id) or {}
-                    action = resolution.get("action")
                     if action == "rename":
                         new_name = (resolution.get("name") or "").strip() or self._suggest_name(
                             directory_id, file_name, row_id
@@ -2518,13 +2530,18 @@ class AttachmentService:
                             )
                             continue
                     elif action == "replace":
-                        refusal = self._replace_refusal(clash, directory_id, actor_id, replace_guard)
+                        locked = self._lock_replaceable(clash, directory_id)
+                        refusal = (
+                            self._replace_refusal(locked, directory_id, actor_id, replace_guard)
+                            if locked is not None
+                            else None
+                        )
                         if refusal:
                             entry = self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id)
                             entry["message"] = refusal
                             not_moved.append(entry)
                             continue
-                        replaced = clash
+                        replaced = locked  # None: trashed or moved meanwhile, a plain move
                     else:
                         not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
                         continue
@@ -2545,6 +2562,8 @@ class AttachmentService:
                 self.db.flush()
                 savepoint.commit()
                 moved.append(row)
+                renamed_count += new_name is not None
+                replaced_count += replaced is not None
             except IntegrityError as exc:
                 savepoint.rollback()
                 if not _is_folder_name_clash(exc):
@@ -2584,7 +2603,7 @@ class AttachmentService:
                 event_type="attachment.updated",
                 changed_fields=changed_fields,
             )
-        return len(rows), not_moved
+        return BulkMoveResult(len(rows), not_moved, renamed_count, replaced_count)
 
     def _bulk_move_conflicts(self, rows: list, directory_id: Optional[str], viewer_id: Optional[str]) -> list[dict]:
         """Every file of this batch that would clash in ``directory_id``, nothing written.
@@ -2607,10 +2626,23 @@ class AttachmentService:
             claimed[key] = row
         return conflicts
 
-    def _replace_refusal(self, clash, directory_id: str, actor_id: Optional[str], replace_guard) -> Optional[str]:
-        """Why Replace may not trash ``clash`` (None when it may). Locks the row first so the
-        row checked is the row trashed."""
-        locked = self.db.query(Attachment).filter(Attachment.id == clash.id).with_for_update().one()
+    def _lock_replaceable(self, clash, directory_id: str):
+        """Lock ``clash`` FOR UPDATE and re-read it; None when it is no longer the active file in
+        ``directory_id`` (trashed or moved meanwhile), so there is nothing to replace."""
+        locked = (
+            self.db.query(Attachment)
+            .filter(Attachment.id == clash.id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if locked is None or locked.is_deleted or str(locked.directory_id or "") != str(directory_id):
+            return None
+        return locked
+
+    def _replace_refusal(self, locked, directory_id: str, actor_id: Optional[str], replace_guard) -> Optional[str]:
+        """Why Replace may not trash ``locked`` (a row from ``_lock_replaceable``), or None.
+        The row checked is the row trashed."""
         if is_private_to_others(locked, actor_id):
             return (
                 f"The file in {self._folder_label(directory_id)} with this name is private to "

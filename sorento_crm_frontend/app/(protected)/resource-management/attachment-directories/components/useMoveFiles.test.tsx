@@ -56,7 +56,10 @@ function mount() {
 }
 
 /** First call = the check-only preflight, second = the move itself. */
-function preflight(conflicts: ReturnType<typeof conflict>[], execute = { updated: 0, not_moved: [] as unknown[] }) {
+function preflight(
+  conflicts: ReturnType<typeof conflict>[],
+  execute: { updated: number; not_moved: unknown[]; renamed?: number; replaced?: number } = { updated: 0, not_moved: [] }
+) {
   bulkMoveAttachments.mockImplementation(async (_ids: string[], _dest: string, opts?: { checkOnly?: boolean }) =>
     opts?.checkOnly ? { updated: 0, not_moved: conflicts } : execute
   );
@@ -81,7 +84,7 @@ describe('useMoveFiles', () => {
   it('100 files, 100 conflicts: one decision with "Do this for the remaining" renames all', async () => {
     const conflicts = Array.from({ length: 100 }, (_, i) => conflict(i));
     const ids = conflicts.map((c) => c.attachment_id);
-    preflight(conflicts, { updated: 100, not_moved: [] });
+    preflight(conflicts, { updated: 100, renamed: 100, not_moved: [] });
     const pending = mount().move(ids, 'dir-b');
     expect(await screen.findByText('1 of 100')).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Do this for the remaining 99 conflicts' }));
@@ -97,7 +100,7 @@ describe('useMoveFiles', () => {
   });
 
   it('without the tick box each conflict is asked; the typed name goes with that file only', async () => {
-    preflight([conflict(1), conflict(2)], { updated: 1, not_moved: [conflict(2)] });
+    preflight([conflict(1), conflict(2)], { updated: 1, renamed: 1, not_moved: [conflict(2)] });
     const pending = mount().move(['f-1', 'f-2'], 'dir-b');
     expect(await screen.findByText('1 of 2')).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox', { name: 'New name' }), { target: { value: 'mine.pdf' } });
@@ -113,7 +116,7 @@ describe('useMoveFiles', () => {
   });
 
   it('Replace for all sends replace for every conflict', async () => {
-    preflight([conflict(1), conflict(2), conflict(3)], { updated: 4, not_moved: [] });
+    preflight([conflict(1), conflict(2), conflict(3)], { updated: 4, replaced: 3, not_moved: [] });
     const pending = mount().move(['plain', 'f-1', 'f-2', 'f-3'], 'dir-b');
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Do this for the remaining 2 conflicts' }));
     fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
@@ -147,7 +150,7 @@ describe('useMoveFiles', () => {
   });
 
   it('one conflict shows no "1 of" counter and no tick box', async () => {
-    preflight([conflict(1)], { updated: 1, not_moved: [] });
+    preflight([conflict(1)], { updated: 1, renamed: 1, not_moved: [] });
     const pending = mount().move(['f-1'], 'dir-b');
     await screen.findByText('scan 1.pdf already exists in Folder B.');
     expect(screen.queryByText('1 of 1')).toBeNull();
@@ -187,5 +190,12 @@ describe('useMoveFiles', () => {
     ]);
     expect(outcome.moved).toBe(3);
     expect(outcome.notMoved).toEqual([{ name: 'Drafts', reason: 'Cannot move a folder into itself' }]);
+  });
+
+  it('a resolved file whose clash vanished counts as a plain move (server counts)', async () => {
+    preflight([conflict(1)], { updated: 1, renamed: 0, replaced: 0, not_moved: [] });
+    const pending = mount().move(['f-1'], 'dir-b');
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+    expect(await pending).toMatchObject({ moved: 1, renamed: 0, replaced: 0 });
   });
 });
