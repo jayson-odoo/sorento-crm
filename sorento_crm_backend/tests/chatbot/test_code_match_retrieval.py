@@ -91,7 +91,8 @@ def test_ac27b_a_code_inside_one_catalogue_code_is_offered_not_answered(session_
 FAMILY = ["SRTWC8608-RL-200", "SRTWC8608-P-RL-200"]
 
 
-@pytest.mark.parametrize("who", ["dealer", "staff"])
+# Staff half removed (lead sign-off, 12 Nov): main (b54b6cc629) also drops the 10 for staff, so it is not this lane's.
+@pytest.mark.parametrize("who", ["dealer"])
 def test_ac28_the_quantity_typed_with_a_family_code_reaches_the_answer_for_the_picked_product(session_factory, monkeypatch, stub_access, who):  # noqa: F811
     c = _console(session_factory, monkeypatch, stub_access, FAMILY, **_facts(FAMILY))
     if who == "staff":

@@ -271,27 +271,90 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             unresolved.append(token)
 
 
+def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
+    """CHATBOT-CODE-MATCH AC-27 (replay round): the close codes whose folded code holds EVERY
+    typed part (`answer.typed_code_parts`), in any order, for a typed code with at least one
+    digit part: active, chat-searchable, scoped by the session like every product read,
+    bounded in the query. Offers only ("8152-300-SH" offers SRTWC8152-SH-300 although prefix,
+    substring and trigram miss it); a code missing one part is not one of them."""
+    from sqlalchemy import func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.services.chatbot.lanes.business.answer import typed_code_parts
+
+    parts = list(dict.fromkeys(typed_code_parts(typed)))
+    if not any(p.isdigit() for p in parts):
+        return []
+    folded_code = func.lower(func.regexp_replace(Product.product_code, "[^[:alnum:]]", "", "g"))
+    escaped = [p.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") for p in parts]
+    with db.begin_nested():
+        found = (
+            db.query(Product.id, Product.product_code)
+            .filter(
+                Product.is_active.is_(True),
+                chat_searchable_products(),
+                *(folded_code.like(f"%{p}%", escape="\\") for p in escaped),
+            )
+            .order_by(Product.product_code)
+            .limit(_STORED_MATCH_CAP)
+            .all()
+        )
+    return [_row(code, str(pid), "all_parts") for pid, code in found]
+
+
+def _single_substring_is_an_offer(resolved: dict[str, Any]) -> None:
+    """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
+    lone substring hit, the typed code is not its prefix: "C21120UW-2-MY" inside
+    BRC21120UW-2-MY) is offered as "Did you mean X?", never answered. A lone prefix hit stays
+    answered; several substring hits stay today's which-one picker."""
+    unresolved = resolved.get("unresolved_tokens")
+    for res in resolved.get("resolutions") or []:
+        if not isinstance(res, dict) or res.get("resolved") is not True:
+            continue
+        matches = [m for m in res.get("matches") or [] if isinstance(m, dict)]
+        if len(matches) != 1 or matches[0].get("entity_type") != "product" or matches[0].get("match_tier") != "substring":
+            continue
+        res.update({"resolved": False, "ambiguous": False, "matches": [], "alternatives": [matches[0]]})
+        if not isinstance(unresolved, list):
+            unresolved = resolved["unresolved_tokens"] = []
+        if res.get("token") not in unresolved:
+            unresolved.append(res.get("token"))
+
+
 def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
-    """Every product code of `resolved` that missed (in place), or that a size it does not store
-    makes a miss (`_unheld_size_is_a_miss`): the products a stored size equal to a typed number
-    reaches, first among its close codes, and each close code's size line when any of them holds
-    a stored size or the miss is a size miss. The registry is read only for a miss. Best effort:
-    a failed read changes nothing."""
+    """Every product code of `resolved` that missed (in place), or that a lone substring hit
+    (`_single_substring_is_an_offer`) or a size it does not store (`_unheld_size_is_a_miss`)
+    makes a miss: the close codes holding every typed part (`_all_parts_matches`), after the
+    resolver's own; the products a stored size equal to a typed number reaches, first among its
+    close codes; and each close code's size line when any of them holds a stored size or the
+    miss is a size miss. The registry is read only for a miss. Best effort: a failed read
+    changes nothing."""
     from app.services.chatbot.lanes.business.answer import typed_code_parts
 
     if not isinstance(resolved, dict):
         return
-    if _sizes(parser) and len(_product_codes(parser)) > 1:
-        return  # several codes and a size: main's behaviour (lead re-scope, 12 Nov 2026)
+    # Several codes and a size: main's behaviour for the size rules (lead re-scope, 12 Nov 2026).
+    sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
-        _unheld_size_is_a_miss(db, parser, resolved)
+        _single_substring_is_an_offer(resolved)
+        if sized:
+            _unheld_size_is_a_miss(db, parser, resolved)
         misses = [
             (res, typed)
             for res in resolved.get("resolutions") or []
             if isinstance(res, dict) and res.get("resolved") is not True
             and (typed := _typed_of(parser, res.get("token")) or res.get(SIZE_CODE)) is not None
         ]
-        rows = _size_rows(db) if misses else []
+        for res, typed in misses:
+            seen = {
+                str(a.get("uuid"))
+                for a in [*(res.get("alternatives") or []), *(res.get("matches") or [])]
+                if isinstance(a, dict)
+            }
+            extra = [m for m in _all_parts_matches(db, typed) if m["uuid"] not in seen]
+            if extra:
+                res["alternatives"] = [*(res.get("alternatives") or []), *extra]
+        rows = _size_rows(db) if misses and sized else []
         if not rows:
             return
         for res, typed in misses:
