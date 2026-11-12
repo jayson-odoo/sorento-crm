@@ -169,7 +169,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await addLine();
     const item = await screen.findByLabelText('Search a set or product...');
     // Owner, 4 Nov: each option leads with its code (the name is its second line).
-    await waitFor(() => expect(screen.getByText('ZZTSET-1')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/^ZZTSET-1/)).toBeInTheDocument());
     expect(screen.getByText('CBF-1234')).toBeInTheDocument();
     expect(item).toBeInTheDocument();
   });

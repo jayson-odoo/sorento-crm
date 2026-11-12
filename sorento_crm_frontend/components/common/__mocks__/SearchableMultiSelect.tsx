@@ -9,11 +9,13 @@
  * - every other multi-select (the Alternatives picker) stays an inert multi select.
  */
 import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 interface StandInOption {
   value: string;
   label: string;
   disabled?: boolean;
+  badgeText?: string;
 }
 
 export interface StandInProps {
@@ -21,6 +23,7 @@ export interface StandInProps {
   disabled?: boolean;
   onChange?: (next: string[]) => void;
   fetchOptions?: (query: string) => Promise<StandInOption[]>;
+  renderOption?: (option: StandInOption) => React.ReactNode;
   renderTrigger?: (state: {
     selected: StandInOption[];
     open: boolean;
@@ -30,11 +33,24 @@ export interface StandInProps {
 
 export const ITEM_CELL_LABEL = 'Search a set or product...';
 
+/** What the option reads as: production's own renderOption text when it passes one (the code and
+ *  its hints), else the option's own label and badge. Nothing is worked out here. */
+function optionText(
+  o: StandInOption,
+  renderOption?: StandInProps['renderOption'],
+): string {
+  if (!renderOption) return [o.label, o.badgeText].filter(Boolean).join(' - ');
+  const holder = document.createElement('div');
+  holder.innerHTML = renderToStaticMarkup(<>{renderOption(o)}</>);
+  return (holder.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
 export function ItemCellStandIn({
   value,
   fetchOptions,
   onChange,
   renderTrigger,
+  renderOption,
 }: StandInProps) {
   const [options, setOptions] = React.useState<StandInOption[]>([]);
   React.useEffect(() => {
@@ -51,7 +67,8 @@ export function ItemCellStandIn({
       {/* The closed cell's own look (the line's item name), hidden from role queries so the
           native select below stays the one control a test drives. */}
       <div aria-hidden>
-        {renderTrigger?.({ selected: [], open: false, disabled: false })}
+        {/* Open, so the cell's open watcher marks what is on the request, as production does on open. */}
+        {renderTrigger?.({ selected: [], open: true, disabled: false })}
       </div>
       <select
         aria-label={ITEM_CELL_LABEL}
@@ -63,15 +80,11 @@ export function ItemCellStandIn({
         }}
       >
         <option value="">{ITEM_CELL_LABEL}</option>
-        {options.map((o) => {
-          // Like the real list: an item already on the request is offered disabled, with the hint.
-          const taken = o.disabled || (value.includes(o.value) && o.value !== shown);
-          return (
-            <option key={o.value} value={o.value} disabled={taken}>
-              {taken ? `${o.label} - Already added` : o.label}
-            </option>
-          );
-        })}
+        {options.map((o) => (
+          <option key={o.value} value={o.value} disabled={o.disabled}>
+            {optionText(o, renderOption)}
+          </option>
+        ))}
       </select>
     </>
   );
