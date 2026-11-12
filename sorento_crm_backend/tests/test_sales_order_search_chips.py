@@ -229,6 +229,20 @@ def test_b6_more_than_200_values_is_422(client, seeded):
     assert "at most 200 values" in resp.text
 
 
+def test_b6_a_value_over_100_characters_is_422_naming_the_limit(client, seeded):
+    """Security review should-fix: one value is capped at 100 characters, like the count cap."""
+    resp = get(client, LIST, _q("SO1", "X" * 101))
+    assert resp.status_code == 422, resp.text
+    assert "100" in resp.text, resp.text
+
+
+def test_b6_a_value_of_exactly_100_characters_is_accepted(client, seeded):
+    s = seeded
+    resp = get(client, LIST, [("limit", 200), *_q(s["alpha"].so_number, "Z" * 100)])
+    assert resp.status_code == 200, resp.text
+    assert set(_numbers(resp.json())) == _n(s, "alpha")
+
+
 def test_b6_exactly_200_values_is_accepted(client, seeded):
     s = seeded
     values = [s["bravo"].so_number] + [f"ZZV{i:03d}" for i in range(199)]

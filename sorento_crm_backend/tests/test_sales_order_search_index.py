@@ -158,17 +158,38 @@ class _FakeOp:
 
 
 def _run(mig, monkeypatch, fn_name, covered=frozenset()):
+    """Run upgrade()/downgrade() against the recording `op`. Returns the raw DDL log, the
+    `_has_trgm_index` calls, and every (table, name, columns) tuple handed to
+    `online_index.ensure_indexes_online` with whether it was handed over inside
+    `autocommit_block()` (the owner rule of 27 Oct: indexes are built through that helper)."""
+    from app.utils import online_index
+
     rec = _Recorder()
     monkeypatch.setattr(mig, "op", _FakeOp(rec))
     calls: list[tuple[str, str]] = []
+    handed: list[tuple[tuple[str, str, str], bool]] = []
 
     def _fake_has(_bind, table, column):
         calls.append((table, column))
         return (table, column) in covered
 
+    def _spy_ensure(_bind, indexes):
+        handed.extend((tuple(t), rec.autocommit) for t in indexes)
+        return True
+
     monkeypatch.setattr(mig, "_has_trgm_index", _fake_has)
+    monkeypatch.setattr(online_index, "ensure_indexes_online", _spy_ensure)
+    if hasattr(mig, "ensure_indexes_online"):  # imported by name rather than through the module
+        monkeypatch.setattr(mig, "ensure_indexes_online", _spy_ensure)
     getattr(mig, fn_name)()
-    return rec.log, calls
+    return rec.log, calls, handed
+
+
+def _trgm_tuple(t):
+    """(table, column) a handed-over (table, name, columns) tuple builds a plain trigram index on."""
+    table, _name, columns = t
+    m = re.fullmatch(r'\s*USING gin\s*\(\s*"?(\w+)"?\s+gin_trgm_ops\s*\)\s*', columns, re.I)
+    return (table, m.group(1)) if m else None
 
 
 _CREATE = re.compile(
@@ -231,20 +252,25 @@ def test_m1_source_uses_concurrently_inside_autocommit_block():
     assert callable(getattr(mig, "_has_trgm_index", None))
 
 
-def test_m1_upgrade_creates_every_index_concurrently_when_none_exists(monkeypatch):
+def test_m1_upgrade_hands_every_index_to_online_index_when_none_exists(monkeypatch):
+    """Round 3 (owner rule 27 Oct, `app/utils/online_index.py`): the build goes through
+    `ensure_indexes_online` inside `autocommit_block()`, which itself always uses
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS under the migration limits; the migration issues no
+    CREATE INDEX of its own."""
     mig = _load_migration()
-    log, calls = _run(mig, monkeypatch, "upgrade")
+    log, calls, handed = _run(mig, monkeypatch, "upgrade")
 
     assert any(re.search(r"CREATE EXTENSION IF NOT EXISTS \"?pg_trgm\"?", sql, re.I) for sql, _ in log), log
-    creates = _creates(log)
-    assert {(m["table"], m["column"]) for m, _ in creates} == ALL_PAIRS, log
-    assert len(creates) == len(ALL_PAIRS), "one index per column"
-    for m, inside in creates:
-        assert m["conc"], f"not CONCURRENTLY: {m.group(0)}"
-        assert m["ine"], f"no IF NOT EXISTS: {m.group(0)}"
-        assert inside, f"CONCURRENTLY outside autocommit_block: {m.group(0)}"
-        assert m["name"].startswith(PREFIX), m["name"]
-        assert len(m["name"]) <= 63, m["name"]
+    assert not _creates(log), f"raw CREATE INDEX issued instead of online_index: {_creates(log)}"
+    assert handed, "nothing handed to online_index.ensure_indexes_online"
+    built = [_trgm_tuple(t) for t, _ in handed]
+    assert None not in built, [t for t, _ in handed]
+    assert set(built) == ALL_PAIRS, handed
+    assert len(built) == len(ALL_PAIRS), "one index per column"
+    for (table, name, _columns), inside in handed:
+        assert inside, f"ensure_indexes_online called outside autocommit_block: {name}"
+        assert name.startswith(PREFIX), name
+        assert len(name) <= 63, name
     # The shared tables were checked before being indexed.
     assert set(SHARED_COLUMNS) <= set(calls), calls
 
@@ -252,17 +278,18 @@ def test_m1_upgrade_creates_every_index_concurrently_when_none_exists(monkeypatc
 def test_m1_upgrade_skips_shared_columns_already_covered(monkeypatch):
     """Prod may carry migration 169's idx_products_*_trgm / idx_customers_*_trgm: no duplicate."""
     mig = _load_migration()
-    log, _ = _run(mig, monkeypatch, "upgrade", covered=frozenset(SHARED_COLUMNS))
-    created = {(m["table"], m["column"]) for m, _ in _creates(log)}
-    assert created == {("sales_orders", c) for c in SO_COLUMNS}, log
+    log, _, handed = _run(mig, monkeypatch, "upgrade", covered=frozenset(SHARED_COLUMNS))
+    assert not _creates(log), _creates(log)
+    assert {_trgm_tuple(t) for t, _ in handed} == {("sales_orders", c) for c in SO_COLUMNS}, handed
 
 
 def test_m1_downgrade_drops_only_its_own_indexes_concurrently(monkeypatch):
     mig = _load_migration()
-    up_log, _ = _run(mig, monkeypatch, "upgrade")
-    created_names = {m["name"] for m, _ in _creates(up_log)}
+    _, _, handed = _run(mig, monkeypatch, "upgrade")
+    created_names = {t[1] for t, _ in handed}
+    assert created_names
 
-    log, _ = _run(mig, monkeypatch, "downgrade")
+    log, _, _ = _run(mig, monkeypatch, "downgrade")
     drops = _drops(log)
     assert drops, log
     for m, inside in drops:
@@ -348,6 +375,172 @@ def test_d2_has_trgm_index_decides_coverage_per_table_and_column(probe_conn):
     assert mig._has_trgm_index(c, a, "expr_col") is False       # expression, not the column
     assert mig._has_trgm_index(c, a, "plain") is False          # only plain_x / other table
     assert mig._has_trgm_index(c, b, "plain") is True
+
+
+def test_d2_has_trgm_index_ignores_an_invalid_index(probe_conn):
+    """An interrupted CONCURRENTLY build leaves an INVALID index the planner never uses. Counting it
+    as covering the column would skip the build for good, and the search stays a seq scan."""
+    mig = _load_migration()
+    a = f"zz_trgm_probe_i_{uuid.uuid4().hex[:8]}"
+    c = probe_conn
+    c.execute(text(f"CREATE TABLE {a} (id int primary key, col text)"))
+    c.execute(text(f"CREATE INDEX {a}_t ON {a} USING gin (col gin_trgm_ops)"))
+    assert mig._has_trgm_index(c, a, "col") is True  # guard: valid, it counts
+    c.execute(text(f"UPDATE pg_index SET indisvalid = false WHERE indexrelid = '{a}_t'::regclass"))
+    assert mig._has_trgm_index(c, a, "col") is False
+
+
+# --------------------------------------------------------------------------- #
+# Round 3: the owner rule of 27 Oct for online index builds (app/utils/online_index.py)
+# --------------------------------------------------------------------------- #
+
+_SCRATCH_DDL = (
+    'CREATE TABLE {s}.sales_orders (id uuid PRIMARY KEY, so_number varchar(100), '
+    'debtor_name varchar(255), project_label text, po_ref varchar(255), po_ref_key varchar(255))',
+    'CREATE TABLE {s}.products (id uuid PRIMARY KEY, product_code varchar(100), product_name varchar(255))',
+    'CREATE TABLE {s}.customers (id uuid PRIMARY KEY, customer_name varchar(255))',
+)
+
+
+@contextmanager
+def _scratch():
+    """A committed scratch schema with the three searched tables, so the real upgrade (CONCURRENTLY
+    needs autocommit) never touches the lane DB's own tables. `public` trails it on search_path
+    for pg_trgm's operator class."""
+    import os
+
+    from app.database import engine
+
+    schema = f"zzs_sotrgm_{os.getpid()}_{uuid.uuid4().hex[:6]}"
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        try:
+            for ddl in _SCRATCH_DDL:
+                conn.exec_driver_sql(ddl.format(s=f'"{schema}"'))
+            yield schema, conn
+        finally:
+            conn.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+def _scratch_index(conn, schema, name):
+    """indisvalid of `name` in `schema`, or None when there is no such index."""
+    return conn.execute(
+        text("SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+             "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :s AND c.relname = :n"),
+        {"s": schema, "n": name},
+    ).scalar()
+
+
+def _scratch_trgm_names(conn, schema):
+    return {r[0] for r in conn.execute(
+        text("SELECT indexname FROM pg_indexes WHERE schemaname = :s AND indexname LIKE 'ix_search_trgm%'"),
+        {"s": schema},
+    )}
+
+
+def _real_upgrade(mig, schema, step="upgrade"):
+    """upgrade() as `alembic/env.py` runs it: a transactional MigrationContext on its own
+    connection, search_path on the scratch schema. A 3 s lock_timeout is a safety net so a raw
+    CONCURRENTLY build stuck behind live work fails instead of hanging the suite
+    (`ensure_index_online` sets and restores its own limits around each build)."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    from app.database import engine
+
+    with engine.connect() as conn:
+        try:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx), ctx.begin_transaction():
+                conn.exec_driver_sql(f'SET search_path TO "{schema}", public')
+                conn.exec_driver_sql("SET lock_timeout = '3s'")
+                conn.exec_driver_sql("SET statement_timeout = '60s'")
+                getattr(mig, step)()
+        finally:
+            conn.rollback()
+            conn.exec_driver_sql("RESET search_path")
+            conn.exec_driver_sql("RESET lock_timeout")
+            conn.exec_driver_sql("RESET statement_timeout")
+            conn.commit()
+
+
+def test_o1_real_upgrade_builds_nothing_itself_and_hands_everything_to_online_index(monkeypatch):
+    """Through a real alembic context: with `ensure_indexes_online` stubbed out, no ix_search_trgm_*
+    index may appear, i.e. every build goes through the helper (and its limits / warning path)."""
+    from app.utils import online_index
+
+    mig = _load_migration()
+    handed: list[tuple] = []
+    monkeypatch.setattr(online_index, "ensure_indexes_online",
+                        lambda _bind, indexes: handed.extend(indexes) or True)
+    with _scratch() as (schema, conn):
+        _real_upgrade(mig, schema)
+        assert _scratch_trgm_names(conn, schema) == set(), "built outside online_index"
+    assert {_trgm_tuple(tuple(t)) for t in handed} == ALL_PAIRS, handed
+
+
+def test_o1_real_upgrade_builds_every_index_valid():
+    """Coverage: unstubbed, the eight indexes come out VALID in the scratch schema."""
+    mig = _load_migration()
+    with _scratch() as (schema, conn):
+        _real_upgrade(mig, schema)
+        names = _scratch_trgm_names(conn, schema)
+        assert len(names) == len(ALL_PAIRS), names
+        assert all(_scratch_index(conn, schema, n) is True for n in names), names
+
+
+@contextmanager
+def _open_writer(schema, table):
+    """Live work: a transaction that wrote a row to `table` and has not committed."""
+    from app.database import engine
+
+    with engine.connect() as other:
+        tx = other.begin()
+        other.exec_driver_sql(f"INSERT INTO \"{schema}\".{table} (id) VALUES ('{uuid.uuid4()}')")
+        try:
+            yield
+        finally:
+            tx.rollback()
+
+
+def test_o1_a_build_stuck_behind_live_work_is_a_warning_not_an_error(monkeypatch, caplog):
+    """The revision still SUCCEEDS when its sales_orders builds cannot finish: the leftover is
+    gone or INVALID, a WARNING names it, and the retry script builds it on the next start."""
+    import logging
+
+    mig = _load_migration()
+    monkeypatch.setenv("MIGRATION_LOCK_TIMEOUT", "300ms")
+    caplog.set_level(logging.WARNING)
+    with _scratch() as (schema, conn):
+        with _open_writer(schema, "sales_orders"):
+            _real_upgrade(mig, schema)  # must not raise
+            for col in SO_COLUMNS:
+                left = _scratch_index(conn, schema, f"{PREFIX}sales_orders_{col}")
+                assert left is None or left is False, (col, left)
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(f"{PREFIX}sales_orders" in m for m in warned), warned
+
+
+def test_o1_retry_script_carries_the_sales_orders_indexes(monkeypatch):
+    """A build the migration could not finish is retried on the next backend start
+    (`scripts/ensure_goods_chain_indexes.py`, run by start.sh), like il_0001/il_0002's."""
+    from app.database import engine
+    from app.utils import online_index
+    from scripts import ensure_goods_chain_indexes as retry
+
+    mig = _load_migration()
+    _, _, handed = _run(mig, monkeypatch, "upgrade")
+    mig_names = {t[1] for t, _ in handed if t[0] == "sales_orders"}
+    assert len(mig_names) == len(SO_COLUMNS), handed
+
+    captured: list[tuple] = []
+    monkeypatch.setattr(online_index, "ensure_indexes_online",
+                        lambda _bind, indexes: captured.extend(tuple(t) for t in indexes) or True)
+    monkeypatch.setattr(online_index, "ensure_search_index_online", lambda _bind: True)
+    assert retry.run(engine) is True
+    retried = {t for t in captured if t[0] == "sales_orders" and t[1].startswith(PREFIX)}
+    assert {_trgm_tuple(t) for t in retried} == {("sales_orders", c) for c in SO_COLUMNS}, captured
+    assert {t[1] for t in retried} == mig_names, "retry and migration must name the same indexes"
 
 
 # --------------------------------------------------------------------------- #
@@ -526,6 +719,23 @@ def test_r_another_companys_order_never_leaks_through_any_arm(client, two_compan
     values = [f"{s['tag']}-OTHERCO", "Foreignco", "Foreignwidget", s["foreign_product"].product_code,
               "Acme Foreign", s["widget"].product_code, "AGENTPERSON", "BAMBOOPROJECT", "po 4500-123"]
     assert s["other_order"].so_number not in _numbers(client, values)
+
+
+@pytest.mark.parametrize("which", ["customer", "product"])
+def test_r_own_order_pointing_at_another_companys_party_is_not_found_by_its_name(
+        client, db, two_companies, which):
+    """Reviewer probe: an order in the user's own company whose customer_id / line points at
+    ANOTHER company's customer / product. Searching by that foreign name finds nothing: no row
+    AND total 0 (before the rewrite the rows query found it while the count said 0)."""
+    s = two_companies
+    own = _so(db, f"{s['tag']}-CROSS", customer_id=s["foreign_cust"].id)
+    _line(db, own, s["foreign_product"])
+    value = {"customer": "Foreignco Pty", "product": "Foreignwidget"}[which]
+    resp = get(client, LIST, [("limit", 200), ("query", value)])
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [r["so_number"] for r in body["data"]] == [], body["data"]
+    assert body["pagination"]["total"] == 0
 
 
 # --------------------------------------------------------------------------- #

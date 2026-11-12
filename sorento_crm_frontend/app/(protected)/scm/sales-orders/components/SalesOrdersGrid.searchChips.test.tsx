@@ -302,3 +302,45 @@ describe('SalesOrdersGrid search chips inside a sales agent record', () => {
     expect(replaceState).not.toHaveBeenCalled();
   });
 });
+
+describe('SalesOrdersGrid search chips: emptied text settles at once', () => {
+  /** The list GETs sent after the first `skip` ones, as their `query` values. */
+  const queriesFrom = (skip: number) => listRequests().slice(skip).map((r) => r.getAll('query'));
+
+  it('Clear with typed text present sends one request with no query, and none with the old text', async () => {
+    nav.search = 'page=1&limit=25&query=SO1';
+    const user = userEvent.setup();
+    renderGrid();
+    await screen.findByRole('button', { name: 'Remove SO1' });
+
+    await user.type(searchBox(), 'Fakeco');
+    await waitFor(() => expect(lastListRequest().getAll('query')).toEqual(['SO1', 'Fakeco']));
+    const before = listRequests().length;
+
+    await user.click(screen.getByRole('button', { name: 'Clear search' }));
+    await waitFor(() => expect(lastListRequest().getAll('query')).toEqual([]));
+    // Past the debounce: a stale word would have gone out by now.
+    await new Promise((r) => setTimeout(r, 400));
+    const after = queriesFrom(before);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.filter((q) => q.includes('Fakeco'))).toEqual([]);
+    expect(after.at(-1)).toEqual([]);
+  });
+
+  it('Enter commits the chip without a request carrying the stale typed text', async () => {
+    const user = userEvent.setup();
+    renderGrid();
+    await screen.findByText('SO900001');
+
+    await user.type(searchBox(), 'Fak');
+    await waitFor(() => expect(lastListRequest().getAll('query')).toEqual(['Fak']));
+    const before = listRequests().length;
+
+    await user.type(searchBox(), 'eco{Enter}');
+    await waitFor(() => expect(lastListRequest().getAll('query')).toEqual(['Fakeco']));
+    await new Promise((r) => setTimeout(r, 400));
+    const after = queriesFrom(before);
+    expect(after.filter((q) => q.includes('Fak'))).toEqual([]);
+    expect(after.every((q) => q.length === 1 && q[0] === 'Fakeco')).toBe(true);
+  });
+});

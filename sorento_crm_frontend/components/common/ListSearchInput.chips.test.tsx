@@ -258,3 +258,18 @@ describe('ListSearchInput chips keyboard (F7)', () => {
     expect(chipsNow()).toEqual(['SO1', 'SO2', 'SO3']);
   });
 });
+
+describe('ListSearchInput chips count label', () => {
+  it('one chip reads "1 value", not "1 values"', async () => {
+    const user = setup({ initialChips: ['SO1'] });
+    await user.click(input());
+    expect(screen.getByText('1 value')).toBeInTheDocument();
+    expect(screen.queryByText('1 values')).toBeNull();
+  });
+
+  it('two chips read "2 values"', async () => {
+    const user = setup({ initialChips: ['SO1', 'SO2'] });
+    await user.click(input());
+    expect(screen.getByText('2 values')).toBeInTheDocument();
+  });
+});
