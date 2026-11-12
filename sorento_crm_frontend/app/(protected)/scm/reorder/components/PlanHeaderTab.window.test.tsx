@@ -159,11 +159,10 @@ describe('PlanHeaderTab - window wording (AC-S4.5)', () => {
     expect(screen.getByText('every open order')).toBeInTheDocument();
   });
 
-  it('Edit exposes BOTH a From and a To date input', () => {
+  it('Edit exposes ONE range field holding both the From and the To date', () => {
     renderTab(makeRun({ plan_horizon_start: '2025-01-01', plan_horizon_date: '2026-10-31' }));
     fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
 
-    expect(screen.getByLabelText('From')).toBeInTheDocument();
-    expect(screen.getByLabelText('To')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sales orders needed')).toBeInTheDocument();
   });
 });

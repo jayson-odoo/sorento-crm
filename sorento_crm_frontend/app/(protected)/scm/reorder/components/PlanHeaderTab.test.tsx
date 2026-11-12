@@ -107,6 +107,15 @@ vi.mock('../services/reorderRunService', () => ({
 
 import { PlanHeaderTab } from './PlanHeaderTab';
 
+/** Type a range into the shared field as dd/mm/yyyy and commit it (blur); a null end is left
+ *  open (`dd/mm/yyyy -` / `- dd/mm/yyyy`) and two nulls empty the field. */
+function typeRange(input: HTMLElement, from: string | null, to: string | null) {
+  const dm = (iso: string) => iso.split('-').reverse().join('/');
+  const text = from && to ? `${dm(from)} - ${dm(to)}` : from ? `${dm(from)} -` : to ? `- ${dm(to)}` : '';
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.blur(input);
+}
+
 function makeRun(over: Partial<ReorderRun> = {}): ReorderRun {
   return {
     run_id: 'run-1',
@@ -199,7 +208,7 @@ describe('PlanHeaderTab - scope round-trip through Edit -> Re-plan (review S7)',
     expect(await screen.findByTestId('chip-All products')).toHaveTextContent(
       'SRTWT7408 - Wall-hung WC 7408',
     );
-    expect(screen.getByLabelText('To')).toHaveValue('2099-12-31');
+    expect(screen.getByLabelText('Sales orders needed')).toHaveValue('- 31/12/2099');
 
     fireEvent.click(screen.getByRole('button', { name: /^Re-plan$/i }));
     await screen.findByRole('alertdialog');
@@ -236,9 +245,7 @@ describe('PlanHeaderTab - past cut-off validation (review S7)', () => {
   it('blocks Re-plan and explains why, without opening the confirm dialog', async () => {
     renderTab(makeRun());
     fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
-    fireEvent.change(screen.getByLabelText('To'), {
-      target: { value: '2000-01-01' },
-    });
+    typeRange(screen.getByLabelText('Sales orders needed'), null, '2000-01-01');
     fireEvent.click(screen.getByRole('button', { name: /^Re-plan$/i }));
     expect(
       await screen.findByText(/cut-off cannot be in the past/i),
@@ -252,9 +259,15 @@ describe('PlanHeaderTab - the cut-off prefill is clamped to today (review nit)',
   it('a stored cut-off already in the past opens the edit form at today, not the stale date', () => {
     renderTab(makeRun({ plan_horizon_date: '2000-01-01' }));
     fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
-    const input = screen.getByLabelText('To') as HTMLInputElement;
-    expect(input.value).not.toBe('2000-01-01');
-    expect(input.value >= input.min).toBe(true);
+    const input = screen.getByLabelText('Sales orders needed') as HTMLInputElement;
+    // Local calendar day, as the component's own `todayDateInputValue()` reads it.
+    const now = new Date();
+    const today = [now.getDate(), now.getMonth() + 1]
+      .map((n) => String(n).padStart(2, '0'))
+      .concat(String(now.getFullYear()))
+      .join('/');
+    expect(input.value).not.toContain('01/01/2000');
+    expect(input.value).toBe(`- ${today}`);
   });
 });
 

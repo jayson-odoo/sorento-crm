@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -79,7 +79,7 @@ export const DEMAND_OPTIONS = [
   { value: 'retail', label: 'Dealer' },
 ];
 
-/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date, not
+/** Today as `YYYY-MM-DD` - local calendar date, not
  *  `toISOString()`'s UTC one, which reads as yesterday or tomorrow depending on the
  *  browser's own offset. */
 function todayDateInputValue(): string {
@@ -337,32 +337,18 @@ export function RunPlanningModal({
                 project") - the range now narrows only the two project legs on an All
                 run; the retail SO-book leg plans every open line regardless of it, same
                 as an unhorizoned run today. */}
-            <Label className="mb-1 block">Project delivery range</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label htmlFor="plan-window-start" className="mb-1 block text-2xs text-muted-foreground">
-                  From
-                </Label>
-                <Input
-                  id="plan-window-start"
-                  type="date"
-                  value={horizonStart}
-                  onChange={(e) => setHorizonStart(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor="plan-cutoff" className="mb-1 block text-2xs text-muted-foreground">
-                  To
-                </Label>
-                <Input
-                  id="plan-cutoff"
-                  type="date"
-                  min={today}
-                  value={horizon}
-                  onChange={(e) => setHorizon(e.target.value)}
-                />
-              </div>
-            </div>
+            <Label htmlFor="plan-window-range" className="mb-1 block">Project delivery range</Label>
+            <DateRangePicker
+              portal
+              id="plan-window-range"
+              aria-label="Project delivery range"
+              from={horizonStart || null}
+              to={horizon || null}
+              onChange={({ from, to }) => {
+                setHorizonStart(from ?? '');
+                setHorizon(to ?? '');
+              }}
+            />
             <p className="mt-1 text-2xs text-muted-foreground">
               Empty = every open order counts.
             </p>
@@ -370,31 +356,18 @@ export function RunPlanningModal({
 
           {demand === 'project' ? (
             <div>
-              <Label className="mb-1 block">Inquiries raised</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label htmlFor="plan-raised-from" className="mb-1 block text-2xs text-muted-foreground">
-                    Raised from
-                  </Label>
-                  <Input
-                    id="plan-raised-from"
-                    type="date"
-                    value={raisedFrom}
-                    onChange={(e) => setRaisedFrom(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="plan-raised-to" className="mb-1 block text-2xs text-muted-foreground">
-                    Raised to
-                  </Label>
-                  <Input
-                    id="plan-raised-to"
-                    type="date"
-                    value={raisedTo}
-                    onChange={(e) => setRaisedTo(e.target.value)}
-                  />
-                </div>
-              </div>
+              <Label htmlFor="plan-raised-range" className="mb-1 block">Inquiries raised</Label>
+              <DateRangePicker
+                portal
+                id="plan-raised-range"
+                aria-label="Inquiries raised"
+                from={raisedFrom || null}
+                to={raisedTo || null}
+                onChange={({ from, to }) => {
+                  setRaisedFrom(from ?? '');
+                  setRaisedTo(to ?? '');
+                }}
+              />
               <p className="mt-1 text-2xs text-muted-foreground">
                 Empty = any raise date. Pre-selects the matching orders; the list still
                 shows them all.

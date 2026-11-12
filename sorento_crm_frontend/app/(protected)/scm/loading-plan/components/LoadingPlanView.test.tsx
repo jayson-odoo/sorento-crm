@@ -251,6 +251,15 @@ vi.mock('../../hooks/useSupplierCodeAliases', () => ({
 
 import { LoadingPlanView } from './LoadingPlanView';
 
+/** Type a range into the shared field as dd/mm/yyyy and commit it (blur); a null end is left
+ *  open (`dd/mm/yyyy -` / `- dd/mm/yyyy`) and two nulls empty the field. */
+function typeRange(input: HTMLElement, from: string | null, to: string | null) {
+  const dm = (iso: string) => iso.split('-').reverse().join('/');
+  const text = from && to ? `${dm(from)} - ${dm(to)}` : from ? `${dm(from)} -` : to ? `- ${dm(to)}` : '';
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.blur(input);
+}
+
 function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -478,8 +487,8 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
 
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
-    const to = await screen.findByLabelText('To');
-    fireEvent.change(to, { target: { value: '2026-10-31' } });
+    const range = await screen.findByLabelText('Sales orders needed');
+    typeRange(range, null, '2026-10-31');
     fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>
@@ -503,14 +512,12 @@ describe('LoadingPlanView (the record)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
 
     expect(await screen.findByText('Sales orders needed')).toBeTruthy();
-    const from = screen.getByLabelText('From') as HTMLInputElement;
-    const to = screen.getByLabelText('To') as HTMLInputElement;
-    expect(from.value).toBe('2026-10-01');
-    expect(to.value).toBe('2026-10-31');
+    const range = screen.getByLabelText('Sales orders needed') as HTMLInputElement;
+    expect(range.value).toBe('01/10/2026 - 31/10/2026');
 
     // A valid window: the new From stays before the existing To (2026-10-31) - a backwards
     // window disables Save (review round, 12 Sep) rather than being sent at all.
-    fireEvent.change(from, { target: { value: '2026-09-01' } });
+    typeRange(range, '2026-09-01', '2026-10-31');
     fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>

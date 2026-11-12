@@ -170,6 +170,13 @@ import SalesOrderDetailPage from '../page';
 import ConsignmentDetailPage from '../../../consignments/[id]/page';
 import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
 
+/** Type a YYYY-MM-DD day into the shared date field as dd/mm/yyyy and commit it (blur). */
+function typeDay(el: HTMLElement, iso: string) {
+  const [y, m, d] = iso.split('-');
+  fireEvent.change(el, { target: { value: `${d}/${m}/${y}` } });
+  fireEvent.blur(el);
+}
+
 function so(over: Partial<SalesOrder> = {}): SalesOrder {
   return {
     id: 'so-1',
@@ -561,6 +568,7 @@ describe('SalesOrderDetail - states', () => {
       'Delivery',
       'Transfers',
       'Related',
+      'History',
     ]);
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
       'data-state',
@@ -1168,7 +1176,7 @@ describe('SalesOrderDetail - the order type round trip', () => {
     renderDetail();
 
     clickEdit();
-    fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
+    typeDay(screen.getByLabelText('Order date'), '2026-05-04');
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: 'Sales order options' });
@@ -1355,8 +1363,8 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
     expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveTextContent('Normal');
     expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('JR001 · JEREMY');
-    expect(screen.getByLabelText('Order date')).toHaveValue('2026-07-16');
-    expect(screen.getByLabelText('Delivery date')).toHaveValue('2026-08-30');
+    expect(screen.getByLabelText('Order date')).toHaveValue('16/07/2026');
+    expect(screen.getByLabelText('Delivery date')).toHaveValue('30/08/2026');
 
     // Save / Cancel replace the pager and the way out; nothing else changed shape.
     expect(screen.getByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
@@ -1435,9 +1443,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     clickEdit();
-    fireEvent.change(screen.getByLabelText('Delivery date'), {
-      target: { value: '2026-09-15' },
-    });
+    typeDay(screen.getByLabelText('Delivery date'), '2026-09-15');
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: 'Sales order options' });
@@ -1525,9 +1531,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' }));
     fireEvent.click(await screen.findByRole('option', { name: 'BRW-IB - Brickworks Iskandar' }));
 
-    fireEvent.change(screen.getByLabelText('Delivery date on CW-BASIN-450'), {
-      target: { value: '2026-10-05' },
-    });
+    typeDay(screen.getByLabelText('Delivery date on CW-BASIN-450'), '2026-10-05');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Box' }));

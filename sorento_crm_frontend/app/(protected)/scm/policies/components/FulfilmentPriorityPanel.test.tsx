@@ -35,6 +35,14 @@ const DATA = {
 /** The column default of `scm.priority_policy.tba_date_from` (migration 443). */
 const DEFAULT_TBA = '2029-01-01';
 
+const ddmm = (iso: string) => iso.split('-').reverse().join('/');
+
+/** Type a YYYY-MM-DD day (or '' to empty the field) as dd/mm/yyyy and commit it (blur). */
+function typeDay(el: HTMLElement, iso: string) {
+  fireEvent.change(el, { target: { value: iso ? ddmm(iso) : '' } });
+  fireEvent.blur(el);
+}
+
 /** Local calendar day, the way the panel computes "today" for its own mirror check. */
 function todayIso(): string {
   const now = new Date();
@@ -90,8 +98,8 @@ describe('FulfilmentPriorityPanel', () => {
     expect(screen.getByLabelText('Purchase order sequence')).toHaveValue(1);
     expect(screen.getByLabelText('Project')).toHaveValue(1);
     expect(screen.getByLabelText('Retail')).toHaveValue(0.4);
-    expect(screen.getByLabelText(/Purchasing covers demand until/i)).toHaveValue('2026-10-31');
-    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(DEFAULT_TBA);
+    expect(screen.getByLabelText(/Purchasing covers demand until/i)).toHaveValue('31/10/2026');
+    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(ddmm(DEFAULT_TBA));
     // R5 dropped the cross-group caps, so the two inputs are gone entirely.
     expect(screen.queryByLabelText(/borrow cap/i)).not.toBeInTheDocument();
   });
@@ -101,9 +109,7 @@ describe('FulfilmentPriorityPanel', () => {
     render(<FulfilmentPriorityPanel />);
 
     fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText(/Purchasing covers demand until/i), {
-      target: { value: '2026-12-01' },
-    });
+    typeDay(screen.getByLabelText(/Purchasing covers demand until/i), '2026-12-01');
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
@@ -240,9 +246,7 @@ describe('FulfilmentPriorityPanel', () => {
     hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
     render(<FulfilmentPriorityPanel />);
 
-    fireEvent.change(screen.getByLabelText(/TBA date from/i), {
-      target: { value: isoDaysFromToday(-1) },
-    });
+    typeDay(screen.getByLabelText(/TBA date from/i), isoDaysFromToday(-1));
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
     expect(screen.getByText('TBA date from must be today or later.')).toBeInTheDocument();
@@ -281,9 +285,7 @@ describe('FulfilmentPriorityPanel', () => {
     });
     render(<FulfilmentPriorityPanel />);
 
-    fireEvent.change(screen.getByLabelText(/TBA date from/i), {
-      target: { value: isoDaysFromToday(-1) },
-    });
+    typeDay(screen.getByLabelText(/TBA date from/i), isoDaysFromToday(-1));
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
     expect(screen.getByText('TBA date from must be today or later.')).toBeInTheDocument();
@@ -294,7 +296,7 @@ describe('FulfilmentPriorityPanel', () => {
     hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
     render(<FulfilmentPriorityPanel />);
 
-    fireEvent.change(screen.getByLabelText(/TBA date from/i), { target: { value: todayIso() } });
+    typeDay(screen.getByLabelText(/TBA date from/i), todayIso());
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
@@ -309,10 +311,10 @@ describe('FulfilmentPriorityPanel', () => {
     // At the default there is nothing to reset to, so the button is not offered.
     expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/TBA date from/i), { target: { value: '2031-05-01' } });
+    typeDay(screen.getByLabelText(/TBA date from/i), '2031-05-01');
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
 
-    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(DEFAULT_TBA);
+    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(ddmm(DEFAULT_TBA));
     expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument();
   });
 
@@ -325,7 +327,7 @@ describe('FulfilmentPriorityPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(screen.getByLabelText(/Purchasing covers demand until/i)).toHaveValue('');
-    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(DEFAULT_TBA);
+    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(ddmm(DEFAULT_TBA));
   });
 
   it('an emptied date input saves the column default, never an empty value', async () => {
@@ -338,7 +340,7 @@ describe('FulfilmentPriorityPanel', () => {
     });
     render(<FulfilmentPriorityPanel />);
 
-    fireEvent.change(screen.getByLabelText(/TBA date from/i), { target: { value: '' } });
+    typeDay(screen.getByLabelText(/TBA date from/i), '');
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());

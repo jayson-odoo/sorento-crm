@@ -8,7 +8,7 @@ import { LoaderCircle, SquarePen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardHeading, CardTitle, CardToolbar } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -57,7 +57,7 @@ export function skippedInactiveNotice(skipped: string[], fellBack: boolean): str
   return fellBack ? `${msg}, planning every active location instead` : msg;
 }
 
-/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date. */
+/** Today as `YYYY-MM-DD` - local calendar date. */
 function todayDateInputValue(): string {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -135,14 +135,13 @@ export function PlanHeaderTab({
 
   const beginEdit = () => {
     // Clamped to today (review nit): a cut-off the run was launched with can already be in
-    // the PAST by the time someone edits it, and the date input's own `min={today}` would
-    // otherwise show that stored value as invalid the instant the form opens - blocking a
-    // scope-only edit that never touched the date at all. Today is the same floor the field
-    // already enforces on submit, so clamping the prefill to it changes nothing about what
-    // the buyer is allowed to pick.
+    // the PAST by the time someone edits it, and the submit check below would otherwise
+    // refuse that stored value the instant the form opens - blocking a scope-only edit that
+    // never touched the date at all. Today is the same floor the form enforces on submit, so
+    // clamping the prefill to it changes nothing about what the buyer is allowed to pick.
     const stored = run.plan_horizon_date ?? '';
     setHorizon(stored && stored > today ? stored : stored ? today : '');
-    // S4: the START carries no `min` floor, so it is never clamped the way the cut-off
+    // S4: the START carries no past-date floor, so it is never clamped the way the cut-off
     // above is - a window that already started in the past is still a real window.
     setHorizonStart(run.plan_horizon_start ?? '');
     const prefill = run.is_all_warehouses ? [] : (run.warehouse_codes ?? []);
@@ -326,31 +325,16 @@ export function PlanHeaderTab({
             </Field>
             <Field label="Sales orders needed">
               {isEditing ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="plan-header-window-start" className="mb-0.5 block text-2xs text-muted-foreground">
-                      From
-                    </Label>
-                    <Input
-                      id="plan-header-window-start"
-                      type="date"
-                      value={horizonStart}
-                      onChange={(e) => setHorizonStart(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="plan-header-cutoff" className="mb-0.5 block text-2xs text-muted-foreground">
-                      To
-                    </Label>
-                    <Input
-                      id="plan-header-cutoff"
-                      type="date"
-                      min={today}
-                      value={horizon}
-                      onChange={(e) => setHorizon(e.target.value)}
-                    />
-                  </div>
-                </div>
+                <DateRangePicker
+                  id="plan-header-window-range"
+                  aria-label="Sales orders needed"
+                  from={horizonStart || null}
+                  to={horizon || null}
+                  onChange={({ from, to }) => {
+                    setHorizonStart(from ?? '');
+                    setHorizon(to ?? '');
+                  }}
+                />
               ) : (
                 <span className="tabular-nums">
                   {describeWindow(run.plan_horizon_start, run.plan_horizon_date)}

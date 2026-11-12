@@ -145,6 +145,13 @@ vi.mock('../../services/scmOptionsService', () => ({
 
 import { SalesOrderFormModal } from './SalesOrderFormModal';
 
+/** Type a YYYY-MM-DD day into the shared date field as dd/mm/yyyy and commit it (blur). */
+function typeDay(el: HTMLElement, iso: string) {
+  const [y, m, d] = iso.split('-');
+  fireEvent.change(el, { target: { value: `${d}/${m}/${y}` } });
+  fireEvent.blur(el);
+}
+
 async function renderModal(
   over: Partial<React.ComponentProps<typeof SalesOrderFormModal>> = {},
 ) {
@@ -164,9 +171,8 @@ async function renderModal(
   return { onSubmit, onOpenChange };
 }
 
-/** The date field's Label carries no `htmlFor`, and the dialog renders through a portal. */
-const dateInput = () =>
-  document.body.querySelector('input[type="date"]') as HTMLInputElement;
+/** The shared date field, found by its label. */
+const dateInput = () => screen.getByLabelText('Requested delivery date');
 
 /** Fill the two required header fields, so a test about the lines is about the lines. */
 function fillHeader() {
@@ -253,7 +259,7 @@ describe('SalesOrderFormModal - payload and validation are unchanged', () => {
     const { onSubmit } = await renderModal();
     fillHeader();
     fireEvent.change(screen.getByLabelText('Select priority'), { target: { value: 'urgent' } });
-    fireEvent.change(dateInput(), { target: { value: '2026-09-30' } });
+    typeDay(dateInput(), '2026-09-30');
     fireEvent.click(screen.getByRole('button', { name: FIRST_PAGE[0].label }));
     fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '12' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create sales order' }));

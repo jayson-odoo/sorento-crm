@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 
 /**
  * ONE control for a date range. Never two date fields side by side.
@@ -86,9 +86,9 @@ function dateFromParts(d: string, m: string, y: string): Date | undefined {
 }
 
 /** Typed `DD/MM/YYYY - DD/MM/YYYY`, a single `DD/MM/YYYY` (from = to = that day),
- *  `DD/MM/YYYY -` (From only) or `- DD/MM/YYYY` (To only). A day that does not exist or any
- *  other text is unparseable and the caller reverts the input; empty text is handled by the
- *  caller, which clears both ends. */
+ *  `DD/MM/YYYY -` (From only) or `- DD/MM/YYYY` (To only). A day that does not exist, a full
+ *  range whose end is before its start, or any other text is unparseable and the caller
+ *  reverts the input; empty text is handled by the caller, which clears both ends. */
 function parseRangeInput(raw: string): { from: Date | null; to: Date | null } | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -107,7 +107,7 @@ function parseRangeInput(raw: string): { from: Date | null; to: Date | null } | 
     const [, d1, m1, y1, d2, m2, y2] = range;
     const from = dateFromParts(d1, m1, y1);
     const to = dateFromParts(d2, m2, y2);
-    return from && to ? { from, to } : null;
+    return from && to && from.getTime() <= to.getTime() ? { from, to } : null;
   }
   const single = SINGLE_INPUT_RE.exec(trimmed);
   if (single) {
@@ -128,6 +128,10 @@ export interface DateRangePickerProps {
   className?: string;
   id?: string;
   'aria-label'?: string;
+  /** Render the calendar at the document root. Needed inside a Dialog: its transformed,
+   *  `overflow-y-auto` box otherwise lays the calendar out inside itself, clipped and
+   *  scrolling (same as `DatePicker`). */
+  portal?: boolean;
 }
 
 export function DateRangePicker({
@@ -139,6 +143,7 @@ export function DateRangePicker({
   className,
   id,
   'aria-label': ariaLabel,
+  portal = false,
 }: DateRangePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState(() => formatRangeLabel(from, to));
@@ -177,6 +182,38 @@ export function DateRangePicker({
     }
   };
 
+  const calendar = (
+    <PopoverContent
+      className="w-auto p-0"
+      align="start"
+      // Portalled, it is placed against the viewport: keep it off the screen edge.
+      {...(portal ? { collisionPadding: 8 } : {})}
+    >
+      <Calendar
+        mode="range"
+        selected={selected}
+        onSelect={(range) =>
+          onChange({ from: toIsoDate(range?.from), to: toIsoDate(range?.to) })
+        }
+        autoFocus
+        numberOfMonths={1}
+      />
+      <div className="flex items-center justify-between border-t border-border px-3 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => onChange({ from: null, to: null })}
+        >
+          Clear
+        </Button>
+        <Button type="button" size="sm" onClick={() => setOpen(false)}>
+          Done
+        </Button>
+      </div>
+    </PopoverContent>
+  );
+
   return (
     <div className={cn('flex min-w-0 gap-2', className)}>
       <Input
@@ -210,30 +247,7 @@ export function DateRangePicker({
             <CalendarIcon className="size-4" aria-hidden />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <Calendar
-            mode="range"
-            selected={selected}
-            onSelect={(range) =>
-              onChange({ from: toIsoDate(range?.from), to: toIsoDate(range?.to) })
-            }
-            autoFocus
-            numberOfMonths={1}
-          />
-          <div className="flex items-center justify-between border-t border-border px-3 py-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => onChange({ from: null, to: null })}
-            >
-              Clear
-            </Button>
-            <Button type="button" size="sm" onClick={() => setOpen(false)}>
-              Done
-            </Button>
-          </div>
-        </PopoverContent>
+        {portal ? <PopoverPortal>{calendar}</PopoverPortal> : calendar}
       </Popover>
     </div>
   );

@@ -43,7 +43,7 @@ import AuditTrail from '@/components/audit/AuditTrail';
 import { useHasPermission } from '@/hooks/usePermissions';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -913,26 +913,26 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="date"
-                aria-label={`Delivery date on ${row.original.sku}`}
+              <DatePickerField
+                ariaLabel={`Delivery date on ${row.original.sku}`}
+                inputClassName="h-8"
+                portal
                 value={draft.expected_date}
-                onChange={(e) =>
+                onChange={(v) =>
                   setLineDrafts((prev) => ({
                     ...prev,
                     [row.original.id]: {
                       ...draftOrRow(prev, row.original),
-                      expected_date: e.target.value,
+                      expected_date: v ?? '',
                     },
                   }))
                 }
-                className="h-8"
               />
             );
           }
           return row.original.expected_date ? fmtDate(row.original.expected_date) : '-';
         },
-        size: 150,
+        size: 190,
         meta: { headerTitle: 'Delivery date' },
       },
       {
@@ -1205,12 +1205,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                   measured supplier lead time reads it (`scm.receipt_lead_v`). */}
               <Field label="Order date" htmlFor={isEditing ? 'po-edit-order-date' : undefined}>
                 {isEditing ? (
-                  <Input
+                  <DatePickerField
                     id="po-edit-order-date"
-                    type="date"
+                    inputClassName="h-8"
                     value={orderDate}
-                    onChange={(e) => setOrderDate(e.target.value)}
-                    className="h-8"
+                    onChange={(v) => setOrderDate(v ?? '')}
                   />
                 ) : (
                   fmtDate(po.order_date)
@@ -1221,12 +1220,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 htmlFor={isEditing ? 'po-edit-expected-date' : undefined}
               >
                 {isEditing ? (
-                  <Input
+                  <DatePickerField
                     id="po-edit-expected-date"
-                    type="date"
+                    inputClassName="h-8"
                     value={expectedDate}
-                    onChange={(e) => setExpectedDate(e.target.value)}
-                    className="h-8"
+                    onChange={(v) => setExpectedDate(v ?? '')}
                   />
                 ) : po.expected_date ? (
                   fmtDate(po.expected_date)

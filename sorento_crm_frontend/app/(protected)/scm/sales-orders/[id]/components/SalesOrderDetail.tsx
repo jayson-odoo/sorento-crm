@@ -17,6 +17,7 @@ import {
   CalendarRange,
   Columns3,
   FileText,
+  History,
   Link2,
   ListOrdered,
   LoaderCircleIcon,
@@ -43,10 +44,11 @@ import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visib
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
+import SalesOrderHistory from '@/components/audit/SalesOrderHistory';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -1263,26 +1265,26 @@ export function SalesOrderDetail({
           if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="date"
-                aria-label={`Delivery date on ${row.original.sku}`}
+              <DatePickerField
+                ariaLabel={`Delivery date on ${row.original.sku}`}
+                inputClassName="h-8"
+                portal
                 value={draft.required_date}
-                onChange={(e) =>
+                onChange={(v) =>
                   setLineDrafts((prev) => ({
                     ...prev,
                     [row.original.id]: {
                       ...draftOrRow(prev, row.original),
-                      required_date: e.target.value,
+                      required_date: v ?? '',
                     },
                   }))
                 }
-                className="h-8"
               />
             );
           }
           return row.original.required_date ? fmtDate(row.original.required_date) : '-';
         },
-        size: 150,
+        size: 190,
         meta: { headerTitle: 'Delivery date' },
       },
       {
@@ -1902,6 +1904,10 @@ export function SalesOrderDetail({
             <Link2 />
             <span>Related</span>
           </TabsTrigger>
+          <TabsTrigger value="history">
+            <History />
+            <span>History</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1985,12 +1991,11 @@ export function SalesOrderDetail({
                   demand trend reads 24 months of this column. */}
               <Field label="Order date" htmlFor={isEditing ? 'so-edit-order-date' : undefined}>
                 {isEditing ? (
-                  <Input
+                  <DatePickerField
                     id="so-edit-order-date"
-                    type="date"
+                    inputClassName="h-8"
                     value={orderDate}
-                    onChange={(e) => setOrderDate(e.target.value)}
-                    className="h-8"
+                    onChange={(v) => setOrderDate(v ?? '')}
                   />
                 ) : (
                   fmtDate(so.order_date)
@@ -2003,12 +2008,11 @@ export function SalesOrderDetail({
                 htmlFor={isEditing ? 'so-edit-requested-date' : undefined}
               >
                 {isEditing ? (
-                  <Input
+                  <DatePickerField
                     id="so-edit-requested-date"
-                    type="date"
+                    inputClassName="h-8"
                     value={requestedDate}
-                    onChange={(e) => setRequestedDate(e.target.value)}
-                    className="h-8"
+                    onChange={(v) => setRequestedDate(v ?? '')}
                   />
                 ) : so.requested_delivery_date ? (
                   fmtDate(so.requested_delivery_date)
@@ -2399,6 +2403,10 @@ export function SalesOrderDetail({
         {/* DOC-RELATIONS: the delivery orders and billing documents of this order, one table. */}
         <TabsContent value="related" className="mt-0 focus-visible:outline-none">
           <RelatedDocumentsPanel kind="sales_order" id={so.id} />
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-0 focus-visible:outline-none">
+          <SalesOrderHistory source="scm" id={so.id} />
         </TabsContent>
       </Tabs>
 

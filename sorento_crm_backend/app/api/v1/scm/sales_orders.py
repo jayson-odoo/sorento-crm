@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas import scm_orders as scm_orders_schemas
+from app.schemas.order_inquiry_history import OrderInquiryHistoryResponse
 from app.schemas.scm_orders import (
     CreateDoResponse,
     SalesAgentOption,
@@ -199,6 +200,27 @@ def get_sales_order_deliveries(so_id: str, db: Session = Depends(get_db), _user:
     except ValueError:
         raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
     return so_line_history(db, SalesOrderService(db)._get_or_404(so_id))
+
+
+@router.get("/sales-orders/{so_id}/history", response_model=OrderInquiryHistoryResponse)
+def get_sales_order_history(
+    so_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission("scm.dashboard.view")),
+):
+    """The detail page's History tab (STANDARD-HISTORY wave 2): the history of the project SO
+    of this order, empty when it has none. Staff session only (no API key)."""
+    import uuid
+
+    from app.services import sales_order_history_service
+    from app.services.error_handler import AppException
+
+    try:
+        uuid.UUID(str(so_id))
+    except ValueError:
+        raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
+    SalesOrderService(db)._get_or_404(so_id)
+    return {"events": sales_order_history_service.history_for_so(db, so_id)}
 
 
 @router.get("/sales-orders/{so_id}/related")

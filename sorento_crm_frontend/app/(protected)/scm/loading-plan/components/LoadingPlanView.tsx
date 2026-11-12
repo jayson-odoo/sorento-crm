@@ -21,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -722,31 +722,18 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-2">
-            <Label className="text-xs">Sales orders needed</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label htmlFor="plan-cutoff-start" className="mb-1 block text-2xs text-muted-foreground">
-                  From
-                </Label>
-                <Input
-                  id="plan-cutoff-start"
-                  type="date"
-                  value={cutOffStartDraft}
-                  onChange={(e) => setCutOffStartDraft(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor="plan-cutoff" className="mb-1 block text-2xs text-muted-foreground">
-                  To
-                </Label>
-                <Input
-                  id="plan-cutoff"
-                  type="date"
-                  value={cutOffDraft}
-                  onChange={(e) => setCutOffDraft(e.target.value)}
-                />
-              </div>
-            </div>
+            <Label htmlFor="plan-cutoff-range" className="text-xs">Sales orders needed</Label>
+            <DateRangePicker
+              portal
+              id="plan-cutoff-range"
+              aria-label="Sales orders needed"
+              from={cutOffStartDraft || null}
+              to={cutOffDraft || null}
+              onChange={({ from, to }) => {
+                setCutOffStartDraft(from ?? '');
+                setCutOffDraft(to ?? '');
+              }}
+            />
             <p className="text-2xs text-muted-foreground">Empty = every open order counts.</p>
             {cutOffWindowInvalid ? (
               <p className="text-2xs text-destructive">

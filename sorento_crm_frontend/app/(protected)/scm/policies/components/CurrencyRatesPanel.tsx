@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -237,11 +238,11 @@ export function CurrencyRatesPanel() {
             </div>
             <div>
               <Label htmlFor="fx-asof">As at</Label>
-              <Input
+              <DatePickerField
                 id="fx-asof"
-                type="date"
+                portal
                 value={draft?.as_of ?? ''}
-                onChange={(e) => setDraft((d) => (d ? { ...d, as_of: e.target.value } : d))}
+                onChange={(v) => setDraft((d) => (d ? { ...d, as_of: v ?? '' } : d))}
               />
             </div>
             <div>

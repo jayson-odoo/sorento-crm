@@ -23,7 +23,7 @@ import {
   type ImportMappingProbe,
   type ImportMappingSelection,
 } from '@/components/common/ImportColumnMapper';
-import { Input } from '@/components/ui/input';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -408,39 +408,19 @@ export function PlanContainerDialog({
           </div>
 
           <div>
-            <Label className="mb-1 block text-xs">Sales orders needed</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label
-                  htmlFor="plan-container-horizon-start"
-                  className="mb-1 block text-2xs text-muted-foreground"
-                >
-                  From
-                </Label>
-                <Input
-                  id="plan-container-horizon-start"
-                  type="date"
-                  value={planHorizonStart}
-                  disabled={busy}
-                  onChange={(e) => setPlanHorizonStart(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label
-                  htmlFor="plan-container-horizon"
-                  className="mb-1 block text-2xs text-muted-foreground"
-                >
-                  To
-                </Label>
-                <Input
-                  id="plan-container-horizon"
-                  type="date"
-                  value={planHorizonDate}
-                  disabled={busy}
-                  onChange={(e) => setPlanHorizonDate(e.target.value)}
-                />
-              </div>
-            </div>
+            <Label htmlFor="plan-container-horizon-range" className="mb-1 block text-xs">Sales orders needed</Label>
+            <DateRangePicker
+              portal
+              id="plan-container-horizon-range"
+              aria-label="Sales orders needed"
+              disabled={busy}
+              from={planHorizonStart || null}
+              to={planHorizonDate || null}
+              onChange={({ from, to }) => {
+                setPlanHorizonStart(from ?? '');
+                setPlanHorizonDate(to ?? '');
+              }}
+            />
             <p className="mt-1 text-2xs text-muted-foreground">
               Empty = every open order counts.
             </p>

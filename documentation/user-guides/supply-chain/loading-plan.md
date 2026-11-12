@@ -14,11 +14,11 @@ Click **Upload** in the list toolbar (the same button appears as the empty-state
 fresh list). The dialog is titled **Plan a container**:
 
 * **Supplier** - required.
-* **Sales orders needed** - **From** and **To** dates, both optional. The helper text reads
-  "Empty = every open order counts." A sales order with no date of its own always counts,
-  whichever dates you set. The **To** date cannot be before the **From** date - the dialog
-  refuses with "The To date cannot be before the From date." rather than silently netting
-  nothing.
+* **Sales orders needed** - one date range field, typed as `01/11/2026 - 30/11/2026` or picked
+  from the calendar button; either end can be left empty (`01/11/2026 -` or `- 30/11/2026`).
+  The helper text reads "Empty = every open order counts." A sales order with no date of its
+  own always counts, whichever dates you set. An end typed before the start is not accepted:
+  the field goes back to its last range rather than silently netting nothing.
 * **Document** - **Stock list**, **Proforma invoice**, or **No file**. Picking a document shows
   a drop zone; picking **No file** does not, and skips straight to starting the plan from what
   is already on file for this supplier.
@@ -141,9 +141,8 @@ sheet tabs keeps the same search applied. A PDF or image file shows no search bo
 
 Open the gear menu and pick **Change cut-off**. The dialog is titled **Change the sales order
 cut-off**, with the note "The suggestion is worked out again against the new window." It carries
-the same **Sales orders needed** **From** / **To** fields as **Plan a container**, with the same
-"Empty = every open order counts." helper and the same guard against a **To** date before
-**From**. Click **Save cut-off** to re-work the suggestion against the new window; this drops
+the same **Sales orders needed** date range field as **Plan a container**, with the same
+"Empty = every open order counts." helper and the same refusal of an end before the start. Click **Save cut-off** to re-work the suggestion against the new window; this drops
 any quantities you had typed but not yet saved, the same as **Refresh suggestion** does.
 
 A plan started before this window existed keeps whatever **To** date it already had, with no
