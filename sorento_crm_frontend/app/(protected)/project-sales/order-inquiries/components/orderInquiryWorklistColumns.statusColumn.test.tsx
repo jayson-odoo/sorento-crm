@@ -97,3 +97,26 @@ describe('H2: the Lines worklist Status column', () => {
     expect(within(screen.getByTestId('row-d')).getByText('Done')).toBeInTheDocument();
   });
 });
+
+describe('R3: the Status column follows the line pill precedence', () => {
+  it('prints "Line cancelled" for a cancelled line that is neither waiting nor an SO cancel', () => {
+    renderStatus([
+      worklistRow({
+        id: 'lc',
+        line_cancelled: true,
+        waiting_for_cs: false,
+        so_cancelled: false,
+      } as Partial<OrderInquiryWorklistRow>),
+    ]);
+    expect(within(screen.getByTestId('row-lc')).getByText('Line cancelled')).toBeInTheDocument();
+  });
+
+  it('keeps Waiting for CS above SO cancelled above Line cancelled', () => {
+    renderStatus([
+      worklistRow({ id: 'a', line_cancelled: true, so_cancelled: true, waiting_for_cs: true } as Partial<OrderInquiryWorklistRow>),
+      worklistRow({ id: 'b', line_cancelled: true, so_cancelled: true, waiting_for_cs: false } as Partial<OrderInquiryWorklistRow>),
+    ]);
+    expect(within(screen.getByTestId('row-a')).getByText('Waiting for CS')).toBeInTheDocument();
+    expect(within(screen.getByTestId('row-b')).getByText('SO cancelled')).toBeInTheDocument();
+  });
+});

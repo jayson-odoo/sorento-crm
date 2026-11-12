@@ -602,3 +602,83 @@ def test_ac_v2_s1_a_date_change_put_back_while_the_location_also_changed_stays_w
     )
 
     assert _wl_row(env, w).get("waiting_for_cs") is True
+
+
+# ================================================================ re-review should-fixes (R1..R3)
+def test_ac_v2_r1_a_header_with_only_a_waiting_row_has_no_lines_to_confirm(env):
+    w = _world(env, "date")  # the row is still awaiting purchasing, but waiting for CS
+
+    mine = [h for h in _headers(env, state="all") if h["id"] == w.inquiry_id]
+    assert len(mine) == 1, mine
+    assert mine[0]["lines_to_confirm"] == 0, mine[0]
+    assert [r["id"] for r in _worklist(env, w, ack="to_confirm")] == [], "consistent with the filter"
+    detail = env.client.get(f"{BASE}/order-inquiry-headers/{w.inquiry_id}")
+    assert detail.status_code == 200, detail.text
+    if "lines_to_confirm" in detail.json():
+        assert detail.json()["lines_to_confirm"] == 0, detail.json()
+
+
+def test_ac_v2_r2_the_header_status_sort_groups_by_the_status_each_header_reads(env):
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    _world(env)  # outstanding: an awaiting row, nothing pending
+    _world(env, "date", ack=ACK_ACKNOWLEDGED)  # waiting_for_cs
+    _world(env, ack=ACK_ACKNOWLEDGED)  # completed
+
+    asc = [h["status"] for h in _headers(env, state="all", sort="status", dir="asc")]
+    desc = [h["status"] for h in _headers(env, state="all", sort="status", dir="desc")]
+
+    assert asc == ["completed", "outstanding", "waiting_for_cs"], asc
+    assert desc == ["waiting_for_cs", "outstanding", "completed"], desc
+
+
+def _status_text(row):
+    if row.get("waiting_for_cs"):
+        return "Waiting for CS"
+    if row.get("so_cancelled"):
+        return "SO cancelled"
+    if row.get("line_cancelled"):
+        return "Line cancelled"
+    return {"acknowledged": "Done", "rejected": "Rejected"}.get(row["ack_state"], "To order")
+
+
+def _five_status_worlds(env):
+    from sqlalchemy import text
+
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    _world(env, "date")  # Waiting for CS
+    _world(env)  # To order
+    _world(env, ack=ACK_ACKNOWLEDGED)  # Done
+    rejected = _world(env)
+    env.db.execute(
+        text("UPDATE order_inquiry_rows SET ack_state = 'rejected' WHERE id = :i"),
+        {"i": rejected.row_id},
+    )
+    cancelled = _world(env)
+    env.db.execute(
+        text("UPDATE sales_order_lines SET line_status = 'cancelled' WHERE id = :i"),
+        {"i": str(cancelled.line_x["id"])},
+    )
+    env.db.commit()
+    return cancelled
+
+
+@pytest.mark.parametrize("direction", ("asc", "desc"))
+def test_ac_v2_r3_the_worklist_status_sort_follows_the_text_the_column_shows(env, direction):
+    w = _five_status_worlds(env)
+
+    full = [_status_text(r) for r in _worklist(env, w, sort="status", dir=direction)]
+    paged = []
+    for page in (1, 2, 3):
+        paged += [
+            _status_text(r)
+            for r in _worklist(env, w, sort="status", dir=direction, limit=2, page=page)
+        ]
+
+    expected = sorted(full, reverse=(direction == "desc"))
+    assert sorted(set(full)) == [
+        "Done", "Line cancelled", "Rejected", "To order", "Waiting for CS",
+    ], full
+    assert full == expected, full
+    assert paged == expected, paged
