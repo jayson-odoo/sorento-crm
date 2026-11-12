@@ -52,28 +52,23 @@ function setup() {
 }
 
 describe('usePriceTagLineEditor Item options (bug 17)', () => {
-  it('labels each option "CODE  RM <list price>", the price only when known and above 0', async () => {
+  it('labels each Item option with the code only: no name, no price (AC-13)', async () => {
     const { result } = setup();
     const options = await result.current.editor.fetchItemOptions('');
     expect(options.map((o) => o.label)).toEqual([
-      'SRTWT7634-BL  RM 1,050',
+      'SRTWT7634-BL',
       'SRTSH2626-GY',
       'SRTZERO-1',
-      'SET-ONE  RM 2,400',
+      'SET-ONE',
       'SET-TWO',
     ]);
   });
 
-  it('shows the name only when it adds something, and never the word Product', async () => {
+  it('has no second line; a set carries a Set badge, a product none (AC-13)', async () => {
     const { result } = setup();
     const options = await result.current.editor.fetchItemOptions('');
-    expect(options.map((o) => o.description)).toEqual([
-      'ZZT Basin Mixer',
-      undefined,
-      undefined,
-      'Set - ZZT Vanity Set',
-      'Set',
-    ]);
+    expect(options.map((o) => o.description)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(options.map((o) => o.badgeText)).toEqual([undefined, undefined, undefined, 'Set', 'Set']);
   });
 
   it('carries the code on the option itself', async () => {
