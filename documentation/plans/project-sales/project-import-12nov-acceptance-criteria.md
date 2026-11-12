@@ -122,7 +122,11 @@ Terms:
   - a PS number twice in the file is `error: ps_duplicate_in_file` on both rows;
   - two CRM POs with the PS number is `error: ps_duplicate_in_crm`;
   - a PO number already on the target project under another PS number is `needs_review: po_number_taken`.
-- AC-PI-31: Create-only: no existing project or PO field is ever updated, and a blank cell never clears anything. The one exception is the SO link of AC-PI-29.
+- AC-PI-31: Create-only: no existing project or PO field is ever updated, and a blank cell never clears anything. Two exceptions:
+  - the SO link of AC-PI-29;
+  - the CRM's own PO rule: the first PO added to an existing linked project moves it to "PO received" and Won (`create_po`). Revert removes the PO but does not move the status back, because the PO was real (security N6, review minor 3).
+- AC-PI-31a: A bulk "create" on project lines without a common title gives each line its own title, so N lines make N projects. Lines become one project only when a person gives them the same title (review M5).
+- AC-PI-31b: A PO date given as unreadable text imports with no date and is flagged `po_date_unreadable`. A column N cell holding an SO number and text keeps both: the SO is linked, and the text goes into the notes.
 - AC-PI-32: Importing the same file twice: the second run has zero created and zero updated rows, every imported row is `unchanged`, and the project and PO counts are equal before and after.
 - AC-PI-33: One bad row never fails the batch: each row runs in a savepoint, a row error is reported, and the rest of the batch goes on. Rows that need review are left out and counted in the result notice.
 - AC-PI-34: No notification, email, WhatsApp, outbound message or project task is written by an import. The shared invoiced sales total (`app/services/sales/invoiced_sales.py`) is unchanged.
@@ -136,6 +140,11 @@ Terms:
   - a record that has a child record not created by the run (a quotation, another PO).
 
   The run status becomes `reverted`.
+- AC-PI-37a: These are also kept as `revert_kept_edited`:
+  - a record with ANY child row the run did not create (tasks, samples, PO versions, delivery schedules, order inquiries, amendments and every other cascading child);
+  - a PO whose SO was adopted before the run.
+
+  Revert puts back only the lines the run itself rewrote from "create" to "link". Any other line whose target was removed is deleted and reads "To do" again (security B1, review RB1).
 - AC-PI-38: A second revert of the same run changes nothing. A preview-only run cannot be reverted.
 
 ## Access
@@ -146,6 +155,15 @@ Terms:
   - Both are in `app/rbac/permission_registry.py` and granted to admin by default.
   - A user without the permission gets 403.
 - AC-PI-40: Runs and maps are company-scoped. A run or map of another company reads as 404, and its saved maps are never offered.
+- AC-PI-40a: Upload limits and import safety:
+  - an upload whose uncompressed size, compression ratio, declared sheet size, rows or sheet count exceeds the caps is refused with a 422;
+  - person targets must be active users of the run's company;
+  - the import job is queued only after the request commits;
+  - a redelivered job never changes an imported run;
+  - a parked revert re-checks `projects.import.run` when it commits;
+  - column choices are saved only for headings in the run's file.
+
+  An import-only user sees the names of the company's projects, customers and parties in the pickers. That is accepted: the tool is admin-only (security N5).
 - AC-PI-41: No log line or error message carries a customer, project or person name beyond what the screen shows the same user.
 
 ## Screen (mock v1)
