@@ -1371,6 +1371,8 @@ export interface BoardContribution {
    * path, which is why it counts toward Confirm (N) while carrying no decision of its own.
    */
   cancelled?: boolean;
+  /** The pending planning-change batch that names this line, when there is one. */
+  pending_change_batch_id?: string | null;
   /** SO-CANCEL-LINE: set when CS transferred the line to Cancel SO. `cancelled_by` is a name. */
   cancelled_at?: string | null;
   cancelled_by?: string | null;

@@ -824,6 +824,12 @@ export function FulfilmentBoardPanel({
     () => board.data?.contributions ?? [],
     [board.data],
   );
+  // OI-WHOLE-SO-CANCEL (AC-WC-9): an order whose only lines are pending cancelled ones comes
+  // back with contributions and no cells; that is still a board with something to confirm.
+  const hasPendingCancelled = React.useMemo(
+    () => allContributions.some((c) => c.cancelled && c.pending_change_batch_id),
+    [allContributions],
+  );
   const purchasingRejected = React.useMemo(
     () => rejectedLineCount(allContributions),
     [allContributions],
@@ -3191,7 +3197,7 @@ export function FulfilmentBoardPanel({
         data-testid="board-action-bar"
         className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
       >
-        {board.data && board.data.cells.length > 0 ? (
+        {board.data && (board.data.cells.length > 0 || hasPendingCancelled) ? (
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span
               data-testid="board-confirm-summary"
@@ -3406,7 +3412,7 @@ export function FulfilmentBoardPanel({
           {/* An undo countdown must keep showing even once its own commit has cleared the
               board down to zero cells (review round) - the Confirm slot this occupies is
               not gated on there being anything left to confirm while it is counting down. */}
-          {board.data && (board.data.cells.length > 0 || undoAction.pending) ? (
+          {board.data && (board.data.cells.length > 0 || hasPendingCancelled || undoAction.pending) ? (
             <DeferredActionButton
               pending={undoAction.pending}
               verb="Undoing"
@@ -3797,7 +3803,7 @@ export function FulfilmentBoardPanel({
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-72 w-full" />
         </div>
-      ) : !board.data || board.data.cells.length === 0 ? (
+      ) : !board.data || (board.data.cells.length === 0 && !hasPendingCancelled) ? (
         <Card>
           <CardContent className="px-6 py-10 text-center">
             <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
