@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -41,7 +42,10 @@ function Rows({ rows }: { rows: ([string, ReactNode] | [string, ReactNode, strin
         <tbody>
           {rows.map(([label, value, id]) => (
             <tr key={id ?? label} className="border-b border-border last:border-0">
-              <td className="py-1.5 pe-2">{label}</td>
+              {/* a long name (a project title can run to hundreds of characters) clamps to one line, full text on hover or the eye */}
+              <td className="w-full max-w-0 py-1.5 pe-2">
+                <TruncatedTextCell text={label} dialogTitle="Full name" />
+              </td>
               <td className="py-1.5 text-end tabular-nums">{value}</td>
             </tr>
           ))}
@@ -161,7 +165,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
         content: (
           <Rows
             rows={[
-              ...bought.map((shop): [string, ReactNode] => [shopLabel(shop), shopToday(shop)]),
+              ...bought.map((shop): [string, ReactNode, string] => [shopLabel(shop), shopToday(shop), shop.key]),
               ...(others ? ([[`+ ${others} more dealers`, '']] as [string, ReactNode][]) : []),
             ]}
           />
@@ -324,7 +328,9 @@ export function TownLightbox({
     <Dialog open={shown !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className={wide ? 'sm:max-w-2xl' : 'sm:max-w-md'}>
         <DialogHeader className="mb-2 space-y-0 pe-8 text-start">
-          <DialogTitle>{shown?.title}</DialogTitle>
+          <DialogTitle>
+            <TruncatedTextCell text={shown?.title} lines={2} dialogTitle="Full name" />
+          </DialogTitle>
           <DialogDescription className={shown?.meta ? 'text-xs' : 'sr-only'}>
             {shown?.meta || shown?.title}
           </DialogDescription>

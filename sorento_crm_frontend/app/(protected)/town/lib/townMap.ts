@@ -44,7 +44,7 @@ export const STATES: StateDef[] = [
   { key: 'ns', name: 'Negeri Sembilan', e: 36, n: -58, rx: 13, ry: 11, rot: 30, parent: 'putrajaya' },
   { key: 'melaka', name: 'Melaka', e: 18, n: -80, rx: 8, ry: 7, rot: 30, parent: 'ns' },
   { key: 'johor', name: 'Johor', e: 68, n: -88, rx: 26, ry: 17, rot: 10, parent: 'ns' },
-  { key: 'notset', name: 'State not set', e: -42, n: -58, rx: 8, ry: 7, rot: 0 },
+  { key: 'notset', name: 'State not set', e: -44, n: -60, rx: 12, ry: 9, rot: 0 },
   { key: 'sarawak', name: 'Sarawak', e: 205, n: -6, rx: 48, ry: 17, rot: 25 },
   { key: 'labuan', name: 'Labuan', e: 246, n: 56, rx: 4, ry: 4, rot: 0 },
   { key: 'sabah', name: 'Sabah', e: 282, n: 70, rx: 26, ry: 20, rot: 35 },

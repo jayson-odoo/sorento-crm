@@ -107,4 +107,27 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/);
     error.mockRestore();
   });
+
+  it('clamps a long project title: 2 lines as the popup title, 1 line in a list, the full text on hover (owner rule, 28 Oct)', () => {
+    const long = 'Cadangan Pembangunan '.repeat(27).trim();
+    const snap = { ...FULL, projects: { ...FULL.projects, sites: [{ ...SITE, name: long }] } };
+    const { unmount } = render(<TownLightbox snapshot={snap as never} target={{ kind: 'site', key: 'p1' }} onClose={() => undefined} />);
+    const title = screen.getByRole('dialog').querySelector('h2 [title]') as HTMLElement;
+    expect(title.className).toMatch(/line-clamp-2/);
+    expect(title.getAttribute('title')).toBe(`${long} · P-0101`);
+    unmount();
+    render(<TownLightbox snapshot={snap as never} target={{ kind: 'projects' }} onClose={() => undefined} />);
+    const row = screen.getByRole('dialog').querySelector('td [title]') as HTMLElement;
+    expect(row.className).toMatch(/truncate/);
+    expect(row.getAttribute('title')).toBe(`${long} · P-0101`);
+  });
+
+  it('lists the dealers bought today without duplicate React keys when names are hidden', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const shops = Array.from({ length: 4 }, (_, i) => ({ key: `opaque-shop-${i}`, kind: 'shop', account_label: null, today_docs: 1 }));
+    const snap = { ...REDACTED, shops, today: { ...REDACTED.today, dealer_customer_count: 4 } };
+    render(<TownLightbox snapshot={snap as never} target={{ kind: 'bought' }} onClose={() => undefined} />);
+    expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    error.mockRestore();
+  });
 });

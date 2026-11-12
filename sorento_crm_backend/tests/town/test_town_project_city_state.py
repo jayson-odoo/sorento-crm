@@ -219,3 +219,15 @@ def test_the_most_frequent_postcode_wins_not_the_most_frequent_state(db):
     c = cust(db)
     _orders(db, c, ["47301", "47301", "50460", "50450"])  # oldest first
     assert _state_of(db, c)[0] == "Selangor"
+
+
+def test_the_order_lookup_has_its_index():
+    """Crew pass (12 Nov): the first build on a cold prod copy hit the 5 s statement timeout in the state
+    lookup, which reads each customer's last 20 delivery orders newest first. The index serves exactly that
+    (customer, newest first), so a dealer's whole order history is never read and sorted."""
+    from app.models.order import Order
+
+    index = {ix.name: ix for ix in Order.__table__.indexes}["ix_orders_customer_order_date"]
+    cols = [str(e) for e in index.expressions]
+    assert cols[0].endswith("customer_id")
+    assert "order_date DESC NULLS LAST" in cols[1] and "created_at DESC" in cols[2]

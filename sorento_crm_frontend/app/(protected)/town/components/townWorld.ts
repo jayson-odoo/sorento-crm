@@ -1819,13 +1819,13 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       const nSites = sitesBy[d.key]?.length ?? 0;
       const nTowers = towersBy[d.key]?.length ?? 0;
       const bits = [dealers.length ? `${plural(dealers.length, 'dealer')}${lit ? `, ${lit} lit` : ''}` : '', nSites ? plural(nSites, 'site') : '', nTowers ? plural(nTowers, 'trading house', 'trading houses') : ''].filter(Boolean);
-      // the pill stands on the state's near (south) shore, not over its street, so a tap on a site or a shop
-      // is never taken by the pill
+      // close up, the pill floats just off the state's near (south) shore, on the water, so it never covers a
+      // site or a shop (on a small islet the shore itself is lined with sites)
       const [sx, sz] = mapXZ(0, -1);
-      const [cx, cz] = d.key === 'selangor' ? polar(26.5, 330) : edgeToward(d.key, centreOf(d.key)[0] + sx * 99, centreOf(d.key)[1] + sz * 99, -1);
+      const [cx, cz] = d.key === 'selangor' ? polar(26.5, 330) : edgeToward(d.key, centreOf(d.key)[0] + sx * 99, centreOf(d.key)[1] + sz * 99, -5);
       addLabel(
         { text: d.name, dot: lit ? 'lit' : undefined, muted: bits.length ? ` ${bits.join(' · ')}` : undefined },
-        new THREE.Vector3(cx, d.key === 'selangor' ? 3 : 1.2, cz),
+        new THREE.Vector3(cx, d.key === 'selangor' ? 3 : 0, cz),
         false,
         () => (d.key === 'selangor' ? flyTo('selangor') : flyTo(d.key)),
         () => ({ kind: 'state', name: d.name, detail: bits.join(' · ') }),
