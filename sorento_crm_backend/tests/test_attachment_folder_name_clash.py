@@ -697,3 +697,86 @@ def test_a_custom_rename_that_is_also_taken_is_named_not_moved(db):
     assert updated == 0
     _assert_plain(not_moved[0]["message"], "Taken.jpg", "Folder B")
     assert _reload(db, a.id).directory_id == folder_a
+
+
+def test_bulk_replace_refuses_another_users_private_file(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    theirs = _file(db, "photo.jpg", folder_b)
+    _make_private(db, theirs, str(uuid.uuid4()))
+    mine = _file(db, "photo.jpg", folder_a)
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [mine.id], folder_b, resolutions={mine.id: {"action": "replace"}}, actor_id=str(uuid.uuid4())
+    )
+
+    assert updated == 0
+    assert "private" in not_moved[0]["message"]
+    assert _reload(db, theirs.id).is_deleted is False
+
+
+def test_rename_all_suggestion_stays_within_the_column_length(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    long_name = "x" * 251 + ".pdf"  # 255 characters
+    _file(db, long_name, folder_b)
+    mine = _file(db, long_name, folder_a)
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [mine.id], folder_b, resolutions={mine.id: {"action": "rename"}}
+    )
+
+    assert (updated, not_moved) == (1, [])
+    new = _reload(db, mine.id).stored_filename
+    assert len(new) <= 255 and new.endswith(" (1).pdf")
+
+
+def test_a_skipped_file_stays_put_even_when_its_clash_is_gone(db):
+    """Review: the user chose Skip; a race that removed the other file must not move it."""
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    mine = _file(db, "photo.jpg", folder_a)  # no clash left at execution
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [mine.id], folder_b, resolutions={mine.id: {"action": "skip"}}
+    )
+
+    assert updated == 0
+    assert [n["attachment_id"] for n in not_moved] == [mine.id]
+    assert _reload(db, mine.id).directory_id == folder_a
+
+
+def test_the_server_counts_what_it_renamed_and_replaced(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "a.jpg", folder_b)
+    _file(db, "b.jpg", folder_b)
+    a = _file(db, "a.jpg", folder_a)
+    b = _file(db, "b.jpg", folder_a)
+    plain = _file(db, "plain.jpg", folder_a)
+    gone = _file(db, "gone.jpg", folder_a)  # chose Rename, but its clash is gone: a plain move
+
+    result = AttachmentService(db).bulk_move_report(
+        [a.id, b.id, plain.id, gone.id], folder_b,
+        resolutions={a.id: {"action": "rename"}, b.id: {"action": "replace"}, gone.id: {"action": "rename"}},
+    )
+
+    assert (result.updated, result.renamed, result.replaced) == (4, 1, 1)
+    assert _reload(db, gone.id).stored_filename == "gone.jpg"
+
+
+def test_replace_does_not_retrash_a_file_trashed_meanwhile(db):
+    """Review: re-check the locked row; a file already in Trash keeps who trashed it."""
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    theirs = _file(db, "photo.jpg", folder_b)
+    mine = _file(db, "photo.jpg", folder_a)
+    service = AttachmentService(db)
+    stale = service._folder_clash(folder_b, "photo.jpg", exclude_id=mine.id)
+    db.execute(
+        Attachment.__table__.update()
+        .where(Attachment.__table__.c.id == theirs.id)
+        .values(is_deleted=True, deleted_by=None)
+    )
+
+    assert service._lock_replaceable(stale, folder_b) is None

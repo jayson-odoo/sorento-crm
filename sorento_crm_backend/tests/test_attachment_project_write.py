@@ -645,3 +645,55 @@ def test_a_shared_file_on_a_project_in_another_company_is_still_refused(db, worl
 
     assert res.status_code == 403, res.text
     assert _row(db, theirs) is not None
+
+
+# ------------------------------------------------ FILES-MOVE-DUPLICATE: bulk Replace gating
+
+
+def test_bulk_move_replace_needs_the_delete_permission(db, world):
+    """Replace sends the file already in the folder to Trash, so it takes the Archive slug."""
+    _as(world, "siti")
+    world["allow"].discard(DELETE)
+    folder_a, folder_b = _folder(db), _folder(db)
+    name = f"{unique_code('clash')}.pdf"
+    theirs = _seed_file(db, None, name, directory_id=folder_b)
+    mine = _seed_file(db, None, name, directory_id=folder_a)
+
+    res = world["client"].post(
+        f"{BASE}/bulk-move",
+        json={
+            "attachment_ids": [mine],
+            "directory_id": folder_b,
+            "resolutions": {mine: {"action": "replace"}},
+        },
+    )
+
+    assert res.status_code == 403, res.text
+    assert _row(db, theirs).is_deleted is False
+    assert _row(db, mine).directory_id == folder_a
+
+
+def test_bulk_move_replace_never_trashes_another_projects_file(db, world):
+    """The write check runs on the file Replace would trash; a refusal skips only that file."""
+    _as(world, "siti")
+    folder_a, folder_b = _folder(db), _folder(db)
+    name = f"{unique_code('clash')}.pdf"
+    theirs = _seed_file(db, world["project_a"], name, directory_id=folder_b)
+    mine = _seed_file(db, None, name, directory_id=folder_a)
+    plain = _seed_file(db, None, directory_id=folder_a)
+
+    res = world["client"].post(
+        f"{BASE}/bulk-move",
+        json={
+            "attachment_ids": [mine, plain],
+            "directory_id": folder_b,
+            "resolutions": {mine: {"action": "replace"}},
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["updated"] == 1
+    assert [n["attachment_id"] for n in body["not_moved"]] == [mine]
+    assert _row(db, theirs).is_deleted is False
+    assert _row(db, plain).directory_id == folder_b
