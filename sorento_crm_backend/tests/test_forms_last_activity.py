@@ -244,3 +244,22 @@ def test_u6_bulk_update_stamps_each_row(db, key):
         assert audit is not None, "precondition: the bulk path wrote a row per record"
         assert stamp(db, r) == audit.changed_at
     assert stamp(db, untouched) == OLD
+
+
+# --------------------------------------------------------------------------- viewing is not activity
+def test_viewing_a_price_tag_request_does_not_move_the_stamp_or_write_history(db):
+    """The data-changes cache columns are written by whoever opens the page (browser re-check, 12 Nov)."""
+    from datetime import datetime
+
+    from app.models.audit import AuditLog
+    from app.services.dealer_kit.tag_data_service import store_data_change_count
+
+    user = seed_user(db)
+    row = BY_KEY["price_tag_request"].seed(db)
+    set_stamp(db, row, at(days=3))
+    before = db.query(AuditLog).filter(AuditLog.entity_id == str(row.id)).count()
+    with person(db, user):
+        store_data_change_count(db, row, [{"changes": [{"x": 1}]}], datetime.utcnow())
+        db.commit()
+    assert stamp(db, row) == at(days=3)
+    assert db.query(AuditLog).filter(AuditLog.entity_id == str(row.id)).count() == before
