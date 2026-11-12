@@ -32,7 +32,10 @@ switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC
   `{"challenge_id": str, "options": PublicKeyCredentialRequestOptionsJSON}` with `rpId` = the
   origin's hostname, `userVerification: "required"`, empty `allowCredentials` (discoverable
   passkeys; no email asked, so nothing to enumerate). The challenge, origin and RP ID are stored
-  in Redis for 300 s under the challenge id. Per-IP rate limit via `rate_limit.hit`; over limit = 429.
+  in Redis for 300 s under the challenge id. Per-IP rate limit via `rate_limit.hit` ONLY when
+  `settings.trusted_proxies` is set (so the IP is the real client); with it unset there is no
+  per-IP gate, because every request would share the proxy's address and one caller could 429
+  every staff sign-in (security review M1, 12 Nov). Over limit = 429.
 - AC-11 `POST /passkey/verify` `{"challenge_id", "credential": AuthenticationResponseJSON}` with a
   valid assertion from a registered passkey of an ACTIVE, non-trashed user returns the same
   `LoginResponse` as `/auth/login` (via `build_login_response`), mints a `user_sessions` row with
@@ -53,8 +56,9 @@ switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC
   false answers the AC-12 401 body, mints no session and does not touch `sign_count` /
   `last_used_at`. Turning the switch off keeps the stored passkeys (turning it on again makes
   them work again).
-- AC-14 `/passkey/verify` is rate-limited per IP (`rate_limit.hit`, own bucket); over limit = 429
-  with Retry-After. Redis down: challenge store unavailable = `400 PASSKEYS_UNAVAILABLE`
+- AC-14 `/passkey/verify` has NO per-IP limit (it is called server-to-server by NextAuth, and the
+  single-use 300 s challenge plus the signature already bound it, the same reasoning as
+  `/phone/verify`, `auth.py` S4 comment). Redis down: challenge store unavailable = `400 PASSKEYS_UNAVAILABLE`
   (fail closed for the challenge; never accept an assertion without a stored challenge).
 
 ## Own passkeys (authenticated; real user, prefix `/api/v1/auth`)
@@ -74,6 +78,9 @@ switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC
     route cannot consume it as a session). No verified phone = 400 `{"code": "NO_PHONE"}`. Wrong =
     `401 REAUTH_FAILED` "That code is not right." with the same per-number attempt budget as
     phone sign-in (429 when spent).
+  - The re-check code is stored with `portal_otp_codes.purpose = 'reauth'` (new column, default
+    `'sign_in'`); `check_code` takes the purpose, so `/auth/phone/verify` can never consume a
+    re-check code (also with Redis down) and the re-check never consumes a sign-in code.
   - neither field = 422. Only a passed check issues the registration challenge, so the challenge
     record IS the proof (single use, 300 s). A user with no password must use phone_code.
 - AC-21 `POST /passkeys/register/options` (after AC-27) returns `{"challenge_id", "options": PublicKeyCredentialCreationOptionsJSON}`
@@ -92,6 +99,12 @@ switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC
   10 s destructive window, `record_actions.register`). Parking it for your OWN passkey needs no
   extra permission; for someone else's passkey it needs `user_management.users.edit`; otherwise
   403 at park time. On commit the row is hard-deleted by the ONE service function both paths use.
+- AC-28 Removing a passkey (AC-24 commit) revokes that user's open sessions whose `auth_method`
+  is `'passkey'`; turning the switch OFF (AC-33) does the same. Password / phone sessions stay.
+- AC-29 Stored `transports` keep only the known values (`usb`, `nfc`, `ble`, `internal`, `hybrid`,
+  `smart-card`, `cable`); anything else is dropped. Sign-in compares the assertion's userHandle
+  with the passkey owner (mismatch = AC-12 401) and updates `sign_count` under a row lock so two
+  parallel assertions with the same counter cannot both pass.
 - AC-25 Add, rename and remove each leave an audit row (default-on ORM audit for `user_passkeys`).
 
 ## Admin (prefix `/api/v1/user-management/users`)
@@ -117,7 +130,8 @@ switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC
 - AC-42 NextAuth provider `id: 'passkey'` posts `{challenge_id, credential}` to
   `/api/v1/auth/passkey/verify` with `forwardedForHeader`, returns the same `User` shape as the
   credentials provider (`apiToken` = `token`).
-- AC-43 My account > Security: shown ONLY when the signed-in user's `passkey_enabled` is true
+- AC-43 My account > Security: hidden while impersonating (the card would belong to the admin, not
+  the person being viewed); otherwise shown ONLY when the signed-in user's `passkey_enabled` is true
   (from `get_me`); otherwise the page is exactly as today. "Passkeys" Card between Password and Delete Account. Header button
   "Add passkey" (outline). Rows: device icon, name (truncate + title), "Added dd/mm/yyyy" and
   "Last used dd/mm/yyyy, h:mm am/pm" (or "Never used") as separate lines, row menu (DropdownMenu)
@@ -134,7 +148,11 @@ switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC
   sign-in turned on/off"); row "Passkeys" with
   "N passkey(s)" link or "None"; the link opens a centred Dialog listing the user's passkeys with a
   row menu holding Remove (only with `users.edit`). `SIGN_IN_METHOD_WORDS.passkey = 'passkey'`.
-- AC-46 Layering: `services/passkeyService.ts` -> `hooks/usePasskeys.ts` -> UI; errors through
+- AC-47 A list that fails to load (own Passkeys card, admin passkeys dialog) shows the shared
+  `ListLoadFailure` with Try again, never a dead end.
+- AC-48 Autofill (AC-41) is cancelled (`WebAuthnAbortService.cancelCeremony()`) when the user
+  signs in another way, and starts again after a failed password attempt.
+- AC-46 Layering: the sign-in button reaches the service through a hook, never directly; `services/passkeyService.ts` -> `hooks/usePasskeys.ts` -> UI; errors through
   `extractApiError`; dates through the shared dd/mm/yyyy helpers. No UUIDs shown. Usable at 375 and 1280.
 
 ## Guides
