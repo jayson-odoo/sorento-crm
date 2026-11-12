@@ -107,3 +107,76 @@ def test_ac24b_a_derived_variant_is_never_guessed_into_the_answer(session_factor
         c.as_staff()
     reply = _ask(c, "Abd7604")
     assert VARIANT not in reply, reply
+
+
+# --------------------------------------------------------------------------- AC-24d, AC-24e: family through a registered set
+
+SET_WORD = "FAM8826"
+SET_CODE = "FAM8826-P"
+SET_BASE, MEMBER, OTHER_MEMBER = "FAM8826-SC", "MEMBQ-26P", "HIDQ-26P"  # no member code shares the set's prefix
+SET_NAMES = {SET_BASE: "ZZT seat cover", MEMBER: "ZZT p trap pan", OTHER_MEMBER: "ZZT p trap pan"}
+
+
+def _set_world(session_factory, monkeypatch, stub_access, member_codes: list[str], hide: str | None = None) -> Console:  # noqa: F811
+    from tests.chatbot.test_code_match_sets import _make_set
+
+    codes = [SET_BASE, MEMBER, OTHER_MEMBER, CONTROL_BASE, CONTROL_VARIANT]
+    c = _console(session_factory, monkeypatch, stub_access, codes, **{k.replace("-", "_"): Stock(on_hand=100) for k in codes})
+    db = session_factory()
+    try:
+        for code, name in {**SET_NAMES, CONTROL_BASE: "ZZT seat cover", CONTROL_VARIANT: "ZZT p trap pan"}.items():
+            db.execute(sql_text("UPDATE products SET product_name = :n WHERE product_code = :c"), {"n": name, "c": code})
+        if hide == "other_company":
+            from tests.chatbot.test_engine_company_scope import _seed_company
+
+            other = _seed_company(session_factory, name="ZZT Other Co Family")
+            db.execute(sql_text("UPDATE products SET company_id = :o WHERE product_code = :c"), {"o": other, "c": OTHER_MEMBER})
+        elif hide == "hidden_from_chat":
+            db.execute(sql_text("UPDATE products SET is_searchable = false WHERE product_code = :c"), {"c": OTHER_MEMBER})
+        db.commit()
+    finally:
+        db.close()
+    _make_set(session_factory, SET_CODE, [c.uuid_of[m] for m in member_codes])
+    return c
+
+
+def _as_set_pair(text: str) -> str:
+    return (
+        text.replace(CONTROL_VARIANT, MEMBER).replace(CONTROL_BASE, SET_BASE).replace("TWC7604", SET_WORD).replace("Twc7604", "Fam8826")
+    )
+
+
+def test_ac24d_the_family_read_includes_a_member_of_a_registered_set_headed_by_the_word(session_factory, monkeypatch, stub_access):  # noqa: F811
+    _set_world(session_factory, monkeypatch, stub_access, [MEMBER])
+    codes = _family_codes(session_factory, SET_WORD)
+    assert SET_BASE in codes and MEMBER in codes, codes
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac24d_a_set_member_is_reached_the_way_the_x_insert_reaches_its_variant(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _set_world(session_factory, monkeypatch, stub_access, [MEMBER])
+    if who == "staff":
+        c.as_staff()
+    control = _ask(c, "Twc7604")
+    reply = _ask(c, "Fam8826")
+    assert reply == _as_set_pair(control), (reply, control)
+    if who == "staff":
+        assert MEMBER in reply, reply
+
+
+@pytest.mark.parametrize("hide", ["other_company", "hidden_from_chat"])
+def test_ac24e_a_set_member_the_contact_cannot_see_is_not_in_the_family_read(session_factory, monkeypatch, stub_access, hide):  # noqa: F811
+    _set_world(session_factory, monkeypatch, stub_access, [MEMBER, OTHER_MEMBER], hide=hide)
+    codes = _family_codes(session_factory, SET_WORD)
+    assert OTHER_MEMBER not in codes, codes
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+@pytest.mark.parametrize("hide", ["other_company", "hidden_from_chat"])
+def test_ac24e_a_set_member_the_contact_cannot_see_never_appears_in_the_reply(session_factory, monkeypatch, stub_access, who, hide):  # noqa: F811
+    c = _set_world(session_factory, monkeypatch, stub_access, [MEMBER, OTHER_MEMBER], hide=hide)
+    if who == "staff":
+        c.as_staff()
+    reply = _ask(c, "Fam8826")
+    assert OTHER_MEMBER not in reply, reply
+    assert OTHER_MEMBER not in str(c.stored_question), c.stored_question
