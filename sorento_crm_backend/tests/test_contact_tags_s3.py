@@ -444,3 +444,32 @@ def test_r2_spec_preview_lists_the_include_list_cleared_by_the_one_rule_and_appl
     db.expire_all()
     row = db.query(SpecVisibilityPolicy).filter_by(contact_id=contact.id).one()
     assert row.spec_keys is None and list(row.excluded_spec_keys) == ["board_thickness"]
+
+
+def test_a_tag_switching_new_product_application_on_grants_it_to_the_holder_at_apply(client, db, all_perms):
+    """FORMS-TAG-CARD-FIX-A: the card now offers New Product Application; a tag that switches it On
+    grants it to every contact holding the tag when the settings are applied (intended)."""
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+
+    npa = _stag(client, db, {"portal_forms": {"new_product_application": True}})
+    holder = _holder(client, db, [npa])
+    assert "new_product_application" not in resolve_visible_form_types(db, str(holder.id))
+    _rows(_apply(client, [holder.id], dry_run=False))
+    db.expire_all()
+    rows = db.query(ContactPortalFormOverride).filter_by(contact_id=str(holder.id), form_type="new_product_application").all()
+    assert [r.is_enabled for r in rows] == [True]
+    assert "new_product_application" in resolve_visible_form_types(db, str(holder.id))
+
+
+def test_settings_catalog_portal_forms_are_every_grantable_kind_in_backend_order(client, db, all_perms):
+    """FORMS-TAG-CARD-FIX-A: the tag card renders this list as is, so it must hold every grantable
+    kind (New Product Application, Sample Request, Project Registration included) in order."""
+    from app.services.portal_form_visibility_service import _KIND_LABELS
+    from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
+
+    resp = client.get(f"{TAGS}/settings-catalog")
+    assert resp.status_code == 200, resp.text
+    forms = resp.json()["portal_forms"]
+    assert [f["value"] for f in forms] == list(GRANTABLE_PORTAL_FORM_TYPES)
+    assert {"new_product_application", "sample_request", "project_registration"} <= {f["value"] for f in forms}
+    assert all(f["label"] == _KIND_LABELS[f["value"]] for f in forms)
