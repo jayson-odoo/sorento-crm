@@ -1079,6 +1079,8 @@ class QuotationLineVerdictResponse(BaseModel):
 
     is_non_standard: bool
     is_below_floor: bool
+    #: NON-CANCELLABLE-ITEMS F1: the save's `is_non_cancellable`, judged now.
+    is_non_cancellable: bool = False
     # Below the default price (series price, else list price): the save's `is_discounted`.
     is_discounted: bool = False
     floor_value: Optional[Decimal] = None

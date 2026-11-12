@@ -345,12 +345,36 @@ def _judge_line(
         )
     below = bool(floor and price is not None and price < floor.value)
     return {
+        "is_non_cancellable": _judge_non_cancellable(
+            db,
+            series_id=series_id,
+            product=None if product_set_id else product,
+            product_set=product_set if product_set_id else None,
+        ),
         "is_non_standard": not in_series,
         "is_below_floor": below,
         "is_discounted": bool(default is not None and price is not None and price < default),
         "floor_value": floor.value if floor else None,
         "floor_level": floor.level if floor else None,
     }
+
+
+def _judge_non_cancellable(db: Session, *, series_id, product, product_set) -> bool:
+    """NON-CANCELLABLE-ITEMS F1: the save's own rule (`non_cancellable_service`), live, so the
+    badge appears the moment the item or the series is picked, like Non-standard."""
+    from app.services import non_cancellable_service as nc
+
+    setting = nc.series_setting(db, series_id, acting_company_id(db))
+    if product_set is not None:
+        parts = [{"product_id": m.product_id} for m in product_set.members]
+        return nc.set_is_non_cancellable(
+            db, product_set_id=product_set.id, parts_snapshot=parts, setting=setting
+        )
+    if product is None:
+        return False
+    return nc.product_is_non_cancellable(
+        db, product_id=product.id, category_id=product.category_id, setting=setting
+    )
 
 
 @router.get(
