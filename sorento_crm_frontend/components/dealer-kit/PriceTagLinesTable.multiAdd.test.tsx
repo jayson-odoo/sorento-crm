@@ -266,6 +266,17 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     expect((await rowFor('DIY-BS-4502')).getAttribute('aria-checked')).toBe('true');
   });
 
+  it('Escape after a tick closes the list and focus returns to the row Item trigger', async () => {
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
+    openItemPicker();
+    await clickRow('DIY-BS-4501');
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501'));
+    fireEvent.keyDown(screen.getByPlaceholderText('Search...'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Search...')).toBeNull());
+    const trigger = screen.getByRole('combobox', { name: 'Item for line 1' });
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
   it('(d) on a row that already has an item a tick adds a new line below and keeps it', async () => {
     render(<Harness initial={[A()]} />);
     openItemPicker();
