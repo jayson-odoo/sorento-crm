@@ -110,9 +110,9 @@ def _assert_listed_with_pending_batch(env, w):
 
 def _assert_board_cell_cancelled_with_batch(env, w):
     body = _board(env, w)
-    assert body["cells"], f"no cells on the board: {body.get('unplanned_orders')}"
+    # read-only cancelled pending lines ride in `contributions` only, never in `cells`
     contribs = _contributions_for_line(body, w["line_x"])
-    assert len(contribs) == 1, contribs
+    assert len(contribs) == 1, (contribs, body.get("unplanned_orders"))
     assert contribs[0]["cancelled"] is True, contribs[0]
     batch = _cancelled_rows(env, w["line_x"])[0].batch_id
     assert contribs[0]["pending_change_batch_id"] == str(batch), contribs[0]
