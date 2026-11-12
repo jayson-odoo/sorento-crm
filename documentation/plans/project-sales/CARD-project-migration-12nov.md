@@ -278,3 +278,19 @@ Explicit links only. Create-only (existing projects and POs are never edited; `c
 1. **Who may run it.** (a) A new `projects.import.run` permission, granted to admin only at first (recommended: a run creates hundreds of projects); (b) anyone with project create rights.
 2. **Revert window.** (a) Revert is offered on any Imported run whose records are unedited, with no time limit (recommended: the edited ones are always kept anyway); (b) only within 24 hours.
 3. **Where the first real run happens.** (a) On the owner's word, crew first runs the real file on a dev copy and posts the masked preview counts; then a person runs it on the live CRM through this screen (recommended); (b) straight on the live CRM, preview first.
+
+## Real-file dry run 1 (crew, 12 Nov, head 86328c32, owner's file, masked counts)
+
+- 1,282 data rows read; 1,398 PS numbers in total; 0 errors; nothing written (projects, customers, parties and learned headings unchanged).
+- Outcome of a preview with nothing linked yet:
+  - 467 skipped: 116 blank pre-numbered rows, 340 rows with no project name, 11 cancelled;
+  - 931 waiting for a person to link their project (as expected, nothing was linked yet).
+- Values to link:
+  - customers 197, of which 174 are already linked through their sales order, so 23 are left for a person;
+  - projects 641;
+  - developers 203;
+  - people 27.
+- Two flags, in the owner's words. Neither stops a row; both import the row exactly as written and tell a person to look:
+  - **"PO number stored as a number" (81 rows):** the PO number cell in the sheet holds a plain number, not text. Excel drops leading zeros from such cells, so a PO written `012119` may arrive as `12119`. The tool imports the digits as they are and marks the row so someone can check the PO number against the customer's document.
+  - **"PO date in another month" (7 rows):** the PO date falls in a month other than the sheet it sits on (for example a March date on the April sheet). It may be a late entry or a typing slip. The tool keeps the date as written and marks the row.
+  - The related flag "PO date in another year" (8 rows) marks dates outside 2026, such as the 2025 dates on the first January rows.
