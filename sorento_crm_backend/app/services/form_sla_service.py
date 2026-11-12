@@ -50,6 +50,9 @@ FORM_SLA_TYPES = (
     "product_photo",
     # NPA-FORM-SLA: approval + purchasing stages, the SI's teams (PLAN-npa-form-sla-08nov).
     "new_product_application",
+    # SPARE-PART-ORDER-REQUEST: the approval levels of a spare part request (an Order Inquiry
+    # of that type), configured as stages; the record opens on the OI page.
+    "spare_part_request",
 )
 
 #: The quotation line media requests among FORM_SLA_TYPES.
@@ -153,6 +156,7 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "product_drawing": ("products", "product_code", False),
     "product_photo": ("products", "product_code", False),
     "new_product_application": ("new_product_applications", "application_no", False),
+    "spare_part_request": ("projects.order_inquiries", "inquiry_no", False),
 }
 
 
@@ -290,6 +294,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/project-sales/sample-requests/{source_entity_id}"
     if source_entity_type == "new_product_application":
         return f"/procurement-management/new-product-applications/{source_entity_id}"
+    if source_entity_type == "spare_part_request":
+        return f"/project-sales/order-inquiries/{source_entity_id}"
     if source_entity_type in ("product_drawing", "product_photo"):
         return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
@@ -431,6 +437,46 @@ class FormSLAOrchestrator:
                     return True
             return False
 
+        # A stage this very emit STARTS (directly, or as the next stage a resolve above spawns)
+        # is not responded or resolved by the same emit: with two chained stages that both
+        # resolve on 'approved', one approval would otherwise close stage 1, start stage 2 and
+        # close stage 2 in one pass (SPARE-PART-ORDER-REQUEST T8). Restored afterwards, so a
+        # nested emit keeps its caller's set.
+        outer_started = self._started_in_emit
+        self._started_in_emit = set()
+        try:
+            self._dispatch_configs(
+                configs,
+                _matches,
+                source_entity_id,
+                event_name,
+                contact_id=contact_id,
+                actor_user_id=actor_user_id,
+                company_id=company_id,
+                source_entity_type=source_entity_type,
+            )
+        finally:
+            self._started_in_emit = outer_started
+
+    #: Tracker ids started during the emit in progress (see `emit_event`); None outside one.
+    _started_in_emit: Optional[set] = None
+
+    def _started_this_emit(self, tracker) -> bool:
+        started = self._started_in_emit
+        return bool(started) and str(tracker.id) in started
+
+    def _dispatch_configs(
+        self,
+        configs,
+        _matches,
+        source_entity_id: str,
+        event_name: str,
+        *,
+        contact_id: Optional[str],
+        actor_user_id: Optional[str],
+        company_id: Optional[str],
+        source_entity_type: str,
+    ) -> None:
         for config in configs:
             try:
                 if _matches(config.start_event):
@@ -1111,6 +1157,8 @@ class FormSLAOrchestrator:
         self.db.add(tracker)
         self.db.commit()
         self.db.refresh(tracker)
+        if self._started_in_emit is not None:
+            self._started_in_emit.add(str(tracker.id))
 
         # Coverage redirect → record why the task landed on the coverer (best-effort).
         if covered_for_id:
@@ -1387,6 +1435,8 @@ class FormSLAOrchestrator:
         tracker = self._active_tracker(config, source_entity_id)
         if not tracker or bool(getattr(tracker, "is_responded", False)):
             return
+        if self._started_this_emit(tracker):
+            return
         svc = ConversationSLATrackingService(self.db)
         update_payload = {"is_responded": True}
         if actor_user_id:
@@ -1411,6 +1461,8 @@ class FormSLAOrchestrator:
 
         tracker = self._active_tracker(config, source_entity_id)
         if not tracker or bool(getattr(tracker, "is_resolved", False)):
+            return
+        if self._started_this_emit(tracker):
             return
         # resolve implies responded - set both if not yet responded
         update_payload = {"is_resolved": True}
