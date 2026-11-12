@@ -4960,7 +4960,45 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
             continue
         seen.append(key)
         keep.append(match)
+    # CHATBOT-CODE-MATCH R2: among the code rows (products, sets), one holding every typed
+    # part ranks before one missing a part, in the slots those rows already hold; ties keep
+    # the resolver's order, other kinds keep their places. The parser's own pick (Q1) leads.
+    token = jsc.get(res, "token")
+    first = 1 if isinstance(near_pick, dict) and keep and keep[0] is near_pick else 0
+    slots = [
+        i
+        for i in range(first, len(keep))
+        if jsc.js_string(jsc.get(keep[i], "entity_type") or "").lower() in _CODE_KINDS
+    ]
+    ranked = sorted(
+        (keep[i] for i in slots),
+        key=lambda m: not holds_every_typed_part(token, jsc.get(m, "canonical_code")),
+    )
+    for i, match in zip(slots, ranked):
+        keep[i] = match
     return keep
+
+
+#: The entity kinds whose did-you-mean is a code, ranked by the typed parts it holds.
+_CODE_KINDS = frozenset({"product", "product_set"})
+#: A typed code's parts: each run of letters, each run of digits (any script).
+_CODE_PART = re.compile(r"[^\W\d_]+|\d+")
+
+
+def holds_every_typed_part(typed: Any, code: Any) -> bool:
+    """CHATBOT-CODE-MATCH R2: does `code` hold every part of the `typed` code, in order? The
+    parts are `typed` split at separators and letter/digit boundaries; a part is held when
+    `code`, case and separators folded (`token_key`), contains it after the part before it.
+    Generic: reads no company's letters, sizes or code shape. False when `typed` has no part."""
+    parts = _CODE_PART.findall(jsc.nullish_str(typed))
+    folded = token_key(jsc.nullish_str(code))
+    at = 0
+    for part in (p.casefold() for p in parts):
+        at = folded.find(part, at)
+        if at < 0:
+            return False
+        at += len(part)
+    return bool(parts)
 
 
 def did_you_mean_head(typed: str) -> str:
