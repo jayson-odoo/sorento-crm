@@ -48,14 +48,21 @@ export default function PasskeyRow({
   const hasMenu = canRemove || Boolean(onRename);
 
   return (
-    <li className="flex items-center gap-3 py-3">
-      <Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+    // flex-wrap: at 375px a running countdown ("Removing in 10s" + Cancel) takes its own line
+    // under the text instead of squeezing the name and dates.
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+      <Icon
+        className="size-5 shrink-0 text-muted-foreground"
+        aria-hidden="true"
+      />
       <div className="min-w-0 flex-1 text-sm">
         <div className="truncate font-medium" title={passkey.name}>
           {passkey.name}
         </div>
         <div className="text-muted-foreground">
-          {passkey.created_at ? `Added ${formatDateInMalaysia(passkey.created_at)}` : null}
+          {passkey.created_at
+            ? `Added ${formatDateInMalaysia(passkey.created_at)}`
+            : null}
         </div>
         <div className="text-muted-foreground">
           {passkey.last_used_at
@@ -64,34 +71,47 @@ export default function PasskeyRow({
         </div>
       </div>
       {hasMenu && (
-        <DeferredActionButton
-          pending={remove.pending}
-          verb="Removing"
-          onCancel={remove.cancel}
-          idle={
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button mode="icon" variant="ghost" size="sm" aria-label="Passkey options">
-                  <Ellipsis />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="bottom" align="end">
-                {onRename && (
-                  <DropdownMenuItem onClick={() => onRename(passkey)}>Rename</DropdownMenuItem>
-                )}
-                {canRemove && (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    disabled={remove.isBlocked}
-                    onClick={() => remove.start()}
-                  >
-                    Remove
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+        <div
+          className={
+            remove.pending ? 'w-full pl-8 sm:w-auto sm:pl-0' : 'shrink-0'
           }
-        />
+        >
+          <DeferredActionButton
+            pending={remove.pending}
+            verb="Removing"
+            onCancel={remove.cancel}
+            idle={
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Passkey options"
+                  >
+                    <Ellipsis />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end">
+                  {onRename && (
+                    <DropdownMenuItem onClick={() => onRename(passkey)}>
+                      Rename
+                    </DropdownMenuItem>
+                  )}
+                  {canRemove && (
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={remove.isBlocked}
+                      onClick={() => remove.start()}
+                    >
+                      Remove
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            }
+          />
+        </div>
       )}
     </li>
   );

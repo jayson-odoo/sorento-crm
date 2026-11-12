@@ -32,6 +32,7 @@ export function AddPasskeyDialog({
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useResendCooldown();
   const add = useAddPasskeyMutation();
   const sendCode = useSendPasskeyReauthCodeMutation();
@@ -42,15 +43,19 @@ export function AddPasskeyDialog({
     setPassword('');
     setCode('');
     setSent(false);
+    setError(null);
   }, [open, hasPassword]);
 
   const submit = async (proof: PasskeyProof) => {
+    setError(null);
     try {
       await add.mutateAsync(proof);
       // Added, or the browser prompt was cancelled: either way the check is spent.
       onOpenChange(false);
-    } catch {
-      // The hook has already shown the backend's message; the dialog stays for another try.
+    } catch (err) {
+      // Shown under the field; the dialog stays open for another try.
+      setError(err instanceof Error ? err.message : 'Could not add the passkey.');
+      if ('phone_code' in proof) setCode('');
     }
   };
 
@@ -108,11 +113,19 @@ export function AddPasskeyDialog({
                 variant="link"
                 size="sm"
                 className="h-auto self-start p-0"
-                onClick={() => setUsePhone(true)}
+                onClick={() => {
+                  setUsePhone(true);
+                  setError(null);
+                }}
               >
                 Use a phone code instead
               </Button>
             </div>
+          )}
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
           )}
           <DialogFooter>
             <Button

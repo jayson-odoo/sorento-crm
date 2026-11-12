@@ -123,7 +123,8 @@ export function useSendPasskeyReauthCodeMutation() {
 
 /**
  * The whole add flow (AC-44): the re-check proof -> registration options -> the browser's own
- * prompt -> store. Resolves null when the user cancels the prompt, which shows nothing.
+ * prompt -> store. Resolves null when the user cancels the prompt, which shows nothing. A refusal
+ * (wrong password or code, a duplicate passkey) is the caller's to show.
  */
 export function useAddPasskeyMutation() {
   const qc = useQueryClient();
@@ -144,7 +145,7 @@ export function useAddPasskeyMutation() {
       toast.success('Passkey added');
       qc.invalidateQueries({ queryKey: MY_PASSKEYS_KEY });
     },
-    onError: (err) => toast.error(err.message),
+    // No toast: the "Confirm it's you" dialog shows the refusal inline and stays open.
   });
 }
 
@@ -171,6 +172,8 @@ export function useSetUserPasskeyEnabledMutation() {
     onSuccess: (data, { userId }) => {
       toast.success(data.passkey_enabled ? 'Passkey sign-in turned on' : 'Passkey sign-in turned off');
       qc.invalidateQueries({ queryKey: ['user-user', userId] });
+      // An admin switching their OWN row sees My account > Security update without a reload.
+      qc.invalidateQueries({ queryKey: ['account-profile'] });
     },
     onError: (err) => toast.error(err.message),
   });
