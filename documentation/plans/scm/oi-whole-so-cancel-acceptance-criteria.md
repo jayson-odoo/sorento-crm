@@ -60,3 +60,6 @@ qty, line removed, whole-SO cancel, SO delete. The 30 Oct auto-done at sync is s
   label). The handover email Excel is unchanged.
 - AC-V2-7 The last open line removed raises a board item (AC-WC-2, built).
 - AC-V2-8 Nothing is emailed at sync for any change type; CS Confirm sends the one email (AC-WC-4/5, built).
+- AC-V2-4b (crew, Q3 multi-row (a)) A line with more than one live OI row keeps each row's confirmed qty in OI
+  Qty; the SO Qty column shows the line's new qty with "Was <old>" (`so_line_qty` / `previous_so_line_qty`);
+  the rows read "Waiting for CS" until CS's Confirm re-splits. No spreading rule.
