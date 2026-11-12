@@ -199,6 +199,40 @@ AUTOCOUNT_OWNED = "autocount_owned"
 #: the feed re-sends it once the master arrives.
 AUTOCOUNT_RETRYABLE = "autocount_retryable"
 
+# --- project import (PLAN-project-import-12nov.md) ------------------------
+#: Outcomes of this importer the generic set does not have: a row a person must decide
+#: (a value not linked yet, a clash) and a row that could not be written.
+OUTCOME_NEEDS_REVIEW = "needs_review"
+OUTCOME_ERROR = "error"
+PROJECT_AND_PO_CREATED = "project_and_po_created"
+PO_ADDED = "po_added"
+NO_PROJECT_NAME = "no_project_name"
+PLACEHOLDER = "placeholder"
+OTHER_YEAR = "other_year"
+CANCELLED = "cancelled"
+MAPPED_SKIP = "mapped_skip"
+PROJECT_UNMAPPED = "project_unmapped"
+CUSTOMER_UNMAPPED = "customer_unmapped"
+DEVELOPER_UNMAPPED = "developer_unmapped"
+CUSTOMER_CONFLICT = "customer_conflict"
+CUSTOMER_SAME_SHOP_SO_USED = "customer_same_shop_so_used"
+DEVELOPER_CONFLICT = "developer_conflict"
+REGISTRATION_LOCK = "registration_lock"
+PO_NUMBER_TAKEN = "po_number_taken"
+SO_ON_OTHER_PROJECT = "so_on_other_project"
+PS_DUPLICATE_IN_FILE = "ps_duplicate_in_file"
+PS_DUPLICATE_IN_CRM = "ps_duplicate_in_crm"
+CHANGED_IN_FILE = "changed_in_file"
+SO_LINKED = "so_linked"
+SO_NOT_SYNCED = "so_not_synced"
+PO_NUMBER_NUMERIC = "po_number_numeric"
+DATE_OTHER_YEAR = "date_other_year"
+DATE_OTHER_MONTH = "date_other_month"
+OWNER_DEFAULTED = "owner_defaulted"
+CLASH_CHECK_SKIPPED = "clash_check_skipped"
+MISSING_HEADER = "missing_header"
+REVERT_KEPT_EDITED = "revert_kept_edited"
+
 LABELS: dict[str, str] = {
     CREATED: "Created",
     UPDATED: "Updated",
@@ -258,6 +292,34 @@ LABELS: dict[str, str] = {
     AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
     AUTOCOUNT_OWNED: "Left alone: AutoCount sends this delivery order's lines",
     AUTOCOUNT_RETRYABLE: "Retry later: a product or warehouse it names is not in the CRM yet",
+    PROJECT_AND_PO_CREATED: "Project and PO created",
+    PO_ADDED: "PO added to the project",
+    NO_PROJECT_NAME: "No project name",
+    PLACEHOLDER: "Numbered but empty",
+    OTHER_YEAR: "Not a 2026 PS number",
+    CANCELLED: "Cancelled",
+    MAPPED_SKIP: "Set to skip",
+    PROJECT_UNMAPPED: "Project not linked yet",
+    CUSTOMER_UNMAPPED: "Customer not linked yet",
+    DEVELOPER_UNMAPPED: "Developer not linked yet",
+    CUSTOMER_CONFLICT: "Sales order customer differs from the linked customer",
+    CUSTOMER_SAME_SHOP_SO_USED: "Sales order customer used (same shop)",
+    DEVELOPER_CONFLICT: "Rows of one new project name different developers",
+    REGISTRATION_LOCK: "Same developer and title as an existing project",
+    PO_NUMBER_TAKEN: "PO number already on this project",
+    SO_ON_OTHER_PROJECT: "Sales order already on another project",
+    PS_DUPLICATE_IN_FILE: "PS number appears twice in the file",
+    PS_DUPLICATE_IN_CRM: "PS number is on two POs already",
+    CHANGED_IN_FILE: "Differs from the CRM, left as it is",
+    SO_LINKED: "Sales order linked",
+    SO_NOT_SYNCED: "Sales order not synced yet",
+    PO_NUMBER_NUMERIC: "PO number was a number cell",
+    DATE_OTHER_YEAR: "PO date not in 2026",
+    DATE_OTHER_MONTH: "PO date in another month than its sheet",
+    OWNER_DEFAULTED: "Owner set to the importing user",
+    CLASH_CHECK_SKIPPED: "Duplicate check skipped (linked by a person)",
+    MISSING_HEADER: "Sheet is missing a required heading",
+    REVERT_KEPT_EDITED: "Kept: changed since the import",
 }
 
 

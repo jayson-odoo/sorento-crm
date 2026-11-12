@@ -154,7 +154,9 @@ def _excel_serial_date(value: Any) -> Optional[date]:
     return _EXCEL_EPOCH + timedelta(days=int(serial))
 
 
-def _to_date(value: Any) -> Optional[date]:
+def to_date(value: Any) -> Optional[date]:
+    """A cell as a date: a real Excel date, an Excel serial number, or a day-first text date.
+    Public since the project import reads its register with it; `_to_date` stays an alias."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, datetime):
@@ -173,6 +175,10 @@ def _to_date(value: Any) -> Optional[date]:
         except ValueError:
             continue
     return None
+
+
+#: The private name every existing caller still imports.
+_to_date = to_date
 
 
 def _clean(value: Any) -> str:
