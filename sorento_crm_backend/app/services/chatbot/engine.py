@@ -1844,6 +1844,8 @@ class _SpanPrep:
     # Fix round 9 (crew turn 4ff1d7b8): the spans the span model typed `supplier`, placed or not; a turn naming one is
     # supplier-scoped even when the parser returned no entity for it (`_supplier_scope`).
     supplier_typed: list[str] = field(default_factory=list)
+    # CHATBOT-SPEED: how long `_span_prep` took (row loading, visibility, spec keys, numbers), for the trace event.
+    prep_ms: int = 0
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1877,6 +1879,7 @@ def _span_prep(
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails.
     `companies` (`_candidate_companies`): the Company rows, offered by the near-exact spelling pass only."""
+    started = time.perf_counter()
     try:
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
@@ -1901,10 +1904,12 @@ def _span_prep(
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(
+        prep = _SpanPrep(
             message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids,
             supplier_ids,
         )
+        prep.prep_ms = int((time.perf_counter() - started) * 1000)
+        return prep
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -2281,8 +2286,11 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         "model_source": config.model_source if config else None,
         "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+        # CHATBOT-SPEED: the rest of the time before the parser, per piece (measurement only).
+        "prep_ms": prep.prep_ms, "resolve_ms": 0, "usage_log_ms": 0,
     }
     if answer is not None and answer.usage and not dry_run:
+        log_started = time.perf_counter()
         try:
             with _session(session_factory) as db:
                 record_turn_llm_usage(
@@ -2291,7 +2299,9 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 )
         except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
             logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+        event["usage_log_ms"] = int((time.perf_counter() - log_started) * 1000)
     reason = "no_config" if answer is None else answer.failure
+    resolve_started = time.perf_counter()
     try:
         hits: dict[str, list[lookup_lists.Hit]] | None = None
         if answer is not None and answer.spans is not None:
@@ -2395,6 +2405,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             prep.supplier_groups = {}
             prep.supplier_spans = {}
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        event["resolve_ms"] = int((time.perf_counter() - resolve_started) * 1000)
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
             for name in hits
