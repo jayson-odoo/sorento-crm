@@ -1,6 +1,6 @@
 # PLAN: DATE-PICKER-UNIFY (12 Nov 2026)
 
-Status: Build slice A - behaviour card answered 12 Nov (Q1-Q5 all option a). Track: size M, cloud lane, sliced
+Status: Slice A in hand test (PR #2357, frozen); slices B-F to follow on new branches. Behaviour card answered 12 Nov (Q1-Q5 all option a). Track: size M, cloud lane, sliced
 (each slice PR < ~300 non-test lines; one PR per slice, frozen after its hand test).
 
 Owner, 4 Nov: "all the dates need to use dd/mm/yyyy format like a standardized format across the
