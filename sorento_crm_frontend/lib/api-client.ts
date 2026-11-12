@@ -9,7 +9,8 @@ export type DataGridParamsInput = {
   pageIndex: number;
   pageSize: number;
   sorting?: SortingState;
-  searchQuery?: string;
+  /** An array is one search value per item (search chips), sent as repeated `query`. */
+  searchQuery?: string | string[];
 };
 
 /** Nginx and other proxies often return HTML for 502/503; never show that in toasts. */
@@ -226,8 +227,11 @@ export function buildDataGridParams(
     page: String(pageIndex + 1),
     limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
-    ...(searchQuery ? { query: searchQuery } : {}),
+    ...(typeof searchQuery === 'string' && searchQuery ? { query: searchQuery } : {}),
   });
+  if (Array.isArray(searchQuery)) {
+    for (const value of searchQuery) if (value.trim()) sp.append('query', value);
+  }
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
       if (Array.isArray(v)) {

@@ -687,9 +687,9 @@ function LinkableBodyRow({
         const detailParams = new URLSearchParams(detailSearch);
         const nextParams = new URLSearchParams(window.location.search);
         for (const key of RESERVED_LIST_STATE_KEYS) {
-          const value = detailParams.get(key);
-          if (value !== null) nextParams.set(key, value);
-          else nextParams.delete(key);
+          // getAll: `query` repeats once per search chip.
+          nextParams.delete(key);
+          for (const value of detailParams.getAll(key)) nextParams.append(key, value);
         }
         const nextSearch = nextParams.toString();
         window.history.replaceState(
