@@ -13,13 +13,14 @@ What:
   listed). Columns: Link? (blank), Type, Number, Date, Typed project name, Proposed project code,
   Proposed project title, record id, project id. Shared Excel style.
 - ``--apply ticked.xlsx``: links only the rows whose Link? cell reads y / yes / x / 1, each through
-  ``project_related_records.set_record_project`` (so each lands in that record's History), and
+  ``project_related_records.set_record_project`` (so each lands in that record's History, naming
+  ``--actor``; the sheet's project id is checked again by ``assert_linkable_project`` there), and
   skips a row whose record has a project by now. Prints the counts. Commits.
 
 Crew-run, never by a lane against a shared database. Run from sorento_crm_backend/ with the
 deployment's env:
     venv/bin/python scripts/project_link_review.py --export review.xlsx
-    venv/bin/python scripts/project_link_review.py --apply review-ticked.xlsx
+    venv/bin/python scripts/project_link_review.py --apply review-ticked.xlsx --actor <user id>
 """
 from __future__ import annotations
 
@@ -190,8 +191,11 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--export", metavar="OUT.xlsx", help="write the review sheet (read-only)")
     group.add_argument("--apply", metavar="TICKED.xlsx", help="link the ticked rows")
-    parser.add_argument("--actor", metavar="USER_ID", help="the user the History names (optional)")
+    parser.add_argument("--actor", metavar="USER_ID", help="the user the History names (needed with --apply)")
     args = parser.parse_args()
+    if args.apply and not args.actor:
+        # AC-C8: each link's History line names who linked it.
+        parser.error("--apply needs --actor USER_ID (the person who ticked the sheet)")
 
     from app.database import SessionLocal
     from app.services.audit_service import register_audit_listeners

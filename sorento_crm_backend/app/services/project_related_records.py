@@ -49,6 +49,9 @@ class RelatedType:
     select: Callable[[Me, str], Any]
     #: The record's own page, "{id}" filled in (the assistant's row link); "" = no link.
     screen_path: str = ""
+    #: The `value` column is a cost price (`products.cost.view`, SUPPLIER-COST-ACCESS): shown only
+    #: to a reader who may see cost, null for everyone else, sorting included.
+    value_is_cost: bool = False
 
 
 RELATED_TYPES: "OrderedDict[str, RelatedType]" = OrderedDict()
@@ -178,6 +181,7 @@ def _register_builtin_types() -> None:
             "new_product_application", "New product application", "new_product_application",
             NewProductApplication, _npa_select,
             "/procurement-management/new-product-applications/{id}",
+            value_is_cost=True,
         ),
     ):
         register_related_type(rt)
@@ -204,6 +208,15 @@ def _linked(rt: RelatedType, me: Me, access: str, project_id: str):
     return rt.select(me, access).where(rt.model.project_id == str(project_id))
 
 
+def _value(rows, visible, cost_visible: bool):
+    """The value column as this reader may see it: a cost value (`value_is_cost`) is null without
+    `products.cost.view`, for the sort as well as the cell."""
+    hidden = [rt.kind for rt, _ in visible if rt.value_is_cost]
+    if cost_visible or not hidden:
+        return rows.c.value
+    return case((rows.c.kind.in_(hidden), null()), else_=rows.c.value)
+
+
 def list_related_records(
     db: Session,
     *,
@@ -217,12 +230,14 @@ def list_related_records(
     direction: str = "desc",
     page: int = 1,
     limit: int = 25,
+    cost_visible: bool = False,
 ) -> Dict[str, Any]:
     """One UNION ALL of the visible types' linked rows, filtered, sorted and paged in SQL.
 
     `type_counts` ignores the type, status and search filters (the tab badge); a type the
     viewer may not see is absent from the rows, `type_counts` and `types` alike. `statuses`
-    are the raw statuses of those rows (the Status filter's options), also unfiltered.
+    are the raw statuses of those rows (the Status filter's options), also unfiltered. A cost
+    value (an NPA's cost price) is null unless `cost_visible` (`cost_access.can_view_cost`).
     """
     visible = visible_types(perms)
     labels = {rt.kind: rt.label for rt, _ in visible}
@@ -266,14 +281,17 @@ def list_related_records(
         )
 
     total = db.execute(select(func.count()).select_from(rows).where(*conditions)).scalar() or 0
+    value = _value(rows, wanted, cost_visible)
     if sort == "type":
         key = case(labels, value=rows.c.kind, else_=rows.c.kind)
+    elif sort == "value":
+        key = value
     else:
         key = rows.c[_SORT_COLUMN[sort]]
     ordered = key.asc() if direction == "asc" else key.desc()
     tie = rows.c.number.asc() if direction == "asc" else rows.c.number.desc()
     result = db.execute(
-        select(rows)
+        select(*[c for c in rows.c if c.key != "value"], value.label("value"))
         .where(*conditions)
         .order_by(ordered.nulls_last(), tie.nulls_last(), rows.c.id)
         .offset((page - 1) * limit)
@@ -315,6 +333,7 @@ def assistant_rows(db: Session, user_id: str, own_only: bool, _date_from, _date_
     from app.models.base import get_company_scope
     from app.models.projects import Project
     from app.services.company_scope import build_company_predicate
+    from app.services.cost_access import can_view_cost
     from app.services.user_service import UserPermissionService
 
     me = own_scope.me(db, user_id)
@@ -335,8 +354,11 @@ def assistant_rows(db: Session, user_id: str, own_only: bool, _date_from, _date_
             sel = sel.where(own_scope.project_clause(me))
         selects.append(sel)
     rows = union_all(*selects).subquery("linked")
+    value = _value(rows, visible, can_view_cost(db, user_id))
     result = db.execute(
-        select(rows).order_by(rows.c.date.desc().nulls_last(), rows.c.number, rows.c.id).limit(limit)
+        select(*[c for c in rows.c if c.key != "value"], value.label("value"))
+        .order_by(rows.c.date.desc().nulls_last(), rows.c.number, rows.c.id)
+        .limit(limit)
     ).mappings().all()
     types = {rt.kind: rt for rt, _ in visible}
     out = []
@@ -379,14 +401,29 @@ _RECORD_WORD = {
 }
 
 
-def assert_can_set_project(db: Session, kind: str, user_id: str) -> None:
-    """403 unless the user holds the kind's edit permission (admin and superadmin do)."""
+def assert_can_set_project(db: Session, kinds, user_id: str, record=None) -> None:
+    """403 unless the user holds the edit permission of one of `kinds` (a kind, or the kinds a
+    route serves before it knows which one the row is, so a refusal never says whether the row
+    exists). An NPA is also the applicant's to edit (`new_product_application_service.update`),
+    or an admin's: pass the loaded `record` for that half."""
     from app.services.error_handler import AppException
     from app.services.user_service import UserPermissionService
 
-    slug = EDIT_PERMISSION[kind]
-    if not UserPermissionService(db).check_user_has_permission(user_id, slug):
+    kinds = (kinds,) if isinstance(kinds, str) else tuple(kinds)
+    service = UserPermissionService(db)
+    if not any(service.check_user_has_permission(user_id, EDIT_PERMISSION[k]) for k in kinds):
+        slug = " or ".join(EDIT_PERMISSION[k] for k in kinds)
         raise AppException(status_code=403, message=f"Permission required: {slug}", code="FORBIDDEN")
+    if record is not None and kinds == ("new_product_application",):
+        from app.services import new_product_application_service as npa
+
+        admin = service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+        if not admin and not npa.is_owner(record, npa.Actor(user_id=str(user_id))):
+            raise AppException(
+                status_code=403,
+                message="Only the applicant can change this application's project.",
+                code="FORBIDDEN",
+            )
 
 
 def get_record(db: Session, kind: str, record_id: str):

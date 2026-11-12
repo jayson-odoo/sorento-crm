@@ -355,6 +355,8 @@ def set_purchase_request_project(
     from app.services import project_related_records as related
 
     validate_uuid_path(request_id, resource="Request")
+    # Either edit right first, before the row is read: a refusal never says the id exists.
+    related.assert_can_set_project(db, ("purchase_request", "sponsorship_form"), current_user["id"])
     kind = PurchaseRequestService(db).get_request(request_id).request_type
     related.assert_can_set_project(db, kind, current_user["id"])
     related.set_record_project(

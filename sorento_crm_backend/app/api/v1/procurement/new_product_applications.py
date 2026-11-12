@@ -224,6 +224,8 @@ def set_application_project(
     related.assert_can_set_project(db, "new_product_application", user["id"])
     app = _load(db, application_id, for_update=True)
     svc.assert_can_view(app, _actor(db, user))
+    # The NPA edit rule: the applicant's (or an admin's), not any creator's (review S3).
+    related.assert_can_set_project(db, "new_product_application", user["id"], record=app)
     related.set_record_project(
         db, kind="new_product_application", record_id=application_id,
         project_id=body.project_id, actor=user["id"],

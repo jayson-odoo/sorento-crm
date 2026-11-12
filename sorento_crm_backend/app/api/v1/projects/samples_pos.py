@@ -546,6 +546,7 @@ def list_project_related_records(
     filtered and paged on the server. Each type follows the viewer's own request rule."""
     from app.services import own_scope
     from app.services import project_related_records as related
+    from app.services.cost_access import can_view_cost
     from app.utils.multi_value import multi_values
 
     try:
@@ -563,6 +564,7 @@ def list_project_related_records(
             direction=dir,
             page=page,
             limit=limit,
+            cost_visible=can_view_cost(db, user["id"]),
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

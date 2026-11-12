@@ -91,6 +91,70 @@ def projects_for_contact(
     ]
 
 
+def _not_yours() -> AppException:
+    return AppException(
+        status_code=422,
+        message=(
+            "That project is not one of yours. Pick a project from the list, "
+            "which shows the ones registered under your company."
+        ),
+        code="sponsorship_project_not_permitted",
+    )
+
+
+def _owned_company_ids(db: Session, *, contact: Optional[RespondContact], project_id: str) -> List[str]:
+    """The ownership half (any approval state): the project belongs to one of the contact's
+    companies. Returns those companies; refuses otherwise. A contact linked to no company (or
+    none at all) is told THAT, so nobody hunts for a project problem an admin has to fix."""
+    company_ids = contact_company_ids(db, contact=contact) if contact is not None else []
+    if not company_ids:
+        raise AppException(
+            status_code=422,
+            message=(
+                "Your contact is not linked to any company yet, so no project can be "
+                "attached. Ask the Sorento team to link your company first."
+            ),
+            code="sponsorship_contact_no_company",
+        )
+    from uuid import UUID
+
+    from app.models.base import company_scope
+
+    try:
+        UUID(str(project_id))
+    except (TypeError, ValueError):
+        raise _not_yours()
+    with company_scope(db, frozenset(company_ids)):
+        owner = db.query(Project.company_id).filter(Project.id == str(project_id)).scalar()
+    if owner is None or str(owner) not in company_ids:
+        raise _not_yours()
+    return company_ids
+
+
+def assert_contact_may_link(
+    db: Session,
+    *,
+    contact: Optional[RespondContact],
+    project_id: Optional[str],
+    current: Optional[str] = None,
+    code: str,
+) -> None:
+    """THE check for a contact linking a record to a project (PROJECT-RELATED-RECORDS AC-C3):
+    portal create, draft save, submit and revise, the portal new product application and the
+    external stock inquiry all call this one. Ownership first, so another company's project reads
+    as "not one of yours"; then the record's own "not approved yet" (`assert_linkable_project`,
+    `code`). Re-saving the link a record already has is not a change."""
+    if not project_id or str(project_id) == str(current or ""):
+        return
+    company_ids = _owned_company_ids(db, contact=contact, project_id=str(project_id))
+    from app.models.base import company_scope
+
+    from app.services.project_service import assert_linkable_project
+
+    with company_scope(db, frozenset(company_ids)):
+        assert_linkable_project(db, str(project_id), current, code=code)
+
+
 def assert_project_requirement(
     db: Session, *, contact: Optional[RespondContact], project_id: Optional[str]
 ) -> None:
@@ -108,31 +172,15 @@ def assert_project_requirement(
         return
 
     if project_id:
-        company_ids = contact_company_ids(db, contact=contact)
-        if not company_ids:
-            raise AppException(
-                status_code=422,
-                message=(
-                    "Your contact is not linked to any company yet, so no project can be "
-                    "attached. Ask the Sorento team to link your company first."
-                ),
-                code="sponsorship_contact_no_company",
-            )
+        company_ids = _owned_company_ids(db, contact=contact, project_id=str(project_id))
         from app.models.base import company_scope
 
         from app.services.project_service import approved_projects
 
         with company_scope(db, frozenset(company_ids)):
             project = approved_projects(db.query(Project).filter(Project.id == project_id)).first()
-        if project is None or str(project.company_id) not in company_ids:
-            raise AppException(
-                status_code=422,
-                message=(
-                    "That project is not one of yours. Pick a project from the list, "
-                    "which shows the ones registered under your company."
-                ),
-                code="sponsorship_project_not_permitted",
-            )
+        if project is None:
+            raise _not_yours()
         return
 
     if getattr(contact, "requires_registered_project", False):
