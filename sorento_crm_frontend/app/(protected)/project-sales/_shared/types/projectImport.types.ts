@@ -65,6 +65,8 @@ export interface ProjectImportRun extends ProjectImportRunRow {
     kept: { entity_type: string; label: string; reason: string }[];
   } | null;
   reverted_at?: string | null;
+  /** The import's outcome envelope (counts, codes and the shared breakdown), once imported. */
+  result?: Record<string, unknown> | null;
 }
 
 export interface ProjectImportLine {

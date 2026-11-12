@@ -1,0 +1,284 @@
+'use client';
+
+/** The outcome tiles and the report rows grid, shared by Preview and Results (AC-PI-47/48). */
+
+import * as React from 'react';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState,
+  type SortingState,
+} from '@tanstack/react-table';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { formatDateSafe } from '@/lib/helpers';
+import { useProjectImportRows } from '../../../_shared/hooks/useProjectImport';
+import type {
+  ProjectImportCounts,
+  ProjectImportKind,
+  ProjectImportOutcome,
+  ProjectImportReportRow,
+  ProjectImportRun,
+} from '../../../_shared/types/projectImport.types';
+import {
+  OUTCOME_LABELS,
+  OUTCOME_ROW_LABELS,
+  codeLabel,
+  kindForCode,
+} from '../../components/importLabels';
+
+const TILES: ProjectImportOutcome[] = ['created', 'unchanged', 'skipped', 'needs_review', 'error'];
+
+const OUTCOME_OPTIONS = (Object.keys(OUTCOME_ROW_LABELS) as ProjectImportOutcome[]).map((value) => ({
+  value,
+  label: OUTCOME_ROW_LABELS[value],
+}));
+
+export function OutcomeTiles({ counts }: { counts: ProjectImportCounts | null | undefined }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {TILES.map((outcome) => (
+        <div key={outcome} className="rounded-lg border bg-card p-3">
+          <div className="text-xs text-muted-foreground">{OUTCOME_LABELS[outcome]}</div>
+          <div className="text-xl font-semibold tabular-nums">{counts?.[outcome] ?? 0}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The kind of a row's FIRST blocking code, the Values tab that unblocks it. */
+export function blockingKind(row: ProjectImportReportRow): ProjectImportKind | null {
+  for (const code of row.codes) {
+    const kind = kindForCode(code);
+    if (kind) return kind;
+  }
+  return null;
+}
+
+/**
+ * The report rows of a run, filtered and sorted on the server. Shared by Preview and the
+ * Results tab, so the two read a row the same way.
+ */
+export function ReportRowsGrid({
+  run,
+  onRowClick,
+  listingKey,
+}: {
+  run: ProjectImportRun;
+  onRowClick?: (row: ProjectImportReportRow) => void;
+  listingKey: string;
+}) {
+  const { value: search, setValue: setSearch, debouncedValue, isSettling } = useDebouncedSearch();
+  const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [sorting, setSorting] = React.useState<SortingState>([]);
+  const [outcome, setOutcome] = React.useState<string[]>([]);
+  const [code, setCode] = React.useState<string[]>([]);
+  const [sheet, setSheet] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [outcome, code, sheet, debouncedValue]);
+
+  const rows = useProjectImportRows(
+    run.id,
+    { ...pagination, sorting, searchQuery: debouncedValue },
+    { outcome, code, sheet },
+  );
+  const data = rows.data?.data ?? [];
+  const total = rows.data?.total ?? 0;
+
+  const codes = run.result_codes ?? run.preview_codes ?? {};
+  const codeOptions = Object.keys(codes)
+    .sort()
+    .map((value) => ({ value, label: codeLabel(value) }));
+  const sheetOptions = (run.sheets ?? [])
+    .filter((s) => s.has_ps_heading)
+    .map((s) => ({ value: s.name, label: s.name_trimmed }));
+
+  const columns = React.useMemo<ColumnDef<ProjectImportReportRow>[]>(
+    () => [
+      {
+        accessorKey: 'sheet',
+        header: ({ column }) => <DataGridColumnHeader title="Sheet" column={column} />,
+        size: 100,
+        meta: { headerTitle: 'Sheet', skeleton: <Skeleton className="h-4 w-14" /> },
+        cell: ({ row }) => <span className="block truncate">{row.original.sheet.trim()}</span>,
+      },
+      {
+        accessorKey: 'row_number',
+        header: ({ column }) => <DataGridColumnHeader title="Row" column={column} />,
+        size: 70,
+        meta: { headerTitle: 'Row' },
+        cell: ({ row }) => <span className="tabular-nums">{row.original.row_number}</span>,
+      },
+      {
+        accessorKey: 'ps_number',
+        header: ({ column }) => <DataGridColumnHeader title="PS no." column={column} />,
+        size: 110,
+        meta: { headerTitle: 'PS no.' },
+        cell: ({ row }) => <span className="font-medium">{row.original.ps_number}</span>,
+      },
+      {
+        accessorKey: 'customer',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        size: 220,
+        meta: { headerTitle: 'Customer' },
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.customer ?? ''}>
+            {row.original.customer}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'project',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        size: 220,
+        meta: { headerTitle: 'Project' },
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project ?? ''}>
+            {row.original.project}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'po_number',
+        header: ({ column }) => <DataGridColumnHeader title="PO no." column={column} />,
+        size: 140,
+        meta: { headerTitle: 'PO no.' },
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.po_number ?? ''}>
+            {row.original.po_number}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'po_date',
+        header: ({ column }) => <DataGridColumnHeader title="PO date" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'PO date' },
+        cell: ({ row }) => formatDateSafe(row.original.po_date, ''),
+      },
+      {
+        accessorKey: 'outcome',
+        header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
+        size: 130,
+        meta: { headerTitle: 'Outcome' },
+        cell: ({ row }) => OUTCOME_ROW_LABELS[row.original.outcome] ?? row.original.outcome,
+      },
+      {
+        id: 'reason',
+        header: () => <span>Reason</span>,
+        enableSorting: false,
+        size: 300,
+        meta: { headerTitle: 'Reason' },
+        cell: ({ row }) => {
+          const text = row.original.message || row.original.codes.map(codeLabel).join('; ');
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data,
+    getRowId: (row) => `${row.sheet}\u0001${row.row_number}`,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    manualSorting: true,
+    manualPagination: true,
+    pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+    defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
+  });
+
+  return (
+    <DataGrid
+      table={table}
+      recordCount={total}
+      isLoading={rows.isLoading}
+      error={rows.error}
+      onRetry={() => void rows.refetch()}
+      isPlaceholderData={rows.isPlaceholderData}
+      onRowClick={onRowClick}
+      listingKey={listingKey}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyMessage={
+        <div className="px-6 py-10 text-center">
+          <p className="text-sm font-semibold">No rows match</p>
+        </div>
+      }
+    >
+      <Card>
+        <CardHeader className="block space-y-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <SearchableMultiSelect
+              value={outcome}
+              onChange={setOutcome}
+              options={OUTCOME_OPTIONS}
+              clearable
+              placeholder="Outcome"
+              aria-label="Outcome"
+            />
+            <SearchableMultiSelect
+              value={code}
+              onChange={setCode}
+              options={codeOptions}
+              clearable
+              placeholder="Reason"
+              aria-label="Reason"
+            />
+            <SearchableMultiSelect
+              value={sheet}
+              onChange={setSheet}
+              options={sheetOptions}
+              clearable
+              placeholder="Sheet"
+              aria-label="Sheet"
+            />
+          </div>
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <ListSearchInput
+                value={search}
+                onChange={setSearch}
+                isSettling={isSearchInFlight(isSettling, rows.isFetching, debouncedValue)}
+                placeholder="Search PS no., customer, project or PO"
+                aria-label="Search rows"
+                className="w-full sm:w-64 md:w-80"
+              />
+            }
+            exportConfig={false}
+            onRefresh={() => void rows.refetch()}
+            isRefreshing={rows.isFetching && !rows.isLoading}
+          />
+        </CardHeader>
+        <CardTable>
+          <DataGridTable />
+        </CardTable>
+        <CardFooter>
+          <DataGridPagination />
+        </CardFooter>
+      </Card>
+    </DataGrid>
+  );
+}

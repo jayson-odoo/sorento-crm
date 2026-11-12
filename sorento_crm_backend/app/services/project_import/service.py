@@ -717,7 +717,7 @@ def _run(db: Session, run: ImportJob, *, user_id: str, persist: bool) -> dict:
         "rows": report_rows,
         "sheet_errors": list(read.sheet_errors),
     }
-    _write_rows(db, run, report_rows, ledger)
+    breakdown = _write_rows(db, run, report_rows, ledger)
 
     meta = _meta(run)
     meta["sheet_errors"] = list(read.sheet_errors)
@@ -732,7 +732,9 @@ def _run(db: Session, run: ImportJob, *, user_id: str, persist: bool) -> dict:
         run.successful_rows = sum(counts.get(o, 0) for o in ("created", "updated", "unchanged"))
         run.skipped_rows = counts.get("skipped", 0)
         run.failed_rows = counts.get(oc.OUTCOME_ERROR, 0) + counts.get(oc.OUTCOME_NEEDS_REVIEW, 0)
-        run.result = {"counts": report["counts"], "codes": report["codes"]}
+        # `breakdown` is ImportOutcome's own, by each row's first reason, so the shared
+        # OutcomeBreakdownCard reads this run like any other import.
+        run.result = {"counts": report["counts"], "codes": report["codes"], "breakdown": breakdown}
     else:
         meta.update({"phase": PHASE_PREVIEWED, "preview_counts": report["counts"],
                      "preview_codes": report["codes"]})
@@ -740,7 +742,7 @@ def _run(db: Session, run: ImportJob, *, user_id: str, persist: bool) -> dict:
     return report
 
 
-def _write_rows(db: Session, run: ImportJob, report_rows: list[dict], ledger: list[dict]) -> None:
+def _write_rows(db: Session, run: ImportJob, report_rows: list[dict], ledger: list[dict]) -> dict:
     """Replace the run's report rows; add the ledger of what was created (AC-PI-35)."""
     from sqlalchemy.orm import Session as _Session
 
@@ -768,6 +770,7 @@ def _write_rows(db: Session, run: ImportJob, report_rows: list[dict], ledger: li
         else:
             rows_out.success(outcome=r["outcome"], **kwargs)
     rows_out.flush()
+    breakdown = rows_out.breakdown()
     entities = ImportOutcome(run.id, session_factory=factory, buffer_size=5000)
     for e in ledger:
         entities.success(
@@ -776,6 +779,7 @@ def _write_rows(db: Session, run: ImportJob, report_rows: list[dict], ledger: li
             entity_id=e["entity_id"],
         )
     entities.flush()
+    return breakdown
 
 
 def _process(db: Session, run: ImportJob, read: reader.ReadResult, *, user_id: str, persist: bool):
@@ -1390,6 +1394,7 @@ def serialize_run(db: Session, run: ImportJob, *, users: Optional[dict] = None, 
             "preview_codes": meta.get("preview_codes"),
             "result_counts": meta.get("result_counts"),
             "result_codes": meta.get("result_codes"),
+            "result": run.result if meta.get("result_counts") else None,
             "sheet_errors": meta.get("sheet_errors") or [],
             "revert_result": meta.get("revert_result"),
             "reverted_at": meta.get("reverted_at"),
