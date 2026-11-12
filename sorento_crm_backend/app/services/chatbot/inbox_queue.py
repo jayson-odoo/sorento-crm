@@ -724,6 +724,7 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
 
     outcome: str | None = None
     actions = engine.split_send_actions(list(result.actions or []))
+    actions = _live_failure_wording(factory, run, result, actions)
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
         if not _stamp_sending(factory, run.turn_id, run.claimed_at):
             logger.warning("chatbot inbox: turn %s is no longer this drain's; not posted", run.turn_id)
@@ -747,6 +748,24 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
         return "failed"
     _flag_for_staff(factory, run.turn_id, outcome, run.claimed_at)
     return "flagged"
+
+
+def _live_failure_wording(factory: Callable[[], Any], run: _RowRun, result: Any, actions: list) -> list:
+    """CRM path only: the engine's generic apology for a failed turn goes out as the sentence n8n
+    sends for an engine failure. The n8n path is untouched."""
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+
+    if str(getattr(result, "status", "")) != "failed":
+        return actions
+    if not any(a.get("text") == CHATBOT_REPLY_TURN_FAILED for a in actions if isinstance(a, dict)):
+        return actions
+    if not direct_ingress._on_crm_path(factory, run.turn_id, run.contact):
+        return actions
+    return [
+        {**a, "text": FAILURE_REPLY_TEXT} if isinstance(a, dict) and a.get("text") == CHATBOT_REPLY_TURN_FAILED else a
+        for a in actions
+    ]
 
 
 def _crm_refusal_is_final(factory: Callable[[], Any], run: _RowRun) -> bool:
@@ -1047,15 +1066,15 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
 
 def _send_failure_reply(factory: Callable[[], Any], turn_id: str, contact: str) -> None:
     """CRM path only: send the generic failure reply for an engine that raised. Never raises."""
-    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
 
     try:
         if not direct_ingress._on_crm_path(factory, turn_id, contact):
             return
-        action = {"kind": "send_message", "text": CHATBOT_REPLY_TURN_FAILED, "quick_replies": None}
+        action = {"kind": "send_message", "text": FAILURE_REPLY_TEXT, "quick_replies": None}
         direct_ingress.send_outcome(
             factory, turn_id=turn_id, contact_id=contact, actions=[action],
-            reply={"text": CHATBOT_REPLY_TURN_FAILED, "quick_replies": None}, branch_kind=None,
+            reply={"text": FAILURE_REPLY_TEXT, "quick_replies": None}, branch_kind=None,
             step_prefix="f.",
         )
     except Exception:  # noqa: BLE001

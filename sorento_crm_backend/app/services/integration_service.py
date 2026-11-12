@@ -479,6 +479,7 @@ class RespondClient:
         attachment_type: str,
         url: str,
         caption: Optional[str] = None,
+        filename: Optional[str] = None,
     ) -> dict:
         """Send a media attachment to a contact. message type ``attachment``
         (R1, resolved 2026-08-12): subtypes are ``image`` / ``video`` / ``audio`` /
@@ -493,6 +494,8 @@ class RespondClient:
         attachment_payload: dict = {"type": attachment_type, "url": url}
         if caption:
             attachment_payload["caption"] = caption
+        if filename:
+            attachment_payload["fileName"] = filename
         payload = {"message": {"type": "attachment", "attachment": attachment_payload}}
         # Larger timeout than a text send: Respond fetches the media itself
         # before it can hand back a response.

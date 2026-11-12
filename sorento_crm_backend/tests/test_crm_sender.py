@@ -258,8 +258,7 @@ def test_send_runs_all_five_kinds_in_order(db, factory, turn_id):
         "send_attachment",
         "set_conversation_assignee",
         "create_comment",
-        "update_contact",
-    ]
+    ]  # update_contact_fields sends nothing, as in n8n (parity row 9)
     assert all(c[1][0] == IDENT for c in fake.calls)
     assert fake.calls[0][1][1] == "Hello"
     assert fake.calls[2][1][1] == "77"
@@ -359,20 +358,23 @@ def test_contact_fields_become_custom_fields_list(db, factory, turn_id):
         [{"kind": "update_contact_fields", "fields": {"alpha": "1", "beta": True}}],
         fake,
     )
-    assert fake.calls[0][1][1] == {
-        "custom_fields": [
-            {"name": "alpha", "value": "1"},
-            {"name": "beta", "value": True},
-        ]
-    }
+    assert "update_contact" not in fake.names()  # parity row 9: n8n sends nothing for these
 
 
 def test_dry_run_and_unknown_kinds_are_skipped(db, factory, turn_id):
     from app.services.chatbot import direct_ingress
 
-    fake = FakeClient()
+    dry = FakeClient()
     actions = [
         {"kind": "send_message", "text": "dry", "dry_run": True},
+        {"kind": "send_message", "text": "real"},
+    ]
+    # Parity row 3: any dry run action drops the whole turn.
+    assert _run(factory, turn_id, actions, dry) == direct_ingress.SEND_OK
+    assert dry.calls == []
+
+    fake = FakeClient()
+    actions = [
         {"kind": "teleport", "text": "??"},
         {"kind": "send_message", "text": "real"},
     ]
@@ -673,7 +675,6 @@ def test_unknown_text_with_failing_lookup_is_timeout(db, factory, turn_id):
     "action,method",
     [
         ({"kind": "assign_conversation", "respond_user_id": "9"}, "set_conversation_assignee"),
-        ({"kind": "update_contact_fields", "fields": {"a": "1"}}, "update_contact"),
     ],
 )
 def test_unknown_on_idempotent_step_is_resent_once_in_the_run(db, factory, turn_id, action, method):
@@ -689,7 +690,6 @@ def test_unknown_on_idempotent_step_is_resent_once_in_the_run(db, factory, turn_
     "action,method",
     [
         ({"kind": "assign_conversation", "respond_user_id": "9"}, "set_conversation_assignee"),
-        ({"kind": "update_contact_fields", "fields": {"a": "1"}}, "update_contact"),
     ],
 )
 def test_unknown_twice_on_idempotent_step_is_refused(db, factory, turn_id, action, method):

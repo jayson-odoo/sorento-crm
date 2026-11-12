@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import struct
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, NamedTuple
@@ -30,39 +31,130 @@ QUICK_REPLY_PART_MAX_CHARS = 1024
 _ATTACHMENT_TYPES = ("image", "video", "audio", "file")
 
 
+# The live n8n sendmsg chunker, ported line for line. Lengths are UTF-16 code units (JavaScript's
+# string length) and the byte cap is UTF-8.
+BUTTON_PART_MAX_BYTES = 1000
+_JS_WHITESPACE = (
+    "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008"
+    "\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
+def _to_units(value: str) -> list[int]:
+    raw = value.encode("utf-16-le", "surrogatepass")
+    return list(struct.unpack(f"<{len(raw) // 2}H", raw))
+
+
+def _from_units(units: list[int]) -> str:
+    return struct.pack(f"<{len(units)}H", *units).decode("utf-16-le", "surrogatepass")
+
+
+def _utf8_len(units: list[int]) -> int:
+    return len(_from_units(units).encode("utf-8", "surrogatepass"))
+
+
+def _trim_units(units: list[int]) -> list[int]:
+    return _to_units(_from_units(units).strip(_JS_WHITESPACE))
+
+
+def _last_index(units: list[int], ch: str, start: int) -> int:
+    """JavaScript `lastIndexOf(ch, start)`: the match may sit AT `start`."""
+    for i in range(min(start, len(units) - 1), -1, -1):
+        if units[i] == ord(ch):
+            return i
+    return -1
+
+
 def split_text(text: str, *, with_quick_replies: bool) -> list[str]:
-    """Cut a reply to the n8n sendmsg chunk rule: paragraphs first, then lines, then a hard cut."""
-    limit = QUICK_REPLY_PART_MAX_CHARS if with_quick_replies else TEXT_PART_MAX_CHARS
-    parts = [p.strip() for p in _cut(text or "", limit, ("\n\n", "\n"))]
+    """Cut a reply into the parts n8n's sendmsg would send, part for part."""
+    limit, floor = (QUICK_REPLY_PART_MAX_CHARS, 450) if with_quick_replies else (TEXT_PART_MAX_CHARS, 800)
+    byte_cap = BUTTON_PART_MAX_BYTES if with_quick_replies else None
+
+    def too_big(units: list[int]) -> bool:
+        return len(units) > limit or (byte_cap is not None and _utf8_len(units) > byte_cap)
+
+    rest = _trim_units(_to_units(text or ""))
+    parts: list[str] = []
+    while too_big(rest):
+        lim = min(limit, len(rest))
+        while byte_cap is not None and lim > 1 and _utf8_len(rest[:lim]) > byte_cap:
+            lim = int(lim * 0.9)
+        at = _last_index(rest, "\n", lim)
+        if at < floor:
+            at = _last_index(rest, " ", lim)
+        if at < floor:
+            at = lim
+        if 0 < at < len(rest) and 0xD800 <= rest[at - 1] <= 0xDBFF:
+            at -= 1
+        parts.append(_from_units(_trim_units(rest[:at])))
+        rest = _trim_units(rest[at:])
+    if rest:
+        parts.append(_from_units(rest))
     return [p for p in parts if p]
 
 
-def _cut(text: str, limit: int, seps: tuple[str, ...]) -> list[str]:
-    if len(text) <= limit:
-        return [text]
-    if not seps:
-        return [text[i : i + limit] for i in range(0, len(text), limit)]
-    sep, rest = seps[0], seps[1:]
-    units: list[str] = []
-    for unit in text.split(sep):
-        units.extend(_cut(unit, limit, rest))
-    out: list[str] = []
-    cur = ""
-    for unit in units:
-        joined = f"{cur}{sep}{unit}" if cur else unit
-        if len(joined) <= limit:
-            cur = joined
-        else:
-            out.append(cur)
-            cur = unit
-    if cur:
-        out.append(cur)
+MAX_BUTTONS = 10
+
+
+def _button_labels(raw: Any) -> list[str]:
+    """Quick-reply labels: split on commas, trimmed (agreed difference from n8n, which keeps a
+    leading space on buttons 2..n), empty ones dropped, at most 10."""
+    items = raw.split(",") if isinstance(raw, str) else (raw or [])
+    return [s for s in (str(i).strip() for i in items) if s][:MAX_BUTTONS]
+
+
+FAILURE_REPLY_TEXT = (
+    "Sorry, I couldn't process that just now \u2014 something went wrong on our side. "
+    "Please try again in a moment."
+)
+
+
+def _attachment_list(raw: Any) -> list[dict[str, Any]]:
+    """`attachments_src` is a list, or an envelope `{"attachments": [...]}`; urls are sent once."""
+    items = raw.get("attachments") if isinstance(raw, dict) else raw
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for att in items if isinstance(items, list) else []:
+        url = att.get("url") if isinstance(att, dict) else None
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(att)
     return out
 
 
-def _reply_list(raw: Any) -> list[str]:
-    items = raw.split(",") if isinstance(raw, str) else (raw or [])
-    return [s for s in (str(i).strip() for i in items) if s]
+def _presign(db: Any, url: str, filename: str | None = None) -> str:
+    """A one hour signed copy of a `cdn-sorento` url, in process, through the storage path the
+    /external/presigned-url route uses. Any other url, or a signing failure, gives the url back
+    (agreed difference: n8n drops the file on a failure, the customer still gets it here)."""
+    if "cdn-sorento" not in (url or ""):
+        return url
+    try:
+        from app.api.v1.external.presigned_url import _normalize_to_s3_key, _provider_for_attachment, _resolve_attachment
+        from app.services import storage_router
+
+        key = _normalize_to_s3_key(url)
+        provider = _provider_for_attachment(_resolve_attachment(db, url, key), url)
+        signed = storage_router.resolve_signed_url(key, provider=provider, expires_in=PRESIGN_SECONDS, strict=True)
+        return signed or url
+    except Exception:  # noqa: BLE001
+        logger.warning("crm sender: could not presign a file", exc_info=True)
+        return url
+
+
+PRESIGN_SECONDS = 3600
+
+
+class _Lazy:
+    """The presigned url, worked out once and only when a step actually runs."""
+
+    def __init__(self, make: Callable[[], str]):
+        self._make, self._value = make, None
+
+    def get(self) -> str:
+        if self._value is None:
+            self._value = self._make()
+        return self._value
 
 
 def _attachment_type(att: dict[str, Any]) -> str:
@@ -82,6 +174,8 @@ class Step(NamedTuple):
     matches: Callable[[dict], bool] | None = None
     # Assign and contact fields can simply be sent again.
     idempotent: bool = False
+    # A file respond.io refuses is sent as this bare link instead (text), and the run goes on.
+    link: Callable[[], str] | None = None
 
 
 def covers(row: Any, contact_id: str) -> bool:
@@ -113,16 +207,21 @@ def _url_is(url: Any) -> Callable[[dict], bool]:
     return match
 
 
-def _steps(actions: list[dict[str, Any]], ident: str, prefix: str = "") -> list[Step]:
+def _steps(
+    actions: list[dict[str, Any]],
+    ident: str,
+    prefix: str = "",
+    presign: Callable[[str], str] | None = None,
+) -> list[Step]:
     """The steps, in action order. `prefix` keeps a side message (the failure reply) off the
-    turn's own step keys."""
+    turn's own step keys; `presign` signs a file url when its step runs."""
     steps: list[Step] = []
     for a, action in enumerate(actions):
         kind = action.get("kind")
         if action.get("dry_run"):
             continue
         if kind == "send_message":
-            replies = _reply_list(action.get("quick_replies"))
+            replies = _button_labels(action.get("quick_replies"))
             parts = split_text(str(action.get("text") or ""), with_quick_replies=bool(replies))
             for p, part in enumerate(parts):
                 if replies and p == len(parts) - 1:
@@ -133,13 +232,20 @@ def _steps(actions: list[dict[str, Any]], ident: str, prefix: str = "") -> list[
                     steps.append(Step(f"{prefix}{a}.{p}", kind, {"text": part},
                                       lambda c, t=part: c.send_message(ident, t), _text_is(part)))
         elif kind == "send_attachments":
-            for p, att in enumerate(action.get("attachments_src") or []):
+            for p, att in enumerate(_attachment_list(action.get("attachments_src"))):
                 kind_, url, cap = _attachment_type(att), att.get("url"), att.get("caption")
-                steps.append(Step(f"{prefix}{a}.{p}", kind, {"attachment_type": kind_, "url": url},
-                                  lambda c, k=kind_, u=url, cp=cap: c.send_attachment(ident, k, u, cp),
-                                  _url_is(url)))
+                name = att.get("filename")
+                signed = _Lazy(lambda u=url, n=name: presign(u, n) if presign else u)
+                # A video travels with its original url; image and file with the signed one.
+                send_url = (lambda u=url: u) if kind_ == "video" else signed.get
+                steps.append(Step(f"{prefix}{a}.{p}", action.get("kind"), {"attachment_type": kind_, "url": url},
+                                  lambda c, k=kind_, f=send_url, cp=cap, n=name: c.send_attachment(
+                                      ident, k, f(), cp, filename=n),
+                                  _url_is(url), link=signed.get))
         elif kind == "assign_conversation":
             uid = action.get("respond_user_id")
+            if uid is None or not str(uid).strip():
+                continue  # n8n errors on an empty id; here it is never sent
             steps.append(Step(f"{prefix}{a}.0", kind, {"respond_user_id": uid},
                               lambda c, u=uid: c.set_conversation_assignee(ident, u), idempotent=True))
         elif kind == "add_comment":
@@ -147,12 +253,7 @@ def _steps(actions: list[dict[str, Any]], ident: str, prefix: str = "") -> list[
             body = f"{mentions}\n{action.get('text') or ''}" if mentions else str(action.get("text") or "")
             steps.append(Step(f"{prefix}{a}.0", kind, {"text": body},
                               lambda c, b=body: c.create_comment(ident, b)))
-        elif kind == "update_contact_fields":
-            fields = action.get("fields") or {}
-            payload = {"custom_fields": [{"name": k, "value": v} for k, v in fields.items()]}
-            steps.append(Step(f"{prefix}{a}.0", kind, {"fields": fields},
-                              lambda c, pl=payload: c.update_contact(ident, pl), idempotent=True))
-        # Unknown kinds are skipped, as the n8n sender does.
+        # update_contact_fields sends nothing in n8n, so nothing here; unknown kinds are skipped too.
     return steps
 
 
@@ -432,6 +533,10 @@ def send(
 
     Each attempt writes a `processing` stamp first and a result row after (the stamp is then
     dropped), so a process that dies mid-request leaves a stamp the next run looks up."""
+    if not str(turn_id or "").strip() or not str(contact_id or "").strip():
+        return direct_ingress.SEND_REFUSED  # n8n throws without either id; nothing is sent
+    if any(isinstance(a, dict) and a.get("dry_run") for a in actions or []):
+        return direct_ingress.SEND_OK  # n8n drops the whole body when any action is a dry run
     db = session_factory()
     try:
         ident = f"id:{contact_id}"
@@ -441,7 +546,7 @@ def send(
             # The way the live path builds it for this contact (`direct_ingress._lookup_contact`).
             client = RespondClient.for_identifier(db, contact_id)
         done = confirmed_keys(db, turn_id)
-        for step in _steps(actions, ident, step_prefix):
+        for step in _steps(actions, ident, step_prefix, lambda u, n=None: _presign(db, u) if "cdn-sorento" in (u or "") else u):
             if step.key in done:
                 continue
             # An earlier attempt with an unknown result: ask the conversation before sending again.
@@ -494,7 +599,24 @@ def send(
             outcome, code, reason = failure
             if outcome == direct_ingress.SEND_REFUSED:
                 _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
-                return outcome
+                if step.link is None or code is None:
+                    return outcome
+                # A file respond.io refused goes out as its bare link (n8n does the same); a
+                # connection failure is not turned into a link, the drain retries it.
+                stamp = _write_row(db, base, status="processing")
+                if stamp is None:
+                    return direct_ingress.SEND_HTTP_ERROR
+                link = step.link()
+                response, failure = _attempt(client, step._replace(call=lambda c, u=link: c.send_message(ident, u)))
+                if failure is None:
+                    if not _finalise(db, base, stamp, status="success", status_code=200,
+                                     response=_kept_response(response)):
+                        return direct_ingress.SEND_HTTP_ERROR
+                    _link_message_id(db, turn_id, contact_id, response)
+                    continue
+                _finalise(db, row_for(unknown=failure[0] != direct_ingress.SEND_REFUSED), stamp, status="failed",
+                          status_code=failure[1], error=failure[2])
+                return failure[0]
             # Unknown: the request may have left.
             unknown_base = row_for(unknown=True)
             if step.idempotent:
