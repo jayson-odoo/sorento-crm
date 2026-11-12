@@ -97,6 +97,31 @@ describe('AC-3 handleItemsAdd', () => {
   });
 });
 
+describe('combos memory across Add N', () => {
+  it('re-asks the combos lookup for a product put back on a row that held it before', async () => {
+    const { result } = hookSetup([row('A')]);
+    const opts = await options(result);
+    const p = opts.find((o) => o.value === 'product:p-x')!;
+    const q = opts.find((o) => o.value === 'product:p-y')!;
+    const r = opts.find((o) => o.value === 'product:p-a')!;
+    LOOKUPS.lookupProductCombos.mockClear();
+
+    act(() => result.current.editor.handleItemsAdd('A', [p]));
+    await waitFor(() => expect(result.current.lines[0].combos_loaded).toBe(true));
+    expect(LOOKUPS.lookupProductCombos).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.editor.handleItemsAdd('A', [q]));
+    await waitFor(() => expect(result.current.lines[0].product_id).toBe('p-y'));
+    await waitFor(() => expect(result.current.lines[0].combos_loaded).toBe(true));
+    LOOKUPS.lookupProductCombos.mockClear();
+
+    act(() => result.current.editor.handleItemsAdd('A', [p, r]));
+    await waitFor(() => expect(result.current.lines[0].combos_loaded).toBe(true));
+    expect(result.current.lines[0].product_id).toBe('p-x');
+    expect(LOOKUPS.lookupProductCombos).toHaveBeenCalledWith('p-x');
+  });
+});
+
 describe('AC-4 no duplicates', () => {
   it('skips an option already on another line, and the same item twice in one batch', async () => {
     const { result } = hookSetup([row('A'), { ...A(), key: 'B' }]);

@@ -177,6 +177,56 @@ describe('multiAdd AC-6 ticks across searches', () => {
   });
 });
 
+describe('multiAdd AC-3 order within one search', () => {
+  it('ticks 3rd then 1st of one search: Add 2 sends them in list order', async () => {
+    const { onAddMany } = setup();
+    await openMenu();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Tick DIY-BS-4503' }));
+    fireEvent.click(tick('DIY-BS-4501'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 2' }));
+    expect(onAddMany.mock.calls[0][0].map((o: SearchableSelectOption) => o.label)).toEqual([
+      'DIY-BS-4501',
+      'DIY-BS-4503',
+    ]);
+  });
+
+  it('across searches stays in tick order: B from search x, then A from search y', async () => {
+    const all = [opt('A-one'), opt('B-two'), opt('X-three')].map((o, i) => ({
+      ...o,
+      label: ['y-A', 'x-B', 'x-C'][i],
+      code: ['y-A', 'x-B', 'x-C'][i],
+    }));
+    const { onAddMany } = setup({ fetchOptions: makeFetch(all) });
+    await openMenu();
+    search('x-');
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Tick x-B' }));
+    search('y-');
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Tick y-A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 2' }));
+    expect(onAddMany.mock.calls[0][0].map((o: SearchableSelectOption) => o.label)).toEqual(['x-B', 'y-A']);
+  });
+});
+
+describe('long labels and descriptions', () => {
+  const code80 = 'DIY' + 'X'.repeat(77);
+
+  it('an 80 char unbroken label renders in a span that can shrink (min-w-0), no multiAdd', async () => {
+    setup({ withMulti: false, fetchOptions: makeFetch([opt(code80)]) });
+    await openMenu();
+    const el = await screen.findByText(code80);
+    expect(el.className).toContain('min-w-0');
+  });
+
+  it('multiAdd: a long description is clamped to 2 lines with the full text as title', async () => {
+    const long = 'Very long description. '.repeat(12).trim();
+    setup({ fetchOptions: makeFetch([opt('DIY-BS-4501', { description: long })]) });
+    await openMenu();
+    const el = await screen.findByText(long);
+    expect(el.className).toContain('line-clamp-2');
+    expect(el).toHaveAttribute('title', long);
+  });
+});
+
 describe('multiAdd AC-7 Escape drops the ticks', () => {
   it('closes, calls nothing, and reopens with no ticks', async () => {
     const { onAddMany, onOptionChange } = setup();
