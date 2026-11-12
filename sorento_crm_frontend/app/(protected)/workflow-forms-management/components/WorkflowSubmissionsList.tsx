@@ -176,7 +176,7 @@ export default function WorkflowSubmissionsList({
           const text = formatDateTimeInMalaysia(raw) || '-';
           return <span className="truncate" title={text}>{text}</span>;
         },
-        size: 180,
+        size: 190,
         meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       ...dynamicHeaderFields.map<ColumnDef<WorkflowSubmission>>((fieldMeta) => {

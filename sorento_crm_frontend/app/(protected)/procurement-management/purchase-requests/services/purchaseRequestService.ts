@@ -56,7 +56,8 @@ export async function getPurchaseRequests(
   const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus, assignedTo, lastActivityFrom, lastActivityTo } =
     params;
   const sortField = sorting?.[0]?.id || 'last_activity_at';
-  const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
+  // No sort chosen means the list's default, newest activity first.
+  const sortDirection = sorting?.[0] ? (sorting[0].desc ? 'desc' : 'asc') : 'desc';
   const queryParams = new URLSearchParams({
     page: String(pageIndex + 1),
     limit: String(pageSize),

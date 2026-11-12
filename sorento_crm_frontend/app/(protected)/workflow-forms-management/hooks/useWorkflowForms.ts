@@ -129,7 +129,8 @@ export function useWorkflowSubmissionsGridQuery(
         page: params.pageIndex + 1,
         limit: params.pageSize,
         sort: params.sorting[0]?.id || 'last_activity_at',
-        dir: params.sorting[0]?.desc ? 'desc' : 'asc',
+        // No sort chosen means the list's default, newest activity first.
+        dir: params.sorting[0] ? (params.sorting[0].desc ? 'desc' : 'asc') : 'desc',
         quick_search: params.searchQuery || undefined,
         workflow_form_definition_id: wfDef,
         workflow_submission_state_code: params.quickStateCode.trim() || undefined,

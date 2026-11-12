@@ -336,7 +336,7 @@ function StaffNewProductApplicationsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Last activity" column={column} />
         ),
-        size: 160,
+        size: 190,
         cell: ({ row }) => {
           const raw = row.original.last_activity_at;
           const text = raw ? formatDateTimeInMalaysia(raw) || '-' : '-';

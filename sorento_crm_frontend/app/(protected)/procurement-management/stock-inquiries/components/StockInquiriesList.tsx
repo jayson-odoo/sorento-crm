@@ -330,10 +330,11 @@ function StaffStockInquiriesList() {
       },
       {
         id: 'last_activity_at',
+        accessorKey: 'last_activity_at',
         header: ({ column }) => (
           <DataGridColumnHeader title="Last activity" column={column} />
         ),
-        size: 150,
+        size: 190,
         cell: ({ row }) => {
           const raw = row.original.last_activity_at;
           if (raw == null) return '-';
