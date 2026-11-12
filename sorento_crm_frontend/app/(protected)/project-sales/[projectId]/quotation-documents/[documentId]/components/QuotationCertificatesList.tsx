@@ -3,18 +3,22 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Download, Eye, FileDown, Plus, Trash2 } from 'lucide-react';
+import { FileDown, Plus } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { Label } from '@/components/ui/label';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
-import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import type { RecordAction } from '@/components/common/recordActions';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { multiChipLabel } from '@/lib/list-filters/multiValue';
@@ -116,48 +120,6 @@ async function saveFile(projectId: string, documentId: string, row: CertificateR
   }
 }
 
-/** The row's "..." menu: Open, Download and (with the edit right) Remove as a countdown. */
-function CertificateRowMenu({
-  row,
-  projectId,
-  documentId,
-  canEdit,
-  onRemove,
-}: {
-  row: CertificateRow;
-  projectId: string;
-  documentId: string;
-  canEdit: boolean;
-  onRemove: (row: CertificateRow) => void;
-}) {
-  const router = useRouter();
-  const actions: RecordAction[] = [
-    {
-      key: 'quotation_certificate.open',
-      label: 'Open',
-      icon: Eye,
-      run: () => router.push(certificateHref(projectId, documentId, row.certificate_id)),
-    },
-    {
-      key: 'quotation_certificate.download',
-      label: 'Download',
-      icon: Download,
-      disabled: !row.has_file,
-      run: () => void saveFile(projectId, documentId, row),
-    },
-  ];
-  if (canEdit) {
-    actions.push({
-      key: 'quotation_certificate.remove',
-      label: 'Remove',
-      icon: Trash2,
-      kind: 'destructive',
-      run: () => onRemove(row),
-    });
-  }
-  return <RowActionsMenu actions={actions} ariaLabel={`${row.scheme} ${row.certificate_number}`} />;
-}
-
 function FilterField({
   id,
   title,
@@ -209,6 +171,8 @@ export function QuotationCertificatesList({
   documentId: string;
 }) {
   const router = useRouter();
+  /** The row the right-click menu was opened on. */
+  const [menuRow, setMenuRow] = React.useState<CertificateRow | null>(null);
   const list = useQuotationCertificates(projectId, documentId);
   const { exportPdf } = useQuotationCertificateMutations(projectId, documentId);
   const [adding, setAdding] = React.useState(false);
@@ -376,30 +340,40 @@ export function QuotationCertificatesList({
         minSize: 64,
         meta: { headerTitle: 'Source' },
       },
-      {
-        id: 'actions',
-        header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => (
-          <CertificateRowMenu
-            row={row.original}
-            projectId={projectId}
-            documentId={documentId}
-            canEdit={canEdit}
-            onRemove={onRemove}
-          />
-        ),
-        size: 60,
-        minSize: 56,
-        enableSorting: false,
-        enableResizing: false,
-        meta: { headerTitle: 'Actions' },
-      },
     ],
-    [projectId, documentId, canEdit, onRemove],
+    [],
   );
+
+  const rowAt = (target: EventTarget) => {
+    const id = (target as Element).closest?.('[data-certificate-id]')?.getAttribute('data-certificate-id');
+    return id ? all.find((r) => r.certificate_id === id) : undefined;
+  };
+  const open = (row: CertificateRow) =>
+    router.push(certificateHref(projectId, documentId, row.certificate_id));
 
   return (
     <>
+      {/* The row actions are its right-click menu (long-press on touch), as on the Purchase
+          orders tab: no "..." button on the row (owner: right-click over icons). */}
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger asChild>
+          <div
+            // Capture phase: a right-click outside a certificate row stops here, so the
+            // browser's own menu shows instead of an empty one.
+            onContextMenuCapture={(event) => {
+              const hit = rowAt(event.target);
+              if (!hit) {
+                event.stopPropagation();
+                return;
+              }
+              setMenuRow(hit);
+            }}
+            // A long-press (touch, pen) opens the menu on a timer with no contextmenu event on
+            // iOS, so the row is picked when the press starts.
+            onPointerDownCapture={(event) => {
+              if (event.pointerType !== 'mouse') setMenuRow(rowAt(event.target) ?? null);
+            }}
+          >
       <PanelDataGrid<CertificateRow>
         title="Certificates"
         listingKey="projects.projects.view::quotation-certificates"
@@ -420,7 +394,8 @@ export function QuotationCertificatesList({
             ? 'Try another search or clear a filter.'
             : 'None of the quoted products has a certificate on file.'
         }
-        onRowClick={(row) => router.push(certificateHref(projectId, documentId, row.certificate_id))}
+        onRowClick={open}
+        rowAttributes={(row) => ({ 'data-certificate-id': row.certificate_id })}
         toolbar={({ table }) => (
           <DataGridListToolbar
             table={table}
@@ -498,6 +473,29 @@ export function QuotationCertificatesList({
           />
         )}
       />
+          </div>
+        </ContextMenuTrigger>
+        {/* Hidden with no row: a long-press outside the rows opens nothing, and the next touch
+            anywhere closes it. */}
+        <ContextMenuContent className="w-48" hidden={!menuRow}>
+          {menuRow && (
+            <>
+              <ContextMenuItem onSelect={() => open(menuRow)}>Open</ContextMenuItem>
+              <ContextMenuItem
+                disabled={!menuRow.has_file}
+                onSelect={() => void saveFile(projectId, documentId, menuRow)}
+              >
+                Download
+              </ContextMenuItem>
+              {canEdit && (
+                <ContextMenuItem variant="destructive" onSelect={() => onRemove(menuRow)}>
+                  Remove
+                </ContextMenuItem>
+              )}
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
       {canAdd && (
         <AddCertificateDialog
           open={adding}
