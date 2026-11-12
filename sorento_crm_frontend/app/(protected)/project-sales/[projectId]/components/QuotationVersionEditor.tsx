@@ -699,7 +699,11 @@ export function QuotationVersionEditor({
   const setChosenFlags = flagFilter?.onChange ?? setOwnFlags;
   const verdictSeriesId = (seriesId !== undefined ? seriesId : quotation?.series_id) ?? null;
   const facts = useLinesFacts(
-    { quotationId: quotation?.id ?? null, seriesId: verdictSeriesId },
+    {
+      quotationId: quotation?.id ?? null,
+      seriesId: verdictSeriesId,
+      savedSeriesId: quotation ? (quotation.series_id ?? null) : undefined,
+    },
     gridLines,
   );
   /**
@@ -885,6 +889,7 @@ export function QuotationVersionEditor({
           editing={gridEditing}
           quotationId={quotation?.id ?? null}
           seriesId={verdictSeriesId}
+          savedSeriesId={quotation ? (quotation.series_id ?? null) : undefined}
           rowFilter={rowFilter}
           emptyHint={
             gridEditing

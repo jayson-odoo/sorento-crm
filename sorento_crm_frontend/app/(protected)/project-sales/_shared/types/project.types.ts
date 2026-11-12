@@ -1149,6 +1149,8 @@ export interface QuotationLineVerdict {
   is_below_floor: boolean;
   /** Below the default price (series price, else list price), by the save's own rule. */
   is_discounted?: boolean;
+  /** NON-CANCELLABLE-ITEMS F1: the save's `is_non_cancellable`, judged now. */
+  is_non_cancellable?: boolean;
   floor_value: string | null;
   floor_level: string | null;
 }
