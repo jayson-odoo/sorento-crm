@@ -59,6 +59,7 @@ vi.mock('../../respond-contacts/services/respondContactOutboundService', () => (
 }));
 vi.mock('../../chat-history/services/chatbotTurnService', () => ({
   getChatbotTurns: vi.fn().mockResolvedValue({ items: [], next_cursor: null, retry_available: false }),
+  getChatbotTurn: vi.fn().mockReturnValue(new Promise(() => {})),
 }));
 
 const CONTACT_KEY = 'chatbot-console:last-contact';
@@ -307,7 +308,7 @@ describe('AC-5: everything the Bot tab had stays', () => {
     send('price?');
     await screen.findByText('Which product?');
     const bubble = bubbleOf('Which product?');
-    expect(within(bubble).getByRole('link', { name: 'trace' }).getAttribute('href')).toContain('t9');
+    expect(within(bubble).getByRole('button', { name: 'trace' })).toBeTruthy();
     expect(within(bubble).getByTestId('chatbot-console-prompt-pill')).toHaveTextContent('v18');
     fireEvent.click(within(bubble).getByRole('button', { name: 'Pump A' }));
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
@@ -318,12 +319,13 @@ describe('AC-5: everything the Bot tab had stays', () => {
 // ------------------------------------------------------------------ AC-6
 
 describe('AC-6: a trace link on an agent turn, and unique bubble keys', () => {
-  it('an agent bubble has a trace link to its own turn', async () => {
+  it('an agent bubble has a trace that opens its own turn in the drawer', async () => {
     getConsoleThread.mockResolvedValue(thread([agentTurn('agent-turn-77', 'q', 'Agent reply.', '2026-10-31T09:00:00Z')]));
     renderConsole();
     await screen.findByText('Agent reply.');
-    const link = within(bubbleOf('Agent reply.')).getByRole('link', { name: 'trace' });
-    expect(link.getAttribute('href')).toContain('agent-turn-77');
+    fireEvent.click(within(bubbleOf('Agent reply.')).getByRole('button', { name: 'trace' }));
+    // shortTurnId drops dashes and keeps 4 characters.
+    expect(within(await screen.findByRole('dialog')).getByText('Turn #agen')).toBeTruthy();
   });
 
   it('two busy agent replies without a turn id do not collide on a React key', async () => {
