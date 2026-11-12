@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_FIELDS, SITE_KEYS } from '../lib/siteFields';
 import { useEffect, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -116,6 +117,10 @@ function cleanProductLines(
  * edits in the portal's own form, written through My Requests; everyone else the staff form,
  * unchanged.
  */
+function hasSite(complaint: Partial<Record<(typeof SITE_KEYS)[number], string | null>>): boolean {
+  return SITE_KEYS.some((k) => !!complaint[k]?.trim());
+}
+
 export default function ComplaintForm(props: ComplaintFormProps) {
   const { limited } = useRequestScope("complaint");
   const fulfilmentTabs = useComplaintFulfilmentTabs(props.complaintId);
@@ -155,6 +160,14 @@ function StaffComplaintForm({
       contact_person: null,
       contact_number: null,
       customer_address: null,
+      site_address_line1: null,
+      site_address_line2: null,
+      site_postcode: null,
+      site_city: null,
+      site_state: null,
+      site_country: null,
+      site_contact_name: null,
+      site_contact_phone: null,
       project_title: null,
       project_id: null,
       contact_id: null,
@@ -230,6 +243,17 @@ function StaffComplaintForm({
         contact_person: complaint.contact_person || null,
         contact_number: complaint.contact_number || null,
         customer_address: complaint.customer_address || null,
+        // Nothing is written until the user saves: an empty Site starts from the delivery address.
+        site_address_line1:
+          complaint.site_address_line1 ||
+          (hasSite(complaint) ? null : complaint.customer_address || null),
+        site_address_line2: complaint.site_address_line2 || null,
+        site_postcode: complaint.site_postcode || null,
+        site_city: complaint.site_city || null,
+        site_state: complaint.site_state || null,
+        site_country: complaint.site_country || null,
+        site_contact_name: complaint.site_contact_name || null,
+        site_contact_phone: complaint.site_contact_phone || null,
         project_title: complaint.project_title || null,
         project_id: complaint.project_id || null,
         contact_id: complaint.contact_id ?? null,
@@ -284,6 +308,14 @@ function StaffComplaintForm({
         contact_person: data.contact_person || undefined,
         contact_number: data.contact_number || undefined,
         customer_address: data.customer_address || undefined,
+        site_address_line1: data.site_address_line1 || undefined,
+        site_address_line2: data.site_address_line2 || undefined,
+        site_postcode: data.site_postcode || undefined,
+        site_city: data.site_city || undefined,
+        site_state: data.site_state || undefined,
+        site_country: data.site_country || undefined,
+        site_contact_name: data.site_contact_name || undefined,
+        site_contact_phone: data.site_contact_phone || undefined,
         project_title: data.project_title || undefined,
         project_id: data.project_id || null,
         ...(isEditMode
@@ -375,6 +407,14 @@ function StaffComplaintForm({
       contact_person: data.contact_person || undefined,
       contact_number: data.contact_number || undefined,
       customer_address: data.customer_address || undefined,
+      site_address_line1: data.site_address_line1 || undefined,
+      site_address_line2: data.site_address_line2 || undefined,
+      site_postcode: data.site_postcode || undefined,
+      site_city: data.site_city || undefined,
+      site_state: data.site_state || undefined,
+      site_country: data.site_country || undefined,
+      site_contact_name: data.site_contact_name || undefined,
+      site_contact_phone: data.site_contact_phone || undefined,
       project_title: data.project_title || undefined,
       project_id: data.project_id || null,
       technical_team_response: technicalResponse,
@@ -548,6 +588,27 @@ function StaffComplaintForm({
                 </FormItem>
               )}
             />
+
+
+            <div className="space-y-4 rounded-lg border p-4">
+              <h3 className="text-sm font-semibold">Site</h3>
+              {SITE_FIELDS.map((f) => (
+                <FormField
+                  key={f.key}
+                  control={form.control}
+                  name={f.key}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{f.label}</FormLabel>
+                      <FormControl>
+                        <Input {...field} value={field.value || ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
+            </div>
 
             <FormField
               control={form.control}

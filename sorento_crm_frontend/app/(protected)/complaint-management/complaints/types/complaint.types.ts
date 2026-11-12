@@ -43,6 +43,14 @@ export interface Complaint {
   contact_person?: string | null;
   contact_number?: string | null;
   customer_address?: string | null;
+  site_address_line1?: string | null;
+  site_address_line2?: string | null;
+  site_postcode?: string | null;
+  site_city?: string | null;
+  site_state?: string | null;
+  site_country?: string | null;
+  site_contact_name?: string | null;
+  site_contact_phone?: string | null;
   project_title?: string | null;
   /** AC-L3: the reportable link to a registered project. `project_code` / `project_name` are
    *  the resolved display values -- never render the UUID. */
@@ -110,6 +118,14 @@ export interface ComplaintFormData {
   contact_person?: string;
   contact_number?: string;
   customer_address?: string;
+  site_address_line1?: string;
+  site_address_line2?: string;
+  site_postcode?: string;
+  site_city?: string;
+  site_state?: string;
+  site_country?: string;
+  site_contact_name?: string;
+  site_contact_phone?: string;
   project_title?: string;
   project_id?: string | null;
   contact_id?: string | null;

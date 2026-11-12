@@ -519,6 +519,18 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Complaints",
       },
       {
+        "path": "/complaint-management/service-jobs",
+        "title": "Service Jobs",
+      },
+      {
+        "path": "/complaint-management/service-jobs/board",
+        "title": "Dispatch Board",
+      },
+      {
+        "path": "/complaint-management/technicians",
+        "title": "Technicians",
+      },
+      {
         "path": "/complaint-management/complaint-root-causes",
         "title": "Root Causes",
       },

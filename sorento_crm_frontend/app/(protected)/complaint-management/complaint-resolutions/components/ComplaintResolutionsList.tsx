@@ -115,6 +115,17 @@ export default function ComplaintResolutionsList() {
         ),
       },
       {
+        id: 'requires_service_job',
+        accessorFn: (row) => row.requires_service_job,
+        header: ({ column }) => <DataGridColumnHeader title="Requires service job" column={column} />,
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Requires service job' },
+        cell: ({ row }) => (
+          <span className="truncate block">{row.original.requires_service_job ? 'Yes' : 'No'}</span>
+        ),
+      },
+      {
         id: 'complaint_count',
         accessorFn: (row) => row.complaint_count ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="Complaints" column={column} />,

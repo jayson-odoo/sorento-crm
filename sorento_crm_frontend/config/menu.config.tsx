@@ -779,6 +779,24 @@ const STAFF_SIDEBAR: MenuConfig = [
         permission: 'complaint_management.complaints.view',
       },
       {
+        title: 'Service Jobs',
+        path: '/complaint-management/service-jobs',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/complaint-management/service-jobs/board',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/complaint-management/technicians',
+        permissionsAny: [
+          'complaint_management.service_jobs.view',
+          'complaint_management.technicians.manage',
+        ],
+      },
+      {
         title: 'Root Causes',
         path: '/complaint-management/complaint-root-causes',
         permission: 'master_data.complaint_root_causes.view',
@@ -1969,6 +1987,24 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Complaints',
         path: '/complaint-management/complaints',
+      },
+      {
+        title: 'Service Jobs',
+        path: '/complaint-management/service-jobs',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/complaint-management/service-jobs/board',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/complaint-management/technicians',
+        permissionsAny: [
+          'complaint_management.service_jobs.view',
+          'complaint_management.technicians.manage',
+        ],
       },
       {
         title: 'Root Causes',

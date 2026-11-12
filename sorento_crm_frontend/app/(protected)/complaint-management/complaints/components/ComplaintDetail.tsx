@@ -58,6 +58,9 @@ import {
   useUploadComplaintResponseAttachments,
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
+import ComplaintSiteCard from './ComplaintSiteCard';
+import ComplaintServiceJobsSection from './ComplaintServiceJobsSection';
+import { useRaiseServiceJob } from '../../service-jobs/hooks/useServiceJobs';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
@@ -133,6 +136,8 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const closeComplaintMutation = useCloseComplaint();
   const notifyRootCauseMutation = useNotifyComplaintRootCause();
   const notifyResolutionMutation = useNotifyComplaintResolution();
+  const canDispatch = useHasPermission('complaint_management.service_jobs.dispatch');
+  const raiseServiceJob = useRaiseServiceJob();
   const canApprove = useHasPermission('complaint_management.complaints.approve');
   const canReject = useHasPermission('complaint_management.complaints.reject');
   const canProcess = useHasPermission('complaint_management.complaints.resolve');
@@ -567,6 +572,16 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 >
                   <Ban className="size-4" />
                   Void
+                </DropdownMenuItem>
+              )}
+              {canDispatch && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    raiseServiceJob.mutate(complaintId);
+                  }}
+                >
+                  Raise service job
                 </DropdownMenuItem>
               )}
               {/* The set the list row renders too (D15) - Download PDF, Delete.
@@ -1396,6 +1411,10 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </div>
         </CardContent>
       </Card>
+
+      <ComplaintSiteCard complaint={complaint} />
+
+      <ComplaintServiceJobsSection complaintId={complaintId} canDispatch={canDispatch} />
 
       <ComplaintManualAttachmentsSection
         complaintId={complaintId}
