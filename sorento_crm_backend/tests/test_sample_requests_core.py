@@ -843,13 +843,25 @@ def test_ac_sr_51_queue_defaults_to_open_statuses_last_activity_descending(world
     """AC-SR-51: default Submitted+Processing+Customer confirmed; last activity descending.
 
     FORMS-LAST-ACTIVITY Q1 (owner ruling, 12 Nov) superseded the old delivery date ascending
-    default. The rows are touched in the order later, sooner, soonest, so newest first is the
-    reverse.
+    default. The stamps are set out of delivery order to show the order follows the stamp.
     """
     later = _submitted(world, delivery_date="2026-12-20")
     sooner = _submitted(world, delivery_date="2026-12-05")
     soonest = _submitted(world, delivery_date="2026-11-30")
     draft = _draft(world, delivery_date="2026-11-01")["id"]
+    # Stamps written without an actor, out of delivery order: sooner is the newest.
+    from datetime import datetime
+
+    from sqlalchemy import update
+
+    from app.models.sample_request import SampleRequest
+
+    for rid, day in ((sooner, 20), (later, 15), (soonest, 10)):
+        world.db.execute(
+            update(SampleRequest.__table__).where(SampleRequest.__table__.c.id == rid)
+            .values(last_activity_at=datetime(2026, 3, day))
+        )
+    world.db.commit()
 
     res = world.api.as_(world.coord).get(SR)
     assert res.status_code == 200, res.text
@@ -857,15 +869,20 @@ def test_ac_sr_51_queue_defaults_to_open_statuses_last_activity_descending(world
     assert set(body) >= {"data", "pagination", "empty"}
     ids = [r["id"] for r in body["data"]]
     assert draft not in ids
-    assert ids == [soonest, sooner, later]
+    assert ids == [sooner, later, soonest]
 
 
-def test_ac_sr_51_default_sort_puts_a_missing_date_last(world):
-    """AC-SR-51: a request with no delivery date (a draft) sorts after dated ones."""
+def test_ac_sr_51_delivery_date_sort_puts_a_missing_date_last(world):
+    """AC-SR-51: sorted by delivery date, a request with none (a draft) comes after dated ones.
+
+    Asked for explicitly since FORMS-LAST-ACTIVITY Q1 (12 Nov) made last activity the default.
+    """
     dated = _draft(world, delivery_date="2026-12-20")["id"]
     undated = _draft(world, delivery_date=None)["id"]
     earlier = _draft(world, delivery_date="2026-12-01")["id"]
-    res = world.api.as_(world.coord).get(SR, params={"status": "draft"})
+    res = world.api.as_(world.coord).get(
+        SR, params={"status": "draft", "sort": "delivery_date", "dir": "asc"}
+    )
     assert res.status_code == 200, res.text
     ids = [r["id"] for r in res.json()["data"]]
     assert ids == [earlier, dated, undated]
