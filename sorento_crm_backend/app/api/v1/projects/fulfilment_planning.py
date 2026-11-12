@@ -626,6 +626,22 @@ def _run_confirm_many(
             actor_id,
             preview,
         )
+    # The SO number per result, one lookup for all of them: the board refetch drops an
+    # applied order, so the result line can only name it from here.
+    pso_ids = [str(r["pso_id"]) for r in results if r.get("pso_id") and _is_uuid(str(r["pso_id"]))]
+    if pso_ids:
+        from app.models.order import SalesOrder
+        from app.models.project_so import ProjectSalesOrder
+
+        numbers = {
+            str(pso_id): number
+            for pso_id, number in db.query(ProjectSalesOrder.id, SalesOrder.so_number)
+            .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            .filter(ProjectSalesOrder.id.in_(pso_ids))
+            .all()
+        }
+        for result in results:
+            result["so_number"] = numbers.get(str(result.get("pso_id")))
     return results
 
 

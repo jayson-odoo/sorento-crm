@@ -199,7 +199,7 @@ function SoPartyLine({ label, inMenu = false }: { label: string | undefined; inM
  * and is excluded from the header's ok/total denominator so an order that confirmed
  * everything else does not read as a failure alongside its own success.
  */
-type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string; heldBack?: boolean };
+type BoardBatchResult = ConfirmManyOrderResult & { heldBack?: boolean };
 
 /**
  * S6 (R-J): List is the default view; only an explicit `?view=grid` opens Grid. Exported

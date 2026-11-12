@@ -715,6 +715,9 @@ class ConfirmManyOrderResult(BaseModel):
     a slower reply."""
 
     pso_id: str
+    #: The core sales order's number, so a result line can name the order after the board
+    #: refetch has dropped it.
+    so_number: Optional[str] = None
     ok: bool
     #: True on a preview: nothing below was committed.
     preview: Optional[bool] = None

@@ -2787,6 +2787,8 @@ export interface ConfirmManyOrderResult {
   lines_retired?: CancelledLineEcho[] | null;
   transfers?: PreviewTransfer[] | null;
   pso_id: string;
+  /** The core sales order number, so a result line can name an order the board dropped. */
+  so_number?: string | null;
   ok: boolean;
   decision_revision?: number | null;
   inquiry_rows_created?: number | null;
