@@ -50,7 +50,7 @@ const PRESENTATION: Record<string, { th: string; td: string }> = {
   unit_rate: { th: 'min-w-[120px] text-right', td: 'text-right tabular-nums' },
   complete_set: { th: 'min-w-[140px] text-left', td: 'text-muted-foreground' },
   // The flag and the line note arrive on separate lines (QUOTE-LINE-NOTE-REMARK); a long note wraps.
-  remark: { th: 'min-w-[110px] text-left', td: 'whitespace-pre-line break-words' },
+  remark: { th: 'min-w-[220px] text-left', td: 'min-w-[220px] max-w-[320px] whitespace-pre-line break-words' },
   amount: { th: 'min-w-[120px] text-right', td: 'text-right' },
 };
 
