@@ -220,3 +220,46 @@ describe('ProjectImportListClient, round 6', () => {
     expect(total).toBeLessThanOrEqual(CONTENT_WIDTH_1280);
   });
 });
+
+/** Round 7: a cell's full text is on hover: the cell (or its wrapper) carries title=text. */
+function hasFullTitle(container: HTMLElement, text: string): boolean {
+  const cells = Array.from(container.querySelectorAll('table tbody td'));
+  return cells.some((td) => {
+    if ((td.textContent ?? '').trim() !== text) return false;
+    return [td, ...Array.from(td.querySelectorAll('*'))].some(
+      (el) => el.getAttribute('title') === text
+    );
+  });
+}
+
+function isTruncated(container: HTMLElement, text: string): boolean {
+  const cells = Array.from(container.querySelectorAll('table tbody td'));
+  const td = cells.find((c) => (c.textContent ?? '').trim() === text);
+  if (!td) return true;
+  return [td, ...Array.from(td.querySelectorAll('*'))].some((el) =>
+    /(^|\s)(truncate|text-ellipsis|line-clamp-1)(\s|$)/.test((el as HTMLElement).className ?? '')
+  );
+}
+
+describe('ProjectImportListClient, round 7', () => {
+  it('r7: N1 Run no. fits PIM-0000 at its default size', async () => {
+    const { container } = renderList();
+    await screen.findByText('PIM-0001');
+    // 'PIM-0000' at the grid font, plus cell padding and the sort control.
+    expect(widthOf(headerCell(container, /^Run no\./))).toBeGreaterThanOrEqual(120);
+    expect(isTruncated(container, 'PIM-0001')).toBe(false);
+  });
+
+  it('r7: N1 Status fits its longest plain label', async () => {
+    const { container } = renderList();
+    await screen.findByText('PIM-0001');
+    // A "Previewed" / "Importing" / "Reverted" pill plus cell padding.
+    expect(widthOf(headerCell(container, /^Status/))).toBeGreaterThanOrEqual(130);
+  });
+
+  it('r7: N1 the file name may truncate but shows in full on hover', async () => {
+    const { container } = renderList();
+    await screen.findByText('PIM-0001');
+    expect(hasFullTitle(container, 'TOTAL SALES ORDER SUMMARY 2026.xlsx')).toBe(true);
+  });
+});

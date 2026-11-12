@@ -291,3 +291,17 @@ describe('ValuesStep, round 6', () => {
     expect(titles.slice(0, 2)).toEqual(['Value in file', 'Linked to']);
   });
 });
+
+describe('ValuesStep, round 7', () => {
+  it('r7: D8 at 375 Linked to starts within the first 300 px', async () => {
+    const { container } = renderStep();
+    await screen.findByText('CUSTOMER 002 SDN BHD');
+    const ths = Array.from(container.querySelectorAll('table thead th')) as HTMLElement[];
+    const at = ths.findIndex((th) => (th.textContent ?? '').trim() === 'Linked to');
+    expect(at).toBeGreaterThan(-1);
+    // The tick column + Value in file, with their cell padding (the th width carries it in a
+    // fixed layout): the picker must be on a 360 px phone screen at first paint.
+    const before = ths.slice(0, at).reduce((sum, th) => sum + parseFloat(th.style.width || '0'), 0);
+    expect(before).toBeLessThanOrEqual(300);
+  });
+});

@@ -357,3 +357,63 @@ describe('PreviewStep, round 6', () => {
     expect(total).toBeLessThanOrEqual(CONTENT_WIDTH_1280);
   });
 });
+
+/** Round 7: a cell's full text is on hover: the cell (or its wrapper) carries title=text. */
+function hasFullTitle(container: HTMLElement, text: string): boolean {
+  const cells = Array.from(container.querySelectorAll('table tbody td'));
+  return cells.some((td) => {
+    if ((td.textContent ?? '').trim() !== text) return false;
+    return [td, ...Array.from(td.querySelectorAll('*'))].some(
+      (el) => el.getAttribute('title') === text
+    );
+  });
+}
+
+function isTruncated(container: HTMLElement, text: string): boolean {
+  const cells = Array.from(container.querySelectorAll('table tbody td'));
+  const td = cells.find((c) => (c.textContent ?? '').trim() === text);
+  if (!td) return true;
+  return [td, ...Array.from(td.querySelectorAll('*'))].some((el) =>
+    /(^|\s)(truncate|text-ellipsis|line-clamp-1)(\s|$)/.test((el as HTMLElement).className ?? '')
+  );
+}
+
+describe('PreviewStep, round 7', () => {
+  const longRow = {
+    ...reportRow('PS26-0042', 'skipped', ['no_project_name'], 42),
+    sheet: "JUN'26 ",
+    customer: 'CUSTOMER 042 SENDIRIAN BERHAD',
+    project: 'PROJECT 042 SAMPLE NAME WITH A LONG TAIL',
+    po_number: 'UT12/0042/LONG-REF',
+    po_date: '2026-06-12',
+    labels: ['No project name'],
+    message: null,
+  };
+
+  it.each([
+    ['Customer', 'CUSTOMER 042 SENDIRIAN BERHAD'],
+    ['Project', 'PROJECT 042 SAMPLE NAME WITH A LONG TAIL'],
+    ['PO no.', 'UT12/0042/LONG-REF'],
+    ['Reason', 'No project name'],
+  ])('r7: N2 a cut %s cell shows its full text on hover', async (_column, text) => {
+    service.listRows.mockResolvedValue({ data: [longRow], total: 1 });
+    const { container } = renderStep();
+    await screen.findByText('PS26-0042');
+    expect(hasFullTitle(container, text)).toBe(true);
+  });
+
+  it('r7: N2 the Sheet cell shows the sheet name in full on hover', async () => {
+    service.listRows.mockResolvedValue({ data: [longRow], total: 1 });
+    const { container } = renderStep();
+    await screen.findByText('PS26-0042');
+    expect(hasFullTitle(container, "JUN'26")).toBe(true);
+  });
+
+  it('r7: N2 PS no. and PO date never truncate', async () => {
+    service.listRows.mockResolvedValue({ data: [longRow], total: 1 });
+    const { container } = renderStep();
+    await screen.findByText('PS26-0042');
+    expect(isTruncated(container, 'PS26-0042')).toBe(false);
+    expect(isTruncated(container, '12/06/2026')).toBe(false);
+  });
+});
