@@ -638,3 +638,101 @@ def test_ac20h_a_discontinued_code_found_only_inside_the_typed_token_is_not_offe
     assert code not in str(c.stored_question), c.stored_question
     assert "Couldn't find" in text, text  # today's no-candidate reply
     assert TICK not in text and "Stock summary" not in text and "How many units of" not in text, text
+
+
+# --------------------------------------------------------------------------- Q3 follow-up: a discontinued close code is replaced by its alternatives
+
+OLD = "TWK8047"  # discontinued (active); "TWKT8047" is close to it (trigram 0.545)
+FAR_ALT = "QMR5521-B"  # its alternative, far from the typed code so only the replacement can put it in the offer
+
+
+def _alt_world(
+    session_factory, monkeypatch, stub_access, codes: list[str], *, discontinued: list[str],
+    links: list[tuple[str, str]], inactive: list[str] = (),
+) -> Console:  # noqa: F811
+    from app.models.product import ProductAlternative
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    c = _console(session_factory, monkeypatch, stub_access, codes, **{k: Stock(on_hand=100, discontinued=k in discontinued) for k in codes})
+    db = session_factory()
+    try:
+        if discontinued:
+            db.execute(sql_text("UPDATE products SET is_discontinued = true WHERE product_code = ANY(:c)"), {"c": list(discontinued)})
+        if inactive:
+            db.execute(sql_text("UPDATE products SET is_active = false WHERE product_code = ANY(:c)"), {"c": list(inactive)})
+        for old, new in links:
+            db.add(
+                ProductAlternative(
+                    product_id=c.uuid_of[old], alternative_product_id=c.uuid_of[new], source="manual", company_id=DEFAULT_COMPANY_ID
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+    return c
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20j_a_discontinued_close_code_is_replaced_by_its_active_alternative(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _alt_world(session_factory, monkeypatch, stub_access, [OLD, FAR_ALT], discontinued=[OLD], links=[(OLD, FAR_ALT)])
+    if who == "staff":
+        c.as_staff()
+    text = c.say("TWKT8047 stock", stock(product("TWKT8047")))
+    assert _word(FAR_ALT, text), text
+    assert not _word(OLD, text) and OLD not in str(c.stored_question), (text, c.stored_question)
+    if who == "dealer":
+        assert text == f"Couldn't find TWKT8047. Did you mean {FAR_ALT}?", text
+        assert _option_codes(c) == [FAR_ALT], c.stored_question
+
+
+@pytest.mark.parametrize("state", ["no_link", "inactive_alternative", "discontinued_alternative"])
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20k_a_discontinued_close_code_with_no_live_alternative_is_dropped(session_factory, monkeypatch, stub_access, who, state):  # noqa: F811
+    codes = [OLD] if state == "no_link" else [OLD, FAR_ALT]
+    c = _alt_world(
+        session_factory, monkeypatch, stub_access, codes,
+        discontinued=[OLD] + ([FAR_ALT] if state == "discontinued_alternative" else []),
+        links=[] if state == "no_link" else [(OLD, FAR_ALT)],
+        inactive=[FAR_ALT] if state == "inactive_alternative" else [],
+    )
+    if who == "staff":
+        c.as_staff()
+    text = c.say("TWKT8047 stock", stock(product("TWKT8047")))
+    assert "Did you mean" not in text, text
+    assert not _word(OLD, text) and not _word(FAR_ALT, text), text
+    assert "Couldn't find" in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20l_a_replacement_that_is_also_a_close_code_is_offered_once(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    new = "TWK8047-NEW"  # active, and itself close to "TWKT8047" (trigram 0.333)
+    c = _alt_world(session_factory, monkeypatch, stub_access, [OLD, new], discontinued=[OLD], links=[(OLD, new)])
+    if who == "staff":
+        c.as_staff()
+    text = c.say("TWKT8047 stock", stock(product("TWKT8047")))
+    assert text.count(new) == 1, text
+    assert not _word(OLD, text), text
+    assert [code for code in _option_codes(c) if code != "None"].count(new) <= 1, c.stored_question
+    if who == "dealer":
+        assert text == f"Couldn't find TWKT8047. Did you mean {new}?", text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20l_a_replacement_in_another_company_is_never_offered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from app.models.product import ProductAlternative
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    c = _alt_world(session_factory, monkeypatch, stub_access, [OLD], discontinued=[OLD], links=[])
+    other = _seed_company(session_factory, name="ZZT Other Co Alt")
+    foreign = _seed_product(session_factory, company_id=other, code=FAR_ALT)
+    db = session_factory()
+    try:
+        db.add(ProductAlternative(product_id=c.uuid_of[OLD], alternative_product_id=foreign, source="manual", company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+    finally:
+        db.close()
+    if who == "staff":
+        c.as_staff()
+    text = c.say("TWKT8047 stock", stock(product("TWKT8047")))
+    assert not _word(FAR_ALT, text) and not _word(OLD, text), text
+    assert "Did you mean" not in text, text
