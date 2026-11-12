@@ -77,3 +77,76 @@ describe('QuotationSignScopes remark with a line note', () => {
     expect(wraps).toBe(true);
   });
 });
+
+/**
+ * The area-grid (matrix) table: the server sends `remark` in a matrix scope's columns too, and the
+ * PDF's matrix layout prints REMARK after the unit rate and before the money (the plain columns
+ * after QTY keep their order: UNIT RATE, COMPLETE SET, REMARK, GRAND TOTAL). The page mirrors it.
+ */
+const MATRIX = [
+  { key: 'ta', label: 'ZZT TYPE A', cols: [{ key: 'ta-bh', label: '1 BH' }, { key: 'ta-kit', label: 'Kitchen' }] },
+];
+
+function renderMatrix(columns: typeof COLUMNS, remark: string | null) {
+  render(
+    <QuotationSignScopes
+      scopes={[
+        {
+          scope_label: 'ZZT Units',
+          scope_total: '200.00',
+          columns,
+          matrix_columns: MATRIX,
+          lines: [{ ...line('m1', '1', remark), quantity: '2', qty_cells: { 'ta-bh': '2.00' } }],
+        },
+      ]}
+      grandTotal="200.00"
+    />,
+  );
+}
+
+function topHeaders(): string[] {
+  const first = document.querySelector('thead tr');
+  return Array.from(first?.querySelectorAll('th') ?? []).map((th) => th.textContent?.trim() ?? '');
+}
+
+/** The body cell whose whole text is ``text``. */
+function cellWithText(text: string): HTMLTableCellElement | undefined {
+  return Array.from(document.querySelectorAll('tbody td')).find((td) => td.textContent === text) as
+    | HTMLTableCellElement
+    | undefined;
+}
+
+describe('QuotationSignScopes matrix scope remark', () => {
+  it('draws a REMARK header between Unit rate and Amount, as the PDF matrix does', () => {
+    renderMatrix(COLUMNS, 'Non-cancellable\nLead time 6 weeks');
+    const heads = topHeaders();
+    expect(heads).toContain('REMARK');
+    const at = heads.indexOf('REMARK');
+    expect(at).toBeGreaterThan(heads.findIndex((h) => /unit rate/i.test(h)));
+    expect(at).toBeLessThan(heads.findIndex((h) => /^amount$/i.test(h)));
+  });
+
+  it('shows the flag and the note on separate lines in the matrix REMARK cell', () => {
+    renderMatrix(COLUMNS, 'Non-cancellable\nLead time 6 weeks');
+    const cell = cellWithText('Non-cancellable\nLead time 6 weeks');
+    expect(cell).toBeDefined();
+    const preLine = selfAndDescendants(cell!).some((el) => el.classList.contains('whitespace-pre-line'));
+    expect(preLine).toBe(true);
+  });
+
+  it('shows a long note whole in the matrix REMARK cell, never truncated', () => {
+    renderMatrix(COLUMNS, LONG_NOTE);
+    const cell = cellWithText(LONG_NOTE);
+    expect(cell).toBeDefined();
+    const cut = selfAndDescendants(cell!).some(
+      (el) => el.classList.contains('truncate') || Array.from(el.classList).some((c) => c.startsWith('line-clamp')),
+    );
+    expect(cut).toBe(false);
+  });
+
+  it('draws no REMARK header on a matrix scope whose columns lack remark', () => {
+    renderMatrix(SIGN_COLUMNS, null);
+    expect(topHeaders()).not.toContain('REMARK');
+    expect(topHeaders().length).toBeGreaterThan(0);
+  });
+});
