@@ -101,3 +101,17 @@ describe('TechnicianFormDialog phone (F2: the project-sales PhoneInput)', () => 
     expect(onSubmit.mock.calls[0][0].phone).toBe('+60123456789');
   });
 });
+
+describe('TechnicianFormDialog phone prefill (R7-2)', () => {
+  it('passes the stored E.164 into the shared PhoneInput, shown formatted like the job dialog', () => {
+    setup(TECH);
+    expect(screen.getByLabelText('Phone')).toHaveValue('12-345 6789');
+  });
+
+  it('keeps what was typed when the row is refetched as a new object', () => {
+    const view = render(<TechnicianFormDialog open onOpenChange={() => {}} technician={{ ...TECH }} onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getAllByLabelText('Name').slice(-1)[0], { target: { value: 'Ali H' } });
+    view.rerender(<TechnicianFormDialog open onOpenChange={() => {}} technician={{ ...TECH }} onSubmit={vi.fn()} />);
+    expect(screen.getAllByLabelText('Name').slice(-1)[0]).toHaveValue('Ali H');
+  });
+});

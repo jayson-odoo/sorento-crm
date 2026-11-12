@@ -49,6 +49,9 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
   const [complaint, setComplaint] = useState<{ id: string; label: string } | null>(null);
   const [tried, setTried] = useState(false);
   const [complaintQuery, setComplaintQuery] = useState('');
+  // What the form was last filled for. A refetched job object is a new reference for the same job and
+  // must not wipe what is being typed.
+  const [filledFor, setFilledFor] = useState<string | null>(null);
   const { data: found = [] } = useQuery({
     queryKey: ['service-job-complaint-search', complaintQuery],
     queryFn: () => searchComplaintNumbers(complaintQuery),
@@ -65,7 +68,10 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
   }, [found, complaint]);
 
   useEffect(() => {
-    if (!open) return;
+    const key = open ? (job?.id ?? 'new') : null;
+    if (key === filledFor) return;
+    setFilledFor(key);
+    if (!key) return;
     setF({
       customer_name: text(job?.customer_name),
       contact_name: text(job?.contact_name),
@@ -80,7 +86,7 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
     setPhone({ e164: text(job?.contact_phone), valid: true });
     setComplaint(job?.complaint_id ? { id: job.complaint_id, label: job.complaint_number ?? '' } : null);
     setTried(false);
-  }, [open, job]);
+  }, [open, job, filledFor]);
 
   const set = (key: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setF((prev) => ({ ...prev, [key]: e.target.value }));

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import asc, desc, or_
+from sqlalchemy import asc, desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.service_jobs import ServiceJob, Technician
@@ -13,10 +13,15 @@ from app.schemas.service_jobs import TechnicianCreate, TechnicianUpdate
 from app.services.error_handler import AppException, handle_not_found
 from app.services.project_party_contact_service import clean_phone, display_phone
 
+def _text(column):
+    """Blank and NULL both mean "no value", so both sort last."""
+    return func.nullif(func.trim(column), "")
+
+
 SORTS = {
-    "name": Technician.name,
-    "phone": Technician.phone,
-    "employment_type": Technician.employment_type,
+    "name": _text(Technician.name),
+    "phone": _text(Technician.phone),
+    "employment_type": _text(Technician.employment_type),
     "is_active": Technician.is_active,
 }
 
@@ -69,7 +74,7 @@ def list_technicians(
     total = q.count()
     column = SORTS.get(sort or "", Technician.name)
     order = desc(column) if (direction or "asc").lower() == "desc" else asc(column)
-    rows = q.order_by(order, Technician.id).offset((page - 1) * limit).limit(limit).all()
+    rows = q.order_by(order.nulls_last(), Technician.id).offset((page - 1) * limit).limit(limit).all()
     used = {
         str(t)
         for (t,) in db.query(ServiceJob.technician_id)

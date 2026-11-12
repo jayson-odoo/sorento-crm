@@ -43,15 +43,20 @@ export default function TechnicianFormDialog({
   const [tried, setTried] = useState(false);
   const [type, setType] = useState<EmploymentType>('employee');
   const [error, setError] = useState<string | null>(null);
+  // A refetched row is a new object for the same technician; it must not wipe what is being typed.
+  const [filledFor, setFilledFor] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    const key = open ? (technician?.id ?? 'new') : null;
+    if (key === filledFor) return;
+    setFilledFor(key);
+    if (!key) return;
     setName(technician?.name ?? '');
     setPhone({ e164: technician?.phone ?? '', valid: true });
     setTried(false);
     setType(technician?.employment_type === 'contractor' ? 'contractor' : 'employee');
     setError(null);
-  }, [open, technician]);
+  }, [open, technician, filledFor]);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();

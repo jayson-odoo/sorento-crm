@@ -16,7 +16,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import asc, desc, false, or_, text
+from sqlalchemy import asc, desc, false, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -150,14 +150,19 @@ def get_job(db: Session, job_id: str) -> Dict[str, Any]:
     return serialize(get_row(db, job_id))
 
 
+def _text(column):
+    """A text column where blank and NULL both mean "no value", so both sort last."""
+    return func.nullif(func.trim(column), "")
+
+
 SORTS = {
-    "job_number": lambda: ServiceJob.job_number,
-    "complaint_number": lambda: Complaint.complaint_number,
+    "job_number": lambda: _text(ServiceJob.job_number),
+    "complaint_number": lambda: _text(Complaint.complaint_number),
     "status": lambda: Status.sort_order,
     "scheduled_from": lambda: ServiceJob.scheduled_from,
-    "technician": lambda: Technician.name,
-    "city": lambda: ServiceJob.site_city,
-    "customer": lambda: ServiceJob.customer_name,
+    "technician": lambda: _text(Technician.name),
+    "city": lambda: _text(ServiceJob.site_city),
+    "customer": lambda: _text(ServiceJob.customer_name),
 }
 
 
