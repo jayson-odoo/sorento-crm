@@ -807,11 +807,14 @@ def test_S55b_substring_of_a_family_with_a_quantity_picks_then_answers(console):
     assert c.say("2", _pick(2)) == f"SRTWC286-SH-150 x 5: {TICK} Got stock."
 
 
-def test_S55c_substring_of_exactly_one_code_is_that_code(console):
-    """Like S08's prefix of one code: nothing to pick, so it is answered as that code."""
+def test_S55c_substring_of_exactly_one_code_is_offered(console):
+    """CHATBOT-CODE-MATCH AC-27b (card R0, lead sign-off 12 Nov): a code only INSIDE one catalogue
+    code is offered, never answered; "yes" answers it at the carried quantity. S55's own owner
+    turn (the wc286 family picker) and S08 (a prefix of one code, answered) are unchanged."""
     c = console(SRT5674=Stock(on_hand=100))
-    assert c.say("rt5674 x 3", stock(product("rt5674", 3))) == f"SRT5674 x 3: {TICK} Got stock."
-    assert c.say("rt5674 got stock?", stock(product("rt5674"))) == "How many units of SRT5674?"
+    assert c.say("rt5674 x 3", stock(product("rt5674", 3))) == "Couldn't find RT5674. Did you mean SRT5674?"
+    assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == f"SRT5674 x 3: {TICK} Got stock."
+    assert c.say("rt5674 got stock?", stock(product("rt5674"))).startswith("Couldn't find RT5674. Did you mean SRT5674?")
 
 
 def test_S55d_an_exact_code_still_never_brings_its_family(console):
