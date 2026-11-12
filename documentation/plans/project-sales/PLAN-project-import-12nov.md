@@ -166,3 +166,9 @@ Behaviour (mock v1 is the picture):
 - Preview: tiles from `preview_counts`; Import is the only primary button; Outcome / Reason / Sheet are `SearchableMultiSelect` filters; a needs-review row click switches to Values on the blocking kind.
 - Results: `OutcomeBreakdownCard` + `ImportJobRowsCard` (or their data shape), tabs Results | Values | History (`AuditTrail`), and Revert as a `DeferredActionButton` in the gear menu.
 - Every date goes through `formatDate` (dd/mm/yyyy). No UUID is rendered.
+
+## Assistant coverage (PRINCIPLES DoD lines 6 to 8)
+
+- Line 6: the runs list (`GET /api/v1/projects/import/runs`) is registered for the assistant and gated by `projects.import.view`. The lists inside a run (lines, lines summary, rows) carry `# ai: not-for-assistant`: they are the rows and value lines of one run, and the assistant answers from the runs list.
+- Line 7: no assistant action for Import or Revert. Each one creates or removes hundreds of records, so they stay on the screen, where a person reads the preview first.
+- Line 8: two eval prompts for the runs list.
