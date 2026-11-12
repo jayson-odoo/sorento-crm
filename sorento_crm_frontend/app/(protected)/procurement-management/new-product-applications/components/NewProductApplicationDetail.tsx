@@ -622,7 +622,8 @@ function StaffNewProductApplicationDetail({
                         projectId={r.project_id}
                         projectCode={r.project_code}
                         projectTitle={r.project_title}
-                        canEdit={canCreate}
+                        // The NPA edit rule (the applicant), as Edit itself (review S3).
+                        canEdit={ownerActs}
                         onSaved={() =>
                           void queryClient.invalidateQueries({
                             queryKey: ['new-product-application', r.id],

@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { setRecordProject, type RecordProjectKind } from '@/services/recordProjectService';
-import { RELATED_RECORDS_KEY } from '@/app/(protected)/project-sales/_shared/hooks/useProjectRelatedRecords';
+import { RELATED_RECORDS_KEY } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
 
 /** PROJECT-RELATED-RECORDS D2: change a record's Project field from its own page. */
 export function useSetRecordProject(kind: RecordProjectKind, recordId: string) {

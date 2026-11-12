@@ -80,6 +80,7 @@ import {
   createPurchaseOrderLine,
   updatePurchaseOrderLine,
   deletePurchaseOrderLine,
+  listProjectRelatedRecords,
   getSponsorshipRollup,
   getProjectDashboard,
   createLead,
@@ -152,6 +153,7 @@ import type {
   ProjectTypeBody,
   ProjectTemplateTaskBody,
   ProjectUpdateBody,
+  RelatedRecordsParams,
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
@@ -1885,9 +1887,26 @@ export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
 
 export const SPONSORSHIPS_KEY = 'project-sponsorships';
 
-// PROJECT-RELATED-RECORDS: defined in its own module so the project page's always-visible
-// tab badge can read it without this whole module; re-exported here for the panel.
-export { RELATED_RECORDS_KEY, useProjectRelatedRecords } from './useProjectRelatedRecords';
+export const RELATED_RECORDS_KEY = 'project-related-records';
+
+/**
+ * PROJECT-RELATED-RECORDS: the project's Related tab rows for these grid params, sorted,
+ * searched, filtered and paged on the server. The tab badge reads `type_counts` off the same
+ * query (the panel's opening params), so opening the tab costs no second request.
+ */
+export function useProjectRelatedRecords(
+  projectId: string | undefined,
+  params: RelatedRecordsParams,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [RELATED_RECORDS_KEY, projectId, params],
+    queryFn: () => listProjectRelatedRecords(projectId as string, params),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    // Keep the page on screen while the next sort, search or page loads.
+    placeholderData: (previous) => previous,
+  });
+}
 
 export function useSponsorshipRollup(projectId: string | undefined) {
   return useQuery({

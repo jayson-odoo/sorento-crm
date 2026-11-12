@@ -1486,6 +1486,9 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     # Resolved for display (AC-L3): the office-side detail page shows a project CODE, never a
     # UUID, matching what the portal already resolves for contacts.
     project_code: Optional[str] = None
+    # The linked project's title (PROJECT-RELATED-RECORDS D2: the detail page's Project field
+    # reads code + title). `project_title` is the typed text, so the complaint's name is used.
+    project_name: Optional[str] = None
     # Requestor display name, resolved live from the FK (read-only, response-only).
     requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None

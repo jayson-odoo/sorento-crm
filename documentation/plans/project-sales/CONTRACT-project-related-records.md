@@ -137,3 +137,27 @@ Register the related-records route in `app/services/assistant_registry/<projects
   Shared Excel style.
 - `--apply ticked.xlsx`: links only rows whose Link? cell is ticked (`y`/`yes`/`x`/`1`), through `set_record_project`, skipping a
   row whose record already has a project; prints counts. Never run by the lane against a shared DB.
+
+## 10. Fix round 2 (security + review, 13 Nov)
+
+- **One portal project check.** `sponsorship_link_service.assert_contact_may_link(db, contact, project_id, current, code)`:
+  ownership first (a project outside the contact's companies -> 422 `sponsorship_project_not_permitted`), then
+  `assert_linkable_project` (`<kind>_project_not_approved`). `PortalService._assert_own_project` runs it inside
+  `_apply_payload` before `project_id` is written, so portal create, draft save, submit and revise
+  (`portal_revision_service.revise` -> `_apply_payload`) all refuse a foreign project and save nothing; submit
+  re-checks the stored value. The portal NPA write and `POST /external/stock-inquiries` (with `project_id`; the
+  contact is the payload's `contact_id`) call the same function. The sponsorship form's own gate
+  (`assert_project_requirement`) reuses the ownership half.
+- **NPA cost.** `RelatedType.value_is_cost` (NPA): the row's `value` is null, for sort and cell, unless
+  `cost_access.can_view_cost` (`products.cost.view`); the assistant's `project_related_record` rows follow it.
+- **PATCH rules.** NPA: the NPA edit rule, the applicant (or an admin), plus `.create`. PR/SF: an edit right on
+  either kind is checked before the row is read (no 404/403 oracle), then the row's own kind.
+- **PR/SF response** carries `project_name` (the linked title; `project_title` stays the typed text).
+- **FE.** Complaint, PR and SF detail pages get the shared `RecordProjectField` (kind's own edit right, any
+  status). Related grid: Type and Status in the toolbar's Filters popover (always present); complaint status
+  label and pill from `lib/complaint-status.ts` through the registry entry (`statusLabel`, `statusPillClass`);
+  page, sort, search and filters in the address bar as `rel_page`, `rel_limit`, `rel_sort`, `rel_dir`,
+  `rel_query`, `rel_type`, `rel_status` (prefixed: the project page's own `page`/`sort`/`query` belong to the
+  projects list's prev/next); a sort change goes back to page 1.
+- `scripts/project_link_review.py --apply` needs `--actor`.
+

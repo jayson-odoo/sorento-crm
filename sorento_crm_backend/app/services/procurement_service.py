@@ -9682,6 +9682,7 @@ class PurchaseRequestService:
         is how a link starts looking broken. `project_title` remains the fallback for the
         thousands of rows that have no link.
         """
+        header.project_name = None  # the linked title; `project_title` is the typed text
         if not getattr(header, "project_id", None):
             header.project_code = None
             return
@@ -9689,11 +9690,12 @@ class PurchaseRequestService:
             from app.models.projects import Project
 
             row = (
-                self.db.query(Project.project_code)
+                self.db.query(Project.project_code, Project.title)
                 .filter(Project.id == str(header.project_id))
                 .first()
             )
             header.project_code = row[0] if row else None
+            header.project_name = row[1] if row else None
         except Exception:  # noqa: BLE001 -- display sugar must never break a read
             header.project_code = None
 
