@@ -87,7 +87,6 @@ import {
   contributionMatchesSearch,
   confirmLinesByOrder,
   remarkFor,
-  autocountChangeSentence,
   confirmButtonLabel,
   confirmSummaryFor,
   decisionHeaderText,
@@ -302,20 +301,10 @@ function pressHasSomething(
   );
 }
 
-/** The note lines of what a press's AutoCount change retired (`lines_retired`), for one order. */
-function retiredNote(result: BoardBatchResult, createdAt: string | null) {
-  const retired = result.lines_retired ?? [];
-  const itemCodes = [
-    ...new Set(retired.map((line) => line.item_code).filter((code): code is string => Boolean(code))),
-  ].sort();
-  return { count: retired.length, itemCodes, createdAt };
-}
-
 /**
  * One order's line in the Confirm / Simulate results (PLAN-BATCH-HELD-CANCEL UAC U3/U4;
  * PLAN-BATCH-COUNT-DISPLAY D3/D4): what the press did with the DECISIONS - the Cancel SO transfer
- * or the revision it confirmed. The AutoCount change it applied is one separate note
- * (`autocountChangeSentence`), unless that change is all the press did: then it is the sentence.
+ * or the revision it confirmed.
  */
 function resultSentence(
   result: BoardBatchResult,
@@ -338,18 +327,6 @@ function resultSentence(
   return simulated
     ? `would confirm as revision ${result.decision_revision}`
     : `confirmed as revision ${result.decision_revision} (${handedOver} purchase row${handedOver === 1 ? '' : 's'} handed over)`;
-}
-
-/** Whether a result's AutoCount change gets its own note (it is not already the sentence). */
-function retiredNoteApart(result: BoardBatchResult): boolean {
-  if (!result.ok || !result.planning_change_applied || !(result.lines_retired?.length ?? 0)) {
-    return false;
-  }
-  return (
-    (result.lines_cancelled?.length ?? 0) > 0 ||
-    (result.lines_confirmed?.length ?? 0) > 0 ||
-    (result.inquiry_rows_created ?? 0) > 0
-  );
 }
 
 function rowAxisFrom(value: string | null): BoardRowAxis {
@@ -599,16 +576,6 @@ export function FulfilmentBoardPanel({
     }
     return out;
   }, [loadedBatches]);
-
-  /**
-   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): every batch date this board has seen, per SO.
-   * Never emptied, so the results of a Confirm still name the change by its date after the
-   * board's re-read drops the now-applied batch from `bySoNumber`.
-   */
-  const seenBatchDates = React.useRef(new Map<string, string>());
-  for (const [soNumber, entry] of bySoNumber) {
-    seenBatchDates.current.set(soNumber, entry.batch.created_at);
-  }
 
   /** The one batch this order belongs to, or null - a `replan`/applied lookup never guesses. */
   const batchIdBySoNumber = React.useMemo(() => {
@@ -3546,9 +3513,6 @@ export function FulfilmentBoardPanel({
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
               const label = order?.so_number ?? result.so_number ?? result.pso_id;
-              // PLAN-BATCH-COUNT-DISPLAY: the date the note names is this order's batch, as seen
-              // when the press ran (the re-read after Confirm no longer names an applied batch).
-              const createdAt = seenBatchDates.current.get(label) ?? null;
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
@@ -3616,18 +3580,6 @@ export function FulfilmentBoardPanel({
                         </li>
                       ))}
                     </ul>
-                  )}
-                  {retiredNoteApart(result) && (
-                    <p
-                      data-testid={`board-retired-note-${result.pso_id}`}
-                      className="text-sm break-words text-muted-foreground"
-                    >
-                      {autocountChangeSentence(
-                        retiredNote(result, createdAt),
-                        simulated ? 'simulated' : 'confirmed',
-                        true,
-                      )}
-                    </p>
                   )}
                   {result.ok && result.lines_cancelled && result.lines_cancelled.length > 0 && (
                     <ul

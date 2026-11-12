@@ -4882,6 +4882,13 @@ def _apply_one_order(
         and r.kind not in _UNDECIDED_KINDS_EXCLUDED
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     } | other_batch_undecided_line_ids
+    # The batch's rows are decided now: marked applied BEFORE the confirm and the purchasing reaction
+    # below, so the OI rows they restate do not read as "waiting for CS" on this very change
+    # (auto-confirm skips a waiting row, which left a covered Done row stamped `changed` by its
+    # own date move). The same rows get their result written at the end.
+    for r in live:
+        r.applied_state = PLANNING_CHANGE_STATE_APPLIED
+    db.flush()
     confirm_lines: List[dict] = []
     replanned = 0
     retired = 0
