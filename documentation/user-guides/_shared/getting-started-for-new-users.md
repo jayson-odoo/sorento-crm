@@ -8,6 +8,8 @@ A zero-knowledge orientation to the Sorento CRM: how to sign in, what each part 
 2. On the **Sign In** page, enter your work email and password, then click **Sign In**. (If your organisation uses Google sign-in, click **Sign in with Google** instead.)
 3. After signing in you land on **Dashboards** - the home page. The left-hand **sidebar** is your main way to move around; the top bar holds search, notifications, your profile, and the AI assistant.
 
+If an admin has turned on passkeys for you, you can also sign in with the round **Passkey** button beside **Phone number** (see [Sign in with a passkey](../user-management/sign-in-with-a-passkey.md)).
+
 You stay signed in as long as you use the CRM at least once every 29 days; there is nothing to tick. To end a session, sign out from your profile menu.
 
 If you forget your password, use the **Reset Password** link on the sign-in page. If a page says you don't have access, your account hasn't been granted that area yet - ask your administrator.
@@ -68,6 +70,14 @@ Things you can ask:
 * *"How do I file a complaint?"* - get step-by-step instructions for a task.
 
 If you're not sure how to phrase something, just describe what you want in your own words - the assistant will ask a follow-up if it needs more detail.
+
+## 5. Entering dates
+
+Every date in the CRM reads day/month/year, for example **05/11/2026** for 5 November 2026, whatever language your browser uses. Times are Malaysia time.
+
+- **A date field** is a text box with a calendar button beside it. Type the date (`05/11/2026` or `5/11/2026`) and press Enter or move to the next field, or click the calendar button and pick a day. A date that does not exist, such as 31/02/2026, is not accepted and the field keeps its last value.
+- **A date range** ("from" and "to") is one field. Type `01/11/2026 - 30/11/2026`, or one date for a single day. Type `01/11/2026 -` for "from 1 November onwards" or `- 30/11/2026` for "up to 30 November". Empty the field to clear both ends. The calendar button opens a picker with a **Clear** button.
+- A range on a log or history screen covers whole days: the first day from midnight, the last day until 11:59 pm.
 
 ## See also
 

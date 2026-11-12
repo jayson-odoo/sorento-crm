@@ -15,6 +15,7 @@ import {
   openQuotationFormDraft,
   createQuotationSignLink,
   deleteQuotationDocument,
+  duplicateQuotationDocument,
   getQuotationFeedback,
   getQuotationApprovalGraph,
   getQuotationDocument,
@@ -39,10 +40,11 @@ import {
   type QuotationDocument,
   type QuotationCoverPreviewBody,
   type QuotationDocumentBody,
+  type QuotationDuplicateBody,
   type QuotationSignatureBody,
 } from '../services/quotationDocumentService';
 
-const DOCUMENTS_KEY = 'project-quotation-documents';
+export const DOCUMENTS_KEY = 'project-quotation-documents';
 const ISSUES_KEY = 'project-quotation-issues';
 const VIEWS_KEY = 'project-quotation-views';
 const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];
@@ -381,6 +383,17 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** QUOTE-DUPLICATE-PARTY: the copy for another party. */
+  const duplicate = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: QuotationDuplicateBody }) =>
+      duplicateQuotationDocument(projectId, id, body),
+    onSuccess: (document: QuotationDocument) => {
+      invalidate();
+      toast.success(`${document.document_no} made for ${document.recipient_name_snapshot ?? 'the party'}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   /** The issued workbook, queued the same way and reported the same way. */
   const issueXlsx = useMutation({
     mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
@@ -409,6 +422,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     issuePdf,
     issueXlsx,
     makeQuotationFrom,
+    duplicate,
     documentId,
   };
 }

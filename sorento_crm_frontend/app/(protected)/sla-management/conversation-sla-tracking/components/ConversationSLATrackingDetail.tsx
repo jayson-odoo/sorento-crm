@@ -27,7 +27,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useConversationSlaActions } from '../actions';
 import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
-import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
 import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, History, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -861,16 +861,16 @@ export default function ConversationSLATrackingDetail({
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Initiated At</p>
-                      <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.initiated_at))}</p>
+                      <p className="font-medium">{formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.initiated_at))}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Current Tier Started At</p>
-                      <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.current_tier_started_at))}</p>
+                      <p className="font-medium">{formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.current_tier_started_at))}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Due at (response)</p>
                       <p className="font-medium">
-                        {formatDateTime(parseDateTimeAsUTC(tracking.due_at))}
+                        {formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.due_at))}
                         {(() => {
                           const due = parseDateTimeAsUTC(tracking.due_at).getTime();
                           const now = Date.now();
@@ -887,7 +887,7 @@ export default function ConversationSLATrackingDetail({
                       <div>
                         <p className="text-sm text-muted-foreground">Due at (resolution)</p>
                         <p className="font-medium">
-                          {formatDateTime(parseDateTimeAsUTC(tracking.due_at_resolution ?? tracking.resolution_due_at!))}
+                          {formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.due_at_resolution ?? tracking.resolution_due_at!))}
                           {(() => {
                             const dueRes = tracking.due_at_resolution ?? tracking.resolution_due_at;
                             if (!dueRes) return null;
@@ -906,7 +906,7 @@ export default function ConversationSLATrackingDetail({
                     {tracking.escalated_at && (
                       <div>
                         <p className="text-sm text-muted-foreground">Escalated At</p>
-                        <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.escalated_at))}</p>
+                        <p className="font-medium">{formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.escalated_at))}</p>
                       </div>
                     )}
                     {tracking.escalation_reason && (
@@ -985,7 +985,7 @@ export default function ConversationSLATrackingDetail({
                       <p className="text-sm text-muted-foreground">Responded At</p>
                       <p className="font-medium">
                         {tracking.responded_at
-                          ? formatDateTime(parseDateTimeAsUTC(tracking.responded_at))
+                          ? formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.responded_at))
                           : '-'}
                       </p>
                     </div>
@@ -1048,7 +1048,7 @@ export default function ConversationSLATrackingDetail({
                       <p className="text-sm text-muted-foreground">Resolved At</p>
                       <p className="font-medium">
                         {tracking.resolved_at
-                          ? formatDateTime(parseDateTimeAsUTC(tracking.resolved_at))
+                          ? formatDateTimeInMalaysia(parseDateTimeAsUTC(tracking.resolved_at))
                           : '-'}
                       </p>
                     </div>

@@ -2063,6 +2063,14 @@ class ProjectQuotationRecipientPick(BaseModel):
     attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
 
 
+class ProjectQuotationDocumentDuplicate(BaseModel):
+    """QUOTE-DUPLICATE-PARTY: the party the copy is for and its Attn people, nothing else."""
+
+    recipient_party_id: str = Field(min_length=1, max_length=64)
+    recipient_role: Optional[str] = Field(default=None, max_length=32)
+    attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
+
+
 class ProjectQuotationDocumentCreate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """Every field optional on purpose (AC-A2).
 
@@ -2225,6 +2233,13 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     customer_decision: Optional[str] = None
+    # AC-QTSO-CRM: declared here as well as in `serialize_document`; the response model drops
+    # what it does not know.
+    in_autocount: bool = False
+    autocount_cancelled: bool = False
+    autocount_doc_no: Optional[str] = None
+    latest_issue_accepted: bool = False
+    autocount_needs_update: bool = False
     # PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link.
     view_count: int = 0
     last_viewed_at: Optional[datetime] = None
@@ -2263,6 +2278,9 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     source_document_id: Optional[str] = None
     source_label: Optional[str] = None
     quotation_document_id: Optional[str] = None
+    # QUOTE-DUPLICATE-PARTY: the document this one was duplicated from, and its number.
+    copied_from_document_id: Optional[str] = None
+    copied_from_label: Optional[str] = None
     recipient_party_type: Optional[str] = None
     # The role the recipient plays on THIS project (developer, or its party link), for the caption.
     recipient_role: Optional[str] = None

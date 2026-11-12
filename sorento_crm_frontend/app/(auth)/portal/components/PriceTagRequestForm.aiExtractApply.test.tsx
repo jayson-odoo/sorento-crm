@@ -86,11 +86,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: { disabled?: boolean }) => (
-    <select multiple aria-label="Alternatives" disabled={props.disabled} onChange={() => {}} />
-  ),
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 let capturedPendingFiles: File[] = [];
 vi.mock('./AttachmentDropzone', () => ({
@@ -545,6 +541,6 @@ describe('PriceTagRequestForm - AI extract reads match fields off the payload (A
     });
 
     await screen.findByLabelText('Quantity for line 1');
-    expect(screen.getByText(MATCHED_PRODUCT.name)).toBeInTheDocument();
+    expect(screen.getByTitle(MATCHED_PRODUCT.name)).toHaveTextContent(MATCHED_PRODUCT.code);
   });
 });

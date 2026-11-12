@@ -8,6 +8,8 @@ Open **[Procurement → Purchase Requests](/procurement-management/purchase-requ
 
 The DataGrid lists every purchase request. Filter by **Approval Status** to find the ones waiting on you. The full set of statuses is: **Draft**, **Pending approval**, **Approved**, **Rejected**.
 
+The list remembers your sort order and every filter, per user, and restores them when you come back to it or reload the page. Page number and the search box always start fresh. To go back to the default, press the cross on the filter chip above the list, or **Clear filters** inside **Filters**.
+
 ## Review
 
 

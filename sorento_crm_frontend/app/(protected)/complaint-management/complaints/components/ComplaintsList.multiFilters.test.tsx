@@ -12,7 +12,18 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ComplaintsList from './ComplaintsList';
+import { getUserLookup } from '@/services/userSelectService';
 
+const view = vi.hoisted(() => ({ filters: null as Record<string, unknown> | null }));
+// LIST-FILTER-MEMORY-4: the filters come back from the remembered view (per user), not the URL.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (key: string) => ({
+    listing_key: key,
+    config: view.filters ? { version: 1, filters: view.filters, filtersVersion: 1 } : null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (key: string, payload: unknown) => ({ listing_key: key, config: payload })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
 const url = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -42,6 +53,8 @@ vi.mock('@/services/userSelectService', () => ({
   getUserLookup: vi.fn(async () => [
     { id: 'u-ann', respond_user_id: 'resp-ann', name: 'ZZT Ann', email: 'a@e.com' },
     { id: 'u-ben', respond_user_id: 'resp-ben', name: 'ZZT Ben', email: 'b@e.com' },
+    // ASSIGNED-FILTER-ALL-STAFF: staff never synced to Respond.io carry no respond id.
+    { id: 'u-cat', name: 'ZZT Cat' },
   ]),
 }));
 vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
@@ -96,6 +109,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn();
   url.search = '';
+  view.filters = null;
   useComplaints.mockReset();
   useComplaints.mockReturnValue({
     data: { data: [], pagination: { total: 0, page: 1, limit: 50 } },
@@ -139,8 +153,18 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     await openFilters(user);
     const box = await boxWith('Unassigned');
     await waitFor(() => expect(within(box).queryByText('ZZT Ben')).not.toBeNull());
-    await user.selectOptions(box, ['__unassigned__', 'resp-ann']);
-    await waitFor(() => expect(asList(lastArgs().assigned_to)).toEqual(['__unassigned__', 'resp-ann']));
+    await user.selectOptions(box, ['__unassigned__', 'u-ann']);
+    await waitFor(() => expect(asList(lastArgs().assigned_to)).toEqual(['__unassigned__', 'u-ann']));
+  });
+
+  it('lists every staff member, a Respond.io-unsynced one too, keyed by CRM id (ASSIGNED-FILTER-ALL-STAFF)', async () => {
+    const user = userEvent.setup();
+    await openFilters(user);
+    const box = await boxWith('Unassigned');
+    await waitFor(() => expect(within(box).queryByText('ZZT Cat')).not.toBeNull());
+    expect(getUserLookup).toHaveBeenCalledWith({ include_inactive: true });
+    await user.selectOptions(box, ['u-cat', 'u-ann']);
+    await waitFor(() => expect(asList(lastArgs().assigned_to)).toEqual(['u-ann', 'u-cat']));
   });
 
   it('the filters AND across each other', async () => {
@@ -148,16 +172,28 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     await openFilters(user);
     const box = await boxWith('Unassigned');
     await waitFor(() => expect(within(box).queryByText('ZZT Ben')).not.toBeNull());
-    await user.selectOptions(box, ['resp-ann', 'resp-ben']);
+    await user.selectOptions(box, ['u-ann', 'u-ben']);
     await user.selectOptions(await boxWith('Settled on site'), ['new', 'rejected']);
     await waitFor(() => {
-      expect(asList(lastArgs().assigned_to)).toEqual(['resp-ann', 'resp-ben']);
+      expect(asList(lastArgs().assigned_to)).toEqual(['u-ann', 'u-ben']);
       expect(asList(lastArgs().status)).toEqual(['new', 'rejected']);
     });
   });
 
-  it('a comma-joined link reads back into both filters', async () => {
-    url.search = 'status=new%2Capproved&assigned_to=resp-ann%2Cresp-ben';
+  it('changing a filter goes back to page 1 (LIST-FILTER-MEMORY-4)', async () => {
+    url.search = 'page=3';
+    const user = userEvent.setup();
+    await openFilters(user);
+    await waitFor(() => expect(lastArgs().pageIndex).toBe(2));
+    await user.selectOptions(await boxWith('Settled on site'), ['new']);
+    await waitFor(() => {
+      expect(asList(lastArgs().status)).toEqual(['new']);
+      expect(lastArgs().pageIndex).toBe(0);
+    });
+  });
+
+  it('a remembered multi-value view reads back into both filters', async () => {
+    view.filters = { status: 'new,approved', assigned_to: 'resp-ann,resp-ben' };
     renderIt();
     await waitFor(() => {
       expect(asList(lastArgs().status)).toEqual(['new', 'approved']);
@@ -165,8 +201,8 @@ describe('Complaints - multi Status and Assigned to filters', () => {
     });
   });
 
-  it('an older link with one status and one assignee reads back as one-value filters (guard)', async () => {
-    url.search = 'status=approved&assigned_to=resp-ann';
+  it('a remembered one-value view reads back as one-value filters (guard)', async () => {
+    view.filters = { status: 'approved', assigned_to: 'resp-ann' };
     renderIt();
     await waitFor(() => {
       expect(asList(lastArgs().status)).toEqual(['approved']);

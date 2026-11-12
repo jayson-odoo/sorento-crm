@@ -173,7 +173,7 @@ export type QuotationDocument = {
   below_floor_line_count?: number;
   /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
   discounted_line_count?: number;
-  /** Discounted and not below the floor, per line: the "Below default price" pill's count. */
+  /** Discounted and not below the floor, per line: the banner's "priced below the default price" count. */
   below_default_line_count?: number;
   /** Lines outside the project's series. */
   off_series_line_count?: number;
@@ -195,6 +195,9 @@ export type QuotationDocument = {
   source_label?: string | null;
   /** On a proposal: the quotation made from one of its revisions, when there is one. */
   quotation_document_id?: string | null;
+  /** QUOTE-DUPLICATE-PARTY: the document this one was duplicated from, and its number. */
+  copied_from_document_id?: string | null;
+  copied_from_label?: string | null;
   recipient_party_type?: string | null;
   /** The role the recipient plays on this project (PROJECT-PARTY-ROLES PR 2). */
   recipient_role?: string | null;
@@ -220,6 +223,12 @@ export type QuotationDocument = {
    * the list ends up disagreeing with the document about a quotation that is already won.
    */
   customer_decision?: 'accepted' | 'changes_requested' | null;
+  /** AC-QTSO-CRM: where the document stands in AutoCount. */
+  in_autocount?: boolean;
+  autocount_cancelled?: boolean;
+  autocount_doc_no?: string | null;
+  latest_issue_accepted?: boolean;
+  autocount_needs_update?: boolean;
   /** PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link. */
   view_count?: number;
   last_viewed_at?: string | null;
@@ -423,6 +432,28 @@ export async function makeQuotation(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to make the quotation'));
+  return response.json();
+}
+
+/** QUOTE-DUPLICATE-PARTY: who a duplicate is for (the header's own To / Attn pick). */
+export type QuotationDuplicateBody = {
+  recipient_party_id: string;
+  recipient_role?: string | null;
+  attn_contact_ids?: string[];
+};
+
+/** Copy this proposal / quotation, as it stands, for another party; returns the copy. */
+export async function duplicateQuotationDocument(
+  projectId: string,
+  documentId: string,
+  body: QuotationDuplicateBody,
+): Promise<QuotationDocument> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/duplicate`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to duplicate'));
   return response.json();
 }
 
@@ -882,7 +913,8 @@ export type QuotationDraftHolder = {
   holder_at?: string | null;
 };
 
-export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict';
+/** `event`: a line about something done to the document (Copied from ...), nothing to restore. */
+export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict' | 'event';
 
 export type QuotationHistoryEntry = {
   id: string;

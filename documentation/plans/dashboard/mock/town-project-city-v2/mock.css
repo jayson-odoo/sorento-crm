@@ -1,0 +1,4 @@
+/* The live app's own stylesheet (tokens, Tailwind), scanned for the live Town classes and this mock's. */
+@import "../../../../../sorento_crm_frontend/css/styles.css";
+@source "../../../../../sorento_crm_frontend/app/(protected)/town";
+@source "./";

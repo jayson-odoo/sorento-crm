@@ -494,8 +494,8 @@ class PoLinkService:
 
     def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
         try:
-            return FoundryxAutocountClient(self.db).write(
-                path, body, idempotency_key=key, request_id=self.request_id, actor=self.actor
+            return FoundryxAutocountClient(self.db).trace_writes(self.request_id, self.actor).write(
+                path, body, idempotency_key=key
             )
         except FoundryxPullError as exc:
             message = UNREACHABLE if exc.code == "UNREACHABLE" else exc.message
