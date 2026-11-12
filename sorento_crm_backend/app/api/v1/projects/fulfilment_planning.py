@@ -32,6 +32,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
 from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
+from app.services.user_service import holds_permission
 from app.dependencies import (
     require_any_permission_with_api_key,
     require_permission,
@@ -1029,6 +1030,19 @@ def _probe_order(entry, result: dict, budget: int, probe, line_error) -> int:
     return budget
 
 
+def _quantities_only(detail: dict) -> dict:
+    """SPARE-PART-ORDER-REQUEST (C1): the stock read for a caller without the projects view
+    grant (a spare part requester): per-location quantities, no document behind them - no
+    sales order, customer, project, agent, SPO or supplier."""
+    return {
+        **detail,
+        "sales_orders": [],
+        "incoming": [],
+        "holds": [],
+        "locations": [{**loc, "incoming": []} for loc in detail.get("locations") or []],
+    }
+
+
 @router.get("/fulfilment-planning/stock-detail", response_model=StockDetail)
 def get_stock_detail(
     product_id: str = Query(..., description="Addressing only; the board's cell carries it."),
@@ -1080,11 +1094,12 @@ def get_stock_detail(
         # repeated params, deduplicates, and refuses a value that is not an id by naming the
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
-        return FulfilmentBoardService(
+        detail = FulfilmentBoardService(
             db, reveal_eta_delay=staff_may_see_clearance(db, _user)
         ).stock_detail(
             product_id, warehouse_id, line_ids=wanted, group=group
         )
+        return detail if holds_permission(db, _user, VIEW) else _quantities_only(detail)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

@@ -792,6 +792,27 @@ _NEXT_STAGE_CANNOT_START = (
 )
 
 
+def _assert_no_unchained_level(db: Session, next_config) -> None:
+    """Fail closed (C2): a configured level that would start on 'approved' and is not the
+    chained next level never starts here (approval closes one level, it emits nothing), so
+    the request cannot be finished while one exists."""
+    from app.models.sla import FormSLAConfig
+
+    for config in (
+        db.query(FormSLAConfig)
+        .filter(FormSLAConfig.source_entity_type == KIND, FormSLAConfig.is_active.is_(True))
+        .all()
+    ):
+        starts_on = {t.strip() for t in str(config.start_event or "").split(",")}
+        if "approved" in starts_on and (next_config is None or config.id != next_config.id):
+            raise _conflict(
+                "Another approval level is set to start on approval but is not linked as the "
+                "next level, so this approval was not recorded. Ask an admin to check the "
+                "approval levels in Form SLA configuration.",
+                "SPARE_PART_REQUEST_UNCHAINED_LEVEL",
+            )
+
+
 def _assert_stage_can_start(db: Session, config, company_id: Optional[str]) -> None:
     """Fail closed (security review S2): the next level must have a team with someone on it
     before this level is closed, or the request would be raised on one level of sign-off."""
@@ -858,6 +879,7 @@ def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] 
     next_config = orchestrator.next_stage_config(stage, "approved")
     if next_config is not None:
         _assert_stage_can_start(db, next_config, inquiry.company_id)
+    _assert_no_unchained_level(db, next_config)
     note = _text(note)
     _audit(
         db, inquiry, "SPR_APPROVED", "Approved" + (f": {note}" if note else ""), actor,
@@ -871,6 +893,8 @@ def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] 
     except AppException:
         raise _conflict(_NEXT_STAGE_CANNOT_START, "SPARE_PART_REQUEST_NEXT_STAGE")
     inquiry = _lock(db, inquiry)
+    # C3: a decision that landed while this level was being closed (a reject) wins.
+    _require_pending(inquiry, "approved")
     still_open = _open_stages(db, inquiry.id)
     if next_config is not None and not any(
         t.team_set_code == next_config.team_set_code for t in still_open
