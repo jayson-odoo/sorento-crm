@@ -706,7 +706,7 @@ def test_ac25_add_rename_and_remove_each_leave_an_audit_row(env):
     created = env.register(headers, challenge_id, env.registration(SoftAuthenticator(), options["challenge"]))
     assert created.status_code == 201, created.text
     pk_id = created.json()["id"]
-    assert env.audit_rows(entity_type="user_passkeys", entity_id=pk_id, action="INSERT"), "add not audited"
+    assert env.audit_rows(entity_type="user_passkeys", entity_id=pk_id, action="CREATE"), "add not audited"
 
     renamed = env.client.patch(f"/api/v1/auth/passkeys/{pk_id}", json={"name": "Renamed"}, headers=headers)
     assert renamed.status_code == 200, renamed.text
