@@ -91,8 +91,8 @@ Dates in examples are dd/mm/yyyy. Times are MYT.
 
 - **E1.** The board shows one day, picked with the shared date picker (dd/mm/yyyy), with Previous, Next and
   Today buttons.
-- **E2.** Columns: "Unassigned" first, then one per active technician who has a job that day (by name).
-  Jobs scheduled that day (MYT) are listed in time order.
+- **E2.** Columns: "Unassigned" first (jobs with no technician), then one per technician who has a job that day,
+  archived technicians included (round 2). Jobs scheduled that day (MYT) are listed in time order.
 - **E3.** "Waiting for a date" on top lists every job in Proposed, oldest raised first, whatever day is
   picked. A Confirmed job is never listed there.
 - **E4.** A card shows job no., time, city and status pill. Clicking it opens the job page.
