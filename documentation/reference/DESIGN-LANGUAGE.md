@@ -236,3 +236,37 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
 | Periodic | `improve-animations` | - |
 
 Not used here: `animate-expo`, `write-swift`.
+
+## 9. UI v2 rules (program `documentation/uiux/UI-V2-PLAN.md` rev 3, owner approved 12 Nov 2026)
+
+Applies to every file under `sorento_crm_frontend/components/v2/` and every v2 screen client (`app/**/_v2/`).
+v1 screens keep sections 1-8 unchanged until program phase 9 (sunset).
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| R1 | Every date dd/mm/yyyy through `lib/format/date.ts`; no native `type="date"` | `lib/native-date-input.inventory.test.ts`; date-format guards |
+| R2 | Desktop: one line per row (+N pill for overflow) | `DataGridTable` |
+| R3 | Every column sortable server-side | `components/ui/sort-off.inventory.test.ts` (shrink-only allowlist) |
+| R4 | Every dropdown filter multi-select | `components/ui/single-select-filter.inventory.test.ts` |
+| R5 | Grid selection like Odoo: ranges + "Select all N" | `data-grid-range-select.ts` + v2 `SelectionBar` |
+| R6 | Right-click / long-press row menus, no row icons, no "..." column (replaces D15's "..." column for v2) | v2 `RowMenu` |
+| R7 | Minimal UI; dialog or lightbox over side panels (decision D7) | `components/ui/sheet-content.inventory.test.ts`; `components/v2/Lightbox.tsx` |
+| R8 | Record header: number + badge inline, one subtitle, actions right; the record IS the page heading | v2 `RecordHeader` |
+| R9 | CRM forms = portal forms (one component) | `components/v2/forms` |
+| R10 | History is the last tab on every record | v2 `HistoryTab` |
+| R11 | One image pipeline (`AttachmentImage` + `AttachmentPreviewModal`) | inventory guard |
+| R12 | Brand colour selectable; Sorento Blue default | `lib/theme/*`; Settings > Appearance |
+| R13 | Reuse the same component; no second implementation | review |
+| R14 | Plain words for errors; nothing stuck | v2 `StateView`; never-stuck smoke |
+| R15 | **Playbook conformance.** Every rule follows the Foundryx playbook (`skills/foundryx-playbook-uiux/SKILL.md`). Deviations exist ONLY in the register of `UI-V2-PLAN.md` section 8.1 (owner overrides: P5 pulse, P8 desktop Smart view, P17 motion timings) and `AUDIT` section 6 Q1-Q5; a new deviation needs an owner ruling recorded there first | review; phase exit trace |
+| R16 | **Holistic and general.** Every decision is ONE shared token, component or layout pattern applied system-wide; no per-page one-off, no per-list design, no local styling around a shared component (fix the shared component) | `components/v2/v2-holistic.inventory.test.ts` |
+
+**Decisions D6-D10 (one shared thing each):**
+
+| # | Shared thing |
+| --- | --- |
+| D6 | Sorento Blue preset in `lib/theme/generate.ts`: `--primary` = `#246bdd` (5.0:1 with white). No component names a blue |
+| D7 | `components/v2/Lightbox.tsx`: a `Dialog` lightbox above 720 px, a vaul `Drawer` at 720 px and below. No `SheetContent` in v2 |
+| D8 | `components/v2/grid/PhoneCardList.tsx` driven by the grid's column definitions; `phoneHidden` is the only per-list input |
+| D9 | **TOGGLE-SELECTED (v2):** a selected toggle, toggle-group item or pill tab uses `--toggle-selected-bg` / `--toggle-selected-fg` = the soft tint with primary text, so the only filled control on a v2 screen is its primary action. In v1 the same tokens resolve to `bg-primary` / `text-primary-foreground` (the 20 Oct rule above, unchanged for v1) |
+| D10 | `components/v2/shell/usePageView.ts`, mounted once in `AppShell`; never imported by a page |
