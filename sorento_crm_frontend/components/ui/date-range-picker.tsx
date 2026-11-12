@@ -7,12 +7,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Input } from '@/components/ui/input';
-import {
-  Popover,
-  PopoverContent,
-  PopoverPortal,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 
 /**
  * ONE control for a date range. Never two date fields side by side.
@@ -47,11 +42,7 @@ export function parseIsoDate(value?: string | null): Date | undefined {
   if (!value) return undefined;
   const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(value.trim());
   if (!match) return undefined;
-  const date = new Date(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-  );
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
@@ -98,9 +89,7 @@ function dateFromParts(d: string, m: string, y: string): Date | undefined {
  *  `DD/MM/YYYY -` (From only) or `- DD/MM/YYYY` (To only). A day that does not exist, a full
  *  range whose end is before its start, or any other text is unparseable and the caller
  *  reverts the input; empty text is handled by the caller, which clears both ends. */
-function parseRangeInput(
-  raw: string,
-): { from: Date | null; to: Date | null } | null {
+function parseRangeInput(raw: string): { from: Date | null; to: Date | null } | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const fromOnly = HALF_FROM_RE.exec(trimmed);
@@ -157,9 +146,7 @@ export function DateRangePicker({
   portal = false,
 }: DateRangePickerProps) {
   const [open, setOpen] = React.useState(false);
-  const [inputValue, setInputValue] = React.useState(() =>
-    formatRangeLabel(from, to),
-  );
+  const [inputValue, setInputValue] = React.useState(() => formatRangeLabel(from, to));
 
   React.useEffect(() => {
     setInputValue(formatRangeLabel(from, to));
@@ -184,10 +171,7 @@ export function DateRangePicker({
     }
     const parsed = parseRangeInput(inputValue);
     if (parsed) {
-      onChange({
-        from: toIsoDate(parsed.from ?? undefined),
-        to: toIsoDate(parsed.to ?? undefined),
-      });
+      onChange({ from: toIsoDate(parsed.from ?? undefined), to: toIsoDate(parsed.to ?? undefined) });
     } else {
       setInputValue(formatRangeLabel(from, to));
     }
@@ -253,11 +237,7 @@ export function DateRangePicker({
             size="icon"
             disabled={disabled}
             className="shrink-0"
-            aria-label={
-              ariaLabel
-                ? `Pick a date range for ${ariaLabel}`
-                : 'Pick a date range'
-            }
+            aria-label={ariaLabel ? `Pick a date range for ${ariaLabel}` : 'Pick a date range'}
           >
             <CalendarIcon className="size-4" aria-hidden />
           </Button>
