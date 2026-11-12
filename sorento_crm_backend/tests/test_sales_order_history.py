@@ -670,3 +670,82 @@ def test_an_event_with_no_person_behind_it_reads_automatic_never_null():
         assert [e["actor"] for e in system] == ["Automatic"]
         assert _by_kind(events, "email_sent")[0]["actor"] == "Automatic"
         assert [e["kind"] for e in events if e["actor"] is None] == []
+
+
+# ----------------------------------------------------------------- on behalf of
+
+
+def _status_row(db, world, day, **actor):
+    return _audit(
+        db, entity_type="project_sales_orders", entity_id=world["order"].id, action="UPDATE",
+        changed_at=datetime(2026, 8, day, 8, 0, 0), company_id=world["company_id"],
+        old_values={"status": "draft"}, new_values={"status": "published"}, **actor,
+    )
+
+
+def _actor_on(events, day):
+    found = [e for e in _by_kind(events, "status_changed") if e["at"].startswith(f"2026-08-{day:02d}")]
+    assert len(found) == 1
+    return found[0]["actor"]
+
+
+def _esb(db):
+    from app.models.integration import Integration
+
+    row = Integration(id=_uid(), name="AutoCount ESB", type="automation", is_active=True)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_the_actor_says_who_and_on_behalf_of_whom():
+    """Standing rule (AC-SH-W2-4): impersonation, an integration acting as a user, a bare
+    integration and a plain user each read in words (no ids)."""
+    with blank_session() as db:
+        world = _world(db)
+        admin_a = _user(db, "ZZT Admin Alice", f"adm.{_uid()[:8]}@zzt.test")
+        integration = _esb(db)
+        buyer = world["buyer"]
+        # (a) impersonated: A at the keyboard, B the effective user.
+        _status_row(db, world, 1, actor_type="user", user_id=buyer.id,
+                    real_user_id=admin_a.id, auth_method="impersonation")
+        # (b) an integration acting as B.
+        _status_row(db, world, 2, actor_type="integration", integration_id=integration.id,
+                    user_id=buyer.id)
+        # (c) an integration with nobody behind it.
+        _status_row(db, world, 3, actor_type="integration", integration_id=integration.id,
+                    user_id=None)
+        # (d) a plain user.
+        _status_row(db, world, 4, actor_type="user", user_id=buyer.id)
+        db.commit()
+
+        events = _pso_events(db, world)
+
+        assert _actor_on(events, 1) == "ZZT Admin Alice on behalf of ZZT Purchasing Person"
+        assert _actor_on(events, 2) == "AutoCount ESB on behalf of ZZT Purchasing Person"
+        assert _actor_on(events, 3) == "AutoCount ESB"
+        assert _actor_on(events, 4) == "ZZT Purchasing Person"
+
+
+def test_an_unconfirm_press_written_by_an_integration_reads_on_behalf_of_too():
+    """The shared `_presses` path (the OI Unconfirm audit row), same rule. audit_logs is
+    append-only, so the row is inserted whole in the shape `unacknowledge_rows` writes."""
+    with blank_session() as db:
+        world = _world(db)
+        integration = _esb(db)
+        ids = [r.id for r in world["rows"]]
+        _audit(
+            db, entity_type="project_order_inquiry_rows", entity_id=ids[0], action="UPDATE",
+            changed_at=datetime(2026, 9, 23, 8, 0, 0), company_id=world["company_id"],
+            actor_type="integration", integration_id=integration.id, user_id=world["buyer"].id,
+            old_values={"rows": [{"id": i, "ack_state": "acknowledged"} for i in ids]},
+            new_values={"ack_state": "awaiting", "row_ids": ids},
+            description="Unconfirm: 4 row(s) back to To confirm",
+            root_entity_type="project_order_inquiries", root_entity_id=world["inquiry"].id,
+        )
+        db.commit()
+
+        events = _pso_events(db, world)
+
+        unconfirm = _by_kind(events, "unconfirmed")[0]
+        assert unconfirm["actor"] == "AutoCount ESB on behalf of ZZT Purchasing Person"
