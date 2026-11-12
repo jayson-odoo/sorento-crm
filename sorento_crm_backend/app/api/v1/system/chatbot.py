@@ -538,7 +538,7 @@ def retry_turn(
 
     stored_actions = (row.response or {}).get("actions") if isinstance(row.response, dict) else None
     if stored_actions and _sent_by_crm(db, row):
-        return _retry_via_crm(db, row, stored_actions, now)
+        return _retry_via_crm(db, request, row, stored_actions, now, actor_id)
 
     # Claim FIRST, then send. See the docstring - and the claim is the conditional UPDATE
     # itself, not the read above. The read can only ever tell an operator what WAS true;
@@ -631,20 +631,54 @@ def retry_turn(
 
 
 def _sent_by_crm(db: Session, row: ChatbotTurn) -> bool:
+    """A turn the CRM sender started, or one no sender has touched yet that the switch covers.
+    A turn the n8n sender already tried keeps n8n's Retry, whatever the switch says now."""
     from app.models.user import SystemSetting
 
-    return crm_sender.has_crm_rows(db, str(row.id)) or crm_sender.covers(
-        db.query(SystemSetting).first(), row.contact_respond_id
-    )
+    turn_id = str(row.id)
+    if crm_sender.has_crm_rows(db, turn_id):
+        return True
+    if crm_sender.has_sender_rows(db, turn_id):
+        return False
+    return crm_sender.covers(db.query(SystemSetting).first(), row.contact_respond_id)
 
 
-def _retry_via_crm(db: Session, row: ChatbotTurn, actions: list, now: datetime) -> RetryTurnResponse:
+RETRY_MAX_AGE = timedelta(hours=24)
+
+
+def _refuse_crm_retry(db: Session, row: ChatbotTurn, now: datetime) -> str | None:
+    """Why Try again must not send now, in plain words; None when it may."""
+    from app.services.chatbot import direct_ingress
+
+    finished = row.finished_at or row.created_at
+    if finished is not None:
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        if now - finished > RETRY_MAX_AGE:
+            return "This reply is more than a day old, so it is not sent now."
+    contact = row.contact_respond_id
+    if not direct_ingress._on_default_workspace(db, contact):
+        return "This contact belongs to another workspace, so the reply is not sent from here."
+    record = direct_ingress._lookup_contact(db, contact)
+    if not isinstance(record, dict):
+        return "Respond.io could not be asked whether staff have taken over, so nothing was sent."
+    if direct_ingress._human_intervened(record) is True:
+        return "Staff have taken over this conversation, so the reply is not sent."
+    return None
+
+
+def _retry_via_crm(
+    db: Session, request: Request, row: ChatbotTurn, actions: list, now: datetime, actor_id: str
+) -> RetryTurnResponse:
     """Try again on a turn the CRM sender sends: re-send the stored actions; steps already
     confirmed are skipped, so no part goes out twice. The row is not re-run."""
     from app.database import SessionLocal  # call time: tests swap it
     from app.services.chatbot import direct_ingress, engine
 
     turn_id = str(row.id)
+    refusal = _refuse_crm_retry(db, row, now)
+    if refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
     claimed = (
         db.query(ChatbotTurn)
         .filter(
@@ -656,6 +690,21 @@ def _retry_via_crm(db: Session, row: ChatbotTurn, actions: list, now: datetime) 
     if not claimed:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RETRY_IN_FLIGHT_DETAIL)
+    row.trace = [
+        *(row.trace or []),
+        {
+            "kind": "note",
+            "stage": row.stage if row.stage in TURN_STAGES else "sent",
+            "status": "ok",
+            "started_at": now.isoformat(),
+            "ms": 0,
+            "summary": "Retry requested by an operator.",
+            "why": "The reply's parts not yet confirmed were sent again; sent parts were not repeated.",
+            "facts": {"attempt": row.attempt + 1, "requested_at": now.isoformat(), "requested_by": actor_id},
+            "error": None,
+            "raw": {"retry": True, "from_attempt": row.attempt, "requested_by": actor_id},
+        },
+    ]
     db.commit()
     try:
         outcome = crm_sender.send(
@@ -671,13 +720,15 @@ def _retry_via_crm(db: Session, row: ChatbotTurn, actions: list, now: datetime) 
     if outcome == direct_ingress.SEND_OK:
         row.status, row.stage, row.error = "done", "sent", None
         db.commit()
+        _log_retry(db, request, row, actor_id, 200, None)
         return RetryTurnResponse(turn_id=turn_id, attempt=row.attempt)
     row.error = (
         "Not confirmed: the reply may not have reached the customer."
         if outcome == direct_ingress.SEND_TIMEOUT
-        else "The reply was not sent."
+        else (crm_sender.last_failure_reason(db, turn_id) or "The reply was not sent.")
     )
     db.commit()
+    _log_retry(db, request, row, actor_id, 502, row.error)
     raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"{row.error} Try again.")
 
 

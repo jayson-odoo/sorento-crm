@@ -96,7 +96,12 @@ def _message_body(item: dict) -> dict:
 
 
 def _text_is(part: str) -> Callable[[dict], bool]:
-    return lambda item: str(_message_body(item).get("text") or "").strip() == part
+    # A quick-reply message carries its words in `title`, a plain one in `text`.
+    def match(item: dict) -> bool:
+        body = _message_body(item)
+        return part in (str(body.get("text") or "").strip(), str(body.get("title") or "").strip())
+
+    return match
 
 
 def _url_is(url: Any) -> Callable[[dict], bool]:
@@ -172,6 +177,21 @@ def confirmed_keys(db: Any, turn_id: str) -> set[str]:
     return keys
 
 
+def has_sender_rows(db: Any, turn_id: str) -> bool:
+    """Did any sender (n8n or CRM) already try this turn?"""
+    from app.models.integration import IntegrationLog
+
+    return (
+        db.query(IntegrationLog.id)
+        .filter(
+            IntegrationLog.business_id == turn_id,
+            IntegrationLog.integration_channel == direct_ingress.INTEGRATION_CHANNEL,
+        )
+        .first()
+        is not None
+    )
+
+
 def has_crm_rows(db: Any, turn_id: str) -> bool:
     """Did the CRM sender already start this turn? Then it finishes on this path."""
     from app.models.integration import IntegrationLog
@@ -193,46 +213,119 @@ def all_confirmed(db: Any, turn_id: str, actions: list[dict[str, Any]]) -> bool:
     return {st.key for st in _steps(actions, "")} <= confirmed_keys(db, turn_id)
 
 
-def _log_step(
-    db: Any,
-    turn_id: str,
-    contact_id: str,
-    key: str,
-    kind: str,
-    detail: dict,
-    *,
-    status_code: int | None,
-    error: str | None,
-    response: Any = None,
-    confirmed_by: str | None = None,
-) -> None:
-    from app.schemas.integration import IntegrationLogCreate
-    from app.services.integration_service import IntegrationLogService
-
+def _step_row(turn_id: str, contact_id: str, key: str, kind: str, detail: dict, *, confirmed_by: str | None = None,
+              unknown: bool = False) -> dict:
     body = {"sender": "crm", "step": key, "kind": kind, **detail}
     if confirmed_by:
         body["confirmed_by"] = confirmed_by
+    if unknown:
+        body["unknown"] = True
+    return {
+        "integration_channel": direct_ingress.INTEGRATION_CHANNEL,
+        "business_table": "chatbot.turns",
+        "business_id": turn_id,
+        "external_reference": contact_id,
+        "direction": "outbound",
+        "endpoint": f"respond.io:{kind}",
+        "http_method": "POST",
+        "request_headers": json.dumps({"Content-Type": "application/json"}),
+        "request_payload": json.dumps(body, default=str)[: direct_ingress.MAX_LOGGED_BODY_CHARS],
+    }
+
+
+def _write_row(db: Any, base: dict, *, status: str, status_code: int | None = None,
+               error: str | None = None, response: Any = None) -> Any:
+    """Write one integration_log row; the row, or None when the write failed."""
+    from app.schemas.integration import IntegrationLogCreate
+    from app.services.integration_service import IntegrationLogService
+
     try:
-        IntegrationLogService(db).create_integration_log(
+        return IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
-                integration_channel=direct_ingress.INTEGRATION_CHANNEL,
-                business_table="chatbot.turns",
-                business_id=turn_id,
-                external_reference=contact_id,
-                direction="outbound",
-                endpoint=f"respond.io:{kind}",
-                http_method="POST",
-                request_headers=json.dumps({"Content-Type": "application/json"}),
-                request_payload=json.dumps(body, default=str)[: direct_ingress.MAX_LOGGED_BODY_CHARS],
-                response_payload=json.dumps(response, default=str)[:4000] if response else None,
+                **base,
+                response_payload=json.dumps(response, default=str) if response else None,
                 status_code=status_code,
-                status="success" if error is None else "failed",
+                status=status,
                 error_message=error,
             )
         )
-    except Exception:  # noqa: BLE001 - a log failure must not turn a sent message into a failure
+    except Exception:  # noqa: BLE001 - a log failure must not raise out of the sender
         db.rollback()
         logger.warning("crm sender: failed to write the integration log", exc_info=True)
+        return None
+
+
+def _drop_stamp(db: Any, stamp: Any) -> None:
+    """The result row exists, so the pre-attempt stamp has nothing left to say."""
+    if stamp is None:
+        return
+    try:
+        db.delete(stamp)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.warning("crm sender: could not drop a step stamp", exc_info=True)
+
+
+def _finalise(db: Any, base: dict, stamp: Any, **kw: Any) -> bool:
+    """Write the attempt's result row and drop its stamp. False when the result was not written."""
+    row = _write_row(db, base, **kw)
+    if row is None:
+        return False
+    _drop_stamp(db, stamp)
+    return True
+
+
+def _prior_attempt(db: Any, turn_id: str, key: str) -> tuple[Any, float | None]:
+    """(latest row of this step, its age in seconds by the database clock), or (None, None)."""
+    from sqlalchemy import text
+
+    from app.models.integration import IntegrationLog
+
+    rows = (
+        db.query(IntegrationLog)
+        .filter(
+            IntegrationLog.business_id == turn_id,
+            IntegrationLog.integration_channel == direct_ingress.INTEGRATION_CHANNEL,
+            IntegrationLog.request_payload.contains('"sender": "crm"'),
+        )
+        .order_by(IntegrationLog.created_at.desc(), IntegrationLog.id)
+        .all()
+    )
+    for row in rows:
+        try:
+            body = json.loads(row.request_payload or "{}")
+        except ValueError:
+            continue
+        if str(body.get("step")) != key:
+            continue
+        unknown = row.status == "processing" or (row.status == "failed" and bool(body.get("unknown")))
+        if not unknown:
+            return None, None
+        age = db.execute(
+            text("SELECT EXTRACT(EPOCH FROM (now() - created_at)) FROM integration_log WHERE id = :i"),
+            {"i": row.id},
+        ).scalar()
+        return row, float(age or 0.0)
+    return None, None
+
+
+def last_failure_reason(db: Any, turn_id: str) -> str | None:
+    """The plain reason on the turn's latest failed CRM step row."""
+    from app.models.integration import IntegrationLog
+
+    row = (
+        db.query(IntegrationLog.error_message)
+        .filter(
+            IntegrationLog.business_id == turn_id,
+            IntegrationLog.integration_channel == direct_ingress.INTEGRATION_CHANNEL,
+            IntegrationLog.request_payload.contains('"sender": "crm"'),
+            IntegrationLog.status == "failed",
+        )
+        .order_by(IntegrationLog.created_at.desc())
+        .first()
+    )
+    return row[0] if row else None
 
 
 def _classify(exc: Exception) -> tuple[str, int | None, str]:
@@ -253,16 +346,20 @@ def _classify(exc: Exception) -> tuple[str, int | None, str]:
 
 def _link_message_id(db: Any, turn_id: str, contact_id: str, response: Any) -> None:
     """Tie the id Respond returned to the turn, so the `message.sent` webhook (the one writer of
-    the chat row) can stamp it. Best effort: the log row already holds the id."""
+    the chat row) can stamp it. Best effort: the log row already holds the id. Redis and the
+    chat row are separate tries: either one failing leaves the other."""
     message_id = response.get("messageId") if isinstance(response, dict) else None
     if message_id in (None, ""):
         return
     try:
-        from sqlalchemy import text
-
         from app.services import queue_service
 
         queue_service.redis_conn.set(SENT_MSG_KEY.format(message_id), turn_id, ex=SENT_MSG_TTL_SECONDS)
+    except Exception:  # noqa: BLE001
+        logger.warning("crm sender: could not record message %s in redis", message_id, exc_info=True)
+    try:
+        from sqlalchemy import text
+
         # The webhook row may have landed before this send returned.
         db.execute(
             text(
@@ -300,6 +397,19 @@ def _attempt(client: Any, step: Step) -> tuple[Any, tuple[str, int | None, str] 
         return None, _classify(exc)
 
 
+def _kept_response(response: Any) -> dict:
+    """What a success row keeps of Respond's answer: the message id and the status, nothing
+    of the contact or message body."""
+    kept: dict[str, Any] = {}
+    if isinstance(response, dict) and response.get("messageId") not in (None, ""):
+        kept["messageId"] = response["messageId"]
+    kept["status_code"] = 200
+    return kept
+
+
+_NOT_CONFIRMED = "Not confirmed: Respond.io could not be asked whether it arrived."
+
+
 def send(
     session_factory: Callable[[], Any],
     *,
@@ -309,51 +419,93 @@ def send(
     ctx: dict[str, Any] | None = None,
     client: Any = None,
 ) -> str:
-    """Run the actions through Respond.io, resuming past confirmed steps. Never raises."""
+    """Run the actions through Respond.io, resuming past confirmed steps. Never raises.
+
+    Each attempt writes a `processing` stamp first and a result row after (the stamp is then
+    dropped), so a process that dies mid-request leaves a stamp the next run looks up."""
     db = session_factory()
     try:
         ident = f"id:{contact_id}"
         if client is None:
             from app.services.integration_service import RespondClient
 
-            client = RespondClient.for_identifier(db, ident)
+            # The way the live path builds it for this contact (`direct_ingress._lookup_contact`).
+            client = RespondClient.for_identifier(db, contact_id)
         done = confirmed_keys(db, turn_id)
         for step in _steps(actions, ident):
             if step.key in done:
                 continue
-            log = lambda **kw: _log_step(db, turn_id, contact_id, step.key, step.kind, step.detail, **kw)  # noqa: E731
+            base = _step_row(turn_id, contact_id, step.key, step.kind, step.detail)
+
+            # An earlier attempt with an unknown result: ask the conversation before sending again.
+            prior, age = _prior_attempt(db, turn_id, step.key)
+            if prior is not None and step.matches is not None:
+                try:
+                    found = _in_conversation(client, ident, step, time.time() - (age or 0.0))
+                except Exception:  # noqa: BLE001
+                    logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
+                    if prior.status == "processing":
+                        row = _write_row(db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail,
+                                                       unknown=True),
+                                         status="failed", error=_NOT_CONFIRMED)
+                        if row is not None:
+                            _drop_stamp(db, prior)
+                    return direct_ingress.SEND_TIMEOUT
+                if found:
+                    ok = _finalise(
+                        db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail, confirmed_by="lookup"),
+                        prior if prior.status == "processing" else None, status="success",
+                    )
+                    if not ok:
+                        return direct_ingress.SEND_HTTP_ERROR
+                    continue
+
+            stamp = _write_row(db, base, status="processing")
+            if stamp is None:
+                return direct_ingress.SEND_HTTP_ERROR
+            if prior is not None and prior.status == "processing":
+                _drop_stamp(db, prior)
             attempted_at = time.time()
             response, failure = _attempt(client, step)
             if failure is None:
-                log(status_code=200, error=None, response=response)
+                if not _finalise(db, base, stamp, status="success", status_code=200, response=_kept_response(response)):
+                    return direct_ingress.SEND_HTTP_ERROR
                 _link_message_id(db, turn_id, contact_id, response)
                 continue
             outcome, code, reason = failure
             if outcome == direct_ingress.SEND_REFUSED:
-                log(status_code=code, error=reason)
+                _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
                 return outcome
             # Unknown: the request may have left.
+            unknown_base = _step_row(turn_id, contact_id, step.key, step.kind, step.detail, unknown=True)
             if step.idempotent:
-                log(status_code=code, error=reason)
+                _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
+                stamp = _write_row(db, base, status="processing")
                 response, failure = _attempt(client, step)
                 if failure is None:
-                    log(status_code=200, error=None, response=response)
+                    if not _finalise(db, base, stamp, status="success", status_code=200,
+                                     response=_kept_response(response)):
+                        return direct_ingress.SEND_HTTP_ERROR
                     continue
-                log(status_code=failure[1], error=failure[2])
+                _finalise(db, base, stamp, status="failed", status_code=failure[1], error=failure[2])
                 return direct_ingress.SEND_REFUSED
             if step.matches is None:
-                log(status_code=code, error=reason)
+                _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
                 return direct_ingress.SEND_TIMEOUT
             try:
                 found = _in_conversation(client, ident, step, attempted_at)
             except Exception:  # noqa: BLE001
                 logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
-                log(status_code=code, error="Not confirmed: Respond.io could not be asked whether it arrived.")
+                _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=_NOT_CONFIRMED)
                 return direct_ingress.SEND_TIMEOUT
             if not found:
-                log(status_code=code, error=reason)
+                _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
                 return direct_ingress.SEND_REFUSED
-            log(status_code=None, error=None, confirmed_by="lookup")
+            if not _finalise(
+                db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail, confirmed_by="lookup"),
+                stamp, status="success",
+            ):
+                return direct_ingress.SEND_HTTP_ERROR
         return direct_ingress.SEND_OK
     except Exception:  # noqa: BLE001
         logger.exception("crm sender: unexpected failure for turn %s", turn_id)
