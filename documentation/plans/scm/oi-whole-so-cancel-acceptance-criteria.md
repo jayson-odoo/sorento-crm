@@ -39,7 +39,7 @@ change with status "Waiting for CS"; CS Confirm clears it and sends purchasing t
 qty, line removed, whole-SO cancel, SO delete. The 30 Oct auto-done at sync is superseded.
 
 - AC-V2-1 A whole-header cancel and an SO delete leave the OI rows' state and ack unchanged at sync
-  (`WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC = False`; AC-WC-6 is no longer xfail;
+  (the sync-time auto-done is removed, no switch; AC-WC-6 is no longer xfail;
   `test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged` now asserts the row
   is NOT acknowledged).
 - AC-V2-2 (Q1 a) An OI row is "waiting for CS" exactly while its SO line has a pending planning-change row in

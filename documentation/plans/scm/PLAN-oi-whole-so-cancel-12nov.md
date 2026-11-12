@@ -51,8 +51,7 @@ behaviour card answers.
   while it has a pending cancelled change; `_standings` seeds the order so Confirm posts; confirm-all results
   carry `so_number`; `FulfilmentBoardPanel.tsx` renders the List view + Confirm when the only lines are pending
   cancelled ones.
-- Q1 seam: `WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC` (`project_order_inquiry_service.py`). For answer (b): set False,
-  drop the strict xfail on the two `test_ac_wc_6_q1b_*` tests, and flip
-  `test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged`.
+- Q1 seam: superseded by v2 (owner rule 12 Nov): the switch and the sync-time auto-done for a
+  whole-SO cancel / SO delete are removed; rows wait for CS (`app/services/oi_waiting_for_cs.py`).
 - Not in scope, noted: a sidebar click to Fulfilment Planning while a board is open keeps the board on screen
   until a reload (pre-existing, not touched here).
