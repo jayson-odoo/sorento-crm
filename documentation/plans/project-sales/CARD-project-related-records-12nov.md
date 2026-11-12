@@ -5,16 +5,20 @@ Pointers read from origin/main aa82463745. BE = `sorento_crm_backend/app`, FE = 
 
 ## 1. The six types today
 
-| Type | Project link today | Set by | On the project page today | Linked rows (dev DB) |
+| Type | Project link today | Set by | On the project page today | Linked rows (12 Nov prod clone, counts only) |
 |---|---|---|---|---|
-| Stock Inquiry (SI) | none. Free text `project_name`, `project_customer` (`models/procurement.py:1063-1064`) | typed in the SI form (`StockInquiryFieldRows.tsx:103`) and the portal/WhatsApp form (`api/v1/external/stock_inquiries.py`) | nothing | pending crew data request |
-| Complaint | `complaints.project_id`, nullable FK, SET NULL (`models/complaints.py:43`, migration `318_complaint_project_link`) | complaint form picker (`ComplaintForm.tsx:905`), checked by `_assert_linkable_project` (`services/complaints_service.py:1845`) | nothing (the complaint shows its project code, `ComplaintDetail.tsx:1246`) | pending |
-| Purchase request (PR) | `purchase_requests.project_id`, nullable FK, SET NULL (`models/procurement.py:1144`, migration `315_sponsorship_link`) | PR form picker (`PurchaseRequestForm.tsx:784`), `assert_linkable_project` (`services/project_service.py:185`) | nothing (the sponsorship tab filters PRs out, `services/sponsorship_link_service.py:163`) | pending |
-| Sponsorship form (SF) | same table and column as PR, `request_type = 'sponsorship_form'` | SF form picker; portal contacts flagged `requires_registered_project` must pick one | **Sponsorship Form tab** (`SponsorshipsPanel.tsx`, `/projects/{id}/sponsorships`, `samples_pos.py:501`) with a spend rollup per year | pending |
-| New Product Application (NPA) | none. Free text `project_name` (`models/new_product_application.py:79`) | NPA form; an NPA raised from an SI keeps `stock_inquiry_id` | nothing | pending |
+| Stock Inquiry (SI) | none. Free text `project_name`, `project_customer` (`models/procurement.py:1063-1064`) | typed in the SI form (`StockInquiryFieldRows.tsx:103`) and the portal/WhatsApp form (`api/v1/external/stock_inquiries.py`) | nothing | 0 linked of 101 (94 have a typed project name) |
+| Complaint | `complaints.project_id`, nullable FK, SET NULL (`models/complaints.py:43`, migration `318_complaint_project_link`) | complaint form picker (`ComplaintForm.tsx:905`), checked by `_assert_linkable_project` (`services/complaints_service.py:1845`) | nothing (the complaint shows its project code, `ComplaintDetail.tsx:1246`) | 0 linked of 448 |
+| Purchase request (PR) | `purchase_requests.project_id`, nullable FK, SET NULL (`models/procurement.py:1144`, migration `315_sponsorship_link`) | PR form picker (`PurchaseRequestForm.tsx:784`), `assert_linkable_project` (`services/project_service.py:185`) | nothing (the sponsorship tab filters PRs out, `services/sponsorship_link_service.py:163`) | 0 linked of 81 (79 have a typed project title) |
+| Sponsorship form (SF) | same table and column as PR, `request_type = 'sponsorship_form'` | SF form picker; portal contacts flagged `requires_registered_project` must pick one | **Sponsorship Form tab** (`SponsorshipsPanel.tsx`, `/projects/{id}/sponsorships`, `samples_pos.py:501`) with a spend rollup per year | 7 linked of 136 (128 unlinked have a typed title) |
+| New Product Application (NPA) | none. Free text `project_name` (`models/new_product_application.py:79`) | NPA form; an NPA raised from an SI keeps `stock_inquiry_id` | nothing | 0 (table empty) |
 | Order Change Notice (OCN) | does not exist yet (lane OCN-ORDER-CHANGE-NOTICE) | - | - | - |
 
 What it should show: every one of these that is linked to the project, in one place on the project page, each row opening the record.
+
+So today the project page could show at most 7 records across the 13 projects; everything else waits for a person to pick its project (Q5).
+
+Migration size: `stock_inquiries` 101 rows / 248 kB, `new_product_applications` 0 rows. Adding a nullable column with no default plus a partial index is metadata-only and well under a second at this size (timed on a dev copy before merge).
 
 ## 2. Proposed display
 
@@ -45,7 +49,7 @@ What it should show: every one of these that is linked to the project, in one pl
 - FE: `relatedRecordTypes.ts` keeps one entry per kind: label, href(id), status label/pill.
 - OCN adds one BE entry and one FE entry. A test registers a fake sixth type and proves it shows without editing the endpoint or the grid.
 
-## 6. Examples (shapes only, filled from masked dev data when crew replies)
+## 6. Examples (fake names; shapes from the counts above)
 
 - Project PS26-0001 "Fake Tower Phase 1": 2 SF (one approved, one pending), 1 PR, 1 complaint (in progress), 0 SI, 0 NPA linked.
 - An SI with free text project "Fake Tower" and no link: does NOT appear until someone picks the project on the SI.
