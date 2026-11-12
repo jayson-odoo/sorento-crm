@@ -162,6 +162,37 @@ See the UAC. Summary:
 - A user limited to their own complaints still sees the full technician list (names, phones) when they hold
   service_jobs.view. This is accepted: the technicians are the company's own staff and contractors.
 
+## Owner hand test round (12 Nov ~20:45 MYT)
+
+Owner: "I didn't know we are putting it under complaint. I thought it's a standalone module." and "the phone
+number must be same component as the project sales module, like where we verify the phone number".
+
+- **F1, its own module.** What the original plan said:
+  - #163's ADR-0009 (`documentation/adr/0009-service-job-is-requester-agnostic.md` on the #163 branch) made
+    `service_jobs` its own installable module (deps base, resources) with no FK to complaints.
+  - #163's build then mounted it under the complaints module and `/complaint-management/...`.
+  - P1 copied that build and added the `complaint_id` FK under the simplest-thing rule.
+
+  What moves now:
+  - **Module:** a new module `after_sales` ("After-Sales Service"), deps `base` + `complaints` (the FK stays:
+    complaints are the only requester today).
+  - **Screens:** a sidebar section "After-Sales Service" with Service Jobs, Dispatch Board and Technicians.
+    The routes become `/after-sales/service-jobs`, `/after-sales/service-jobs/{id}`,
+    `/after-sales/dispatch-board` and `/after-sales/technicians`.
+  - **API:** everything moves under `/api/v1/after-sales/...` behind the `after_sales` module guard.
+  - **Permissions:** renamed to `after_sales.service_jobs.view`, `after_sales.service_jobs.dispatch` and
+    `after_sales.technicians.manage`.
+  - **What stays on complaints:** the Site fields, the Service Jobs section linking to the job, and the gear
+    "Raise service job".
+- **F2, one phone field.** Every phone field in after-sales uses the same frontend input and backend check as
+  project sales:
+  - Fields: the technician phone and the complaint Site contact phone.
+  - Frontend: `components/common/PhoneInput.tsx`, as wired in
+    `project-sales/_shared/components/PartyContactDialog.tsx`, with its error text.
+  - Backend: `clean_phone` (`app/services/project_party_contact_service.py:80`), which stores E.164 or
+    returns a 422.
+  - Display: one local format, as `display_phone` / `formatPhone` do.
+
 ## Out of P1 (named)
 
 - Not taken by the owner: G4 WhatsApp the customer, G5 send the job to the technician, G6 completion report,
