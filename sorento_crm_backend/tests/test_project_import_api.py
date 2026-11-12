@@ -874,3 +874,87 @@ def test_labels_run_detail_carries_code_labels_for_preview_and_result_codes(worl
     for c in codes:
         assert body["code_labels"].get(c) == oc.label_for(c), c
         assert "_" not in body["code_labels"][c], c
+
+
+# --------------------------------------------------------------------------- round 4:
+# auto-matched columns are kept (AC-PI-09/10/11). Found by crew's real-file dry run: a
+# columns PUT that sends {} dropped every heading the reader had matched by alias, so the
+# preview refused ps_number / customer / po_number. Rule: a field the request does not send
+# keeps its auto-matched heading; an explicit value (a heading or "ignore") overrides it;
+# only a field with neither is missing.
+
+from tests.fixtures.project_import.build_so_summary import EXPECTED as _FIXTURE_EXPECTED
+
+
+def test_columns_auto_matched_headings_count_before_any_choice(world, api_client):
+    w = world
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+
+    run_id = _created_id(client, build_workbook())
+
+    body = client.get(f"{BASE}/runs/{run_id}").json()
+    assert body["missing_columns"] == [], body["missing_columns"]
+
+
+def test_columns_an_empty_columns_put_keeps_the_auto_match_and_previews_the_fixture(
+    world, api_client
+):
+    w = world
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    run_id = _created_id(client, build_workbook())
+
+    saved = client.put(f"{BASE}/runs/{run_id}/columns",
+                       json={"sheets": [s.name for s in MONTHLY_SHEETS], "columns": {}})
+    assert saved.status_code in (200, 204), saved.text
+    assert client.get(f"{BASE}/runs/{run_id}").json()["missing_columns"] == []
+
+    preview = client.post(f"{BASE}/runs/{run_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    counts = {k: v for k, v in preview.json()["counts"].items() if v}
+    assert counts == {k: v for k, v in _FIXTURE_EXPECTED["counts"].items() if v}
+
+
+def test_columns_an_explicit_ignore_overrides_the_auto_match(world, api_client):
+    w = world
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    run_id = _created_id(client, _small_book())
+
+    saved = client.put(f"{BASE}/runs/{run_id}/columns",
+                       json={"sheets": ["JAN'26"], "columns": {"customer": "ignore"}})
+    assert saved.status_code in (200, 204), saved.text
+    assert client.get(f"{BASE}/runs/{run_id}").json()["missing_columns"] == ["customer"]
+
+    preview = client.post(f"{BASE}/runs/{run_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert "CUSTOMER" in preview.text.upper()
+
+
+def test_columns_an_explicit_other_heading_is_honoured(world, api_client):
+    from openpyxl import Workbook
+    import io
+
+    w = world
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "JAN'26"
+    ws.append([HEADER_BY_FIELD[f] for f in FIELDS] + ["CUSTOMER PO REF"])
+    for n in (1, 2):
+        values = row(f"PS26-{n:04d}", po_number=f"PO-AUTO-{n}")
+        ws.append([values.get(f) for f in FIELDS] + [f"PO-CHOSEN-{n}"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    run_id = _created_id(client, buf.getvalue())
+
+    saved = client.put(f"{BASE}/runs/{run_id}/columns",
+                       json={"sheets": ["JAN'26"], "columns": {"po_number": "CUSTOMER PO REF"}})
+    assert saved.status_code in (200, 204), saved.text
+    preview = client.post(f"{BASE}/runs/{run_id}/preview")
+    assert preview.status_code == 200, preview.text
+
+    rows = client.get(f"{BASE}/runs/{run_id}/rows", params={"limit": 50}).json()["data"]
+    assert sorted(r["po_number"] for r in rows) == ["PO-CHOSEN-1", "PO-CHOSEN-2"]
+    # The fields not sent kept their auto match: the customer still reads.
+    assert {r["customer"] for r in rows} == {"CUSTOMER 001 SDN BHD"}
