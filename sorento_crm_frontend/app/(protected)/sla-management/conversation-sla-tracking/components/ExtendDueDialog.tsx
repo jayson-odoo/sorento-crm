@@ -16,7 +16,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { formatDateTime, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import {
   getExtendPreview,
   type ExtendSLAInput,
@@ -157,10 +157,10 @@ export default function ExtendDueDialog({
   };
 
   const currentDueText = currentDueAt
-    ? formatDateTime(parseDateTimeAsUTC(currentDueAt))
+    ? formatDateTimeInMalaysia(parseDateTimeAsUTC(currentDueAt))
     : '-';
   const newDueText =
-    preview?.new_due_at ? formatDateTime(parseDateTimeAsUTC(preview.new_due_at)) : null;
+    preview?.new_due_at ? formatDateTimeInMalaysia(parseDateTimeAsUTC(preview.new_due_at)) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
