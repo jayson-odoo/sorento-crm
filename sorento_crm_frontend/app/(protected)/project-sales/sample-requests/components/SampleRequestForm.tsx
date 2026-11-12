@@ -4,8 +4,10 @@
  * Staff new / edit sample request (SR-CORE), restructured by SAMPLE-REQUEST-V2 (owner 11 Nov):
  * four guided sections like the price tag request (Customer & project / Ship to / Items /
  * Delivery), ship to = a party of the project (the proposal's party picker), the contact person
- * from that party's people (the registration contacts popup), and one main button, Preview, whose
- * popup submits. Every exit returns to where the person started (`?from=`, owner 16:30).
+ * from that party's people (the proposal's Attn chooser), and Submit as the main button with no
+ * Preview step (owner 12 Nov). The sections open as the price tag request's do (the first one open,
+ * each next one as the one before it is filled: `hooks/useProgressiveSections`, owner 12 Nov
+ * ~15:45). Every exit returns to where the person started (`?from=`, owner 16:30).
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -20,6 +22,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { DatePicker } from '@/components/ui/date-picker';
 import { toIsoDate } from '@/components/ui/date-range-picker';
 import { FormSection } from '@/components/common/FormSection';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
+import { useProgressiveSections } from '@/hooks/useProgressiveSections';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
@@ -43,6 +47,7 @@ import {
   stateFromDetail,
   numberErrors,
   validateStaff,
+  withShipToContacts,
   withShipToParty,
   type FormState,
 } from '@/lib/sample-request-form';
@@ -52,7 +57,7 @@ import { searchProjectsForLink } from '@/app/(protected)/complaint-management/co
 import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { useProject, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
+import { useProject, usePartyContacts, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
 import { useEffectiveUserName } from '@/hooks/useEffectiveUserId';
 import { QuotationAttnChooser } from '../../[projectId]/quotation-documents/components/QuotationRecipientPicker';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
@@ -170,8 +175,14 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   const [hydrated, setHydrated] = useState(!requestId);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
-  // Owner hand test 12 Nov: every section starts collapsed (its one-line summary shows).
-  const [open, setOpen] = useState({ customer: false, shipTo: false, items: false, delivery: false });
+  // The price tag request's section rule (owner hand test 12 Nov ~15:45): the first section open,
+  // the rest collapsed, each next one opened once as the one before it is filled.
+  const { open, openOnce, toggle } = useProgressiveSections({
+    customer: true,
+    shipTo: false,
+    items: false,
+    delivery: false,
+  });
 
   const set = useCallback(
     <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -212,6 +223,25 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
       setHydrated(true);
     }
   }, [requestId, existing.data, hydrated]);
+
+  // Each rule opens the NEXT section once the one before it holds what it needs; a loaded draft
+  // opens the sections that already hold values the same way. A section shut by hand stays shut.
+  const hasCustomer = Boolean(state.customer_id);
+  const hasParty = Boolean(state.ship_to_party_id);
+  const hasLine = state.lines.some((l) => l.product_id) || state.board_mounting;
+  const hasDelivery = Boolean(state.delivery_date);
+  useEffect(() => {
+    if (hasCustomer) openOnce('shipTo');
+  }, [hasCustomer, openOnce]);
+  useEffect(() => {
+    if (hasParty) openOnce('items');
+  }, [hasParty, openOnce]);
+  useEffect(() => {
+    if ((hasParty && hasLine) || (Boolean(requestId) && hasDelivery)) openOnce('delivery');
+  }, [hasParty, hasLine, hasDelivery, requestId, openOnce]);
+
+  // Every chosen contact's phone (owner 12 Nov ~15:45): the chooser hands back the first one's only.
+  const shipToContacts = usePartyContacts(state.ship_to_party_id || null);
 
   // A project passed in the URL starts the request on that project, its buyer prefilled.
   const startProject = useProject(!requestId ? projectId : undefined);
@@ -273,15 +303,11 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     const found = validateStaff(state, { requireProject: switches?.requireProject });
     setErrors(found);
     if (Object.keys(found).length > 0) {
-      // Open the sections holding a problem so the message is in view.
-      setOpen((o) => ({
-        customer: o.customer || Boolean(found.customer_id || found.project_id),
-        shipTo:
-          o.shipTo || Boolean(found.ship_to_party_id || found.ship_to_role || found.ship_to_address),
-        items: o.items || Boolean(found.lines || found.board_label),
-        delivery:
-          o.delivery || Boolean(found.delivery_date || found.delivery_mode || found.loan_value),
-      }));
+      // Open the sections holding a problem so the message is in view (always, like price tags).
+      if (found.customer_id || found.project_id) toggle('customer', true);
+      if (found.ship_to_party_id || found.ship_to_role || found.ship_to_address) toggle('shipTo', true);
+      if (found.lines || found.board_label) toggle('items', true);
+      if (found.delivery_date || found.delivery_mode || found.loan_value) toggle('delivery', true);
       return;
     }
     try {
@@ -339,7 +365,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
         title="Customer & project"
         summary={[customerText, projectText].filter(Boolean).join(', ')}
         open={open.customer}
-        onOpenChange={(v) => setOpen((o) => ({ ...o, customer: v }))}
+        onOpenChange={(v) => toggle('customer', v)}
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field
@@ -372,7 +398,10 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
           </Field>
           {projectFixed ? (
             <Field label="Project">
-              <ReadValue>{state.project_label}</ReadValue>
+              {/* One clamped line, the whole title on hover and behind the eye (owner 12 Nov ~15:45). */}
+              <div className="flex min-h-9 items-center rounded-md border border-dashed px-3 py-1 text-sm">
+                <TruncatedTextCell text={state.project_label} dialogTitle="Project" />
+              </div>
             </Field>
           ) : (
             <Field
@@ -438,7 +467,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
         title="Ship to"
         summary={[shipToText, state.site_contact_name].filter(Boolean).join(', ')}
         open={open.shipTo}
-        onOpenChange={(v) => setOpen((o) => ({ ...o, shipTo: v }))}
+        onOpenChange={(v) => toggle('shipTo', v)}
       >
         <div className="grid grid-cols-1 gap-4">
           <ProjectPartyPicker
@@ -501,16 +530,25 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
                 locked={false}
                 autoPick
                 onChange={(next) =>
-                  setState((prev) => ({
-                    ...prev,
-                    ship_to_contact_ids: next.attn_contact_ids ?? prev.ship_to_contact_ids,
-                    site_contact_name:
-                      'attn_name' in next ? (next.attn_name ?? '') : prev.site_contact_name,
-                    site_contact_phone:
-                      'recipient_phone_snapshot' in next
-                        ? (next.recipient_phone_snapshot ?? '')
-                        : prev.site_contact_phone,
-                  }))
+                  setState((prev) => {
+                    const ids = next.attn_contact_ids ?? prev.ship_to_contact_ids;
+                    const people = shipToContacts.data ?? [];
+                    const chosen = ids
+                      .map((cid) => people.find((c) => c.id === cid))
+                      .filter((c): c is (typeof people)[number] => Boolean(c));
+                    // Every chosen contact's phone; none of them has one: the party's own.
+                    const phones = withShipToContacts(prev, chosen).site_contact_phone;
+                    return {
+                      ...prev,
+                      ship_to_contact_ids: ids,
+                      site_contact_name:
+                        'attn_name' in next ? (next.attn_name ?? '') : prev.site_contact_name,
+                      site_contact_phone:
+                        'recipient_phone_snapshot' in next
+                          ? phones || (next.recipient_phone_snapshot ?? '')
+                          : prev.site_contact_phone,
+                    };
+                  })
                 }
               />
             </div>
@@ -535,7 +573,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
             : ''
         }
         open={open.items}
-        onOpenChange={(v) => setOpen((o) => ({ ...o, items: v }))}
+        onOpenChange={(v) => toggle('items', v)}
       >
         {prefill.documents.length > 1 && (
           <div className="mb-3">
@@ -577,7 +615,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
         title="Delivery"
         summary={deliveryText}
         open={open.delivery}
-        onOpenChange={(v) => setOpen((o) => ({ ...o, delivery: v }))}
+        onOpenChange={(v) => toggle('delivery', v)}
       >
         <div className="space-y-4">
           <Field

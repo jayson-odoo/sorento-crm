@@ -37,7 +37,7 @@ class SampleRequestWrite(BaseModel):
     ship_to_name: Optional[str] = Field(None, max_length=255)
     ship_to_address: Optional[str] = None
     site_contact_name: Optional[str] = Field(None, max_length=255)
-    site_contact_phone: Optional[str] = Field(None, max_length=60)
+    site_contact_phone: Optional[str] = Field(None, max_length=255)
     site_contact_note: Optional[str] = Field(None, max_length=255)
     loan_value: Optional[int] = Field(None, ge=1)
     loan_unit: Optional[Literal["days", "months"]] = None

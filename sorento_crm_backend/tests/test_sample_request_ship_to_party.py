@@ -436,3 +436,41 @@ def test_a_non_editor_cannot_add_a_party_by_updating_a_saved_draft(world):
     )
     assert res.status_code == 403, res.text
     assert w.db.query(ProjectPartyLink).filter(ProjectPartyLink.party_id == newcomer.id).count() == 0
+
+
+# ------------------------------------------------- owner hand test 12 Nov ~15:45 (F4): every phone
+
+
+def test_two_contacts_with_phones_print_both_phones_in_the_order_of_the_names(world):
+    w = world
+    w.perms[w.sales].add("projects.parties.view")
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
+    ravi = _contact(w.db, party, "Ravi Kumar", phone="01111111111")
+    d = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id, ravi.id]).json()
+    assert d["site_contact_name"] == "Mei Ling Tan & Ravi Kumar"
+    assert d["site_contact_phone"] == "012-345 6789 & 011-1111 1111"
+
+
+def test_a_contact_without_a_phone_leaves_the_others_phone_named(world):
+    w = world
+    w.perms[w.sales].add("projects.parties.view")
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    mei = _contact(w.db, party, "Mei Ling Tan")
+    ravi = _contact(w.db, party, "Ravi Kumar", phone="01111111111")
+    d = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[mei.id, ravi.id]).json()
+    assert d["site_contact_phone"] == "Ravi Kumar 011-1111 1111"
+
+
+def test_five_contacts_keep_all_five_phones(world):
+    """Five phones do not fit the old 60-character column (srv2_0003 widens it)."""
+    w = world
+    w.perms[w.sales].add("projects.parties.view")
+    party = _party(w.db, "Bintang Trading", address="Klang")
+    _link(w.db, w.project, party)
+    people = [_contact(w.db, party, f"Person {i}", phone="0123456789") for i in range(5)]
+    res = _create(w, ship_to_party_id=party.id, ship_to_contact_ids=[p.id for p in people])
+    assert res.status_code in (200, 201), res.text
+    assert res.json()["site_contact_phone"] == " & ".join(["012-345 6789"] * 5)

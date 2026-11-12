@@ -363,18 +363,33 @@ export function withShipToParty(s: FormState, party: ShipToPick | null): FormSta
   };
 }
 
-/** The contact person = the party's people picked in the registration popup: "A & B", the first
- * one's phone (owner Q3 a, the proposal Attn rule). */
+/**
+ * The phones of the chosen contacts, in the order of their names (owner hand test 12 Nov ~15:45:
+ * "I added 2 contacts but why got 1 phone only"). Every contact with a phone is listed. When each
+ * chosen contact has one, the phones read in the order of the names ("A & B" / "pA & pB"); when
+ * some have none, each phone carries its contact's name, so no phone reads as someone else's.
+ * The server builds the same text (`sample_request_service._contact_phones_text`).
+ */
+export function contactPhonesText(contacts: { name: string; phone?: string | null }[]): string {
+  const withPhone = contacts
+    .map((c) => ({ name: c.name, phone: (c.phone ? formatPhone(c.phone) || c.phone : '').trim() }))
+    .filter((c) => c.phone);
+  if (withPhone.length === 0) return '';
+  if (withPhone.length === contacts.length) return withPhone.map((c) => c.phone).join(' & ');
+  return withPhone.map((c) => `${c.name} ${c.phone}`).join(' & ');
+}
+
+/** The contact person = the party's people picked in the registration popup: "A & B", and every
+ * one's phone (`contactPhonesText`). */
 export function withShipToContacts(
   s: FormState,
   contacts: { id: string; name: string; phone?: string | null }[],
 ): FormState {
-  const first = contacts[0];
   return {
     ...s,
     ship_to_contact_ids: contacts.map((c) => c.id),
     site_contact_name: contacts.map((c) => c.name).join(' & '),
-    site_contact_phone: first?.phone ? formatPhone(first.phone) || first.phone : '',
+    site_contact_phone: contactPhonesText(contacts),
   };
 }
 

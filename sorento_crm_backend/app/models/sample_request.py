@@ -111,7 +111,7 @@ class SampleRequest(Base, CompanyScopedMixin):
     ship_to_name = Column(String(255), nullable=True)
     ship_to_address = Column(Text, nullable=True)
     site_contact_name = Column(String(255), nullable=True)
-    site_contact_phone = Column(String(60), nullable=True)
+    site_contact_phone = Column(String(255), nullable=True)
     site_contact_note = Column(String(255), nullable=True)
     delivery_mode = Column(String(20), nullable=True)
     loan_value = Column(Integer, nullable=False, server_default="2")
