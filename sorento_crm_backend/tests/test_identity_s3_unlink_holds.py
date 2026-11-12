@@ -255,6 +255,8 @@ def test_ac44_respond_contacts_sync_creates_no_user_and_links_nobody():
         before_assignments = db.query(UserRoleAssignment).count()
 
         class _FakeRespondClient:
+            base_url = "http://respond.test"
+
             def list_contacts(self, body):
                 return {"items": [{"phone": phone, "firstName": "Sync", "lastName": "Person", "id": 77}]}
 

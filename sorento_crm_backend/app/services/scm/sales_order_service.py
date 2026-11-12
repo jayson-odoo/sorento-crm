@@ -14,10 +14,12 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import exists, false, func, or_, select, text
+from sqlalchemy import any_, exists, false, func, or_, select, text
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.list_search import search_values_filter
 from app.utils.multi_value import multi_values as _as_list
 
 from app.models.access import MarketSegment
@@ -43,6 +45,7 @@ from app.models.scm import OrderLinkClaim
 from app.services.document_ingest_service import CANCELLED
 from app.services import so_remark_rules
 from app.services.scm.po_ref import po_ref_key
+from app.services.company_scope import build_company_predicate, get_company_scope
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm import sales_agent_service
@@ -1446,8 +1449,73 @@ class SalesOrderService:
             )
         )[0]
 
+    def _search_match(self, values: list[str]):
+        """A row matching any of `values` over the list search's fields.
+
+        Every OR arm is one the planner can serve from an index (a BitmapOr): one
+        `ILIKE ANY` per `sales_orders` column (trigram indexes, `so_search_trgm_0001`),
+        and `<fk> = ANY(ARRAY(SELECT id ...))` for the customer, agent and line arms, so
+        the statement does not grow with the number of values and holds no correlated
+        EXISTS (which forced a seq scan). The id lists are uncorrelated: an order with
+        three matching lines is still ONE row, and `total` counts the same query."""
+        likes = array([f"%{v}%" for v in values])
+        typed_keys = [k for k in (po_ref_key(v) for v in values) if k]
+
+        # The company-scope listener scopes these id lists in the count query but not in
+        # the paged rows query (it does not reach into the joinedload-wrapped subquery), so
+        # `total` and the rows disagreed. Scoped here, explicitly, for both.
+        scope = get_company_scope(self.db)
+
+        def scoped(stmt, model):
+            predicate = build_company_predicate(model, scope)
+            return stmt if predicate is None else stmt.where(predicate)
+
+        def ids(stmt):
+            return func.array(stmt.correlate(None).scalar_subquery())
+
+        # The four things a person holds when they come looking for an order: the
+        # document number, who it is for, WHAT IS ON IT, and WHO SOLD IT.
+        customers = scoped(
+            select(Customer.id).where(Customer.customer_name.ilike(any_(likes))), Customer
+        )
+        # Code AND person: the codes are `SEAN I` / `SEAN III`, and the person behind
+        # them is what anybody actually types. Same pair `list_agents` searches.
+        agents = select(SalesAgent.id).where(
+            or_(SalesAgent.sales_agent.ilike(any_(likes)),
+                SalesAgent.person_label.ilike(any_(likes)))
+        )
+        products = scoped(
+            select(Product.id).where(
+                or_(Product.product_code.ilike(any_(likes)),
+                    Product.product_name.ilike(any_(likes)))
+            ),
+            Product,
+        )
+        on_a_line = scoped(
+            select(SalesOrderLine.sales_order_id).where(
+                SalesOrderLine.product_id == any_(ids(products))
+            ),
+            SalesOrderLine,
+        )
+        return or_(
+            SalesOrder.so_number.ilike(any_(likes)),
+            SalesOrder.debtor_name.ilike(any_(likes)),
+            SalesOrder.customer_id == any_(ids(customers)),
+            SalesOrder.id == any_(ids(on_a_line)),
+            SalesOrder.sales_agent_id == any_(ids(agents)),
+            # The project a person came looking for, resolved from whichever source
+            # ranked highest - so "BAMBOO" finds an order the Order Inquiry sheet
+            # named, whether or not the customer half of that cell ever matched.
+            SalesOrder.project_label.ilike(any_(likes)),
+            # The customer's PO number: the raw value like the other fields, and the
+            # folded key of what was typed ("po 4500-123" finds "PO-4500 123").
+            SalesOrder.po_ref.ilike(any_(likes)),
+            SalesOrder.po_ref_key.like(any_(array([f"%{k}%" for k in typed_keys])))
+            if typed_keys else false(),
+        )
+
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[list[str] | str],
+             query: Optional[list[str] | str], status: Optional[list[str] | str],
              priority: Optional[list[str] | str],
              source: Optional[list[str] | str] = None, *,
              date_from: Optional[date] = None, date_to: Optional[date] = None,
@@ -1542,59 +1610,10 @@ class SalesOrderService:
                 )
                 .exists()
             )
-        if query:
-            like = f"%{query.strip()}%"
-            typed_key = po_ref_key(query)
-            # The four things a person holds when they come looking for an order: the
-            # document number, who it is for, WHAT IS ON IT, and WHO SOLD IT. The last two
-            # were not matched, so "which orders have that sink on them" and "show me
-            # Eric's orders" both answered nothing and sent the reader to the filter panel
-            # for a question the search box looks like it takes.
-            #
-            # EXISTS subqueries, never joins: an order with three matching lines must come
-            # back as ONE row, and a join would also break `total` (which counts the same
-            # query) and the page boundaries computed from it.
-            on_a_line = (
-                self.db.query(SalesOrderLine.id)
-                .join(Product, Product.id == SalesOrderLine.product_id)
-                .filter(
-                    SalesOrderLine.sales_order_id == SalesOrder.id,
-                    or_(
-                        Product.product_code.ilike(like),
-                        Product.product_name.ilike(like),
-                    ),
-                )
-                .exists()
-            )
-            # Code AND person: the codes are `SEAN I` / `SEAN III`, and the person behind
-            # them is what anybody actually types. Same pair `list_agents` searches, so the
-            # Agent picker and this box understand the same words.
-            sold_by = (
-                self.db.query(SalesAgent.id)
-                .filter(
-                    SalesAgent.id == SalesOrder.sales_agent_id,
-                    or_(
-                        SalesAgent.sales_agent.ilike(like),
-                        SalesAgent.person_label.ilike(like),
-                    ),
-                )
-                .exists()
-            )
-            q = q.filter(
-                (SalesOrder.so_number.ilike(like))
-                | (SalesOrder.debtor_name.ilike(like))
-                | (SalesOrder.customer.has(Customer.customer_name.ilike(like)))
-                | on_a_line
-                | sold_by
-                # The project a person came looking for, resolved from whichever source
-                # ranked highest - so "BAMBOO" finds an order the Order Inquiry sheet
-                # named, whether or not the customer half of that cell ever matched.
-                | (SalesOrder.project_label.ilike(like))
-                # The customer's PO number: the raw value like the other fields, and the
-                # folded key of what was typed ("po 4500-123" finds "PO-4500 123").
-                | (SalesOrder.po_ref.ilike(like))
-                | (SalesOrder.po_ref_key.like(f"%{typed_key}%") if typed_key else false())
-            )
+        # The route has already cleaned the values (`search_values`); a lone string is one value.
+        terms = [query.strip()] if isinstance(query, str) else query
+        if terms and any(terms):
+            q = q.filter(search_values_filter(terms, self._search_match))
         sort_cols = {
             "so_number": SalesOrder.so_number,
             "order_date": SalesOrder.order_date,
