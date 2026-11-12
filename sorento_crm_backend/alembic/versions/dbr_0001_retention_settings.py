@@ -1,7 +1,8 @@
 """DB retention: settings columns and the daily retention tasks
 
 PLAN-db-retention-12nov. Adds one system_settings column per retention value (plus the
-four knobs every rule shares) and seeds the seven daily scheduled tasks; the existing
+four knobs every rule shares), indexes the recommendation link on
+scm.order_summary_location_allocation, and seeds the seven daily scheduled tasks; the existing
 `api_call_log_prune` row is left alone. No rows are deleted here: the tasks do that,
 in batches, from their first night (02:00 Malaysia time = 18:00 UTC).
 
@@ -43,7 +44,8 @@ _TASKS = [
         "integration_log_prune",
         "Integration log clean-up",
         "Daily: clears request and response bodies and headers after 30 days and removes "
-        "log rows after 180 days. Calls still pending or processing are never touched.",
+        "log rows after 180 days. Calls still pending or processing, and failed-audit "
+        "records, are kept.",
     ),
     (
         "chatbot_turn_trace_prune",
@@ -96,6 +98,19 @@ def upgrade():
                 sa.Column(name, type_, nullable=False, server_default=default),
             )
 
+    # Deleting a recommendation SETs NULL on this column (reorder_run_prune); without an
+    # index each deleted recommendation scans the table. A plain build, not CONCURRENTLY
+    # (app/utils/online_index.py): the table is small (under 50 MB) and only the daily
+    # reorder run writes it, so the share lock lasts seconds under the migration
+    # lock_timeout.
+    op.create_index(
+        "ix_scm_order_summary_location_alloc_rec",
+        "order_summary_location_allocation",
+        ["reorder_recommendation_id"],
+        schema="scm",
+        if_not_exists=True,
+    )
+
     for key, name, description in _TASKS:
         conn.execute(
             sa.text(
@@ -116,6 +131,12 @@ def upgrade():
 
 def downgrade():
     conn = op.get_bind()
+    op.drop_index(
+        "ix_scm_order_summary_location_alloc_rec",
+        table_name="order_summary_location_allocation",
+        schema="scm",
+        if_exists=True,
+    )
     for key, _name, _description in _TASKS:
         conn.execute(sa.text("DELETE FROM scheduled_tasks WHERE key = :key"), {"key": key})
     for name, _type, _default in reversed(_COLUMNS):

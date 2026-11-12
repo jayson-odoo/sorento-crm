@@ -11,6 +11,7 @@ from app.models.access import RespondContact
 from app.models.product import UnitOfMeasure
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
+from app.services.user_service import UserPermissionService
 from app.services.signin_background import resolve_signin_background_url
 
 logger = logging.getLogger(__name__)
@@ -464,19 +465,8 @@ def get_settings(
                 # only through this manual dict (LESSONS).
                 **{
                     name: (getattr(settings, name, default) if settings else None)
-                    for name, default in (
-                        ("integration_log_payload_retention_days", 30),
-                        ("integration_log_row_retention_days", 180),
-                        ("chatbot_turn_trace_retention_days", 90),
-                        ("scheduled_task_run_retention_days", 90),
-                        ("reorder_run_retention_days", 90),
-                        ("embedding_superseded_retention_days", 90),
-                        ("plan_exception_superseded_grace_days", 1),
-                        ("data_retention_dry_run", False),
-                        ("data_retention_batch_size", 5000),
-                        ("data_retention_batch_sleep_ms", 200),
-                        ("data_retention_max_run_minutes", 30),
-                    )
+                    for name, default in _RETENTION_SETTING_DEFAULTS.items()
+                    if name != "import_job_rows_retention_days"
                 },
                 "ai_trace_ttl_days": getattr(settings, "ai_trace_ttl_days", 30) if settings else None,
                 "ai_trace_error_ttl_days": getattr(settings, "ai_trace_error_ttl_days", 90) if settings else None,
@@ -945,6 +935,39 @@ def get_chatbot_lanes(
 # setattr loop below took them on `.edit` alone, which went around that gate).
 _SMTP_FIELDS = ("smtp_host", "smtp_port", "smtp_secure", "smtp_username", "smtp_password", "smtp_from")
 
+# Retention settings decide how much history the nightly jobs delete
+# (PLAN-db-retention-12nov), so on `/general` they need the secrets slug the SMTP login
+# sits behind (admin passes through its bypass), not `.edit` alone. Every column is NOT
+# NULL, so an explicit null is a 422 rather than a 500 at commit. Name -> column default.
+_RETENTION_SETTING_DEFAULTS = {
+    "import_job_rows_retention_days": 90,
+    "integration_log_payload_retention_days": 30,
+    "integration_log_row_retention_days": 180,
+    "chatbot_turn_trace_retention_days": 90,
+    "scheduled_task_run_retention_days": 90,
+    "reorder_run_retention_days": 90,
+    "embedding_superseded_retention_days": 90,
+    "plan_exception_superseded_grace_days": 1,
+    "data_retention_dry_run": False,
+    "data_retention_batch_size": 5000,
+    "data_retention_batch_sleep_ms": 200,
+    "data_retention_max_run_minutes": 30,
+}
+
+
+def _require_secrets_slug_for_retention(settings_data: SystemSettingUpdate, current_user: dict, db: Session) -> None:
+    """Refuse the whole body (nothing applied) when it carries a retention key and the
+    caller lacks RUNTIME_SETTINGS_PERMISSION."""
+    sent = settings_data.model_dump(exclude_unset=True)
+    keys = sorted(k for k in sent if k in _RETENTION_SETTING_DEFAULTS)
+    if keys and not UserPermissionService(db).check_user_has_permission(
+        current_user["id"], RUNTIME_SETTINGS_PERMISSION
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission required: {RUNTIME_SETTINGS_PERMISSION} ({', '.join(keys)})",
+        )
+
 
 def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Session):
     """Shared implementation for PUT/POST general settings."""
@@ -961,6 +984,15 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"SMTP settings are saved through PUT /settings/smtp, not here: {', '.join(smtp_keys)}",
+        )
+
+    null_retention = sorted(
+        k for k in update_data if k in _RETENTION_SETTING_DEFAULTS and update_data[k] is None
+    )
+    if null_retention:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"These settings cannot be null: {', '.join(null_retention)}",
         )
 
     if "default_product_supplier_id" in update_data:
@@ -1343,6 +1375,7 @@ def update_general_settings(
     No new slug and no grant sweep: every role holding `.view` today also holds
     `.edit` (admin, warehouse_manager and the three integration roles).
     """
+    _require_secrets_slug_for_retention(settings_data, current_user, db)
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:
@@ -1363,6 +1396,7 @@ def update_general_settings_post(
     through the same implementation, so gating only one would leave the other as
     the way around it.
     """
+    _require_secrets_slug_for_retention(settings_data, current_user, db)
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:

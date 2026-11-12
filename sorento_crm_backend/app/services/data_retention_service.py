@@ -221,8 +221,8 @@ def prune_plan_exceptions(
     sleep_ms: int = 0,
     max_seconds: Optional[float] = None,
 ) -> dict:
-    """R1. A batch that is not the newest of its planning run (batches with no run are one
-    group) and was generated before the grace loses its undecided rows; a batch left with
+    """R1. A batch that is not the newest of its planning run within its company (batches
+    with no run are one group per company) and was generated before the grace loses its undecided rows; a batch left with
     no rows goes too. A decided row (status not open, or a decision time) and its batch
     stay forever. Newest = ``generated_at`` desc, the order ``latest_batch`` reads."""
     from app.models.scm import PlanException, PlanExceptionBatch
@@ -232,7 +232,9 @@ def prune_plan_exceptions(
         PlanExceptionBatch.generated_at.label("generated_at"),
         func.row_number()
         .over(
-            partition_by=PlanExceptionBatch.run_id,  # NULL run ids form one partition
+            # Per company: the screen reads the newest batch under a company-scoped
+            # session. NULL run ids form one partition per company.
+            partition_by=(PlanExceptionBatch.company_id, PlanExceptionBatch.run_id),
             order_by=(PlanExceptionBatch.generated_at.desc(), PlanExceptionBatch.id.desc()),
         )
         .label("rn"),
@@ -282,8 +284,10 @@ def prune_integration_log(
     max_seconds: Optional[float] = None,
 ) -> dict:
     """R2. Payloads and headers blank past the payload window, rows go past the row
-    window. A pending or processing row is still work in flight and is never touched."""
+    window. A pending or processing row is still work in flight and is never touched, nor
+    is a failed-audit record (audit_trail_gaps.integration_log_id points at it)."""
     from app.models.integration import IntegrationLog as L
+    from app.services.audit_service import AUDIT_FAILURE_CHANNEL
 
     return two_stage_prune(
         db,
@@ -293,7 +297,10 @@ def prune_integration_log(
         payload_columns=[L.request_payload, L.response_payload, L.request_headers, L.response_headers],
         payload_retention_days=payload_retention_days,
         row_retention_days=row_retention_days,
-        extra_conditions=[func.lower(L.status).notin_(("pending", "processing"))],
+        extra_conditions=[
+            func.lower(L.status).notin_(("pending", "processing")),
+            L.integration_channel != AUDIT_FAILURE_CHANNEL,
+        ],
         dry_run=dry_run,
         batch_size=batch_size,
         sleep_ms=sleep_ms,
