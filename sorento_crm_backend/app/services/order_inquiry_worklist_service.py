@@ -682,7 +682,7 @@ _SHOWS_LINE_QTY = and_(
     _LIVE_ROWS_ON_LINE == 1,
     _LINE_NOW_QTY != OrderInquiryRow.qty,
 )
-_ROW_QTY = case((_SHOWS_LINE_QTY, _LINE_NOW_QTY), else_=OrderInquiryRow.qty)
+_SHOWN_QTY = case((_SHOWS_LINE_QTY, _LINE_NOW_QTY), else_=OrderInquiryRow.qty)
 _ROW_PREVIOUS_QTY = case(
     (_SHOWS_LINE_QTY, OrderInquiryRow.qty), else_=OrderInquiryRow.previous_qty
 )
@@ -953,7 +953,7 @@ _COLUMNS = (
     OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
     OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
-    _ROW_QTY.label("qty"),
+    _SHOWN_QTY.label("qty"),
     _LINE_DATE.label("delivery_date"),
     OrderInquiryRow.state.label("state"),
     OrderInquiryRow.verb.label("verb"),

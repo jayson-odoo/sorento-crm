@@ -940,6 +940,15 @@ def _nets_to_nothing(row: PlanningChangeRow) -> bool:
     return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
 
 
+def _nets_back_to_older(row: PlanningChangeRow) -> bool:
+    """A date / qty replacement whose carried "was" equals its "now": the line is back at
+    what CS last confirmed."""
+    if row.kind not in ("advanced", "delayed", "qty_up", "qty_down"):
+        return False
+    before, after = row.from_json or {}, row.to_json or {}
+    return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
+
+
 def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
     """Whether a gate-failed change actually alters what an older pending row already
     describes (S1, `PLAN-esb-change-row-refresh.md`) - qty, required_date, status or the
@@ -1317,6 +1326,11 @@ def build_batch(
                         # Moved back where it was planned, nothing else changed: the
                         # older row retires and no replacement is raised.
                         older.applied_reason = "Line moved back to its planned location"
+                        continue
+                    if _nets_back_to_older(row):
+                        # OI-WHOLE-SO-CANCEL v2 (AC-V2-2): a date or qty changed back to what
+                        # CS last confirmed leaves nothing to decide; the older row retires.
+                        older.applied_reason = "Line changed back to what was confirmed"
                         continue
                 row.batch_id = open_batch_id
                 kept_rows_by_existing_batch[open_batch_id].append(row)
