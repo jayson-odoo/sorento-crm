@@ -81,6 +81,14 @@ def _scopes_class(row: Any, classes: set[str]) -> bool:
     return bool(classes) and any(str(c).casefold() in classes for c in scope)
 
 
+def size_key_rows(rows: list[Any], classes: set[str]) -> list[Any]:
+    """R6-1's size keys among the registry `rows` (numeric, with a unit): a key one of `classes`
+    scopes (`applies_when.class`), then the keys flagged `matches_bare_size`, registry order
+    kept within each. The one rule a size number is read against; never a key list."""
+    keys = [r for r in rows if getattr(r, "matches_bare_size", False) or _scopes_class(r, classes)]
+    return sorted(keys, key=lambda r: not _scopes_class(r, classes))
+
+
 def ground_bare(
     db: "Session",
     entity: dict[str, Any],
@@ -122,7 +130,7 @@ def ground_bare(
     # Another unit (litres, ounces): R6-1, over the keys of that unit.
     rows = [r for r in rows if length_factor(r.unit) is None]
     classes = _classes(db, entities, held_ids)
-    units = {str(r.unit).casefold() for r in rows if getattr(r, "matches_bare_size", False) or _scopes_class(r, classes)}
+    units = {str(r.unit).casefold() for r in size_key_rows(rows, classes)}
     # More than one unit in play: the size word's own unit only.
     unit = next(iter(units)) if len(units) == 1 else (unit_said if unit_said in units else None)
     if unit is None and units:

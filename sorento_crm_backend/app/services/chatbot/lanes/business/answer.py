@@ -5021,6 +5021,30 @@ def _set_then_its_members(keep: list, first: int, close: list) -> list:
     return keep[:first] + group + rest
 
 
+def offer_extras(match: Any) -> dict[str, Any]:
+    """What an offered code's row carries beside its code: a set's members (`set_members_of`)
+    and, in a size-relevant offer, its one size line (`size_line_of`)."""
+    return {**set_members_of(match), **size_line_of(match)}
+
+
+def size_line_of(match: Any) -> dict[str, Any]:
+    """CHATBOT-CODE-MATCH R4: the candidate's size line ("Size: 300 mm", "Size: not recorded"),
+    written by `code_sizes.annotate` from stored values only; empty when it wrote none."""
+    display = jsc.get(match, "display")
+    line = jsc.get(display, "size_line") if isinstance(display, dict) else None
+    return {"size_line": jsc.js_string(line)} if jsc.truthy(line) else {}
+
+
+def with_size_lines(lines: list[str], size_lines: list[str]) -> list[str]:
+    """Each offered code's line, then its own size line under it when it has one."""
+    out: list[str] = []
+    for line, size in zip(lines, size_lines):
+        out.append(line)
+        if size:
+            out.append(size)
+    return out
+
+
 def set_members_of(match: Any) -> dict[str, Any]:
     """CHATBOT-CODE-MATCH R3: what an exact ask of an offered set resolves to, carried on its
     offer row so a pick of it answers the same way: its member products, each with its own
@@ -5119,7 +5143,7 @@ def did_you_mean_by_token(
             # CHATBOT-CODE-MATCH AC-1d: a close set leads as it does asked alone, carrying
             # what its exact ask resolves to (`set_members_of`).
             rows.append(
-                {"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": kind, **set_members_of(match)}
+                {"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": kind, **offer_extras(match)}
             )
         if rows:
             out[token] = rows
@@ -5627,6 +5651,8 @@ def build_suggest_offer(
                 if key is not None:
                     sfx = _stamp(key)
                 cand_lines.append(f"{idx}. {jsc.js_string(pick['label'])}{sfx}")
+                if size_line_of(match):
+                    cand_lines.append(size_line_of(match)["size_line"])
                 out["suggest_last_result_set"].append(
                     {
                         "idx": idx,
@@ -5637,7 +5663,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(match, "entity_type")
                         if jsc.truthy(jsc.get(match, "entity_type"))
                         else None,
-                        **set_members_of(match),
+                        **offer_extras(match),
                     }
                 )
                 out["dym_candidates"].append(
@@ -5713,7 +5739,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(p["m"], "entity_type")
                         if jsc.truthy(jsc.get(p["m"], "entity_type"))
                         else None,
-                        **set_members_of(p["m"]),
+                        **offer_extras(p["m"]),
                     }
                     for i, p in enumerate(picks)
                 ]
@@ -5759,18 +5785,20 @@ def build_suggest_offer(
                         else 1
                     )
                 codes = [jsc.get(p["m"], "canonical_code") for p in picks]
-                if dym_annotate_on:
+                # CHATBOT-CODE-MATCH R4: a size-relevant offer lists each code with its size line.
+                size_lines = [size_line_of(p["m"]).get("size_line", "") for p in picks]
+                if dym_annotate_on or any(size_lines):
                     dym_lines = []
                     for i, p in enumerate(picks):
                         code = jsc.js_string(jsc.get(p["m"], "canonical_code"))
-                        key = _dym_lookup(code, dym_probed)
+                        key = _dym_lookup(code, dym_probed) if dym_annotate_on else None
                         sfx = ""
                         if key is not None:
                             sfx = _stamp(key)
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
-                        f"Did you mean:\n" + "\n".join(dym_lines) + "\n"
+                        f"Did you mean:\n" + "\n".join(with_size_lines(dym_lines, size_lines)) + "\n"
                         + _cont(
                             "Reply with a code to continue",
                             f", or would you like me to escalate to {team} team?",
@@ -5800,7 +5828,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(p["m"], "entity_type")
                         if jsc.truthy(jsc.get(p["m"], "entity_type"))
                         else None,
-                        **set_members_of(p["m"]),
+                        **offer_extras(p["m"]),
                     }
                     for i, p in enumerate(picks)
                 ]

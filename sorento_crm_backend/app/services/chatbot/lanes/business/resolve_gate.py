@@ -1640,6 +1640,10 @@ def run(
     # parser's pick first.
     if isinstance(resolved, dict):
         pick_near_code_first(parser, resolved)
+        if services.code_sizes is not None:
+            # CHATBOT-CODE-MATCH R4: a missed code's close codes, and a stored size equal to
+            # a number in it, read off stored values only.
+            services.code_sizes(parser, resolved)
 
     resolved_snapshot = _snapshot(resolved)
 

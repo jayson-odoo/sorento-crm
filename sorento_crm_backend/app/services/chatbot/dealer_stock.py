@@ -81,14 +81,21 @@ def _code_of(row: dict[str, Any]) -> Any:
     return row.get("product") or row.get("value") or row.get("label") or row.get("code")
 
 
-def did_you_mean_text(shown: str, labels: list[str], *, start: int | None = None) -> str:
+def did_you_mean_text(
+    shown: str, labels: list[str], *, start: int | None = None, size_lines: list[str] | None = None
+) -> str:
     """The did-you-mean sentence for one missed code. One code alone reads "Couldn't find
     ELP3753. Did you mean ELP3754?"; several, or a list sharing a message with others
     (`start`, where its numbers carry on), read one numbered code per line. PICKER-NO-CAP
-    (owner, 2 Oct 2026): every option the pick carries is printed."""
+    (owner, 2 Oct 2026): every option the pick carries is printed. CHATBOT-CODE-MATCH R4:
+    each code's own size line (`size_lines`, from stored values only) sits under it."""
+    from app.services.chatbot.lanes.business.answer import with_size_lines
+
+    sizes = list(size_lines or []) + [""] * len(labels)
     if start is None and len(labels) == 1:
-        return f"Couldn't find {shown}. Did you mean {labels[0]}?"
-    return "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(labels, start or 1)])
+        return "\n".join(with_size_lines([f"Couldn't find {shown}. Did you mean {labels[0]}?"], sizes))
+    lines = with_size_lines(numbered(labels, start or 1), sizes)
+    return "\n".join([f"Couldn't find {shown}. Did you mean:", *lines])
 
 
 def did_you_mean_lists(
@@ -107,6 +114,7 @@ def did_you_mean_lists(
             str(group["typed"]),
             [str(o["label"]) for o in options if o.get("position") in group["positions"]],
             start=group["positions"][0],
+            size_lines=[str(o.get("size_line") or "") for o in options if o.get("position") in group["positions"]],
         )
         for group in groups
         if group.get("positions")
@@ -144,6 +152,7 @@ def did_you_mean(
                 "entity_type": row.get("entity_type") or "product",
                 # An offered set carries what its exact ask resolves to (`answer.set_members_of`).
                 **({"members": list(row["members"])} if row.get("members") else {}),
+                **({"size_line": str(row["size_line"])} if row.get("size_line") else {}),
             }
         )
     options = options[:MAX_SLOTS]
@@ -151,7 +160,7 @@ def did_you_mean(
         return None
     shown = (typed or "").strip().upper() or "that"
     labels = [o["label"] for o in options]
-    text = did_you_mean_text(shown, labels)
+    text = did_you_mean_text(shown, labels, size_lines=[str(o.get("size_line") or "") for o in options])
     pick = ask(
         "product_pick",
         options,

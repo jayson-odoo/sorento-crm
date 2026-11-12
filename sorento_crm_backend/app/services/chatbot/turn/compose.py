@@ -523,6 +523,8 @@ def _did_you_mean_per_code(
             used.add(token_key(code))
             n += 1
             lines.append(f"{n}. {code}")
+            if row.get("size_line"):
+                lines.append(str(row["size_line"]))  # CHATBOT-CODE-MATCH R4: its stored size
             options.append(
                 {
                     "position": n,
