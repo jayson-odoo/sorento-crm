@@ -6,7 +6,7 @@ UAC: documentation/plans/scm/oi-whole-so-cancel-acceptance-criteria.md, section 
 test_ac_removed_lines_ingest.py).
 
 Endpoints (BASE /api/v1/project-sales), through `env.client`:
-  worklist     GET  /order-inquiries?query=<so_number>
+  worklist     GET  /order-inquiries   (blank schema: only this test's rows exist)
   acknowledge  POST /order-inquiries/acknowledge   {"row_ids": [...]} or {"filter": {...}}
 Exports: POST /order-inquiries/export and POST /order-inquiries/{id}/export only enqueue a
 worker job; the worker renders with `OrderInquiryWorklistService.export_xlsx(**filters)`
@@ -50,7 +50,7 @@ class World:
     pass
 
 
-def _world(env, change=None, *, qty=10):
+def _world(env, change=None, *, qty=10, row_qtys=None):
     """Two-line SO (x carries one live OI row, qty `qty`, dated OLD_DATE; y stays), pushed
     open. If `change` is given it is then applied by an AutoCount push / delete."""
     w = World()
@@ -65,10 +65,18 @@ def _world(env, change=None, *, qty=10):
     by_ref = {l["source_ref"]: l for l in env.so_lines(w.header["id"])}
     w.line_x = by_ref[x["source_ref"]]
     w.so_number = w.record["so_number"]
+    first_qty = (row_qtys or [qty])[0]
     w.row_id, _ = _so_mirror_row(
-        env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING, qty=str(qty)
+        env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING, qty=str(first_qty)
     )
     w.inquiry_id = str(_so_mirror_row.last[1])
+    w.row_ids = [w.row_id]
+    for extra_qty in (row_qtys or [])[1:]:
+        more, _ = _so_mirror_row(
+            env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING,
+            qty=str(extra_qty), share=_so_mirror_row.last,
+        )
+        w.row_ids.append(more)
     if change:
         _apply_change(w, change)
     return w
@@ -112,7 +120,7 @@ def _apply_change(w, change):
 def _worklist(env, w, **params):
     res = env.client.get(
         f"{BASE}/order-inquiries",
-        params={"query": w.so_number, "limit": 100, **params},
+        params={"limit": 100, **params},
     )
     assert res.status_code == 200, res.text
     return res.json()["data"]
@@ -191,7 +199,7 @@ def test_ac_v2_3_the_select_all_acknowledge_skips_a_waiting_row(env):
     w = _world(env, "date")
 
     res = env.client.post(
-        f"{BASE}/order-inquiries/acknowledge", json={"filter": {"query": w.so_number}}
+        f"{BASE}/order-inquiries/acknowledge", json={"filter": {"state": "raised"}}
     )
 
     assert res.status_code == 200, res.text
@@ -212,6 +220,22 @@ def test_ac_v2_4_a_qty_change_shows_the_current_qty_with_the_confirmed_one_as_wa
         text("SELECT qty FROM order_inquiry_rows WHERE id = :i"), {"i": w.row_id}
     ).scalar()
     assert int(stored) == 10, "the stored row qty is CS's confirmed one until Confirm"
+
+
+def test_ac_v2_4b_a_line_with_two_rows_keeps_each_rows_qty_and_shows_the_line_was(env):
+    """ORDER 6 + ORDER 4 on a line of 10; AutoCount cuts the line to 7: each row keeps its own
+    confirmed qty, the SO line column reads 7 with Was 10, both rows wait for CS."""
+    w = _world(env, "qty", row_qtys=[6, 4])
+    assert len(w.row_ids) == 2
+
+    rows = {r["id"]: r for r in _worklist(env, w) if r["id"] in w.row_ids}
+
+    assert set(rows) == set(w.row_ids), rows
+    assert sorted(r["qty"] for r in rows.values()) == ["4", "6"], rows
+    for row in rows.values():
+        assert row["so_line_qty"] == "7", row
+        assert row.get("previous_so_line_qty") == "10", row
+        assert row.get("waiting_for_cs") is True, row
 
 
 # ============================================================================ AC-V2-5
@@ -250,7 +274,7 @@ def _exports(env, w):
 
     service = OrderInquiryWorklistService(env.db)
     return {
-        "list export (POST /order-inquiries/export)": service.export_xlsx(query=w.so_number)[1],
+        "list export (POST /order-inquiries/export)": service.export_xlsx()[1],
         "OI export (POST /order-inquiries/{id}/export)": service.export_xlsx(
             inquiry_id=w.inquiry_id
         )[1],
@@ -271,9 +295,8 @@ def test_ac_v2_6_a_date_changed_waiting_row_exports_status_new_date_and_was_date
 
     for name, content in _exports(env, w).items():
         _header, rows = _sheet_rows(content)
-        mine = [r for r in rows if r.get("S/O NO") == w.so_number and r.get("ITEM CODE") == w.x["product_code"]] if "product_code" in w.x else [
-            r for r in rows if r.get("S/O NO") == w.so_number
-        ]
+        # the mirror order carries its own S/O NO; the seeded row is the only ZZT-CL-PUSH one
+        mine = [r for r in rows if r.get("ITEM CODE") == "ZZT-CL-PUSH"]
         assert mine, (name, rows)
         changed = [r for r in mine if _as_ddmmyyyy(r.get("DELIVERY DATE")) == "01/02/2027"]
         assert len(changed) == 1, (name, mine)
