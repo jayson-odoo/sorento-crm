@@ -2688,7 +2688,29 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
-def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | None = None) -> bool:
+def product_typed_tokens(parser: Any) -> set[str]:
+    """The folded tokens the parser typed as a product code (hint `product`, the resolver's
+    token: canonical code first, raw second). CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov
+    2026): such a token is a code for the did-you-mean whatever its shape, letters only
+    included; the parser's own hint decides, no word is read."""
+    return {
+        token_key(jsc.nullish_str(jsc.get(e, "canonical_code")).strip() or jsc.get(e, "raw"))
+        for e in jsc.array(jsc.get(parser, "entities"))
+        if isinstance(e, dict) and jsc.js_string(jsc.get(e, "hint") or "").lower() == "product"
+        and jsc.get(e, "current_message") is not False
+    } - {""}
+
+
+def _code_like(token: str, product_typed: set[str] | frozenset[str]) -> bool:
+    """A code-shaped token (the resolver's `_CODE_RE`), or one the parser typed as a product."""
+    from app.services.entity_resolver import _CODE_RE
+
+    return bool(_CODE_RE.fullmatch(token)) or token_key(token) in product_typed
+
+
+def _unplaced_token_has_neighbours(
+    resolved: Any, gate: Any, only_token: str | None = None, product_typed: set[str] | frozenset[str] = frozenset()
+) -> bool:
     """True when a token the customer typed missed AND has real did-you-mean neighbours.
 
     AC-1703. The described-set branches below all assert something about the SET the
@@ -2713,15 +2735,14 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | N
     and treating its matches as neighbours silenced AC-1319's zero-qualifying answer
     ("Couldn't find a bidet with a certificate") under an unrelated did-you-mean.
     """
-    from app.services.entity_resolver import _CODE_RE
-
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
     allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
     for res in _ms_miss_resolutions(r, gate=g):
         token = jsc.nullish_str(jsc.get(res, "token")).strip()
-        if len(token) < 3 or not _CODE_RE.fullmatch(token):
+        # AC-19 (owner Q1 (b)): a token the parser typed as a product counts as code-shaped.
+        if len(token) < 3 or not _code_like(token, product_typed):
             continue
         if only_token is not None and token.lower() != only_token.strip().lower():
             continue
@@ -4147,7 +4168,7 @@ def not_found_error_message(
             # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
             # mistyped code, so it takes the did-you-mean below, not the vague clarify.
             # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
-            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
+            if all(_unplaced_token_has_neighbours(r, g, t, product_typed_tokens(q)) for t in vague_unresolved):
                 vague_unresolved = []
 
         if len(vague_unresolved) > 0:
@@ -4195,7 +4216,9 @@ def not_found_error_message(
             # production's did-you-mean, and it has to be reachable: `build_suggest_offer`
             # skips its own D1 candidates entirely whenever a clarify fired here, so the
             # set answer does not merely come FIRST, it silences the other one.
-            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(r, g)
+            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(
+                r, g, product_typed=product_typed_tokens(q)
+            )
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
             elif described_set_answers and "schemes_on_file" in predicate:
@@ -5399,7 +5422,7 @@ def build_suggest_offer(
         # number of missed tokens shown at 5, which with cap3 per token keeps the numbered
         # list at or under 15.
         for res in misses:
-            if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
+            if zero_set and not _code_like(jsc.nullish_str(jsc.get(res, "token")).strip(), product_typed_tokens(q)):
                 continue
             cands = miss_token_candidates(res, allowed_types, typed=raw_of_tok(jsc.get(res, "token")))
             if cands:

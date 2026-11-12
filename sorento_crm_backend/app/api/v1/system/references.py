@@ -1856,14 +1856,19 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
             _rebuild_intersection_fields(result)
 
 
-def _drop_word_neighbours(result: dict[str, Any]) -> None:
+def _drop_word_neighbours(result: dict[str, Any], *, offer_for: set[str] | frozenset[str] = frozenset()) -> None:
     """Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
     basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
     only"), for `exact_match` callers: a WORD token (no digit in it: "basin", "gunmetal
     basin") gets no product by nearest neighbour, neither as a match (the embedding tier
     answered "basin" with the flexible trap) nor as a did-you-mean alternative. A token
     with a digit keeps them: a code typo ("SRWC8088") still finds its code. Customers,
-    orders and every other entity type are untouched."""
+    orders and every other entity type are untouched.
+
+    `offer_for` (CHATBOT-CODE-MATCH AC-19, owner Q1 (b), 13 Nov 2026): the folded word tokens
+    the caller typed as a product code. Such a word keeps its trigram ALTERNATIVES, the
+    did-you-mean a digit code gets, so a letters-only code typo is offered its near code; it
+    still never gets a neighbour as a MATCH, and an embedding neighbour never."""
     def word(token: Any) -> bool:
         return not _has_digit(token)
 
@@ -1877,8 +1882,12 @@ def _drop_word_neighbours(result: dict[str, Any]) -> None:
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or not word(resolution.get("token")):
             continue
+        offered = _fold_code(resolution.get("token")) in offer_for
         for key in ("matches", "alternatives"):
-            kept = [m for m in resolution.get(key) or [] if not neighbour(m)]
+            kept = [
+                m for m in resolution.get(key) or []
+                if not neighbour(m) or (offered and key == "alternatives" and m.get("match_tier") == "trgm")
+            ]
             if len(kept) != len(resolution.get(key) or []):
                 resolution[key] = kept
         if not resolution.get("matches"):
@@ -3591,7 +3600,14 @@ def resolve_reference_post(
         # A size or named spec no variant of the typed code's family holds; the reply says so.
         result["spec_none"] = spec_none
     if payload.exact_match:
-        _drop_word_neighbours(result)
+        # CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov 2026): a word token the caller typed
+        # as a PRODUCT (its own type, positionally parallel) keeps its trigram did-you-mean.
+        typed_products = (
+            {_fold_code(t) for t, kind in zip(payload.tokens, payload.allowed_entity_types) if kind == "product"}
+            if payload.tokens and payload.allowed_entity_types and len(payload.tokens) == len(payload.allowed_entity_types)
+            else set()
+        )
+        _drop_word_neighbours(result, offer_for=typed_products)
     if payload.require or payload.spec_fallback:
         # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
         from app.services.product_spec_search import _search_vocabulary

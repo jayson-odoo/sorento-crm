@@ -82,6 +82,7 @@ class Console(AvailConsole):
                     "product_id": pid,
                     "product_code": self.codes[pid],
                     "total_on_hand": self.stock_on_hand,
+                    "is_discontinued": self._facts(self.codes[pid]).discontinued,
                     "locations": [{"warehouse_code": "BRW", "quantity_on_hand": self.stock_on_hand}],
                 }
                 for pid in args.get("product_ids") or []
@@ -534,3 +535,85 @@ def test_ac20e_the_escalation_lanes_product_suggestions_never_list_an_inactive_c
         db.close()
     assert active in codes, codes
     assert inactive not in codes, codes
+
+
+# --------------------------------------------------------------------------- owner Q3 (13 Nov): discontinued codes are not offered
+
+#: Shape of owner-FAIL #9: CL8109A is the only code that may be offered; C9109A is inactive, CB3109A and CB4109A are
+#: active but discontinued. All four are within the trigram floor of "CLB109A".
+DISC_CODES = ["CL8109A", "C9109A", "CB3109A", "CB4109A", "ZQX5521"]
+NOT_OFFERED = ["C9109A", "CB3109A", "CB4109A"]
+
+
+def _discontinued_world(session_factory, monkeypatch, stub_access) -> Console:  # noqa: F811
+    discontinued = ("CB3109A", "CB4109A")
+    c = _console(
+        session_factory, monkeypatch, stub_access, DISC_CODES,
+        **{k: Stock(on_hand=100, discontinued=k in discontinued) for k in DISC_CODES},
+    )
+    db = session_factory()
+    try:
+        db.execute(sql_text("UPDATE products SET is_active = false WHERE product_code = 'C9109A'"))
+        db.execute(sql_text("UPDATE products SET is_discontinued = true WHERE product_code = ANY(:c)"), {"c": list(discontinued)})
+        db.commit()
+    finally:
+        db.close()
+    return c
+
+
+def _only_the_live_code_is_offered(c: Console, text: str, who: str) -> None:
+    for code in NOT_OFFERED:
+        assert not _word(code, text), (code, text)
+        assert code not in str(c.stored_question), (code, c.stored_question)
+    assert _word("CL8109A", text), text
+    if who == "dealer":
+        assert _option_codes(c) == ["CL8109A"], (_option_codes(c), text)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20f_a_discontinued_or_inactive_code_is_not_offered_in_a_did_you_mean(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _discontinued_world(session_factory, monkeypatch, stub_access)
+    if who == "staff":
+        c.as_staff()
+    text = c.say("CLB109A stock", stock(product("CLB109A")))
+    _only_the_live_code_is_offered(c, text, who)
+    if who == "dealer":
+        assert text == "Couldn't find CLB109A. Did you mean CL8109A?", text
+    else:
+        assert 'Couldn\'t find "CLB109A" (product). Did you mean' in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20f_the_any_order_tier_does_not_offer_a_discontinued_code_either(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _discontinued_world(session_factory, monkeypatch, stub_access)
+    if who == "staff":
+        c.as_staff()
+    # "A-109" folds to "a109": held by all four codes in another order, so the any-order tier reaches them.
+    text = c.say("A-109 stock", stock(product("A-109")))
+    _only_the_live_code_is_offered(c, text, who)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20f_a_miss_beside_a_found_code_does_not_offer_a_discontinued_code(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _discontinued_world(session_factory, monkeypatch, stub_access)
+    if who == "staff":
+        c.as_staff()
+    text = c.say("CLB109A x 1, ZQX5521 x 1", stock(product("CLB109A", 1), product("ZQX5521", 1)))
+    if who == "dealer":
+        assert f"ZQX5521 x 1: {TICK} Got stock." in text, text
+    else:
+        assert "*Product Code:* ZQX5521" in text, text
+    _only_the_live_code_is_offered(c, text, who)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20g_a_discontinued_code_typed_exactly_keeps_todays_reply(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _discontinued_world(session_factory, monkeypatch, stub_access)
+    if who == "staff":
+        c.as_staff()
+    text = c.say("CB3109A x 1", stock(product("CB3109A", 1)))
+    assert "Did you mean" not in text and "Couldn't find" not in text, text
+    if who == "dealer":
+        assert text == f"CB3109A x 1: {TICK} Got stock.\n⚠️  *(PRODUCT DISCONTINUED)*", text
+    else:
+        assert "*Product Code:* CB3109A" in text, text
