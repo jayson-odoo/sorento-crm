@@ -1,6 +1,6 @@
 # PLAN: Files move / upload name clash (FILES-MOVE-DUPLICATE)
 
-Status: Build, hand-test round 2 (track: standard; no migration; RBAC touched by Replace, so security-reviewer runs)
+Status: Build, rework for the same-name ruling (size M; migration fmd_0001 drops the unique index; RBAC touched by Replace and bulk restore, so security-reviewer runs)
 
 ## Problem (production, 12 Nov)
 
@@ -58,3 +58,18 @@ Windows-style conflict handling:
   "N moved, R renamed, P replaced. S skipped: ...".
 - Folders cannot clash (no name rule on `attachment_directories`); Files has no Duplicate action.
 - Title padding keeps long names clear of the close X.
+
+## Owner ruling 12 Nov 17:35: same names allowed (supersedes the one-name rule above)
+
+"files we should allow same name, google drive also can why we cannot".
+- Migration `fmd_0001_drop_dir_name_unique`: DROP INDEX CONCURRENTLY IF EXISTS
+  `ux_attachments_dir_lower_filename_active`; the model no longer declares it.
+- One check, `_folder_clash`, on the visible name (any case); the original name no longer counts.
+- Every path that would put a second file of one visible name into a folder asks first:
+  single move, bulk move (check-only first), drag, rename in a folder, restore from Trash
+  (new `POST /bulk-restore`, `PUT /{id}/restore?on_conflict=`). Choices: Keep both (main) /
+  Rename / Replace / Skip; Cancel stops all; "Apply to all N remaining conflicts" -> Keep all /
+  Rename all / Replace all / Skip all.
+- Upload keeps its own window and gains Keep both (`on_conflict=keep`) (crew Q1, recommended (a)).
+- Folder restore brings everything back (crew Q2, recommended (a)).
+- Existing same-name pairs stay as they are.
