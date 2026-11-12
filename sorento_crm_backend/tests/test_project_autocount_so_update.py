@@ -5,8 +5,8 @@ UAC U10-U13, R3. Route: `POST /api/v1/project-sales/sales-orders/amendments/{ame
 The rows are the real producer's (`ProjectSODeltaService`, verbs ORDER, RESERVE & ORDER, ADVANCE,
 DELAY, CHANGE SO NO, CANCEL BALANCE). ORDER / RESERVE & ORDER (qty up on an existing line) PATCH
 the line's qty to `to_value`; ADVANCE / DELAY PATCH deliveryDate; CHANGE SO NO waits; CANCEL
-BALANCE waits while `_SEND_CANCEL_BALANCE_AS_QTY_EDIT` is False (owner pending) and goes as a qty
-edit down to `to_value` when it is True. A new product never arrives as a row (the delta service
+BALANCE that lowers a line to a non-zero qty goes as a qty edit down to `to_value` (owner, 12 Nov); a
+cut to zero waits (owner, 11 Nov). A new product never arrives as a row (the delta service
 reports it in `unmatched`). The PATCH's key is `crm-amd-{id}-update-edit`, stable across retries.
 """
 from __future__ import annotations
@@ -186,26 +186,37 @@ def test_change_so_no_and_cancel_balance_are_listed_as_waiting_and_never_deleted
     assert all(str(DTL_3) not in r.content.decode() for r in fake_ss.writes())
 
 
-def test_cancel_balance_goes_as_a_qty_edit_when_the_owner_switch_is_on(api, fake_ss, monkeypatch):
-    from app.services import project_autocount_write_service as svc
+def _lower_by_cancel_balance(db, world, to="2"):
+    """ORDER on line 1 plus a CANCEL BALANCE that lowers line 3 (7 -> `to`), not to zero."""
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(
+        db, world, [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, to)]
+    )
+    db.commit()
+    return amendment
 
-    monkeypatch.setattr(svc, "_SEND_CANCEL_BALANCE_AS_QTY_EDIT", True)
+
+def test_cancel_balance_lowering_a_line_goes_as_a_qty_edit(api, fake_ss):
+    """Owner, 12 Nov ~17:35 ("for the lower qty we should do a yeah"): a CANCEL BALANCE that lowers
+    a line to a non-zero qty goes to AutoCount as a qty edit, in the same PATCH as the other edits."""
     client, db, world = api
-    amendment, _line3 = _setup_mixed(db, world)
+    amendment = _lower_by_cancel_balance(db, world)
     _answer_edits(fake_ss)
 
     body = client.post(_url(amendment)).json()
 
+    assert body["outcome"] == "done", body
     [patch] = fake_ss.to("PATCH", DOC_PATH)
     by_key = {str(l["dtlKey"]): l for l in fake_ss.body(patch)["lines"]}
-    assert D(by_key[str(DTL_3)]["qty"]) == 0
-    assert [w["verb"] for w in body["waiting"]] == ["CHANGE SO NO"]
+    assert D(by_key[str(DTL_3)]["qty"]) == 2
+    assert D(by_key[str(DTL_1)]["qty"]) == 120
+    assert body["waiting"] == []
+    assert [r for r in fake_ss.writes() if "/delete" in r.url.path] == [], "lowered, never removed"
 
 
-def test_cancel_balance_waits_when_the_owner_switch_is_off(api, fake_ss, monkeypatch):
-    from app.services import project_autocount_write_service as svc
-
-    monkeypatch.setattr(svc, "_SEND_CANCEL_BALANCE_AS_QTY_EDIT", False)
+def test_cancel_balance_to_zero_still_waits(api, fake_ss):
+    """Owner, 11 Nov: a cut to zero is not written; the 12 Nov ruling covers the lower qty only."""
     client, db, world = api
     amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
@@ -214,7 +225,39 @@ def test_cancel_balance_waits_when_the_owner_switch_is_off(api, fake_ss, monkeyp
 
     [patch] = fake_ss.to("PATCH", DOC_PATH)
     assert str(DTL_3) not in {str(l["dtlKey"]) for l in fake_ss.body(patch)["lines"]}
-    assert "CANCEL BALANCE" in [w["verb"] for w in body["waiting"]]
+    assert ("CANCEL BALANCE", WAITING) in [(w["verb"], w["reason"]) for w in body["waiting"]]
+
+
+def test_a_lowered_qty_below_what_moved_on_is_refused_and_retried_after_the_fix(api, fake_ss):
+    """AutoCount refuses a qty below what was delivered / PO-linked (QTY_BELOW_TRANSFERRED): the
+    reason shows, nothing is recorded, and the next press goes again under a fresh key."""
+    client, db, world = api
+    amendment = _lower_by_cancel_balance(db, world)
+    _answer_edits(fake_ss, patch=(422, refused_body("QTY_BELOW_TRANSFERRED", "Qty 2 is below the 5 already delivered")))
+
+    first = client.post(_url(amendment)).json()
+
+    assert first["outcome"] == "refused"
+    assert first["message"] == "AutoCount refused: Qty 2 is below the 5 already delivered. Nothing was changed."
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is None
+
+    _answer_edits(fake_ss)
+    second = client.post(_url(amendment)).json()
+
+    assert second["outcome"] == "done", second
+    patches = fake_ss.to("PATCH", DOC_PATH)
+    assert len(patches) == 2
+    assert patches[0].headers["Idempotency-Key"] != patches[1].headers["Idempotency-Key"]
+
+
+def test_the_change_list_marks_a_lowering_cancel_balance_sendable(api, fake_ss):
+    client, db, world = api
+    amendment = _lower_by_cancel_balance(db, world)
+
+    rows = client.get(f"{BASE}/amendments/{amendment.id}/autocount-change-list").json()["rows"]
+
+    assert [(r["verb"], r["autocount_sendable"]) for r in rows] == [("ORDER", True), ("CANCEL BALANCE", True)]
 
 
 def test_done_lists_the_read_back_stores_last_modified_and_marks_the_step(api, fake_ss):
@@ -623,14 +666,11 @@ def test_a_qty_row_for_an_item_on_several_lines_waits_but_its_date_row_still_goe
     assert [(w["verb"], w["reason"]) for w in body["waiting"]] == [("ORDER", SPLIT_REASON)]
 
 
-def test_cancel_balance_for_an_item_on_several_lines_waits_when_the_switch_is_on(api, fake_ss, monkeypatch):
-    from app.services import project_autocount_write_service as svc
-
-    monkeypatch.setattr(svc, "_SEND_CANCEL_BALANCE_AS_QTY_EDIT", True)
+def test_a_lowering_cancel_balance_for_an_item_on_several_lines_waits(api, fake_ss):
     client, db, world = api
     put_in_autocount(db, world)
     _second_line_of_the_same_product(db, world)
-    amendment = add_amendment(db, world, [cancel_balance_row(world, world.line1, "0")])
+    amendment = add_amendment(db, world, [cancel_balance_row(world, world.line1, "40")])
     db.commit()
 
     body = client.post(_url(amendment)).json()

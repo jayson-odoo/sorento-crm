@@ -289,11 +289,12 @@ def _so_url(amendment) -> str:
     return f"{BASE}/sales-orders/amendments/{amendment.id}/autocount"
 
 
-@pytest.mark.parametrize("to_qty", ["0", "2"])
+@pytest.mark.parametrize("to_qty", ["0"])
 def test_cancel_balance_sends_nothing_even_with_delete_line_on(so_api, fake_ss, to_qty):
     """Owner, 11 Nov ("cancel balance don't do much about it"): no AutoCount write for a CANCEL
-    BALANCE row, whether it cuts the line to zero or lowers it; it waits, and the edits beside it
-    still go."""
+    BALANCE row that cuts the line to zero, even with `delete_line` on; it waits, and the edits
+    beside it still go. (Lowering to a non-zero qty goes as a qty edit, owner 12 Nov:
+    `test_project_autocount_so_update.py`.)"""
     client, db, world = so_api
     put_in_autocount(db, world)
     line3 = _third_line(db, world)
