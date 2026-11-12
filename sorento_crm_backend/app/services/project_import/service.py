@@ -1046,10 +1046,17 @@ def _new_row(ctx: _Ctx, p: _Plan) -> None:
                         db, company_id=ctx.company_id,
                         payload={"party_type": "developer", "name": name}, actor_user_id=ctx.user_id,
                     )
+                    if not created:
+                        # AC-PI-23a: `create_party` answers an active same-name party. A
+                        # "create" line is never linked to it by its name: a person decides.
+                        raise _Review(
+                            oc.DEVELOPER_EXISTS,
+                            f"A party named {party.name} already exists. Link the developer "
+                            "line to it, or keep Create new after renaming that party.",
+                        )
                     developer_id = str(party.id)
                     made_party = (group.developer[1], developer_id)
-                    if created:
-                        _entity(entities, p, ENTITY_PARTY, party.id, party.name)
+                    _entity(entities, p, ENTITY_PARTY, party.id, party.name)
             project = register_project(
                 db, company_id=ctx.company_id, actor_user_id=ctx.user_id,
                 developer_party_id=developer_id, title=group.title,

@@ -217,6 +217,9 @@ DEVELOPER_UNMAPPED = "developer_unmapped"
 CUSTOMER_CONFLICT = "customer_conflict"
 CUSTOMER_SAME_SHOP_SO_USED = "customer_same_shop_so_used"
 DEVELOPER_CONFLICT = "developer_conflict"
+#: AC-PI-23a: a "create" developer line whose name an active party already carries. Never
+#: linked to that party by its name: a person links the line, or renames and keeps "create".
+DEVELOPER_EXISTS = "developer_exists"
 REGISTRATION_LOCK = "registration_lock"
 PO_NUMBER_TAKEN = "po_number_taken"
 SO_ON_OTHER_PROJECT = "so_on_other_project"
@@ -305,6 +308,7 @@ LABELS: dict[str, str] = {
     CUSTOMER_CONFLICT: "Sales order customer differs from the linked customer",
     CUSTOMER_SAME_SHOP_SO_USED: "Sales order customer used (same shop)",
     DEVELOPER_CONFLICT: "Rows of one new project name different developers",
+    DEVELOPER_EXISTS: "A party with this developer name already exists",
     REGISTRATION_LOCK: "Same developer and title as an existing project",
     PO_NUMBER_TAKEN: "PO number already on this project",
     SO_ON_OTHER_PROJECT: "Sales order already on another project",
