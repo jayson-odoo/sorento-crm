@@ -1,4 +1,4 @@
-"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no`, `lec_0002_embedding_indexes`, `epp_0001_chunk_coverage_idx` and `il_0001_integration_log_indexes` could not build.
+"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no`, `lec_0002_embedding_indexes`, `epp_0001_chunk_coverage_idx`, `il_0001_integration_log_indexes` and `il_0002_integration_log_search` could not build.
 
 GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX, LOOKUP-EMBED-CENTRAL. Those revisions let a deploy succeed when an
 index build times out (`app/utils/online_index.py`), so something has to try again: `start.sh`
@@ -30,7 +30,8 @@ def run(engine) -> bool:
         # The keep-set HNSW build took 131 s at the default and 34 s at 512MB, against the 180 s budget.
         bind.exec_driver_sql("SET maintenance_work_mem = '512MB'")
         try:
-            return online_index.ensure_indexes_online(
+            search_was_valid = online_index.search_index_valid(bind)
+            ok = online_index.ensure_indexes_online(
                 bind,
                 online_index.GOODS_CHAIN_KEY_INDEXES
                 + online_index.BILLING_FROM_DOC_INDEXES
@@ -38,6 +39,11 @@ def run(engine) -> bool:
                 + embedding_indexes.MIGRATION_INDEXES
                 + embedding_indexes.COVERAGE_INDEXES,
             )
+            # il_0002's index on its own, longer budget (online_index.SEARCH_INDEX_RETRY_BUDGET_MS),
+            # then statistics on the search expression once the index first turns VALID.
+            search_ok = online_index.ensure_search_index_online(bind)
+            online_index.analyze_after_search_index_build(bind, search_was_valid)
+            return ok and search_ok
         finally:
             # A session-level SET outlives this block on a pooled engine: the connection goes back
             # to the pool still at 512MB and the next borrower inherits it.
