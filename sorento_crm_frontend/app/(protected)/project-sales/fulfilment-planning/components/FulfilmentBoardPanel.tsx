@@ -87,8 +87,6 @@ import {
   contributionMatchesSearch,
   confirmLinesByOrder,
   remarkFor,
-  autocountBoardNote,
-  autocountChangeNotes,
   autocountChangeSentence,
   confirmButtonLabel,
   confirmSummaryFor,
@@ -322,7 +320,6 @@ function retiredNote(result: BoardBatchResult, createdAt: string | null) {
 function resultSentence(
   result: BoardBatchResult,
   simulated: boolean,
-  createdAt: string | null,
 ): string {
   if (!result.ok) return result.error ?? 'refused';
   const cancelled = result.lines_cancelled?.length ?? 0;
@@ -337,14 +334,6 @@ function resultSentence(
     return simulated
       ? `would transfer ${lines(cancelled)} to Cancel SO`
       : `${lines(cancelled)} transferred to Cancel SO`;
-  }
-  if (result.planning_change_applied && confirmed === 0 && created === 0) {
-    const note = autocountChangeSentence(
-      retiredNote(result, createdAt),
-      simulated ? 'simulated' : 'confirmed',
-      false,
-    );
-    return note.charAt(0).toLowerCase() + note.slice(1);
   }
   return simulated
     ? `would confirm as revision ${result.decision_revision}`
@@ -1434,17 +1423,6 @@ export function FulfilmentBoardPanel({
       batchNamedKeys,
     ],
   );
-  // PLAN-BATCH-COUNT-DISPLAY (D2, crew ruling b): the lines pending AutoCount changes retire,
-  // per order - not in the count, said once in the note beside the button.
-  const autocountNotes = React.useMemo(
-    () =>
-      autocountChangeNotes(allContributions, draftWithoutPreMark).map((note) => ({
-        ...note,
-        createdAt: (note.soNumber && bySoNumber.get(note.soNumber)?.batch.created_at) || null,
-      })),
-    [allContributions, draftWithoutPreMark, bySoNumber],
-  );
-
   /**
    * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by <name>,
    * N lines" beside the confirm summary, or "No decision yet" - one segment per order
@@ -3449,14 +3427,14 @@ export function FulfilmentBoardPanel({
                     size="sm"
                     data-testid="board-confirm"
                     disabled={
-                      (confirmSummary.toConfirm === 0 && autocountNotes.length === 0) ||
+                      confirmSummary.toConfirm === 0 ||
                       confirmingAll ||
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
                     onClick={openGuide}
                   >
-                    {confirmButtonLabel(confirmSummary.toConfirm, autocountNotes.length)}
+                    {confirmButtonLabel(confirmSummary.toConfirm)}
                   </Button>
                 </>
               }
@@ -3544,17 +3522,6 @@ export function FulfilmentBoardPanel({
         </Alert>
       )}
 
-      {autocountNotes.length > 0 && (
-        <div
-          data-testid="board-autocount-change-note"
-          className="space-y-0.5 rounded-lg border border-border px-3 py-2.5 text-sm break-words text-muted-foreground"
-        >
-          {autocountBoardNote(autocountNotes, confirmSummary.toConfirm > 0).map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
-      )}
-
       {batchResults && (
         <div
           data-testid="board-confirm-results"
@@ -3603,7 +3570,7 @@ export function FulfilmentBoardPanel({
                           : 'text-destructive'
                     }`}
                   >
-                    {`${label}: ${resultSentence(result, simulated, createdAt)}`}
+                    {`${label}: ${resultSentence(result, simulated)}`}
                   </span>
                   <SoPartyLine label={order ? partyByOrder.get(order.sales_order_id) : undefined} />
                   {simulated &&
@@ -4254,8 +4221,6 @@ export function FulfilmentBoardPanel({
       {guideOpen ? (
         <ConfirmGuideDialog
           pages={guidePages}
-          autocountNote={autocountBoardNote(autocountNotes, guidePages.length > 0)}
-          applyLabel={confirmButtonLabel(0, autocountNotes.length)}
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}

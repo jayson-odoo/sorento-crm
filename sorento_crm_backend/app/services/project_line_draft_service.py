@@ -486,8 +486,13 @@ def save_draft(
         )
     # An AutoCount-cancelled line holds nothing (its owed qty is 0), so an active decision
     # still naming it does not stand in the way of transferring it.
+    # OI-WHOLE-SO-CANCEL F2: a line the book has cancelled is decided (its cancel accepted) like any
+    # other pending change, even while an older revision still names it.
+    book_cancelled = core_line.line_status == "cancelled"
     covered = (
-        None if verdict == "amended" or awaiting else _active_coverage(db, core_line)
+        None
+        if verdict == "amended" or awaiting or book_cancelled
+        else _active_coverage(db, core_line)
     )
     if covered is not None:
         if verdict == "rejected":

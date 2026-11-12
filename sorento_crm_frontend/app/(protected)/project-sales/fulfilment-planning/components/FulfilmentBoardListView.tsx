@@ -40,7 +40,7 @@ import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExp
 import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
-import { awaitsCancelSo, canDecide } from '../../_shared/lib/boardAmend';
+import { awaitsCancelSo, canDecide, isBookCancelled } from '../../_shared/lib/boardAmend';
 import {
   contributionMatchesSearch,
   soLineLabel,
@@ -897,6 +897,17 @@ export function FulfilmentBoardListView({
         header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
+          // OI-WHOLE-SO-CANCEL F2: what the book proposes for a removed line is to cancel it.
+          if (isBookCancelled(contribution)) {
+            return (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="block min-w-0 truncate" title="Cancel line">
+                  Cancel line
+                </span>
+                {changeIcons(contribution, 'suggested')}
+              </span>
+            );
+          }
           if (contribution.unplannable) {
             // The ladder was never walked for it (AC-FP16), so there is nothing to suggest -
             // and the reason is the one thing worth saying in its place.
@@ -1305,6 +1316,7 @@ function hasBuy(parts: SupplyPart[] | null): boolean {
  * the words on screen.
  */
 function suggestedSortText(contribution: BoardContribution): string {
+  if (isBookCancelled(contribution)) return 'Cancel line';
   if (contribution.unplannable) return unplannableLabel(contribution);
   const parts = contributionSuggestion(contribution);
   if (!parts) return 'Not recorded';

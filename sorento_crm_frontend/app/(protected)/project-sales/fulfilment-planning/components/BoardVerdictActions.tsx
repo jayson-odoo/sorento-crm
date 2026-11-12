@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import { verdictOf } from './BoardDecisionPill';
-import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
+import { isBookCancelled, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardContribution,
@@ -111,7 +111,10 @@ export function BoardVerdictActions({
   // The X is offered only where an ACTIVE decision covers the line (`contribution.decision`
   // is the frozen decision object, non-null exactly then), not merely where the pill reads
   // Confirmed.
-  const rejectable = proposed || (verdict === 'confirmed' && Boolean(contribution.decision));
+  // A cancel the book proposed has one action, Save (F2): nothing to refuse or amend.
+  const rejectable =
+    !isBookCancelled(contribution) &&
+    (proposed || (verdict === 'confirmed' && Boolean(contribution.decision)));
 
   return (
     <>
