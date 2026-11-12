@@ -524,6 +524,10 @@ def test_fp_email_one_trigger_q1_the_board_confirm_retires_them_and_emails_cance
     _register(None)
     calls = _captured_dispatches(monkeypatch)
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     planning_change_service.apply(env.db, str(batch_id), _USER_ID)
     env.db.commit()
@@ -936,6 +940,10 @@ def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_boar
     )
     _register(None)
     calls = _captured_dispatches(monkeypatch)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     planning_change_service.apply(env.db, str(batch_id), _USER_ID)
     env.db.commit()

@@ -87,6 +87,10 @@ def _confirm_and_collect(env, monkeypatch, core_line_id):
     mark_purchasing_email_trigger(env.db)
     from .test_ingest_documents import _USER_ID
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     planning_change_service.apply(env.db, str(batch_id), _USER_ID)
     env.db.commit()
     env.db.expire_all()
@@ -251,6 +255,10 @@ def test_ac_wc_8_a_header_reopened_before_cs_decides_leaves_nothing_to_do(env, m
 
     _register(None)
     calls = _captured_dispatches(monkeypatch)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     try:
         planning_change_service.apply(env.db, str(batch_id), _USER_ID)
         env.db.commit()

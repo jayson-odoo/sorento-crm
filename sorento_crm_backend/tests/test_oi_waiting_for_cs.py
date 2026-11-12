@@ -167,6 +167,10 @@ def _confirm(w):
         assert res.status_code == 200, res.text
         w.confirm_response = res.json()
     else:
+        # F2 12/13 Nov: a cancel is saved like any change before Confirm
+        from ._cancel_decide import decide_cancelled_rows
+
+        decide_cancelled_rows(env.db, batch_id)
         planning_change_service.apply(env.db, batch_id, _USER_ID)
         env.db.commit()
     env.db.expire_all()

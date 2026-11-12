@@ -124,6 +124,10 @@ def _confirm_through_the_board_route(env, monkeypatch, w):
     batch_id = str(_cancelled_rows(env, w["line_x"])[0].batch_id)
     _register(None)
     calls = _captured_dispatches(monkeypatch)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     env.db.commit()
     res = env.client.post(
@@ -195,6 +199,10 @@ def _confirm_all_result(env, monkeypatch, w):
     batch_id = str(_cancelled_rows(env, w["line_x"])[0].batch_id)
     _register(None)
     _captured_dispatches(monkeypatch)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     env.db.commit()
     res = env.client.post(

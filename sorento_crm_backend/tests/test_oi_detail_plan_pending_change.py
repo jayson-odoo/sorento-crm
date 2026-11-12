@@ -58,6 +58,10 @@ def test_ac_v2_plan_a_pending_cancel_makes_the_lines_plannable_then_zero_after_a
     assert listed == board_lines, f"list plannable_lines {listed} vs board {board_lines}"
 
     batch_id = str(_cancelled_rows(env, w["line_x"])[0].batch_id)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     planning_change_service.apply(env.db, batch_id, _USER_ID)
     env.db.commit()
     env.db.expire_all()
