@@ -141,7 +141,7 @@ export function OrderInquiryLineStatePill({ state }: { state: string }) {
   const own = LINE_STATE[state];
   if (!own) return <OrderInquiryStatePill state={state} />;
   return (
-    <span className={`${STATUS_PILL_BASE} ${statusPillClass(own.palette)}`}>{own.label}</span>
+    <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(own.palette)}`}>{own.label}</span>
   );
 }
 
