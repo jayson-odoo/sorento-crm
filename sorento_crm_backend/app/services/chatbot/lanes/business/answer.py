@@ -4679,9 +4679,20 @@ def not_found_error_message(
                     # dead-ends on the no-compatible-entity branch and the fetch never runs.
                     # Saying we searched sends the customer off correcting the wrong thing.
                     esc = _esc_offer()
-                    escalate_message = (
-                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
-                    ) + (f" {esc}" if esc else "")
+                    # CHATBOT-CODE-MATCH R4: a code that exists but stores no asked size, with
+                    # nothing to offer, names the size as what is missing (`code_sizes`).
+                    sized = {
+                        _type_norm(jsc.get(x, "token")): f"{jsc.js_string(jsc.get(x, 'size_code'))} {jsc.js_string(jsc.get(x, 'size_asked'))}"
+                        for x in jsc.array(jsc.get(r, "resolutions"))
+                        if jsc.truthy(jsc.get(x, "size_asked")) and jsc.truthy(jsc.get(x, "size_code"))
+                    }
+                    if all(_type_norm(t) in sized for t in not_found_raw):
+                        missing = ", ".join(sized[_type_norm(t)] for t in not_found_raw)
+                        escalate_message = f"Couldn't find {missing}." + (f" {esc}" if esc else "")
+                    else:
+                        escalate_message = (
+                            f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
+                        ) + (f" {esc}" if esc else "")
                 else:
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
                     esc = _esc_offer()
