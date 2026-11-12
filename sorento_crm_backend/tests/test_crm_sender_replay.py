@@ -293,3 +293,103 @@ def test_fake_client_records_calls_and_answers_success(tool):
     fake.create_comment("id:zzt-replay-1", "zzt note")
     fake.update_contact("id:zzt-replay-1", {"custom_fields": []})
     assert len(fake.calls) == 6
+
+
+# --- review round: R1 loopback hardening ------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "url, env",
+    [
+        ("postgresql://u:p@127.0.0.1:5432/zzt?host=prod.example.invalid", {}),
+        ("postgresql://u:p@localhost:5432/zzt?hostaddr=10.0.0.5", {}),
+        ("postgresql://u:p@/zzt", {"PGHOST": "prod.example.invalid"}),
+        ("postgresql://u:p@/zzt", {"PGHOSTADDR": "10.0.0.5"}),
+        ("postgresql://u:p@127.0.0.1:5432/zzt?host=db.example.invalid", {}),
+    ],
+    ids=["query-host", "query-hostaddr", "empty-host-PGHOST", "empty-host-PGHOSTADDR", "loopback-plus-host-override"],
+)
+def test_main_refuses_hidden_non_loopback_targets(tool, tmp_path, monkeypatch, capsys, url, env):
+    from app.services.chatbot import crm_sender
+
+    def boom(*a, **k):
+        raise AssertionError("nothing may run against a non-loopback target")
+
+    monkeypatch.setattr(crm_sender, "send", boom)
+    monkeypatch.setattr(settings, "database_url", url, raising=False)
+    for k in ("PGHOST", "PGHOSTADDR"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    before = _log_count()
+    assert tool.main(["--in", str(_folder(tmp_path, "plain_text.json"))]) != 0
+    assert not re.search(r"\bSAME\b\D{0,6}\d", capsys.readouterr().out)
+    assert _log_count() == before
+
+
+def test_main_refuses_when_server_address_is_not_loopback(tool, tmp_path, monkeypatch, capsys):
+    """After connecting, `_server_addr(connection)` (SELECT inet_server_addr()) must be NULL or loopback."""
+    from app.services.chatbot import crm_sender
+
+    def boom(*a, **k):
+        raise AssertionError("nothing may run when the server address is not loopback")
+
+    monkeypatch.setattr(crm_sender, "send", boom)
+    monkeypatch.setattr(tool, "_server_addr", lambda *a, **k: "10.0.0.5", raising=True)
+    assert tool.main(["--in", str(_folder(tmp_path, "plain_text.json"))]) != 0
+    assert not re.search(r"\bSAME\b\D{0,6}\d", capsys.readouterr().out)
+
+
+# --- review round: R2 every socket entry point is blocked -------------------------------------
+
+def test_block_sockets_blocks_connect_ex_getaddrinfo_and_udp(tool):
+    with tool.block_sockets():
+        s = socket.socket()
+        try:
+            with pytest.raises(tool.ReplayNetworkBlocked):
+                s.connect_ex(("127.0.0.1", 9))
+        finally:
+            s.close()
+        with pytest.raises(tool.ReplayNetworkBlocked):
+            socket.getaddrinfo("example.invalid", 443)
+        u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            with pytest.raises(tool.ReplayNetworkBlocked):
+                u.sendto(b"x", ("127.0.0.1", 9))
+        finally:
+            u.close()
+
+
+# --- review round: R3 logging is silenced during the run --------------------------------------
+
+def test_main_silences_logging_of_input_strings(tool, tmp_path, monkeypatch, capsys):
+    import logging
+
+    from app.services.chatbot import crm_sender
+
+    secret = "zzt-log-leak-text-Alpha"
+
+    def noisy_send(session_factory, **kw):
+        crm_sender.logger.warning("crm sender: step failed: %s", secret)
+        try:
+            raise ValueError(secret)
+        except ValueError:
+            crm_sender.logger.exception("crm sender: unexpected failure for %s", secret)
+        return "ok"
+
+    handler = logging.StreamHandler()  # writes to the (captured) stderr
+    handler.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    old_level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    monkeypatch.setattr(crm_sender, "send", noisy_send)
+    try:
+        assert tool.main(["--in", str(_folder(tmp_path, "plain_text.json"))]) == 0
+        captured = capsys.readouterr()
+        assert secret not in captured.out + captured.err
+        assert "zzt-replay-1" not in captured.out + captured.err
+        # Silencing is undone afterwards.
+        assert logging.root.manager.disable == logging.NOTSET
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(old_level)
