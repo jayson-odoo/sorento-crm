@@ -169,37 +169,39 @@ SIZE_ASKED = "size_asked"
 SIZE_CODE = "size_code"
 
 
+def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
+    """The product codes this message names (parser entities, hint product)."""
+    return [
+        e for e in jsc.array(jsc.get(parser, "entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").lower() == "product"
+    ]
+
+
+def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:
+    """The numeric sizes the parser read apart from a code (grounded specification entities)."""
+    return [
+        e for e in jsc.array(jsc.get(parser, "entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and e.get("spec_key")
+        and _number(e.get("spec_value")) is not None
+    ]
+
+
 def _asked_size(parser: dict[str, Any]) -> tuple[list[str], float, str, str] | None:
-    """The one numeric size the parser read apart from a code (a grounded specification
-    entity of this message): the keys it may be under, its value, "with size 400 mm" in the
-    key's own label and unit (`head/bare_size`), and the folded code it was said with. The
-    code is the parser's own pairing: the product entity it read right before the size, else
-    the message's only product code. None when there is not exactly one size, or no code
-    it belongs to."""
+    """The one numeric size the parser read beside the message's ONE product code (lead
+    re-scope, 12 Nov 2026: several codes and a size keep main's behaviour): the keys it may be
+    under, its value, "with size 400 mm" in the key's own label and unit (`head/bare_size`),
+    and that code, folded. None otherwise."""
     from app.services.chatbot.turn.state import token_key
 
-    entities = [e for e in jsc.array(jsc.get(parser, "entities")) if isinstance(e, dict)]
-    sizes = [
-        i for i, e in enumerate(entities)
-        if e.get("current_message") is not False and e.get("spec_key") and _number(e.get("spec_value")) is not None
-    ]
-    if len(sizes) != 1:
+    sizes, codes = _sizes(parser), _product_codes(parser)
+    if len(sizes) != 1 or len(codes) != 1:
         return None
-    e = entities[sizes[0]]
-
-    def is_code(other: dict[str, Any]) -> bool:
-        return other.get("current_message") is not False and jsc.js_string(other.get("hint") or "").lower() == "product"
-
-    before = [x for x in entities[: sizes[0]] if is_code(x)]
-    codes = [x for x in entities if is_code(x)]
-    owner = before[-1] if before else (codes[0] if len(codes) == 1 else None)
-    if owner is None:
-        return None
+    e = sizes[0]
     value = _number(e.get("spec_value"))
     keys = [str(k) for k in e.get("spec_any_keys") or [e.get("spec_key")] if k]
     label = jsc.js_string(e.get("spec_label") or e.get("spec_key")).strip().lower()
     said = f"with {label} {_plain(value)} {jsc.js_string(e.get('spec_unit') or '').strip()}".strip()
-    return keys, value, said, token_key(owner.get("canonical_code") or owner.get("raw"))
+    return keys, value, said, token_key(codes[0].get("canonical_code") or codes[0].get("raw"))
 
 
 def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
@@ -226,8 +228,8 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
     if isinstance(resolved.get("intersection"), list) and len(tokens) == 1:
         named.append((None, tokens[0], resolved["intersection"]))
     for res, token, matched in named:
-        # A size belongs only to the code it was said with: the row whose code is that code
-        # (the route may have cut a spaced "twc8152 sh uf" to its code word first).
+        # The row whose code is the message's one code (the route may have cut a spaced
+        # "twc8152 sh uf" to its code word first).
         exact = [
             m for m in matched
             if isinstance(m, dict) and m.get("entity_type") == "product" and m.get("uuid")
@@ -279,6 +281,8 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
 
     if not isinstance(resolved, dict):
         return
+    if _sizes(parser) and len(_product_codes(parser)) > 1:
+        return  # several codes and a size: main's behaviour (lead re-scope, 12 Nov 2026)
     try:
         _unheld_size_is_a_miss(db, parser, resolved)
         misses = [
