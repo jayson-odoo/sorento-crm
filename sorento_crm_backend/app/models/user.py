@@ -477,6 +477,12 @@ class SystemSetting(Base):
     sample_request_require_project = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # AC-QTSO-CRM (owner, 5 Nov): "AutoCount quotations and sales orders from Project sales".
+    # OFF on deploy. Off, Project sales shows no AutoCount write action and every write route
+    # answers 403 without calling the Shared Service.
+    project_autocount_write_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # AC-LINK-CRM-UI (owner, 5 Nov): "AutoCount links from Stock Debt". OFF on deploy; the
     # owner turns it on only after the full AutoCount + Shared Service test. Off, the Stock
     # Debt drill offers no PO actions and every po-link route answers 403.
