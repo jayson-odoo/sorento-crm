@@ -38,7 +38,6 @@ const PENDING = [
   'app/(protected)/project-sales/_shared/components/ProjectForm.tsx',
   'app/(protected)/project-sales/order-inquiries/components/OrderInquiriesClient.tsx',
   'app/(protected)/project-sales/sample-requests/components/SampleRequestDetail.tsx',
-  'app/(protected)/project-sales/sample-requests/components/SampleRequestForm.tsx',
   'app/(protected)/resource-management/attachments/components/AttachmentBrowser.tsx',
   'app/(protected)/sales/opportunities/[id]/components/SalesOpportunityDetail.tsx',
   'app/(protected)/sales/opportunities/components/SalesOpportunityModal.tsx',
