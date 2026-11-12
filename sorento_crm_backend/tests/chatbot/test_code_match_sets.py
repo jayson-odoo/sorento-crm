@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Any
+
 import pytest
 
 from app.models.product_set import ProductSet, ProductSetMember
@@ -175,3 +177,72 @@ def test_ac23_a_set_with_a_member_the_dealer_cannot_see_is_neither_answered_nor_
 
 
 # AC-24 moved to slice 5 (crew ruling 12 Nov: replace the X insert from catalogue data, not remove)
+
+
+# --------------------------------------------------------------------------- slice 3 review round
+
+CLOSE = ["TWC8354-SH-UF", "TWC8354-SH-UP", "TWC8354-SH-UN"]
+TYPO = "SWTWC8354-SH-UF"
+
+
+def _requested(c: Console) -> list[Any]:
+    """Every quantity a stock read carried (`requested_quantities` is a JSON object of id to quantity)."""
+    import json
+
+    out: list[Any] = []
+    for args in c.stock_calls:
+        wanted = args.get("requested_quantities") or {}
+        wanted = json.loads(wanted) if isinstance(wanted, str) else wanted
+        out.extend(wanted.values())
+    return out
+
+
+def test_ac1c_a_quantity_from_an_earlier_unrelated_miss_is_not_carried_into_a_later_pick(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, CLOSE, **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    _as_staff(c)
+    c.say("QQXZ9917-ZZ x 7", stock(product("QQXZ9917-ZZ", 7)))  # a miss with no close code
+    offer = c.say(f"{TYPO} stock", stock(product(TYPO)))  # no quantity of its own
+    assert "Did you mean" in offer and _option_codes(c)[0] == "TWC8354-SH-UF", (offer, _option_codes(c))
+    text = c.say("1", _pick(1))
+    assert "How many units of TWC8354-SH-UF?" in text, text
+    assert "x 7" not in text, text
+    assert 7 not in _requested(c), c.stock_calls
+
+
+def test_ac1c_the_quantity_typed_with_the_miss_is_carried_to_the_pick(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, CLOSE, **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    _as_staff(c)
+    c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
+    assert _option_codes(c)[0] == "TWC8354-SH-UF", _option_codes(c)
+    text = c.say("1", _pick(1))
+    assert "TWC8354-SH-UF x 3" in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac1d_a_set_miss_in_a_multi_code_ask_is_offered_the_same_list_as_asked_alone(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _console(
+        session_factory, monkeypatch, stub_access, [*MEMBERS, "ZQX5521"],
+        **{"ZQX5521": Stock(on_hand=100), "TWCA604_P_RL": Stock(on_hand=100), "TWCB604_RL": Stock(on_hand=100)},
+    )
+    _make_set(session_factory, SET, [c.uuid_of[m] for m in MEMBERS])
+    if who == "staff":
+        _as_staff(c)
+    c.say("TWC604RL x 2", stock(product("TWC604RL", 2)))
+    alone = _option_codes(c)
+    assert alone == [SET, *MEMBERS], alone
+
+    c.state = None
+    text = c.say("ZQX5521 x 1, TWC604RL x 2", stock(product("ZQX5521", 1), product("TWC604RL", 2)))
+    assert "ZQX5521" in text, text
+    if who == "dealer":
+        assert f"ZQX5521 x 1: {TICK} Got stock." in text, text
+    assert _option_codes(c) == alone, (_option_codes(c), alone, text)
+
+
+def test_ac1e_a_set_led_offer_to_staff_still_says_product_not_product_set(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _set_console(session_factory, monkeypatch, stub_access)
+    _as_staff(c)
+    text = c.say("TWC604RL x 2", stock(product("TWC604RL", 2)))
+    assert _option_codes(c)[:1] == [SET], _option_codes(c)
+    assert 'Couldn\'t find "TWC604RL" (product). Did you mean' in text, text
+    assert "(product set)" not in text, text
