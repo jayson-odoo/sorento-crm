@@ -568,3 +568,42 @@ def test_unknown_contact_reference_raises(db):
 
     with pytest.raises(AppException):
         set_contact_outbound(db, "zzt-no-such-contact", enabled=False)
+
+
+# --------------------------------------------------------------------------
+# N8N-RETIRE-A: quick replies go through the same chokepoint
+# --------------------------------------------------------------------------
+
+
+def test_send_quick_reply_builds_payload_and_uses_the_chokepoint():
+    client = _respond_client()
+
+    assert hasattr(type(client), "send_quick_reply"), "RespondClient.send_quick_reply is missing"
+    with patch.object(
+        type(client), "_post_contact_message", return_value={"messageId": 1}
+    ) as chokepoint:
+        client.send_quick_reply("900000008", "Pick one", ["Yes", "No"])
+
+    assert chokepoint.call_count == 1
+    assert chokepoint.call_args.args[0] == "900000008"
+    assert chokepoint.call_args.args[1] == {
+        "message": {"type": "quick_reply", "title": "Pick one", "replies": ["Yes", "No"]}
+    }
+
+
+def test_send_quick_reply_is_blocked_for_a_disabled_contact(db):
+    from app.services import integration_service as mod
+    from app.services.error_handler import AppException
+
+    contact = _seed_contact(db, enabled=False)
+    client = _respond_client()
+    http = MagicMock()
+
+    assert hasattr(type(client), "send_quick_reply"), "RespondClient.send_quick_reply is missing"
+    with patch("app.database.SessionLocal", return_value=_NoClose(db)), patch.object(
+        mod.httpx, "Client", return_value=http
+    ):
+        with pytest.raises(AppException):
+            client.send_quick_reply(contact["respond_io_id"], "Pick", ["A"])
+
+    assert not http.__enter__.called
