@@ -37,10 +37,10 @@ if (!window.matchMedia) {
 }
 Element.prototype.scrollIntoView = vi.fn();
 
-const nav = vi.hoisted(() => ({ search: '', replace: vi.fn() }));
+const nav = vi.hoisted(() => ({ search: '', replace: vi.fn(), push: vi.fn() }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/order-inquiries',
-  useRouter: () => ({ push: vi.fn(), replace: nav.replace }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace }),
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -277,5 +277,28 @@ describe('OrderInquiryHeadersList search chips: one URL writer', () => {
     );
     await new Promise((r) => setTimeout(r, 400));
     expect(allWrites() - before).toBe(1);
+  });
+});
+
+describe('OrderInquiryHeadersList search chips: opening a row keeps every chip', () => {
+  it('with two chips, a row click navigates to the record with both query values, in order', async () => {
+    nav.search = 'state=all&query=OI2611001&query=Acme%2C+Trading';
+    renderList();
+    expect(
+      await screen.findByRole('button', { name: 'Remove OI2611001' }),
+    ).toBeInTheDocument();
+    fireEvent.click(await screen.findByText('ZZT Fakeco Customer'));
+
+    await waitFor(() => expect(nav.push).toHaveBeenCalled());
+    const target = new URL(
+      String(nav.push.mock.calls.at(-1)![0]),
+      'http://localhost',
+    );
+    expect(target.pathname).toBe('/project-sales/order-inquiries/oi-1');
+    // Back from the record restores what this URL names: both chips, not the last one.
+    expect(target.searchParams.getAll('query')).toEqual([
+      'OI2611001',
+      'Acme, Trading',
+    ]);
   });
 });

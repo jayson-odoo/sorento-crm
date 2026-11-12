@@ -12,7 +12,13 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  cleanup,
+  waitFor,
+  fireEvent,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -37,9 +43,9 @@ if (!('ResizeObserver' in window)) {
 }
 Element.prototype.scrollIntoView = vi.fn();
 
-const nav = vi.hoisted(() => ({ search: '', replace: vi.fn() }));
+const nav = vi.hoisted(() => ({ search: '', replace: vi.fn(), push: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: nav.replace }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace }),
   useSearchParams: () => new URLSearchParams(nav.search),
   usePathname: () => '/order-management/orders',
 }));
@@ -293,5 +299,28 @@ describe('OrdersList search chips', () => {
       expect(last.transport).toBe('search');
       expect(last.body?.quick_search).toEqual(['DO2611001', 'Acme, Trading']);
     });
+  });
+});
+
+describe('OrdersList search chips: opening a row keeps every chip', () => {
+  it('with two chips, a row click navigates to the record with both query values, in order', async () => {
+    nav.search = 'page=1&limit=50&query=DO2611001&query=Acme%2C+Trading';
+    renderList();
+    expect(
+      await screen.findByRole('button', { name: 'Remove DO2611001' }),
+    ).toBeInTheDocument();
+    fireEvent.click(await screen.findByText('ZZT-DO-1'));
+
+    await waitFor(() => expect(nav.push).toHaveBeenCalled());
+    const target = new URL(
+      String(nav.push.mock.calls.at(-1)![0]),
+      'http://localhost',
+    );
+    expect(target.pathname).toBe('/order-management/orders/o-1');
+    // Back from the record restores what this URL names: both chips, not the last one.
+    expect(target.searchParams.getAll('query')).toEqual([
+      'DO2611001',
+      'Acme, Trading',
+    ]);
   });
 });

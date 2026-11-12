@@ -402,3 +402,68 @@ describe('useHrefWithListState forwards from unchanged (M5-07)', () => {
     );
   });
 });
+
+describe('appendListState keeps every search chip (SEARCH-CHIPS-B browser pass)', () => {
+  // A list in chips mode puts one `query` per chip into its own `rowHref` query string. Copying
+  // that string onto the detail href with `params.set` kept only the LAST chip, so Back from
+  // the record restored one chip of two.
+  const CHIPS = ['SO371334', 'Acme, Trading'];
+
+  function ChipsHarness() {
+    const table = useReactTable({
+      data: ROWS,
+      columns: COLUMNS,
+      getRowId: (r) => r.id,
+      getCoreRowModel: getCoreRowModel(),
+    });
+    const own = new URLSearchParams();
+    for (const chip of CHIPS) own.append('query', chip);
+    own.set('status', 'open');
+    return (
+      <DataGrid
+        table={table}
+        recordCount={ROWS.length}
+        isLoading={false}
+        rowHref={(r) => `/order-management/orders/${r.id}?${own.toString()}`}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+      >
+        <DataGridTable />
+      </DataGrid>
+    );
+  }
+
+  it('click: the detail href carries one query param per chip, in order', () => {
+    render(<ChipsHarness />);
+    fireEvent.click(screen.getByText('Beta'));
+
+    const href = push.mock.calls[0][0] as string;
+    const params = new URL(href, 'http://localhost').searchParams;
+    expect(params.getAll('query')).toEqual(CHIPS);
+    // The rest of the row's own query string and the restore id still ride along.
+    expect(params.get('status')).toBe('open');
+    expect(params.get('from')).toBe('a2');
+  });
+
+  it('keyboard Enter: the same href, every chip kept', () => {
+    render(<ChipsHarness />);
+    fireEvent.keyDown(screen.getByText('Beta').closest('tr')!, {
+      key: 'Enter',
+    });
+
+    const href = push.mock.calls[0][0] as string;
+    expect(
+      new URL(href, 'http://localhost').searchParams.getAll('query'),
+    ).toEqual(CHIPS);
+  });
+
+  it("the list's own history entry, rewritten before the push, keeps every chip too", () => {
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+    render(<ChipsHarness />);
+    fireEvent.click(screen.getByText('Beta'));
+
+    const url = replaceStateSpy.mock.calls[0][2] as string;
+    expect(
+      new URL(url, 'http://localhost').searchParams.getAll('query'),
+    ).toEqual(CHIPS);
+  });
+});
