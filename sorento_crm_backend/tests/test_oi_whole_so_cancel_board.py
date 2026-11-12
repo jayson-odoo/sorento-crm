@@ -186,3 +186,34 @@ def test_ac_wc_9d_the_board_names_a_header_cancelled_order_with_record_and_batch
 
 def test_ac_wc_9d_the_board_names_a_deleted_order_with_record_and_batch(env):
     _assert_board_names_the_order_with_its_planning_record_and_batch(env, _world(env, "delete"))
+
+
+# ============================================================================ AC-WC-9e
+def _confirm_all_result(env, monkeypatch, w):
+    from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
+
+    batch_id = str(_cancelled_rows(env, w["line_x"])[0].batch_id)
+    _register(None)
+    _captured_dispatches(monkeypatch)
+    mark_purchasing_email_trigger(env.db)
+    env.db.commit()
+    res = env.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [{"pso_id": w["pso_id"], "lines": [], "batch_id": batch_id}]},
+    )
+    assert res.status_code == 200, res.text
+    results = res.json()["results"]
+    assert len(results) == 1 and results[0]["pso_id"] == w["pso_id"], results
+    return results[0]
+
+
+def test_ac_wc_9e_confirm_all_names_the_so_number_after_a_header_cancel_push(env, monkeypatch):
+    """The board refetch drops an applied order, so the result line can only read the SO
+    number off the confirm-all result itself (else it prints the planning record's UUID)."""
+    w = _world(env, "push")
+    assert _confirm_all_result(env, monkeypatch, w).get("so_number") == w["so_number"]
+
+
+def test_ac_wc_9e_confirm_all_names_the_so_number_after_an_so_delete(env, monkeypatch):
+    w = _world(env, "delete")
+    assert _confirm_all_result(env, monkeypatch, w).get("so_number") == w["so_number"]
