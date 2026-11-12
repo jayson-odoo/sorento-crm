@@ -47,6 +47,25 @@ File rows in the attachments table no longer have a pencil / **Actions** column 
 2. Choose **Rename** from the context menu.
 3. Edit the name in the rename dialog and confirm.
 
+### Move files to another folder
+
+1. Tick the files (and folders) to move, then choose **Move to…** from the action menu, or right-click one file and choose **Move to…**. You can also drag files onto a folder in the sidebar.
+2. Pick the target folder and confirm.
+
+Every file that can move goes straight away. A folder can hold only one file with a given name, so if the target folder already has a file with the same name, a window opens for that file with three choices:
+
+| Choice | What happens |
+|----|----|
+| **Rename** | The file moves under the new name shown in the box (for example `photo (1).jpg`). You can type another name. The file itself, its links to products, promotions and forms, and any link already shared stay the same. |
+| **Replace** | The file already in the target folder goes to **Trash** and this file takes its place. Records linked to the replaced file stay linked to it; restore it from **Trash** to undo. Only users who may delete files see this choice. |
+| **Skip** | The file stays where it is. |
+
+When the move is done, one message sums it up, for example: *2 moved. 1 not moved: photo.jpg already exists in Folder B.*
+
+A file renamed earlier still counts under the name it was first uploaded with. If the target folder holds a file first uploaded under that same name, the message says so, for example: *holiday.jpg cannot be moved into Folder B: photo.jpg there has the same original file name.* Choose **Rename** to move it under a new name.
+
+The same rule applies when you upload a file into a folder: a name already used there (including a file first uploaded under it and renamed since) is refused with a plain message naming the file and the folder.
+
 ## Quick Access
 
 Quick Access is the pinned-shortcuts section at the top of the left sidebar. Use it for menu items and folders you visit often.
