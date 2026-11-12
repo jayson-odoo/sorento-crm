@@ -81,6 +81,39 @@ def _code_of(row: dict[str, Any]) -> Any:
     return row.get("product") or row.get("value") or row.get("label") or row.get("code")
 
 
+def did_you_mean_text(shown: str, labels: list[str], *, start: int | None = None) -> str:
+    """The did-you-mean sentence for one missed code. One code alone reads "Couldn't find
+    ELP3753. Did you mean ELP3754?"; several, or a list sharing a message with others
+    (`start`, where its numbers carry on), read one numbered code per line. PICKER-NO-CAP
+    (owner, 2 Oct 2026): every option the pick carries is printed."""
+    if start is None and len(labels) == 1:
+        return f"Couldn't find {shown}. Did you mean {labels[0]}?"
+    return "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(labels, start or 1)])
+
+
+def did_you_mean_lists(
+    options: list[dict[str, Any]], groups: list[dict[str, Any]], owed: list[dict[str, Any]] | None = None
+) -> tuple[str, dict[str, Any]]:
+    """Several missed codes' did-you-mean lists in one message (`task.picks_question`'s
+    did-you-mean twin): the text, one list per group numbered as its options are, and the
+    pick (`task.stock_pick`, each group keeping its typed code and quantity, `did_you_mean`
+    kept). Asked first by `did_you_mean_each`, and again with the lists still open
+    (`apply`'s "yes" over it, `engine._stock_ask_reply` after one list is answered)."""
+    from app.services.chatbot.turn.task import stock_pick
+
+    stored = stock_pick(options, groups, owed)
+    text = "\n\n".join(
+        did_you_mean_text(
+            str(group["typed"]),
+            [str(o["label"]) for o in options if o.get("position") in group["positions"]],
+            start=group["positions"][0],
+        )
+        for group in groups
+        if group.get("positions")
+    )
+    return text, {**stored, "payload": {**stored["payload"], "did_you_mean": True}}
+
+
 def did_you_mean(
     typed: str,
     candidates: list[dict[str, Any]],
@@ -115,11 +148,7 @@ def did_you_mean(
         return None
     shown = (typed or "").strip().upper() or "that"
     labels = [o["label"] for o in options]
-    if len(labels) == 1:
-        text = f"Couldn't find {shown}. Did you mean {labels[0]}?"
-    else:
-        # PICKER-NO-CAP (owner, 2 Oct 2026): every option the pick carries is printed.
-        text = "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(labels)])
+    text = did_you_mean_text(shown, labels)
     pick = ask(
         "product_pick",
         options,
@@ -167,8 +196,6 @@ def did_you_mean_each(
     read one numbered list each, numbers running on, stored as one pick whose `groups`
     keep each code's quantity (`task.stock_pick`). Returns the text, the pick and the typed
     codes it offered for; None when no candidate is left."""
-    from app.services.chatbot.turn.task import stock_pick
-
     seen = set(answered)
     blocks: list[tuple[str, Any, Pending, str]] = []
     for typed, candidates, quantity in groups:
@@ -185,19 +212,11 @@ def did_you_mean_each(
         return text, pick, [typed]
     options: list[dict[str, Any]] = []
     pick_groups: list[dict[str, Any]] = []
-    lines: list[str] = []
     for _typed, quantity, one, _text in blocks:
         start = len(options) + 1
         options.extend({**o, "position": start + i} for i, o in enumerate(one.options))
         positions = list(range(start, len(options) + 1))
-        shown = one.payload["typed"]
-        pick_groups.append({"typed": shown, "count": len(positions), "qty": quantity, "positions": positions})
-        lines.append("\n".join([f"Couldn't find {shown}. Did you mean:", *numbered([o["label"] for o in one.options], start)]))
-    stored = stock_pick(options, pick_groups)
-    pick = ask(
-        "product_pick",
-        stored["options"],
-        asked_at_turn=asked_at_turn,
-        payload={**stored["payload"], "did_you_mean": True},
-    )
-    return "\n\n".join(lines), pick, [b[0] for b in blocks]
+        pick_groups.append({"typed": one.payload["typed"], "count": len(positions), "qty": quantity, "positions": positions})
+    text, stored = did_you_mean_lists(options, pick_groups)
+    pick = ask("product_pick", stored["options"], asked_at_turn=asked_at_turn, payload=stored["payload"])
+    return text, pick, [b[0] for b in blocks]

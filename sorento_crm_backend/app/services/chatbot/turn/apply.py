@@ -838,6 +838,28 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
             decision = replace(decision, positions=(pending.options[0].get("position"),))
             trace.rules_fired.append("stock_pick_yes")
+        elif (
+            decision.answers
+            and decision.why == "affirmative"
+            and not decision.positions
+            and pending.payload.get("did_you_mean") is True
+            and len(pending.payload.get("groups") or []) > 1
+        ):
+            # CHATBOT-CODE-MATCH R7: a "yes" over several did-you-mean lists names no code,
+            # so they are asked again as they were (each code's quantity kept), nothing fetched.
+            from app.services.chatbot import dealer_stock as dealer_mod
+
+            trace.rules_fired.append("stock_pick_yes_reasked")
+            trace.task_question = dealer_mod.did_you_mean_lists(
+                list(pending.options), list(pending.payload["groups"]), pending.payload.get(task_mod.OWED)
+            )[0]
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                pending,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
         elif not decision.positions and (
             decision.declined or (decision.negated and not decision.entities)
         ):
@@ -3038,6 +3060,8 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     verdict[task_mod.NEXT_PICKS] = {
         "options": [o for o in asked.options if o.get("position") in positions],
         "groups": open_groups,
+        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one.
+        "did_you_mean": asked.payload.get("did_you_mean") is True,
     }
     trace.rules_fired.append("stock_pick_lists_still_open")
 

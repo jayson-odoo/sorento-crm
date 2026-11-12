@@ -535,6 +535,11 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
         if not isinstance(row, dict):
             continue
         token, pick = _token_of(entity), token_key(str(row.get("canonical_code") or ""))
+        # CHATBOT-CODE-MATCH AC-20d: an inactive pick is set aside but never offered. Its row is
+        # the pick's own exact match (`grounding._pick_as_trgm_neighbour`), which the resolver's
+        # `alternatives_active_only` does not filter; the resolver stamps `display.is_active`.
+        if (row.get("display") or {}).get("is_active") is False:
+            continue
         for res in resolutions:
             if isinstance(res, dict) and res.get("token") == token:
                 others = [

@@ -2329,12 +2329,9 @@ def _dealer_did_you_mean(
         return (each[0], each[1]) if each is not None else None
     token = next(iter(by_token), None)
     typed = (typed_of(token) if token else None) or token or next((e.get("raw") for e in named if e.get("raw")), "")
-    quantities = {
-        int(e["quantity"])
-        for e in named
-        if isinstance(e.get("quantity"), (int, float)) and not isinstance(e.get("quantity"), bool)
-    }
-    quantity = next(iter(quantities)) if len(quantities) == 1 else (parser or {}).get("demand_qty")
+    quantity = dealer_mod.quantity_of(named, token or typed)
+    if quantity is None:
+        quantity = (parser or {}).get("demand_qty")
     return dealer_mod.did_you_mean(
         str(typed),
         [dict(row) for row in rows],

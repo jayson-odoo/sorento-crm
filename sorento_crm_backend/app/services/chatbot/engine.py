@@ -10049,8 +10049,14 @@ def _stock_ask_reply(
         # picked, rides on them and is asked once no list is left open.
         carried = [*owed, *turn_task.owed_of(tuple(state_out.focus.tasks or ()))]
         state_out.focus.tasks = tuple(t for t in state_out.focus.tasks or () if t.kind != "stock_qty")
-        text = turn_task.picks_question(queued["options"], queued["groups"])
-        pick = turn_task.stock_pick(queued["options"], queued["groups"], carried)
+        if queued.get("did_you_mean"):
+            # CHATBOT-CODE-MATCH R7: a did-you-mean list still open is asked as one again.
+            from app.services.chatbot import dealer_stock as dealer_mod
+
+            text, pick = dealer_mod.did_you_mean_lists(queued["options"], queued["groups"], carried)
+        else:
+            text = turn_task.picks_question(queued["options"], queued["groups"])
+            pick = turn_task.stock_pick(queued["options"], queued["groups"], carried)
     elif not pick and owed:
         # Reviewer B4: the pick is answered, so the codes owed a quantity beside it are
         # asked now, in one question with any the picked code owes itself.
