@@ -160,6 +160,11 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
     asking again),
   * or this environment simply has no automation front door configured to retry into (this is
     normal on a development machine; it is not a bug).
+* **When the CRM sent the reply** (Settings > Chatbot, **Bot replies sent by** is a CRM option),
+  Retry does not ask the bot again. It sends the same reply again, only the parts the customer has
+  not received yet, so nobody gets a part twice. If a part timed out, the CRM first checks the
+  conversation: a part that did arrive is counted as sent. When that check itself fails, the turn
+  shows **Not confirmed**: look at the conversation, then press Retry.
 * Retry needs a slightly wider permission than viewing the trace, so if you can see the trace but
   not the Retry button, that is expected for your role - ask an admin to retry it instead.
 
