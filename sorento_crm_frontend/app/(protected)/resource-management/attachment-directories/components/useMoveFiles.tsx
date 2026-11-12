@@ -144,7 +144,9 @@ export function useMoveFiles() {
     <Dialog open={clash !== null} onOpenChange={(open) => !open && answer({ kind: 'skip' })}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{clash?.message}</DialogTitle>
+          <DialogTitle className="line-clamp-2 break-words" title={clash?.message}>
+            {clash?.message}
+          </DialogTitle>
           <DialogDescription>
             Move it under a new name, replace the file in {clash?.folder_name}, or skip it.
           </DialogDescription>
