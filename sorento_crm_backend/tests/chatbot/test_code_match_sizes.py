@@ -356,9 +356,20 @@ def test_ac25b_a_size_key_scoped_to_one_class_is_not_read_for_a_product_of_anoth
 # --------------------------------------------------------------------------- slice 4 round 3
 
 
+#: Parser orders of a message naming several product codes and a size. The size-miss rule applies only to a message
+#: that names exactly one product code; these keep main's behaviour whichever order the parser emits.
+ORDERS = {
+    "size_after_fam": lambda zqx, fam, size: [zqx, fam, size],
+    "size_after_zqx": lambda zqx, fam, size: [fam, zqx, size],
+    "size_before_both": lambda zqx, fam, size: [size, zqx, fam],
+    "two_sizes_two_codes": lambda zqx, fam, size: [zqx, dict(size, raw="300mm"), fam, size],
+}
+
+
 @pytest.mark.parametrize("held", [True, False], ids=["300_held", "300_not_held"])
+@pytest.mark.parametrize("order", list(ORDERS))
 @pytest.mark.parametrize("who", ["dealer", "staff"])
-def test_ac4d_another_code_in_the_same_message_is_answered_beside_a_size_ask(session_factory, monkeypatch, stub_access, who, held):  # noqa: F811
+def test_ac4d_several_codes_and_a_size_keep_mains_behaviour_and_answer_the_unrelated_code(session_factory, monkeypatch, stub_access, who, order, held):  # noqa: F811
     other = "ZQX5521"  # in stock, another class, nothing stored, no size relation
     c = _size_console(
         session_factory, monkeypatch, stub_access, [FAM, FAM_300], {FAM_300: {"zz_size": 300 if held else 250}},
@@ -369,12 +380,14 @@ def test_ac4d_another_code_in_the_same_message_is_answered_beside_a_size_ask(ses
     if who == "staff":
         _as_staff(c)
     head, size = _head_and_size(300, "mm")
-    text = c.say(f"{other} x 2, {FAM} 300mm", stock(product(other, 2), head, size))
+    entities = ORDERS[order](product(other, 2), head, size)
+    text = c.say(f"{other} x 2, {FAM} 300mm", stock(*entities))
     if who == "dealer":
         assert f"{other} x 2: {TICK} Got stock." in text, text
     else:
         assert f"*Product Code:* {other}" in text, text
-    assert f"Couldn't find {other}" not in text and f'Couldn\'t find "{other}"' not in text, text
+    # Never a "Couldn't find" naming a code that exists, the unrelated one included.
+    assert not re.search(rf"Couldn't find:? \"?({other}|{re.escape(FAM)})", text), text
     assert other not in _option_codes(c), c.stored_question
     assert not re.search(rf"\d+[.)]\s+{other}", text), f"offered back to itself: {text!r}"
 
