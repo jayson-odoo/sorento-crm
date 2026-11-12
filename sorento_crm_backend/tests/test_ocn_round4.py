@@ -82,6 +82,8 @@ def test_r4_pending_voided_and_done_notices_are_not_pickable(build, cols):
 
 def test_r4_picking_an_approved_notice_revises_it_and_publish_waits_for_a_new_approval(build):
     b = build
+    # Round 5 ruling (security L5): reopening an approval is the Revise right.
+    grant(b.db, b.owner, EDIT)
     mine = _crm_ocn(b, b.project.id)
     _set(b, mine.id, status="approved", approval_status="approved", approver_id=b.owner, revision_no=0)
     created = _create(b, ocn_id=mine.id)

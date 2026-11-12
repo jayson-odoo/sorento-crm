@@ -468,6 +468,35 @@ def link_attachment(db: Session, row: OrderChangeNotice, *, actor: Actor, attach
     )
 
 
+def upload_attachment(
+    db: Session,
+    row: OrderChangeNotice,
+    *,
+    actor: Actor,
+    contents: bytes,
+    filename: Optional[str],
+    content_type: Optional[str],
+) -> Dict[str, Any]:
+    """A file uploaded straight onto the notice (the revised customer PO, card example 5),
+    by whoever may edit it while it is editable. The staff upload path every form shares
+    (`create_response_attachment`: the same storage, the `response_attachment` type's file
+    types, size and per-record limits, uploader stamped), stored under this notice."""
+    from app.services.entity_attachment_service import create_response_attachment
+
+    _assert_attachments_editable(row, actor)
+    return create_response_attachment(
+        db,
+        entity_type=ENTITY,
+        entity_id=str(row.id),
+        contents=contents,
+        filename=filename,
+        content_type=content_type,
+        uploaded_by=actor.user_id,
+        commit=False,
+        key_prefix=f"order_change_notices/{row.id}",
+    )
+
+
 def _own_link(db: Session, link_id: str):
     from app.models.entity_attachment import EntityAttachmentLink
 
@@ -752,38 +781,67 @@ RAISER_NOTICES = {
 }
 
 
+#: The move's own stamp, so each move is its own notice: a second send back in the same
+#: revision (send back, resubmit, send back) is told again, never swallowed (review N1).
+_EVENT_STAMP = {
+    "reject_submitted": "approved_at",
+    "approval_rejected": "approved_at",
+    "approved": "approved_at",
+    "voided": "voided_at",
+}
+
+
+def _move_stamp(row: OrderChangeNotice, event: str) -> str:
+    value = getattr(row, _EVENT_STAMP.get(event, ""), None) if event in _EVENT_STAMP else None
+    return value.isoformat() if value is not None else datetime.utcnow().isoformat()
+
+
+def _tell(db: Session, row: OrderChangeNotice, event: str, title: str, *, users: Iterable[Any],
+          actor_id: Optional[str], reason: Optional[str] = None) -> None:
+    """An in-app notice about the notice to each of `users` who can still open it, never to
+    whoever made the move. Best effort: a failure is logged and never undoes the move."""
+    stamp = _move_stamp(row, event)
+    seen: set = set()
+    for user_id in users:
+        uid = str(user_id or "")
+        if not uid or uid == str(actor_id or "") or uid in seen:
+            continue
+        seen.add(uid)
+        try:
+            if not can_view(actor_for_user(db, uid)):
+                continue  # lost every grant since: they could not open it anyway
+            from app.services.notification_service import NotificationService
+
+            NotificationService(db).create_with_channel_preferences(
+                user_id=uid,
+                type=f"order_change_notice_{event}",
+                title=title,
+                body=f"{title}. Reason: {reason}" if reason else title,
+                data={"link": f"/procurement-management/order-change-notices/{row.id}", "ocn_number": row.ocn_number},
+                source_entity_type=ENTITY,
+                source_entity_id=str(row.id),
+                dedup_key=f"{row.id}:{event}:{row.revision_no or 0}:{stamp}",
+                event_type=f"order_change_notice_{event}",
+                send_in_app=True,
+                send_email=False,
+                send_whatsapp=False,
+                send_web_push=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("order change notice in-app notice not sent: %s %s (%s)", event, row.id, exc)
+            if not db.is_active:
+                db.rollback()
+
+
 def _tell_raiser(db: Session, row: OrderChangeNotice, event: str, actor_id: Optional[str]) -> None:
-    """An in-app notice to the raiser (never to whoever made the move). Best effort: a failure
-    is logged and never undoes the committed move."""
-    raiser = str(row.created_by or "")
-    if not raiser or raiser == str(actor_id or ""):
-        return
-    title = f"Order change notice {row.ocn_number} {RAISER_NOTICES[event]}"
+    """The raiser hears each move that is theirs to know (review M3)."""
     reason = row.approval_comments if event in ("reject_submitted", "approval_rejected") else (
         row.void_reason if event == "voided" else None
     )
-    try:
-        from app.services.notification_service import NotificationService
-
-        NotificationService(db).create_with_channel_preferences(
-            user_id=raiser,
-            type=f"order_change_notice_{event}",
-            title=title,
-            body=f"{title}. Reason: {reason}" if reason else title,
-            data={"link": f"/procurement-management/order-change-notices/{row.id}", "ocn_number": row.ocn_number},
-            source_entity_type=ENTITY,
-            source_entity_id=str(row.id),
-            dedup_key=f"{row.id}:{event}:{row.revision_no or 0}",
-            event_type=f"order_change_notice_{event}",
-            send_in_app=True,
-            send_email=False,
-            send_whatsapp=False,
-            send_web_push=False,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("order change notice raiser notice not sent: %s %s (%s)", event, row.id, exc)
-        if not db.is_active:
-            db.rollback()
+    _tell(
+        db, row, event, f"Order change notice {row.ocn_number} {RAISER_NOTICES[event]}",
+        users=[row.created_by], actor_id=actor_id, reason=reason,
+    )
 
 
 def finish(db: Session, row: OrderChangeNotice, event: Optional[str], actor_id: Optional[str]) -> Dict[str, Any]:
@@ -1202,13 +1260,59 @@ def assert_linkable(
     if str(row.project_id or "") != str(project_id or ""):
         raise _invalid("ocn_id", "That order change notice belongs to another project.")
     if db.query(OrderChangeNotice.id).filter(OrderChangeNotice.id == row.id, linkable_clause()).first() is None:
-        raise _conflict(
-            f"A {ocn_status_word(row).lower()} or already linked order change notice cannot be picked.",
-            "ORDER_CHANGE_NOTICE_NOT_LINKABLE",
-        )
+        raise _conflict(_not_linkable_sentence(db, row), "ORDER_CHANGE_NOTICE_NOT_LINKABLE")
     if _status(row) == APPROVED:
-        _back_to_draft(db, row, "Picked for a sales order amendment: the change needs approval.")
+        # Reopening an approval is the Revise right (security review L5).
+        if not (actor.can_edit or actor.can_approve):
+            raise _forbidden(
+                "This order change notice is approved. Only someone who can revise notices can "
+                "pick it, because it goes back for approval."
+            )
+        _reopen_for_amendment(db, row, actor)
     return row
+
+
+REOPENED_REASON = "Picked for a sales order amendment: the change needs approval."
+
+
+def _reopen_for_amendment(db: Session, row: OrderChangeNotice, actor: Actor) -> None:
+    """An approved notice picked by an amendment goes back to draft (Revise's own writes, so
+    the row listener audits the move), with a History line naming why, and the raiser and the
+    approver are told in-app (review N4). Inside the amendment's transaction: it all rolls back
+    together if the amendment does not land."""
+    from app.services.audit_service import log_audit
+
+    previous_approver = row.approver_id
+    before = {"status": row.status, "approval_status": row.approval_status, "revision_no": row.revision_no}
+    _back_to_draft(db, row, REOPENED_REASON)
+    try:
+        log_audit(
+            db,
+            entity_type=ENTITY,
+            entity_id=str(row.id),
+            action="UPDATE",
+            user_id=actor.user_id,
+            old_values=before,
+            new_values={"status": row.status, "approval_status": row.approval_status,
+                        "revision_no": row.revision_no},
+            description=REOPENED_REASON,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("order change notice reopen audit not written: %s (%s)", row.id, exc)
+    _tell(
+        db, row, "reopened",
+        f"Order change notice {row.ocn_number} went back for approval for a sales order amendment",
+        users=[row.created_by, previous_approver], actor_id=actor.user_id,
+    )
+
+
+def _not_linkable_sentence(db: Session, row: OrderChangeNotice) -> str:
+    """Why this notice cannot be picked, in one plain sentence per case (review N9)."""
+    if linked_amendment(db, row) is not None:
+        return "That order change notice is already linked to another amendment."
+    if (row.approval_status or "") == "pending" and _status(row) in AWAITING_REVIEW:
+        return "That order change notice is waiting for approval. Pick it once it is decided."
+    return f"A {ocn_status_word(row).lower()} order change notice cannot be picked."
 
 
 def ocn_status_word(row: OrderChangeNotice) -> str:

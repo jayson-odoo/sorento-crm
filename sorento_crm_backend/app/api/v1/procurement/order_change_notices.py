@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -200,6 +200,28 @@ def link_attachment(
         row, actor = _readable(db, user, ocn_id, for_update=True)
         svc.link_attachment(db, row, actor=actor, attachment_id=payload.attachment_id)
         return svc.finish(db, row, None, actor.user_id)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/{ocn_id}/attachments/upload", status_code=status.HTTP_201_CREATED)
+def upload_attachment(
+    ocn_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload a file straight onto the notice (drop zone or browse). Gated by the notice's own
+    edit rule, not the library's upload grant; the company comes from the notice."""
+    try:
+        row, actor = _readable(db, user, ocn_id, for_update=True)
+        result = svc.upload_attachment(
+            db, row, actor=actor, contents=file.file.read(), filename=file.filename,
+            content_type=file.content_type,
+        )
+        db.commit()
+        return result
     except Exception:
         db.rollback()
         raise
