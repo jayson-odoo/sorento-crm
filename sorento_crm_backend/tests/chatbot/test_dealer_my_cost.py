@@ -232,6 +232,52 @@ def test_the_grant_wins_over_the_dealer_tag(session_factory, monkeypatch, dealer
     assert "Cost / unit" in reply, reply
 
 
+# ---------------------------------------------------------------- COST-ACCESS-UNIFIED AC-4: the user decides, not the row
+
+
+def _real_attributes(session_factory) -> list[str]:
+    """The dealer contact's effective reveal keys, read the way `check_access` reads them."""
+    from app.services.contact_field_reveal_service import granted_keys
+
+    db = session_factory()
+    pk = db.execute(text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}).scalar()
+    return granted_keys(db, pk)
+
+
+def _dealer_pk(session_factory) -> str:
+    db = session_factory()
+    return db.execute(text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}).scalar()
+
+
+def test_cost_unified_a_stored_cost_row_without_a_cost_user_still_reads_as_promotions(session_factory, monkeypatch, dealer):
+    from app.models.access import ContactFieldReveal
+
+    db = session_factory()
+    db.add(ContactFieldReveal(respond_contact_id=_dealer_pk(session_factory), field_key="purchase_orders.cost", granted=True))
+    db.commit()
+    attributes = _real_attributes(session_factory)
+    assert "purchase_orders.cost" not in attributes  # the stored row alone grants nothing
+    (promo_text, promo_calls), (cost_text, cost_calls) = _pair(session_factory, monkeypatch, ONE_PROMO, attributes=attributes)
+    assert cost_text == promo_text and cost_calls == promo_calls, (cost_text, promo_text)
+    assert COST_TOOL not in _names(cost_calls), cost_calls
+
+
+def test_cost_unified_a_dealer_whose_linked_user_is_a_cost_viewer_gets_the_cost_answer(session_factory, monkeypatch, dealer):
+    from tests._cost_viewer_seed import cost_viewer
+
+    db = session_factory()
+    cost_viewer(db, _dealer_pk(session_factory))
+    db.commit()
+    attributes = _real_attributes(session_factory)
+    assert "purchase_orders.cost" in attributes  # no stored row at all
+    reply, calls, _ = _say(
+        session_factory, monkeypatch, "cost", lambda n, a: _granted_cost_row() if n == COST_TOOL else ONE_PROMO,
+        attributes=attributes,
+    )
+    assert _names(calls) == [COST_TOOL], calls
+    assert "Cost / unit" in reply, reply
+
+
 # ---------------------------------------------------------------- 10 multi-level dealer: same pick, same continuation
 
 
