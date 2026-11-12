@@ -9,12 +9,30 @@ Forms in scope (audit entity type -> table):
 `new_product_application` -> new_product_applications, `stock_inquiry` -> stock_inquiries,
 `workflow_submissions` -> workflow_submissions.
 
+Dev data findings (crew, prod clone 12 Nov, counts only):
+- Sponsorship header rows were audited as `sponsorship_form` before the model pinned
+  `purchase_request`; both types map to `purchase_requests`.
+- Sample requests live in the `projects` schema (`projects.sample_requests`, `sr_0001`); raw SQL
+  resolves the schema like `sr_0001_sample_requests.py:43` does.
+- Pre-stamp rows have `actor_type = 'legacy'` and often `root_entity_type` NULL (complaint 3,757,
+  PR 898, SF 126, SI 820). Matching is entity OR root, so they are found.
+- Attachment audit rows never carry the form as root; a form's files hang off
+  `entity_attachment_links(entity_type, entity_id, attachment_id)` (price tags use the singular
+  `price_tag_request` there).
+- Backfill timing on the prod clone (audit_logs 589,951 rows): 5-18 ms per table. Plain UPDATE in the
+  migration, no job.
+
 ## Backend
 
 - U1 Each of the 7 tables has a nullable, indexed `last_activity_at` (timestamp without tz, same
   clock as `audit_logs.changed_at`). Migration is additive and backfills: newest person `audit_logs`
   row whose `root_entity_type/root_entity_id` (or `entity_type/entity_id`) is the record, or newest
   non-system form comment, whichever is later; else `created_at`.
+- U1b Backfill counts `legacy` rows (they predate actor stamping and are staff edits) and excludes
+  `worker`, `scheduler`, `system`, `integration`; it also counts `entity_attachment_links.created_at`
+  for the record's links.
+- U5b Linking a file to a form (an `entity_attachment_links` row created or deleted for the form by a
+  person) moves `last_activity_at`.
 - U2 A new record has `last_activity_at` = its create time (never NULL after create by a person or
   a system path).
 - U3 A person's audited change on the record (header edit, status change, approve/reject, line
