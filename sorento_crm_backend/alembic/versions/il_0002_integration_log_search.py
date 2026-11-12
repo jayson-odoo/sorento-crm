@@ -4,7 +4,9 @@
 dev copy (~1.2M rows): an 8-character Business ID search took 19.5-28 s, because the search was an
 OR of seven ``ILIKE '%term%'`` that no index can serve. The search now matches one expression
 (``online_index.INTEGRATION_LOG_SEARCH_EXPR``) and this builds a GIN ``gin_trgm_ops`` index on
-exactly that expression, so a rare term is an index lookup.
+exactly that expression, so a rare term is an index lookup. An ANALYZE follows a fresh build:
+without statistics on the expression the planner sends common terms through the index too (3-4 s
+instead of 70-160 ms, sandbox, 1.3M rows).
 
 Built like ``il_0001_integration_log_indexes``: CREATE INDEX CONCURRENTLY IF NOT EXISTS in an
 autocommit block, under the repo's migration limits, so it never blocks the log's writers. A build
@@ -33,7 +35,15 @@ def upgrade():
     with op.get_context().autocommit_block():
         bind = op.get_bind()
         bind.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-        online_index.ensure_indexes_online(bind, online_index.INTEGRATION_LOG_SEARCH_INDEXES)
+        was_valid = online_index.search_index_valid(bind)
+        # As the retry script builds: 130 s at 512MB against 142 s at the default (1.3M rows).
+        bind.execute(sa.text("SET maintenance_work_mem = '512MB'"))
+        try:
+            online_index.ensure_indexes_online(bind, online_index.INTEGRATION_LOG_SEARCH_INDEXES)
+        finally:
+            bind.execute(sa.text("RESET maintenance_work_mem"))
+        # Statistics on the new expression, or the planner sends common terms through the index.
+        online_index.analyze_after_search_index_build(bind, was_valid)
 
 
 def downgrade():

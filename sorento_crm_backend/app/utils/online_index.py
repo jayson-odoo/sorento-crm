@@ -228,3 +228,44 @@ def _ensure_within_budget(bind, indexes: Sequence[Tuple[str, str, str]]) -> bool
             continue
         results.append(ensure_index_online(bind, table, name, columns, budget_ms=left_ms))
     return all(results)
+
+
+def search_index_valid(bind):
+    """index_valid for `ix_integration_log_search_trgm`, or None when there is no integration_log
+    on the search_path (a scratch schema built for another index's test) or the tuple is empty
+    (a test that keeps the retry off integration_log)."""
+    if not INTEGRATION_LOG_SEARCH_INDEXES:
+        return None
+    [(table, name, _columns)] = INTEGRATION_LOG_SEARCH_INDEXES
+    if bind.execute(sa.text("SELECT to_regclass(:t)"), {"t": table}).scalar() is None:
+        return None
+    return index_valid(bind, table, name)
+
+
+def analyze_after_search_index_build(bind, was_valid) -> None:
+    """ANALYZE integration_log once the search index has just become VALID.
+
+    Postgres keeps statistics on an index EXPRESSION only from an ANALYZE run after the index
+    exists. Without them the planner guesses ~100 matches for every search term, so a common term
+    (a channel name, 216k rows of 1.3M) went through the trigram index and a full sort: 3-4 s,
+    against 70-160 ms once analyzed (sandbox, 1.3M rows, 12 Nov 2026). Autovacuum would only
+    re-analyze after ~10% of the table changed, days on this table. ANALYZE samples a fixed
+    30k rows (0.6 s there) and does not block writers. Under the migration limits; a failure is
+    a WARNING, never an error: the search still answers, only a common term is slower."""
+    if was_valid is True or search_index_valid(bind) is not True:
+        return
+    table = INTEGRATION_LOG_SEARCH_INDEXES[0][0]
+    previous = (
+        bind.execute(sa.text("SELECT current_setting('lock_timeout')")).scalar(),
+        bind.execute(sa.text("SELECT current_setting('statement_timeout')")).scalar(),
+    )
+    _set_limits(bind, *migration_timeouts())
+    try:
+        bind.execute(sa.text(f"ANALYZE {table}"))
+    except sa.exc.DBAPIError as exc:
+        log.warning(
+            "ANALYZE %s after building its search index failed (%s); autovacuum analyzes it later.",
+            table, str(getattr(exc, "orig", exc)).strip().splitlines()[0],
+        )
+    finally:
+        _set_limits(bind, *previous)

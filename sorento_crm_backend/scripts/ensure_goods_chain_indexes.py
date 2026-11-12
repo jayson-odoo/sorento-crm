@@ -30,7 +30,8 @@ def run(engine) -> bool:
         # The keep-set HNSW build took 131 s at the default and 34 s at 512MB, against the 180 s budget.
         bind.exec_driver_sql("SET maintenance_work_mem = '512MB'")
         try:
-            return online_index.ensure_indexes_online(
+            search_was_valid = online_index.search_index_valid(bind)
+            ok = online_index.ensure_indexes_online(
                 bind,
                 online_index.GOODS_CHAIN_KEY_INDEXES
                 + online_index.BILLING_FROM_DOC_INDEXES
@@ -39,6 +40,9 @@ def run(engine) -> bool:
                 + embedding_indexes.MIGRATION_INDEXES
                 + embedding_indexes.COVERAGE_INDEXES,
             )
+            # il_0002: statistics on the search expression once its index first turns VALID.
+            online_index.analyze_after_search_index_build(bind, search_was_valid)
+            return ok
         finally:
             # A session-level SET outlives this block on a pooled engine: the connection goes back
             # to the pool still at 512MB and the next borrower inherits it.
