@@ -279,3 +279,26 @@ describe('SalesOrdersGrid search chips', () => {
     });
   });
 });
+
+describe('SalesOrdersGrid search chips inside a sales agent record', () => {
+  it('S4 guard: pinned to an agent, adding a chip searches but never rewrites the address bar', async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <SalesOrdersGrid salesAgentId="AG1" />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('SO900001');
+
+    await user.type(searchBox(), 'SO1{Enter}SO2{Enter}');
+    // The search still runs, pinned to the agent ...
+    await waitFor(() => {
+      const req = lastListRequest();
+      expect(req.getAll('query')).toEqual(['SO1', 'SO2']);
+      expect(req.get('sales_agent_id')).toBe('AG1');
+    });
+    // ... but the record's own URL is left alone: that address bar belongs to the agent record.
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+});

@@ -223,3 +223,38 @@ describe('ListSearchInput chips mode', () => {
     expect(screen.queryByText(/\b200\b/)).toBeNull();
   });
 });
+
+describe('ListSearchInput chips keyboard (F7)', () => {
+  // The marked chip carries the focus outline (`outline-ring`); nothing else exposes it.
+  const chipEl = (v: string) => screen.getByTitle(v);
+  const marked = () =>
+    ['SO1', 'SO2', 'SO3'].filter((v) => screen.queryByTitle(v)?.className.includes('outline-ring'));
+
+  it('ArrowLeft marks the last chip, again the previous one, Delete removes the marked chip', async () => {
+    const user = setup({ initialChips: ['SO1', 'SO2', 'SO3'] });
+    await user.click(input());
+    expect(marked()).toEqual([]);
+
+    await user.keyboard('{ArrowLeft}');
+    expect(marked()).toEqual(['SO3']);
+    await user.keyboard('{ArrowLeft}');
+    expect(marked()).toEqual(['SO2']);
+    expect(chipEl('SO2').className).toContain('outline-ring');
+
+    await user.keyboard('{Delete}');
+    expect(chipsNow()).toEqual(['SO1', 'SO3']);
+    expect(spies.onChipsChange).toHaveBeenLastCalledWith(['SO1', 'SO3']);
+    expect(input()).toHaveValue('');
+  });
+
+  it('ArrowRight past the last chip unmarks; Delete with nothing marked removes nothing', async () => {
+    const user = setup({ initialChips: ['SO1', 'SO2', 'SO3'] });
+    await user.click(input());
+    await user.keyboard('{ArrowLeft}{ArrowLeft}{ArrowRight}');
+    expect(marked()).toEqual(['SO3']);
+    await user.keyboard('{ArrowRight}');
+    expect(marked()).toEqual([]);
+    await user.keyboard('{Delete}');
+    expect(chipsNow()).toEqual(['SO1', 'SO2', 'SO3']);
+  });
+});
