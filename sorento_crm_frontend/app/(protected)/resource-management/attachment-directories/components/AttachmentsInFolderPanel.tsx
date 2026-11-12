@@ -872,8 +872,10 @@ export default function AttachmentsInFolderPanel({
           ? [moveContextItem.id]
           : []
         : selectedFolderIds;
-      const folderName = (id: string) =>
-        items.find((item) => isFolderItem(item) && item.id === id)?.name ?? 'A folder';
+      const folderName = (id: string) => {
+        const folder = items.find((item) => item.id === id);
+        return folder && isFolderItem(folder) ? folder.name : 'A folder';
+      };
 
       setIsMoving(true);
       setMoveDialogOpen(false);
