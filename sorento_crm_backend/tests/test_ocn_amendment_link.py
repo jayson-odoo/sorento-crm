@@ -33,6 +33,11 @@ def build():
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
         owner = _user(db, "zzt-ocn Sales Admin A")
+        # Lead ruling m17 (round 4): the amendment's author must be able to see the notice
+        # they pick, so the author holds the OCN view grant.
+        from ._forms_chain_support import grant
+
+        grant(db, owner, "procurement.order_change_notices.view")
         numbering_rule(db)
         types = change_types(db)
         with company_scope(db, frozenset({company_id})):

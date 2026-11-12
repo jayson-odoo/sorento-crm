@@ -11,12 +11,14 @@ cleanly (tests/test_ocn_migration.py runs `upgrade()` twice on a blank scratch s
   `projects.order_change_notice_lines` (one catalogue product per line, UUID ids).
 - `system_settings.order_change_notice_require_project` (OFF) and
   `system_settings.order_change_notice_default_approver_user_id`.
-- The `order_change_notice` numbering rule `OCN{yy}-`, 4 digits, yearly.
-- Seven permissions, granted to the roles holding the matching purchase request slug and to the
+- The `order_change_notice` numbering rule `OCN{yy}-`, 4 digits, yearly, one per company.
+- A partial unique index: one amendment per notice (`so_amendments.ocn_id`).
+- Eight permissions, granted to the roles holding the matching purchase request slug and to the
   admin roles (grant ids prefixed `ocn-`, so the downgrade removes only these).
 - SLA: policy `ORDER_CHANGE_NOTICE` with the purchase request policy's tiers, and one
-  `form_sla_configs` row per purchase request stage (main, approval, customer service), linked
-  in the same chain. Only when purchase request rows exist; an existing OCN row is kept.
+  `form_sla_configs` row per purchase request stage (main, approval, customer service), every
+  column copied, linked in the same chain. The policy is the one the purchase request stages use
+  (one company today; a second company's PR policy would need its own copy). Only when purchase request rows exist; an existing OCN row is kept.
 - An enabled `portal_revision_configs` row, which arms the revision fence on every move.
 
 The table has no rows on the 12 Nov production copy, so nothing is backfilled.
@@ -51,12 +53,14 @@ PERMISSIONS = (
     ("procurement.order_change_notices.create", "Create Order Change Notices",
      "Raise, edit and submit your own order change notices."),
     ("procurement.order_change_notices.edit", "Edit Order Change Notices",
-     "Send an order change notice for approval or back to its raiser, mark it done, void or "
-     "revise it."),
+     "Send an order change notice for approval or back to its raiser, edit, void or revise it. "
+     "Includes seeing every notice."),
     ("procurement.order_change_notices.delete", "Delete Order Change Notices",
      "Delete an order change notice."),
     ("procurement.order_change_notices.approve", "Approve Order Change Notices",
-     "Approve or reject an order change notice that is pending approval."),
+     "Approve or reject an order change notice that is pending approval. Includes seeing every notice."),
+    ("procurement.order_change_notices.process", "Mark Order Change Notices Done",
+     "Customer service: mark an approved order change notice done. Includes seeing every notice."),
     ("procurement.order_change_notices.report", "Order Change Notice Report",
      "Read the order change notice report."),
 )
@@ -66,9 +70,10 @@ GRANT_FROM_PR = (
     ("procurement.purchase_requests.view", "procurement.order_change_notices.view"),
     ("procurement.purchase_requests.view_own", "procurement.order_change_notices.view_own"),
     ("procurement.purchase_requests.add", "procurement.order_change_notices.create"),
+    # `.edit` only from the purchase request's triage grant (security review M3); customer
+    # service's processing grant becomes the notice's own Done grant, nothing more.
     ("procurement.purchase_requests.send_for_approval", "procurement.order_change_notices.edit"),
-    # Customer service marks a notice done with `.edit`, as it processes a request.
-    ("procurement.purchase_requests.process", "procurement.order_change_notices.edit"),
+    ("procurement.purchase_requests.process", "procurement.order_change_notices.process"),
     ("procurement.purchase_requests.delete", "procurement.order_change_notices.delete"),
     ("procurement.purchase_requests.approve", "procurement.order_change_notices.approve"),
 )
@@ -195,6 +200,22 @@ def _seeds(bind, p: str) -> None:
             ),
             {"n": name, "r": risk, "g": guide, "pos": position},
         )
+    # One rule per company (each its own counter, UAC A2), as the purchase request's numbering
+    # is; no runtime copying. A company with none (one added later) uses the unscoped rule, which
+    # is seeded only where no OCN rule exists at all.
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO document_numbering_rules (id, company_id, doc_type, enabled, prefix_template,
+                number_digits, next_value, start_value, reset_policy, created_at, updated_at)
+            SELECT gen_random_uuid()::text, c.id, :k, true, 'OCN{yy}-', 4, 1, 1, 'yearly', now(), now()
+              FROM companies c
+             WHERE NOT EXISTS (SELECT 1 FROM document_numbering_rules r
+                                WHERE r.doc_type = :k AND r.company_id = c.id)
+            """
+        ),
+        {"k": KIND},
+    )
     bind.execute(
         sa.text(
             """
@@ -331,11 +352,13 @@ def _sla(bind) -> None:
             f"""
             INSERT INTO form_sla_configs (id, source_entity_type, stage_code, policy_id, agent_code,
                 team_set_code, start_event, respond_event, resolve_event, advance_on_event,
+                grace_seconds, skip_event, skip_terminal_status, skip_action_label,
                 is_active, notify_assignee, notify_on_escalation, created_at, updated_at)
             SELECT gen_random_uuid(), :k, 'ocn_' || COALESCE(pr.team_set_code, 'main'), :p,
                    pr.agent_code, pr.team_set_code, pr.start_event, pr.respond_event,
-                   pr.resolve_event, pr.advance_on_event, pr.is_active, pr.notify_assignee,
-                   pr.notify_on_escalation, now(), now()
+                   pr.resolve_event, pr.advance_on_event,
+                   pr.grace_seconds, pr.skip_event, pr.skip_terminal_status, pr.skip_action_label,
+                   pr.is_active, pr.notify_assignee, pr.notify_on_escalation, now(), now()
               FROM ({_PR_STAGES}) pr
              WHERE NOT EXISTS (SELECT 1 FROM form_sla_configs o WHERE o.source_entity_type = :k
                                 AND o.team_set_code IS NOT DISTINCT FROM pr.team_set_code)
@@ -364,10 +387,21 @@ def _sla(bind) -> None:
     )
 
 
+def _one_notice_per_amendment(bind, p: str) -> None:
+    """One amendment per notice (security review L1): the pick locks the row, this is the backstop."""
+    bind.execute(
+        sa.text(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS uq_so_amendments_ocn_id ON "{p}".so_amendments (ocn_id) '
+            "WHERE ocn_id IS NOT NULL"
+        )
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     p = _schema(bind, "projects")
     _tables(bind, p)
+    _one_notice_per_amendment(bind, p)
     _project_optional(bind, p)
     _seeds(bind, p)
     _permissions(bind)
@@ -400,4 +434,5 @@ def downgrade() -> None:
         sa.text("DELETE FROM document_numbering_rules WHERE doc_type = :k AND prefix_template = 'OCN{yy}-'"),
         {"k": KIND},
     )
+    bind.execute(sa.text(f'DROP INDEX IF EXISTS "{p}".uq_so_amendments_ocn_id'))
     bind.execute(sa.text(f'DROP TABLE IF EXISTS "{p}".order_change_notice_lines'))

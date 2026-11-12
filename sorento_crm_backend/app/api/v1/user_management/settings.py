@@ -136,8 +136,8 @@ class SystemSettingUpdate(BaseModel):
     cost_price_verification_enabled: Optional[bool] = None
     # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
     sample_request_require_project: Optional[bool] = None
-    # OCN-ORDER-CHANGE-NOTICE: Submit needs a project, OFF on deploy. Here and in the GET dict
-    # (Submit itself refuses with the field named, so app-config does not carry it).
+    # OCN-ORDER-CHANGE-NOTICE: Submit needs a project, OFF on deploy. Here, in the GET dict, and in
+    # AppConfigResponse below (the form marks the project required, as the sample request's does).
     order_change_notice_require_project: Optional[bool] = None
     # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
     # Here, in the GET dict, and in AppConfigResponse below.
@@ -297,6 +297,9 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: OCN-ORDER-CHANGE-NOTICE: the order change notice form says whether Submit needs a project,
+    #: and its raisers hold no `user_management.settings.view` (the sample request's reason).
+    order_change_notice_require_project: bool = False
     #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
     #: salesperson who sends holds no `user_management.settings.view`.
     project_autocount_write_enabled: bool = False
@@ -645,6 +648,9 @@ def get_app_config(
             ),
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
+            ),
+            order_change_notice_require_project=bool(
+                getattr(settings, "order_change_notice_require_project", False)
             ),
             project_autocount_write_enabled=bool(
                 getattr(settings, "project_autocount_write_enabled", False)

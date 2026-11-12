@@ -121,6 +121,12 @@ def test_a2_two_companies_each_get_their_own_sequence(ocn):
     from ._sample_request_seed import second_company
 
     other = second_company(ocn.db)
+    # Lead ruling m5 (round 4): each company has its own rule row (the migration seeds one per
+    # company); a company created here gets its row the same way.
+    from ._ocn_support import numbering_rule
+
+    numbering_rule(ocn.db, company_id=SORENTO)
+    numbering_rule(ocn.db, company_id=other)
     s = svc()
     x1 = s.next_ocn_number(ocn.db, SORENTO)
     x2 = s.next_ocn_number(ocn.db, SORENTO)

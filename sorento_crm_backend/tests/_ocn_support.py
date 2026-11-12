@@ -45,7 +45,9 @@ EDIT = "procurement.order_change_notices.edit"
 DELETE = "procurement.order_change_notices.delete"
 APPROVE = "procurement.order_change_notices.approve"
 REPORT = "procurement.order_change_notices.report"
-ALL_SLUGS = (VIEW, VIEW_OWN, CREATE, EDIT, DELETE, APPROVE, REPORT)
+# Lead ruling (round 4, security review M3): customer service's Done has its own slug.
+PROCESS = "procurement.order_change_notices.process"
+ALL_SLUGS = (VIEW, VIEW_OWN, CREATE, EDIT, DELETE, APPROVE, PROCESS, REPORT)
 
 #: The PR chain's shape (tests/test_forms_chain_purchase_request.py), on the three team sets
 #: the plan names: main (project_sales), approval (project_sales_manager), CS (customer_service).
@@ -223,7 +225,7 @@ def ocn(world):  # noqa: F811  (`world` comes from _forms_chain_support)
     o.manager = user(db, "OCN manager")
     grant(db, o.manager, VIEW, APPROVE)
     o.cs = user(db, "OCN customer service")
-    grant(db, o.cs, VIEW, EDIT)
+    grant(db, o.cs, VIEW, EDIT, PROCESS)
     o.viewer = user(db, "OCN viewer")
     grant(db, o.viewer, VIEW)
     o.own = user(db, "OCN own-scope user")
@@ -256,8 +258,8 @@ def sla(ocn):
     grant(ocn.db, main.tier2, VIEW, EDIT)
     grant(ocn.db, approval.tier1, VIEW, APPROVE)
     grant(ocn.db, approval.tier2, VIEW, APPROVE)
-    grant(ocn.db, cs.tier1, VIEW, EDIT)
-    grant(ocn.db, cs.tier2, VIEW, EDIT)
+    grant(ocn.db, cs.tier1, VIEW, EDIT, PROCESS)
+    grant(ocn.db, cs.tier2, VIEW, EDIT, PROCESS)
     ocn.db.commit()
     return SimpleNamespace(chain=chain, main=main, approval=approval, cs=cs)
 

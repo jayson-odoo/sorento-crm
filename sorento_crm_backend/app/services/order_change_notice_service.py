@@ -343,10 +343,14 @@ def _check_refs(db: Session, data: Dict[str, Any], *, current_project_id: Option
         value = data.get(field)
         if value is not None and db.query(User.id).filter(User.id == str(value)).first() is None:
             raise _invalid(field, f"Choose the {word} in charge from the list.")
-    for index, line in enumerate(data.get("lines") or [], start=1):
+    lines = data.get("lines") or []
+    wanted = {str(line.get("product_id")) for line in lines if _is_uuid(line.get("product_id"))}
+    # One query for every line (the company filter applies), not one per line.
+    known = {str(i) for (i,) in db.query(Product.id).filter(Product.id.in_(wanted)).all()} if wanted else set()
+    for index, line in enumerate(lines, start=1):
         if not line.get("product_id"):
             raise _invalid("lines", f"Line {index}: choose a product from the catalogue.")
-        if not _ref_exists(db, Product, line["product_id"]):
+        if str(line["product_id"]) not in known:
             raise _invalid("lines", f"Line {index}: that product is not in the catalogue.")
 
 
@@ -832,7 +836,7 @@ def serialize_summary(
         "ocn_number": row.ocn_number,
         "ocn_date": _iso(row.ocn_date),
         "status": row.status,
-        "status_label": STATUS_LABELS.get(row.status or "", row.status),
+        "status_label": ocn_status_word(row),
         "approval_status": row.approval_status,
         "revision_no": row.revision_no or 0,
         "source": row.source,

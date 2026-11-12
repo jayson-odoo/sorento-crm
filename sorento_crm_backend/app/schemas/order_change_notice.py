@@ -35,21 +35,22 @@ class OrderChangeNoticeWrite(BaseModel):
     project_id: Optional[str] = None
     sales_in_charge_user_id: Optional[str] = None
     cs_in_charge_user_id: Optional[str] = None
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=4000)
     ocn_date: Optional[date] = None
-    lines: Optional[List[OrderChangeNoticeLineIn]] = None
+    #: Capped like the new product application's (security review L3).
+    lines: Optional[List[OrderChangeNoticeLineIn]] = Field(None, max_length=100)
 
 
 class ReasonIn(BaseModel):
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(None, max_length=4000)
 
 
 class DecisionIn(BaseModel):
     """The purchase request's approval-decision body."""
 
     action: str  # "approved" | "rejected"
-    comments: Optional[str] = None
+    comments: Optional[str] = Field(None, max_length=4000)
 
 
 class DoneIn(BaseModel):
-    cs_comment: Optional[str] = None
+    cs_comment: Optional[str] = Field(None, max_length=4000)

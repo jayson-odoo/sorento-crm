@@ -44,12 +44,28 @@ def _load(db: Session, ocn_id: str, *, for_update: bool = False):
     return svc.get_for(db, validate_uuid_path(ocn_id, resource="Order change notice"), for_update=for_update)
 
 
+def _readable(db: Session, user: dict, ocn_id: str, *, for_update: bool = False):
+    """The notice and the actor, after the reader check: a grant first (403 without one), then
+    the row in the caller's company and `assert_can_view` (404 when it is not theirs to see)."""
+    actor = _reader(db, user)
+    row = _load(db, ocn_id, for_update=for_update)
+    svc.assert_can_view(row, actor)
+    return row, actor
+
+
+#: What each stage move needs, checked BEFORE the dispatcher may park it (security review M1):
+#: a user without it gets 403 at once, never a countdown that fails at commit.
+_MOVE_NEEDS = {
+    "edit": ("can_edit", "You cannot send order change notices for approval or back."),
+    "approve": ("can_approve", "You cannot approve or reject order change notices."),
+    "process": ("can_process", "You cannot mark order change notices done."),
+}
+
+
 def _move(db: Session, user: dict, ocn_id: str, fn, **kw):
     """The raiser's and the editor's own moves (submit, void, revise): no stage lock."""
     try:
-        row = _load(db, ocn_id, for_update=True)
-        actor = _actor(db, user)
-        svc.assert_can_view(row, actor)
+        row, actor = _readable(db, user, ocn_id, for_update=True)
         event = fn(db, row, actor=actor, **kw)
         return svc.finish(db, row, event, actor.user_id)
     except Exception:
@@ -58,15 +74,17 @@ def _move(db: Session, user: dict, ocn_id: str, fn, **kw):
 
 
 def _stage_work(db: Session, user: dict, request: Request, ocn_id: str, *, action_key: str,
-                entity_type: str, payload: dict, event_name: str):
+                entity_type: str, payload: dict, event_name: str, needs: str):
     """A stage move: the record is checked and the handling lock applied here, then the
     deferred-action dispatcher runs it now or parks it (`form_actions` `ocn.*`). A parked one
     answers the dispatcher's 202 body as is."""
     from app.services.form_action_dispatch import dispatch_or_defer
 
     try:
-        row = _load(db, ocn_id)
-        svc.assert_can_view(row, _actor(db, user))
+        row, actor = _readable(db, user, ocn_id)
+        flag, refusal = _MOVE_NEEDS[needs]
+        if not getattr(actor, flag):
+            raise AppException(status_code=403, message=refusal, code="FORBIDDEN")
         assert_can_act_on_form(db, str(row.id), user, source_entity_type=svc.ENTITY)
         outcome = dispatch_or_defer(
             db,
@@ -145,8 +163,7 @@ def create_notice(
 
 @router.get("/{ocn_id}")
 def get_notice(ocn_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    row = _load(db, ocn_id)
-    svc.assert_can_view(row, _actor(db, user))
+    row, _actor_ = _readable(db, user, ocn_id)
     return svc.serialize_detail(db, row)
 
 
@@ -161,9 +178,7 @@ def update_notice(
     db: Session = Depends(get_db),
 ):
     try:
-        row = _load(db, ocn_id, for_update=True)
-        actor = _actor(db, user)
-        svc.assert_can_view(row, actor)
+        row, actor = _readable(db, user, ocn_id, for_update=True)
         svc.update(db, row, actor=actor, data=payload.model_dump(exclude_unset=True))
         return svc.finish(db, row, None, actor.user_id)
     except Exception:
@@ -193,6 +208,7 @@ def send_for_approval(
         db, user, request, ocn_id,
         action_key="ocn.send_for_approval",
         entity_type="order_change_notice",
+        needs="edit",
         payload={"actor_user_id": user.get("id")},
         event_name="send_for_approval",
     )
@@ -213,6 +229,7 @@ def reject_submitted(
         db, user, request, ocn_id,
         action_key="ocn.reject_submitted",
         entity_type="order_change_notice",
+        needs="edit",
         payload={"rejection_reason": payload.reason, "actor_user_id": user.get("id")},
         event_name="reject_submitted",
     )
@@ -233,6 +250,7 @@ def approval_decision(
         db, user, request, ocn_id,
         action_key="ocn.approval_decision",
         entity_type="order_change_notice",
+        needs="approve",
         payload={
             "action": payload.action,
             "approval_comments": payload.comments,
@@ -257,6 +275,7 @@ def mark_done(
         db, user, request, ocn_id,
         action_key="ocn.finalize",
         entity_type="order_change_notice",
+        needs="process",
         payload={
             "new_status": svc.DONE,
             "note": payload.cs_comment if payload else None,

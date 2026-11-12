@@ -81,9 +81,15 @@ def _authorize_log_read(
     user_id = str(current_user["id"])
     if _is_audit_admin(db, user_id):
         return True
-    slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
-    if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
-        raise _forbidden()
+    if entity_type == "order_change_notice" and entity_id:
+        # The notice's own reader rule, the same check as its page, Conversation and SLA tab.
+        from app.services import order_change_notice_service as ocn
+
+        ocn.reader_for(db, entity_id, user_id)
+    else:
+        slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
+        if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
+            raise _forbidden()
     # The only company check downstream is admin_listing_company_filter, which is not
     # fail-closed: UNSET or an empty set means "every company", safe only for an admin.
     # A non-admin with no active company (no grant left after offboarding, a deleted

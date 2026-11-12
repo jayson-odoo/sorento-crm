@@ -106,7 +106,18 @@ def _require_tracker_reader(
     source_entity_type: Optional[str],
     source_entity_id: Optional[str] = None,
 ) -> None:
-    _require_any(db, current_user, tracker_reader_slugs(source_entity_type))
+    if source_entity_type == "order_change_notice" and source_entity_id:
+        # The SLA module's readers, or whoever can open the notice itself (its own reader rule,
+        # the same as its page, Conversation and History).
+        try:
+            _require_any(db, current_user, SLA_READERS)
+        except HTTPException:
+            from app.services import order_change_notice_service as ocn
+
+            ocn.reader_for(db, str(source_entity_id), str(current_user["id"]))
+            return
+    else:
+        _require_any(db, current_user, tracker_reader_slugs(source_entity_type))
     _require_source_visible(db, source_entity_type, source_entity_id)
 
 

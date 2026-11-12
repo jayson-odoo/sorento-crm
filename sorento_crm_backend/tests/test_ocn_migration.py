@@ -29,7 +29,8 @@ KIND = "order_change_notice"
 SORENTO = "00000000-0000-0000-0000-000000000001"
 OCN_SLUGS = tuple(
     f"procurement.order_change_notices.{s}"
-    for s in ("view", "view_own", "create", "edit", "delete", "approve", "report")
+    # Lead ruling (round 4): `.process` (Done) joins the seven.
+    for s in ("view", "view_own", "create", "edit", "delete", "approve", "process", "report")
 )
 
 

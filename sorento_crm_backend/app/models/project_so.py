@@ -839,6 +839,13 @@ class SOAmendment(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_so_amendments_order", "project_sales_order_id"),
+        # One amendment per order change notice (OCN-ORDER-CHANGE-NOTICE, migration ocn_0001).
+        Index(
+            "uq_so_amendments_ocn_id",
+            "ocn_id",
+            unique=True,
+            postgresql_where=text("ocn_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 

@@ -285,9 +285,10 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.order_change_notices.view", "name": "View Order Change Notices", "description": "See every order change notice of your companies."},
     {"slug": "procurement.order_change_notices.view_own", "name": "View Own Order Change Notices", "description": "See only the order change notices you raised or are named on as sales or customer service in charge. Ignored when View Order Change Notices is also held."},
     {"slug": "procurement.order_change_notices.create", "name": "Create Order Change Notices", "description": "Raise, edit and submit your own order change notices."},
-    {"slug": "procurement.order_change_notices.edit", "name": "Edit Order Change Notices", "description": "Send an order change notice for approval or back to its raiser, mark it done, void or revise it."},
+    {"slug": "procurement.order_change_notices.edit", "name": "Edit Order Change Notices", "description": "Send an order change notice for approval or back to its raiser, edit, void or revise it. Includes seeing every notice."},
     {"slug": "procurement.order_change_notices.delete", "name": "Delete Order Change Notices", "description": "Delete an order change notice."},
-    {"slug": "procurement.order_change_notices.approve", "name": "Approve Order Change Notices", "description": "Approve or reject an order change notice that is pending approval."},
+    {"slug": "procurement.order_change_notices.approve", "name": "Approve Order Change Notices", "description": "Approve or reject an order change notice that is pending approval. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.process", "name": "Mark Order Change Notices Done", "description": "Customer service: mark an approved order change notice done. Includes seeing every notice."},
     {"slug": "procurement.order_change_notices.report", "name": "Order Change Notice Report", "description": "Read the order change notice report."},
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))

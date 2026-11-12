@@ -65,7 +65,9 @@ REVISABLE_PORTAL_FORM_TYPES = tuple(
 
 # Rows a list must not show although they exist: a type whose revisions this
 # settings page no longer governs.
-_HIDDEN_CONFIG_TYPES = frozenset({"price_tag_request"})
+# The order change notice's row arms its revision fence and is office-only (OCN-ORDER-CHANGE-
+# NOTICE): switching it off here would silently drop the fence, so it is not listed.
+_HIDDEN_CONFIG_TYPES = frozenset({"price_tag_request", "order_change_notice"})
 
 
 class PortalRevisionConfigResponse(BaseModel):

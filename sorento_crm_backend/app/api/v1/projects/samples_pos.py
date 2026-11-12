@@ -533,6 +533,8 @@ def list_project_sponsorships(
 )
 def list_project_order_change_notices(
     project_id: str,
+    # The amendment dialog's pick: only the notices an amendment may take (`linkable_clause`).
+    linkable: bool = Query(False),
     user: dict = Depends(
         require_any_permission(
             ["procurement.order_change_notices.view", "procurement.order_change_notices.view_own"]
@@ -548,7 +550,7 @@ def list_project_order_change_notices(
         from app.services import order_change_notice_service as ocn
 
         actor = ocn.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
-        return _envelope(ocn.list_for_project(db, project_id, actor=actor))
+        return _envelope(ocn.list_for_project(db, project_id, actor=actor, linkable=linkable))
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
