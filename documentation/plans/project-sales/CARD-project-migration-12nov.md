@@ -241,7 +241,7 @@ Both are seeded to admin. Every route checks one of them and the company scope.
    - PS number, Customer and PO number are required. Without them, Next stays disabled and a message sits next to the missing field.
 4. **Step "Values".** Line tabs: Customers | Projects | Developers | People. Each tab is a DataGrid listing one line per distinct value in the file (trimmed, spaces collapsed, upper-cased, so only case and spacing variants fold together). Columns: Value in file | Rows | Linked to | Set by.
    - **Linked to** is a picker per line:
-     - Customers: an existing customer by name or debtor code (`CustomerDebtorCombobox`), or Skip.
+     - Customers: an existing customer by name or debtor code (the register form's customer picker), or Skip.
      - Projects: one line per (customer, project name) pair. Options: an existing project by code or title, **Create new** (title prefilled with the file's text, editable; lines given the same new title become ONE project), or Skip.
      - Developers: an existing developer party, Create new, or None.
      - People: an existing user, or None.

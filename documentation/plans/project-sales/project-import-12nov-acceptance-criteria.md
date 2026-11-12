@@ -165,7 +165,7 @@ Terms:
 - AC-PI-46: Values: line tabs with "N to do" counts.
   - Each tab is a DataGrid: Value in file, Rows, Linked to (picker), Set by.
   - Bulk "Set to" acts on ticked lines.
-  - Customer picker = `CustomerDebtorCombobox`; others = `SearchableSelect`.
+  - Customer picker = `SearchableSelect` + `useFetchCustomerOptions` (the register form's customer picker; `CustomerDebtorCombobox` is the portal's free-text debtor box); others = `SearchableSelect`.
 - AC-PI-47: Preview:
   - outcome tiles, a rows DataGrid (Sheet, Row, PS no., Customer, Project, PO no., PO date, Outcome, Reason);
   - Outcome / Reason / Sheet are multi-select filters;

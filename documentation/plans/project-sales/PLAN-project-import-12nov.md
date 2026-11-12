@@ -128,7 +128,7 @@ Global guards: `tests/test_schema_uuid_id_principle.py`, `tests/test_list_pagina
 ## Reuse (crew-done lists these)
 
 `normalize_header`, `every_sheet_rows`, `to_date` (promoted), `ImportOutcome` + codes, `import_jobs` / `import_job_rows`, `import_field_alias`, `register_project(skip_clash_check=True)`, `create_po`, `create_party` (only for a "create" developer line), `ProjectSOAdoptionService.adopt_for_migration`, `ledger_family_key` + `customer_group_id`, pending actions + `record_actions`, `stamp_actor`.
-FE: `FileDropzone`, `WizardSteps`, `ImportColumnMapper`, `DataGrid` + `buildDataGridParams`, `CustomerDebtorCombobox`, `SearchableSelect`/`SearchableMultiSelect`, `userSelectService`, `OutcomeBreakdownCard`, `ImportJobRowsCard`, `useImportJobDrawer`, `DeferredActionButton`, `AuditTrail`, `PageHeader`, `RecordNavigation`, `formatDate`.
+FE: `FileDropzone`, `WizardSteps`, `ImportColumnMapper`, `DataGrid` + `buildDataGridParams`, `SearchableSelect`/`SearchableMultiSelect` (customer via `useFetchCustomerOptions`), `userSelectService`, `OutcomeBreakdownCard`, `ImportJobRowsCard`, `useImportJobDrawer`, `DeferredActionButton`, `AuditTrail`, `PageHeader`, `RecordNavigation`, `formatDate`.
 
 ## DoD (beyond PRINCIPLES)
 

@@ -238,7 +238,7 @@ code{overflow-wrap:anywhere;font-size:12px;background:var(--muted);padding:1px 4
 <tr><td>Steps row (Columns, Values, Preview, Import)</td><td><code>components/common/WizardSteps.tsx</code></td></tr>
 <tr><td>Columns step (sample / heading / field, Ignore, saved headings)</td><td><code>components/common/ImportColumnMapper.tsx</code> over the header probe; headings saved in <code>import_field_alias</code> (<code>sorento_crm_backend/app/models/import_alias.py</code>) under doc type <code>project_po_register</code></td></tr>
 <tr><td>Values tabs</td><td><code>components/ui/tabs.tsx</code> <code>variant="line"</code></td></tr>
-<tr><td>Linked to: customer</td><td><code>components/common/CustomerDebtorCombobox.tsx</code> (name or debtor code)</td></tr>
+<tr><td>Linked to: customer</td><td><code>components/common/SearchableSelect.tsx</code> + <code>useFetchCustomerOptions</code> (the register form's customer picker, name or debtor code)</td></tr>
 <tr><td>Linked to: project / developer / person</td><td><code>components/common/SearchableSelect.tsx</code>; persons through <code>services/userSelectService</code></td></tr>
 <tr><td>Bulk action on ticked lines</td><td>the DataGrid selection + one action dropdown; each line calls the same save as the single picker</td></tr>
 <tr><td>Preview outcome tiles + rows, Results breakdown + rows</td><td><code>app/(protected)/system-management/import-jobs/components/OutcomeBreakdownCard.tsx</code>, <code>ImportJobRowsCard.tsx</code>; codes in <code>sorento_crm_backend/app/services/import_outcome_codes.py</code></td></tr>
