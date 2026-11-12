@@ -1,6 +1,6 @@
 # PLAN: Spare-part order request (stock replenishment, no SO)
 
-Status: Plan, behaviour card filed as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
+Status: Plan, mock v2 + card v2 filed as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
 
 Lane: SPARE-PART-ORDER-REQUEST.
 
@@ -29,7 +29,7 @@ purchasing works it in the same place as SO-driven inquiries.
   `[id]/components/OrderInquiryDetail.tsx`, `OrderInquiryLinesTab.tsx`), service
   `_shared/services/orderInquiryService.ts`, hooks `_shared/hooks/useOrderInquiry.ts`.
 
-Decision: **extend** OrderInquiry with `inquiry_type` (`sales_order` default, `stock_replenishment`) and make
+Decision: **extend** OrderInquiry with `inquiry_type` (`sales_order` default, `spare_part_request`, `consignment_request`) and make
 `project_sales_order_id` nullable behind a CHECK (`inquiry_type <> 'sales_order' OR project_sales_order_id IS NOT NULL`).
 Risk measured: 83 reads of `project_sales_order_id` in inquiry code across 27 files; every read that
 dereferences the order must tolerate a typeless-SO header (tests list each surface the type reaches:
@@ -87,4 +87,6 @@ See the crew-ask comment on PR #2381. Answers are recorded here once relayed.
 
 - Mock v1 note 1 (12 Nov 18:48): location per line like AutoCount; header default optional. Reuse: `sorento_crm_backend/app/services/scm/location_stock_service.py:35` (`location_stock_for_product`, behind `GET /scm/reorder-runs/location-stock`, `app/api/v1/scm/reorder_runs.py:511`); OI row's existing `stock_location` (`app/models/project_so.py:1018`). Mock v2 filed.
 - Mock v1 note 2: reuse list posted as a crew-note on PR #2381.
-- Card questions 1-5: (pending)
+- Mock v1 note 3: request detail laid out like the Sales Order screen (`sorento_crm_frontend/app/(protected)/scm/sales-orders/[id]/components/SalesOrderDetail.tsx`: header card `:1745`, tabs `:1881`, General cards `:1921`/`:2156`/`:2196`; local `Field` `:256` lifted to a shared component). Mock v2.
+- Mock v1 note 4: request type Spare part / Consignment; OI `inquiry_type` values `sales_order` | `spare_part_request` | `consignment_request`; consignment reuses `ConsignmentBadge` (`app/(protected)/scm/lib/docType.ts`). Differences asked as card v2 Q5.
+- Card v2 questions 1-5: (pending)
