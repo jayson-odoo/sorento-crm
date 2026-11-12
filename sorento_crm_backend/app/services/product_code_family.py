@@ -3,19 +3,18 @@
 Owner hand test of rounds 4 to 6 on PR #833 (27 Sep 2026, items 2 to 4). A salesperson
 types the code she knows and the variant she wants in plain words: "I need srtwc8840 s
 trap bowl only price", "Srtwc8840 bowl only price", "Srtwc7604 p trap price". The code
-names a family (SRTWC8840-SC, SRTWC8840-LID, ...); the words after it pick the variant.
-Before this, the words either opened a category set of unrelated S trap water closets, were
-ignored, or were folded into the code ("Srtwc7604ptrap") so that nothing matched.
+names a family (SRTWC8840-SC, SRTWC8840-LID and the X-prefixed bowls SRTWCX8840-P and
+SRTWCX8840-S); the words after it pick the variant. Before this, the words either opened a
+category set of unrelated S trap water closets, were ignored, or were folded into the code
+("Srtwc7604ptrap") so that nothing matched.
 
 The rule, in order:
   1. A token is a code token when a word of the message is letters then digits and the
      token starts with it (the lane folds "Srtwc7604 p trap" into one token, so the word
      is read back off the message).
   2. The family is every active product whose code, with separators removed, starts with
-     that word and does not go on with another digit (8840 is not 88401). No letter is read
-     into the code (CHATBOT-CODE-MATCH AC-24 removed the "X after the letters" insert): a
-     code outside the word's family is reached through a registered product set's members
-     or offered as a close code.
+     that word, or with the same word with an "X" after its letters (SRTWC7604 and
+     SRTWCX7604), and does not go on with another digit (8840 is not 88401).
   3. The other words of the code's OWN LINE of the message are matched against each
      variant's code, name, description and spec values: first two-word phrases ("p trap",
      "seat cover"), then single words of three letters or more. A word no variant carries
@@ -86,7 +85,7 @@ def _family_rows(
 
     letters, rest = _CODE_WORD.match(code_word).groups()  # type: ignore[union-attr]
     boundary = "([^0-9]|$)" if not loose or rest[-1].isdigit() else ""
-    body = f"{re.escape(letters)}{re.escape(rest)}{boundary}"
+    body = f"({re.escape(letters)}|{re.escape(letters)}X){re.escape(rest)}{boundary}"
     folded_code = func.upper(func.regexp_replace(Product.product_code, "[^A-Za-z0-9]", "", "g"))
 
     def fetch(pattern: str):

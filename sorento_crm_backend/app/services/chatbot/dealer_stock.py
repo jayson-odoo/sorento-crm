@@ -132,7 +132,8 @@ def did_you_mean(
         code = _code_of(row)
         if not code or not row.get("uuid"):
             continue
-        if row.get("entity_type") not in (None, "product"):
+        # CHATBOT-CODE-MATCH R3: a close registered set is offered beside its members.
+        if row.get("entity_type") not in (None, "product", "product_set"):
             continue
         options.append(
             {
@@ -140,7 +141,7 @@ def did_you_mean(
                 "label": str(code),
                 "code": str(code),
                 "uuid": str(row["uuid"]),
-                "entity_type": "product",
+                "entity_type": row.get("entity_type") or "product",
             }
         )
     options = options[:MAX_SLOTS]

@@ -4929,8 +4929,8 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
     if isinstance(matches, list):
         acc.extend(matches)
     alternatives = jsc.get(res, "alternatives")
-    if isinstance(alternatives, list):
-        acc.extend(alternatives)
+    close = alternatives if isinstance(alternatives, list) else []
+    acc.extend(close)
 
     def cust_key(match: Any) -> str:
         display = jsc.get(match, "display")
@@ -4952,7 +4952,12 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
         if _ms_is_exact(match):
             continue  # exact would have resolved
         entity_type = jsc.get(match, "entity_type")
-        if allowed_types is not None and jsc.truthy(entity_type) and entity_type not in allowed_types:
+        # CHATBOT-CODE-MATCH R3: a set answers a product ask (CHATBOT-SET-STOCK), so a set
+        # code CLOSE to the token (its trigram alternatives) is a product ask's candidate
+        # wherever products are. A set the token's own probe matched keeps today's rule.
+        close_set = entity_type == "product_set" and any(match is a for a in close)
+        allowed_as = "product" if close_set else entity_type
+        if allowed_types is not None and jsc.truthy(entity_type) and allowed_as not in allowed_types:
             continue
         key = (
             cust_key(match)
@@ -4979,7 +4984,43 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
     )
     for i, match in zip(slots, ranked):
         keep[i] = match
-    return keep
+    return _set_then_its_members(keep, first, close)
+
+
+def _set_then_its_members(keep: list, first: int, close: list) -> list:
+    """CHATBOT-CODE-MATCH R3: a close registered set leads the offer, then its member products
+    in the membership table's order (the resolver's set row carries them,
+    `entity_resolver._product_set_entities`), then the other candidates, a code never twice.
+    Only a close set (the token's trigram `alternatives`, never one its own probe matched)
+    and only one the contact may be told about (`visible_set_clauses`)."""
+    at = next(
+        (
+            i
+            for i in range(first, len(keep))
+            if jsc.js_string(jsc.get(keep[i], "entity_type") or "").lower() == "product_set"
+            and any(keep[i] is a for a in close)
+        ),
+        None,
+    )
+    if at is None:
+        return keep
+    product_set = keep[at]
+    display = jsc.get(product_set, "display")
+    members = [
+        {
+            "entity_type": "product",
+            "canonical_code": jsc.get(m, "product_code"),
+            "uuid": jsc.get(m, "uuid"),
+            "match_tier": "set_member",
+            "similarity": jsc.get(product_set, "similarity"),
+        }
+        for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
+        if isinstance(m, dict) and jsc.truthy(jsc.get(m, "product_code")) and jsc.truthy(jsc.get(m, "uuid"))
+    ]
+    group = [product_set, *members]
+    codes = {jsc.get(g, "canonical_code") for g in group}
+    rest = [m for i, m in enumerate(keep[first:], first) if i != at and jsc.get(m, "canonical_code") not in codes]
+    return keep[:first] + group + rest
 
 
 #: The entity kinds whose did-you-mean is a code, ranked by the typed parts it holds.

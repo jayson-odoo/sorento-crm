@@ -17,7 +17,7 @@ from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
 from tests.chatbot._avail_mode_console import Stock, _seed
-from tests.chatbot._r9_engine_console import product, stock
+from tests.chatbot._r9_engine_console import answer, product, reply, stock
 from tests.chatbot.test_code_match_dealer_offers import TICK, Console, _console, _option_codes, _word
 from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
 from tests.chatbot.test_engine_company_scope import _seed_company, _seed_product
@@ -76,6 +76,51 @@ def test_ac1_a_near_set_code_offers_the_set_then_its_members_and_answers_nothing
     _as_staff(c)
     c.say(f"{typed} x 2", stock(product(typed, 2)))
     assert _option_codes(c) == offered, (_option_codes(c), offered)
+
+
+# --------------------------------------------------------------------------- AC-1b
+
+
+def _full_stock_console(session_factory, monkeypatch, stub_access) -> Console:  # noqa: F811
+    return _set_console(
+        session_factory, monkeypatch, stub_access, **{"TWCA604_P_RL": Stock(on_hand=100), "TWCB604_RL": Stock(on_hand=100)}
+    )
+
+
+def _pick(*positions: int):
+    return reply(reference_positions=list(positions), open_question_answer=answer("pick", picked=list(positions)))
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac1b_picking_the_offered_set_answers_the_set_at_the_carried_quantity(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _full_stock_console(session_factory, monkeypatch, stub_access)
+    if who == "staff":
+        _as_staff(c)
+    reference = c.say("TWC604-P-RL x 2", stock(product("TWC604-P-RL", 2)))  # the exact set ask
+    assert "Did you mean" not in reference and c.stored_question is None, reference
+
+    c.state = None
+    c.say("TWC604RL x 2", stock(product("TWC604RL", 2)))
+    offered = _option_codes(c)
+    assert offered[:1] == [SET], offered
+    text = c.say("1", _pick(1))
+    assert text == reference, (text, reference)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac1b_picking_a_member_option_answers_that_member_at_the_carried_quantity(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _full_stock_console(session_factory, monkeypatch, stub_access)
+    if who == "staff":
+        _as_staff(c)
+    reference = c.say(f"{MEMBERS[0]} x 2", stock(product(MEMBERS[0], 2)))  # the member asked exactly
+    c.state = None
+    c.say("TWC604RL x 2", stock(product("TWC604RL", 2)))
+    offered = _option_codes(c)
+    assert offered == [SET, *MEMBERS], offered
+    text = c.say(str(offered.index(MEMBERS[0]) + 1), _pick(offered.index(MEMBERS[0]) + 1))
+    assert text == reference, (text, reference)
+    if who == "dealer":
+        assert text == f"{MEMBERS[0]} x 2: {TICK} Got stock.", text
 
 
 # --------------------------------------------------------------------------- AC-3
