@@ -70,6 +70,7 @@ import type {
 } from '../types/orderInquiry.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { searchQueryValue } from '@/lib/searchChips';
 
 export const ORDER_INQUIRY_ROWS_KEY = 'project-order-inquiry-rows';
 export const ORDER_INQUIRY_SUMMARY_KEY = 'project-order-inquiry-summary';
@@ -124,7 +125,10 @@ function orderInquiryHeaderListParamsFromUrl(
     limit: params.pageSize,
     sort: params.sorting?.[0]?.id ?? 'raised_at',
     dir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
-    query: params.searchQuery || undefined,
+    // Every `query` on the URL, as the list holds its chips.
+    query: searchQueryValue(
+      params.searchQueries ?? (params.searchQuery ? [params.searchQuery] : []),
+    ),
     state:
       (params.filters.state as OrderInquiryHeaderListParams['state']) || 'outstanding',
     raised_by: params.filters.raised_by || undefined,

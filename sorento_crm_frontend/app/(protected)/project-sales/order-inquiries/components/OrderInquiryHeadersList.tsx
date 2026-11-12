@@ -35,10 +35,13 @@ import {
   splitMulti,
   splitText,
 } from '@/lib/list-filters/multiValue';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight } from '@/hooks/useDebouncedSearch';
+import { useListChipSearch } from '@/hooks/useListChipSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { searchQueryValue } from '@/lib/searchChips';
+import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getUserLookup } from '@/services/userSelectService';
 import { toast } from '@/lib/toast';
@@ -119,12 +122,17 @@ export function OrderInquiryHeadersList() {
     if (!sort) return DEFAULT_SORTING;
     return [{ id: sort, desc: searchParams.get('dir') === 'desc' }];
   });
+  // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; a header
+  // matching any of them is listed. Every `query` on the URL opens as a chip.
   const {
-    value: searchInput,
-    setValue: setSearchInput,
-    debouncedValue: searchQuery,
+    searchInput,
+    setSearchInput,
+    chips: searchChips,
+    setChips: setSearchChips,
+    searchTerms,
+    searchTermsKey,
     isSettling: searchSettling,
-  } = useDebouncedSearch(searchParams.get('query') ?? '');
+  } = useListChipSearch(searchParams.getAll('query'));
   // Raised by (ids) rides comma-joined. Agent (a name) and Project (a title) are free text, so one entry
   // per value and a repeated param, never joined.
   const [raisedByFilter, setRaisedByFilter] = useState(() =>
@@ -151,7 +159,7 @@ export function OrderInquiryHeadersList() {
     // Outstanding is the default only when nothing widens the default view: with an email's
     // OI list or a reserve status in the URL it is written, so a reload keeps the choice.
     if (stateInUrl) next.set('state', stateFilter);
-    if (searchQuery) next.set('query', searchQuery);
+    for (const term of searchTerms) next.append('query', term);
     const sort = sorting[0];
     if (sort && (sort.id !== 'raised_at' || sort.desc)) {
       next.set('sort', sort.id);
@@ -170,7 +178,7 @@ export function OrderInquiryHeadersList() {
   }, [
     stateFilter,
     stateInUrl,
-    searchQuery,
+    searchTerms,
     sorting,
     pagination.pageIndex,
     pagination.pageSize,
@@ -186,7 +194,7 @@ export function OrderInquiryHeadersList() {
 
   useResetPageOnFilterChange(setPagination, [
     stateFilter,
-    searchQuery,
+    searchTermsKey,
     raisedByFilter,
     agentFilter,
     projectFilter,
@@ -199,7 +207,7 @@ export function OrderInquiryHeadersList() {
     setRowSelection({});
   }, [
     stateFilter,
-    searchQuery,
+    searchTermsKey,
     raisedByFilter,
     agentFilter,
     projectFilter,
@@ -212,7 +220,7 @@ export function OrderInquiryHeadersList() {
   const params = useMemo<OrderInquiryHeaderListParams>(
     () => ({
       state: stateFilter,
-      query: searchQuery || undefined,
+      query: searchQueryValue(searchTerms),
       raised_by: raisedByFilter || undefined,
       agent: agentFilter.length ? agentFilter : undefined,
       project: projectFilter.length ? projectFilter : undefined,
@@ -225,7 +233,7 @@ export function OrderInquiryHeadersList() {
     }),
     [
       stateFilter,
-      searchQuery,
+      searchTerms,
       raisedByFilter,
       agentFilter,
       projectFilter,
@@ -293,7 +301,12 @@ export function OrderInquiryHeadersList() {
 
   const detailSearch = useMemo(() => {
     const base = buildDetailSearch(
-        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: searchTerms,
+        },
         {
           state: stateInUrl ? stateFilter : undefined,
           raised_by: raisedByFilter || undefined,
@@ -310,7 +323,7 @@ export function OrderInquiryHeadersList() {
     pagination.pageIndex,
     pagination.pageSize,
     sorting,
-    searchQuery,
+    searchTerms,
     stateInUrl,
     stateFilter,
     raisedByFilter,
@@ -553,7 +566,7 @@ export function OrderInquiryHeadersList() {
     (projectFilter.length ? 1 : 0) +
     (reserveFilter ? 1 : 0) +
     (inquiryNoFilter ? 1 : 0);
-  const isFiltered = Boolean(searchQuery) || filtersActive > 0;
+  const isFiltered = searchTerms.length > 0 || filtersActive > 0;
 
   // AC-HL-07: Outstanding empty is a work-queue empty state with a way out; All empty is
   // a genuinely empty book. Anything narrowed by search/filter reads as a search miss,
@@ -588,9 +601,11 @@ export function OrderInquiryHeadersList() {
                 <ListSearchInput
                   value={searchInput}
                   onChange={setSearchInput}
-                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  chips={searchChips}
+                  onChipsChange={setSearchChips}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
                   placeholder="Search OI, SO, customer, project or product..."
-                  className="w-64"
+                  className={cn('w-full', searchChips.length ? 'md:w-[420px]' : 'md:w-64')}
                 />
                 <ToggleGroup
                   type="single"
