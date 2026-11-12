@@ -387,15 +387,21 @@ def prune_reorder_runs(
             ReorderRecommendation.run_id == ReorderRun.id,
         )
 
-    eligible = [
+    candidate = [
         ReorderRun.superseded_by_run_id.isnot(None),
         ReorderRun.created_at < _cutoff(retention_days),
         ~touched_by(RecommendationOverride),
         ~touched_by(PlanRowDecision),
     ]
+    # A run another remaining run names as its superseder stays: the link is ON DELETE SET
+    # NULL, so deleting it would turn that run (kept for a decision) back into a current
+    # one. Re-checked per run, so an undecided chain drains oldest first in one call.
+    pointer = aliased(ReorderRun)
+    eligible = candidate + [~exists().where(pointer.superseded_by_run_id == ReorderRun.id)]
     if dry_run:
         return rule_result(
-            "reorder_run_prune", dry_run=True, finished=True, runs_deleted=_count(db, ReorderRun, eligible)
+            "reorder_run_prune", dry_run=True, finished=True,
+            runs_deleted=_predict_reorder_runs_deleted(db, ReorderRun, candidate),
         )
 
     budget = Budget(sleep_ms=sleep_ms, max_seconds=max_seconds)
@@ -439,6 +445,31 @@ def prune_reorder_runs(
         db.commit()
         last = (nxt[1], run_id)
     return rule_result("reorder_run_prune", dry_run=False, finished=finished, runs_deleted=runs_deleted)
+
+
+def _predict_reorder_runs_deleted(db: Session, ReorderRun, candidate: list) -> int:
+    """What the live loop deletes, without writing: walk the candidates in its order
+    (oldest first) and take one once every run naming it as superseder is already taken."""
+    ordered = [
+        row[0]
+        for row in db.execute(
+            select(ReorderRun.id).where(*candidate).order_by(ReorderRun.created_at, ReorderRun.id)
+        )
+    ]
+    if not ordered:
+        return 0
+    pointers: dict = {}
+    for run_id, target in db.execute(
+        select(ReorderRun.id, ReorderRun.superseded_by_run_id).where(
+            ReorderRun.superseded_by_run_id.in_(ordered)
+        )
+    ):
+        pointers.setdefault(target, []).append(run_id)
+    gone: set = set()
+    for run_id in ordered:
+        if all(p in gone for p in pointers.get(run_id, ())):
+            gone.add(run_id)
+    return len(gone)
 
 
 def prune_superseded_embeddings(
