@@ -617,3 +617,24 @@ def test_ac20g_a_discontinued_code_typed_exactly_keeps_todays_reply(session_fact
         assert text == f"CB3109A x 1: {TICK} Got stock.\n⚠️  *(PRODUCT DISCONTINUED)*", text
     else:
         assert "*Product Code:* CB3109A" in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20h_a_discontinued_code_found_only_inside_the_typed_token_is_not_offered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    code = "BRC21120UW-2-MY"  # active, discontinued; "C21120UW-2-MY" is a substring of it
+    c = _console(session_factory, monkeypatch, stub_access, [code], **{"BRC21120UW_2_MY": Stock(on_hand=100, discontinued=True)})
+    db = session_factory()
+    try:
+        db.execute(sql_text("UPDATE products SET is_discontinued = true WHERE product_code = :c"), {"c": code})
+        db.commit()
+    finally:
+        db.close()
+    if who == "staff":
+        c.as_staff()
+    typed = "C21120UW-2-MY"
+    text = c.say(f"{typed} x 1", stock(product(typed, 1)))
+    assert "Did you mean" not in text, text
+    assert not _word(code, text), text
+    assert code not in str(c.stored_question), c.stored_question
+    assert "Couldn't find" in text, text  # today's no-candidate reply
+    assert TICK not in text and "Stock summary" not in text and "How many units of" not in text, text

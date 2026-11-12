@@ -452,3 +452,22 @@ def test_ac26b_a_bare_centimetre_size_still_searches_the_millimetre_dimension_ke
     assert grounded is not None, "a bare 15cm grounded to nothing"
     assert grounded.value == 150 and str(grounded.unit).casefold() == "mm", grounded
     assert "zz_dim_len" in (grounded.any_keys or []), grounded
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20h_a_discontinued_code_is_not_offered_back_by_the_size_miss(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """The family has one code, discontinued, and no other offerable code: the size miss cannot offer it back."""
+    c = _size_console(session_factory, monkeypatch, stub_access, [FAM], {})
+    db = session_factory()
+    try:
+        db.execute(sql_text("UPDATE products SET is_discontinued = true WHERE product_code = :c"), {"c": FAM})
+        db.commit()
+    finally:
+        db.close()
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    text = c.say(f"{FAM} 400mm stock", _head_plus_size(400, "mm"))
+    at = text.find("Did you mean")
+    assert FAM not in (text[at:] if at >= 0 else ""), f"offered back: {text!r}"
+    assert FAM not in str(c.stored_question), c.stored_question
