@@ -68,6 +68,10 @@ Seed a registry size key scoped to the test category (Q2 a) in mm.
 - Scope (lead, review round 4): the size rules above apply when the message names exactly ONE product code. A
   message naming several product codes plus a size keeps main's behaviour (each existing code answered; the size is not
   paired to a code). Known limitation, follow-up: pair a size to its own code in a multi-code ask.
+- Accepted limitations (reviewer, slice 4 final; both behave as on main, follow-ups): (1) a code plus a customer name
+  plus a size still gives "None with size N." and an answer, because the resolver lists the code's prefix family and the
+  code is not marked resolved; (2) the one-code count reads only entities hinted "product" (elsewhere a missing hint
+  also counts as a product); a second code with no hint counts as one code.
 - AC-18 `scripts/chatbot_products_without_size.sql` (read-only SELECT): active products in categories with a size key
   and no stored value (code, category); crew runs it on the dev copy.
 
