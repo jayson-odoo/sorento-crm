@@ -1203,6 +1203,205 @@ def make_quotation(
     return quotation
 
 
+# ------------------------------------------------------------- duplicate (QUOTE-DUPLICATE-PARTY)
+
+
+def _source_ref(db: Session, document: ProjectQuotationDocument) -> str:
+    """How a duplicate names its source: the number and its latest revision ("PRJQ-2026-0141-B")."""
+    latest = current_issue(db, document)
+    return issue_no_text(document.document_no, latest) if latest is not None else document.document_no
+
+
+#: The merge fields a copy for another party must say differently (review B1).
+_PARTY_FACTS = ("recipient_name", "attn_name", "our_ref", "doc_date")
+
+
+def _swap_letter_facts(
+    db: Session, *, source: ProjectQuotationDocument, copy: ProjectQuotationDocument
+) -> None:
+    """The letter, closing and terms are stored with their {{merge fields}} already filled in, so
+    a copy would still greet the source's party, its Attn, number and date. Each of those values
+    is swapped for the copy's own, in plain and HTML-escaped form (the editor stores "&" as
+    "&amp;"). Longest first, so a value that contains another is replaced whole."""
+    import html
+
+    from app.services import project_quotation_template_service as templates
+
+    old_ctx = templates.build_document_context(db, document=source)
+    new_ctx = templates.build_document_context(db, document=copy)
+    pairs = []
+    for key in _PARTY_FACTS:
+        old = (old_ctx.get(key) or "").strip()
+        new = (new_ctx.get(key) or "").strip()
+        if old and old != new:
+            pairs.append((old, new))
+            escaped = html.escape(old, quote=False)
+            if escaped != old:
+                pairs.append((escaped, html.escape(new, quote=False)))
+    pairs.sort(key=lambda pair: len(pair[0]), reverse=True)
+    for field in TOKEN_FIELDS:
+        text = getattr(copy, field)
+        if not text:
+            continue
+        for old, new in pairs:
+            text = text.replace(old, new)
+        setattr(copy, field, text)
+    db.flush()
+
+
+def duplicate_document(
+    db: Session,
+    *,
+    source: ProjectQuotationDocument,
+    actor_user_id: str,
+    payload: Dict[str, Any],
+) -> ProjectQuotationDocument:
+    """Copy a proposal / quotation, as it stands, for another party (owner, 11 Nov 2026).
+
+    The same lines and prices go to a second party without a second approval: one document per
+    party keeps every party's sends, sign-back link and History its own. The copy takes a new
+    number, the picked To / Attn (through ``apply_recipient_pick``, the header's own rule) and
+    today's date; Your Ref (the other party's reference) and the signature (whoever sends it
+    signs it) are not copied. It is always a PROPOSAL: a project holds one quotation.
+
+    Approval: carried when the copy needs one and the source's prices were approved as they stand
+    (``approvals.carry_approval``); otherwise the copy follows the normal flow.
+    """
+    party_id = payload.get("recipient_party_id")
+    if not party_id:
+        raise AppException(
+            status_code=422,
+            message="Pick the party this copy is for.",
+            code="quotation_duplicate_party_required",
+        )
+    _form_drafts.assert_no_pending_draft(db, source)
+    # Security review S1: the approval is read from the row as it stands NOW, locked until this
+    # transaction ends, so a Revise committed after the source was loaded cannot be missed and
+    # cannot land between the line copy and the carry.
+    db.refresh(source, with_for_update=True)
+    project = db.query(Project).filter(Project.id == source.project_id).first()
+    if project is None:
+        raise AppException(status_code=404, message="Project not found.", code="project_not_found")
+
+    copy_doc = ProjectQuotationDocument(
+        company_id=source.company_id,
+        project_id=source.project_id,
+        kind=KIND_PROPOSAL,
+        copied_from_document_id=source.id,
+        document_no=_next_document_no(db, source.company_id),
+        doc_date=date.today(),
+        quotation_purpose=source.quotation_purpose,
+        subject_title=source.subject_title,
+        cover_letter_html=source.cover_letter_html,
+        cover_closing_html=source.cover_closing_html,
+        terms_html=source.terms_html,
+        payment_terms=source.payment_terms,
+        validity=source.validity,
+        payment_term_id=source.payment_term_id,
+        validity_value=source.validity_value,
+        validity_unit=source.validity_unit,
+        spec_sheet=copy.deepcopy(source.spec_sheet) if source.spec_sheet is not None else None,
+        signatory_name=source.signatory_name,
+        signatory_phone=source.signatory_phone,
+        created_by=actor_user_id,
+    )
+    db.add(copy_doc)
+    db.flush()
+
+    for scope in list_scopes(db, source):
+        scope_copy = ProjectQuotation(
+            company_id=copy_doc.company_id,
+            project_id=copy_doc.project_id,
+            document_id=copy_doc.id,
+            sort_order=scope.sort_order,
+            scope_label=scope.scope_label,
+            series_id=scope.series_id,
+            notes=scope.notes,
+            created_by=actor_user_id,
+        )
+        db.add(scope_copy)
+        db.flush()
+        live = scope_service.current_version(db, scope.id)
+        version = ProjectQuotationVersion(
+            company_id=copy_doc.company_id,
+            quotation_id=scope_copy.id,
+            version_no=1,
+            issued_by=actor_user_id,
+            total_amount=ZERO,
+            notes=live.notes,
+            matrix_columns=live.matrix_columns,
+        )
+        db.add(version)
+        db.flush()
+        for line in scope_service.list_lines(db, live.id):
+            db.add(scope_service.copy_line(line, version_id=version.id, company_id=copy_doc.company_id))
+        db.flush()
+        scope_service.recalculate_total(db, version)
+
+    from app.models.projects import ProjectQuotationDocumentCertificate
+
+    for row in (
+        db.query(ProjectQuotationDocumentCertificate)
+        .filter(ProjectQuotationDocumentCertificate.document_id == source.id)
+        .all()
+    ):
+        db.add(
+            ProjectQuotationDocumentCertificate(
+                company_id=copy_doc.company_id,
+                document_id=copy_doc.id,
+                certificate_id=row.certificate_id,
+                included=row.included,
+                source=row.source,
+                send_to_customer=row.send_to_customer,
+                boxes=copy.deepcopy(row.boxes) if row.boxes is not None else None,
+                created_by=actor_user_id,
+            )
+        )
+    db.flush()
+
+    pick = {
+        key: payload[key]
+        for key in ("recipient_party_id", "recipient_role", "attn_contact_ids")
+        if key in payload
+    }
+    apply_recipient_pick(db, document=copy_doc, project=project, payload=pick)
+
+    _swap_letter_facts(db, source=source, copy=copy_doc)
+
+    source_ref = _source_ref(db, source)
+    _form_drafts.record_event(
+        db, document=copy_doc, note=f"Copied from {source_ref}", user_id=actor_user_id
+    )
+    if approvals.carry_approval(db, copy=copy_doc, source=source, actor_user_id=actor_user_id):
+        _form_drafts.record_event(
+            db, document=copy_doc, note=f"Approval carried from {source_ref}", user_id=actor_user_id
+        )
+    party_name = copy_doc.recipient_name_snapshot or "another party"
+    _form_drafts.record_event(
+        db,
+        document=source,
+        note=f"Duplicated for {party_name} as {copy_doc.document_no}",
+        user_id=actor_user_id,
+    )
+
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="quotation_created",
+        payload={
+            "document_id": str(copy_doc.id),
+            "document_no": copy_doc.document_no,
+            "copied_from": source_ref,
+        },
+        actor_id=actor_user_id,
+        body_text=f"{copy_doc.document_no} copied from {source_ref} for {party_name}",
+    )
+    db.flush()
+    return copy_doc
+
+
 # ------------------------------------------------------------------ delete
 
 
@@ -1331,8 +1530,24 @@ def _kind_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, A
             else None
         ),
         "quotation_document_id": str(made) if made else None,
+        **_copied_from_fields(db, document),
         "recipient_party_type": party_type,
         "recipient_role": _recipient_role(db, document),
+    }
+
+
+def _copied_from_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+    """The header's "Copied from" link (QUOTE-DUPLICATE-PARTY). Empty when the source is gone."""
+    source = (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == document.copied_from_document_id)
+        .first()
+        if getattr(document, "copied_from_document_id", None)
+        else None
+    )
+    return {
+        "copied_from_document_id": str(source.id) if source is not None else None,
+        "copied_from_label": _source_ref(db, source) if source is not None else None,
     }
 
 

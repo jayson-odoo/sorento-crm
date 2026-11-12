@@ -18,7 +18,7 @@ Additive only:
   project_sales_manager (insert-only, ON CONFLICT DO NOTHING).
 
 Revision ID: nc_0001_non_cancellable
-Revises: pc_0001_product_costing
+Revises: qdp_0001_duplicate_party
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "nc_0001_non_cancellable"
-down_revision = "pc_0001_product_costing"
+down_revision = "qdp_0001_duplicate_party"
 branch_labels = None
 depends_on = None
 

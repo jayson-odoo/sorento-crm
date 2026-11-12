@@ -29,6 +29,7 @@ from app.dependencies import (
 )
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
+    ProjectQuotationDocumentDuplicate,
     MakeQuotationRequest,
     ProjectQuotationDocumentCreate,
     QuotationCoverPreviewRequest,
@@ -829,6 +830,42 @@ def make_quotation_from_proposal(
             )
         db.refresh(quotation)
         return svc.serialize_document(db, quotation)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/duplicate",
+    response_model=ProjectQuotationDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_quotation_document(
+    project_id: str,
+    document_id: str,
+    payload: ProjectQuotationDocumentDuplicate,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """QUOTE-DUPLICATE-PARTY: copy this proposal / quotation, as it stands, for another party.
+
+    Same right as creating one (EDIT on a project the caller may write). 422
+    ``quotation_duplicate_party_required`` / ``quotation_recipient_role_required`` /
+    ``quotation_attn_not_of_party`` / a pending autosave draft; 404 for a document not on the
+    project."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user)
+        source = svc.get_document_or_404(db, project_id, document_id)
+        copy = svc.duplicate_document(
+            db,
+            source=source,
+            actor_user_id=current_user["id"],
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        db.commit()
+        db.refresh(copy)
+        return svc.serialize_document(db, copy, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
