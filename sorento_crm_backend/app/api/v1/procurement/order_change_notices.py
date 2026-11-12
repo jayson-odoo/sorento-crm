@@ -18,6 +18,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.schemas.common import MAX_PAGE_LIMIT
+from app.schemas.new_product_application import AttachmentLinkIn
 from app.schemas.order_change_notice import DecisionIn, DoneIn, OrderChangeNoticeWrite, ReasonIn
 from app.services import order_change_notice_service as svc
 from app.services.error_handler import AppException
@@ -180,6 +181,24 @@ def update_notice(
     try:
         row, actor = _readable(db, user, ocn_id, for_update=True)
         svc.update(db, row, actor=actor, data=payload.model_dump(exclude_unset=True))
+        return svc.finish(db, row, None, actor.user_id)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/{ocn_id}/attachments", status_code=status.HTTP_201_CREATED)
+def link_attachment(
+    ocn_id: str,
+    payload: AttachmentLinkIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Link a file from the attachment library; an unlink is a pending action
+    (`order_change_notice_attachment.unlink`)."""
+    try:
+        row, actor = _readable(db, user, ocn_id, for_update=True)
+        svc.link_attachment(db, row, actor=actor, attachment_id=payload.attachment_id)
         return svc.finish(db, row, None, actor.user_id)
     except Exception:
         db.rollback()

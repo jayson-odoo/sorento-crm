@@ -443,6 +443,69 @@ def update(db: Session, row: OrderChangeNotice, *, actor: Actor, data: Dict[str,
     db.flush()
 
 
+# ------------------------------------------------------------------ attachments
+
+
+def _assert_attachments_editable(row: OrderChangeNotice, actor: Actor) -> None:
+    """Whoever may edit the notice, while it is editable (draft or rejected), as the form."""
+    _assert_may_edit(row, actor, "change the attachments of")
+    if _status(row) not in EDITABLE:
+        raise _conflict(
+            f"A {_label(row)} order change notice is locked. Revise it to change its attachments.",
+            "ORDER_CHANGE_NOTICE_LOCKED",
+        )
+
+
+def link_attachment(db: Session, row: OrderChangeNotice, *, actor: Actor, attachment_id: str) -> None:
+    """Link a file from the attachment library (the new product application's way)."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    _assert_attachments_editable(row, actor)
+    if not _is_uuid(attachment_id):
+        raise _invalid("attachment_id", "Pick a file from the attachment library.")
+    EntityAttachmentService(db).link_existing_attachment(
+        ENTITY, str(row.id), attachment_id, created_by=actor.user_id if _is_uuid(actor.user_id) else None
+    )
+
+
+def _own_link(db: Session, link_id: str):
+    from app.models.entity_attachment import EntityAttachmentLink
+
+    link = (
+        db.query(EntityAttachmentLink)
+        .filter(EntityAttachmentLink.id == link_id, EntityAttachmentLink.entity_type == ENTITY)
+        .first()
+        if _is_uuid(link_id)
+        else None
+    )
+    if link is None:
+        raise handle_not_found("Attachment", link_id)
+    return link
+
+
+def assert_attachment_unlinkable(db: Session, link_id: str, user_id: Optional[str]) -> OrderChangeNotice:
+    """Unlink pre-check: a link on a notice the user may see and edit, still editable."""
+    link = _own_link(db, link_id)
+    row = reader_for(db, str(link.entity_id), user_id)
+    _assert_attachments_editable(row, actor_for_user(db, user_id))
+    return row
+
+
+def unlink_attachment(db: Session, link_id: str, user_id: Optional[str]) -> None:
+    """Drop the link only; the file stays in the library. Runs when the pending window lapses."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    assert_attachment_unlinkable(db, link_id, user_id)
+    EntityAttachmentService(db).delete_link(link_id, ENTITY)
+    db.commit()
+
+
+def _attachments(db: Session, ocn_id: str) -> List[Dict[str, Any]]:
+    from app.services.entity_attachment_service import list_attachments_for_entity
+
+    return list_attachments_for_entity(db, ENTITY, ocn_id)
+
+
 # ------------------------------------------------------------------ moves
 
 
@@ -919,6 +982,7 @@ def serialize_detail(db: Session, row: OrderChangeNotice) -> Dict[str, Any]:
             "purchase_order_id": str(row.purchase_order_id) if row.purchase_order_id else None,
             "change_table_json": row.change_table_json,
             **_amendment_refs(db, row),
+            "attachments": _attachments(db, str(row.id)),
             "created_by": row.created_by,
             "created_by_name": names.get(str(row.created_by or "")) or None,
             "submitted_at": _iso(row.submitted_at),

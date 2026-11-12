@@ -371,3 +371,64 @@ def test_r4_the_migration_seeds_a_numbering_rule_per_company():
             ).all()
         }
         assert other in companies
+
+
+# ================================================================== attachments (review B2)
+
+
+@pytest.fixture
+def store(monkeypatch, ocn):
+    from ._npa_v4_support import install_storage, seed_attachment_type
+
+    seed_attachment_type(ocn.db)
+    return install_storage(monkeypatch)
+
+
+def _library_file(o, store, name="revised-po.pdf"):
+    from app.models.resources import Attachment, AttachmentType
+    import uuid as _uuid
+
+    atype = o.db.query(AttachmentType).filter(AttachmentType.code == "response_attachment").first()
+    key = f"library/{_uuid.uuid4()}-{name}"
+    store.files[key] = b"%PDF-1.4 fake"
+    row = Attachment(
+        id=str(_uuid.uuid4()), attachment_type_id=atype.id, original_filename=name, stored_filename=name,
+        file_path=key, file_size_bytes=13, storage_provider="s3", mime_type="application/pdf",
+    )
+    o.db.add(row)
+    o.db.commit()
+    return str(row.id)
+
+
+def test_r4_the_raiser_links_a_file_and_the_detail_lists_it(ocn, store):
+    d = create(ocn)
+    att = _library_file(ocn, store)
+    res = ocn.as_(ocn.raiser).post(f"{OCN}/{d['id']}/attachments", json={"attachment_id": att})
+    assert res.status_code in (200, 201), res.text
+    files = ok(get(ocn, d["id"]))["attachments"]
+    assert [f["attachment_id"] for f in files] == [att]
+    assert files[0]["filename"] == "revised-po.pdf" and files[0]["link_id"]
+
+
+def test_r4_files_are_locked_once_submitted_and_a_viewer_cannot_link(ocn, store):
+    d = create(ocn)
+    att = _library_file(ocn, store)
+    assert ocn.as_(ocn.viewer).post(f"{OCN}/{d['id']}/attachments", json={"attachment_id": att}).status_code == 403
+    ok(move(ocn, d["id"], "submit", ocn.raiser))
+    res = ocn.as_(ocn.raiser).post(f"{OCN}/{d['id']}/attachments", json={"attachment_id": att})
+    assert res.status_code == 409, res.text
+    assert ok(get(ocn, d["id"]))["attachments"] == []
+
+
+def test_r4_unlink_is_a_pending_action_that_drops_only_the_link(ocn, store):
+    import app.services.record_actions  # noqa: F401  (registers the action)
+    from app.services.form_action_registry import get_action
+
+    assert get_action("order_change_notice_attachment.unlink") is not None
+    d = create(ocn)
+    att = _library_file(ocn, store)
+    res = ocn.as_(ocn.raiser).post(f"{OCN}/{d['id']}/attachments", json={"attachment_id": att})
+    assert res.status_code in (200, 201), res.text
+    link_id = ok(get(ocn, d["id"]))["attachments"][0]["link_id"]
+    svc().unlink_attachment(ocn.db, link_id, ocn.raiser)
+    assert ok(get(ocn, d["id"]))["attachments"] == []
