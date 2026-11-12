@@ -165,6 +165,7 @@ def _confirm(w):
             },
         )
         assert res.status_code == 200, res.text
+        w.confirm_response = res.json()
     else:
         planning_change_service.apply(env.db, batch_id, _USER_ID)
         env.db.commit()
@@ -594,3 +595,16 @@ def test_ac_v2_r3_the_worklist_status_sort_follows_the_text_the_column_shows(env
     ], full
     assert full == expected, full
     assert paged == expected, paged
+
+
+def test_ac_v2_b1_the_board_confirm_result_counts_the_rows_it_handed_over(env):
+    """A date-moved line confirmed with its Buy kept hands purchasing one DELAY line without
+    creating a row: the result must say 1 handed over (`inquiry_rows_handed_over`), while
+    `inquiry_rows_created` stays 0."""
+    w = _world(env, "date")
+
+    _confirm(w)
+
+    result = w.confirm_response
+    assert result.get("inquiry_rows_handed_over") == 1, result
+    assert result.get("inquiry_rows_created") == 0, result
