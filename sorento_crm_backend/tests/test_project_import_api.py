@@ -44,6 +44,12 @@ def _upload(client, content, name="SO SUMMARY 2026.xlsx", ctype=XLSX):
     return client.post(f"{BASE}/runs", files={"file": (name, content, ctype)})
 
 
+def _created_id(client, content, name="SO SUMMARY 2026.xlsx"):
+    response = _upload(client, content, name=name)
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
 def _small_book():
     return make_book({"JAN'26": [
         row("PS26-0001"),
@@ -138,7 +144,14 @@ def test_ac_pi_40_a_run_of_another_company_reads_as_404(world, api_client, metho
                                      filename="theirs.xlsx", content=_small_book())
     w.db.commit()
 
+    mine = new_run(w, _small_book())
+    w.db.commit()
+
     client = api_client(w.db, w.admin_id, w.company_id, BOTH)
+    # Control: the route exists and answers for this company's own run, so the 404 below
+    # is the scope refusal and not a missing route.
+    control = _call(client, method, path, mine.id)
+    assert control.status_code != 404, (method, path, control.text)
     response = _call(client, method, path, foreign.id)
     assert response.status_code == 404, (method, path, response.text)
 
@@ -278,8 +291,7 @@ def test_ac_pi_11_preview_is_refused_while_a_required_field_has_no_column(world,
                                                                           missing):
     w = world
     client = api_client(w.db, w.admin_id, w.company_id, BOTH)
-    created = _upload(client, _small_book())
-    run_id = created.json()["id"]
+    run_id = _created_id(client, _small_book())
     columns = {f: h for f, h in HEADER_BY_FIELD.items() if f != missing}
     client.put(f"{BASE}/runs/{run_id}/columns", json={"sheets": ["JAN'26"], "columns": columns})
 
@@ -300,7 +312,7 @@ def test_preview_rows_and_import_through_the_routes(world, api_client, monkeypat
     customer = seed_customer(w.db, w.company_id, f"{MARKER} DEALER ONE")
     w.db.commit()
     client = api_client(w.db, w.admin_id, w.company_id, BOTH)
-    run_id = _upload(client, _small_book()).json()["id"]
+    run_id = _created_id(client, _small_book())
     assert client.put(f"{BASE}/runs/{run_id}/columns",
                       json={"sheets": ["JAN'26"], "columns": HEADER_BY_FIELD}).status_code in (200, 204)
     set_one = client.put(f"{BASE}/runs/{run_id}/lines", json={
@@ -358,7 +370,7 @@ def test_ac_pi_41_no_name_reaches_a_log_line(world, api_client, caplog):
     client = api_client(w.db, w.admin_id, w.company_id, BOTH)
 
     with caplog.at_level(logging.DEBUG):
-        run_id = _upload(client, content).json()["id"]
+        run_id = _created_id(client, content)
         client.put(f"{BASE}/runs/{run_id}/columns",
                    json={"sheets": ["JAN'26"], "columns": HEADER_BY_FIELD})
         client.put(f"{BASE}/runs/{run_id}/lines", json={

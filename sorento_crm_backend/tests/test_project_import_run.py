@@ -752,6 +752,7 @@ def _posted_invoice(w, customer):
 
     w.db.add(BillingDocument(
         document_type="invoice", doc_no=f"{MARKER}-IV-1", doc_date=date(2026, 1, 9),
+        source_ref=f"{MARKER}-IV-1",
         customer_id=customer.id, local_net_total=Decimal("1234.50"), status="posted",
         company_id=w.company_id,
     ))
