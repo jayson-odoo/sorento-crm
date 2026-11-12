@@ -189,3 +189,45 @@ describe('ProjectImportListClient, round 5', () => {
     expect(params.get('status')).toContain('imported');
   });
 });
+
+/** Round 6 D3/D8: the page content width at 1280 with the sidebar open: 1280 - 270 sidebar
+ *  (demo6 `--sidebar-width`) - 15 shell margin - 48 page padding - 2 borders. */
+const CONTENT_WIDTH_1280 = 945;
+
+function headerCells(container: HTMLElement): HTMLTableCellElement[] {
+  return Array.from(container.querySelectorAll('table thead th')) as HTMLTableCellElement[];
+}
+
+function widthOf(cell: HTMLElement | null | undefined): number {
+  return cell ? parseFloat(cell.style.width || '0') : 0;
+}
+
+function headerCell(container: HTMLElement, text: RegExp): HTMLTableCellElement | undefined {
+  return headerCells(container).find((th) => text.test((th.textContent ?? '').trim()));
+}
+
+describe('ProjectImportListClient, round 6', () => {
+  it('r6: D6 the column headers stay sortable on an empty list', async () => {
+    service.listRuns.mockResolvedValue({ data: [], total: 0 });
+    const { container } = renderList();
+    await waitFor(() => expect(service.listRuns).toHaveBeenCalled());
+    const th = await waitFor(() => {
+      const cell = headerCell(container, /^Run no\./);
+      expect(cell).toBeTruthy();
+      return cell!;
+    });
+    const sort = th.querySelector('button');
+    expect(sort).toBeTruthy();
+    expect(sort).not.toBeDisabled();
+  });
+
+  it('r6: D3 Created, Skipped and To review show by default and the row fits 1280', async () => {
+    const { container } = renderList();
+    await screen.findByText('PIM-0001');
+    for (const title of [/^Created/, /^Skipped/, /^To review/]) {
+      expect(headerCell(container, title), String(title)).toBeTruthy();
+    }
+    const total = headerCells(container).reduce((sum, th) => sum + widthOf(th), 0);
+    expect(total).toBeLessThanOrEqual(CONTENT_WIDTH_1280);
+  });
+});

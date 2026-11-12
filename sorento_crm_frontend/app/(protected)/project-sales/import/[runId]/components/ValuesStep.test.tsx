@@ -259,3 +259,35 @@ describe('ValuesStep, round 5', () => {
     expect(filter).toBeInTheDocument();
   });
 });
+
+describe('ValuesStep, round 6', () => {
+  it('r6: D4 a focus line opens searched (or highlighted) on that line', async () => {
+    const focusLine = { kind: 'customer', customer_value_key: '', value_key: 'CUSTOMER 003 SDN BHD' };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ValuesStep run={run as never} kind="customer" focusLine={focusLine as never} />
+      </QueryClientProvider>
+    );
+    const cell = await screen.findByText('CUSTOMER 003 SDN BHD');
+    await waitFor(() => {
+      const searched = service.listLines.mock.calls.some(([, , grid]) =>
+        String(grid?.searchQuery ?? '').toUpperCase().includes('CUSTOMER 003'));
+      const tr = cell.closest('tr');
+      const highlighted =
+        tr?.getAttribute('data-highlighted') === 'true' ||
+        tr?.getAttribute('aria-selected') === 'true' ||
+        tr?.getAttribute('data-state') === 'selected';
+      expect(searched || highlighted).toBe(true);
+    });
+  });
+
+  it('r6: D8 Value in file and Linked to are the first two data columns', async () => {
+    const { container } = renderStep();
+    await screen.findByText('CUSTOMER 002 SDN BHD');
+    const titles = Array.from(container.querySelectorAll('table thead th'))
+      .map((th) => (th.textContent ?? '').trim())
+      .filter((t) => t.length > 0);
+    expect(titles.slice(0, 2)).toEqual(['Value in file', 'Linked to']);
+  });
+});

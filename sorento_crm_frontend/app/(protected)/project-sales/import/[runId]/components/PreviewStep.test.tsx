@@ -307,3 +307,53 @@ describe('PreviewStep, round 5', () => {
     expect(onOpenLine.mock.calls[0][0]).toBe(kind);
   });
 });
+
+/** Round 6 D3/D8: the page content width at 1280 with the sidebar open: 1280 - 270 sidebar
+ *  (demo6 `--sidebar-width`) - 15 shell margin - 48 page padding - 2 borders. */
+const CONTENT_WIDTH_1280 = 945;
+
+function headerCells(container: HTMLElement): HTMLTableCellElement[] {
+  return Array.from(container.querySelectorAll('table thead th')) as HTMLTableCellElement[];
+}
+
+function widthOf(cell: HTMLElement | null | undefined): number {
+  return cell ? parseFloat(cell.style.width || '0') : 0;
+}
+
+function headerCell(container: HTMLElement, text: RegExp): HTMLTableCellElement | undefined {
+  return headerCells(container).find((th) => text.test((th.textContent ?? '').trim()));
+}
+
+describe('PreviewStep, round 6', () => {
+  it('r6: D4 a needs-review row passes its blocking line to onOpenLine', async () => {
+    const user = userEvent.setup();
+    const line = { kind: 'customer', customer_value_key: '', value_key: 'CUSTOMER 013 SDN BHD' };
+    service.listRows.mockResolvedValue({
+      data: [{ ...reportRow('PS26-0013', 'needs_review', ['customer_unmapped'], 13),
+               blocking_kind: 'customer', blocking_line: line, labels: ['Customer not linked yet'] }],
+      total: 1,
+    });
+    renderStep();
+    await user.click(await screen.findByText('PS26-0013'));
+    await waitFor(() => expect(onOpenLine).toHaveBeenCalledTimes(1));
+    expect(onOpenLine.mock.calls[0][0]).toBe('customer');
+    expect(onOpenLine.mock.calls[0][1]).toEqual(line);
+  });
+
+  it('r6: D3 PS no. and PO date fit at their default size', async () => {
+    const { container } = renderStep();
+    await screen.findByText('PS26-0001');
+    // 'PS26-0000' / 'dd/mm/yyyy' at the grid's font with cell padding and the sort control.
+    expect(widthOf(headerCell(container, /^PS no\./))).toBeGreaterThanOrEqual(120);
+    expect(widthOf(headerCell(container, /^PO date/))).toBeGreaterThanOrEqual(120);
+  });
+
+  it('r6: D3 the default columns, Outcome and Reason included, fit the 1280 content width', async () => {
+    const { container } = renderStep();
+    await screen.findByText('PS26-0001');
+    expect(headerCell(container, /^Outcome/)).toBeTruthy();
+    expect(headerCell(container, /^Reason/)).toBeTruthy();
+    const total = headerCells(container).reduce((sum, th) => sum + widthOf(th), 0);
+    expect(total).toBeLessThanOrEqual(CONTENT_WIDTH_1280);
+  });
+});
