@@ -1,6 +1,6 @@
 # P1 behaviour card (DRAFT): service jobs, send a technician to the site
 
-Status: DRAFT, not filed. It waits for the owner's G-list notes on the review page
+Status: owner-accepted 12 Nov 2026 (5 defaults as recommended); superseded by PLAN-service-jobs-p1-12nov.md + its UAC for the build.
 (`documentation/plans/after-sales/review/index.html`). Nothing is built until this card is approved.
 Lane AFTER-SALES-REVIVE, port slice P1. Size L: new tables, migration, new screens, permissions.
 PR title: "AFTER-SALES-P1: ...".

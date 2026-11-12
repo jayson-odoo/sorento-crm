@@ -4,7 +4,15 @@ Status: in build. Track: L (new tables, migration, new screens, new permissions)
 PR #2365, retitled to "AFTER-SALES-P1: service jobs". Slices P2 to P4 each go on a new branch and PR.
 Owner go: 12 Nov 14:20 MYT ("let's do this and bring the copy for me to test").
 UAC: `service-jobs-p1-acceptance-criteria.md` (alongside).
-Card: `P1-behaviour-card.md`. Its 5 questions were taken on their recommended defaults (crew-ask 12 Nov).
+Card: `P1-behaviour-card.md`. Owner-accepted 12 Nov 2026 (~14:26 MYT, "ok for after sales"):
+- job numbers look like `SV26/11-0001`;
+- the Site is separate address fields, prefilled from the complaint address;
+- a job can still be raised on a closed or voided complaint;
+- no jobs are backfilled for existing complaints;
+- service jobs get new permissions.
+
+Slices 2-4 each go on a new branch and PR after P1 is frozen at hand test. The portal inputs (Malay privacy
+notice text, Google Maps key) are asked for as one crew-ask when slice 4 starts.
 Source being ported: PR #163 (`worktree-after-sales-warranty`), slices S6 and S7a, plus S1's site columns.
 
 ## Journey
