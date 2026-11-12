@@ -1,6 +1,6 @@
 # PLAN: Integration Log search box + pager number format (INTLOG-SEARCH)
 
-Status: built, reviewer findings fixed (small fix track: no migration, no auth/RBAC change)
+Status: built, fix round INTLOG-SPEED-2 (main merged, 200-char search cap, Business Table one line, guide updated), awaiting merge (small fix track: no migration, no auth/RBAC change)
 
 Follow-up to INTLOG-SPEED (`_archive/infra/PLAN-intlog-speed-03nov.md`, PR #2129, merged), found by crew's browser pass.
 
