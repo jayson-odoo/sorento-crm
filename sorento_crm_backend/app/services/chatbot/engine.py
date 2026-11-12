@@ -10070,12 +10070,11 @@ def _stock_ask_reply(
     from app.services.chatbot.composers import stock as composers_stock
 
     parts = _stock_answer_lines(envelopes, full=composers.enabled())
-    # CHATBOT-CODE-MATCH R1/R7: the missed codes beside found ones in an availability reply
-    # (this block is that reply's, the dealer's view; AC-1d: staff read through it too) get
-    # the pick a single-code miss gets (`dealer_stock.did_you_mean_each`), over the same
-    # candidates, never one this reply already answered.
+    # CHATBOT-CODE-MATCH R1/R7: a dealer's missed codes beside found ones get the pick a
+    # single-code miss gets (`dealer_stock.did_you_mean_each`), over the same candidates,
+    # never one this reply already answered.
     offer = None
-    if not pick and not text:
+    if not pick and not text and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
         from app.services.chatbot import dealer_stock as dealer_mod
 
         suggested = turn_compose.unplaced_suggestions(envelopes)

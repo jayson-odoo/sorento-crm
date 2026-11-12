@@ -5748,9 +5748,14 @@ def build_suggest_offer(
                 if dym_annotate_on:
                     # STABLE PARTITION, no tiebreak: a comparator tiebreak here would
                     # alphabetise and destroy the resolver's similarity ranking.
+                    # CHATBOT-CODE-MATCH R3: a set holds what its members hold, so a set
+                    # whose members have stock keeps its lead (`_set_then_its_members`).
                     picks.sort(
                         key=lambda p: 0
-                        if _dym_lookup(jsc.get(p["m"], "canonical_code"), dym_has) is not None
+                        if any(
+                            _dym_lookup(code, dym_has) is not None
+                            for code in [jsc.get(p["m"], "canonical_code"), *(m["code"] for m in _set_members(p["m"]))]
+                        )
                         else 1
                     )
                 codes = [jsc.get(p["m"], "canonical_code") for p in picks]
