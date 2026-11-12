@@ -413,6 +413,7 @@ export function RelatedRecordsPanel({
         getRowId={(row) => `${row.kind}:${row.id}`}
         listingKey="projects.projects.view::project-related-records"
         isLoading={related.isLoading}
+        isPlaceholderData={related.isPlaceholderData}
         error={related.isError ? related.error : undefined}
         onRetry={() => void related.refetch()}
         serverSorting={{ sorting, onSortingChange }}

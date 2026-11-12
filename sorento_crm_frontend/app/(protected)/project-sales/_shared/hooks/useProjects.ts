@@ -1903,8 +1903,8 @@ export function useProjectRelatedRecords(
     queryKey: [RELATED_RECORDS_KEY, projectId, params],
     queryFn: () => listProjectRelatedRecords(projectId as string, params),
     enabled: Boolean(projectId) && (options.enabled ?? true),
-    // Keep the page on screen while the next sort, search or page loads.
-    placeholderData: (previous) => previous,
+    // Keep the page on screen while the next sort, search or page loads (M4-01).
+    ...LIST_QUERY_OPTIONS,
   });
 }
 

@@ -63,6 +63,7 @@ export function PanelDataGrid<TRow extends object>({
   sortable = false,
   serverSorting,
   serverPaging,
+  isPlaceholderData,
   onSortedRowsChange,
   rowSelection,
   onRowSelectionChange,
@@ -164,6 +165,11 @@ export function PanelDataGrid<TRow extends object>({
     onPaginationChange: OnChangeFn<PaginationState>;
     rowCount: number;
   };
+  /**
+   * The query is showing the previous page while the next loads (`LIST_QUERY_OPTIONS`): the
+   * grid dims instead of flashing empty. Forward the query's flag with `serverPaging` (M4-01b).
+   */
+  isPlaceholderData?: boolean;
   /**
    * The rows in the grid's own live order - sorted, then filtered, never paginated - each time
    * that order changes (Should fix 3, review round 1, PR #1218 S3). OPTIONAL: a caller whose
@@ -423,6 +429,7 @@ export function PanelDataGrid<TRow extends object>({
       table={table}
       recordCount={serverPaging ? serverPaging.rowCount : filtered.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       listingKey={listingKey}
       tableLayout={{
         width: 'fixed',
