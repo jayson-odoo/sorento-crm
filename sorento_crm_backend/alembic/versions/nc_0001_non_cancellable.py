@@ -18,7 +18,7 @@ Additive only:
   project_sales_manager and the sales manager role (insert-only, ON CONFLICT DO NOTHING).
 
 Revision ID: nc_0001_non_cancellable
-Revises: town_0003_orders_cust_date
+Revises: acqs_0001_project_ac_write
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "nc_0001_non_cancellable"
-down_revision = "town_0003_orders_cust_date"
+down_revision = "acqs_0001_project_ac_write"
 branch_labels = None
 depends_on = None
 
