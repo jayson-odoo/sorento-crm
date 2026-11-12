@@ -364,7 +364,9 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
         onOpenChange={(next) => toggleSection('lines', next)}
         bodyClassName="p-0"
       >
-        <div className="overflow-x-auto">
+        {/* relative: the containing block of the table's sr-only labels (absolutely
+            positioned), so none escapes this scroller and widens the page at 375 (a3). */}
+        <div className="relative overflow-x-auto">
           {/* 840px of columns: fits the card at 1280 (935px inside); below that the table
               scrolls inside its own box, so 375 stays usable. */}
           <table className="w-full min-w-[840px] table-fixed text-sm">
