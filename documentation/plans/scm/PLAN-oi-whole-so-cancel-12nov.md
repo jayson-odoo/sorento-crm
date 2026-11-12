@@ -1,6 +1,6 @@
 # PLAN: OI-WHOLE-SO-CANCEL - whole-SO cancel and SO delete from AutoCount raise a board item
 
-Status: Build (card v1 answered 12 Nov except Q1, which is with the owner). Track: M (LEAD pattern).
+Status: Hand test (built, reviewed, browser pass PASS; owner Q1 still open, switch WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC kept True). Track: M (LEAD pattern).
 
 ## Problem
 
@@ -40,3 +40,19 @@ behaviour card answers.
 - One bad line never fails a batch (hooks best effort, ingest already committed).
 - Plain wording ("Line cancelled" already shown).
 - Every action tracked shows in History (OI_ROW_CANCELLED audit on Confirm, existing).
+
+## Built (12 Nov)
+
+- Ingest scope = `service.so_numbers` (only records that succeeded), `ingest.py:556`.
+- SO delete raises the batch, `deletion_service.py` `_raise_so_cancel_batch`; one line shaper
+  `planning_diff_line` in `document_ingest_service.py`.
+- Board / list (browser pass found CS could not reach the item): `_cancelled_pending_change_rows` admits a
+  cancelled header; `_cancelled_pending_arm` in `project_so_reconciliation_service.py` lists a cancelled SO only
+  while it has a pending cancelled change; `_standings` seeds the order so Confirm posts; confirm-all results
+  carry `so_number`; `FulfilmentBoardPanel.tsx` renders the List view + Confirm when the only lines are pending
+  cancelled ones.
+- Q1 seam: `WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC` (`project_order_inquiry_service.py`). For answer (b): set False,
+  drop the strict xfail on the two `test_ac_wc_6_q1b_*` tests, and flip
+  `test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged`.
+- Not in scope, noted: a sidebar click to Fulfilment Planning while a board is open keeps the board on screen
+  until a reload (pre-existing, not touched here).
