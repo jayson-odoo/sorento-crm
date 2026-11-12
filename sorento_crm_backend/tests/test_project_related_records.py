@@ -281,7 +281,9 @@ def _viewer(db) -> str:
     return user(db, "Viewer")
 
 
-FULL = {P_VIEW} | ALL_TYPES_VIEW
+#: Fix round 2 (security B2): the NPA Value is its cost price, so the readers these tests pin the
+#: Value of hold `products.cost.view`; tests/test_project_related_cost.py covers the reader without it.
+FULL = {P_VIEW, "products.cost.view"} | ALL_TYPES_VIEW
 
 
 # ------------------------------------------------------------------ AC-A3, AC-A4: the rows

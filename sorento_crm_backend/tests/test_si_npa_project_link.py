@@ -495,6 +495,7 @@ def test_ac_c3_portal_request_forms_take_only_the_contacts_own_company_projects(
 
     refused, _sid = _create_and_submit(sc.portal, kind, spec.body(sc, project_id=str(foreign.id)))
     assert refused.status_code == 422, refused.text
+    assert refused.json().get("code") == "sponsorship_project_not_permitted", refused.text  # fix round 2 S4
 
     saved, sid = _create_and_submit(sc.portal, kind, spec.body(sc, project_id=str(own.id)))
     p4.ok(saved)
@@ -515,6 +516,7 @@ def test_ac_c3_portal_npa_takes_only_the_contacts_own_company_projects(world):  
     if refused.status_code < 400:
         refused = api.call("POST", f"{p4npa.SUB}/{refused.json()['id']}/submit")
     assert refused.status_code == 422, refused.text
+    assert refused.json().get("code") == "sponsorship_project_not_permitted", refused.text  # fix round 2 S4
 
     created = p4.ok(api.call("POST", p4npa.SUB, json=w.body(project_id=str(own.id))), 201).json()
     p4.ok(api.call("POST", f"{p4npa.SUB}/{created['id']}/submit"))
