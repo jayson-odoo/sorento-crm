@@ -8,7 +8,6 @@
 import type { OrderInquiryHeaderStatus } from '../types/orderInquiry.types';
 
 export function orderInquiryHeaderStatusLabel(status: OrderInquiryHeaderStatus): string {
-  if (status === 'waiting_for_cs') return 'Waiting for CS';
   return status === 'outstanding' ? 'Outstanding' : 'Completed';
 }
 
@@ -17,7 +16,7 @@ export function orderInquiryHeaderStatusLabel(status: OrderInquiryHeaderStatus):
 export function orderInquiryHeaderStatusVariant(
   status: OrderInquiryHeaderStatus,
 ): 'warning' | 'secondary' {
-  return status === 'outstanding' || status === 'waiting_for_cs' ? 'warning' : 'secondary';
+  return status === 'outstanding' ? 'warning' : 'secondary';
 }
 
 /** AC-SN-30: the reserve status of an OI's request rows, earliest first. */

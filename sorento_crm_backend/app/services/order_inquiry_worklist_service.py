@@ -38,7 +38,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, Numeric, String, and_, case, cast, func, or_, select, text
+from sqlalchemy import Date, Numeric, String, and_, case, cast, func, literal_column, or_, select, text
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
@@ -676,6 +676,67 @@ _PENDING_FROM_QTY = (
     .correlate(OrderInquiryRow)
     .scalar_subquery()
 )
+#: The newest pending change for the row's line, as {kind, from, to}: what the Status cell and the
+#: pill say changed. One correlated subquery in the page's own query, nothing per row.
+_PENDING_CHANGE = (
+    select(
+        func.jsonb_build_object(
+            literal_column("'kind'"),
+            PlanningChangeRow.kind,
+            literal_column("'from'"),
+            PlanningChangeRow.from_json,
+            literal_column("'to'"),
+            PlanningChangeRow.to_json,
+        )
+    )
+    .where(*pending_change_clause(OrderInquiryRow.so_line_id))
+    .order_by(PlanningChangeRow.created_at.desc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+
+
+def waiting_change_of(raw: Any, so_cancelled: bool) -> Optional[Dict[str, Any]]:
+    """The pending change as the worklist row states it: {kind, was, now}, or None.
+
+    `so_cancelled` (the header is cancelled / the SO was deleted) and `line_removed` (a cancelled
+    change on an open SO) come from a `cancelled` row; `date`, `qty`, `product` and `location`
+    from the others. Dates read dd/mm/yyyy and quantities as a plain number."""
+    if not raw:
+        return None
+    kind = raw.get("kind")
+    before, after = raw.get("from") or {}, raw.get("to") or {}
+
+    def qty(value: Any) -> Optional[str]:
+        return _qty_str(_dec(value)) if value not in (None, "") else None
+
+    def day(value: Any) -> Optional[str]:
+        return fmt_date(value) if value else None
+
+    if kind == "cancelled":
+        return {
+            "kind": "so_cancelled" if so_cancelled else "line_removed",
+            "was": qty(before.get("qty")),
+            "now": None,
+        }
+    if kind in ("advanced", "delayed") or (
+        before.get("required_date") != after.get("required_date")
+    ):
+        return {
+            "kind": "date",
+            "was": day(before.get("required_date")),
+            "now": day(after.get("required_date")),
+        }
+    if kind in ("qty_up", "qty_down"):
+        return {"kind": "qty", "was": qty(before.get("qty")), "now": qty(after.get("qty"))}
+    if kind == "product_changed":
+        return {"kind": "product", "was": before.get("item_code"), "now": after.get("item_code")}
+    if kind == "location_changed":
+        return {"kind": "location", "was": before.get("location"), "now": after.get("location")}
+    return None
+
+
 #: AC-V2-4: a waiting row alone on its line reads the line's current quantity, the stored one
 #: becoming "Was". With more than one live row (AC-V2-4b) each keeps its confirmed quantity.
 _SHOWS_LINE_QTY = and_(
@@ -922,7 +983,9 @@ _OVERRIDE_USER = aliased(User)
 #: F1b: the rows the Status column prints each word for. Waiting for CS outranks SO cancelled,
 #: which outranks Line cancelled; a row reading none of them is "plain" and reads its ack word.
 _STATUS_IS_SO_CANCELLED = and_(~_WAITING_FOR_CS, _SO_CANCELLED)
-_STATUS_IS_LINE_CANCELLED = and_(~_WAITING_FOR_CS, ~_SO_CANCELLED, _LINE_CANCELLED)
+# A waiting cancelled line shows the Line cancelled pill beside its Waiting for CS marker, so it
+# is listed under BOTH words; only a cancelled-SO row that is not waiting reads SO cancelled.
+_STATUS_IS_LINE_CANCELLED = and_(_LINE_CANCELLED, ~_STATUS_IS_SO_CANCELLED)
 _STATUS_IS_PLAIN = and_(~_WAITING_FOR_CS, ~_SO_CANCELLED, ~_LINE_CANCELLED)
 
 #: OI-WHOLE-SO-CANCEL v2 (H2): the Status column's sort key, the same words `status_label` prints.
@@ -1045,6 +1108,7 @@ _COLUMNS = (
     _WAITING_FOR_CS.label("waiting_for_cs"),
     _SO_CANCELLED.label("so_cancelled"),
     _PREVIOUS_SO_LINE_QTY.label("previous_so_line_qty"),
+    _PENDING_CHANGE.label("waiting_change_raw"),
     _ACK_USER.name.label("acknowledged_by_name"),
     OrderInquiryRow.ack_override.label("ack_override"),
     OrderInquiryRow.ack_override_at.label("ack_override_at"),
@@ -2830,6 +2894,12 @@ class OrderInquiryWorklistService:
             # OI-WHOLE-SO-CANCEL v2 (AC-V2-2/4b/5).
             "waiting_for_cs": bool(row.waiting_for_cs),
             "so_cancelled": bool(row.so_cancelled),
+            # What the waiting change is (kind, was, now), None when nothing waits.
+            "waiting_change": (
+                waiting_change_of(row.waiting_change_raw, bool(row.so_cancelled))
+                if row.waiting_for_cs
+                else None
+            ),
             "previous_so_line_qty": (
                 _qty_str(_dec(row.previous_so_line_qty))
                 if row.previous_so_line_qty is not None

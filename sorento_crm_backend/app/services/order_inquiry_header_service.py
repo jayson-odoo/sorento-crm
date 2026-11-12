@@ -327,9 +327,10 @@ class OrderInquiryHeaderService:
         lines_to_confirm = func.coalesce(agg.c.lines_to_confirm, 0)
         qty_total = func.coalesce(agg.c.qty_total, 0)
         lines_waiting_cs = func.coalesce(agg.c.lines_waiting_cs, 0)
+        # Owner 12 Nov 22:55: the header never reads "waiting for CS"; a line waiting for CS keeps
+        # the OI outstanding, while `lines_to_confirm` still leaves the waiting row out.
         status_expr = case(
-            (lines_waiting_cs > 0, "waiting_for_cs"),
-            (lines_to_confirm > 0, "outstanding"),
+            ((lines_to_confirm > 0) | (lines_waiting_cs > 0), "outstanding"),
             else_="completed",
         )
         ragg = self._reserve_agg()
@@ -527,8 +528,11 @@ class OrderInquiryHeaderService:
             "so_date": _SO_DATE,
             # The words the header's own status reads, so the sort groups them as shown.
             "status": case(
-                (func.coalesce(agg.c.lines_waiting_cs, 0) > 0, "Waiting for CS"),
-                (func.coalesce(agg.c.lines_to_confirm, 0) > 0, "Outstanding"),
+                (
+                    (func.coalesce(agg.c.lines_to_confirm, 0) > 0)
+                    | (func.coalesce(agg.c.lines_waiting_cs, 0) > 0),
+                    "Outstanding",
+                ),
                 else_="Completed",
             ),
         }

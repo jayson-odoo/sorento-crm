@@ -606,6 +606,8 @@ class OrderInquiryWorklistRow(BaseModel):
     line_cancelled: bool = False
     #: OI-WHOLE-SO-CANCEL v2: AC-V2-2 / AC-V2-5 / AC-V2-4b.
     waiting_for_cs: bool = False
+    #: What the waiting change is: {kind: so_cancelled|line_removed|date|qty|product|location, was, now}.
+    waiting_change: Optional[Dict[str, Optional[str]]] = None
     so_cancelled: bool = False
     previous_so_line_qty: Optional[str] = None
     #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
@@ -1529,7 +1531,7 @@ class OrderInquiryHeaderOut(BaseModel):
     lines_to_confirm: int = 0
     qty_total: str = "0"
     #: DERIVED, never stored (AC-LS-02): `lines_to_confirm > 0`.
-    status: Literal["outstanding", "completed", "waiting_for_cs"] = "outstanding"
+    status: Literal["outstanding", "completed"] = "outstanding"
     #: OI-STAGED-NOTIFY (AC-SN-30): the OI's earliest reserve status, null when it has no
     #: reserve request rows; `parked_by_name` names who parked it while it is parked.
     reserve_status: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None

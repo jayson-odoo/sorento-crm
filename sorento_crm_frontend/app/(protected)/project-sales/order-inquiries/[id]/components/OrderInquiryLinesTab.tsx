@@ -30,7 +30,7 @@ import { useSoLineAttachmentLookup } from '../../../_shared/hooks/useSoLineAttac
 import { reserveStatusFrom } from '../../../_shared/lib/orderInquiryHeaderStatus';
 import {
   LINE_STATUS_OPTIONS,
-  lineStatusValue,
+  lineStatusValues,
 } from '../../../_shared/components/OrderInquiryLineStatusPill';
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
@@ -94,7 +94,8 @@ function sortingToUrl(sorting: SortingState): string | null {
 /** A line matches the State filter when the State column reads one of the chosen words. */
 function lineMatchesStateFilter(line: OrderInquiryLine, selected: string[]): boolean {
   if (selected.length === 0) return true;
-  return selected.includes(lineStatusValue(line));
+  const values = lineStatusValues(line);
+  return selected.some((value) => values.includes(value));
 }
 
 /** Detail's selection is keyed by ROW id (every mutation takes row ids); the grid ticks

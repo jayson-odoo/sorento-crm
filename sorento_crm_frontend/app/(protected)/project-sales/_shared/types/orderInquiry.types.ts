@@ -595,6 +595,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   waiting_for_cs?: boolean;
   so_cancelled?: boolean;
+  /** What the waiting change is, off the line's pending planning change; null when nothing waits. */
+  waiting_change?: WaitingChange | null;
   previous_so_line_qty?: string | null;
   /**
    * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
@@ -1453,7 +1455,13 @@ export interface OrderInquiryBulkRejectResult {
  * backend response models field for field.
  */
 
-export type OrderInquiryHeaderStatus = 'outstanding' | 'completed' | 'waiting_for_cs';
+export type OrderInquiryHeaderStatus = 'outstanding' | 'completed';
+
+export interface WaitingChange {
+  kind: 'so_cancelled' | 'line_removed' | 'date' | 'qty' | 'product' | 'location';
+  was: string | null;
+  now: string | null;
+}
 
 /** One row of the Documents view (AC-HL-02). */
 export interface OrderInquiryHeader {

@@ -61,7 +61,7 @@ COMMIT;
 ## Steps
 1. Sign in, click Order Inquiries in the sidebar (Documents view, Outstanding), search the three OIs.
 2. Open OI-A, Lines tab. Open the State filter and read its options; then pick each of "Waiting for CS",
-   "To order", "Done" in turn.
+   "To order", "Done" in turn. Then open OI-B, Lines tab, and pick "Line cancelled", then "Waiting for CS".
 3. Open OI-C, Lines tab, State filter: pick "Request to reserve".
 4. Back on Order Inquiries, switch to the Lines view. Open the Confirmed filter and read its options; pick
    "Waiting for CS", then "To order", then "Done".
@@ -74,11 +74,14 @@ COMMIT;
 10. System > Messaging > Outgoing Mails, search the fixture SO numbers.
 
 ## Expected
-1. Step 1: OI-A and OI-B read "Waiting for CS" (not Completed), under Outstanding; OI-C reads "Outstanding".
+1. Step 1: OI-A, OI-B and OI-C all read "Outstanding" (header level, owner 12 Nov 22:55) and sit under the
+   Outstanding tab; the header Status filter offers only the header words (Outstanding / Completed).
 2. Step 2: the State filter's options are exactly the words the State column prints, written the same way
    (To order, Waiting for CS, Done, Rejected, SO cancelled, Line cancelled, Nothing to buy, Request to
-   reserve, Reserved, Not reserved). The State column reads "Waiting for CS" (small "f"), not "Waiting For
-   CS". Each option shows only the lines whose State reads that word; the choice survives a reload.
+   reserve, Reserved, Not reserved). On OI-A, line 1 reads "Waiting for CS · date D-old -> D-new" (small
+   "f"). On OI-B (SO deleted) every line shows the existing grey "Line cancelled" pill with a "waiting for CS"
+   marker next to it. Each option shows only the lines whose State reads that word (a waiting cancelled line
+   matches both "Line cancelled" and "Waiting for CS"); the choice survives a reload.
 3. Step 3: only the line with the reserve request shows.
 4. Step 4: the Confirmed filter's options are the Status column's words (To order, Done, Rejected, Waiting
    for CS, SO cancelled, Line cancelled, All); each shows only rows whose Status reads that word; each

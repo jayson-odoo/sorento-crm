@@ -21,8 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
-import { statusPillClass } from '@/lib/status-pill';
-import { ACK_PILL_BASE, rowStatusPill } from '../../_shared/components/OrderInquiryLineStatusPill';
+import { RowStatusCell, rowStatusPill } from '../../_shared/components/OrderInquiryLineStatusPill';
 import {
   ackStateOf,
   bundledHostChangeLines,
@@ -1462,14 +1461,7 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 160,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => {
-          const { text, palette } = rowStatusPill(row.original);
-          return (
-            <span className={`${ACK_PILL_BASE} ${statusPillClass(palette)}`} title={text}>
-              {text}
-            </span>
-          );
-        },
+        cell: ({ row }) => <RowStatusCell row={row.original} />,
       },
       {
         // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction -
