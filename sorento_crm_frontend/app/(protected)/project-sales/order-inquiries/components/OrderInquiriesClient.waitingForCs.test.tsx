@@ -358,7 +358,9 @@ describe('AC-V2-3: a waiting row is not offered to Confirm', () => {
 
     const waitingBox = screen.getByLabelText('Select ZZT-WAIT on SO-WAIT');
     expect(waitingBox).toBeDisabled();
-    expect(waitingBox).toHaveAttribute(
+    // The shared select column puts the reason on the wrapper span (a disabled control gets
+    // no hover), so the title is read there.
+    expect(waitingBox.closest('span[title]')).toHaveAttribute(
       'title',
       expect.stringContaining('Waiting for CS to confirm the sales order change'),
     );
