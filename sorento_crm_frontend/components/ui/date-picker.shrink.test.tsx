@@ -10,13 +10,13 @@ import { DatePicker } from './date-picker';
 import { DateRangePicker } from './date-range-picker';
 
 describe('DateRangePicker shrinks inside a narrow flex row', () => {
-  it('root is w-full, the text input has min-w-0 and the calendar button has shrink-0', () => {
+  it('root is min-w-0, the text input has min-w-0 and the calendar button has shrink-0', () => {
     const { container } = render(
       <DateRangePicker from={null} to={null} onChange={() => {}} aria-label="Window" />,
     );
     const input = screen.getByLabelText('Window');
     const button = screen.getByRole('button', { name: 'Pick a date range for Window' });
-    expect((container.firstElementChild as HTMLElement).className).toContain('w-full');
+    expect((container.firstElementChild as HTMLElement).className).toContain('min-w-0');
     expect(input.className).toContain('min-w-0');
     expect(button.className).toContain('shrink-0');
   });

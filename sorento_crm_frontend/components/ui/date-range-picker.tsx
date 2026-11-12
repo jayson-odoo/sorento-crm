@@ -173,7 +173,7 @@ export function DateRangePicker({
   };
 
   return (
-    <div className={cn('flex w-full gap-2', className)}>
+    <div className={cn('flex min-w-0 gap-2', className)}>
       <Input
         id={id}
         type="text"
