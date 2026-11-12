@@ -4,6 +4,10 @@
  * The line table of the sample request form, shared by the staff page and the portal so the two
  * cannot drift: row 1 is the sample board (a tick and its label, never a product), then one row
  * per product with its own product search. Search lists; only a click on a hit picks.
+ *
+ * Below `sm` (a phone) each line stacks instead of scrolling sideways (crew pass 12 Nov, 375 px):
+ * No, item and remove on the first line, then Qty and Remark with their own captions, since the
+ * column header row is hidden there.
  */
 
 import { useCallback, useState } from 'react';
@@ -61,9 +65,9 @@ export function SampleRequestLines({
 
   return (
     <div>
-      <div className="relative overflow-x-auto">
-        <table className="w-full min-w-[560px] table-fixed text-sm">
-          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+      <div className="relative sm:overflow-x-auto">
+        <table className="w-full table-fixed text-sm max-sm:block sm:min-w-[560px]">
+          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground max-sm:hidden">
             <tr>
               <th className="w-12 px-2 py-2 text-left">{captions.no}</th>
               <th className="w-[44%] px-2 py-2 text-left">{captions.item}</th>
@@ -74,10 +78,10 @@ export function SampleRequestLines({
               </th>
             </tr>
           </thead>
-          <tbody>
-            <tr className="border-t align-top">
+          <tbody className="max-sm:block">
+            <tr className="border-t align-top max-sm:grid max-sm:grid-cols-[1.75rem_minmax(0,1fr)_2.5rem] max-sm:py-1">
               <td className="px-2 py-2 text-muted-foreground">1</td>
-              <td className="px-2 py-2" colSpan={4}>
+              <td className="px-2 py-2 max-sm:col-span-2" colSpan={4}>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   <div className="flex items-center gap-2">
                     <Checkbox
@@ -106,9 +110,15 @@ export function SampleRequestLines({
               </td>
             </tr>
             {value.lines.map((line, index) => (
-              <tr key={line.key} data-testid="sample-request-line" className="border-t align-top">
-                <td className="px-2 py-2 text-muted-foreground">{firstProductRow + index}</td>
-                <td className="px-2 py-2">
+              <tr
+                key={line.key}
+                data-testid="sample-request-line"
+                className="border-t align-top max-sm:grid max-sm:grid-cols-[1.75rem_minmax(0,1fr)_2.5rem] max-sm:py-1"
+              >
+                <td className="px-2 py-2 text-muted-foreground max-sm:col-start-1 max-sm:row-start-1">
+                  {firstProductRow + index}
+                </td>
+                <td className="min-w-0 px-2 py-2 max-sm:col-start-2 max-sm:row-start-1">
                   <AsyncCombobox<SampleRequestProductHit>
                     ariaLabel="Item code"
                     value={line.product_id}
@@ -138,7 +148,10 @@ export function SampleRequestLines({
                     <span className="block text-xs text-muted-foreground">Inactive</span>
                   )}
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-2 py-2 max-sm:col-span-2 max-sm:col-start-2 max-sm:row-start-2">
+                  <span data-narrow-caption aria-hidden="true" className="mb-1 block text-xs text-muted-foreground sm:hidden">
+                    {captions.qty}
+                  </span>
                   <NumberInput
                     inputMode="numeric"
                     min={1}
@@ -149,7 +162,10 @@ export function SampleRequestLines({
                     onChange={(e) => patchLine(line.key, { qty: e.target.value })}
                   />
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-2 py-2 max-sm:col-span-2 max-sm:col-start-2 max-sm:row-start-3">
+                  <span data-narrow-caption aria-hidden="true" className="mb-1 block text-xs text-muted-foreground sm:hidden">
+                    Remark
+                  </span>
                   <Input
                     aria-label="Remark"
                     disabled={disabled}
@@ -157,7 +173,7 @@ export function SampleRequestLines({
                     onChange={(e) => patchLine(line.key, { remark: e.target.value })}
                   />
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-2 py-2 max-sm:col-start-3 max-sm:row-start-1">
                   {!disabled && (
                     <Button
                       type="button"

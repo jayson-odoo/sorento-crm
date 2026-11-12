@@ -3,8 +3,8 @@
 Use this when a WhatsApp contact asks what was last paid for a product - "last purchase cost for
 M218", "what did we pay for M218", "上次采购价 M218", "harga belian terakhir M218". The bot answers
 with the newest purchase order line for that product, one row per warehouse location. This
-answer is **hidden for every contact by default** and only reachable once an admin reveals it on
-that contact's record.
+answer is only given to a contact whose linked CRM user has the **View Product Cost** permission
+(see "Who sees cost" below).
 
 Asking the everyday selling-price question - "how much do we sell M218 for", "how much does it
 cost", "berapa harga" - is not this feature and stays on the normal stock / product answer; only
@@ -42,27 +42,38 @@ prefix that resolves to several product variants, e.g. SRTWC8517) returns the la
 cost for every member of that family, at every warehouse it was bought into - not just the first
 match.
 
-## Permission: the Field reveals card
+## Who sees cost
 
-This answer is off for every contact until an admin turns it on for that specific contact.
+Purchase cost follows one rule everywhere: the **View Product Cost** permission on the person's
+role. The same rule decides the cost columns and tabs on the CRM screens, the in-app AI assistant
+and this WhatsApp answer.
 
-To reveal it: open the contact's record, go to **Access**, and on the **Field reveals** card
-tick **Last purchase cost**.
+On WhatsApp the person is the CRM user linked to the contact. So a contact gets the answer when:
 
-Without the grant, a contact asking for the last purchase cost gets exactly this reply, and the
-bot never looks the cost up at all:
+1. A CRM user is linked to the contact (shown in the **User** column of the Contacts list), and
+2. that user is **Active**, and
+3. that user's role has **View Product Cost** (admins have it by default).
+
+A contact with no linked user, or whose linked user is inactive or lacks the permission, gets
+exactly this reply, and the bot never looks the cost up at all:
 
 > Sorry, you are not allowed to access purchase cost
 
-**Field reveals** is the same card that also controls **PO supplier** and **Outstanding SO on
-stock answers** - one screen, one switch per restricted answer, each off by default until an
-admin ticks it for that contact.
+A dealer asking about "my cost" without that permission gets their promotions instead, as before.
 
-## Not on the in-app AI assistant
+To give someone cost on WhatsApp, give their user a role with **View Product Cost** (User Management >
+Access > Roles) and make sure their contact is linked to that user. To take it away, remove the permission
+or unlink the contact. The change applies from their next message.
 
-This is a WhatsApp chatbot answer only. The in-app AI assistant (the one staff use inside the
-CRM) does not offer this tool at all - it is deliberately kept out of that assistant's tool
-search, the same way every cost-restricted lookup is.
+There is no per-contact cost switch any more: **Last purchase cost** is no longer on the contact's
+**Access > Field reveals** card, and **Copy access** does not copy it. On the Contacts list the
+**Cost** column (Visible / Hidden) and the **Cost** filter show the result of the rule above for
+each contact; they cannot be edited there.
+
+## On the in-app AI assistant
+
+Staff asking the in-app AI assistant get the same answer under the same rule: their own role needs
+**View Product Cost**.
 
 ## Admin: rolling this answer out
 
@@ -70,11 +81,11 @@ The vocabulary that lets the bot recognise a "last purchase cost" question ships
 unlabelled version of the parser prompt - deploying the code does not change what any customer
 sees. The answer only becomes reachable once that version is moved into use:
 
-1. Grant **Last purchase cost** on a test contact (see above).
+1. Link a test contact to an active user whose role has **View Product Cost** (see above).
 2. Open **[Prompts](/system-management/ai-assistant/prompts)** (System Management > AI Assistant
    > Prompts), open **chatbot_semantic_parser**, and **Publish** the new version so it carries the
    **production** label.
-3. Test with the granted contact.
+3. Test with that contact.
 
 **Rollback** is moving the **production** label back to the previous version. No redeploy is
 needed either way.
