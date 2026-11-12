@@ -173,6 +173,17 @@ export function ValuesStep({
 
   const actions = ACTIONS_BY_KIND[kind];
 
+  // Below 640 px the value column narrows (truncated, full text on hover) so the Linked to
+  // picker is on a phone screen at first paint (browser pass D8).
+  const [narrow, setNarrow] = React.useState(false);
+  React.useEffect(() => {
+    const query = window.matchMedia('(max-width: 639px)');
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener?.('change', update);
+    return () => query.removeEventListener?.('change', update);
+  }, []);
+
   const columns = React.useMemo<ColumnDef<ProjectImportLine>[]>(() => {
     const out: ColumnDef<ProjectImportLine>[] = [];
     if (!readOnly) {
@@ -195,7 +206,7 @@ export function ValuesStep({
       {
         accessorKey: 'value_text',
         header: ({ column }) => <DataGridColumnHeader title="Value in file" column={column} />,
-        size: 240,
+        size: narrow ? 130 : 240,
         meta: { headerTitle: 'Value in file', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="block truncate font-medium" title={row.original.value_text ?? ''}>
@@ -275,7 +286,7 @@ export function ValuesStep({
     return [...out].sort((a, b) => order.indexOf(keyOf(a)) - order.indexOf(keyOf(b)));
     // `choose` reads the current kind; the columns are rebuilt whenever it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, readOnly, actions]);
+  }, [kind, readOnly, actions, narrow]);
 
   const table = useReactTable({
     columns,
@@ -318,7 +329,7 @@ export function ValuesStep({
   return (
     <div className="space-y-4">
       <Tabs value={kind} onValueChange={(next) => setKind(next as ProjectImportKind)}>
-        <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="w-full justify-start">
           {KIND_TABS.map((tab) => {
             const todo = summary.data?.[tab.kind]?.todo ?? 0;
             return (

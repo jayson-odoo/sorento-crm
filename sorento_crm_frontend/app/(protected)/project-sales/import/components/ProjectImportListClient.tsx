@@ -24,6 +24,7 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { formatDateSafe } from '@/lib/helpers';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -103,15 +104,7 @@ export function ProjectImportListClient() {
   const total = runs.data?.total ?? 0;
   const filtered = Boolean(debouncedValue || status.length || uploadedBy.length);
 
-  const firstFilterRun = React.useRef(true);
-  React.useEffect(() => {
-    // Not on mount: a page restored from the URL must stay where it was.
-    if (firstFilterRun.current) {
-      firstFilterRun.current = false;
-      return;
-    }
-    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [debouncedValue, status, uploadedBy]);
+  useResetPageOnFilterChange(setPagination, [debouncedValue, status, uploadedBy]);
 
   const columns = React.useMemo<ColumnDef<ProjectImportRunRow>[]>(
     () => [

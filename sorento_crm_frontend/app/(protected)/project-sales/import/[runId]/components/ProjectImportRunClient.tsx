@@ -189,7 +189,7 @@ export function ProjectImportRunClient({ runId }: { runId: string }) {
         <ResultsView run={run} />
       ) : (
         <Tabs value={current} onValueChange={(next) => setTab(next as TabId)} className="space-y-4">
-          <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+          <TabsList variant="line" className="w-full justify-start">
             <TabsTrigger value="columns">Columns</TabsTrigger>
             <TabsTrigger value="values" disabled={run.missing_columns.length > 0}>
               Values

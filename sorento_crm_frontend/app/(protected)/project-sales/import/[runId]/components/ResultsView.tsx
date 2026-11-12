@@ -19,7 +19,7 @@ export function ResultsView({ run }: { run: ProjectImportRun }) {
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-      <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+      <TabsList variant="line" className="w-full justify-start">
         <TabsTrigger value="results">Results</TabsTrigger>
         <TabsTrigger value="values">Values</TabsTrigger>
         <TabsTrigger value="history">History</TabsTrigger>
