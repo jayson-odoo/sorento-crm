@@ -29,8 +29,9 @@ Before the sales order is confirmed, quoting is free. Moving a delivery date is 
 
 ## What's captured
 
-* Each override is written to the history of the proposal line or the sales order, with your
-  name, the reason, and the quantity before and after.
+* Each override shows in History, with your name, the time, the reason and the quantity before and
+  after: on a proposal, in its **History** (the clock button in **Edit proposal**); on a sales
+  order, in its **History** tab.
 
 ## How you'll be notified
 

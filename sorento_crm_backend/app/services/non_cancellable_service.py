@@ -40,6 +40,13 @@ from app.services.error_handler import AppException
 logger = logging.getLogger(__name__)
 
 OVERRIDE_PERMISSION = "projects.non_cancellable.override"
+
+#: What each gated action is called in History and the audit text (plain words, owner rule).
+ACTION_WORDS = {
+    "quotation_line_change": "Quotation line changed",
+    "so_amendment_publish": "Amendment published",
+    "board_cancel_line": "Transferred to Cancel SO",
+}
 AUDIT_EVENT = "non_cancellable_override"
 ALERT_TYPE = "project_non_cancellable_reduced"
 
@@ -579,12 +586,15 @@ def assert_may_reduce(
             entity_id=r.entity_id,
             reason=reason,
             new_values={
-                "action": action,
+                "action": ACTION_WORDS.get(action, action),
                 "line": r.label,
                 "from_qty": _qty_or_none(r.from_qty),
                 "to_qty": _qty_or_none(r.to_qty),
             },
-            description=f"Non-cancellable override ({action}): {r.label}",
+            description=(
+                f"Non-cancellable override, {ACTION_WORDS.get(action, action).lower()}: "
+                f"{r.label}, {_qty_or_none(r.from_qty)} to {_qty_or_none(r.to_qty)}"
+            ),
             company_id=company_id,
         )
 

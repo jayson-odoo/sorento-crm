@@ -1300,6 +1300,30 @@ def _assert_no_non_cancellable_cut(
         action="quotation_line_change",
         company_id=quotation.company_id,
     )
+    # Passed with lines to cut means an override was given: it shows in the proposal's own
+    # History (owner rule: every tracked action in the record's one History view).
+    if reductions and getattr(quotation, "document_id", None):
+        from app.models.projects import ProjectQuotationDocument
+        from app.services import quotation_form_draft_service as drafts
+
+        document = (
+            db.query(ProjectQuotationDocument)
+            .filter(ProjectQuotationDocument.id == quotation.document_id)
+            .first()
+        )
+        if document is not None:
+            for r in reductions:
+                drafts.record_event(
+                    db,
+                    document=document,
+                    note=(
+                        f"Non-cancellable override: {r.label} "
+                        f"{non_cancellable._qty_or_none(r.from_qty)} to "
+                        f"{non_cancellable._qty_or_none(r.to_qty)}. "
+                        f"Reason: {(override_reason or '').strip()}"
+                    ),
+                    user_id=user_id,
+                )
 
 
 def replace_lines(

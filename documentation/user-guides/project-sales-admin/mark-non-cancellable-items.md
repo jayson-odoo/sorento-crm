@@ -12,7 +12,8 @@ the sales order is confirmed, for example a bathtub that Sorento cannot store.
    the series' own **Categories** can be picked. A category also covers the categories under it.
    Select **Save changes**.
 3. To set one model differently, scroll the products table right to the **Non-cancellable**
-   column and pick **Yes** or **No** on its row. Clear the cell to follow the category again. The
+   column, pick **Yes** or **No** on its row and select the row's tick to save it. Clear the cell
+   (and tick) to follow the category again. The
    **Applies** column shows a **Non-cancellable** badge on every product that ends up
    Non-cancellable.
 4. In the **Sets** table, tick **Non-cancellable** on a set to mark the set itself. A set is also
@@ -21,11 +22,12 @@ the sales order is confirmed, for example a bathtub that Sorento cannot store.
 ### Company-wide, for items outside a series
 
 1. Open **Project Sales**, then **Configuration**, then **Non-cancellable Items**.
-2. Select **Add item**. Pick the **Type** (**Product** or **Category**), the product or category,
+2. Select **Create**. Pick the **Type** (**Product** or **Category**), the product or category,
    leave **Non-cancellable: Yes** on (or switch it to No to exempt one model from its category),
    add **Notes** if you like, and select **Add item**.
-3. To change a row, select it, edit, and select **Save**. To remove it, select the bin on its row;
-   the row is removed when the countdown ends (**Cancel** stops it).
+3. To change a row, select it (or right-click it and choose **Edit**), edit, and select **Save**.
+   To remove it, right-click the row and choose **Delete**; the row is removed when the countdown
+   ends (**Cancel** stops it).
 
 ## What's captured
 

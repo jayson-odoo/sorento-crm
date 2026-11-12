@@ -601,3 +601,98 @@ def test_queued_alerts_send_only_after_commit_and_drop_on_rollback(world, monkey
     nc._queue_alert(db, dict(spec, dedup_key="k2"))
     db.commit()
     assert [s["dedup_key"] for s in sent] == ["k2"]
+
+
+# ------------------------------------------------- crew pass 878bb236 fix round
+
+
+def _document_scope(db, company_id, owner, series_id):
+    """A proposal document with one scope, the way the quotation form builds it."""
+    from app.services import project_quotation_document_service as documents
+    from app.services import project_quotation_service as quotes
+    from app.services.project_service import register_project
+
+    project = register_project(
+        db,
+        company_id=company_id,
+        actor_user_id=owner,
+        developer_party_id=None,
+        title=f"{MARKER} Mutiara Heights {_uid()[:12]}",
+    )
+    document = documents.create_document(db, project=project, actor_user_id=owner)
+    scope = documents.add_scope(
+        db,
+        document=document,
+        scope_label="House Units",
+        actor_user_id=owner,
+        payload={"series_id": series_id},
+    )
+    return document, scope, quotes.current_version(db, scope.id)
+
+
+def test_override_audit_reads_in_plain_words(world, monkeypatch):
+    """Crew pass: the audit text read "(quotation_line_change)", a raw key."""
+    from app.services import project_quotation_service as quotes
+
+    db, cid, owner = world["db"], world["company_id"], world["owner"]
+    tub = _product(db, cid, world["bath"].id, world["uom"])
+    series = _series(db, cid, [world["bath"].id], [world["bath"].id])
+    quotation, version = _scope(db, cid, owner, series_id=series.id)
+    line = _line(db, version, owner, tub)
+    _confirmed(db, quotation, line)
+    monkeypatch.setattr(nc, "can_override", lambda _db, _uid: True)
+    line_id, code = str(line.id), line.product_code_snapshot
+
+    quotes.delete_line(
+        db, version=version, line=line, user_id=owner, non_cancellable_override_reason="Agreed"
+    )
+
+    row = db.query(AuditLog).filter(AuditLog.entity_id == line_id, AuditLog.event == nc.AUDIT_EVENT).one()
+    assert row.description == f"Non-cancellable override, quotation line changed: {code}, 53 to 0"
+    assert "_" not in row.description and "(" not in row.description
+    assert row.new_values["action"] == "Quotation line changed"
+
+
+def test_quotation_override_shows_in_the_proposal_history(world, monkeypatch):
+    """Owner rule: every tracked action shows in the record's one History view."""
+    from app.services import project_quotation_service as quotes
+    from app.services import quotation_form_draft_service as drafts
+
+    db, cid, owner = world["db"], world["company_id"], world["owner"]
+    tub = _product(db, cid, world["bath"].id, world["uom"])
+    series = _series(db, cid, [world["bath"].id], [world["bath"].id])
+    document, scope, version = _document_scope(db, cid, owner, series.id)
+    line = _line(db, version, owner, tub, qty=5)
+    _confirmed(db, scope, line)
+    monkeypatch.setattr(nc, "can_override", lambda _db, _uid: True)
+    code = line.product_code_snapshot
+
+    quotes.upsert_line(
+        db,
+        version=version,
+        actor_user_id=owner,
+        line=line,
+        payload={"quantity": 4},
+        non_cancellable_override_reason="Customer pays the storage charge",
+    )
+
+    history = drafts.list_history(db, document)
+    events = [e for e in history if e["kind"] == "event"]
+    assert [e["note"] for e in events] == [
+        f"Non-cancellable override: {code} 5 to 4. Reason: Customer pays the storage charge"
+    ]
+
+
+def test_sales_manager_roles_get_the_override_permission():
+    """Owner ruling 11 Nov: sales manager + director (admin always) hold the override."""
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "versions" / "nc_0001_non_cancellable.py"
+    spec = importlib.util.spec_from_file_location("nc_0001", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert {"superadmin", "admin", "director", "project_sales_manager", "sales_manager"} <= set(
+        module.GRANT_ROLES
+    )
+    assert "sales manager" in module.GRANT_ROLE_NAMES

@@ -14,8 +14,8 @@ Additive only:
   the customer already holds.
 - ``projects.non_cancellable_rules``: the company-wide default by product or category (owner
   answer (a)); the series setting wins over it.
-- ``projects.non_cancellable.override`` seeded and granted to superadmin, admin, director and
-  project_sales_manager (insert-only, ON CONFLICT DO NOTHING).
+- ``projects.non_cancellable.override`` seeded and granted to superadmin, admin, director,
+  project_sales_manager and the sales manager role (insert-only, ON CONFLICT DO NOTHING).
 
 Revision ID: nc_0001_non_cancellable
 Revises: qdp_0001_duplicate_party
@@ -39,7 +39,17 @@ SLUG_DESC = (
     "Cancel or reduce a Non-cancellable line after its sales order is confirmed, with a "
     "reason. Also receives the alert when AutoCount cancels or reduces one."
 )
-GRANT_ROLES = ("superadmin", "admin", "director", "project_sales_manager")
+GRANT_ROLES = (
+    "superadmin",
+    "admin",
+    "director",
+    "project_sales_manager",
+    # Owner ruling 11 Nov: the sales manager role too (crew fix round, 12 Nov). Its slug is
+    # matched both ways it is spelled on installs, and by name below as a fallback.
+    "sales_manager",
+    "sales.manager",
+)
+GRANT_ROLE_NAMES = ("sales manager", "project sales manager", "director")
 
 
 def upgrade() -> None:
@@ -98,10 +108,10 @@ def upgrade() -> None:
             "INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at) "
             "SELECT gen_random_uuid()::text, r.id, p.id, :now "
             "  FROM user_roles r CROSS JOIN user_permissions p "
-            " WHERE r.slug = ANY(:roles) AND p.slug = :slug "
+            " WHERE (r.slug = ANY(:roles) OR lower(r.name) = ANY(:names)) AND p.slug = :slug "
             "ON CONFLICT (role_id, permission_id) DO NOTHING"
         ),
-        {"roles": list(GRANT_ROLES), "slug": SLUG, "now": now},
+        {"roles": list(GRANT_ROLES), "names": list(GRANT_ROLE_NAMES), "slug": SLUG, "now": now},
     )
 
 
