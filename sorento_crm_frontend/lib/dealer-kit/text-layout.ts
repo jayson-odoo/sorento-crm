@@ -383,7 +383,9 @@ export function richLayerLines(
         }
         continue;
       }
-      if (lineWidth > 0) {
+      // The space joins a started line. "Started" is "holds a piece", not "has width": with no
+      // measure (no canvas) every width is 0, and a width test dropped every space.
+      if (line.length > 0) {
         line.push(...group.space);
         lineWidth += spaceWidth;
       }
