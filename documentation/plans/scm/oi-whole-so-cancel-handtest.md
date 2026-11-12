@@ -69,7 +69,8 @@ COMMIT;
 6. At phone width (375 px), repeat steps 1 and 2.
 7. Click Fulfilment Planning in the sidebar, search SO-A, open it. Keep Buy for the moved line ("Change
    decision" > "Buy the whole 2" > Save decision; do NOT click "Save all suggested"), then the board's Confirm.
-8. Search SO-B, open it, click "Apply AutoCount change", then Apply in the popup.
+8. Open SO-B from Sales Orders (sidebar) and click its "Plan" button on the order page. On the board, read
+   SO-B's lines, click "Save all suggested", then "Confirm (3)" and confirm in the popup.
 9. Open OI-B, Lines tab.
 10. System > Messaging > Outgoing Mails, search the fixture SO numbers.
 
@@ -90,7 +91,11 @@ COMMIT;
 6. Step 6: same as Expected 1 and 2, no sideways scrolling.
 7. Step 7: the result reads "SO-A: confirmed as revision 2 (1 purchase row handed over)"; OI-A goes back to
    Outstanding, line 1 "To order".
-8. Step 8: the result reads "SO-B: applied the AutoCount change ..."; SO-B leaves the planning list.
+8. Step 8: the SO-B order page shows a "Plan" button (owner F1) and it opens the board. Each SO-B line reads
+   "Change proposed" with Now "Cancel line"; before saving, the button reads "Confirm (0)"; after "Save all
+   suggested" it reads "Confirm (3)". Nowhere on the board, the popup or the result is "Apply AutoCount
+   change" (owner F2: one Decide -> Confirm path). The result reads "SO-B: confirmed as revision N (3
+   purchase rows handed over)"; SO-B leaves the planning list.
 9. Step 9: the Lines tab reads "Every line on this order inquiry is cancelled." (not "Nothing was raised on
    this order inquiry."); History shows "Cancelled <item>" once per row.
 10. Step 10: SO-A's handover lists the moved line with remark DELAY; SO-B's lists every line CANCEL ALL;
