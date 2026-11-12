@@ -4,7 +4,8 @@ Status: DRAFT, written against the behaviour card's recommendations (PR #2381). 
 [Qn] change if the owner answers question n differently. Not a build contract until answers land.
 
 ## Request (requester)
-- R1 A user with `procurement.stock_order_requests.create` can create a request with currency (required, one per request), needed-by date, stock location, reason, and one or more product lines.
+- R1 A user with `procurement.stock_order_requests.create` can create a request with currency (required, one per request), needed-by date, an optional default location, reason, and one or more product lines.
+- R1a (owner, mock v1 note) Location is per line, like AutoCount: each line has its own location (required on Submit), a new line starts with the header default when one is set, and changing the default never rewrites existing lines. The picker lists locations from `location_stock_service.location_stock_for_product` with stock shown as information only (never caps qty). The OI row carries it in its existing `stock_location`.
 - R2 [Q4] Each line picks a catalogue product (searchable by code and name); description fills from the product; quantity > 0 and unit price >= 0 are required on Submit, not while typing.
 - R3 Line total = qty x unit price, worked out server-side and shown; the request total is the sum, in the request currency.
 - R4 [Q3] Photos attach per line through the shared attachment pipeline; thumbnails in the line, full image only in the shared lightbox.

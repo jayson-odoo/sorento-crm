@@ -85,4 +85,6 @@ See the crew-ask comment on PR #2381. Answers are recorded here once relayed.
 
 ## Owner answers
 
-(pending)
+- Mock v1 note 1 (12 Nov 18:48): location per line like AutoCount; header default optional. Reuse: `sorento_crm_backend/app/services/scm/location_stock_service.py:35` (`location_stock_for_product`, behind `GET /scm/reorder-runs/location-stock`, `app/api/v1/scm/reorder_runs.py:511`); OI row's existing `stock_location` (`app/models/project_so.py:1018`). Mock v2 filed.
+- Mock v1 note 2: reuse list posted as a crew-note on PR #2381.
+- Card questions 1-5: (pending)

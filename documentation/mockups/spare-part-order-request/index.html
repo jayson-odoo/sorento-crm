@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock order request mock v1</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock order request mock v2</title>
 <style>
 :root{--fg:#18181b;--mut:#71717a;--line:#e4e4e7;--soft:#f4f4f5;--pri:#1b84ff;--new:#b45309;--newbg:#fffbeb;--err:#dc2626;--ok:#047857;--okbg:#ecfdf5;--warn:#b45309;--warnbg:#fffbeb;--r:8px}
 *{box-sizing:border-box}body{margin:0;background:#fafafa;color:var(--fg);font:13px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
@@ -35,26 +35,26 @@ ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);
 .view{display:none}.view.on{display:block}
 @media(max-width:640px){.acts .btn{flex:1 1 100%}.acts .sp{display:none}.ph .pager{display:none}}
 </style></head><body><div class="wrap">
-<p class="note">Mock v1 for SPARE-PART-ORDER-REQUEST. It follows the behaviour card's recommendations: a separate request, Form SLA stages as approval levels, photos per line, catalogue products, one currency per request, and an OI raised on final approval. Every name, code, price and photo is invented. <span class="new">NEW</span> marks what this lane adds; everything else exists today. Switch screens with the buttons below. Click a photo for the lightbox.</p>
+<p class="note">Mock v2 for SPARE-PART-ORDER-REQUEST. v2 (owner, 12 Nov 18:48): location is per line like AutoCount; the header holds an optional default location that new lines start with, and each line can differ. v1 text: It follows the behaviour card's recommendations: a separate request, Form SLA stages as approval levels, photos per line, catalogue products, one currency per request, and an OI raised on final approval. Every name, code, price and photo is invented. <span class="new">NEW</span> marks what this lane adds; everything else exists today. Switch screens with the buttons below. Click a photo for the lightbox.</p>
 <div class="tabsw" id="sw"><button data-v="v1" class="on">1 Requester: Create</button><button data-v="v2">2 Approver: Pending approval</button><button data-v="v3">3 Purchasing: Order Inquiries list</button><button data-v="v4">4 Purchasing: Order Inquiry detail</button></div>
 
 <!-- 1. Requester -->
 <div class="view on" id="v1">
 <div class="ph"><h1>New Stock Order Request</h1><span class="pill n">Draft</span><span class="grow"></span><button class="btn">Back to stock order requests</button></div>
 <div class="sub">Prepared by Requester A</div>
-<div class="sec" id="s1"><div class="sh" onclick="fold('s1')"><span class="chev">&#9662;</span><b>Request</b><span class="sum">MYR, needed by 30/11/2026</span></div>
+<div class="sec" id="s1"><div class="sh" onclick="fold('s1')"><span class="chev">&#9662;</span><b>Request</b><span class="sum">MYR, needed by 30/11/2026, default location WH-MAIN</span></div>
 <div class="sb"><div class="grid2">
 <div><span class="lbl">Currency *</span><div class="sel">MYR</div></div>
 <div><span class="lbl">Needed by</span><input class="in" value="30/11/2026"></div>
-<div><span class="lbl">Stock location</span><div class="sel">Main warehouse</div></div>
+<div><span class="lbl">Default location <span class="new">NEW optional</span></span><div class="sel">WH-MAIN</div><div class="hint">New lines start with this location.</div></div>
 </div><div><span class="lbl">Reason</span><textarea class="in" rows="2">Service stock for the hinge and damper repairs</textarea></div></div></div>
 <div class="sec" id="s2"><div class="sh" onclick="fold('s2')"><span class="chev">&#9662;</span><b>Products</b><span class="sum">2 lines, MYR 260.00</span></div>
 <div class="sb"><div class="tw"><table>
-<colgroup><col style="width:30px"><col style="width:18%"><col style="width:24%"><col style="width:80px"><col style="width:100px"><col style="width:110px"><col style="width:20%"></colgroup>
-<thead><tr><th>#</th><th>Product</th><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Total</th><th>Photos <span class="new">NEW</span></th></tr></thead>
+<colgroup><col style="width:30px"><col style="width:15%"><col style="width:20%"><col style="width:150px"><col style="width:80px"><col style="width:100px"><col style="width:100px"><col style="width:17%"></colgroup>
+<thead><tr><th>#</th><th>Product</th><th>Description</th><th>Location <span class="new">NEW</span></th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Total</th><th>Photos <span class="new">NEW</span></th></tr></thead>
 <tbody>
-<tr><td>1</td><td><div class="sel" title="ZZX-100 Hinge set soft close">ZZX-100</div></td><td title="Hinge set soft close">Hinge set soft close</td><td><input class="in r" value="10"></td><td><input class="in r" value="12.00"></td><td class="r">120.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i><button class="btn sm">+ Photo</button></span></td></tr>
-<tr><td>2</td><td><div class="sel" title="ZZX-220 Damper 90 deg">ZZX-220</div></td><td title="Damper 90 deg">Damper 90 deg</td><td><input class="in r" value="4"></td><td><input class="in r" value="35.00"></td><td class="r">140.00</td><td><span class="th"><button class="btn sm">+ Photo</button></span></td></tr>
+<tr><td>1</td><td><div class="sel" title="ZZX-100 Hinge set soft close">ZZX-100</div></td><td title="Hinge set soft close">Hinge set soft close</td><td><div class="sel" title="WH-MAIN, stock 3">WH-MAIN <small class="hint">stock 3</small></div></td><td><input class="in r" value="10"></td><td><input class="in r" value="12.00"></td><td class="r">120.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i><button class="btn sm">+ Photo</button></span></td></tr>
+<tr><td>2</td><td><div class="sel" title="ZZX-220 Damper 90 deg">ZZX-220</div></td><td title="Damper 90 deg">Damper 90 deg</td><td><div class="sel" title="WH-SVC, stock 0">WH-SVC <small class="hint">stock 0</small></div></td><td><input class="in r" value="4"></td><td><input class="in r" value="35.00"></td><td class="r">140.00</td><td><span class="th"><button class="btn sm">+ Photo</button></span></td></tr>
 </tbody></table></div>
 <div class="row"><button class="btn sm">+ Add product</button></div>
 <div class="tot"><span>Total</span><span>MYR 260.00</span></div></div></div>
@@ -68,11 +68,11 @@ ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);
 <div class="meta"><div><span>Requested by</span>Requester A</div><div><span>Submitted</span>12/11/2026, 4:10 pm</div><div><span>Approval level</span>1 of 1 (Service HOD) <span class="new">NEW</span></div><div><span>Waiting on</span>Approver B</div></div>
 <div class="ltabs"><span class="on">Details</span><span>History</span></div>
 <div class="tw"><table>
-<colgroup><col style="width:30px"><col style="width:16%"><col style="width:24%"><col style="width:110px"><col style="width:100px"><col style="width:110px"><col style="width:18%"></colgroup>
-<thead><tr><th>#</th><th>Product</th><th>Description</th><th class="r">Qty <span class="new">editable</span></th><th class="r">Unit price</th><th class="r">Total</th><th>Photos</th></tr></thead>
+<colgroup><col style="width:30px"><col style="width:14%"><col style="width:20%"><col style="width:100px"><col style="width:110px"><col style="width:100px"><col style="width:110px"><col style="width:18%"></colgroup>
+<thead><tr><th>#</th><th>Product</th><th>Description</th><th>Location</th><th class="r">Qty <span class="new">editable</span></th><th class="r">Unit price</th><th class="r">Total</th><th>Photos</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>ZZX-100</td><td title="Hinge set soft close">Hinge set soft close</td><td><input class="in r" id="q1" value="6" oninput="rc()"></td><td class="r">12.00</td><td class="r" id="t1">72.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i></span></td></tr>
-<tr><td>2</td><td>ZZX-220</td><td title="Damper 90 deg">Damper 90 deg</td><td><input class="in r" id="q2" value="4" oninput="rc()"></td><td class="r">35.00</td><td class="r" id="t2">140.00</td><td><small class="hint">-</small></td></tr>
+<tr><td>1</td><td>ZZX-100</td><td title="Hinge set soft close">Hinge set soft close</td><td>WH-MAIN</td><td><input class="in r" id="q1" value="6" oninput="rc()"></td><td class="r">12.00</td><td class="r" id="t1">72.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i></span></td></tr>
+<tr><td>2</td><td>ZZX-220</td><td title="Damper 90 deg">Damper 90 deg</td><td>WH-SVC</td><td><input class="in r" id="q2" value="4" oninput="rc()"></td><td class="r">35.00</td><td class="r" id="t2">140.00</td><td><small class="hint">-</small></td></tr>
 </tbody></table></div>
 <div class="tot"><span>Total</span><span id="tt">MYR 212.00</span></div>
 <p class="hint">Requested qty for line 1 was 10; the History tab records the change to 6.</p>
@@ -100,11 +100,11 @@ ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);
 <div class="meta"><div><span>Type</span>Stock replenishment <span class="new">NEW</span></div><div><span>Requested by</span>Requester A</div><div><span>Approved by</span>Approver B</div><div><span>Approved</span>12/11/2026, 5:02 pm</div><div><span>Currency</span>MYR</div><div><span>Sales order</span>-</div></div>
 <div class="ltabs"><span class="on">Lines</span><span>Related documents</span><span>History</span></div>
 <div class="tw"><table>
-<colgroup><col style="width:30px"><col style="width:14%"><col style="width:22%"><col style="width:80px"><col style="width:100px"><col style="width:100px"><col style="width:16%"><col style="width:120px"></colgroup>
-<thead><tr><th><input type="checkbox"></th><th>Product</th><th>Description</th><th class="r">Qty</th><th class="r">Unit price <span class="new">NEW</span></th><th class="r">Total <span class="new">NEW</span></th><th>Photos <span class="new">NEW</span></th><th>Status</th></tr></thead>
+<colgroup><col style="width:30px"><col style="width:13%"><col style="width:18%"><col style="width:100px"><col style="width:70px"><col style="width:95px"><col style="width:95px"><col style="width:14%"><col style="width:110px"></colgroup>
+<thead><tr><th><input type="checkbox"></th><th>Product</th><th>Description</th><th>Location</th><th class="r">Qty</th><th class="r">Unit price <span class="new">NEW</span></th><th class="r">Total <span class="new">NEW</span></th><th>Photos <span class="new">NEW</span></th><th>Status</th></tr></thead>
 <tbody>
-<tr><td><input type="checkbox"></td><td>ZZX-100</td><td title="Hinge set soft close">Hinge set soft close</td><td class="r">6</td><td class="r">12.00</td><td class="r">72.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i></span></td><td><span class="pill n">Awaiting</span></td></tr>
-<tr><td><input type="checkbox"></td><td>ZZX-220</td><td title="Damper 90 deg">Damper 90 deg</td><td class="r">4</td><td class="r">35.00</td><td class="r">140.00</td><td><small class="hint">-</small></td><td><span class="pill n">Awaiting</span></td></tr>
+<tr><td><input type="checkbox"></td><td>ZZX-100</td><td title="Hinge set soft close">Hinge set soft close</td><td>WH-MAIN</td><td class="r">6</td><td class="r">12.00</td><td class="r">72.00</td><td><span class="th"><i onclick="pv()"></i><i onclick="pv()"></i></span></td><td><span class="pill n">Awaiting</span></td></tr>
+<tr><td><input type="checkbox"></td><td>ZZX-220</td><td title="Damper 90 deg">Damper 90 deg</td><td>WH-SVC</td><td class="r">4</td><td class="r">35.00</td><td class="r">140.00</td><td><small class="hint">-</small></td><td><span class="pill n">Awaiting</span></td></tr>
 </tbody></table></div>
 <div class="tot"><span>Total</span><span>MYR 212.00</span></div>
 </div>
@@ -121,6 +121,7 @@ ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);
 <li>Photos per line <span class="new">NEW</span>: upload through <code>sorento_crm_backend/app/services/so_line_attachments.py:181</code> generalised by entity type, storage <code>entity_attachment_links</code> (<code>app/models/entity_attachment.py:10</code>), thumbnails <code>image_thumbnailer.store_thumbnail</code>; FE thumbnails <code>components/common/AttachmentImage.tsx:19</code>, strip lifted from <code>procurement-management/packing-lists/components/ShipmentLinePhotosCell.tsx</code>, lightbox <code>components/common/AttachmentPreviewModal.tsx:197</code></li>
 <li>Approve popup: the main button opens it, Approve is inside (standing rule); the backend is <code>FormSLAOrchestrator.emit_event</code> (<code>app/services/form_sla_service.py:378</code>) advancing the stage chain from <code>form_sla_configs</code> (<code>app/models/sla.py:222</code>); approver identity check modelled on <code>app/services/project_quotation_approval_service.py:500</code></li>
 <li>Approval levels setting: existing <code>/sla-management/form-sla-config</code> screen, new form type <code>stock_order_request</code> in <code>FORM_SLA_TYPES</code> (<code>form_sla_service.py:34</code>); no new settings screen</li>
+<li>Location per line <span class="new">NEW v2</span>: <code>SearchableSelect</code> fed by the per-location stock reader <code>sorento_crm_backend/app/services/scm/location_stock_service.py:35</code> (<code>location_stock_for_product</code>, already behind <code>GET /scm/reorder-runs/location-stock</code>, <code>app/api/v1/scm/reorder_runs.py:511</code>, and used by the fulfilment board); stock beside the code is information only and never caps the qty; the OI row stores it in its existing <code>stock_location</code> column (<code>app/models/project_so.py:1018</code>)</li>
 <li>History tab: <code>components/audit/AuditTrail.tsx:100</code> (requested qty 10 to 6 by Approver B shows here)</li>
 <li>Order Inquiries list: <code>app/(protected)/project-sales/order-inquiries/components/OrderInquiryHeadersList.tsx</code>, one new Type column + Type filter <span class="new">NEW</span>; Sales order cell shows "-" for this type</li>
 <li>Order Inquiry detail: <code>app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryDetail.tsx</code>, <code>OrderInquiryLinesTab.tsx</code>, <code>OrderInquiryHistory.tsx</code>; new unit price, total, photo columns shown only for this type; Acknowledge / per-row reject are the existing actions</li>
