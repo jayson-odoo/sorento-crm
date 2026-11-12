@@ -297,6 +297,7 @@ def test_the_retry_builds_what_is_missing_and_then_does_nothing(monkeypatch):
     monkeypatch.setattr(embedding_indexes, "COVERAGE_INDEXES", ())
     # Nor integration_log; that part is covered in test_migration_il_0001_integration_log_indexes.py.
     monkeypatch.setattr(online_index, "INTEGRATION_LOG_INDEXES", ())
+    monkeypatch.setattr(online_index, "INTEGRATION_LOG_SEARCH_INDEXES", ())
 
     with _scratch() as (schema, conn):
         scratch_engine = _scratch_engine(schema)

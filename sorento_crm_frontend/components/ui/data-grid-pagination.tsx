@@ -80,13 +80,17 @@ function DataGridPagination(props: DataGridPaginationProps) {
     ? `${formatCount(recordCount)}+`
     : formatCount(recordCount);
 
-  // Replace placeholders in paginationInfo
-  const paginationInfo = mergedProps?.info
-    ? mergedProps.info
-        .replace('{from}', fromLabel)
-        .replace('{to}', toLabel)
-        .replace('{count}', countLabel)
-    : `${fromLabel} - ${toLabel} of ${countLabel}`;
+  // Replace placeholders in paginationInfo. No rows reads "0 of 0", never "1 - 0 of 0", which
+  // looks like a broken pager (crew pass on 086a3235); the default `info` is a template too.
+  const paginationInfo =
+    recordCount === 0
+      ? `0 of ${countLabel}`
+      : mergedProps?.info
+        ? mergedProps.info
+            .replace('{from}', fromLabel)
+            .replace('{to}', toLabel)
+            .replace('{count}', countLabel)
+        : `${fromLabel} - ${toLabel} of ${countLabel}`;
 
   // Pagination limit logic
   const paginationMoreLimit = mergedProps?.moreLimit || 5;

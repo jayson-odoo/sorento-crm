@@ -1,4 +1,4 @@
-"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no`, `lec_0002_embedding_indexes`, `epp_0001_chunk_coverage_idx` and `il_0001_integration_log_indexes` could not build.
+"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no`, `lec_0002_embedding_indexes`, `epp_0001_chunk_coverage_idx`, `il_0001_integration_log_indexes` and `il_0002_integration_log_search` could not build.
 
 GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX, LOOKUP-EMBED-CENTRAL. Those revisions let a deploy succeed when an
 index build times out (`app/utils/online_index.py`), so something has to try again: `start.sh`
@@ -35,6 +35,7 @@ def run(engine) -> bool:
                 online_index.GOODS_CHAIN_KEY_INDEXES
                 + online_index.BILLING_FROM_DOC_INDEXES
                 + online_index.INTEGRATION_LOG_INDEXES
+                + online_index.INTEGRATION_LOG_SEARCH_INDEXES
                 + embedding_indexes.MIGRATION_INDEXES
                 + embedding_indexes.COVERAGE_INDEXES,
             )

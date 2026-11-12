@@ -186,6 +186,7 @@ def test_the_retry_script_builds_it(monkeypatch):
     monkeypatch.setattr(embedding_indexes, "COVERAGE_INDEXES", ())
     # Nor public.integration_log (covered in test_migration_il_0001_integration_log_indexes.py).
     monkeypatch.setattr(online_index, "INTEGRATION_LOG_INDEXES", ())
+    monkeypatch.setattr(online_index, "INTEGRATION_LOG_SEARCH_INDEXES", ())
     with _scratch(monkeypatch) as (schema, conn):
         assert retry.run(engine) is True
         assert _index(conn, schema)[1] is True

@@ -1039,39 +1039,39 @@ class IntegrationLogService:
     
     @staticmethod
     def _apply_search(q, search: Optional[str]):
-        """The list's search box (INTLOG-SEARCH).
+        """The list's search box (INTLOG-SEARCH, INTLOG-SPEED-2).
 
-        Every term is a case-insensitive substring of the columns the grid shows or a person
-        reads off a failure: channel, business table, business id (the grid shows its first 8
-        characters), endpoint, external reference, error code, error message. LIKE wildcards in
-        the term are literal. A term that is a UUID also matches ``id`` and ``correlation_id``
-        exactly; it still searches the text columns, because ``external_reference`` and
-        endpoints carry other records' UUIDs (a stock inquiry id, for one).
+        Every term is a case-insensitive substring of one search text per row: channel, business
+        table, business id (the grid shows its first 8 characters), endpoint, external reference,
+        error code, error message, id and correlation id (``online_index.INTEGRATION_LOG_SEARCH_EXPR``).
+        LIKE wildcards and backslashes in the term are literal. A term that is a UUID in another
+        spelling (upper case, no dashes, braces) is also searched in its stored form.
+
+        One ILIKE on one expression, not an OR across columns: the GIN trigram index
+        ``ix_integration_log_search_trgm`` is built on exactly that expression, so a term that
+        matches few rows (a Business ID) is an index lookup instead of a read of the whole table.
         """
         import uuid as _uuid
 
-        from sqlalchemy import String, cast, or_
+        from sqlalchemy import literal_column, or_
+
+        from app.utils.online_index import INTEGRATION_LOG_SEARCH_EXPR
 
         term = (search or "").strip()
         if not term:
             return q
-        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = f"%{escaped}%"
-        matches = [
-            IntegrationLog.integration_channel.ilike(pattern, escape="\\"),
-            IntegrationLog.business_table.ilike(pattern, escape="\\"),
-            cast(IntegrationLog.business_id, String).ilike(pattern, escape="\\"),
-            IntegrationLog.endpoint.ilike(pattern, escape="\\"),
-            IntegrationLog.external_reference.ilike(pattern, escape="\\"),
-            IntegrationLog.error_code.ilike(pattern, escape="\\"),
-            IntegrationLog.error_message.ilike(pattern, escape="\\"),
-        ]
+        terms = [term]
         try:
-            exact = str(_uuid.UUID(term))
+            canonical = str(_uuid.UUID(term))
         except ValueError:
-            exact = None
-        if exact is not None:
-            matches += [IntegrationLog.id == exact, IntegrationLog.correlation_id == exact]
+            canonical = None
+        if canonical is not None and canonical != term.lower():
+            terms.append(canonical)
+        text = literal_column(INTEGRATION_LOG_SEARCH_EXPR)
+        matches = []
+        for t in terms:
+            escaped = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            matches.append(text.ilike(f"%{escaped}%", escape="\\"))
         return q.filter(or_(*matches))
 
     @staticmethod

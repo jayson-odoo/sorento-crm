@@ -73,6 +73,29 @@ INTEGRATION_LOG_INDEXES: Tuple[Tuple[str, str, str], ...] = (
     ("integration_log", "ix_integration_log_next_retry_at", "(next_retry_at)"),
 )
 
+#: INTLOG-SPEED-2: what the Integration Log search box matches (`IntegrationLogService._apply_search`),
+#: one text per row: the columns the grid shows or a person reads off a failure, plus `id` and
+#: `correlation_id`. The list's search runs `<this> ILIKE '%term%'` and the GIN trigram index
+#: below is built on exactly this expression, so the planner can use it: the two must stay
+#: byte-for-byte the same (tests/test_integration_logs_search_index.py EXPLAINs the route's SQL).
+#: Crew, 12 Nov 2026, dev copy (~1.2M rows): the earlier OR of seven ILIKEs could use no index,
+#: so a Business ID search read the whole table (19.5-28 s).
+INTEGRATION_LOG_SEARCH_EXPR = (
+    "(coalesce(integration_channel, '') || ' ' || coalesce(business_table, '') || ' ' || "
+    "coalesce(business_id::text, '') || ' ' || coalesce(endpoint, '') || ' ' || "
+    "coalesce(external_reference, '') || ' ' || coalesce(error_code, '') || ' ' || "
+    "coalesce(error_message, '') || ' ' || id::text || ' ' || coalesce(correlation_id::text, ''))"
+)
+
+#: Built online by il_0002_integration_log_search and retried by scripts/ensure_goods_chain_indexes.py.
+INTEGRATION_LOG_SEARCH_INDEXES: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "integration_log",
+        "ix_integration_log_search_trgm",
+        f"USING gin ({INTEGRATION_LOG_SEARCH_EXPR} gin_trgm_ops)",
+    ),
+)
+
 #: pg_try_advisory_lock key `ensure_indexes_online` takes, so two builders (the migration, the
 #: retry, blue and green starting together) never build the same index at once.
 ADVISORY_LOCK_KEY = 0x6763_6964_7830  # "gcidx0"
