@@ -1,6 +1,6 @@
 # PLAN: Spare-part order request (stock replenishment, no SO)
 
-Status: Plan, mock v5 + card v4 filed as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
+Status: Build (mock v5 + card v4 approved 12 Nov 20:14). Track L. as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
 
 Lane: SPARE-PART-ORDER-REQUEST.
 
@@ -92,4 +92,4 @@ See the crew-ask comment on PR #2381. Answers are recorded here once relayed.
 - Mock notes 5-7 (12 Nov 18:54): stock per line = `sorento_crm_frontend/app/(protected)/project-sales/_shared/components/OrderInquiryStockGrid.tsx` as is (wired at `order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:471-510`); attachments = `_shared/components/SoLineAttachmentsButton.tsx` (mock v2's thumbnail strip was NOT it; switched); the request opens on the existing OI page `order-inquiries/[id]/components/OrderInquiryDetail.tsx` (header `:771`, tabs `:1001-1019`), fields in `OrderInquiryGeneralTab.tsx`, lines in `OrderInquiryLinesTab.tsx`. The SO-style layout of mock v2 is dropped. Consequence: card question 1 flips to ONE record (the request is an OI of type spare_part_request / consignment_request with draft and pending_approval states before purchasing sees it). Mock v4 + card v3 filed.
 - Mock note 8 (12 Nov 20:00): no Consignment type (supersedes note 4). `inquiry_type` values: `sales_order` | `spare_part_request`.
 - Mock note 9: the approver edits qty, unit price and photos per line before approving; requested values kept on the row (`requested_qty`, `requested_unit_price`) and shown as "was ..."; each change audited (OI History). Photos via `SoLineAttachmentsButton` `canEdit`. Mock v5 + card v4 filed.
-- Card v4 questions 1-5: (pending)
+- Card v4 + mock v5 APPROVED (owner 12 Nov 20:14: "Ok go, make sure reuse"): all five recommendations stand. Q1 one record (the request IS an OI of type spare_part_request); Q2 Form SLA stages, one chain, server-side team check; Q3 catalogue products only; Q4 Revise until purchasing acknowledges; Q5 approver edits qty / unit price / photos on existing lines only.
