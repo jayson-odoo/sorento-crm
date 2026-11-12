@@ -51,10 +51,15 @@ function lineRows(over: Partial<OrderInquiryWorklistRow>) {
 
 describe('AC-V2-4b: the SO Qty cell', () => {
   it('prints "Was 10" under a line qty of 7 when previous_so_line_qty is 10', () => {
-    render(<SoQtyOnly rows={lineRows({ previous_so_line_qty: '10' } as Partial<OrderInquiryWorklistRow>)} />);
+    render(<SoQtyOnly rows={lineRows({ previous_so_line_qty: '10', waiting_for_cs: true } as Partial<OrderInquiryWorklistRow>)} />);
     const cell = screen.getByTestId('so-qty-row');
     expect(within(cell).getByText('7')).toBeInTheDocument();
     expect(within(cell).getByText('Was 10')).toBeInTheDocument();
+  });
+
+  it('prints no Was when the row is not waiting', () => {
+    render(<SoQtyOnly rows={lineRows({ previous_so_line_qty: '10', waiting_for_cs: false } as Partial<OrderInquiryWorklistRow>)} />);
+    expect(within(screen.getByTestId('so-qty-row')).queryByText(/^Was /)).not.toBeInTheDocument();
   });
 
   it('prints no Was when previous_so_line_qty is null', () => {

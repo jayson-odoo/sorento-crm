@@ -1162,7 +1162,8 @@ export function OrderInquiriesClient({
     // `selectedRejectable` below) and say so in their own label, so a row ineligible for
     // one action can still be ticked for another in the same batch. "Link selected" is the
     // exception (R18): it acts on every ticked row, whatever its state.
-    enableRowSelection: (row) => row.original.state !== 'cancelled',
+    // OI-WHOLE-SO-CANCEL v2 (AC-V2-3): a row waiting for CS is not purchasing's to take on.
+    enableRowSelection: (row) => row.original.state !== 'cancelled' && !row.original.waiting_for_cs,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,

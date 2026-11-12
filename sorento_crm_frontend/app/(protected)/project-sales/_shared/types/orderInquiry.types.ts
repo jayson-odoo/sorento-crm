@@ -589,6 +589,14 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   line_cancelled?: boolean;
   /**
+   * OI-WHOLE-SO-CANCEL v2: the row's SO line has a change CS has not confirmed yet
+   * (AC-V2-2), the sales order itself is cancelled or deleted (AC-V2-5), and the line's
+   * quantity as CS last confirmed it when the line has since changed (AC-V2-4b).
+   */
+  waiting_for_cs?: boolean;
+  so_cancelled?: boolean;
+  previous_so_line_qty?: string | null;
+  /**
    * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
    * read-only expand; empty when the line is not split.
    */

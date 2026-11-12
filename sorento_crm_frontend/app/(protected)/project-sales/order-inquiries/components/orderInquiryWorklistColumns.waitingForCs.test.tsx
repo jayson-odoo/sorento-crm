@@ -62,8 +62,15 @@ function renderQty(rows: OrderInquiryWorklistRow[]) {
 
 describe('AC-V2-4: the Qty cell shows Was <previous_qty> when it differs', () => {
   it('prints "Was 10" beside a qty of 7', () => {
-    renderQty([worklistRow({ id: 'r', qty: '7', previous_qty: '10' })]);
+    renderQty([worklistRow({ id: 'r', qty: '7', previous_qty: '10', waiting_for_cs: true } as Partial<OrderInquiryWorklistRow>)]);
     expect(within(screen.getByTestId('row-r')).getByText('Was 10')).toBeInTheDocument();
+  });
+
+  it('prints no Was text for the same qty / previous_qty when the row is not waiting', () => {
+    renderQty([
+      worklistRow({ id: 'r', qty: '7', previous_qty: '10', waiting_for_cs: false } as Partial<OrderInquiryWorklistRow>),
+    ]);
+    expect(within(screen.getByTestId('row-r')).queryByText('Was 10')).not.toBeInTheDocument();
   });
 
   it('prints no Was when previous_qty equals qty', () => {

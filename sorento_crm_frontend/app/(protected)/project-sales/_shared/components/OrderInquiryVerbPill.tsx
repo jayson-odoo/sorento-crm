@@ -129,6 +129,9 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
  */
 const LINE_STATE: Record<string, { label: string; palette: string }> = {
   line_cancelled: { label: 'Line cancelled', palette: 'voided' },
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-5): never a stored state, chosen by the status pill.
+  so_cancelled: { label: 'SO cancelled', palette: 'voided' },
+  waiting_for_cs: { label: 'Waiting for CS', palette: 'pending' },
   nothing_to_buy: { label: 'Nothing to buy', palette: 'draft' },
   // AC-ND-7 (review B1): a live row CS amended after purchasing took it on.
   to_confirm: { label: 'To order', palette: 'pending' },

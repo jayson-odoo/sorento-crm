@@ -68,8 +68,16 @@ const trimQty = (value: number): string =>
  * Confirm / Unconfirm decided it.
  */
 export function ackStatusText(
-  row: OrderInquiryAckFields & { qty?: string | number | null; open_qty?: string | number | null },
+  row: OrderInquiryAckFields & {
+    qty?: string | number | null;
+    open_qty?: string | number | null;
+    waiting_for_cs?: boolean;
+    so_cancelled?: boolean;
+  },
 ): string {
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-5): a change waiting for CS reads first, then a cancelled SO.
+  if (row.waiting_for_cs) return 'Waiting for CS';
+  if (row.so_cancelled) return 'SO cancelled';
   const state = ackStateOf(row);
   let text: string = ACK_LABELS[state];
   if (state === 'awaiting' || state === 'changed') {

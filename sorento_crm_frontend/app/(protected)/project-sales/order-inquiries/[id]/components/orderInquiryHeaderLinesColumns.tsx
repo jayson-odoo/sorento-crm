@@ -28,6 +28,7 @@ import {
   formatInquiryQty,
   orderInquirySoLineHref,
   raisedKindLabel,
+  wasQtyOf,
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
   lineFooterTotals,
@@ -386,10 +387,20 @@ function quantityColumn({
     meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
     cell: ({ row }) => {
       // A row that names no sales order line has no SO Qty (L17).
-      const value = lineOf(row.original)[field];
+      const line = lineOf(row.original);
+      const value = line[field];
+      // AC-V2-4b: the line's quantity as CS last confirmed it, when the line has changed.
+      const was =
+        field === 'soQty'
+          ? wasQtyOf(
+              value as number | null,
+              line.rows.find((r) => r.previous_so_line_qty != null)?.previous_so_line_qty,
+            )
+          : null;
       return (
         <span className="tabular-nums">
           {value == null ? '-' : formatInquiryQty(String(value))}
+          {was ? <span className="ml-1 text-xs text-muted-foreground">{`Was ${was}`}</span> : null}
         </span>
       );
     },

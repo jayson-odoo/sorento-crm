@@ -68,6 +68,12 @@ export function OrderInquiryLineStatusPill({
       />
     );
   }
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-5): a change waiting for CS reads before anything else
+  // (a removed line included), then a cancelled SO ahead of "Line cancelled".
+  if (primary.waiting_for_cs) return <OrderInquiryLineStatePill state="waiting_for_cs" />;
+  if (line.state === 'line_cancelled' && primary.so_cancelled) {
+    return <OrderInquiryLineStatePill state="so_cancelled" />;
+  }
   if (!LIVE_LINE_STATES.includes(line.state)) {
     return <OrderInquiryLineStatePill state={line.state} />;
   }
