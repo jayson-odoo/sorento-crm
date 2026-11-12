@@ -537,7 +537,25 @@ export function descriptionFromEditor(html: string): string {
  * One step to type (owner hand test, 10 Nov): the click on the cell opens the editor with its caret
  * at the character clicked; Tab into the cell, Enter or Space opens it with the caret at the end.
  */
-function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
+function DescriptionCell(context: CellContext<GridRow, unknown>) {
+  const { staged } = context.row.original;
+  return (
+    <>
+      <DescriptionBody {...context} />
+      {/* On screen the flag sits under the description, not in a column of its own (the PDF,
+          sign page and Excel keep their REMARK column). */}
+      {staged.line?.is_non_cancellable && !isSectionDraft(staged.draft) ? (
+        <div className="mt-1">
+          <Badge variant="warning" appearance="light" size="sm" className="whitespace-nowrap">
+            Non-cancellable
+          </Badge>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function DescriptionBody({ row: tableRow }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const row = tableRow.original;
   const { staged } = row;

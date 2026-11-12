@@ -1,9 +1,12 @@
 import { apiFetch } from '@/lib/api';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { refusalAwareError } from '../lib/nonCancellable';
 import { qtyOverAwareError } from '../lib/qtyOverQuote';
 import type { MatrixHeader } from '../lib/quotationMatrix';
 import type {
+  NonCancellableRule,
+  NonCancellableRuleBody,
   PartyContact,
   PartyContactBody,
   PartyRole,
@@ -1010,12 +1013,15 @@ export async function createQuotationLine(
 export async function replaceQuotationLines(
   versionId: string,
   lines: QuotationLineBulkItem[],
+  overrideReason?: string,
 ): Promise<QuotationLine[]> {
-  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines`, {
+  const query = overrideReason ? `?non_cancellable_override_reason=${encodeURIComponent(overrideReason)}` : '';
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines${query}`, {
     method: 'PUT',
     body: JSON.stringify({ lines }),
   });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the lines'));
+  // A 409 `non_cancellable_line` is a `NonCancellableRefusalError`; resend with `overrideReason`.
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to save the lines');
   const body: ListEnvelope<QuotationLine> = await response.json();
   return body.data;
 }
@@ -1042,12 +1048,14 @@ export async function updateQuotationLine(
   versionId: string,
   lineId: string,
   body: Partial<QuotationLineBody>,
+  overrideReason?: string,
 ): Promise<QuotationLine> {
-  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}`, {
+  const query = overrideReason ? `?non_cancellable_override_reason=${encodeURIComponent(overrideReason)}` : '';
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}${query}`, {
     method: 'PUT',
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the line'));
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to save the line');
   return response.json();
 }
 
@@ -1066,15 +1074,23 @@ export async function escalateLineMedia(
   return response.json();
 }
 
+/**
+ * A 409 `non_cancellable_line` comes back as a `NonCancellableRefusalError`; retry with
+ * `overrideReason` when the caller holds `projects.non_cancellable.override`.
+ */
 export async function deleteQuotationLine(
   versionId: string,
   lineId: string,
+  overrideReason?: string,
 ): Promise<void> {
-  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to delete the line'));
+  const query = overrideReason
+    ? `?non_cancellable_override_reason=${encodeURIComponent(overrideReason)}`
+    : '';
+  const response = await apiFetch(
+    `${BASE}/quotation-versions/${versionId}/lines/${lineId}${query}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to delete the line');
 }
 
 export async function listQuotationLossReasons(): Promise<{ value: string; label: string }[]> {
@@ -1492,6 +1508,64 @@ export async function updateSeriesSetPricing(
     { method: 'PATCH', body: JSON.stringify(body) },
   );
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the price'));
+  return response.json();
+}
+
+/** Set or clear one product's own non-cancellable answer on the series; `null` follows the category. */
+export async function setSeriesProductNonCancellable(
+  seriesId: string,
+  productId: string,
+  nonCancellable: boolean | null,
+): Promise<SeriesProductRow> {
+  const response = await apiFetch(
+    `${BASE}/config/series/${seriesId}/products/${productId}/non-cancellable`,
+    { method: 'PUT', body: JSON.stringify({ non_cancellable: nonCancellable }) },
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the setting'));
+  return response.json();
+}
+
+export async function setSeriesSetNonCancellable(
+  seriesId: string,
+  productSetId: string,
+  nonCancellable: boolean,
+): Promise<SeriesSetRow> {
+  const response = await apiFetch(
+    `${BASE}/config/series/${seriesId}/sets/${productSetId}/non-cancellable`,
+    { method: 'PUT', body: JSON.stringify({ non_cancellable: nonCancellable }) },
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the setting'));
+  return response.json();
+}
+
+export async function listNonCancellableRules(): Promise<NonCancellableRule[]> {
+  const response = await apiFetch(`${BASE}/config/non-cancellable-rules`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the non-cancellable items'));
+  const body: ListEnvelope<NonCancellableRule> = await response.json();
+  return body.data;
+}
+
+export async function createNonCancellableRule(
+  body: NonCancellableRuleBody,
+): Promise<NonCancellableRule> {
+  const response = await apiFetch(`${BASE}/config/non-cancellable-rules`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the item'));
+  return response.json();
+}
+
+export async function updateNonCancellableRule(
+  ruleId: string,
+  body: { non_cancellable: boolean; notes?: string | null },
+): Promise<NonCancellableRule> {
+  const response = await apiFetch(`${BASE}/config/non-cancellable-rules/${ruleId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the item'));
   return response.json();
 }
 

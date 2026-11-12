@@ -619,6 +619,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.non_cancellable.override",
+        "name": "Override a non-cancellable item",
+        "description": (
+            "Cancel or reduce a Non-cancellable line after its sales order is confirmed, with a "
+            "reason. Also receives the alert when AutoCount cancels or reduces one."
+        ),
+    },
+    {
         "slug": "projects.parties.view",
         "name": "View Project Parties",
         "description": (

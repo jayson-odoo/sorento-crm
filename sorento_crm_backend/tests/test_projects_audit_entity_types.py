@@ -70,6 +70,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-set-quote-line-14oct.md, migration sql_0001_set_quote_line (#1682): one product
     # set priced into a series, born straight into `projects` beside `series_products`.
     "series_sets",
+    # PLAN-non-cancellable-items-11nov.md, migration nc_0001_non_cancellable: the company-wide
+    # Non-cancellable default per product or category, born straight into `projects`.
+    "non_cancellable_rules",
     # PLAN-series-filters-15oct.md, migration sf_0001_series_brands (#1697): the brands a
     # series picks, born straight into `projects` beside `series_categories`.
     "series_brands",
