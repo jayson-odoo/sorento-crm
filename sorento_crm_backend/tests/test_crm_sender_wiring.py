@@ -795,7 +795,8 @@ def test_t10_success_row_keeps_only_the_message_id_and_status(db, factory, fake_
 
     turn_id = _turn(db)
     contact_record = {"id": 9, "phone": "+60123456789", "firstName": "Zedekiah", "email": "z@zzt.test"}
-    fake = FakeClient(responses={"update_contact": contact_record, "send_message": {
+    # Row 9 skips update_contact_fields, so the second logged step is an assign (parity round).
+    fake = FakeClient(responses={"set_conversation_assignee": contact_record, "send_message": {
         "messageId": 123, "contact": contact_record}})
     crm_sender.send(
         factory,
@@ -803,7 +804,7 @@ def test_t10_success_row_keeps_only_the_message_id_and_status(db, factory, fake_
         contact_id=CONTACT,
         actions=[
             {"kind": "send_message", "text": "hello"},
-            {"kind": "update_contact_fields", "fields": {"a": "1"}},
+            {"kind": "assign_conversation", "respond_user_id": "zzt-agent-1"},
         ],
         client=fake,
     )

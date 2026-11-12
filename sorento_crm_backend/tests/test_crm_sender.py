@@ -197,13 +197,17 @@ def test_split_text_with_quick_replies_uses_1024_limit():
     assert all(len(p) <= 1024 for p in parts)
 
 
-def test_split_text_cuts_on_paragraph_break_before_line_break():
+def test_split_text_cuts_at_a_line_break_never_inside_a_line():
+    # Parity round (row 12): the live n8n splitter cuts at the last newline inside the limit,
+    # not at the paragraph break; what holds is that no line is ever cut in two.
     from app.services.chatbot.crm_sender import split_text
 
     first = "\n".join(["a" * 50] * 40)  # 40 lines, ~2040 chars
     second = "\n".join(["b" * 50] * 40)
     parts = split_text(first + "\n\n" + second, with_quick_replies=False)
-    assert parts == [first, second]
+    assert len(parts) == 2
+    assert all(len(p) <= 3900 for p in parts)
+    assert all(len(line) == 50 for p in parts for line in p.split("\n") if line)
 
 
 def test_split_text_hard_cuts_a_single_overlong_line():
