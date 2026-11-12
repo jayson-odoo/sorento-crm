@@ -4,7 +4,7 @@ import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { formatDateTime, formatMaybeDate, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatMaybeDate, parseDateTimeAsUTC } from '@/lib/helpers';
 import {
   ColumnDef,
   PaginationState,
@@ -76,7 +76,7 @@ function taskHref(t: KpiTaskRow): string {
 
 const fmtPct = (v: number | null) => (v == null ? '-' : `${v}%`);
 const fmtHrs = (v: number | null) => (v == null ? '-' : `${v}h`);
-const fmtDate = (v: string | null) => (v ? formatDateTime(parseDateTimeAsUTC(v)) : '-');
+const fmtDate = (v: string | null) => (v ? formatDateTimeInMalaysia(parseDateTimeAsUTC(v)) : '-');
 
 // Escalation timestamp + a relative hint ("in 42m" / "overdue 3h") so a sysadmin
 // can eyeball how imminent the outgoing escalation is. null = resolved, nothing
@@ -88,7 +88,7 @@ function fmtEscalates(v: string | null): { text: string; overdue: boolean } {
   const overdue = diffMin < 0;
   const abs = Math.abs(diffMin);
   const rel = abs < 60 ? `${abs}m` : abs < 1440 ? `${Math.round(abs / 60)}h` : `${Math.round(abs / 1440)}d`;
-  return { text: `${formatDateTime(parseDateTimeAsUTC(v))} (${overdue ? `overdue ${rel}` : `in ${rel}`})`, overdue };
+  return { text: `${formatDateTimeInMalaysia(parseDateTimeAsUTC(v))} (${overdue ? `overdue ${rel}` : `in ${rel}`})`, overdue };
 }
 
 const ESC_WINDOW_OPTIONS: { value: KpiEscWindow; label: string }[] = [
