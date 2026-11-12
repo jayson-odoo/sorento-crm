@@ -248,6 +248,9 @@ def test_a_lowered_qty_below_what_moved_on_is_refused_and_retried_after_the_fix(
     assert second["outcome"] == "done", second
     patches = fake_ss.to("PATCH", DOC_PATH)
     assert len(patches) == 2
+    for patch in patches:
+        by_key = {str(l["dtlKey"]): l for l in fake_ss.body(patch)["lines"]}
+        assert D(by_key[str(DTL_3)]["qty"]) == 2, "the lowered line is in the refused and the retried PATCH"
     assert patches[0].headers["Idempotency-Key"] != patches[1].headers["Idempotency-Key"]
 
 

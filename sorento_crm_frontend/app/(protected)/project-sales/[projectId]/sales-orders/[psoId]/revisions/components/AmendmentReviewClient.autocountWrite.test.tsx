@@ -4,7 +4,7 @@
  * UAC U2, U10, U11, U18, ruling R3. The button shows only when the switch is on, the user holds
  * `projects.autocount.write`, the amendment is `published` and its order is `in_autocount` (the
  * SO detail's new field). N counts only the rows the CRM can send: ORDER, RESERVE & ORDER, ADVANCE and
- * DELAY (CHANGE SO NO and CANCEL BALANCE wait for AutoCount).
+ * DELAY, and a CANCEL BALANCE that lowers a line (CHANGE SO NO and a CANCEL BALANCE to zero wait for AutoCount).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -142,7 +142,7 @@ const ROWS = [
   // On more than one line: the server says it cannot be sent, so it is not counted.
   { so_number: 'SO397450', line_no: 4, item_code: 'A1', verb: 'ORDER', old_qty: '3', new_qty: '4', autocount_sendable: false },
   { so_number: 'SO397450', line_no: 5, item_code: 'A4', verb: 'CHANGE SO NO', new_so_number: 'SO397451', autocount_sendable: false },
-  { so_number: 'SO397450', line_no: 6, item_code: 'A5', verb: 'CANCEL BALANCE', old_qty: '9', new_qty: '4', autocount_sendable: false },
+  { so_number: 'SO397450', line_no: 6, item_code: 'A5', verb: 'CANCEL BALANCE', old_qty: '9', new_qty: '0', autocount_sendable: false },
 ];
 
 async function openAmendment({ status = 'published', inAutocount = true, adopted = false } = {}) {
