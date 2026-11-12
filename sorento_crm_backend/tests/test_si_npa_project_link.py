@@ -393,9 +393,11 @@ def test_ac_c6a_the_project_can_be_changed_on_a_closed_record_without_touching_i
         if "project_id" in (a.new_values or {})
     ]
     assert changes, "no History row for the project change"
-    last = changes[-1]
-    assert str(last.new_values["project_id"]) == str(w.approved_2.id)
-    assert str((last.old_values or {}).get("project_id")) == str(w.approved.id)
+    # The audit query is unordered, so pick the row for THIS change by its new value
+    # rather than by position (lead sign-off: same assertion, not order dependent).
+    this_change = [a for a in changes if str(a.new_values["project_id"]) == str(w.approved_2.id)]
+    assert len(this_change) == 1, "expected exactly one History row for the project change"
+    assert str((this_change[0].old_values or {}).get("project_id")) == str(w.approved.id)
 
 
 @pytest.mark.parametrize(
