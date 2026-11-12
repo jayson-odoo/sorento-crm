@@ -51,7 +51,12 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   ),
 }));
 
-const state = vi.hoisted(() => ({ related: null as unknown, calls: [] as unknown[][] }));
+const state = vi.hoisted(() => ({
+  related: null as unknown,
+  calls: [] as unknown[][],
+  rollup: undefined as unknown,
+  rollupCalls: [] as unknown[][],
+}));
 vi.mock('../../_shared/hooks/useProjects', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -60,7 +65,10 @@ vi.mock('../../_shared/hooks/useProjects', async (importOriginal) => {
       state.calls.push(args);
       return { data: state.related, isLoading: false, isError: false, error: null, refetch: vi.fn() };
     },
-    useSponsorshipRollup: () => ({ data: undefined, isLoading: false, isError: false, error: null }),
+    useSponsorshipRollup: (...args: unknown[]) => {
+      state.rollupCalls.push(args);
+      return { data: state.rollup, isLoading: false, isError: false, error: null };
+    },
   };
 });
 
@@ -74,6 +82,8 @@ beforeEach(() => {
   nav.push.mockReset();
   state.related = response();
   state.calls = [];
+  state.rollup = undefined;
+  state.rollupCalls = [];
 });
 
 describe('RelatedRecordsPanel fix round 2', () => {
@@ -129,5 +139,17 @@ describe('RelatedRecordsPanel fix round 2', () => {
     // The projects list's own prev/next query stays.
     expect(last.get('page')).toBe('3');
     expect(last.get('sort')).toBe('title');
+  });
+
+  it('D4 (fix round 3) no sponsorship read: the spend line is not asked for and not shown', () => {
+    state.rollup = { total: '1200.00', form_count: 1, by_year: [{ year: 2026, total: '1200.00', form_count: 1 }] };
+    const noSf = response(
+      ROWS.filter((r) => r.kind !== 'sponsorship_form'),
+      [{ kind: 'stock_inquiry', label: 'Stock Inquiry' }],
+    );
+    state.related = noSf;
+    renderWithClient(<RelatedRecordsPanel project={project()} />);
+    expect(screen.queryAllByText('2026', { exact: true })).toHaveLength(0);
+    expect(state.rollupCalls.every((c) => (c[1] as { enabled?: boolean } | undefined)?.enabled === false)).toBe(true);
   });
 });
