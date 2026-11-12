@@ -8,6 +8,7 @@ import {
   Download,
   FileDiff,
   GitCompareArrows,
+  History,
   RotateCcw,
   Send,
   Shuffle,
@@ -21,8 +22,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import SalesOrderHistory from '@/components/audit/SalesOrderHistory';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import AuditTrail from '@/components/audit/AuditTrail';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import {
   AlertDialog,
@@ -648,7 +649,10 @@ export function SalesOrderDetailClient({
               ? `AutoCount differences (${divergence.differing_count})`
               : 'AutoCount differences'}
           </TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="history">
+            <History />
+            <span>History</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="lines" className="min-w-0 space-y-3">
@@ -699,10 +703,8 @@ export function SalesOrderDetailClient({
           />
         </TabsContent>
 
-        {/* Every tracked action on this order, its lines' included (they roll up to it), on the
-            one shared history component: a Non-cancellable override shows here with its reason. */}
         <TabsContent value="history" className="min-w-0">
-          <AuditTrail entityType="project_sales_orders" entityId={psoId} title="History" />
+          <SalesOrderHistory source="project" id={psoId} />
         </TabsContent>
       </Tabs>
 
