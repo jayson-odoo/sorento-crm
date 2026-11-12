@@ -78,7 +78,7 @@ R16 means every item lands as ONE shared token, component or pattern.
 | D-2 | [BE] | Given a route containing an id-like segment (UUID, digits) or a query string, then it is stored as a pattern (`/project-sales/order-inquiries/[id]`), never the raw id or query. |
 | D-3 | [BE] | Given more than 50 items, a viewport outside `phone/tablet/desktop`, a negative or > 600000 ms value, then 422 and nothing is stored. Unauthenticated: 401. Body over 16 KB: 413. More than 120 posts per user per hour: 429 (the table is the counter, as `client_error_report_service.is_rate_limited`). |
 | D-4 | [BE] | Given rows older than 90 days, when the daily retention job runs, then they are deleted; younger rows stay. |
-| D-5 | [FE] | Given the v2 shell, then ONE hook `components/v2/shell/usePageView.ts`, mounted once in `AppShell`, records each route change and flushes in batches (on 10 items, after 15 s, and on page hide via `sendBeacon`); v1 sends nothing. |
+| D-5 | [FE] | Given the v2 shell, then ONE hook `components/v2/shell/usePageView.ts`, mounted once in `AppShell`, records each route change and flushes in batches (on 10 items, after 15 s, and on page hide via `fetch` with `keepalive` and the bearer token, as `lib/client-error-report.ts`; `sendBeacon` cannot carry the token); v1 sends nothing. |
 | D-6 | [T] | Given the inventory guard, then no file outside `components/v2/shell` imports `usePageView`. |
 
 ## Phase E: v2 shell and shared patterns

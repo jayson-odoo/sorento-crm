@@ -82,6 +82,8 @@ Lane UI-V2-PLAN, branch `claude/ui-v2-design-plan-3cmy20`, PR #2323.
 - **Telemetry:**
   - New `BE/app/api/v1/system/page_views.py` (`POST /page-views`, 204), mounted in `system/__init__.py` next to
     `client_errors`.
+  - Request body: `{"items": [{"route", "viewport", "ms_to_first_data", "ui_version", "at"}, ...]}` (1-50 items).
+    Any `user_id` in the body is ignored.
   - Service `BE/app/services/ui_page_view_service.py`: `normalise_route`, `is_rate_limited` (120 per user per hour),
     `record_batch`, `prune_older_than(days=90)`.
   - The prune runs in the same scheduled cleanup that prunes `client_error_report` (find its caller and add one line).
@@ -188,7 +190,7 @@ Lane UI-V2-PLAN, branch `claude/ui-v2-design-plan-3cmy20`, PR #2323.
   untouched (C-7).
 - `toggle-tokens.test.ts`: toggle and pill-tab selected classes use `--toggle-selected-*`; the v1 values equal the
   primary pair, the v2 values the soft pair (C-9).
-- `usePageView.test.tsx`: batches at 10, flushes at 15 s and on `pagehide` via `sendBeacon`, normalises nothing
+- `usePageView.test.tsx`: batches at 10, flushes at 15 s and on `pagehide` via `fetch` with `keepalive` + bearer token, normalises nothing
   client-side except dropping the query, and is mounted once in `AppShell` (D-5).
 - Shell components: `AppShell.test.tsx` (E-1), `Topbar.test.tsx` (E-2 class/state on scroll), `FloatingAction.test.tsx`
   (E-3), `SystemBanner.test.tsx` (E-4), `Lightbox.test.tsx` (E-5 dialog vs drawer by width), `PanelTabs.test.tsx`
