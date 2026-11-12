@@ -109,3 +109,44 @@ Backend: `TagItemLookupItem.is_discontinued: bool = False`; `lookup_tag_items` f
   single-pick patch per row, AC-4 no duplicates, AC-9 Discontinued badge.
 - pytest (`tests/test_price_tag_request.py` style, Postgres): AC-9 `is_discontinued` in `lookup_tag_items` rows,
   AC-10 default limit 50 on the route.
+
+## Round 3 (owner hand test, 12/11/2026 ~16:35): SUPERSEDES AC-1, AC-2, AC-5 cap line, AC-7, AC-8 and the SearchableSelect contract
+
+Owner: "when I select to add, the dropdown stays intact for me to continue clicking, but after I click it just
+disappears". Crew F1: ticking must NOT close the picker; reuse the existing list-filter multi-select, do not build a
+second one.
+
+### F1-1 Click anywhere on a result ticks it and the list stays open
+The Item cell's picker is the existing `components/common/SearchableMultiSelect.tsx` (unchanged), the one list
+filters use: clicking a result row (anywhere on it) or pressing Enter on the highlighted row ticks it, and the list
+stays open with its search text and scroll position. The user ticks several in a row without reopening it.
+
+### F1-2 Each tick adds its line at once
+A tick goes through the one pick path straight away (no Add button, no pending state):
+- if the row the picker belongs to has no item yet, the first tick fills that row (`handleItemSelect`);
+- otherwise the item gets a new line (`addLine(anchor)` + `handleItemSelect`) directly below the line this picker
+  added last (the row itself at first), so ticks land in tick order right under the row.
+An item, once on the request, shows ticked, greyed (disabled) with "Already added", and cannot be unticked from the
+picker (remove the line with its bin icon, as today). "Select all N loaded" adds every shown item not yet on the
+request, in list order, the same way. Esc or a click outside closes the list.
+
+### F1-3 Trigger, clear and labels
+The closed cell looks as today: the line's item name, or "Search a set or product..." when empty; a clear button
+(aria-label "Clear item") empties the row's item as the old clear X did (`handleItemSelect(key, null)`). Results stay
+one line, code only, with grey "Set" / "Discontinued" / "Already added" hints on that line (via `renderOption`).
+
+### F1-4 Nothing else changes
+`components/common/SearchableSelect.tsx` goes back to main (no multiAdd, no badgeText): every other picker in the app
+is untouched. Other users of `SearchableMultiSelect` are untouched (no change to that file). Duplicate rule, 50 + 50
+search, Discontinued flag, portal/CRM parity, Upload a file, Save Draft, Preview unchanged.
+
+### Round 3 contract
+- `PriceTagLinesTable.tsx` LineRow Item cell: `SearchableMultiSelect` with `fetchOptions={(q) => editor.fetchItemOptions(q)}`,
+  `value` = the item values of every line on the request, options marked `disabled` + "Already added" when on the
+  request, `renderTrigger` = today's look, `renderOption` = one line code + hints, `onChange(next)` = for the values
+  in `next` not on the request (in `next` order) call the pick path above.
+- `hooks/usePriceTagLineEditor.ts`: reuse `addPickedItems`; it returns the key of the last line it filled, so the row
+  can remember its anchor. No other new logic.
+- Tests: click a result row (not a box) -> list still open, search text kept, line added; tick 3 in a row without
+  reopening -> 3 lines in tick order under the row; ticked item disabled with "Already added"; empty row filled by the
+  first tick; Select all adds the rest in list order; clear button empties the row; SearchableSelect has no multiAdd.
