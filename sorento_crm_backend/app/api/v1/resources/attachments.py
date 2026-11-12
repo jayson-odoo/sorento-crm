@@ -193,11 +193,14 @@ def _find_filename_collision(
                 Attachment.entity_type != PROJECT_ENTITY_TYPE,
             )
         )
-    return q.first()
+    # Several files may share a name now (FILES-MOVE-DUPLICATE): always the oldest one.
+    return q.order_by(Attachment.uploaded_at, Attachment.id).first()
 
 
 def _folder_name_collision(db: Session, directory_id: Optional[str], display_name: str):
-    """The active file in the folder holding ``display_name`` as its visible OR original name
+    """The active file in the folder showing ``display_name`` (any case), or None. The zip
+    import asks Skip / Copy / Replace off this; Replace itself only ever targets this record's
+    own row (``_find_filename_collision``)."""The active file in the folder holding ``display_name`` as its visible OR original name
     (any case), or None. The zip import asks Skip / Copy / Replace off this, so a renamed file
     still holding the name as its original counts too (FILES-MOVE-DUPLICATE)."""
     if not directory_id:
@@ -217,8 +220,8 @@ def _next_copy_name(
     """Loop _suffix_copy_name until the candidate display name is free in the directory."""
     service = AttachmentService(db)
     candidate = _suffix_copy_name(display_name)
-    # Free on the visible name AND on the folder's one-original-name index, or the copy
-    # itself would clash with a renamed file still holding that original name.
+    # Free on this record's names AND on every visible name in the folder, so a copy never
+    # lands beside another file of the same name.
     while (
         _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None
         or service._folder_clash(

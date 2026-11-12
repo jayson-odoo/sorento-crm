@@ -31,7 +31,7 @@ type Action = 'keep' | 'rename' | 'replace' | 'skip';
 export type ClashChoice = { kind: 'cancel' } | { kind: Action; name?: string; forAll: boolean };
 
 /** Shown in place of the name box while "Apply to all" is ticked. */
-const HINT = 'Rename all adds a number to each name, like (1).';
+const HINT = 'Rename all adds a number, like (1).';
 
 interface Prompt {
   conflict: Pick<AttachmentNotMoved, 'message' | 'file_name' | 'suggested_name'>;

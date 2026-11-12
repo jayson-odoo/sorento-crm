@@ -114,7 +114,7 @@ describe('useMoveFiles', () => {
     expect(screen.queryByRole('button', { name: 'Keep both' })).toBeNull();
     // The name row stays (no jump) with a hint instead of the box.
     expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
-    expect(screen.getByText('Rename all adds a number to each name, like (1).')).toBeTruthy();
+    expect(screen.getByText('Rename all adds a number, like (1).')).toBeTruthy();
     fireEvent.click(button('Keep all'));
     const outcome = await pending;
     const { resolutions } = bulkMoveAttachments.mock.calls[1][2];
