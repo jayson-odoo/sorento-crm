@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -38,11 +39,12 @@ export default function AssignTechnicianDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="overflow-hidden sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Assign technician</DialogTitle>
           <DialogDescription className="sr-only">Choose the technician for this visit.</DialogDescription>
         </DialogHeader>
+        <DialogBody className="min-h-0 space-y-4 overflow-y-auto">
         <div className="space-y-1">
           <Label>Technician</Label>
           <SearchableSelect
@@ -53,6 +55,7 @@ export default function AssignTechnicianDialog({
             aria-label="Technician"
           />
         </div>
+        </DialogBody>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

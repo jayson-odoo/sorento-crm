@@ -10,6 +10,7 @@ import { PhoneInput } from '@/components/common/PhoneInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -112,12 +113,13 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="overflow-hidden sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{job ? 'Edit service job' : 'Create service job'}</DialogTitle>
           <DialogDescription className="sr-only">Service job details.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogBody className="min-h-0 space-y-4 overflow-y-auto">
           <div className="space-y-1">
             <Label htmlFor="sj-customer">Customer name *</Label>
             <Input id="sj-customer" value={f.customer_name} onChange={set('customer_name')} />
@@ -190,6 +192,7 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
               />
             </div>
           )}
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

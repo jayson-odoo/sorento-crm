@@ -8,6 +8,7 @@ import { PhoneInput } from '@/components/common/PhoneInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -69,12 +70,13 @@ export default function TechnicianFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="overflow-hidden sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{technician ? 'Edit technician' : 'Create technician'}</DialogTitle>
           <DialogDescription className="sr-only">Technician details.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogBody className="min-h-0 space-y-4 overflow-y-auto">
           <div className="space-y-1">
             <Label htmlFor="technician-name">Name</Label>
             <Input id="technician-name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -103,6 +105,7 @@ export default function TechnicianFormDialog({
               aria-label="Type"
             />
           </div>
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
