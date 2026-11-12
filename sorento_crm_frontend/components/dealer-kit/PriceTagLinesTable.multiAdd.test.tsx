@@ -143,7 +143,7 @@ describe('the Item picker in the table', () => {
   });
 
   it('ticks two results from row 1, Add 2 fills row 1 and inserts the other below row 2 stays last', async () => {
-    render(<Harness initial={[row('A'), A()]} />);
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
     fireEvent.click(screen.getAllByRole('combobox')[0]);
     fireEvent.click(await screen.findByRole('checkbox', { name: /Tick DIY-BS-4501/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /Tick DIY-BS-4502/ }));
@@ -154,7 +154,7 @@ describe('the Item picker in the table', () => {
   });
 
   it('shows a product already on another row as Already added', async () => {
-    render(<Harness initial={[row('A'), A()]} />);
+    render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
     fireEvent.click(screen.getAllByRole('combobox')[0]);
     const box = await screen.findByRole('checkbox', { name: /Tick DIY-BS-4001/ });
     expect(box).toHaveAttribute('aria-disabled', 'true');
