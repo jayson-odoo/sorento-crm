@@ -1,6 +1,6 @@
 # UAC: project related records (PROJECT-RELATED-RECORDS)
 
-Status: DRAFT, written to the card's recommended answers; final once the owner answers card Q1-Q5 and approves mock v1.
+Status: DRAFT. Crew answered Q1-Q4 = (a) from owner rulings (12 Nov). Open owner decisions: D1 (old-record linking), D2 (editable on closed/approved without Revise), D3 (project optional on new SI/NPA). Final when the owner approves mock v2 and D1-D3.
 Card: `CARD-project-related-records-12nov.md`. Mock: `documentation/mockups/project-related/index.html`.
 
 ## A. The Related tab
@@ -28,12 +28,20 @@ Card: `CARD-project-related-records-12nov.md`. Mock: `documentation/mockups/proj
 
 - AC-C1 Stock inquiries and new product applications have a nullable Project link. Existing rows are not changed by the release.
 - AC-C2 The staff SI and NPA forms have a clearable, searchable Project picker (code and title), the same one the purchase request form uses. Only approved projects are offered and accepted (`assert_linkable_project`).
-- AC-C3 The portal SI and NPA forms offer only the contact's own company projects; a project outside them is refused with a plain message.
+- AC-C3 The portal SI, NPA, complaint and purchase request forms have the same project picker the portal sponsorship form has, offering only the contact's own company projects; a project outside them is refused with a plain message. (Today only the portal sponsorship form has it, `SubmissionForm.tsx:397`.)
+- AC-C3a Picker rows are one line: project code + short title clamped with "...", full title on hover, no price.
+- AC-C3b (D3, recommended) Project stays optional on new SI and NPA.
 - AC-C4 An NPA raised from an SI starts with that SI's project picked; the person can change or clear it.
 - AC-C5 The typed "Project name" keeps working and is never used to fill the link.
-- AC-C6 (Q5a) On a closed record, the Project field alone stays editable on the record's own page for users who may edit that record; the change shows in the record's History (who, when, old -> new).
+- AC-C6 Linking happens on the record's own page via its Project field; every change shows in that record's History tab (shared history component: who, on behalf of, when, old -> new).
+- AC-C6a (D2, pending owner) On a closed or approved record, the Project field alone stays editable without Revise.
+- AC-C8 (D1, pending owner) Existing records are never linked by name automatically. If D1 = reviewed list: a one-off list of exact-name proposals; only rows the owner ticks are written.
 - AC-C7 The detail pages of SI and NPA show the linked project as its code + title, linking to the project.
 
 ## D. Extensibility (OCN)
 
 - AC-D1 Adding a record type is one backend registration and one frontend entry; a test registers a sixth fake type and it appears in the endpoint, the filter and the grid without editing either.
+
+## E. Assistant
+
+- AC-E1 The related-records list route is registered in `app/services/assistant_registry/` (project module) and has two eval prompts in `scripts/chatbot_eval/gold/`.

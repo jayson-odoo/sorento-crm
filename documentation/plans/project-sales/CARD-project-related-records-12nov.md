@@ -1,6 +1,6 @@
 # CARD: project related records (lane PROJECT-RELATED-RECORDS)
 
-Status: Gate 1, waiting on the owner. Track: L (migration: nullable `project_id` on SI and NPA).
+Status: Q1-Q4 answered (a) by crew 12 Nov from owner rulings; D1-D3 with the owner; mock v2 filed. Track: L (migration: nullable `project_id` on SI and NPA).
 Pointers read from origin/main aa82463745. BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend`.
 
 ## 1. The six types today
@@ -62,3 +62,11 @@ Migration size: `stock_inquiries` 101 rows / 248 kB, `new_product_applications` 
 3. **PR and SF share one table.** (a) same grid, Type column tells them apart; (b) separate. Recommendation: (a). The spend rollup still counts sponsorship forms only.
 4. **Columns.** (a) Type, Number, Status, Approval, Date, Raised by, Subject, Value as above; (b) fewer: Type, Number, Status, Date, Subject. Recommendation: (a), every column can be hidden with Columns.
 5. **Linking an old or closed record.** Most existing SIs are already answered and may be locked for editing. (a) the Project field stays editable on the record's own page for anyone who can edit that record, even when the record is closed, and the change shows in its History; (b) only through the normal edit, so closed records stay unlinked; (c) a "Link records" picker on the project page. Recommendation: (a), linking is filing, not changing the request, and it stays on the record's page as today.
+
+## 8. Why purchase requests and complaints have zero links (crew asked, 12 Nov)
+
+- The link columns are not new: `315_sponsorship_project_link` (purchase_requests.project_id) and `318_complaint_project_link` (complaints.project_id) both landed 17 Aug 2026 (#155), with a "Registered project (optional)" picker on the STAFF purchase request / sponsorship form (`PurchaseRequestForm.tsx:779-800`) and complaint form (`ComplaintForm.tsx:900-915`).
+- The PORTAL forms (what salespeople fill from the WhatsApp link) never got it for complaints and purchase requests: in `SubmissionForm.tsx` the complaint and purchase_request field lists hold only the typed `project_title`; only `sponsorship_form` has `project_id` (`:387-397`). That is why the 7 linked records are all sponsorship forms.
+- Second cause: only 13 projects exist, and portal project registration arrived 26 Oct (#1849), so most of these records predate any project they could point to.
+- Complaints do carry a free-text project name: `complaints.project_title` (`models/complaints.py:38`), like `purchase_requests.project_title`.
+- Consequence for this lane: AC-C3 adds the portal picker to complaint and purchase request too (CRM forms = portal forms, owner 28 Oct).

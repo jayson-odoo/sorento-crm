@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project related records (mock v1)</title>
+<title>Project related records (mock v2)</title>
 <style>
 /* App tokens from sorento_crm_frontend/css/config.reui.css (light), as in the other mockups. */
 :root{--fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--q:#6d28d9;--q-soft:#f5f3ff;--page:#f7f7f8;--dis:#a1a1aa;
@@ -107,7 +107,8 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 </head>
 <body>
 <div class="doc">
-  <h1>Project related records &middot; mock v1 (PROJECT-RELATED-RECORDS)</h1>
+  <h1>Project related records &middot; mock v2 (PROJECT-RELATED-RECORDS)</h1>
+  <p class="intro"><b>v2:</b> crew's answers applied (Q1-Q4 = a). Section 5 now shows the picker's list (one line per project: code + clamped short title, no price) and the portal forms. Complaint and purchase request portal forms get the same picker: today only the portal sponsorship form has it (see the note under section 5). Owner decisions D1-D3 are marked <span class="qtag">D1</span>-<span class="qtag">D3</span>.</p>
   <p class="intro">Static mock, nothing is built. Every project, person, customer and number below is made up. Amber
     <span class="newtag">NEW</span> = does not exist today; violet <span class="qtag">Q1</span> to <span class="qtag">Q5</span> = the
     questions in the behaviour card (<code>documentation/plans/project-sales/CARD-project-related-records-12nov.md</code>). Drawn to the
@@ -252,19 +253,26 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 
   <!-- ============================================================ 5 -->
   <section id="link">
-    <h2><span class="nb">5</span>Linking: a Project picker on the SI and NPA forms <span class="qtag">Q1</span><span class="qtag">Q5</span></h2>
+    <h2><span class="nb">5</span>Linking: a Project picker on the SI and NPA forms (staff and portal) <span class="qtag">Q1</span><span class="qtag">D2</span><span class="qtag">D3</span></h2>
     <p class="why">The same project picker the purchase request form uses (searchable by code and title, clearable). The typed
-      "Project name" stays. Nothing is filled from the typed name: a person picks. On a closed record the Project field alone stays
-      editable on the record's page (Q5), and the change shows in History.</p>
+      "Project name" stays. Nothing is filled from the typed name: a person picks. Every change shows in the record's History. Whether the field stays editable on a closed or approved record without Revise is owner decision D2 (drawn here as yes).</p>
     <div class="row">
       <div class="form" style="flex:1;min-width:min(320px,100%)">
         <div class="fh">New stock inquiry</div>
         <div class="fb">
           <div><div class="lbl">Customer</div><div class="inp sel">Sample Builders Sdn Bhd<span class="clr">&times;</span></div></div>
-          <div class="hl"><div class="lbl">Project <span class="newtag">NEW</span></div><div class="inp sel">PS26-0001 Fake Tower Phase 1<span class="clr">&times;</span></div></div>
+          <div class="hl" style="position:relative"><div class="lbl">Project (optional) <span class="newtag">NEW</span><span class="qtag">D3</span></div><div class="inp sel">PS26-0001 Fake Tower Phase 1<span class="clr">&times;</span></div>
+            <div class="pop" style="left:0;right:auto;top:58px;width:100%;padding:4px">
+              <div class="search" style="margin:2px 2px 6px">fake</div>
+              <div class="ms" style="border:0">
+                <div class="op" style="background:var(--muted)"><b style="flex:none">PS26-0001</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Fake Tower Phase 1">Fake Tower Phase 1</span></div>
+                <div class="op"><b style="flex:none">PS26-0007</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Fake Gardens Residences Block A and B serviced apartments with retail podium">Fake Gardens Residences Block A and B serviced apartments with retail podium</span></div>
+                <div class="op"><b style="flex:none">PS26-0011</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Fake Lakeside Phase 2</span></div>
+              </div>
+            </div></div>
           <div><div class="lbl">Project name</div><div class="inp">Fake Tower</div></div>
           <div><div class="lbl">Salesperson</div><div class="inp sel">Alex Tan</div></div>
-          <div style="grid-column:1/-1"><div class="lbl">Item description</div><div class="inp">Matt porcelain 600x1200 grey, 2,400 m2</div></div>
+          <div style="grid-column:1/-1;margin-top:120px"><div class="lbl">Item description</div><div class="inp">Matt porcelain 600x1200 grey, 2,400 m2</div></div>
         </div>
         <div class="ff"><span class="btn">Cancel</span><span class="btn pri">Submit</span></div>
       </div>
@@ -281,6 +289,8 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
         <p class="muted" style="margin:0 18px 14px">History after picking: "Alex Tan set Project: - &rarr; PS26-0001 Fake Tower Phase 1, 12/11/2026, 3:40 pm".</p>
       </div>
     </div>
+    <p class="muted"><b>Portal forms (salesperson, WhatsApp link):</b> the SI, NPA, complaint and purchase request forms get the same picker the portal sponsorship form already has (<code>SubmissionForm.tsx:397</code>), listing only the contact's own company projects. Today the portal complaint and purchase request forms have only the typed "Project title" (<code>SubmissionForm.tsx</code> complaint / purchase_request field lists), which is why none of them is linked.</p>
+    <p class="muted">Existing records: nothing is written by name. Owner decision <span class="qtag">D1</span> (crew's recommendation): a one-off reviewed list of exact-name proposals, the owner ticks, only ticked rows are written.</p>
     <p class="muted">The NPA form gets the same field next to Project name. An NPA raised from an SI starts with that SI's project picked, which the person can change or clear.</p>
   </section>
 
@@ -302,13 +312,14 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
       <tr><td>Project picker on SI / NPA</td><td><code>useProject</code> / <code>projectCodeLabel</code> as in <code>PurchaseRequestForm.tsx:70-71, 784</code>; portal: <code>projects_for_contact</code></td><td>reuse; field added to SI and NPA forms</td></tr>
       <tr><td>Link check</td><td><code>project_service.assert_linkable_project</code> (<code>sorento_crm_backend/app/services/project_service.py:185</code>)</td><td>reuse</td></tr>
       <tr><td>History line</td><td>audit listeners (<code>__audit_track__</code> on StockInquiry; shared history component)</td><td>reuse</td></tr>
+      <tr><td>Assistant</td><td><code>sorento_crm_backend/app/services/assistant_registry/</code> (project module), 2 eval prompts in <code>scripts/chatbot_eval/gold/</code></td><td><span class="newtag">NEW</span> entry for the related-records list ("what is linked to project PS26-0001?")</td></tr>
       <tr><td>DB</td><td>migrations <code>315_sponsorship_link</code>, <code>318_complaint_project_link</code> as the pattern</td><td><span class="newtag">NEW</span> nullable <code>project_id</code> + partial index on <code>stock_inquiries</code> and <code>new_product_applications</code></td></tr>
     </table>
   </section>
 
   <!-- ============================================================ 7 -->
   <section id="qs">
-    <h2><span class="nb">7</span>Questions (same as the card)</h2>
+    <h2><span class="nb">7</span>Card questions (crew answered Q1-Q4 = a; Q5 became D1-D3 for the owner)</h2>
     <ol class="qs">
       <li><b>Q1</b> SI and NPA: add a Project picker and link field (recommended) or show them only through another record?</li>
       <li><b>Q2</b> One Related tab replacing Sponsorship Form (recommended) or one tab per type?</li>
