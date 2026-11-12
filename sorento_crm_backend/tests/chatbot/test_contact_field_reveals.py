@@ -235,5 +235,10 @@ class TestFieldRevealKeys:
 
         keys = svc.field_reveal_keys()
 
-        assert keys == [{"key": key, "label": label} for key, label in sorted(svc.FIELD_REVEAL_KEYS)]
+        assert keys == [
+            {"key": key, "label": label}
+            for key, label in sorted(svc.FIELD_REVEAL_KEYS)
+            if key not in svc.RETIRED_CHECKLIST_KEYS
+        ]
+        assert "purchase_orders.cost" not in {item["key"] for item in keys}
         assert {"key": "inventory.sellable", "label": "Outstanding SO on stock answers"} in keys
