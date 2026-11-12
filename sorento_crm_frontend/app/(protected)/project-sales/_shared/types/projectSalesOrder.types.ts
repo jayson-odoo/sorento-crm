@@ -427,6 +427,8 @@ export interface AmendmentPreviewBody {
 
 export interface AmendmentCreateBody extends AmendmentPreviewBody {
   reason: string;
+  /** An existing order change notice of this project to link instead of drafting a new one. */
+  ocn_id?: string | null;
 }
 
 export interface AmendmentCreated {

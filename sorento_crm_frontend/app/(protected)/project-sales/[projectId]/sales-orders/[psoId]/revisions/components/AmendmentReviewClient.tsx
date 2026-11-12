@@ -351,12 +351,14 @@ export function AmendmentReviewClient({
       {creating && result && (
         <AmendmentCreateDialog
           preview={result}
+          projectId={projectId}
           submitting={create.isPending}
           onDone={() => setCreating(false)}
-          onConfirm={(reason) => {
+          onConfirm={(reason, ocnId) => {
+            const linked = ocnId ? { ocn_id: ocnId } : {};
             const body = selection.startsWith(SCHEDULE_PREFIX)
-              ? { schedule_version_id: selection.slice(SCHEDULE_PREFIX.length), reason }
-              : { po_version_id: selection.slice(PO_PREFIX.length), reason };
+              ? { schedule_version_id: selection.slice(SCHEDULE_PREFIX.length), reason, ...linked }
+              : { po_version_id: selection.slice(PO_PREFIX.length), reason, ...linked };
             return create.mutateAsync(body);
           }}
         />

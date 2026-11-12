@@ -872,6 +872,14 @@ const STAFF_SIDEBAR: MenuConfig = [
         permission: 'procurement.sponsorship_forms.view',
       },
       {
+        title: 'Order Change Notices',
+        path: '/procurement-management/order-change-notices',
+        permissionsAny: [
+          'procurement.order_change_notices.view',
+          'procurement.order_change_notices.view_own',
+        ],
+      },
+      {
         title: 'Sponsorship Report',
         path: '/procurement-management/sponsorship-forms/report',
         permission: 'procurement.sponsorship_forms.report',
@@ -2188,6 +2196,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
+      },
+      {
+        title: 'Order Change Notices',
+        path: '/procurement-management/order-change-notices',
+        permissionsAny: [
+          'procurement.order_change_notices.view',
+          'procurement.order_change_notices.view_own',
+        ],
       },
       {
         title: 'Sponsorship Report',

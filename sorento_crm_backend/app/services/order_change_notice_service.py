@@ -949,7 +949,13 @@ def change_types(db: Session) -> List[Dict[str, Any]]:
         .all()
     )
     return [
-        {"id": str(r.id), "name": r.name, "risk_level": r.risk_level, "guide_text": r.guide_text}
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "risk_level": r.risk_level,
+            "guide_text": r.guide_text,
+            "is_active": bool(r.is_active),
+        }
         for r in rows
     ]
 

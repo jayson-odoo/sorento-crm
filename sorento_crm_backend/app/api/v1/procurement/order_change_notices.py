@@ -5,7 +5,7 @@ HTTP shape. Every move commits first and notifies after (`svc.finish`), so a not
 failure never undoes the move. Every move route carries the revision fence, and the
 purchase request chain's stage work (send for approval, send back, the decision, done) runs
 through the deferred-action dispatcher under the `ocn.*` keys, behind the handling lock.
-Literal paths (`/change-types`) are declared before `/{ocn_id}`.
+Literal paths (`/change-types`, `/products`) are declared before `/{ocn_id}`.
 """
 from __future__ import annotations
 
@@ -90,12 +90,24 @@ def list_change_types(user: dict = Depends(get_current_user), db: Session = Depe
     return svc.change_types(db)
 
 
+@router.get("/products")
+def search_products(q: str = Query(""), user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The line picker: active catalogue products only (no free-text line), the sample request's
+    own product search."""
+    from app.services import sample_request_service
+
+    _reader(db, user)
+    return sample_request_service.search_products(db, q)
+
+
 @router.get("")
 def list_notices(
     status_filter: Optional[list[str]] = Query(None, alias="status"),
     change_type_id: Optional[list[str]] = Query(None),
     risk_level: Optional[list[str]] = Query(None),
     q: Optional[str] = Query(None),
+    # The DataGrid's standard search key (`buildDataGridParams`); `q` stays for API callers.
+    query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query(None),
@@ -109,7 +121,7 @@ def list_notices(
         statuses=multi_values(status_filter),
         change_type_ids=multi_uuids(change_type_id, "Change type"),
         risk_levels=multi_values(risk_level),
-        q=q,
+        q=query or q,
         page=page,
         limit=limit,
         sort=sort,
