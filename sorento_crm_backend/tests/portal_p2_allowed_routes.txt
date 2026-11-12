@@ -10,6 +10,7 @@ DELETE /delivery-schedule-versions/{version_id}
 DELETE /delivery-schedules/{schedule_id}
 DELETE /fulfilment-planning/lines/{contribution_key}/draft
 DELETE /leads/{lead_id}
+DELETE /order-inquiry-rows/{row_id}/attachments/{link_id}
 DELETE /projects/{project_id}
 DELETE /projects/{project_id}/quotation-documents/{document_id}
 DELETE /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}/boxes
@@ -148,6 +149,7 @@ GET /sample-requests/products
 GET /sample-requests/{request_id}
 GET /sample-requests/{request_id}/consignments
 GET /sample-requests/{request_id}/pdf
+GET /spare-part-requests/{inquiry_id}
 GET /status-graph/{entity_type}
 GET /stock-debt
 GET /stock-debt/snapshots
@@ -163,6 +165,7 @@ PATCH /projects/{project_id}/quotation-documents/{document_id}/certificates/{cer
 PATCH /projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
+PATCH /spare-part-requests/{inquiry_id}/lines/{row_id}
 POST /config/price-floors
 POST /config/quotation-templates
 POST /config/quotation-templates/cover-preview
@@ -210,7 +213,9 @@ POST /order-inquiries/{inquiry_id}/export/pdf
 POST /order-inquiries/{inquiry_id}/reserve-commit
 POST /order-inquiries/{inquiry_id}/reserve-requests
 POST /order-inquiries/{row_id}/reject
+POST /order-inquiry-rows/attachments/lookup
 POST /order-inquiry-rows/mark
+POST /order-inquiry-rows/{row_id}/attachments
 POST /order-inquiry-rows/{row_id}/place-on-po
 POST /order-inquiry-rows/{row_id}/unplace
 POST /projects/
@@ -266,6 +271,8 @@ POST /quotation-versions/{version_id}/recompute
 POST /quotations/{quotation_id}/revise
 POST /sales-orders/{pso_id}/amendments
 POST /sales-orders/{pso_id}/amendments/preview
+POST /sales-orders/{pso_id}/autocount
+POST /sales-orders/{pso_id}/autocount/cancel
 POST /sales-orders/{pso_id}/confirm
 POST /sales-orders/{pso_id}/confirm-costing
 POST /sales-orders/{pso_id}/findings/{finding_id}/acknowledge
@@ -277,6 +284,11 @@ POST /sales-orders/{pso_id}/unpublish
 POST /sample-requests
 POST /sample-requests/{request_id}/move
 POST /sample-requests/{request_id}/submit
+POST /spare-part-requests
+POST /spare-part-requests/{inquiry_id}/approve
+POST /spare-part-requests/{inquiry_id}/reject
+POST /spare-part-requests/{inquiry_id}/revise
+POST /spare-part-requests/{inquiry_id}/submit
 POST /stock-debt/export
 POST /stock-debt/po-link/operations/{operation_id}/resume
 POST /stock-debt/po-link/relocate
@@ -321,4 +333,5 @@ PUT /sample-requests/{request_id}/consignment
 PUT /sample-requests/{request_id}/date-answer
 PUT /sample-requests/{request_id}/internal
 PUT /samples/{sample_id}
+PUT /spare-part-requests/{inquiry_id}
 PUT /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/decision
