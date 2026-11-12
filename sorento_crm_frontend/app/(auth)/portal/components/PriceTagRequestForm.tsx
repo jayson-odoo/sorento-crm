@@ -1254,6 +1254,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       return;
     }
     if (numbersInvalid()) return;
+    // The screen row of each line sent, so a server `line:<n>` (an index into what was sent) can be
+    // put back on the row the user sees.
+    const sentRows = lines.flatMap((l, index) => (isUntouchedBlankLine(l) ? [] : [index]));
     setSaving(true);
     try {
       const payload = {
@@ -1262,7 +1265,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         notes: notes || null,
         price_mode: priceMode,
         print_by: printBy,
-        lines: draftLinesPayload(lines.filter((l) => !isUntouchedBlankLine(l)), priceMode),
+        lines: draftLinesPayload(
+          sentRows.map((index) => lines[index]),
+          priceMode,
+        ),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
       // the salesperson with two rows and no way to tell them apart - and so
@@ -1285,7 +1291,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // INVALID_PART alike) is named on the ROW here too, not just a generic
       // toast with no way back to which line it was about.
       const message = e instanceof Error ? e.message : 'Failed to save draft';
-      const named = errorFields(e);
+      const named = errorFields(e).map((key) => {
+        if (!key.startsWith('line:')) return key;
+        const screenRow = sentRows[Number(key.slice('line:'.length))];
+        return screenRow === undefined ? key : `line:${screenRow}`;
+      });
       const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
       if (placed > 0) {
         lineErrorToast(named, message);
