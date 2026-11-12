@@ -18,6 +18,7 @@ offered order, "outcome": "offered" | "answered"}`. Flexible about extra keys.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -202,7 +203,7 @@ def test_ac16_exact_code_is_answered_with_no_offer_for_dealer_and_staff(session_
 
 
 def test_ac17_a_miss_writes_a_code_candidates_trace_entry(session_factory, monkeypatch, stub_access):  # noqa: F811
-    c = _console(session_factory, monkeypatch, stub_access, [TARGET, *SIBLINGS])
+    c = _console(session_factory, monkeypatch, stub_access, [TARGET, *SIBLINGS, "TWC8152"])
     c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
     offered = c.offered()
     entries = c.trace_entries("code_candidates")
@@ -217,6 +218,14 @@ def test_ac17_a_miss_writes_a_code_candidates_trace_entry(session_factory, monke
         assert isinstance(row.get("similarity"), (int, float)) and 0 < row["similarity"] <= 1, row
     assert entry.get("outcome") in ("offered", "answered"), entry
     assert entry["outcome"] == "offered", entry
+
+    # Lead ruling 12 Nov: a staff miss with one close code (the AC-1691 yes/no offer) traces it offered.
+    c.as_staff()
+    c.stock_on_hand = 12
+    c.say("SWTWC8152 x 1", stock(product("SWTWC8152", 1)))
+    staff = c.trace_entries("code_candidates")
+    assert len(staff) == 1 and staff[0]["outcome"] == "offered", staff
+    assert [(row["code"], row.get("outcome")) for row in staff[0]["candidates"]][:1] == [("TWC8152", "offered")], staff
 
 
 # --------------------------------------------------------------------------- AC-20
@@ -324,7 +333,12 @@ def test_ac20b_same_family_inactive_code_is_never_offered_but_its_active_sibling
         assert not _word(inactive, text), (who, text)
         assert inactive not in _option_codes(c), (who, c.stored_question)
         assert _word(active, text), (who, text)
-        assert active in _option_codes(c), (who, c.stored_question)
+        if who == "dealer":
+            assert active in _option_codes(c), (who, c.stored_question)
+        else:
+            # Lead ruling 12 Nov: AC-1691 stands, one option is a yes/no offer, so the staff
+            # question is checked whole (any kind, options or payload) for the inactive code.
+            assert inactive not in json.dumps(c.stored_question or {}, default=str), (who, c.stored_question)
 
 
 def test_ac20c_the_inactive_filter_is_chat_only_list_search_still_resolves_a_typo_to_an_inactive_code(session_factory):  # noqa: F811

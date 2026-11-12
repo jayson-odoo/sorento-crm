@@ -9576,6 +9576,8 @@ def _run_stages_body(  # noqa: PLR0915
                 unplaced=unplaced_tokens,
                 suggestions=_unplaced_suggestions(resolver_payload, unplaced_tokens),
                 question=getattr(answer, "question", None),
+                shown_codes=getattr(answer, "shown_codes", None),
+                answered=turn_compose.answered_codes(envelopes),
             ):
                 turn_trace.add("code_candidates", event)
 

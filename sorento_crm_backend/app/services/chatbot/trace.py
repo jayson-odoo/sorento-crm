@@ -482,15 +482,20 @@ def code_candidates_events(
     unplaced: dict[str, str] | None,
     suggestions: dict[str, list[dict[str, Any]]] | None,
     question: Any = None,
+    shown_codes: list[str] | None = None,
+    answered: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """CHATBOT-CODE-MATCH R6: one `code_candidates` event per product code this turn missed.
 
     `unplaced` is the turn's missed tokens (folded key to the word as typed), `suggestions`
     the close codes each was offered from (`answer.did_you_mean_by_token`, keyed by the
-    resolver's token), `question` the pick the reply stored. Per miss: the typed word, the
-    candidates (code, the resolver's match tier and similarity) with the offered ones first
-    in offered order, and `offered` when the reply's did-you-mean pick (`payload.did_you_mean`)
-    holds one of them, else `answered`.
+    resolver's token), `question` the pending question the reply stored, `shown_codes` the
+    codes the reply listed (`Answer.shown_codes`), `answered` the codes it answered (folded
+    by `token_key`). Per miss: the typed word, the candidates (code, the resolver's match
+    tier and similarity, and each one's own outcome: `offered` when the question's options
+    or the shown codes hold it (the AC-1691 yes/no offer of one code included), else
+    `answered` when the reply answered it, else `not_shown`), the offered ones first in
+    offered order, and the miss's `offered` when any candidate was, else `answered`.
     Codes only, never a row id.
     """
     from app.services.chatbot.turn.state import token_key
@@ -504,10 +509,22 @@ def code_candidates_events(
         for match in [*(resolution.get("matches") or []), *(resolution.get("alternatives") or [])]:
             if isinstance(match, dict) and match.get("uuid"):
                 how.setdefault(str(match["uuid"]), (match.get("match_tier"), match.get("similarity")))
-    # Only a did-you-mean pick offers a candidate; a which-one picker listing the same code does not.
-    is_dym = (getattr(question, "payload", None) or {}).get("did_you_mean") is True
-    options = (getattr(question, "options", None) or []) if is_dym else []
-    offered = [str(o.get("code")) for o in options if isinstance(o, dict) and o.get("code")]
+    options = getattr(question, "options", None) or []
+    offered = list(
+        dict.fromkeys(
+            [
+                *(str(o.get("code")) for o in options if isinstance(o, dict) and o.get("code")),
+                *(str(c) for c in shown_codes or [] if c),
+            ]
+        )
+    )
+    answered_keys = set(answered or ())
+
+    def outcome_of(code: str) -> str:
+        if code in offered:
+            return "offered"
+        return "answered" if token_key(code) in answered_keys else "not_shown"
+
     by_key = {token_key(token): rows for token, rows in (suggestions or {}).items()}
     events: list[dict[str, Any]] = []
     for typed in dict.fromkeys((unplaced or {}).values()):
@@ -518,6 +535,7 @@ def code_candidates_events(
                 "code": str(r["code"]),
                 "tier": how.get(str(r.get("uuid")), (None, None))[0],
                 "similarity": how.get(str(r.get("uuid")), (None, None))[1],
+                "outcome": outcome_of(str(r["code"])),
             }
             for r in rows
         ]
@@ -525,7 +543,7 @@ def code_candidates_events(
             {
                 "typed": typed,
                 "candidates": candidates,
-                "outcome": "offered" if any(c["code"] in offered for c in candidates) else "answered",
+                "outcome": "offered" if any(c["outcome"] == "offered" for c in candidates) else "answered",
             }
         )
     return events
