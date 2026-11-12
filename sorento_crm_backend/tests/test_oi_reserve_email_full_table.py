@@ -1274,7 +1274,8 @@ def test_ac_rf_70_export_headings_are_the_list_layout_and_the_shared_eight():
     assert EXPORT_HEADINGS == (
         "SO DATE", "S/O NO", "ITEM CODE", "QTY", "REQUESTED RESERVE", "RESERVED", "TOTAL QTY",
         "DELIVERY DATE", "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION", "ACKNOWLEDGED",
-        "TAKEN", "REMAINING", "SUGGESTED", "CHANGE QUANTITY", "CHANGE DATE", "REMARK",
+        "TAKEN", "REMAINING", "SUGGESTED", "CHANGE QUANTITY", "CHANGE DATE", "STATUS",
+        "WAS QTY", "WAS DATE", "REMARK",
     )
     assert order_inquiry_export.HEADINGS == (
         "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT/CUSTOMER",

@@ -316,6 +316,9 @@ def test_ac_v2_6_both_exports_carry_status_was_qty_and_was_date_columns(env):
         header, _rows = _sheet_rows(content)
         for column in ("STATUS", "WAS QTY", "WAS DATE"):
             assert column in header, (name, header)
+        named = [h for h in header if h]
+        assert named[-1] == "REMARK", (name, header)
+        assert named[-4:-1] == ["STATUS", "WAS QTY", "WAS DATE"], (name, header)
 
 
 def test_ac_v2_6_a_date_changed_waiting_row_exports_status_new_date_and_was_date(env):
@@ -332,11 +335,13 @@ def test_ac_v2_6_a_date_changed_waiting_row_exports_status_new_date_and_was_date
         assert _as_ddmmyyyy(changed[0].get("WAS DATE")) == "01/01/2027", (name, changed[0])
 
 
-def test_ac_v2_6_the_per_project_export_route_carries_status_and_was_columns(env):
-    """GET /projects/{project_id}/order-inquiry-export (ProjectOrderInquiryService.export_xlsx):
-    the same STATUS / WAS QTY / WAS DATE columns, "Waiting for CS" for a date-changed row."""
+def test_ac_v2_6_the_per_project_export_keeps_its_golden_eight_headings_and_the_live_date(env):
+    """GET /projects/{project_id}/order-inquiry-export (ProjectOrderInquiryService.export_xlsx)
+    keeps exactly its eight golden headings (lead decision: only the Lines list export gets
+    STATUS / WAS QTY / WAS DATE); its DELIVERY DATE is the SO's live (new) date."""
     from app.models.project_so import ProjectSalesOrder
     from app.models.projects import Project
+    from app.services.order_inquiry_export import HEADINGS
 
     w = _world(env, "date")
     title = f"ZZT waiting project {w.so_number}"
@@ -357,13 +362,10 @@ def test_ac_v2_6_the_per_project_export_route_carries_status_and_was_columns(env
 
     assert res.status_code == 200, res.text
     header, rows = _sheet_rows(res.content)
-    for column in ("STATUS", "WAS QTY", "WAS DATE"):
-        assert column in header, header
+    assert tuple(header) == tuple(HEADINGS), header
     mine = [r for r in rows if r.get("ITEM CODE") == "ZZT-CL-PUSH"]
     assert len(mine) == 1, rows
-    assert mine[0].get("STATUS") == "Waiting for CS", mine[0]
     assert _as_ddmmyyyy(mine[0].get("DELIVERY DATE")) == "01/02/2027", mine[0]
-    assert _as_ddmmyyyy(mine[0].get("WAS DATE")) == "01/01/2027", mine[0]
 
 
 # ================================================================ v2 review gaps (B1..S4)
