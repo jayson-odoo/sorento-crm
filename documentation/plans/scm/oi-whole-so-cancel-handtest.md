@@ -1,4 +1,4 @@
-# OI-WHOLE-SO-CANCEL hand test (v2: Waiting for CS)
+# OI-WHOLE-SO-CANCEL hand test (v2: Waiting for CS, owner round 12 Nov evening)
 
 No Excel step: neither OI export changes (owner 12 Nov 14:57 and 15:10, an exception to the export = screen rule).
 
@@ -6,27 +6,13 @@ No Excel step: neither OI export changes (owner 12 Nov 14:57 and 15:10, an excep
 crew test copy
 
 ## Setup
-1. On the test copy's database, pick two AutoCount sales orders with live Order Inquiry rows that purchasing
-   has already confirmed (read only):
-```sql
-SELECT so.so_number, ir.source_ref, oi.inquiry_no, count(*) AS live_rows
-FROM projects.order_inquiry_rows oir
-JOIN projects.order_inquiries oi    ON oi.id = oir.order_inquiry_id
-JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
-JOIN public.sales_order_lines sol   ON sol.id = psl.core_sales_order_line_id
-JOIN public.sales_orders so         ON so.id = sol.sales_order_id
-JOIN public.integration_references ir
-     ON ir.entity_type = 'sales_orders' AND ir.entity_id = so.id::text
-WHERE so.status = 'open' AND so.demand_class = 'project'
-  AND sol.line_status = 'open' AND oir.state <> 'cancelled' AND oir.ack_state = 'acknowledged'
-GROUP BY so.so_number, ir.source_ref, oi.inquiry_no
-ORDER BY so.so_number DESC LIMIT 5;
-```
-2. Note two of them: SO-A / OI-A and SO-B / OI-B, with SO-B's source_ref.
-3. SO-A: change one line's delivery date AutoCount-side (re-push SO-A through the test copy's ingest with that
-   line's date 30 days later; crew's AutoCount fixture for the test copy). Note the old date (D-old) and the
-   new one (D-new).
-4. SO-B: send the AutoCount SO delete to the test copy's backend only:
+1. Crew fixture sales orders only, never real orders, ingested through the test copy's own ingest, adopted,
+   board-confirmed as Buy:
+   - SO-A (OI-A): three lines on items with NO free stock at their location; purchasing acknowledged.
+   - SO-B (OI-B): three lines; purchasing acknowledged.
+   - SO-C (OI-C): three lines, not confirmed by purchasing; one line with a reserve request.
+2. SO-A: re-push line 1 through the test copy's ingest with its delivery date 30 days later (D-old -> D-new).
+3. SO-B: send the AutoCount SO delete to the test copy's backend only:
 ```bash
 curl -s -X POST "http://localhost:<be port>/api/v1/external/ingest/sales_orders/deletions" \
   -H "X-API-Key: <test copy key>" -H "Content-Type: application/json" \
@@ -34,29 +20,36 @@ curl -s -X POST "http://localhost:<be port>/api/v1/external/ingest/sales_orders/
 ```
 
 ## Steps
-1. Sign in, click Order Inquiries in the sidebar (Documents view, Outstanding).
-2. Search OI-A, then OI-B.
-3. Switch to the Lines view; search SO-A, then SO-B.
-4. Click the Status column header twice (sort up, then down).
-5. Tick SO-A's line and one ordinary line of another order, click Confirm, then confirm in the popup.
-6. Tick only SO-A's line and look at Confirm.
-7. Click Fulfilment Planning in the sidebar, search SO-A, open it, confirm it with the board's Confirm.
+1. Sign in, click Order Inquiries in the sidebar (Documents view, Outstanding), search the three OIs.
+2. Open OI-A, Lines tab. Open the State filter and read its options; then pick each of "Waiting for CS",
+   "To order", "Done" in turn.
+3. Open OI-C, Lines tab, State filter: pick "Request to reserve".
+4. Back on Order Inquiries, switch to the Lines view. Open the Confirmed filter and read its options; pick
+   "Waiting for CS", then "To order", then "Done".
+5. Look at the filter panel of that Lines view for a "State" filter.
+6. At phone width (375 px), repeat steps 1 and 2.
+7. Click Fulfilment Planning in the sidebar, search SO-A, open it. Keep Buy for the moved line ("Change
+   decision" > "Buy the whole 2" > Save decision; do NOT click "Save all suggested"), then the board's Confirm.
 8. Search SO-B, open it, click "Apply AutoCount change", then Apply in the popup.
-9. Back on Order Inquiries, open OI-A and OI-B and their History tabs.
-10. Repeat steps 1-3 at phone width (375 px).
+9. Open OI-B, Lines tab.
+10. System > Messaging > Outgoing Mails, search the fixture SO numbers.
 
 ## Expected
-1. Step 2: OI-A and OI-B both read "Waiting for CS" (not Completed), under Outstanding.
-2. Step 3: SO-A's line shows D-new with the date "What changed" icon (Was D-old), Status "Waiting for CS";
-   SO-B's lines read Status "Waiting for CS". Nothing was emailed.
-3. Step 4: the rows sort by the Status words, both directions.
-4. Step 5: only the ordinary line is confirmed; a notice reads "1 row is waiting for CS and was skipped".
-5. Step 6: Confirm reads "Confirm (0)" and is disabled.
-6. Step 7: the result names SO-A (no long code); OI-A goes back to Outstanding with the line "To order" for
-   purchasing (changed); purchasing's handover lists the line as DELAY.
-7. Step 8: the result reads "SO-B: applied the AutoCount change ..."; SO-B leaves the planning list; purchasing's
-   handover lists SO-B's lines as CANCEL ALL.
-8. Step 9: OI-A History shows "Reconfirmed"; OI-B's rows are Cancelled with "Cancelled <item>" once per row,
-   dated dd/mm/yyyy.
-9. Step 10: same as Expected 1 and 2, no sideways scrolling.
-10. On the test copy the handover emails are queued only, nothing is delivered.
+1. Step 1: OI-A and OI-B read "Waiting for CS" (not Completed), under Outstanding; OI-C reads "Outstanding".
+2. Step 2: the State filter's options are exactly the words the State column prints, written the same way
+   (To order, Waiting for CS, Done, Rejected, SO cancelled, Line cancelled, Nothing to buy, Request to
+   reserve, Reserved, Not reserved). The State column reads "Waiting for CS" (small "f"), not "Waiting For
+   CS". Each option shows only the lines whose State reads that word; the choice survives a reload.
+3. Step 3: only the line with the reserve request shows.
+4. Step 4: the Confirmed filter's options are the Status column's words (To order, Done, Rejected, Waiting
+   for CS, SO cancelled, Line cancelled, All); each shows only rows whose Status reads that word; each
+   option's count equals the rows shown.
+5. Step 5: there is no "State" filter on the Lines view (it has no State column).
+6. Step 6: same as Expected 1 and 2, no sideways scrolling.
+7. Step 7: the result reads "SO-A: confirmed as revision 2 (1 purchase row handed over)"; OI-A goes back to
+   Outstanding, line 1 "To order".
+8. Step 8: the result reads "SO-B: applied the AutoCount change ..."; SO-B leaves the planning list.
+9. Step 9: the Lines tab reads "Every line on this order inquiry is cancelled." (not "Nothing was raised on
+   this order inquiry."); History shows "Cancelled <item>" once per row.
+10. Step 10: SO-A's handover lists the moved line with remark DELAY; SO-B's lists every line CANCEL ALL;
+    queued only, nothing delivered from the test copy.
