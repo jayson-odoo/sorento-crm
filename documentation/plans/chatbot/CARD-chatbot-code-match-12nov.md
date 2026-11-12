@@ -1,85 +1,98 @@
-# CARD: CHATBOT-CODE-MATCH behaviour card (one crew ask before code)
+# CARD: CHATBOT-CODE-MATCH behaviour card v3 (generic rules, Phase 1 of the chatbot plan)
 
-Lane CHATBOT-CODE-MATCH, plan `PLAN-chatbot-code-match-12nov.md`. Codes below are catalogue codes (business data);
-no customer, person, phone or price appears.
+Lane CHATBOT-CODE-MATCH, plan `PLAN-chatbot-code-match-12nov.md` (holds the 5-slice plan). Chatbot plan v2, D3 (owner
+12 Nov 16:08 "ok"): code matching is Phase 1, lookup only, no prompt change. Codes below are catalogue codes (business
+data); no customer, person, phone or price appears.
 
-## What exists today (discovery, file:line on main 7ede7cfa)
+Binding owner rule (12 Nov, verbatim): "when we fix things along the way we shouldn't make the rule too customized and
+cannot be repclicated for another company in differtn industry". So every rule below reads only generic data: codes,
+the set membership table, the spec registry and stored spec values. No company's code letters, size markers or default
+sizes appear in code. v3 replaces v2: the X = pan / Y = cistern letters, the trap_length / S6-S12 / -250 markers and
+the letters-then-digits code shape are gone.
 
-| Piece | Where | Reuse |
+## What exists today (file:line on main 7ede7cfa) and what each slice does with it
+
+| Piece | Where | Use |
 | --- | --- | --- |
-| Code probe: prefix, else substring, on the code with spaces folded | `app/services/entity_resolver.py:2087` `_code_prefix_then_substring`, `:2110` `_prefix_probe_product`, `:2136` `_prefix_probe_product_set` | extend (X / Y part form, all-parts ranking) |
-| Family rule incl. the X sibling (SRTWC7604 and SRTWCX7604) | `app/services/product_code_family.py:71` `_family_rows` (body regex `:88`) | extend (Y sibling, size word) |
-| Spec narrowing of a family + "None with size 300 mm." | `product_code_family.py:161` `narrow_code_tokens_by_specs`; `lanes/business/answer.py:2872` `no_variant_clause` | extend (size read from the code itself or the size field, never assumed) |
-| Trigram did-you-mean (0.25 floor, 15 rows, variants first) | `entity_resolver.py:3225`, `:3317` `_trgm_lookup`, `:3289` `_trgm_product_sets` | reuse as is |
-| Per-token did-you-mean candidates, capped at 3 | `lanes/business/answer.py:4973` `did_you_mean_by_token` (`_cap3`, `miss_token_candidates`) | reuse as is (one function for single and multi-code) |
-| Dealer did-you-mean pick (carries the typed quantity, no escalation) | `chatbot/dealer_stock.py:77` `did_you_mean`; `answer_bridge.py:2190`, `:2287` `_dealer_did_you_mean` | reuse; feed it the candidates it never gets |
-| Dealer exact-codes-only filter | `chatbot/engine.py:975` `_exact_codes_only`, called `:7745` | extend: keep the miss's candidates instead of dropping to "refer to your salesman" |
-| Set entity with members, stock, complete-sets figure | `entity_resolver.py:931` `_product_set_entities` | reuse as is |
-| Turn trace | `turn_trace.add(...)` (e.g. `engine.py:7759`) | add one `code_candidates` entry |
+| Code probe: prefix, else substring, on the code with spaces folded | `app/services/entity_resolver.py:2087` `_code_prefix_then_substring`, `:2110`, `:2136` | reuse; ranking extended (slice 2) |
+| Trigram did-you-mean (0.25 floor, 15 rows, prefix-extensions first) | `entity_resolver.py:3225`, `:3317` `_trgm_lookup`, `:3289` `_trgm_product_sets` | reuse as is |
+| Per-token did-you-mean, first 3 | `lanes/business/answer.py:4973` `did_you_mean_by_token` | reuse as is: ONE function for staff, dealer, single and multi-code |
+| Dealer did-you-mean pick (carries quantity, no escalation) | `chatbot/dealer_stock.py:77` `did_you_mean`; `answer_bridge.py:2190`, `:2287` | reuse; feed it the candidates it never gets (slice 1) |
+| Dealer exact-codes-only filter | `chatbot/engine.py:975` `_exact_codes_only`, called `:7745` | extend: a miss keeps its candidates (slice 1) |
+| Set entity with members, stock, complete-sets figure | `entity_resolver.py:931` `_product_set_entities`; members in `product_set_members` (`app/models/product_set.py:88`) | reuse (slice 3) |
+| Size keys by data: every numeric key in the registry's length unit, `matches_bare_size`, a key a class scopes (`applies_when.class`) | `chatbot/head/bare_size.py:1-11`, `:125-134`; `app/models/product_spec.py:32-80` | reuse as the category's size setting (slice 4, Q2) |
+| Units and unit aliases | `product_spec_registry.unit`, `unit_aliases` (`product_spec.py:52`, `:80`) | reuse (slice 4) |
+| Family by code word | `app/services/product_code_family.py:47` `_CODE_WORD` (letters then digits), `:71` `_family_rows` (inserts an "X") | NOT extended: Sorento-shaped; new matching goes through the generic probe (slice 5 retires the X insert only if the owner asks, Q4) |
+| Turn trace | `turn_trace.add(...)` (e.g. `engine.py:7759`) | one `code_candidates` entry (slice 1) |
 
 ## Rules
 
-R0. The bot answers a code directly ONLY when the typed code differs from one catalogue code by case, dashes or
-spaces, or is a registered product set. Every other near match is OFFERED (up to 3, numbered) and the bot asks. Nothing
-is answered on a guess. (Owner 12 Nov 15:10 agreed the "couldn't find" improvement, especially for dealers; the wording
-of this rule is the lane's. Owner 12 Nov ~16:05: no default size, "we shouldn't default 250mm".)
+R0. Answer a code directly ONLY when the typed code equals one catalogue code with case, dashes and spaces ignored, or
+is a registered product set (same fold). Every other near match is OFFERED (up to 3, numbered) and the bot asks.
+Nothing is answered on a guess, and no size is ever assumed.
 
-R1. Pan / cistern form of a set code. A typed code with no exact hit is also tried with the part role letter after its
-letters (X = pan, Y = cistern: CWC604RL -> CWCX604..., CWCY604...), the way `_family_rows` already tries X. The parts
-found are OFFERED (they are not the typed code), unless the typed code is a registered set (R2).
+R1. Dealers get offers. When a dealer's (availability-only contact) exact code fails, they get up to 3 close codes from
+their own company as a numbered pick carrying the typed quantity, instead of "Please refer to your salesman." No close
+code: today's reply, unchanged.
 
-R2. A registered set code on a stock ask answers the set: its members' stock and the complete-sets figure, the existing
-set stock reply (`_product_set_entities`). Direct answer, no question.
+R2. Ranking. A candidate holding every typed part (the typed code split at its letter/digit boundaries and separators,
+each part found in the candidate's code in order) ranks before one that misses a part; then today's order. A token
+with more than 3 such candidates keeps today's which-one picker, all-parts first.
 
-R3. A size is read ONLY from the product's size field (`trap_length`) or from the typed code (300, S10, -250; Mocha
-S6/S8/S10/S12 are read as written, and matched to the size field). There is no default size: a code with no size marker
-has no size unless its size field holds one. A typed size that has no exact code is never answered directly: the family's
-close codes are OFFERED (up to 3) with their real sizes from the size field ("size not recorded" when it is empty), and
-the bot asks. Never the bare "None with size 300 mm." line alone.
+R3. Sets through the membership table. A typed code close to a registered set code (R2 match, not an R0 equal) offers
+the set and its member products (from `product_set_members`), up to 3. A set typed exactly (R0) on a stock ask answers
+the set: members' stock and the complete-sets figure (the existing set reply). No code letter is read as a part role.
 
-R4. Dealers. When the exact code fails, the dealer gets up to 3 close codes from their OWN company (the existing company
-scope on every probe) as a numbered pick that carries the typed quantity (`dealer_stock.did_you_mean`), instead of
-"Please refer to your salesman." With no close code at all: "Couldn't find X." then the refer line (today's reply).
+R4. Size only from stored values. A number in the typed code counts as a size ONLY when it equals a value stored on a
+candidate under the category's size key (Q2), in that key's registry unit. Such a candidate ranks first and is OFFERED
+with its stored size ("Size: 300 mm"); a candidate with no stored value shows "Size: not recorded". A typed size no
+candidate holds: "Couldn't find X" and the close codes with their stored sizes. Never "None with size 300 mm." alone.
 
-R5. Ranking. Candidates holding every typed part (letters block, digits block, each suffix) come first, then trigram
-order. A short token with more than 3 matches (e.g. "8152") keeps today's which-one picker, all-parts matches first.
+R5. Any code shape. A typed token that is a prefix or substring of a catalogue code is a code, whatever its shape
+(letters only, digits first, dashes); the letters-then-digits assumption is not used by any new rule.
 
-R6. Trace. Every miss writes `code_candidates`: typed token, each candidate code, its tier (exact / prefix / substring /
-part_form / set / size / trgm), similarity, and whether it was answered or offered. Logs keep it.
+R6. Trace. Every miss writes `code_candidates`: typed token, candidate codes in offered order, tier, similarity, all-parts
+flag, stored size when read, and `answered` or `offered`.
 
-R7. Multi-code ask: each code runs the same function as a single-code ask (`did_you_mean_by_token`), once per code.
+R7. Multi-code: each code runs the same function as a single-code ask, once per code.
 
 ## Examples (shapes from the 12 Nov review)
 
 | Typed (stock ask) | Catalogue holds | Reply |
 | --- | --- | --- |
-| `CWC604RL x 2` | sets CWC604-P-RL (registered), parts CWCX604-P-RL, CWCX604-S-RL | Dashes only vs set CWC604-P-RL? No (P missing), so OFFER: 1. CWC604-P-RL (set) 2. CWCX604-P-RL 3. CWCX604-S-RL, quantity 2 carried |
-| `8152-300-SH` | SRTWC8152-SH-300 (trap_length 300) | All parts held, size 300 is not the default: "Couldn't find 8152-300-SH. Did you mean SRTWC8152-SH-300?" (yes answers it) |
-| `SRTWC8152-SH-UF-250` | SRTWC8152-SH-UF (no size marker), sized siblings | No exact code: OFFER the close codes with their real sizes (e.g. 1. SRTWC8152-SH-UF, size not recorded 2. SRTWC8152-SH-UF-300, 300 mm) and ask; never answered as 250 |
-| `Swtwc8354-SH-UF` (dealer) | SRTWC8354-SH-UF in the dealer's company (trigram 0.67) | Today "Please refer to your salesman."; new: "Couldn't find SWTWC8354-SH-UF. Did you mean SRTWC8354-SH-UF?" |
-| `C21120UW-2-MY` | BRC21120UW-2-MY (substring) | Not a dashes-only difference: one-option offer "Did you mean BRC21120UW-2-MY?" |
-| `srtwc 8354 sh uf` | SRTWC8354-SH-UF | Spaces only: answered directly |
+| `Swtwc8354-SH-UF x 3` (dealer) | SRTWC8354-SH-UF in the dealer's company (trigram 0.67) | Today "Please refer to your salesman."; new: "Couldn't find SWTWC8354-SH-UF. Did you mean SRTWC8354-SH-UF?", quantity 3 carried |
+| `C21120UW-2-MY` | BRC21120UW-2-MY (substring, all parts held) | "Did you mean BRC21120UW-2-MY?" (offer, not answer) |
+| `CWC604RL x 2` | registered set CWC604-P-RL; its members | Offer 1. CWC604-P-RL (set) then its members from the membership table, up to 3; quantity carried |
+| `8152-300-SH` | SRTWC8152-SH-300 with 300 stored under the size key | "Did you mean SRTWC8152-SH-300?" with "Size: 300 mm" |
+| `SRTWC8152-SH-UF-250` | SRTWC8152-SH-UF (nothing stored), siblings with stored sizes | "Couldn't find SRTWC8152-SH-UF-250." then the close codes, each with its stored size or "Size: not recorded"; never answered as 250 |
+| `srtwc 8354 sh uf` | SRTWC8354-SH-UF | Equal with spaces folded: answered directly |
 
-Edge cases: a close code in ANOTHER company is never offered to a dealer; a set whose members the dealer may not see is
-not offered (`visible_set_clauses`); typed quantity rides on every offer; "no" to an offer = "Couldn't find X." (staff)
-or the refer line (dealer); an inactive or placeholder code is never offered (existing `_chat_visible_product_ids`);
-the 419 water closets with no `trap_length` are never given a size: they show "size not recorded" in an offer (R3).
+Edge cases: a close code in another company is never offered to a dealer; a set whose members the dealer may not see is
+not offered (`visible_set_clauses`); an inactive or placeholder code is never offered (`_chat_visible_product_ids`);
+"no" to an offer = "Couldn't find X." (staff) or the refer line (dealer); an exact code's reply is byte-identical to
+main.
 
 ## Questions (each with a recommendation)
 
-Q1. `8152-300-SH` (all parts held, one candidate, non-default size). (a) one-option "Did you mean X?" offer; (b) answer
-directly because every part matched. Recommendation: (a), only a dashes/spaces difference or a registered set is answered
-directly.
+Q1. `8152-300-SH` (every part matched, one candidate, stored size equals the typed number). (a) one-option "Did you
+mean" offer; (b) answer directly. Recommendation: (a): only an R0 equal or a set is answered directly.
 
-Q2. Withdrawn (owner ~16:05: no default size; R3 rewritten).
+Q2. The category's size setting. (a) reuse the spec registry: the size key of a category is the registry key scoped to
+its class (`applies_when.class`), else the keys flagged `matches_bare_size`, the rule `bare_size.py` already uses; set
+on the existing Spec Registry screen, no migration; (b) a new `size_spec_key` column on product categories (migration,
+new setting). Recommendation: (a): the setting exists and is already per-category and per-industry.
 
-Q3. Dealer offer when the close code is only in another company of the same trading name (same-name accounts).
-(a) offer it: same-name accounts count as one customer (9 Nov); (b) own company row only. Recommendation: (b) for product
-codes, because the scope is company (catalogue owner), not the customer ledger; same-name accounts are a customer rule.
+Q3. Dealer close code only in another company sharing the trading name. (a) offer it; (b) own company only.
+Recommendation: (b): product scope is the catalogue company; same-name accounts are a customer-ledger rule.
 
-Q4. A registered set typed with a dash/space difference (CWC604PRL). (a) answer the set directly (R0 dashes rule + R2);
-(b) offer. Recommendation: (a), both direct-answer conditions hold.
+Q4. The existing family rule inserts an "X" after the letters (`product_code_family.py:88`, SRTWC7604 -> SRTWCX7604), a
+Sorento-shaped rule from 27 Sep. (a) leave it (not this lane's, and removing it changes answers that pass today);
+(b) replace it by R3 in slice 5. Recommendation: (a) now, listed as a follow-up for the plan's generic clean-up.
 
-Q5. The R0 offer for STAFF (not only dealers): today staff already get a did-you-mean list. (a) same R5 ranking and
-X / Y / size candidates for staff too, one shared function; (b) dealers only. Recommendation: (a): one function, and the
-review's 20 "right code never offered" turns are staff and dealer both.
+Q5. Same offers and ranking for staff as for dealers. (a) yes, one shared function; (b) dealers only.
+Recommendation: (a): the review's 20 "right code never offered" turns are both audiences.
+
+## Changed in v3
+
+- Owner 12 Nov ~16:05: no default size ("we shouldn't default 250mm").
+- Owner 12 Nov 16:08 / plan v2: no customer-specific rule; sizes, units and set parts come from settings and tables.
