@@ -91,6 +91,11 @@ def test_staff_with_no_complaints_returns_empty_list(client, seeded):
     assert _cp(client, s, s["nobody"]) == set()
 
 
+def test_unknown_value_returns_empty_list_not_an_error(client, seeded):
+    s = seeded
+    assert _cp(client, s, f"zzt-unknown-{uuid.uuid4().hex[:6]}") == set()
+
+
 def test_unassigned_plus_two_people_or_combine(client, seeded):
     s = seeded
     got = _cp(client, s, f"__unassigned__,{s['plain']},{s['synced']}")

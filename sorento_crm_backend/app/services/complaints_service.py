@@ -818,7 +818,7 @@ class ComplaintService:
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
     ):
-        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
+        """List complaints. assigned_to filters by assignee: a CRM user id or a Respond.io id, each matching the person under both. status filters by complaint status.
 
         contact_id/space_id scope the result set to a single Respond.io contact/space (used by external callers).
         root_cause_ids/resolution_ids match ANY of the given ids per field (the list
