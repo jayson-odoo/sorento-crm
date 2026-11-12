@@ -26,12 +26,27 @@ cleanly (tests/test_ocn_migration.py runs `upgrade()` twice on a blank scratch s
 
 The table has no rows on the 12 Nov production copy, so nothing is backfilled.
 
+Locks (round 10, the aud_0001_audit_standard_s0 precedent): every step that alters or
+references a table other requests use (entity_conversation_messages, every form's Conversation;
+system_settings, read on every request; so_amendments; order_change_notices; the users,
+customers and products a new foreign key references) runs under `lock_timeout = 5s` and
+`statement_timeout = 60s`, transaction-local, in a savepoint retried up to 5 times with a
+backoff. A DDL queued behind a long transaction would otherwise queue every read and write of
+that table behind itself; now the wait is bounded and the fifth miss fails with a message. The
+widened Conversation CHECK is added NOT VALID inside that bounded lock and validated at the end
+of the same transaction (the table is small; the migration tests run `upgrade()` inside the
+caller's transaction, where alembic's autocommit block cannot run). The timeouts are put back
+before returning.
+
 Plan: documentation/plans/procurement/PLAN-ocn-order-change-notice-12nov.md.
 
 Revision ID: ocn_0001_order_change_notice
 Revises: prr_0001_si_npa_project
 """
 from __future__ import annotations
+
+import time
+from typing import Callable
 
 import sqlalchemy as sa
 from alembic import op
@@ -44,6 +59,12 @@ depends_on = None
 
 KIND = "order_change_notice"
 GRANT_ID_PREFIX = "ocn-"
+
+LOCK_TIMEOUT = "5s"
+STATEMENT_TIMEOUT = "60s"
+LOCK_ATTEMPTS = 5
+#: Seconds between attempts, times the attempt number (2, 4, 6, 8).
+LOCK_BACKOFF_SECONDS = 2
 _ADMIN_ROLES = ("superadmin", "admin")
 
 #: (slug, name, description), as `app/rbac/permission_registry.py` declares them.
@@ -119,6 +140,62 @@ def _ocn_columns(p: str) -> tuple:
     )
 
 
+# ------------------------------------------------------------------ bounded locks (aud_0001)
+
+
+def _is_lock_timeout(exc: Exception) -> bool:
+    orig = getattr(exc, "orig", None)
+    return getattr(orig, "pgcode", None) == "55P03" or "lock timeout" in str(orig or exc).lower()
+
+
+def _set_timeouts(bind) -> tuple:
+    """Bound this transaction's waits; returns the previous values for ``_restore_timeouts``."""
+    previous = tuple(
+        bind.execute(sa.text(f"SELECT current_setting('{name}')")).scalar()
+        for name in ("lock_timeout", "statement_timeout")
+    )
+    bind.execute(sa.text(f"SELECT set_config('lock_timeout', '{LOCK_TIMEOUT}', true)"))
+    bind.execute(sa.text(f"SELECT set_config('statement_timeout', '{STATEMENT_TIMEOUT}', true)"))
+    return previous
+
+
+def _restore_timeouts(bind, previous: tuple) -> None:
+    """Put the session's values back, so no later migration in this transaction inherits them."""
+    lock, statement = (value or "0" for value in previous)
+    bind.execute(sa.text(f"SELECT set_config('lock_timeout', '{lock}', true)"))
+    bind.execute(sa.text(f"SELECT set_config('statement_timeout', '{statement}', true)"))
+
+
+def _bounded(bind, label: str, work: Callable[[], None]) -> None:
+    """Run ``work`` (which takes its table lock first) in a savepoint, each attempt bounded by
+    ``lock_timeout``; a lock timeout rolls the savepoint back, waits, and tries again. The last
+    miss raises a message that says what to do."""
+    for attempt in range(1, LOCK_ATTEMPTS + 1):
+        bind.execute(sa.text("SAVEPOINT ocn_0001_lock"))
+        try:
+            work()
+        except sa.exc.OperationalError as exc:
+            if not _is_lock_timeout(exc):
+                raise
+            bind.execute(sa.text("ROLLBACK TO SAVEPOINT ocn_0001_lock"))
+            if attempt < LOCK_ATTEMPTS:
+                time.sleep(LOCK_BACKOFF_SECONDS * attempt)
+            continue
+        bind.execute(sa.text("RELEASE SAVEPOINT ocn_0001_lock"))
+        return
+    raise RuntimeError(
+        f"ocn_0001_order_change_notice: could not lock {label} in {LOCK_ATTEMPTS} attempts of "
+        f"lock_timeout {LOCK_TIMEOUT}; a long-running transaction holds it. Find it in "
+        "pg_stat_activity (wait_event_type = 'Lock' or state = 'idle in transaction'), end it, "
+        "and rerun the upgrade."
+    )
+
+
+def _run(bind, *statements: str) -> None:
+    for statement in statements:
+        bind.execute(sa.text(statement))
+
+
 def _schema(bind, module: str) -> str:
     """Where a module's tables live, for RAW SQL, under BOTH substrates (see
     `prreg_0001_project_registrations`)."""
@@ -141,11 +218,17 @@ def _tables(bind, p: str) -> None:
         """,
     ):
         bind.execute(sa.text(statement))
-    for name, ddl in _ocn_columns(p):
-        bind.execute(
-            sa.text(f'ALTER TABLE "{p}".order_change_notices ADD COLUMN IF NOT EXISTS {name} {ddl}')
-        )
-    for statement in (
+    # The new foreign keys also lock users and customers (SHARE ROW EXCLUSIVE): one bounded step.
+    _bounded(bind, f'"{p}".order_change_notices', lambda: _run(
+        bind,
+        f'LOCK TABLE "{p}".order_change_notices IN ACCESS EXCLUSIVE MODE',
+        *(
+            f'ALTER TABLE "{p}".order_change_notices ADD COLUMN IF NOT EXISTS {name} {ddl}'
+            for name, ddl in _ocn_columns(p)
+        ),
+    ))
+    _bounded(bind, f'"{p}".order_change_notice_lines (it references products)', lambda: _run(
+        bind,
         f"""
         CREATE TABLE IF NOT EXISTS "{p}".order_change_notice_lines (
             id UUID PRIMARY KEY,
@@ -161,17 +244,26 @@ def _tables(bind, p: str) -> None:
         )
         """,
         f'CREATE INDEX IF NOT EXISTS ix_order_change_notice_lines_ocn ON "{p}".order_change_notice_lines (ocn_id)',
+    ))
+    # system_settings is read on every request.
+    _bounded(bind, "system_settings", lambda: _run(
+        bind,
+        "LOCK TABLE system_settings IN ACCESS EXCLUSIVE MODE",
         "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS "
         "order_change_notice_require_project BOOLEAN NOT NULL DEFAULT false",
         "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS "
         "order_change_notice_default_approver_user_id VARCHAR REFERENCES users(id) ON DELETE SET NULL",
-    ):
-        bind.execute(sa.text(statement))
+    ))
 
 
 def _project_optional(bind, p: str) -> None:
     """UAC A3: whatever the project foreign key is called today, it becomes SET NULL, and the
     column nullable. Dropped and re-created on every run, so a second run is the same."""
+    _bounded(bind, f'"{p}".order_change_notices', lambda: _project_fk(bind, p))
+
+
+def _project_fk(bind, p: str) -> None:
+    bind.execute(sa.text(f'LOCK TABLE "{p}".order_change_notices IN ACCESS EXCLUSIVE MODE'))
     names = bind.execute(
         sa.text(
             "SELECT c.conname FROM pg_constraint c JOIN pg_attribute a "
@@ -392,12 +484,12 @@ def _sla(bind) -> None:
 
 def _one_notice_per_amendment(bind, p: str) -> None:
     """One amendment per notice (security review L1): the pick locks the row, this is the backstop."""
-    bind.execute(
-        sa.text(
-            f'CREATE UNIQUE INDEX IF NOT EXISTS uq_so_amendments_ocn_id ON "{p}".so_amendments (ocn_id) '
-            "WHERE ocn_id IS NOT NULL"
-        )
-    )
+    _bounded(bind, f'"{p}".so_amendments', lambda: _run(
+        bind,
+        f'LOCK TABLE "{p}".so_amendments IN SHARE MODE',
+        f'CREATE UNIQUE INDEX IF NOT EXISTS uq_so_amendments_ocn_id ON "{p}".so_amendments (ocn_id) '
+        "WHERE ocn_id IS NOT NULL",
+    ))
 
 
 #: The form-comment thread's allowed kinds (fcom_0002) plus the two form kinds that write it
@@ -410,21 +502,31 @@ _CONVERSATION_TYPES = (
 )
 
 
+CONVERSATION_CHECK = "ck_entity_conversation_messages_entity_type"
+
+
 def _conversation_kinds(bind) -> None:
-    """The Conversation tab writes entity_type = order_change_notice; the CHECK must admit it."""
-    ck = "ck_entity_conversation_messages_entity_type"
-    bind.execute(sa.text(f"ALTER TABLE entity_conversation_messages DROP CONSTRAINT IF EXISTS {ck}"))
-    bind.execute(
-        sa.text(
-            f"ALTER TABLE entity_conversation_messages ADD CONSTRAINT {ck} "
-            f"CHECK (entity_type IN ({_CONVERSATION_TYPES}))"
-        )
-    )
+    """The Conversation tab writes entity_type = order_change_notice; the CHECK must admit it.
+    Swapped NOT VALID under the bounded lock (no scan while every form's Conversation waits);
+    `_validate_conversation_kinds` checks the rows afterwards."""
+    ck = CONVERSATION_CHECK
+    _bounded(bind, "entity_conversation_messages", lambda: _run(
+        bind,
+        "LOCK TABLE entity_conversation_messages IN ACCESS EXCLUSIVE MODE",
+        f"ALTER TABLE entity_conversation_messages DROP CONSTRAINT IF EXISTS {ck}",
+        f"ALTER TABLE entity_conversation_messages ADD CONSTRAINT {ck} "
+        f"CHECK (entity_type IN ({_CONVERSATION_TYPES})) NOT VALID",
+    ))
+
+
+def _validate_conversation_kinds(bind) -> None:
+    bind.execute(sa.text(f"ALTER TABLE entity_conversation_messages VALIDATE CONSTRAINT {CONVERSATION_CHECK}"))
 
 
 def upgrade() -> None:
     bind = op.get_bind()
     p = _schema(bind, "projects")
+    previous = _set_timeouts(bind)
     _tables(bind, p)
     _one_notice_per_amendment(bind, p)
     _conversation_kinds(bind)
@@ -432,6 +534,8 @@ def upgrade() -> None:
     _seeds(bind, p)
     _permissions(bind)
     _sla(bind)
+    _validate_conversation_kinds(bind)
+    _restore_timeouts(bind, previous)
 
 
 def downgrade() -> None:
@@ -460,5 +564,14 @@ def downgrade() -> None:
         sa.text("DELETE FROM document_numbering_rules WHERE doc_type = :k AND prefix_template = 'OCN{yy}-'"),
         {"k": KIND},
     )
-    bind.execute(sa.text(f'DROP INDEX IF EXISTS "{p}".uq_so_amendments_ocn_id'))
-    bind.execute(sa.text(f'DROP TABLE IF EXISTS "{p}".order_change_notice_lines'))
+    previous = _set_timeouts(bind)
+    _bounded(bind, f'"{p}".so_amendments', lambda: _run(
+        bind,
+        f'LOCK TABLE "{p}".so_amendments IN ACCESS EXCLUSIVE MODE',
+        f'DROP INDEX IF EXISTS "{p}".uq_so_amendments_ocn_id',
+    ))
+    _bounded(bind, f'"{p}".order_change_notice_lines', lambda: _run(
+        bind,
+        f'DROP TABLE IF EXISTS "{p}".order_change_notice_lines',
+    ))
+    _restore_timeouts(bind, previous)
