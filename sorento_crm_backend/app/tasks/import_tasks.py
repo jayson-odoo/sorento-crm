@@ -3852,3 +3852,44 @@ def process_order_inquiry_import(db_job_id: str, file_data: bytes, filename: str
         # about a row of the file, so processed and total are the same count.
         total_rows_of=lambda r: r.get("rows", 0),
     )
+
+
+def process_project_import(job_id: str):
+    """Import a project PO register run (PLAN-project-import-12nov.md, AC-PI-36).
+
+    `job_id` is the run's `import_jobs.id`. Calls `project_import.service.apply`, the same
+    function the preview ran rolled back. No notification is written (AC-PI-34), so the
+    run's own fields are set by the service rather than through `JobService.complete_job`.
+    """
+    from app.services.project_import import service as project_import
+
+    db = SessionLocal()
+    _apply_import_job_scope(db, job_id)
+    try:
+        run = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+        if run is None:
+            logger.error("Project import run not found: %s", job_id)
+            return
+        run.status = JobStatus.STARTED.value
+        run.started_at = datetime.utcnow()
+        db.commit()
+        user_id = (run.job_metadata or {}).get("started_by") or run.user_id
+        project_import.apply(db, run, user_id=user_id)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 - the run records the failure
+        db.rollback()
+        logger.error("Project import %s failed: %s", job_id, type(exc).__name__)
+        run = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+        if run is not None:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            meta = dict(run.job_metadata or {})
+            meta["phase"] = "previewed" if meta.get("preview_counts") else "draft"
+            run.job_metadata = meta
+            flag_modified(run, "job_metadata")
+            run.status = JobStatus.FAILED.value
+            run.completed_at = datetime.utcnow()
+            run.error = "The import stopped before it finished. Nothing was saved."
+            db.commit()
+    finally:
+        db.close()
