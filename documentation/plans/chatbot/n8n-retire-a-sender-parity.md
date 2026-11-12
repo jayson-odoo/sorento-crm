@@ -6,7 +6,7 @@ Source: crew's read-only audit of the LIVE published `sorento-chatbot-sender` an
 column names the parity test (`sorento_crm_backend/tests/test_crm_sender_parity.py` unless noted);
 the CRM column is filled with file:line once built.
 
-Status: building. Rows marked "keep (ask)" wait on the crew-ask of 12 Nov; placeholders marked
+Status: building. Agreed differences (rows 6 labels, 18, 19, 24, 26) ruled by crew 12 Nov, (a) on all five; 24, 26 and 6 told to the owner, who may overrule, so each sits behind one named function. Placeholders marked
 VERBATIM-PENDING are swapped for the live text when crew answers.
 
 | # | n8n live behaviour | CRM must | Verdict target | CRM file:line | Test |
@@ -16,7 +16,7 @@ VERBATIM-PENDING are swapped for the live text when crew answers.
 | 3 | drops the WHOLE body when `is_test` or any action is `dry_run` | send nothing for the whole turn when any action is `dry_run` | same | | parity |
 | 4 | actions strictly in order | in order, stop at first unconfirmed | same | | existing |
 | 5 | unknown kind skipped | skipped | same | | existing |
-| 6 | buttons: join, split ",", trim, max 10 | split, trim, at most 10 | same (leading space: keep (ask)) | | parity |
+| 6 | buttons: join, split ",", trim, max 10; buttons 2..n keep a leading space | split, trim, at most 10 | same, except AGREED DIFFERENCE: labels trimmed (a quirk, not a rule; respond.io shows the label as given). One function: `_button_labels` | | parity |
 | 7 | assign with `respond_user_id`; an empty id errors in n8n | never call assign with an empty id (step skipped, logged) | same in effect | | parity |
 | 8 | comment `{{@user.<id>}}` mentions, newline, text | same | same | | existing |
 | 9 | `update_contact_fields` sends nothing | skip the action, send nothing (crew ruling; lane C owns the flag) | same | | parity |
@@ -28,15 +28,15 @@ VERBATIM-PENDING are swapped for the live text when crew answers.
 | 15 | plain part via SEND_MESSAGE, last-interacted channel | text message (respond.io default channel) | same | | existing |
 | 16 | button body `{"message":{"type":"quick_reply","title":..,"replies":[..]}}` | same | same | | existing |
 | 17 | empty text sends nothing | same | same | | existing |
-| 18 | no retry; drain re-POSTs the whole body | per-part resume + look-up before resend | keep (ask) | | existing |
-| 19 | Redis push to the chat-history consumer | `message.sent` webhook row, linked by message id | keep (owner Q5) | | wiring |
+| 18 | no retry; drain re-POSTs the whole body | per-part resume + look-up before resend | AGREED DIFFERENCE (owner rule 11 Nov: a confirmed part is never resent; n8n sends part 1 twice) | | existing |
+| 19 | Redis push to the chat-history consumer | `message.sent` webhook row, linked by message id | AGREED DIFFERENCE (owner Q5 (a), 12 Nov: one writer, no n8n Redis) | | wiring |
 | 20 | template fallback / delivery check disabled | none | same | | n/a |
 | 21 | `attachments_src` is a list OR `{attachments: [...]}` | accept both | same | | parity |
 | 22 | remove duplicate urls | same | same | | parity |
 | 23 | url containing `cdn-sorento` -> 1 h presigned URL; else as is | same, in-process presign | same | | parity |
-| 24 | type by mime: image / video / else file | attachmentType, then mime | keep (ask) | | existing |
+| 24 | type by mime: image / video / else file | attachmentType, then mime; audio as audio | AGREED DIFFERENCE (live entries carry no mimeType, backlog H47, so n8n sends photos as documents). One function: `_attachment_type` | | existing |
 | 25 | sends the file name | same | same | | parity |
-| 26 | file send retried 3 times, 1 s | drain retries from the failed step | keep (ask) | | existing |
+| 26 | file send retried 3 times, 1 s | drain retries from the failed step, then the link fallback (row 27) | AGREED DIFFERENCE (same count, already built). One function: the drain's `MAX_SEND_ATTEMPTS` path | | existing |
 | 27 | a file that still fails -> its link sent as a text message, run continues | same | same | | parity |
 | 28 | text before files | same | same | | existing |
 | 31 | engine failure: n8n sub-error-logger sentence | the same sentence (VERBATIM-PENDING) | same | | parity |
