@@ -105,6 +105,8 @@ import {
   templateAfterFlip,
   lineToDraft,
   EMPTY_LINE,
+  emptyRowIndexes,
+  isUntouchedBlankLine,
   droppedPromotionNote,
   lineProblemsOf,
   pruneGuardError,
@@ -1163,9 +1165,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
     if (lines.length === 0) next.lines = MISSING_LINES;
-    const emptyRows = lines
-      .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
-      .filter((index) => index >= 0);
+    const emptyRows = emptyRowIndexes(lines);
     return { next, emptyRows };
   }, [debtorCode, lines]);
 
@@ -1242,6 +1242,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- Save draft (D48a: validates nothing but the numbers it would send) ----
   const handleSaveDraft = useCallback(async () => {
+    // A blank row nothing was done to is dropped; one with a changed quantity or remarks is
+    // named on its row, the way Submit names it.
+    const touchedBlank = emptyRowIndexes(lines).filter((index) => !isUntouchedBlankLine(lines[index]));
+    if (touchedBlank.length > 0) {
+      setLines((prev) =>
+        prev.map((l, index) => ({ ...l, guard_error: touchedBlank.includes(index) ? EMPTY_LINE : null })),
+      );
+      openSectionForProblems({}, true);
+      scrollToFirstProblem();
+      return;
+    }
     if (numbersInvalid()) return;
     setSaving(true);
     try {
@@ -1251,7 +1262,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         notes: notes || null,
         price_mode: priceMode,
         print_by: printBy,
-        lines: payloadLines(),
+        lines: draftLinesPayload(lines.filter((l) => !isUntouchedBlankLine(l)), priceMode),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
       // the salesperson with two rows and no way to tell them apart - and so
@@ -1286,7 +1297,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, applyFieldErrors, client]);
+  }, [numbersInvalid, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, applyFieldErrors, openSectionForProblems, client]);
 
   // ---- Edit save: through the portal revision engine's endpoint, never the retired
   // post-submit PUT. No reason for a price tag (owner hand test 11 Nov); the same zero-line/

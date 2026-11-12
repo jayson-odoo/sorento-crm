@@ -382,6 +382,13 @@ class PriceTagRequestService:
             product_set_id = PriceTagRequestService._part_uuid(
                 line_data.get("product_set_id"), idx
             )
+            if not product_id and not product_set_id:
+                raise AppException(
+                    status_code=422,
+                    message="Pick a set or a product for every line.",
+                    detail=f"line:{idx}",
+                    code="EMPTY_LINE",
+                )
             key = (product_id, product_set_id)
             # Security review: the line's own host id must be visible to
             # THIS request's company, the same reason `_add_line_parts`
