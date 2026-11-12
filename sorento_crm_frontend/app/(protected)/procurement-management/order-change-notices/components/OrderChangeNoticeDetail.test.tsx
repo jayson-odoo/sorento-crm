@@ -389,8 +389,9 @@ describe('G4 the Details tab reads like the form', () => {
     for (const name of ['Product', 'Qty before', 'Qty after', 'Date before', 'Date after', 'Delivered', 'Remark']) {
       expect(screen.getByRole('columnheader', { name: new RegExp(`^${name}$`) }), name).toBeTruthy();
     }
-    expect(screen.getByText(/ABC123-RL/)).toBeTruthy();
-    expect(screen.getByText(/ABC123-SH/)).toBeTruthy();
+    const table = within(screen.getByRole('columnheader', { name: /^Product$/ }).closest('table') as HTMLElement);
+    expect(table.getByText(/ABC123-RL/)).toBeTruthy();
+    expect(table.getByText(/ABC123-SH/)).toBeTruthy();
     expect(screen.getAllByText('15/01/2027').length).toBeGreaterThan(0);
     expect(screen.getByText('Collect back 12 sets')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
