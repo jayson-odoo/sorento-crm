@@ -1,5 +1,6 @@
 'use client';
 
+import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -54,7 +55,7 @@ export default function WorkflowSubmissionsList({
     modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('workflow_forms');
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'updated_at', desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'last_activity_at', desc: true }]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -64,6 +65,7 @@ export default function WorkflowSubmissionsList({
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [scopeDefinitionId, setScopeDefinitionId] = useState<string>(fixedDefinitionId ?? '__all');
   const [quickStateCode, setQuickStateCode] = useState('');
+  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
 
   const { data: pubDefs } = usePublishedWorkflowDefinitionsForSubmissionQuery();
   const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useWorkflowSubmissionsGridQuery({
@@ -75,6 +77,8 @@ export default function WorkflowSubmissionsList({
     fixedDefinitionId,
     scopeDefinitionId,
     quickStateCode,
+    lastActivityFrom: lastActivity.from,
+    lastActivityTo: lastActivity.to,
   });
 
   const canAdd = useHasPermission('workflow_forms.submissions.add');
@@ -86,14 +90,14 @@ export default function WorkflowSubmissionsList({
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, searchQuery, quickStateCode, scopeDefinitionId, fixedDefinitionId]);
+  }, [advancedFilter, searchQuery, quickStateCode, scopeDefinitionId, fixedDefinitionId, lastActivity.from, lastActivity.to]);
 
   const defOptions = useMemo(() => pubDefs?.data ?? [], [pubDefs?.data]);
   const formTitle = fixedDefinitionId
     ? defOptions.find((d) => d.id === fixedDefinitionId)?.name
     : null;
 
-  const quickFilterActive = Boolean(quickStateCode.trim());
+  const quickFilterActive = Boolean(quickStateCode.trim()) || lastActivityActive(lastActivity) > 0;
   // The states of the scoped form (or, with none chosen, of every published form), from the published schema.
   const stateOptions = useMemo(() => {
     const scoped = fixedDefinitionId || (scopeDefinitionId !== '__all' ? scopeDefinitionId : undefined);
@@ -164,12 +168,16 @@ export default function WorkflowSubmissionsList({
         meta: { headerTitle: 'State', skeleton: <Skeleton className="h-5 w-16" /> },
       },
       {
-        accessorKey: 'updated_at',
-        header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
-        cell: ({ row }) =>
-          row.original.updated_at ? formatDateTimeInMalaysia(row.original.updated_at) : '-',
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => <DataGridColumnHeader title="Last activity" column={column} />,
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
         size: 180,
-        meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       ...dynamicHeaderFields.map<ColumnDef<WorkflowSubmission>>((fieldMeta) => {
         const fieldId = fieldMeta.field_key.slice(4);
@@ -313,6 +321,7 @@ export default function WorkflowSubmissionsList({
                               clearable
                             />
                           </div>
+                          <LastActivityFilter id="wf-sub-last-activity" value={lastActivity} onChange={setLastActivity} />
                         </div>
                       </PopoverContent>
                     </Popover>

@@ -1,5 +1,6 @@
 'use client';
 
+import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
 import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -168,7 +169,7 @@ function StaffPurchaseRequestsList({
     pageSize: 50,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
+    { id: 'last_activity_at', desc: true },
   ]);
   const {
     value: searchInput,
@@ -182,6 +183,7 @@ function StaffPurchaseRequestsList({
   );
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('');
+  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -191,6 +193,7 @@ function StaffPurchaseRequestsList({
     resetSearch(state.searchQuery);
     setStatusFilter(state.filters.approval_status ?? '');
     setAssignedToFilter(state.filters.assigned_to ?? '');
+    setLastActivity({ from: state.filters.last_activity_from, to: state.filters.last_activity_to });
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -214,11 +217,13 @@ function StaffPurchaseRequestsList({
     requestType: effectiveRequestType,
     approvalStatus: effectiveStatusFilter,
     assignedTo: assignedToFilter || undefined,
+    lastActivityFrom: lastActivity.from,
+    lastActivityTo: lastActivity.to,
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [requestTypeFilter, statusFilter, assignedToFilter, searchQuery]);
+  useResetPageOnFilterChange(setPagination, [requestTypeFilter, statusFilter, assignedToFilter, searchQuery, lastActivity.from, lastActivity.to]);
 
   // The whole row opens the record, carrying the list query the pager rebuilds its
   // key from. request_type rides along so a PR pager stays in PRs and an SF one in SFs.
@@ -234,6 +239,8 @@ function StaffPurchaseRequestsList({
         request_type: effectiveRequestType,
         approval_status: effectiveStatusFilter,
         assigned_to: assignedToFilter || undefined,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -333,6 +340,20 @@ function StaffPurchaseRequestsList({
             : '-',
         size: 160,
         meta: { headerTitle: 'Created At', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        size: 160,
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'approval_status',
@@ -458,7 +479,7 @@ function StaffPurchaseRequestsList({
   });
 
   const filtersActiveCount =
-    (!requestType && requestTypeFilter ? 1 : 0) + (statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0);
+    (!requestType && requestTypeFilter ? 1 : 0) + (statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0) + lastActivityActive(lastActivity);
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
@@ -555,6 +576,7 @@ function StaffPurchaseRequestsList({
                       ]}
                     />
                   </div>
+                  <LastActivityFilter id="pr-last-activity" value={lastActivity} onChange={setLastActivity} />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
@@ -563,6 +585,7 @@ function StaffPurchaseRequestsList({
                         onClick={() => {
                           setStatusFilter('');
                           setAssignedToFilter('');
+                          setLastActivity({});
                           if (!requestType) setRequestTypeFilter('');
                         }}
                       >

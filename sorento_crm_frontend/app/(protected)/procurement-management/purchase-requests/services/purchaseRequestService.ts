@@ -39,6 +39,8 @@ export type PurchaseRequestsListParams = DataGridApiFetchParams & {
   request_type?: string;
   approval_status?: string;
   assigned_to?: string;
+  last_activity_from?: string;
+  last_activity_to?: string;
 };
 
 
@@ -47,11 +49,13 @@ export async function getPurchaseRequests(
     requestType?: string;
     approvalStatus?: string;
     assignedTo?: string;
+    lastActivityFrom?: string;
+    lastActivityTo?: string;
   },
 ): Promise<DataGridApiResponse<PurchaseRequest>> {
-  const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus, assignedTo } =
+  const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus, assignedTo, lastActivityFrom, lastActivityTo } =
     params;
-  const sortField = sorting?.[0]?.id || 'request_date';
+  const sortField = sorting?.[0]?.id || 'last_activity_at';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
     page: String(pageIndex + 1),
@@ -62,6 +66,8 @@ export async function getPurchaseRequests(
     ...(requestType ? { request_type: requestType } : {}),
     ...(approvalStatus ? { approval_status: approvalStatus } : {}),
     ...(assignedTo ? { assigned_to: assignedTo } : {}),
+    ...(lastActivityFrom ? { last_activity_from: lastActivityFrom } : {}),
+    ...(lastActivityTo ? { last_activity_to: lastActivityTo } : {}),
   });
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests?${queryParams.toString()}`,

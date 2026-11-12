@@ -48,6 +48,8 @@ export function complaintsListQueryKey(params: ComplaintsListParams): QueryKey {
     // Join, not the array: a fresh array literal each render would be a new key.
     params.root_cause_ids?.join(',') ?? '',
     params.resolution_ids?.join(',') ?? '',
+    params.last_activity_from,
+    params.last_activity_to,
   ];
 }
 
@@ -66,6 +68,8 @@ export function complaintsListParamsFromUrl(
     status: params.filters.status,
     root_cause_ids: rootCauses ? rootCauses.split(',') : undefined,
     resolution_ids: resolutions ? resolutions.split(',') : undefined,
+    last_activity_from: params.filters.last_activity_from,
+    last_activity_to: params.filters.last_activity_to,
   };
 }
 

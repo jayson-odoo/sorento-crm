@@ -96,6 +96,8 @@ export function useWorkflowSubmissionsGridQuery(
     fixedDefinitionId?: string;
     scopeDefinitionId: string;
     quickStateCode: string;
+    lastActivityFrom?: string;
+    lastActivityTo?: string;
   },
   options?: { enabled?: boolean },
 ) {
@@ -117,6 +119,8 @@ export function useWorkflowSubmissionsGridQuery(
       params.fixedDefinitionId,
       params.scopeDefinitionId,
       params.quickStateCode,
+      params.lastActivityFrom,
+      params.lastActivityTo,
     ],
     queryFn: () =>
       postListQuerySearch<WorkflowSubmission>({
@@ -124,11 +128,13 @@ export function useWorkflowSubmissionsGridQuery(
         filter: params.advancedFilter ?? undefined,
         page: params.pageIndex + 1,
         limit: params.pageSize,
-        sort: params.sorting[0]?.id || 'updated_at',
+        sort: params.sorting[0]?.id || 'last_activity_at',
         dir: params.sorting[0]?.desc ? 'desc' : 'asc',
         quick_search: params.searchQuery || undefined,
         workflow_form_definition_id: wfDef,
         workflow_submission_state_code: params.quickStateCode.trim() || undefined,
+        last_activity_from: params.lastActivityFrom || undefined,
+        last_activity_to: params.lastActivityTo || undefined,
       }),
     enabled: options?.enabled !== false,
     staleTime: 30_000,

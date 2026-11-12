@@ -42,6 +42,7 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
+import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -79,10 +80,11 @@ function StaffPriceTagRequestsList() {
     pageSize: 50,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
+    { id: 'last_activity_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
   const [data, setData] = useState<{
     data: PriceTagRequestSummary[];
     pagination: { total: number };
@@ -94,7 +96,7 @@ function StaffPriceTagRequestsList() {
   // Reset page on filter change
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, lastActivity.from, lastActivity.to]);
 
   // Fetch data
   const fetchData = async () => {
@@ -106,6 +108,8 @@ function StaffPriceTagRequestsList() {
       dir: sort?.desc ? 'desc' : 'asc',
       query: searchQuery || undefined,
       status: statusFilter || undefined,
+      last_activity_from: lastActivity.from,
+      last_activity_to: lastActivity.to,
     });
     setData(result);
     setLoadError(null);
@@ -127,7 +131,7 @@ function StaffPriceTagRequestsList() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter]);
+  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter, lastActivity.from, lastActivity.to]);
 
   const handleRetry = () => {
     setIsLoading(true);
@@ -182,7 +186,7 @@ function StaffPriceTagRequestsList() {
     }
   };
 
-  const filtersActiveCount = statusFilter ? 1 : 0;
+  const filtersActiveCount = (statusFilter ? 1 : 0) + lastActivityActive(lastActivity);
 
   const columns = useMemo<ColumnDef<PriceTagRequestSummary>[]>(
     () => [
@@ -303,6 +307,23 @@ function StaffPriceTagRequestsList() {
             : '-',
         meta: {
           headerTitle: 'Created',
+          skeleton: <Skeleton className="h-4 w-28" />,
+        },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        size: 160,
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        meta: {
+          headerTitle: 'Last activity',
           skeleton: <Skeleton className="h-4 w-28" />,
         },
       },
@@ -454,12 +475,16 @@ function StaffPriceTagRequestsList() {
                       clearable
                     />
                   </div>
+                  <LastActivityFilter id="ptr-last-activity" value={lastActivity} onChange={setLastActivity} />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setStatusFilter('')}
+                        onClick={() => {
+                          setStatusFilter('');
+                          setLastActivity({});
+                        }}
                       >
                         Clear filters
                       </Button>

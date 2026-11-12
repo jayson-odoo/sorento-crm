@@ -24,6 +24,7 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
+import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { APPEALED_LABEL } from '@/lib/submission-status';
@@ -76,7 +77,7 @@ function StaffComplaintsList() {
     pageSize: 50,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
+    { id: 'last_activity_at', desc: true },
   ]);
   const {
     value: searchInput,
@@ -89,6 +90,7 @@ function StaffComplaintsList() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [rootCauseFilter, setRootCauseFilter] = useState<string[]>([]);
   const [resolutionFilter, setResolutionFilter] = useState<string[]>([]);
+  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -100,6 +102,7 @@ function StaffComplaintsList() {
     setStatusFilter(state.filters.status ?? '');
     setRootCauseFilter(state.filters.root_cause_ids ? state.filters.root_cause_ids.split(',') : []);
     setResolutionFilter(state.filters.resolution_ids ? state.filters.resolution_ids.split(',') : []);
+    setLastActivity({ from: state.filters.last_activity_from, to: state.filters.last_activity_to });
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -115,6 +118,8 @@ function StaffComplaintsList() {
     statusFilter,
     rootCauseFilter.join(','),
     resolutionFilter.join(','),
+    lastActivity.from,
+    lastActivity.to,
   ]);
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useComplaints({
@@ -126,6 +131,8 @@ function StaffComplaintsList() {
     status: statusFilter || undefined,
     root_cause_ids: rootCauseFilter.length ? rootCauseFilter : undefined,
     resolution_ids: resolutionFilter.length ? resolutionFilter : undefined,
+    last_activity_from: lastActivity.from,
+    last_activity_to: lastActivity.to,
   });
 
   const {
@@ -154,7 +161,8 @@ function StaffComplaintsList() {
     (assignedToFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (rootCauseFilter.length ? 1 : 0) +
-    (resolutionFilter.length ? 1 : 0);
+    (resolutionFilter.length ? 1 : 0) +
+    lastActivityActive(lastActivity);
 
   // The whole row opens the record, carrying the active list query so the
   // detail page's pager walks the same filtered+sorted page.
@@ -175,6 +183,8 @@ function StaffComplaintsList() {
         resolution_ids: resolutionFilter.length
           ? resolutionFilter.join(',')
           : undefined,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -229,6 +239,20 @@ function StaffComplaintsList() {
             : '-',
         size: 160,
         meta: { headerTitle: 'Created at', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        size: 160,
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'customer_name',
@@ -516,6 +540,7 @@ function StaffComplaintsList() {
                       triggerClassName="mt-1"
                     />
                   </div>
+                  <LastActivityFilter id="cmp-last-activity" value={lastActivity} onChange={setLastActivity} />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
@@ -526,6 +551,7 @@ function StaffComplaintsList() {
                           setStatusFilter('');
                           setRootCauseFilter([]);
                           setResolutionFilter([]);
+                          setLastActivity({});
                         }}
                       >
                         Clear filters

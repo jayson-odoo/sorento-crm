@@ -39,7 +39,8 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
 import { getUserLookup } from '@/services/userSelectService';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { revisionBadgeLabel } from '@/lib/document-number';
@@ -93,7 +94,9 @@ function StaffNewProductApplicationsList() {
     pageIndex: 0,
     pageSize: 25,
   });
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: 'last_activity_at', desc: true },
+  ]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -103,6 +106,7 @@ function StaffNewProductApplicationsList() {
   } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState('');
   const [applicantFilter, setApplicantFilter] = useState('');
+  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useListStateFromUrl((state) => {
@@ -111,6 +115,7 @@ function StaffNewProductApplicationsList() {
     resetSearch(state.searchQuery);
     setStatusFilter(state.filters.status ?? '');
     setApplicantFilter(state.filters.applicant_id ?? '');
+    setLastActivity({ from: state.filters.last_activity_from, to: state.filters.last_activity_to });
   });
 
   const { data: applicants = [] } = useQuery({
@@ -129,12 +134,16 @@ function StaffNewProductApplicationsList() {
       searchQuery,
       status,
       applicantId,
+      lastActivityFrom: lastActivity.from,
+      lastActivityTo: lastActivity.to,
     });
 
   useResetPageOnFilterChange(setPagination, [
     statusFilter,
     applicantFilter,
     searchQuery,
+    lastActivity.from,
+    lastActivity.to,
   ]);
 
   const rowHref = (row: NewProductApplicationSummary) => {
@@ -145,7 +154,12 @@ function StaffNewProductApplicationsList() {
         sorting,
         searchQuery,
       },
-      { status, applicant_id: applicantId },
+      {
+        status,
+        applicant_id: applicantId,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
+      },
     );
     return `${BASE_PATH}/${row.id}${search ? `?${search}` : ''}`;
   };
@@ -317,6 +331,22 @@ function StaffNewProductApplicationsList() {
           skeleton: <Skeleton className="h-4 w-20" />,
         },
       },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        size: 160,
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          const text = raw ? formatDateTimeInMalaysia(raw) || '-' : '-';
+          return truncated(text);
+        },
+        meta: {
+          headerTitle: 'Last activity',
+          skeleton: <Skeleton className="h-4 w-28" />,
+        },
+      },
     ],
     [],
   );
@@ -343,7 +373,8 @@ function StaffNewProductApplicationsList() {
 
   const filtersActiveCount =
     (statusFilter ? 1 : 0) +
-    (applicantFilter ? 1 : 0);
+    (applicantFilter ? 1 : 0) +
+    lastActivityActive(lastActivity);
 
   return (
     <DataGrid
@@ -419,6 +450,7 @@ function StaffNewProductApplicationsList() {
                       }
                     />
                   </div>
+                  <LastActivityFilter id="npa-last-activity" value={lastActivity} onChange={setLastActivity} />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
@@ -427,6 +459,7 @@ function StaffNewProductApplicationsList() {
                         onClick={() => {
                           setStatusFilter('');
                           setApplicantFilter('');
+                          setLastActivity({});
                         }}
                       >
                         Clear filters
