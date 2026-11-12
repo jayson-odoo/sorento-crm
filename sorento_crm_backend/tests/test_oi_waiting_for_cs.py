@@ -608,3 +608,62 @@ def test_ac_v2_b1_the_board_confirm_result_counts_the_rows_it_handed_over(env):
     result = w.confirm_response
     assert result.get("inquiry_rows_handed_over") == 1, result
     assert result.get("inquiry_rows_created") == 0, result
+
+
+# ================================================================ F1b: the ack filter words
+def _ids(env, w, ack):
+    res = env.client.get(f"{BASE}/order-inquiries", params={"limit": 100, "ack": ack})
+    assert res.status_code == 200, f"ack={ack}: {res.status_code} {res.text[:200]}"
+    return {r["id"] for r in res.json()["data"]}
+
+
+def _status_worlds(env):
+    from sqlalchemy import text
+
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    waiting = _world(env, "date")
+    plain = _world(env)
+    done = _world(env, ack=ACK_ACKNOWLEDGED)
+    rejected = _world(env)
+    so_cancelled = _world(env)
+    line_cancelled = _world(env)
+    env.db.execute(
+        text("UPDATE order_inquiry_rows SET ack_state = 'rejected' WHERE id = :i"),
+        {"i": rejected.row_id},
+    )
+    env.db.execute(
+        text("UPDATE sales_orders SET status = 'cancelled' WHERE id = :i"),
+        {"i": str(so_cancelled.header["id"])},
+    )
+    env.db.execute(
+        text("UPDATE sales_order_lines SET line_status = 'cancelled' WHERE id = :i"),
+        {"i": str(line_cancelled.line_x["id"])},
+    )
+    env.db.commit()
+    env.db.expire_all()
+    return waiting, plain, done, rejected, so_cancelled, line_cancelled
+
+
+@pytest.mark.parametrize(
+    "ack,index",
+    [("waiting_for_cs", 0), ("so_cancelled", 4), ("line_cancelled", 5)],
+)
+def test_ac_v2_f1b_the_new_status_words_filter_exactly_their_rows(env, ack, index):
+    worlds = _status_worlds(env)
+
+    assert _ids(env, worlds[0], ack) == {worlds[index].row_id}
+
+
+def test_ac_v2_f1b_the_existing_words_keep_matching_and_never_list_a_waiting_row(env):
+    waiting, plain, done, rejected, _so, _line = _status_worlds(env)
+
+    to_confirm = _ids(env, waiting, "to_confirm")
+    acknowledged = _ids(env, waiting, "acknowledged")
+    rejected_ids = _ids(env, waiting, "rejected")
+
+    assert plain.row_id in to_confirm
+    assert done.row_id in acknowledged
+    assert rejected.row_id in rejected_ids
+    for ids in (to_confirm, acknowledged, rejected_ids):
+        assert waiting.row_id not in ids
