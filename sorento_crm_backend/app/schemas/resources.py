@@ -315,6 +315,13 @@ class AttachmentsBulkRestoreRequest(BaseModel):
     def at_least_one(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("At least one attachment ID is required")
+        if len(v) > 1000:
+            raise ValueError("Restore at most 1000 files at a time.")
+        for aid in v:
+            try:
+                uuid.UUID(str(aid))
+            except ValueError:
+                raise ValueError("One of the files could not be found.") from None
         return v
 
 

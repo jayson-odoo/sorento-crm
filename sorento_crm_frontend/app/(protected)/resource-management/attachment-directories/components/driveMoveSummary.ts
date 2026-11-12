@@ -22,9 +22,9 @@ export interface MoveOutcome {
 
 const NAMED_AT_MOST = 3;
 
-function sentence(item: MoveSkipped): string {
+function sentence(item: MoveSkipped, verb: string): string {
   const reason = (item.reason || '').trim();
-  if (!reason) return `${item.name} could not be moved.`;
+  if (!reason) return `${item.name} could not be ${verb}.`;
   const text = reason.startsWith(item.name) ? reason : `${item.name}: ${reason}`;
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
@@ -49,7 +49,7 @@ export function summarizeMove(
     text += ` ${skipped.length} skipped: ${shown}${more}.`;
   }
   if (notMoved.length) {
-    const shown = notMoved.slice(0, NAMED_AT_MOST).map(sentence).join(' ');
+    const shown = notMoved.slice(0, NAMED_AT_MOST).map((item) => sentence(item, verb)).join(' ');
     const more =
       notMoved.length > NAMED_AT_MOST ? ` And ${notMoved.length - NAMED_AT_MOST} more.` : '';
     text += ` ${notMoved.length} not ${verb}: ${shown}${more}`;

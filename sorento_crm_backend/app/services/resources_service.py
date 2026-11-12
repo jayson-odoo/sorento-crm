@@ -3,7 +3,6 @@ import logging
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_
-from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from typing import Any, Optional, List
 
@@ -27,12 +26,6 @@ from app.services.entity_attachment_service import exclude_private_types, is_pri
 from app.utils.multi_value import multi_values
 
 
-FOLDER_NAME_INDEX = "ux_attachments_dir_lower_filename_active"
-
-
-def _is_folder_name_clash(exc: IntegrityError) -> bool:
-    """True when the IntegrityError is the one-name-per-folder index (migration 198)."""
-    return FOLDER_NAME_INDEX in str(getattr(exc, "orig", None) or exc)
 
 
 class BulkMoveResult(tuple):
@@ -2201,12 +2194,11 @@ class AttachmentService:
         )
         return attachment
     
-    # ---- FILES-MOVE-DUPLICATE: a name clash inside a folder ------------------------------
+    # ---- FILES-MOVE-DUPLICATE: same names in a folder ---------------------------------------
     #
-    # ``ux_attachments_dir_lower_filename_active`` (migration 198) allows one active file per
-    # (folder, lower(original_filename)). Every write that can hit it checks first and still
-    # catches the IntegrityError of a race, so a clash always reads as a plain 409 naming the
-    # file and the folder, never a 500 with database text.
+    # Two files may share a name in one folder (owner, 12 Nov; migration fmd_0001 dropped the
+    # old unique index). Every action that would put a second file of one visible name into a
+    # folder asks first: Keep both / Rename / Replace / Skip.
 
     def _folder_clash(
         self,
@@ -2234,7 +2226,8 @@ class AttachmentService:
         )
         if exclude_id:
             q = q.filter(Attachment.id != str(exclude_id))
-        return q.first()
+        # Several files may share a name now: answer with the oldest, always the same one.
+        return q.order_by(Attachment.uploaded_at, Attachment.id).first()
 
     def _folder_label(self, directory_id: Optional[str]) -> str:
         name = (
@@ -2269,12 +2262,8 @@ class AttachmentService:
 
     @staticmethod
     def _clash_message(file_name: str, existing_name: Optional[str], folder_name: str, verb: str) -> str:
-        if not existing_name or existing_name.lower() == (file_name or "").lower():
-            return f"{file_name} already exists in {folder_name}."
-        return (
-            f"{file_name} cannot be {verb} {folder_name}: "
-            f"{existing_name} there has the same original file name."
-        )
+        # The match is on the visible name, so the message is always the plain one.
+        return f"{file_name} already exists in {folder_name}."
 
     def _clash_details(
         self, file_name: str, existing, directory_id: str, exclude_id=None, viewer_id: Optional[str] = None
@@ -2379,34 +2368,13 @@ class AttachmentService:
         type_changed = "attachment_type_id" in update_data and str(attachment.attachment_type_id or "") != str(
             update_data["attachment_type_id"] or ""
         )
-        try:
-            if replaced is not None:
-                # Replace: the file already in the folder goes to Trash (restorable, still in
-                # its folder; its stored object stays until a permanent delete). Flushed on its
-                # own first: one flush orders UPDATEs by primary key, which could write the
-                # moved row before the trashed one and trip the index.
-                from datetime import datetime
-
-                replaced.is_deleted = True
-                replaced.deleted_at = datetime.utcnow()
-                replaced.deleted_by = actor_id
-                self.db.flush()
-            for key, value in update_data.items():
-                setattr(attachment, key, value)
-            self._finish_update(attachment, update_data)
-        except IntegrityError as exc:
-            # Two parallel moves can both pass the check above; the loser lands here.
-            self.db.rollback()
-            if not _is_folder_name_clash(exc):
-                raise
-            raise self._clash_error(
-                file_name,
-                self._folder_clash(target_dir, original_name, exclude_id=attachment_id, visible_name=file_name),
-                target_dir,
-                verb="moved into",
-                exclude_id=attachment_id,
-                viewer_id=actor_id,
-            )
+        if replaced is not None:
+            # Replace: the file already in the folder goes to Trash (restorable, still in its
+            # folder; its stored object stays until a permanent delete).
+            self._trash(replaced, actor_id)
+        for key, value in update_data.items():
+            setattr(attachment, key, value)
+        self._finish_update(attachment, update_data)
         self.db.refresh(attachment)
         if type_changed:
             self._queue_ai_reads([attachment])
@@ -2466,9 +2434,8 @@ class AttachmentService:
         what to do with a file that clashes: skip (left where it is, named in the list),
         replace (the file already there goes to Trash; ``replace_guard(row)`` runs on it and a
         refusal skips only this file), rename (to ``name``, or a free "name (1)" style name;
-        sets the visible and original name, DB only). A clashing file with no resolution is
-        skipped. Each row is written under its own savepoint, so a race on the index skips
-        that one file instead of rolling back the batch.
+        visible name only, DB only), keep (moves in under the same name). A clashing file with
+        no resolution is skipped and named.
         """
         rows = (
             exclude_private_types(self.db.query(Attachment))
@@ -2533,34 +2500,16 @@ class AttachmentService:
                     else:
                         not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
                         continue
-            savepoint = self.db.begin_nested()
-            try:
-                if replaced is not None:
-                    from datetime import datetime
-
-                    replaced.is_deleted = True
-                    replaced.deleted_at = datetime.utcnow()
-                    replaced.deleted_by = actor_id
-                    self.db.flush()  # before the move: one flush orders UPDATEs by primary key
-                if new_name is not None:
-                    row.stored_filename = new_name
-                row.directory_id = directory_id
-                row.full_directory_path = full_path
-                self.db.flush()
-                savepoint.commit()
-                moved.append(row)
-                renamed_count += new_name is not None
-                replaced_count += replaced is not None
-            except IntegrityError as exc:
-                savepoint.rollback()
-                if not _is_folder_name_clash(exc):
-                    raise
-                clash = self._folder_clash(
-                    directory_id, new_name or original, exclude_id=row_id, visible_name=new_name or file_name
-                )
-                not_moved.append(
-                    self._not_moved_entry(row_id, new_name or file_name, clash, directory_id, viewer_id)
-                )
+            if replaced is not None:
+                self._trash(replaced, actor_id)
+            if new_name is not None:
+                row.stored_filename = new_name
+            row.directory_id = directory_id
+            row.full_directory_path = full_path
+            self.db.flush()
+            moved.append(row)
+            renamed_count += new_name is not None
+            replaced_count += replaced is not None
         rows = moved
 
         # PLAN-shared-brand-attachments R10/R19: a move never re-stamps a
@@ -2766,8 +2715,7 @@ class AttachmentService:
 
         ``check_only``: write nothing, return every file whose folder now shows another file of
         the same name (or an earlier file of this batch). ``resolutions`` per file: keep /
-        rename / replace / skip; a clashing file with none stays in Trash and is named. Each
-        row under its own savepoint.
+        rename / replace / skip; a clashing file with none stays in Trash and is named.
         """
         rows = (
             exclude_private_types(self.db.query(Attachment))
@@ -2835,7 +2783,6 @@ class AttachmentService:
                 else:
                     not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
                     continue
-            savepoint = self.db.begin_nested()
             if to_trash is not None:
                 self._trash(to_trash, actor_id)
             if new_name is not None:
@@ -2844,7 +2791,6 @@ class AttachmentService:
             row.deleted_at = None
             row.deleted_by = None
             self.db.flush()
-            savepoint.commit()
             restored += 1
             renamed += new_name is not None
             replaced_count += to_trash is not None

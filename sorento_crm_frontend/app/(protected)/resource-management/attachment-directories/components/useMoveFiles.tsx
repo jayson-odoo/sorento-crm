@@ -96,7 +96,8 @@ export function useMoveFiles() {
       ids: string[],
       call: BulkCall,
       folders: { id: string; name: string }[],
-      moveFolder: (id: string) => Promise<unknown>
+      moveFolder: (id: string) => Promise<unknown>,
+      verb: 'moved' | 'restored' = 'moved'
     ): Promise<MoveOutcome> => {
       const outcome: MoveOutcome = {
         cancelled: false,
@@ -111,7 +112,7 @@ export function useMoveFiles() {
       const failedAll = (err: unknown) =>
         outcome.notMoved.push({
           name: ids.length === 1 ? 'The file' : `${ids.length} files`,
-          reason: err instanceof Error ? err.message : 'could not be moved',
+          reason: err instanceof Error ? err.message : `could not be ${verb}`,
         } satisfies MoveSkipped);
 
       // 1. Every clash, before anything changes.
@@ -188,7 +189,8 @@ export function useMoveFiles() {
   );
 
   const restoreFiles = useCallback(
-    (fileIds: string[]) => run(fileIds, (ids, options) => bulkRestoreAttachments(ids, options), [], async () => {}),
+    (fileIds: string[]) =>
+      run(fileIds, (ids, options) => bulkRestoreAttachments(ids, options), [], async () => {}, 'restored'),
     [run]
   );
 

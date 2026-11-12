@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { toast } from '@/lib/toast';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -44,12 +45,13 @@ import { formatDate } from '@/lib/helpers';
 import {
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
-  useRestoreAttachment,
   useUpdateAttachment,
 } from '../hooks/useAttachments';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
 import { attachmentDisplayNames } from '../types/attachmentDisplayName';
+import { useMoveFiles } from '../../attachment-directories/components/useMoveFiles';
+import { summarizeMove } from '../../attachment-directories/components/driveMoveSummary';
 import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
@@ -879,7 +881,19 @@ export default function AttachmentDetailModal({
 
   const downloadMutation = useDownloadAttachment();
   const resubmitMutation = useResubmitAttachmentWebhook();
-  const restoreMutation = useRestoreAttachment();
+  // FILES-MOVE-DUPLICATE: Restore asks when the folder now shows a file of the same name.
+  const { restoreFiles, MoveClashDialog } = useMoveFiles();
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restore = async (id: string) => {
+    setIsRestoring(true);
+    try {
+      const summary = summarizeMove(await restoreFiles([id]), 'restored');
+      if (summary.ok) toast.success(summary.text);
+      else toast.error(summary.text);
+    } finally {
+      setIsRestoring(false);
+    }
+  };
   const updateMutation = useUpdateAttachment();
 
   const formatFileSize = (bytes: number | null | undefined) => {
@@ -1019,8 +1033,8 @@ export default function AttachmentDetailModal({
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => restoreMutation.mutate(attachment.id)}
-                          disabled={restoreMutation.isPending}
+                          onClick={() => void restore(attachment.id)}
+                          disabled={isRestoring}
                         >
                           Restore
                         </Button>
@@ -1268,6 +1282,7 @@ export default function AttachmentDetailModal({
         </DialogContent>
       </Dialog>
 
+      {MoveClashDialog}
       <AttachmentPreviewModal
         open={previewOpen}
         onOpenChange={setPreviewOpen}

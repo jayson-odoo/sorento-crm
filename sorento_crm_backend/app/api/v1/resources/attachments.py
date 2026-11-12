@@ -983,48 +983,53 @@ async def create_attachment(
         # who may not write that project which file names it holds.
         assert_can_write_target(db, entity_type, entity_id, current_user)
         collision = _find_filename_collision(db, directory_id, display_name, entity_type, entity_id)
+        # FILES-MOVE-DUPLICATE: a same-named file on ANOTHER record in this folder asks too
+        # (Keep both / Create copy), but is never offered for Replace: no id is handed out, and a
+        # private file's name stays hidden.
+        other = (
+            AttachmentService(db)._folder_clash(directory_id, display_name)
+            if collision is None and directory_id
+            else None
+        )
         existing_to_replace = None
-        if collision is not None:
+        if collision is not None or other is not None:
             if on_conflict_clean is None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "ATTACHMENT_FILENAME_COLLISION",
-                        "existing_attachment_id": str(collision.id),
-                        "existing_file_name": collision.stored_filename,
-                        "existing_target_entity_type": collision.target_entity_type,
-                        "existing_target_field_keys": collision.target_field_keys,
-                    },
+                    detail=(
+                        {
+                            "code": "ATTACHMENT_FILENAME_COLLISION",
+                            "existing_attachment_id": str(collision.id),
+                            "existing_file_name": collision.stored_filename,
+                            "existing_target_entity_type": collision.target_entity_type,
+                            "existing_target_field_keys": collision.target_field_keys,
+                        }
+                        if collision is not None
+                        else {
+                            "code": "ATTACHMENT_FILENAME_COLLISION",
+                            "existing_attachment_id": None,
+                            "existing_file_name": (
+                                None
+                                if is_private_to_others(other, str(current_user["id"]))
+                                else other.stored_filename
+                            ),
+                            "existing_target_entity_type": None,
+                            "existing_target_field_keys": None,
+                        }
+                    ),
                 )
             if on_conflict_clean == "copy":
                 display_name = _next_copy_name(db, directory_id, display_name, entity_type, entity_id)
-            elif on_conflict_clean == "replace":
+            elif on_conflict_clean == "replace" and collision is not None:
                 existing_to_replace = collision
-            # "keep": same names are allowed (owner, 12 Nov) - the new file lands beside it.
+            # "keep" (or "replace" of another record's file): same names are allowed (owner,
+            # 12 Nov), so the new file lands beside it.
 
         # Split the resolved display name into the two canonical columns:
         #   stored_filename   = user-facing label (editable later via rename)
         #   original_filename = immutable, sanitized → the object-key basename
         stored_filename = display_name
         original_filename = sanitize_storage_filename(display_name)
-        if collision is None and on_conflict_clean is None and directory_id:
-            # FILES-MOVE-DUPLICATE: a same-named file on ANOTHER record in this folder still asks
-            # first (same window: Keep both / Create copy / Replace). No id is handed out for a
-            # file of another record, and a private file's name stays hidden.
-            other = AttachmentService(db)._folder_clash(directory_id, stored_filename)
-            if other is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "ATTACHMENT_FILENAME_COLLISION",
-                        "existing_attachment_id": None,
-                        "existing_file_name": (
-                            None if is_private_to_others(other, str(current_user["id"])) else other.stored_filename
-                        ),
-                        "existing_target_entity_type": None,
-                        "existing_target_field_keys": None,
-                    },
-                )
 
         # Get attachment type: optional in DB (nullable); required by API for new uploads.
         # When entity_type is "promotion" and no type_id given, use the promotion attachment type (code='promotion').
