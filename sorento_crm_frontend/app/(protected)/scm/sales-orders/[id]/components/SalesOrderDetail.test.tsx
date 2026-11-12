@@ -568,6 +568,7 @@ describe('SalesOrderDetail - states', () => {
       'Delivery',
       'Transfers',
       'Related',
+      'History',
     ]);
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
       'data-state',
