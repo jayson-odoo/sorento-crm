@@ -85,6 +85,7 @@
  * ===========================================================================
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
@@ -273,12 +274,21 @@ export interface TagPreviewResponse {
  *  `selling` requires a promotion - the server rejects it without one. */
 export type PriceMode = 'list' | 'selling';
 
+/** One customer a request prints for (PRICETAG-REQUEST-LAYOUT). */
+export interface RequestCustomer {
+  code: string | null;
+  name: string;
+}
+
 export interface PriceTagRequestSummary {
   id: string;
   doc_number: string;
   debtor_code: string | null;
   /** Null on a draft: Save Draft validates nothing (D48a). */
   debtor_name: string | null;
+  /** Every customer, in pick order; the first is mirrored into `debtor_*`. Absent from an
+   *  older server; an older request answers its one debtor. */
+  customers?: RequestCustomer[];
   /** Null on a draft, for the same reason as `debtor_name`. */
   needed_by_date: string | null;
   notes: string | null;
@@ -527,6 +537,8 @@ async function unwrapNamingFields<T>(res: Response, fallback: string): Promise<T
 export interface CreatePriceTagRequestInput {
   debtor_code: string | null;
   debtor_name: string | null;
+  /** PRICETAG-REQUEST-LAYOUT: every customer; the server mirrors the first into `debtor_*`. */
+  customers?: RequestCustomer[];
   // D1 (S6): no request-level `promotion_id` any more - both `PriceTagRequestCreate`
   // and `...Update` `extra="forbid"` it now; the promotion is a LINE fact
   // (`PriceTagRequestLineInput.promotion_id`).
@@ -744,14 +756,15 @@ export function makePriceTagRequestService(
         kind: 'price_tag_request' as const,
         // A draft may have no dealer yet, and a card with a blank first line reads
         // as a broken row rather than an unfinished one.
-        title: r.debtor_name || r.doc_number,
+        title: customersLabel(requestCustomers(r)) || r.doc_number,
         document_number: r.doc_number,
         reference: null,
         status: r.status,
         is_editable: isDraft,
         is_draft: isDraft,
         created_at: r.created_at,
-        customer_name: r.debtor_name,
+        customer_name: customersLabel(requestCustomers(r)),
+        customer_names: requestCustomers(r).map((c) => c.name).join(', ') || null,
         needed_by_date: r.needed_by_date,
         // AC-R7: the same revision fields the legacy kinds' own summaries carry
         // (D45's landing card reads these for the "Rev N" / "Revising" badges) -

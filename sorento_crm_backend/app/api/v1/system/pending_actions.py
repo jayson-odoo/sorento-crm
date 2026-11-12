@@ -41,6 +41,7 @@ from app.models.access import Team
 from app.models.accessory import Accessory
 from app.models.base import company_scope, get_company_scope
 from app.models.certificate import Certificate
+from app.models.costing import CustomerCostingProduct
 from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
 from app.models.country import Country
 from app.models.dealer_kit import (
@@ -167,6 +168,14 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
 # by the requester (`ACKNOWLEDGE`) or by CS (`RESERVE`, who may cancel a request that
 # is not hers - the ownership question itself is `cancel_request`'s own job, not the
 # park gate's).
+#: Grants an action needs IN ADDITION to its declared one (all of them). The Costing record
+#: actions touch cost data, which `products.cost.view` guards on every costing route, so parking
+#: one without it is refused here as well.
+_ALSO_REQUIRED_PERMISSIONS: dict = {
+    "costing_party_product.unlink": ("products.cost.view",),
+    "exchange_rate.delete": ("products.cost.view",),
+}
+
 _ANY_OF_PERMISSIONS: dict = {
     "form_comment.delete": (
         "complaint_management.complaints.view",
@@ -210,6 +219,24 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
     for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
         if not (payload or {}).get(key):
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
+    if action_key == "tag_template.unassign_products":
+        # PRICETAG-TEMPLATE-PRODUCTS: the same shape and 500-per-list cap /assign takes, so a
+        # parked removal can never carry a list the HTTP route would refuse.
+        from pydantic import ValidationError
+
+        from app.schemas.price_tag import TemplateAssignFilter
+
+        keys = (
+            "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids", "combo_ids",
+        )
+        try:
+            TemplateAssignFilter.model_validate(
+                {key: (payload or {})[key] for key in keys if (payload or {}).get(key) is not None}
+            )
+        except ValidationError:
+            raise handle_validation_error(
+                "Each filter must be a list of at most 500 values for 'tag_template.unassign_products'."
+            )
     if action_key in _UUID_ENTITY_ACTIONS:
         from app.services.ideation_gateway_service import require_uuid
 
@@ -370,6 +397,7 @@ _PARK_SCOPED_MODELS: dict = {
     "attachment_directory.set_company": AttachmentDirectory,
     "brand.delete": Brand,
     "campaign.delete": MarketingCampaign,
+    "costing_party_product.unlink": CustomerCostingProduct,
     "certificate.delete": Certificate,
     "cost_price_change_set.discard": CostPriceChangeSet,
     "country.delete": Country,
@@ -473,6 +501,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "contact_tag.delete",
     "container_size.delete",
     "currency_rate.delete",
+    # No company column: a dated exchange rate is the same for every company.
+    "exchange_rate.delete",
     "email_template.delete",
     "idea.archive",
     "idea.delete",
@@ -663,14 +693,15 @@ def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slu
             )
         return
 
-    if not user_id or not UserPermissionService(db).check_user_has_permission(
-        str(user_id), slug
-    ):
-        raise AppException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            message=f"Permission required: {slug}",
-            code="FORBIDDEN",
-        )
+    for needed in (slug, *_ALSO_REQUIRED_PERMISSIONS.get(action_key, ())):
+        if not user_id or not UserPermissionService(db).check_user_has_permission(
+            str(user_id), needed
+        ):
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message=f"Permission required: {needed}",
+                code="FORBIDDEN",
+            )
 
 
 def _window_seconds(row: SlaFormAction) -> Optional[int]:

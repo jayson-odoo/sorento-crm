@@ -85,4 +85,14 @@ describe('ContactImpersonateDialog S8', () => {
     expect(router.replace).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem('sorento.portalToken')).toBeNull();
   });
+
+  it('the confirm copy says what is saved as the contact and that the audit log shows you (crew pass 11 Nov)', () => {
+    answer(null);
+    mount();
+    const text = screen.getByRole('alertdialog').textContent ?? '';
+    expect(text).toContain(
+      'What you submit is saved as Test Salesperson A; comments also show your name, and the audit log shows you did it.',
+    );
+    expect(text).not.toContain('attributed to you');
+  });
 });

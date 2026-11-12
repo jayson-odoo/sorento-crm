@@ -842,6 +842,9 @@ export interface ProductTagData {
   /** Staff-authored tag copy (r10 S4). Absent/null renders nothing - no
    *  fallback to `spec_lines` or a description. */
   price_tag_description?: string | null;
+  /** `products.description`, the plain catalogue description ({{product.description}}).
+   *  Optional: a row frozen before it existed reads as empty. */
+  description?: string | null;
   /** `products.currency` (AC-A5). Optional so an older pinned/cached row
    *  (frozen before this field existed) still renders - `resolvePath` falls
    *  back to `MYR` when absent (AC-A7). */
@@ -1032,6 +1035,9 @@ export interface TagPartData {
   chosen?: boolean;
   /** This part's OWN product's tag copy (r10 S4), not the host's. */
   price_tag_description?: string | null;
+  /** `products.description`, the plain catalogue description ({{product.description}}).
+   *  Optional: a row frozen before it existed reads as empty. */
+  description?: string | null;
   /** PS-SPEC-SHEET: the part's brand name and technical drawing. */
   brand?: string;
   drawing?: TagImage | null;
@@ -1114,6 +1120,9 @@ export interface LineTagData {
   /** Staff-authored tag copy (r10 S4). Null for a set line - a set has no
    *  description of its own, same rule as barcode above. */
   price_tag_description?: string | null;
+  /** `products.description`, the plain catalogue description ({{product.description}}).
+   *  Optional: a row frozen before it existed reads as empty. */
+  description?: string | null;
   /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
   combo?: TagCombo | null;
   /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */

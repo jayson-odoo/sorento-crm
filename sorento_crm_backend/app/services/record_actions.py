@@ -1802,7 +1802,8 @@ for _key, _fn, _label in (
 def _unassign_tag_template_products(db: Session, payload: dict):
     """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
     an unlink, so it parks (5s, reversible: Add puts the links back). The
-    filter is re-applied at commit, under the requester's own scope."""
+    filter is re-applied at commit, under the requester's own scope.
+    PRICETAG-TEMPLATE-PRODUCTS: the designer's Save parks its unticked ``product_ids`` here."""
     from app.services.dealer_kit import product_tag_template_service
 
     return product_tag_template_service.bulk_assign(
@@ -1810,7 +1811,10 @@ def _unassign_tag_template_products(db: Session, payload: dict):
         _entity_id(payload),
         {
             key: payload.get(key) or []
-            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+            for key in (
+                "brand_ids", "category_ids", "item_class_ids", "family_codes", "product_ids",
+                "combo_ids",
+            )
         },
         "remove",
         user_id=payload.get("requested_by_id"),
@@ -3126,5 +3130,44 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="projects.parties.edit",
         label="Delete party contact",
+    )
+)
+
+
+def _delete_exchange_rate(db: Session, payload: dict):
+    from app.services.costing import rates
+
+    return rates.delete_rate_by_id(db, _entity_id(payload))
+
+
+def _unlink_costing_party_product(db: Session, payload: dict):
+    from app.services.costing import party
+
+    return party.unlink_product_by_id(db, _entity_id(payload))
+
+
+# PRODUCT-COSTING (AC-ER-06): delete one dated exchange rate row from Costing > Settings.
+# Destructive; the row is gone for good, the audit row keeps the old value.
+register(
+    FormAction(
+        key="exchange_rate.delete",
+        entity_types=("exchange_rate",),
+        execute=_delete_exchange_rate,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.config.manage",
+        label="Delete exchange rate",
+    )
+)
+
+# PRODUCT-COSTING (AC-CG-12): remove one product from a party's costing list. Reversible: the
+# product stays and is one pick away on the Add products dialog.
+register(
+    FormAction(
+        key="costing_party_product.unlink",
+        entity_types=("costing_party_product",),
+        execute=_unlink_costing_party_product,
+        window=WINDOW_REVERSIBLE,
+        permission="products.party_costing.manage",
+        label="Remove from party",
     )
 )

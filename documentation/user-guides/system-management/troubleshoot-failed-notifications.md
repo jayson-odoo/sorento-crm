@@ -61,7 +61,7 @@ All three start **Enabled**. Turning one off stops only that email: the bell not
    * **Status** with a status code - a **`401`** means the workspace API key is bad/placeholder.
    * **Error** / the **View** detail has the raw failure.
    * **Button URL** - inspect for a malformed double-host link if the contact's link is broken.
-5. For the full request/response, open **[Integration Logs](/integration-management/integration-logs)**, filter **Channel = (Respond.io)** and **Status = Failed**, and read **response_payload** / **error_message**. If the row is `failed` and still has retries left (`retry_count < max_retry_allowed`), use the **Retry** action.
+5. For the full request/response, open **[Integration Logs](/integration-management/integration-logs)**, filter **Channel = (Respond.io)** and **Status = Failed**, and read **response_payload** / **error_message**. To find one send, type part of its reference, endpoint, error code or error text (or paste its full ID) into the **Search** box: it searches every row on the server, together with the filters you set. If the row is `failed` and still has retries left (`retry_count < max_retry_allowed`), use the **Retry** action.
 
 ### What the statuses mean
 

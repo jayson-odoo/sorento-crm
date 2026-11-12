@@ -32,9 +32,10 @@ import {
   toWaDigits,
   whatsAppMessage,
 } from '../../../../_shared/lib/quotationWhatsApp';
-import type {
-  QuotationDocument,
-  QuotationIssue,
+import {
+  sendRevisionLabel,
+  type QuotationDocument,
+  type QuotationIssue,
 } from '../../../../_shared/services/quotationDocumentService';
 import { formatPhone } from '../../../../_shared/lib/phoneDisplay';
 
@@ -70,12 +71,22 @@ export function QuotationWhatsAppDialog({
   const lastIssue = React.useRef<QuotationIssue | null>(null);
   if (issue) lastIssue.current = issue;
   const shown = issue ?? lastIssue.current;
+  // The party of whoever is picked in "Send to"; null until a pick, when the document's To party
+  // stands in. Reported up by the body, which owns the pick, because the title has to stay a
+  // direct child of the content (`DialogContent` looks for it there).
+  const [pickedParty, setPickedParty] = React.useState<string | null>(null);
   return (
     <Dialog open={Boolean(issue)} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         {shown && (
           <DialogHeader>
-            <DialogTitle>{`Send ${revisionLabel(shown)} via WhatsApp`}</DialogTitle>
+            {/* The same words as the Send button that opened it (QUOTE-HEADER-TIDY). */}
+            <DialogTitle>
+              {`${sendRevisionLabel(
+                revisionLabel(shown),
+                pickedParty ?? document.recipient_name_snapshot,
+              )} via WhatsApp`}
+            </DialogTitle>
           </DialogHeader>
         )}
         {shown && (
@@ -84,6 +95,7 @@ export function QuotationWhatsAppDialog({
             document={document}
             key={shown.id}
             issue={shown}
+            onPickedParty={setPickedParty}
             onClose={() => onOpenChange(false)}
           />
         )}
@@ -137,11 +149,13 @@ function WhatsAppBody({
   projectId,
   document,
   issue,
+  onPickedParty,
   onClose,
 }: {
   projectId: string;
   document: QuotationDocument;
   issue: QuotationIssue;
+  onPickedParty: (name: string | null) => void;
   onClose: () => void;
 }) {
   const mutations = useQuotationDocumentMutations(projectId, document.id);
@@ -198,6 +212,10 @@ function WhatsAppBody({
         })
       : '');
   const ready = link !== null;
+  const pickedParty = recipient
+    ? ((parties.data ?? []).find((party) => party.party_id === recipient.partyId)?.name ?? null)
+    : null;
+  React.useEffect(() => onPickedParty(pickedParty), [onPickedParty, pickedParty]);
 
   return (
     <>

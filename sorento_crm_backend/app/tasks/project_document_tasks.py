@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 # worker that was started for THIS code can take these jobs.
 PROJECT_DOCS_QUEUE = "project_docs"
 
+# What a PO or schedule version shows when its read died somewhere no service caught it.
+_READ_STOPPED = (
+    "The reader stopped before it finished. Read it again; if it stops again, upload it "
+    "again."
+)
+
 
 def enqueue_po_extraction(po_version_id: str):
     """Queue a PO version for reading. Call this rather than enqueueing by hand, so
@@ -114,7 +120,10 @@ def _mark_failed(db, model, row_id: str, exc: Exception) -> None:
         db.query(model).filter(model.id == row_id).update(
             {
                 model.extraction_state: "failed",
-                model.extraction_error: str(exc)[:500],
+                # Never ``str(exc)``: this lands on screen verbatim, and on 11 Nov 2026 it
+                # showed a customer "'list' object has no attribute 'get'". The exception
+                # is already in the log (``logger.exception`` in the caller).
+                model.extraction_error: _READ_STOPPED,
             },
             synchronize_session=False,
         )

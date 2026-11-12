@@ -30,6 +30,7 @@ from app.schemas.price_tag import (
     TemplateAssignIn,
     TemplateAssignOut,
     TemplateAssignPreviewOut,
+    TemplateComboListOut,
     TagTemplateCreate,
     TagTemplateFromTagCreate,
     TagTemplatePublishIn,
@@ -523,6 +524,60 @@ def restore_tag_template_version(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/{template_id}/product-ids", response_model=list[str])
+def list_template_product_ids(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """PRICETAG-TEMPLATE-PRODUCTS: the products that use this template, which the designer's
+    Products dialog ticks on open. Manage only: it exists for that dialog."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.linked_product_ids(db, template_id)
+
+
+@router.get("/{template_id}/combo-ids", response_model=list[str])
+def list_template_combo_ids(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """The combos that use this template (owner hand test 11 Nov): the Products view ticks them."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.linked_combo_ids(db, template_id)
+
+
+# ai: not-for-assistant picker feed for the template designer's Products dialog; the assistant reads combos through the product's own combo data
+@router.get("/{template_id}/combos", response_model=TemplateComboListOut)
+def list_template_combos(
+    template_id: str,
+    query: str | None = Query(None, max_length=100),
+    category_id: list[str] | None = Query(None),
+    brand_id: list[str] | None = Query(None),
+    linked: bool = Query(False),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=501),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Combos for the designer's Products view, each with why this template cannot print it.
+    ``limit`` reaches 501 so "Select all" can tell a capped set (500) from an exact one."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.combo_rows(
+        db,
+        template_id,
+        query=query,
+        category_ids=[v for raw in category_id or [] for v in str(raw).split(",")],
+        brand_ids=[v for raw in brand_id or [] for v in str(raw).split(",")],
+        linked=linked,
+        page=page,
+        limit=limit,
+    )
+
+
 @router.post("/{template_id}/assign/preview", response_model=TemplateAssignPreviewOut)
 def preview_template_assignment(
     template_id: str,
@@ -539,7 +594,9 @@ def preview_template_assignment(
     )
 
 
-@router.post("/{template_id}/assign", response_model=TemplateAssignOut)
+@router.post(
+    "/{template_id}/assign", response_model=TemplateAssignOut, response_model_exclude_none=True
+)
 def assign_template_to_products(
     template_id: str,
     payload: TemplateAssignIn,

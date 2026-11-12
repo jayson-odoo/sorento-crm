@@ -373,7 +373,16 @@ def withdraw(
     return _append_outcome(db, principal, outcome)
 
 
-TRACE_SLUG = "system.ai_assistant_settings.view"
+#: Who sees a reply's route, steps, usage and trace: the admin roles only (owner, 11 Nov, AGENT-PANEL-FIXES F).
+#: It was the `system.ai_assistant_settings.view` slug, which a role editor can hand to anyone.
+TRACE_ROLES = frozenset({"superadmin", "admin"})
+
+
+def sees_trace(db: Session, user_id: str) -> bool:
+    """Does this user hold an admin role? By role slug, not a permission check (that answers true for any slug)."""
+    from app.services.user_service import UserPermissionService
+
+    return bool(UserPermissionService(db).get_user_role_slugs(str(user_id)) & TRACE_ROLES)
 
 
 def prepare_files(db: Session, user_id: str, refs: list[Any]) -> panel_files.PreparedFiles:
@@ -386,7 +395,7 @@ def prepare_files(db: Session, user_id: str, refs: list[Any]) -> panel_files.Pre
 def read_metadata(db: Session, rows: list[AIAssistantMessage], user_id: str) -> list[dict[str, Any]]:
     """What each row's `metadata_json` reads as, in the rows' order. A brain reply (it has a `route`)
     has its card read live, from the action store, one query for the thread (AC-22); and for a reader
-    without `TRACE_SLUG` only the card and the route stay, no steps, tool calls, usage, route score or
+    who is not an admin (`sees_trace`) only the card and the route stay, no steps, tool calls, usage, route score or
     turn id (AC-23). A row without a `route` is the old path's and comes back as stored (AC-26)."""
     metas = [row.metadata_json if isinstance(row.metadata_json, dict) else {} for row in rows]
     return _with_file_urls(db, _read_cards(db, rows, metas, user_id))
@@ -422,9 +431,7 @@ def _read_cards(db: Session, rows: list[AIAssistantMessage], metas: list[dict[st
 
 
 def _trace_strip(db: Session, metas: list[dict[str, Any]], user_id: str) -> list[dict[str, Any]]:
-    from app.services.user_service import UserPermissionService
-
-    if not any("route" in m for m in metas) or UserPermissionService(db).check_user_has_permission(user_id, TRACE_SLUG):
+    if not any("route" in m for m in metas) or sees_trace(db, user_id):
         return metas
     out = []
     for m in metas:

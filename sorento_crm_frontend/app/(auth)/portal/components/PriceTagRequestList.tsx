@@ -7,6 +7,7 @@
  * existing portal landing page pattern).
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileText, Plus } from 'lucide-react';
@@ -120,9 +121,9 @@ export function PriceTagRequestList({ slug }: Props) {
                       rather than sitting blank. */}
                   <p
                     className="text-sm text-muted-foreground mt-0.5 truncate"
-                    title={req.debtor_name ?? 'No dealer yet'}
+                    title={requestCustomers(req).map((c) => c.name).join(', ') || 'No dealer yet'}
                   >
-                    {req.debtor_name ?? 'No dealer yet'}
+                    {customersLabel(requestCustomers(req)) ?? 'No dealer yet'}
                   </p>
                 </div>
               </div>

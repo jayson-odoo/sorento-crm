@@ -51,6 +51,10 @@ vi.mock('../lib/price-tag-request-service', async () => {
  * component is a Radix popover whose options only exist while it is open, which
  * tests the popover rather than the payload.
  */
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -100,7 +104,7 @@ import {
   lookupTagItems,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems } from '@/test-utils';
 
 const DEBTORS = [{ code: 'ZZTD01', name: 'ZZT Dealer Sdn Bhd' }];
 
@@ -131,7 +135,7 @@ beforeEach(() => {
 // (AC-P3) or opened by hand - Radix's Collapsible unmounts its content while
 // closed, so a test that never picks a customer has to open it itself.
 function openSalesOrderSection() {
-  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+  chooseTypedItems();
 }
 
 async function addLine() {
@@ -153,7 +157,7 @@ async function pickPrinting() {
 describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () => {
   it('adds a row with one button and offers sets and products in one dropdown', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
     // The two Add buttons are gone: there is exactly one.
@@ -173,8 +177,8 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     // Need by is optional since D-P2b - Customer + one line is the whole
     // requirement (AC-P10); picking the customer auto-opens Sales Order &
     // Lines (AC-P3).
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -199,8 +203,8 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('a picked set posts line_type product_set with no product id', async () => {
     render(<PriceTagRequestForm />);
     // Need by is optional since D-P2b - see the note above.
-    await selectOption('Debtor', 'ZZTD01');
-    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
@@ -224,7 +228,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a set row has no Alternatives column (D3/AC-S1-3)', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
     await addLine();
@@ -236,7 +240,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a product row has no Alternatives column either', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
     await addLine();
@@ -248,7 +252,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('removes a row without asking for a confirmation', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
     await addLine();
@@ -265,7 +269,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 describe('PriceTagRequestForm - no line reorder arrows (R3-6, AC-R12)', () => {
   it('renders no up/down move buttons on a line', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
     await addLine();
@@ -281,7 +285,7 @@ describe('PriceTagRequestForm - no line reorder arrows (R3-6, AC-R12)', () => {
 describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)', () => {
   it('picking a product already on the request shows an inline message and does not add a line', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
+    await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
     await addLine();
@@ -329,7 +333,7 @@ describe('PriceTagRequestForm - the debtor dropdown explains itself (D46a)', () 
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(screen.queryByTestId('no-debtors-notice')).toBeNull();
-    expect(screen.getByLabelText('Debtor')).toBeInTheDocument();
+    expect(screen.getByLabelText('Customer')).toBeInTheDocument();
   });
 });
 

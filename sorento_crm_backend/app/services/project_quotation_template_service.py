@@ -243,6 +243,24 @@ def salesperson_of(db: Session, project: Any, document: Any) -> Optional[str]:
     return owner.name if owner else None
 
 
+def prepared_by_user(db: Session, document: Any) -> Any:
+    """Who prepared the document: its creator, never the project owner (owner ruling 11 Nov
+    2026, compliance). While an admin impersonates, ``created_by`` is the impersonated user, the
+    one the document is saved as. None when the creator is unknown."""
+    from app.models.user import User
+
+    creator_id = getattr(document, "created_by", None)
+    if not creator_id:
+        return None
+    return db.query(User).filter(User.id == creator_id).first()
+
+
+def prepared_by_of(db: Session, document: Any) -> Optional[str]:
+    """The Prepared By name: the document's creator (``prepared_by_user``)."""
+    user = prepared_by_user(db, document)
+    return user.name if user else None
+
+
 def build_document_context(
     db: Session, *, document: Any, grand_total: Optional[Decimal] = None
 ) -> Dict[str, Any]:

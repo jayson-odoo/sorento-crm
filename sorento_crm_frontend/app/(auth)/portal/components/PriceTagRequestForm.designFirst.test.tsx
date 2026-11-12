@@ -1,12 +1,11 @@
 /**
- * The design leads the portal read view (r9 S1/D3, AC-S1-2).
+ * Where the design is on the portal read view.
  *
- * A salesperson opens a proof-ready request to look at the tags. Everything
- * else on the page - the dealer, the lines, the price mode - is what they
- * already typed, so it is the reference and not the headline. From
- * `proof_ready` onward the design sits FIRST, right after the status row;
- * before it there is nothing to show and the section is absent entirely rather
- * than an empty frame with a spinner in it.
+ * r9 S1/D3 put it inline, first on the page. Owner hand test 11 Nov
+ * (PRICETAG-REQUEST-LAYOUT) supersedes that: "the preview can be a button to open the lightbox
+ * popup so it doesn't bloat the view page". From `proof_ready` onward the page carries a Preview
+ * button that opens the design in the shared lightbox; nothing of the design is drawn inline.
+ * Before `proof_ready` there is nothing to show, so there is no Preview button either.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -117,44 +116,27 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('where the design sits (AC-S1-2)', () => {
-  it.each(['proof_ready', 'changes_requested', 'approved'])(
-    'is the first section at %s',
+describe('where the design is (owner hand test 11 Nov)', () => {
+  it.each(['proof_ready', 'changes_requested', 'approved', 'collected'])(
+    'is a Preview button, not an inline design, at %s',
     async (status) => {
       asMock(getRequest).mockResolvedValue(request(status));
 
-      const { container } = render(<PriceTagRequestForm requestId="req-1" />);
+      render(<PriceTagRequestForm requestId="req-1" />);
       await screen.findByText('PT-202609-0001');
 
-      const design = await screen.findByTestId('design-section');
-      const firstSectionHeader = container.querySelector(
-        '[data-slot="collapsible-trigger"]',
-      );
-      expect(firstSectionHeader).not.toBeNull();
-      // Node.DOCUMENT_POSITION_FOLLOWING: the first ordinary section comes
-      // AFTER the design in document order.
-      expect(
-        design.compareDocumentPosition(firstSectionHeader as Node) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
+      expect(screen.queryByTestId('design-section')).toBeNull();
     },
   );
 
-  it.each(['new', 'designing'])('is absent at %s', async (status) => {
+  it.each(['new', 'designing'])('has no Preview button at %s', async (status) => {
     asMock(getRequest).mockResolvedValue(request(status));
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
+    expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
     expect(screen.queryByTestId('design-section')).toBeNull();
-  });
-
-  it('is still there once the tags have been collected', async () => {
-    asMock(getRequest).mockResolvedValue(request('collected'));
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    expect(await screen.findByTestId('design-section')).toBeInTheDocument();
   });
 });

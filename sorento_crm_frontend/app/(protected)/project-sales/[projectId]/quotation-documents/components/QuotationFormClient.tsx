@@ -11,9 +11,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import { FormSection } from '@/components/common/FormSection';
-import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useEffectiveUserName } from '@/hooks/useEffectiveUserId';
 import { toast } from '@/lib/toast';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
@@ -56,7 +56,7 @@ import type {
   QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
-import { formatMyrExact, isDecimalString, sumMoney } from '../../../_shared/lib/money';
+import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
@@ -85,8 +85,11 @@ import { serverToDraft } from '../../components/quotationLineDraft';
 import { hasColumns } from '../../../_shared/lib/quotationMatrix';
 import {
   QuotationDocumentHeader,
+  headerSummary,
+  linesSummary,
   useQuotationHeaderDetails,
 } from '../[documentId]/components/QuotationDocumentHeader';
+import { projectDisplayName } from '../../../_shared/lib/projectName';
 import {
   QuotationCoverLetterPanel,
   QuotationTermsPanel,
@@ -297,6 +300,7 @@ export function QuotationFormClient({
   // for a new proposal the person's own private one, unnumbered until the first Save (Q2).
   const opened = useQuotationFormDraftOpen(projectId, routeDocumentId ?? null);
   const project = useProject(projectId);
+  const preparedBy = useEffectiveUserName();
   const saved = useQuotationDocument(projectId, documentId);
   const quotations = useQuotations(isEdit ? projectId : undefined);
   const mutations = useQuotationDocumentMutations(projectId, documentId);
@@ -1018,7 +1022,9 @@ export function QuotationFormClient({
               )}
             </>
           }
-          subtitle={header?.subject_title ?? saved.data.subject_title}
+          // The short name (QUOTE-HEADER-TIDY, PROJECT-NAME): the full title is the Header's
+          // own "Project title" field just below.
+          subtitle={project.data ? projectDisplayName(project.data) : null}
         />
       )}
 
@@ -1068,7 +1074,10 @@ export function QuotationFormClient({
                 document={shownDocument}
                 liveGrandTotal={liveTotal}
                 details={details}
-                preparedBy={project.data?.owner_name ?? null}
+                // Prepared By is the document's creator: on a new one, whoever is creating it
+                // (owner ruling 11 Nov 2026); a saved one carries its own prepared_by and never
+                // falls back to the viewer.
+                preparedBy={isEdit ? null : preparedBy}
                 onChange={(patch) => {
                   setDirty(true);
                   setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
@@ -1268,23 +1277,6 @@ function savedTermsPicks(document: QuotationDocument | undefined): QuoteTermsPat
   };
 }
 
-/** The folded Header's one line: To, Subject, Date, Total; blanks are left out. */
-function headerSummary(document: QuotationDocument, total: string | null): string {
-  return [
-    document.recipient_name_snapshot,
-    document.subject_title,
-    document.doc_date ? formatDateInMalaysia(document.doc_date) : null,
-    formatMyrExact(total),
-  ]
-    .filter(Boolean)
-    .join(' · ');
-}
-
-/** The folded Lines' one line: how many scopes, and their total. */
-function linesSummary(count: number, total: string | null): string {
-  return `${count} ${count === 1 ? 'scope' : 'scopes'} · ${formatMyrExact(total)}`;
-}
-
 /**
  * One tab's body. Hidden rather than unmounted when another tab is open, so typed work, a saved
  * scope's loading lines and the letter editors all survive a tab switch.
@@ -1383,6 +1375,12 @@ function FormLines({
 }) {
   const active = scopes.find((scope) => scope.key === activeKey) ?? scopes[0] ?? null;
   const savedRow = active?.id ? (quotations.find((row) => row.id === active.id) ?? null) : null;
+  // The lines filter, held here so it stays on across the scope tabs (PROJECT-QUOTE-LINE-TOOLS).
+  const [lineFlags, setLineFlags] = React.useState<string[]>([]);
+  const lineFlagFilter = React.useMemo(
+    () => ({ value: lineFlags, onChange: setLineFlags }),
+    [lineFlags],
+  );
 
   // Whether any version of the open scope was sent: such a scope cannot be removed (#1341, owner
   // on Q2: "yes can", while nothing in it has been issued). The same cached query its editor uses.
@@ -1486,6 +1484,7 @@ function FormLines({
             seriesId={active.series_id || null}
             edit={scopeEditing}
             feedback={feedback}
+            flagFilter={lineFlagFilter}
             // The version is the record card's (PROPOSAL-HEADER-LAYOUT): no version row here, and
             // the form always works on the current version.
             headerVersion={{ versionNo: null }}

@@ -400,3 +400,19 @@ describe('SearchableMultiSelect async pagination', () => {
     expect(labels()).toEqual(['Fresh zz']);
   });
 });
+
+describe('SearchableMultiSelect - chips that cannot be changed', () => {
+  it('a disabled control offers no chip remove', () => {
+    renderMulti({ value: ['a'], disabled: true });
+    expect(screen.queryByRole('button', { name: 'Remove Alpha' })).toBeNull();
+  });
+
+  it('a disabled option offers no chip remove; an enabled one does', () => {
+    renderMulti({
+      value: ['a', 'b'],
+      options: [{ value: 'a', label: 'Alpha', disabled: true }, { value: 'b', label: 'Beta' }],
+    });
+    expect(screen.queryByRole('button', { name: 'Remove Alpha' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove Beta' })).toBeInTheDocument();
+  });
+});

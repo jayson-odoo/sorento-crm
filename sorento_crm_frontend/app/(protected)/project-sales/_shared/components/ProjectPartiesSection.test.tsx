@@ -41,13 +41,28 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     return <span data-testid={props.id}>{props.selectedOption?.label ?? ''}</span>;
   },
 }));
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: ({ id, selectedOptions }: { id?: string; selectedOptions?: Opt[] }) => (
-    <span data-testid={id} data-multi="true">
-      {(selectedOptions ?? []).map((o) => o.label).join('|')}
-    </span>
-  ),
-}));
+// The contacts popup's own picker (id `party-contacts-*`) is the real component; the role
+// pickers keep the stand-in.
+vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
+  return {
+    ...actual,
+    SearchableMultiSelect: (props: React.ComponentProps<typeof actual.SearchableMultiSelect>) =>
+      props.id?.startsWith('party-contacts-') ? (
+        <actual.SearchableMultiSelect {...props} />
+      ) : (
+        <span data-testid={props.id} data-multi="true">
+          {((props.selectedOptions ?? []) as Opt[]).map((o) => o.label).join('|')}
+        </span>
+      ),
+  };
+});
+
+/** Opens the popup's contact picker and ticks one contact. */
+async function tick(dialog: HTMLElement, name: RegExp) {
+  fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+  fireEvent.click(await screen.findByRole('option', { name }));
+}
 
 const ROLES: PartyRole[] = [
   { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
@@ -223,7 +238,7 @@ describe('contacts popup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Contacts at CONTOH BUILDERS BHD')).toBeInTheDocument();
-    fireEvent.click(await within(dialog).findByLabelText(/EN\. CONTOH DUA/));
+    await tick(dialog, /EN\. CONTOH DUA/);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
     expect(props.onContactPicksChange).toHaveBeenCalledWith({ 'p-mc': ['c-2'] });
   });
@@ -233,10 +248,11 @@ describe('contacts popup', () => {
     renderSection({ picks: { main_contractor: [MC] }, fixedContacts: { 'p-mc': ['c-3'] } });
     fireEvent.click(screen.getByRole('button', { name: '1 contact' }));
     const dialog = await screen.findByRole('dialog');
-    const box = await within(dialog).findByRole('checkbox', { name: /PN\. CONTOH TIGA/ });
-    expect(box).toBeChecked();
-    expect(box).toBeDisabled();
-    expect(within(dialog).getByText('On this project')).toBeInTheDocument();
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    const row = await screen.findByRole('option', { name: /PN\. CONTOH TIGA/ });
+    expect(row).toHaveAttribute('aria-checked', 'true');
+    expect(row).toHaveAttribute('aria-disabled', 'true');
+    expect(row).toHaveTextContent('On this project');
   });
 
   it('adds a missing number to the contact in place', async () => {
@@ -245,6 +261,8 @@ describe('contacts popup', () => {
     renderSection({ picks: { main_contractor: [MC] } });
     fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
     const dialog = await screen.findByRole('dialog');
+    // "Add number" is offered for a ticked contact that has none.
+    await tick(dialog, /MR\. CONTOH SATU/);
     fireEvent.click(await within(dialog).findByRole('button', { name: 'Add number' }));
     fireEvent.change(within(dialog).getByLabelText('Phone for MR. CONTOH SATU'), {
       target: { value: '012-345 6789' },
@@ -261,6 +279,8 @@ describe('contacts popup', () => {
     renderSection({ picks: { main_contractor: [MC] } });
     fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
     const dialog = await screen.findByRole('dialog');
+    // "Add number" is offered for a ticked contact that has none.
+    await tick(dialog, /MR\. CONTOH SATU/);
     fireEvent.click(await within(dialog).findByRole('button', { name: 'Add number' }));
     const box = within(dialog).getByLabelText('Phone for MR. CONTOH SATU');
     for (const bad of ['01234', '13245t']) {
@@ -309,7 +329,7 @@ describe('contacts popup', () => {
     renderSection({ picks: { main_contractor: [MC] }, canCreateParty: false });
     fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
     const dialog = await screen.findByRole('dialog');
-    await within(dialog).findByText('MR. CONTOH SATU');
+    await tick(dialog, /MR\. CONTOH SATU/);
     expect(within(dialog).queryByRole('button', { name: '+ Add contact' })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Add number' })).not.toBeInTheDocument();
   });

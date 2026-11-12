@@ -260,7 +260,7 @@ def test_cover_default_endpoint_returns_the_default_design(api):
     assert body["sections"][0]["columns"] == 1
     assert [r["source"] for r in body["sections"][0]["rows"]] == [
         "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",
-        "terms", "payment_terms", "validity", "salesperson_name",
+        "terms", "payment_terms", "validity", "prepared_by_name",
     ]
     assert body["title"] == "QUOTATION" and body["show_letterhead"] is True
 

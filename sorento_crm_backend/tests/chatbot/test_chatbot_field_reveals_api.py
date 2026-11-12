@@ -85,7 +85,9 @@ class TestFieldRevealKeys:
         resp = client.get(f"{BASE}/field-reveal-keys")
         assert resp.status_code == 200, resp.text
         keys = {item["key"]: item["label"] for item in resp.json()["items"]}
-        assert dict(FIELD_REVEAL_KEYS) == keys
+        # COST-ACCESS-UNIFIED: the cost key is no longer a checklist item (it follows the linked user).
+        assert {k: v for k, v in FIELD_REVEAL_KEYS if k != "purchase_orders.cost"} == keys
+        assert "purchase_orders.cost" not in keys
 
     def test_requires_permission(self, client, db):
         _GRANTS.discard(CONTACT_VIEW)
@@ -267,3 +269,51 @@ class TestUnknownHeldKeysAreKept:
 
         assert resp.status_code == 422, resp.text
         assert "not_a_real_key" in resp.text
+
+
+class TestCostKeyIsNotAChecklistItem:
+    """COST-ACCESS-UNIFIED AC-6: the Access screen's save never creates, grants or revokes a cost row."""
+
+    COST = "purchase_orders.cost"
+
+    def _rows(self, db, contact_id: str) -> list[tuple[str, bool]]:
+        from app.models.access import ContactFieldReveal
+
+        db.expire_all()
+        return sorted(
+            (r.field_key, bool(r.granted))
+            for r in db.query(ContactFieldReveal).filter(
+                ContactFieldReveal.respond_contact_id == contact_id, ContactFieldReveal.field_key == self.COST
+            )
+        )
+
+    def test_the_keys_endpoint_does_not_offer_cost(self, client, db):
+        resp = client.get(f"{BASE}/field-reveal-keys")
+        assert resp.status_code == 200, resp.text
+        assert self.COST not in {item["key"] for item in resp.json()["items"]}
+
+    def test_a_put_naming_cost_creates_no_row_and_never_grants_it(self, client, db):
+        contact_id = _contact(db)
+        resp = client.put(
+            f"{BASE}/contacts/{contact_id}/field-reveals", json={"granted": ["inventory.sellable", self.COST]}
+        )
+        assert resp.status_code in (200, 422), resp.text
+        assert self._rows(db, contact_id) == []
+        assert self.COST not in client.get(f"{BASE}/contacts/{contact_id}/field-reveals").json()["granted"]
+
+    def test_a_put_omitting_cost_leaves_a_stored_cost_row_untouched(self, client, db):
+        contact_id = _contact(db)
+        _seed_grant(db, contact_id, self.COST, True)
+        resp = client.put(f"{BASE}/contacts/{contact_id}/field-reveals", json={"granted": ["inventory.sellable"]})
+        assert resp.status_code == 200, resp.text
+        assert self._rows(db, contact_id) == [(self.COST, True)]
+        assert self.COST not in resp.json()["granted"]  # a stored row grants nothing
+
+    def test_a_put_echoing_a_stored_cost_row_succeeds_and_keeps_it(self, client, db):
+        contact_id = _contact(db)
+        _seed_grant(db, contact_id, self.COST, False)
+        resp = client.put(
+            f"{BASE}/contacts/{contact_id}/field-reveals", json={"granted": ["inventory.sellable", self.COST]}
+        )
+        assert resp.status_code in (200, 422), resp.text
+        assert self._rows(db, contact_id) == [(self.COST, False)]

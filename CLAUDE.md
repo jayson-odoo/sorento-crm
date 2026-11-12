@@ -91,7 +91,7 @@ For a lane that goes to a Claude Code cloud environment instead of a local workt
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` - backend file edits auto-restart uvicorn; nothing to do |
 | Worker   | `no_proxy='*' PGGSSENCMODE=disable OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES venv/bin/python worker.py` (in `sorento_crm_backend/`) | -    | **No reload.** Restart manually after editing any RQ task (`app/tasks/*`). |
-| Frontend | `npm run dev` (Turbopack; in `sorento_crm_frontend/`)                                                      | 3000 | **HMR - edits hot-reload; no rebuild.** ONE dev server machine-wide; see "Frontend dev loop". |
+| Frontend | `npm run dev` (Turbopack; in `sorento_crm_frontend/`)                                                      | 3000 | **HMR - edits hot-reload; no rebuild.** ONE dev server per lane, on the lane's own ports; see "Frontend dev loop". |
 | MCP      | `CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=<from backend .env> backend venv's python -m sorento_crm_mcp` (in `sorento_crm_mcp/`; package installed in the backend venv) | 8765 | Restart manually after MCP code/catalog changes |
 
 - Run each as `run_in_background: true` Bash so logs are inspectable and sessions survive across turns.
@@ -151,7 +151,7 @@ Mutation hooks: shared `useCreateMutation` / `useUpdateMutation` / `useDeleteMut
 `documentation/reference/DESIGN-LANGUAGE.md` are the contract.** Summary only, so the three
 cannot drift:
 
-- List = DataGrid + search/filters + Add. Create/edit = **modal by default**; dedicated page only
+- List = DataGrid + search/filters + Create. Create/edit = **modal by default**; dedicated page only
   for complex/multi-tab/file-centric flows. View = `/{module}/{id}` detail page rendering **every**
   section, with an explicit empty state (heading + hint, no button: one CTA per page, in the
   header, and no subtitle; `DESIGN-LANGUAGE.md` section 6).
@@ -232,8 +232,7 @@ writes the red tests from the UAC + captain's test list BEFORE the `coder` agent
 kept alive for the whole lane, makes them green; pytest + vitest land here, never deferred) →
 **Phase 3** `reviewer` + browser verification in parallel, once per lane (`security-reviewer`
 joins only when the diff touches auth, RBAC, external ingest, uploads or multi-company scoping;
-otherwise it is skipped and the PR body says so) → DoD gate → PR. `guide-writer` no longer runs
-per lane (owner ruling, 24 Sep 2026): it runs on-request or as a weekly batch over merged lanes -
+otherwise it is skipped and the PR body says so) → DoD gate → PR. User guides: every PR that changes what a user sees or does updates its user guide under `documentation/user-guides/` in the same PR (owner ruling, 31 Oct 2026);
 see `.claude/agents/guide-writer.md`.
 
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
@@ -290,18 +289,21 @@ Full policy, command table, login env vars and the persisted-spec rules:
 ## Frontend dev loop
 
 **`npm run dev` (HMR) for ALL frontend work and agent-browser verification, sub-agents included -
-and exactly ONE dev server running at a time, machine-wide. `npm run build` ONLY when the user
+and exactly ONE dev server per lane, on that lane's own ports. `npm run build` ONLY when the user
 explicitly asks for a hands-on build.** Standing rule since 2026-08-15, reaffirmed 2026-08-23; it
-supersedes the older "every handoff is a prod build" habit.
+supersedes the older "every handoff is a prod build" habit. The earlier "one dev server
+machine-wide" wording is replaced by "one per lane": that is what the crew worker contract uses
+(each lane, and each crew test copy, runs on its own crew-assigned ports; `AGENTS.md` "Running
+several worktrees at once").
 
 **Why:** HMR is what makes iteration fast - an edit is visible in seconds, and a rebuild throws that
 away. Prod builds peg several cores for minutes, and parallel ones from several worktrees took the
 machine down twice in one day (load 90-190 on 10 cores, dev Postgres at 96/100 connections). Never
 spawn a build "for handoff" on your own initiative.
 
-- **ONE dev server, machine-wide, not one per worktree.** Before starting one, check
-  `lsof -i :3000 -sTCP:LISTEN` and `ps aux | grep 'next dev'` - if another lane already has one,
-  use it or ask, do not start a second. Kill only a server you started yourself.
+- **ONE dev server per lane, on the lane's own ports.** Before starting one, check the lane's
+  port (`lsof -i :<port> -sTCP:LISTEN`) and `ps aux | grep 'next dev'` - if this lane already has
+  one, use it; never start a second for the same lane. Kill only a server you started yourself.
 - Edits hot-reload; do NOT kill/restart it to see a change. That is the whole point of the rule.
 - Hand off on the dev server. It is the environment the work was verified in.
 - Dev hides some `next build`-only errors (RSC / server-component / type). If that error class
@@ -335,7 +337,7 @@ spawn a build "for handoff" on your own initiative.
 
 ## Lessons learned
 
-**Full log: `LESSONS-LEARNT.md` (113 entries).** Read it when a bug's cause is not obvious, before
+**Full log: `LESSONS-LEARNT.md`.** Read it when a bug's cause is not obvious, before
 touching the worker, migrations, tests-in-CI, or anything Respond.io / Outline / storage related.
 When a lesson's cause is fixed in code, retire the entry rather than leaving it to accumulate.
 
@@ -358,7 +360,7 @@ Reference docs this file defers to, so nothing is stated twice:
 | Doc | Holds |
 | --- | --- |
 | `PRINCIPLES.md` | The binding contract: methodology, DoD gate, design mandates, layering, hard-fail rules. **Governs on conflict.** |
-| `LESSONS-LEARNT.md` | 80 gotchas. Read before debugging anything non-obvious. |
+| `LESSONS-LEARNT.md` | The gotcha log. Read before debugging anything non-obvious. |
 | `documentation/agents/browser-verification.md` | Full agent-browser policy + command table. |
 | `documentation/agents/chatbot-verification.md` | The chatbot's equivalent: the console check, run per PR and after deploy. |
 | `documentation/reference/ADR-PRODUCT-STANDARDS.md` | CRUD/UX standard in full. |
@@ -431,4 +433,4 @@ Canonical five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`
 
 ### Domain docs
 
-Multi-context: `CONTEXT-MAP.md` at the root points at two glossaries; ADRs in `documentation/adr/`. See `documentation/agents/domain.md`.
+Multi-context: `CONTEXT-MAP.md` at the root points at the glossary (`documentation/CONTEXT.md`); ADRs in `documentation/adr/`. See `documentation/agents/domain.md`.

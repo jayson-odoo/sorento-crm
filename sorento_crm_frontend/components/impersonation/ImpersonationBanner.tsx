@@ -97,7 +97,7 @@ export function ImpersonationBanner() {
               {targetName}
             </Link>
             <span className="hidden sm:inline">
-              . Records you create or modify are still attributed to you.
+              . Records you create are saved as {targetName}; the audit log shows you did it.
             </span>
           </span>
         </div>

@@ -27,14 +27,14 @@ export type MarkedState =
   | 'no_text'
   | 'not_found'
   | 'no_file'
-  | 'suggested'
   | 'code_needed'
   | 'not_on_certificate';
 
 export type ProductState =
   | 'found'
-  | 'suggested'
   | 'edited'
+  /** CERT-TAB-UX: marked by its code, but its box was deleted (for this quote or as default). */
+  | 'unmarked'
   | 'not_found'
   | 'no_text'
   | 'code_needed';

@@ -71,17 +71,26 @@ function DataGridPagination(props: DataGridPaginationProps) {
   const to = Math.min((pageIndex + 1) * pageSize, recordCount);
   const pageCount = table.getPageCount();
 
+  // One thousands format for all three numbers, on every grid ("9,951 - 10,000 of 19,950+").
+  // Fixed to en-US so the label does not change with the viewer's browser locale.
+  const formatCount = (n: number) => n.toLocaleString('en-US');
+  const fromLabel = formatCount(from);
+  const toLabel = formatCount(to);
   const countLabel = mergedProps.recordCountCapped
-    ? `${recordCount.toLocaleString('en-US')}+`
-    : recordCount.toString();
+    ? `${formatCount(recordCount)}+`
+    : formatCount(recordCount);
 
-  // Replace placeholders in paginationInfo
-  const paginationInfo = mergedProps?.info
-    ? mergedProps.info
-        .replace('{from}', from.toString())
-        .replace('{to}', to.toString())
-        .replace('{count}', countLabel)
-    : `${from} - ${to} of ${countLabel}`;
+  // Replace placeholders in paginationInfo. No rows reads "0 of 0", never "1 - 0 of 0", which
+  // looks like a broken pager (crew pass on 086a3235); the default `info` is a template too.
+  const paginationInfo =
+    recordCount === 0
+      ? `0 of ${countLabel}`
+      : mergedProps?.info
+        ? mergedProps.info
+            .replace('{from}', fromLabel)
+            .replace('{to}', toLabel)
+            .replace('{count}', countLabel)
+        : `${fromLabel} - ${toLabel} of ${countLabel}`;
 
   // Pagination limit logic
   const paginationMoreLimit = mergedProps?.moreLimit || 5;

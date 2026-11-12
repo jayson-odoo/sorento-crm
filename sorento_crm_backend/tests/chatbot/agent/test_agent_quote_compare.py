@@ -564,7 +564,7 @@ def test_AC_E2_no_refs_returns_every_document_with_each_scopes_current_version(d
     mixer = units["lines"][0]
     assert mixer["code"] == "C3" and mixer["description"] == "Mixer" and mixer["uom"] == "pcs"
     assert float(mixer["qty"]) == 3 and float(mixer["list_price"]) == 100 and float(mixer["unit_price"]) == 100
-    assert float(mixer["discount_pct"]) == 0.0 and float(mixer["line_total"]) == 300
+    assert mixer["vs_list"] == "at list" and float(mixer["line_total"]) == 300
     assert float(a["total"]) == 340.0  # 300 + 40: the document total is the sum of its scopes
 
 
@@ -573,8 +573,8 @@ def test_AC_E2_a_line_priced_below_list_carries_the_discount_percent_and_no_list
     out = _lines(db, world, {"project_id": world.project_id, "refs": [f"{world.doc_a}-B"]})
     units = next(s for s in _doc(out, f"{world.doc_a}-B")["scopes"] if s["scope"] == "Units")
     by_code = {ln["code"]: ln for ln in units["lines"]}
-    assert float(by_code["C1"]["discount_pct"]) == 10.0
-    assert by_code["C2"]["list_price"] is None and by_code["C2"]["discount_pct"] is None
+    assert by_code["C1"]["vs_list"] == "10% below list"
+    assert by_code["C2"]["list_price"] is None and by_code["C2"]["vs_list"] is None
 
 
 def test_AC_E3_a_document_ref_narrows_to_that_document(db):
@@ -839,7 +839,7 @@ def test_AC_E2_a_line_priced_above_list_has_no_discount_and_no_negative_value(db
     out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_b]})
     assert out.status == "ok", (out.status, out.message)
     line = next(ln for ln in _doc(out, world.doc_b)["scopes"][0]["lines"] if ln["code"] == "ABOVE1")
-    assert line["discount_pct"] is None, line
+    assert line["vs_list"] == "100% above list", line
     assert not [k for k, v in line.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and v < 0], line
 
 
@@ -860,17 +860,32 @@ def _add_showroom_line(db, world, code, list_price, unit, qty="1", total=None):
         db.flush()
 
 
-def test_AC_E2_above_list_pct_is_positive_above_list_and_none_otherwise(db):
+def test_AC_E2_vs_list_labels_every_percent_below_or_above_list(db):
+    """AGENT-PANEL-FIXES B: the owner's answer showed a bare "74.52%". Every percent comes with its words."""
     world = _seed_world(db)
     _add_showroom_line(db, world, "ABOVE1", "600.00", "1200.00")
     _add_showroom_line(db, world, "BELOW1", "600.00", "540.00")
     _add_showroom_line(db, world, "EQUAL1", "600.00", "600.00")
+    _add_showroom_line(db, world, "SRTWC8518-SH", "1295.00", "330.00")  # the owner's line
     out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_b]})
     by_code = {ln["code"]: ln for ln in _doc(out, world.doc_b)["scopes"][0]["lines"]}
-    assert by_code["ABOVE1"].get("above_list_pct") == 100.0, by_code["ABOVE1"]
-    assert by_code["ABOVE1"]["discount_pct"] is None
-    assert "above_list_pct" in by_code["BELOW1"] and by_code["BELOW1"]["above_list_pct"] is None, by_code["BELOW1"]
-    assert "above_list_pct" in by_code["EQUAL1"] and by_code["EQUAL1"]["above_list_pct"] is None, by_code["EQUAL1"]
+    assert by_code["ABOVE1"]["vs_list"] == "100% above list"
+    assert by_code["BELOW1"]["vs_list"] == "10% below list"
+    assert by_code["EQUAL1"]["vs_list"] == "at list"
+    assert by_code["SRTWC8518-SH"]["vs_list"] == "74.52% below list"
+    from app.services.chatbot.agent.quotation_lines import vs_list
+    assert vs_list(Decimal("100000.00"), Decimal("99999.99")) == "at list"  # rounds to 0.00: never "0% below list"
+    for line in by_code.values():
+        assert "discount_pct" not in line and "above_list_pct" not in line, line
+        assert not [v for k, v in line.items() if k.endswith("_pct")], line
+
+
+def test_AC_E2_the_tool_description_never_asks_for_a_bare_percent():
+    from app.services.chatbot.agent.tools import QUOTATION_LINES_SCHEMA
+
+    text = QUOTATION_LINES_SCHEMA["function"]["description"]
+    assert "vs_list" in text and "below list" in text and "above list" in text
+    assert "discount %" not in text and "(discount" not in text
 
 
 def test_a_whole_turn_quoting_an_above_list_line_keeps_its_percent_verified(db):

@@ -184,6 +184,8 @@ async function placePin(body: string) {
 async function renderReadView() {
   const result = render(<PriceTagRequestForm requestId="req-1" />);
   await screen.findByText('PT-202609-0001');
+  // Owner hand test 11 Nov: the design (and its pins) opens from the page's Preview button.
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
   return result;
 }
 
@@ -338,7 +340,8 @@ describe('a design that is not waiting on the salesperson', () => {
     });
     await renderReadView();
 
-    await screen.findByText('PT-202609-0001');
+    // The design popup is open (its title is the doc number too).
+    await screen.findByRole('dialog');
     expect(screen.queryByTestId('pin-hit-line-1')).toBeNull();
     expect(screen.queryByTestId('send-change-requests')).toBeNull();
     expect(screen.queryByRole('button', { name: /Approve/ })).toBeNull();
