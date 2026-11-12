@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Price tag multi add</title>
 <!--
-  PRICETAG-MULTI-ADD mock v1 (12/11/2026). Static, no data fetch. Fake codes, names and prices only.
+  PRICETAG-MULTI-ADD mock v2 (12/11/2026; v2 = owner 14:17: each result is one line, code + name cut with an ellipsis, no price, no second line; hints on the same line). Static, no data fetch. Fake codes, names and prices only.
   Plan: documentation/plans/dealer-kit/PLAN-pricetag-multi-add-12nov.md
   Element -> existing component: section 4 at the bottom of the page.
 -->
@@ -44,12 +44,15 @@
   .opt { display:flex; align-items:flex-start; gap:8px; padding:6px 10px; }
   .opt.hl { background:var(--sel); }
   .opt.dis { opacity:.55; }
-  .box { flex:none; width:16px; height:16px; margin-top:2px; border:1.5px solid var(--muted); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:11px; line-height:1; color:#fff; }
+  .box { flex:none; width:16px; height:16px; margin-top:1px; border:1.5px solid var(--muted); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:11px; line-height:1; color:#fff; }
   .box.on { background:var(--primary); border-color:var(--primary); }
   .box.grey { background:var(--line); border-color:var(--line); color:var(--muted); }
   .txt { min-width:0; flex:1; }
   .l1 { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
-  .l2 { color:var(--muted); font-size:12px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .l1 { display:flex; align-items:center; gap:6px; }
+  .l1 .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .l1 .pill { flex:none; margin-left:0; }
+  .nm { color:var(--muted); }
   .pill { display:inline-block; border-radius:999px; padding:0 7px; font-size:11px; background:var(--line); color:var(--muted); margin-left:6px; white-space:nowrap; vertical-align:1px; }
   .foot { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-top:1px solid var(--line); }
   .more { padding:6px 10px; font-size:12px; color:var(--muted); border-top:1px solid var(--line); }
@@ -66,7 +69,7 @@
 </head>
 <body>
 <h1>New Price Tag Request: Price section, tick several items</h1>
-<p class="muted">Mock v1, 12/11/2026. Fake data. State A: the user typed "DIY" in row 1 and ticked three results.</p>
+<p class="muted">Mock v2, 12/11/2026 (one-line results, no price). Fake data. State A: the user typed "DIY" in row 1 and ticked three results.</p>
 
 <h2>1. State A: picker open, three ticked (1280 px)</h2>
 <div class="card">
@@ -86,17 +89,15 @@
               <div class="search"><span class="muted">&#x1F50D;</span><span>DIY</span><span class="caret"></span></div>
               <div class="all"><span class="box"></span>Select all 9</div>
               <div class="list">
-                <div class="grp">Sets</div>
-                <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-SET-KT60  RM 999</div><div class="l2">Set: Demo kitchen starter set 60</div></div></div>
-                <div class="opt dis"><span class="box grey">&#10003;</span><div class="txt"><div class="l1">DIY-SET-KT90  RM 999<span class="pill">Already added</span></div><div class="l2">Set: Demo kitchen starter set 90</div></div></div>
-                <div class="grp">Products</div>
-                <div class="opt hl"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4501  RM 111</div><div class="l2">Demo basin cabinet 450 white</div></div></div>
-                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4502  RM 111</div><div class="l2">Demo basin cabinet 450 grey</div></div></div>
-                <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-6001  RM 222</div><div class="l2">Demo basin cabinet 600 white</div></div></div>
-                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-6002  RM 222<span class="pill">Discontinued</span></div><div class="l2">Demo basin cabinet 600 oak</div></div></div>
-                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-MR-0450</div><div class="l2">Demo mirror cabinet 450 with a long name that is clamped to two lines in the picker</div></div></div>
-                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-MR-0600  RM 333</div><div class="l2">Demo mirror cabinet 600</div></div></div>
-                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-SH-0900  RM 444</div><div class="l2">Demo shower screen 900</div></div></div>
+                <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-SET-KT60<span class="nm">Demo kitchen starter set 60</span><span class="pill">Set</span></div></div></div>
+                <div class="opt dis"><span class="box grey">&#10003;</span><div class="txt"><div class="l1">DIY-SET-KT90<span class="nm">Demo kitchen starter set 90</span><span class="pill">Set</span><span class="pill">Already added</span></div></div></div>
+                <div class="opt hl"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4501<span class="nm">Demo basin cabinet 450 white</span></div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4502<span class="nm">Demo basin cabinet 450 grey</span></div></div></div>
+                <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-6001<span class="nm">Demo basin cabinet 600 white</span></div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-6002<span class="nm">Demo basin cabinet 600 oak</span><span class="pill">Discontinued</span></div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-MR-0450<span class="nm">Demo mirror cabinet 450 with a long name that is clamped to two lines in the picker</span></div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-MR-0600<span class="nm">Demo mirror cabinet 600</span></div></div></div>
+                <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-SH-0900<span class="nm">Demo shower screen 900</span></div></div></div>
               </div>
               <div class="foot"><span class="muted">3 ticked</span><span class="btn primary">Add 3</span></div>
             </div>
@@ -151,8 +152,8 @@
             <div class="search"><span class="muted">&#x1F50D;</span><span>DIY-BS</span><span class="caret"></span></div>
             <div class="all"><span class="box on">&#10003;</span>Select all 2</div>
             <div class="list">
-              <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4501  RM 111</div><div class="l2">Demo basin cabinet 450 white</div></div></div>
-              <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4502  RM 111</div><div class="l2">Demo basin cabinet 450 grey</div></div></div>
+              <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4501<span class="nm">Demo basin cabinet 450 white</span></div></div></div>
+              <div class="opt"><span class="box on">&#10003;</span><div class="txt"><div class="l1">DIY-BS-4502<span class="nm">Demo basin cabinet 450 grey</span></div></div></div>
             </div>
             <div class="foot"><span class="muted">2 ticked</span><span class="btn primary">Add 2</span></div>
           </div>
@@ -164,9 +165,9 @@
     <div class="search"><span class="muted">&#x1F50D;</span><span>D</span><span class="caret"></span></div>
     <div class="all"><span class="box"></span>Select all 40 shown</div>
     <div class="list" style="max-height:150px">
-      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4501  RM 111</div><div class="l2">Demo basin cabinet 450 white</div></div></div>
-      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4502  RM 111</div><div class="l2">Demo basin cabinet 450 grey</div></div></div>
-      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-6001  RM 222</div><div class="l2">Demo basin cabinet 600 white</div></div></div>
+      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4501<span class="nm">Demo basin cabinet 450 white</span></div></div></div>
+      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-4502<span class="nm">Demo basin cabinet 450 grey</span></div></div></div>
+      <div class="opt"><span class="box"></span><div class="txt"><div class="l1">DIY-BS-6001<span class="nm">Demo basin cabinet 600 white</span></div></div></div>
     </div>
     <div class="more">More match. Type more of the code to see them.</div>
   </div>
@@ -179,11 +180,11 @@
   <tr><th style="width:32%">Element</th><th>Reuses</th></tr>
   <tr><td>Lines table, row, + Add line, Upload a file instead</td><td><code>sorento_crm_frontend/components/dealer-kit/PriceTagLinesTable.tsx</code> (unchanged)</td></tr>
   <tr><td>Item trigger "Search a set or product..."</td><td><code>components/common/SearchableSelect.tsx</code> (as today, <code>PriceTagLinesTable.tsx:678</code>)</td></tr>
-  <tr><td>Popup, search box, groups Sets / Products, option text "CODE  RM price" + name</td><td><code>SearchableSelect.tsx</code> popup; options from <code>hooks/usePriceTagLineEditor.ts:58</code> <code>tagItemOption</code></td></tr>
+  <tr><td>Popup, search box, option text "CODE  name" on one line (no price, no second line)</td><td><code>SearchableSelect.tsx</code> popup; options from <code>hooks/usePriceTagLineEditor.ts:58</code> <code>tagItemOption</code></td></tr>
   <tr><td>Tick box per option, "Select all N" row, disabled option</td><td>the tick + Select all rows of <code>components/common/SearchableMultiSelect.tsx</code> (same markup and classes), added to SearchableSelect as an opt-in prop</td></tr>
   <tr><td>"Already added" / "Discontinued" grey hint</td><td><code>badgeText</code> on the option, as the part picker does (<code>PriceTagLinesTable.tsx:383-410</code>)</td></tr>
   <tr><td>Footer "N ticked" + "Add N"</td><td><code>components/ui/button.tsx</code> primary; wording as <code>master-data-management/costing/components/AddCostingProductsDialog.tsx:59</code></td></tr>
-  <tr><td>New rows' values</td><td><code>handleItemSelect</code> per item (<code>usePriceTagLineEditor.ts:593</code>), so pricing, package and template look-ups run exactly as for one pick</td></tr>
+  <tr><td>New rows' values</td><td>Add N calls the single-pick function <code>handleItemSelect</code> (<code>hooks/usePriceTagLineEditor.ts</code>) once per item: one path for one or many</td></tr>
 </table>
 </div>
 </body>
