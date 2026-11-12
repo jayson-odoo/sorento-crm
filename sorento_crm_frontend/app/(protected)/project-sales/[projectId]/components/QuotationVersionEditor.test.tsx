@@ -3093,8 +3093,8 @@ describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the 
 });
 
 // ---------------------------------------------------------------------------------------------
-// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026): Duplicate line, the Below default price pill and
-// the lines Flags filter. UAC: documentation/plans/project-sales/project-quote-line-tools-acceptance-criteria.md
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026): Duplicate line and the lines Flags filter (its
+// Below default price pill was removed by QUOTE-BELOW-DEFAULT-OFF, owner 12 Nov 2026). UAC: documentation/plans/project-sales/project-quote-line-tools-acceptance-criteria.md
 
 /** The Flags filter's trigger (it shows chips once chosen, so it is found by its slot). */
 function flagsTrigger(): HTMLElement {
@@ -3151,7 +3151,8 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_below_floor: true })]);
     renderEditor();
     const pill = await screen.findByText('Below minimum price');
-    expect(pill.closest('td')).not.toBe(screen.getByText('SRT-WC-01').closest('td'));
+    const rateHeader = screen.getByRole('columnheader', { name: 'Rate (RM)' }) as HTMLTableCellElement;
+    expect((pill.closest('td') as HTMLTableCellElement).cellIndex).toBe(rateHeader.cellIndex);
     expect(screen.queryByText('Below default price')).toBeNull();
   });
 
@@ -3178,7 +3179,7 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     await waitFor(() => expect(judgeQuotationLine).toHaveBeenCalled(), { timeout: 5000 });
     // Let the verdict land before asserting the pill stays away.
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await judgeQuotationLine.mock.results[0]?.value;
     });
     expect(screen.queryByText('Below default price')).toBeNull();
     expectNothingWritten();
