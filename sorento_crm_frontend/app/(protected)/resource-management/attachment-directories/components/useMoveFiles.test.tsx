@@ -1,43 +1,39 @@
 /**
- * FILES-MOVE-DUPLICATE: the move flow behind "Move to..." and drag. The others move; a name
- * clash asks Rename / Replace / Skip; every file left behind is named.
+ * FILES-MOVE-DUPLICATE: the move flow behind "Move to..." and drag (hand test 12 Nov).
+ * Every conflict is found before anything moves; one dialog walks them "1 of N" with
+ * "Do this for the remaining" (Windows-style); Cancel / X / Esc cancel the whole move.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const bulkMoveAttachments = vi.fn();
-const updateAttachment = vi.fn();
 const updateDirectory = vi.fn();
 let canDelete = true;
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => canDelete }));
 vi.mock('../../attachments/services/attachmentService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../attachments/services/attachmentService')>();
-  return {
-    ...actual,
-    bulkMoveAttachments: (...args: unknown[]) => bulkMoveAttachments(...args),
-    updateAttachment: (...args: unknown[]) => updateAttachment(...args),
-  };
+  return { ...actual, bulkMoveAttachments: (...args: unknown[]) => bulkMoveAttachments(...args) };
 });
-
 vi.mock('../../attachments/services/directoryService', () => ({
   updateDirectory: (...args: unknown[]) => updateDirectory(...args),
 }));
 
 import { useMoveFiles } from './useMoveFiles';
-import { AttachmentMoveClashError } from '../../attachments/services/attachmentService';
-import { summarizeMove, type MoveOutcome } from './driveMoveSummary';
+import type { MoveOutcome } from './driveMoveSummary';
 
-const CLASH = {
-  attachment_id: 'f-2',
-  file_name: 'photo.jpg',
-  folder_name: 'Folder B',
-  message: 'photo.jpg already exists in Folder B.',
-  existing_file_name: 'photo.jpg',
-  suggested_name: 'photo (1).jpg',
-};
+function conflict(i: number) {
+  return {
+    attachment_id: `f-${i}`,
+    file_name: `scan ${i}.pdf`,
+    folder_name: 'Folder B',
+    message: `scan ${i}.pdf already exists in Folder B.`,
+    existing_file_name: `scan ${i}.pdf`,
+    suggested_name: `scan ${i} (1).pdf`,
+  };
+}
 
 type Handle = {
   move: (ids: string[], dest: string | null, folders?: { id: string; name: string }[]) => Promise<MoveOutcome>;
@@ -59,126 +55,137 @@ function mount() {
   return refObj.current!;
 }
 
+/** First call = the check-only preflight, second = the move itself. */
+function preflight(conflicts: ReturnType<typeof conflict>[], execute = { updated: 0, not_moved: [] as unknown[] }) {
+  bulkMoveAttachments.mockImplementation(async (_ids: string[], _dest: string, opts?: { checkOnly?: boolean }) =>
+    opts?.checkOnly ? { updated: 0, not_moved: conflicts } : execute
+  );
+}
+
 describe('useMoveFiles', () => {
   beforeEach(() => {
     bulkMoveAttachments.mockReset();
-    updateAttachment.mockReset();
     updateDirectory.mockReset();
     canDelete = true;
   });
 
-  it('no clash: everything moves in one call, no dialog', async () => {
-    bulkMoveAttachments.mockResolvedValue({ updated: 3, not_moved: [] });
+  it('no conflict: checks first, then moves everything in one call, no dialog', async () => {
+    preflight([], { updated: 3, not_moved: [] });
     const outcome = await mount().move(['a', 'b', 'c'], 'dir-b');
-    expect(bulkMoveAttachments).toHaveBeenCalledWith(['a', 'b', 'c'], 'dir-b');
-    expect(outcome).toEqual({ moved: 3, notMoved: [] });
+    expect(bulkMoveAttachments).toHaveBeenNthCalledWith(1, ['a', 'b', 'c'], 'dir-b', { checkOnly: true });
+    expect(bulkMoveAttachments).toHaveBeenNthCalledWith(2, ['a', 'b', 'c'], 'dir-b', { resolutions: {} });
+    expect(outcome).toMatchObject({ cancelled: false, moved: 3, renamed: 0, replaced: 0 });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('Skip: the others moved and the skipped file is named in the summary', async () => {
-    bulkMoveAttachments.mockResolvedValue({ updated: 2, not_moved: [CLASH] });
-    const pending = mount().move(['a', 'f-2', 'c'], 'dir-b');
-    fireEvent.click(await screen.findByRole('button', { name: 'Skip' }));
-    const outcome = await pending;
-    expect(updateAttachment).not.toHaveBeenCalled();
-    expect(summarizeMove(outcome).text).toBe(
-      '2 moved. 1 not moved: photo.jpg already exists in Folder B.'
-    );
-  });
-
-  it('Rename: moves under the suggested name, prefilled', async () => {
-    bulkMoveAttachments.mockResolvedValue({ updated: 0, not_moved: [CLASH] });
-    updateAttachment.mockResolvedValue({});
-    const pending = mount().move(['f-2'], 'dir-b');
-    expect(await screen.findByDisplayValue('photo (1).jpg')).toBeTruthy();
-    expect(screen.getByText('photo.jpg already exists in Folder B.')).toBeTruthy();
+  it('100 files, 100 conflicts: one decision with "Do this for the remaining" renames all', async () => {
+    const conflicts = Array.from({ length: 100 }, (_, i) => conflict(i));
+    const ids = conflicts.map((c) => c.attachment_id);
+    preflight(conflicts, { updated: 100, not_moved: [] });
+    const pending = mount().move(ids, 'dir-b');
+    expect(await screen.findByText('1 of 100')).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Do this for the remaining 99 conflicts' }));
+    expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
     const outcome = await pending;
-    expect(updateAttachment).toHaveBeenCalledWith('f-2', {
-      directory_id: 'dir-b',
-      on_conflict: 'rename',
-      stored_filename: 'photo (1).jpg',
-    });
-    expect(outcome).toEqual({ moved: 1, notMoved: [] });
+    const [, , opts] = bulkMoveAttachments.mock.calls[1];
+    expect(Object.keys(opts.resolutions)).toHaveLength(100);
+    expect(opts.resolutions['f-0']).toEqual({ action: 'rename' });
+    expect(opts.resolutions['f-99']).toEqual({ action: 'rename' });
+    expect(bulkMoveAttachments).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({ cancelled: false, moved: 0, renamed: 100 });
   });
 
-  it('Rename to a name that is also taken asks again with the new reason', async () => {
-    bulkMoveAttachments.mockResolvedValue({ updated: 0, not_moved: [CLASH] });
-    updateAttachment
-      .mockRejectedValueOnce(
-        new AttachmentMoveClashError('taken.jpg already exists in Folder B.', {
-          file_name: 'taken.jpg',
-          folder_name: 'Folder B',
-          existing_file_name: 'taken.jpg',
-          suggested_name: 'taken (1).jpg',
-        })
-      )
-      .mockResolvedValueOnce({});
-    const pending = mount().move(['f-2'], 'dir-b');
-    const input = await screen.findByDisplayValue('photo (1).jpg');
-    fireEvent.change(input, { target: { value: 'taken.jpg' } });
+  it('without the tick box each conflict is asked; the typed name goes with that file only', async () => {
+    preflight([conflict(1), conflict(2)], { updated: 2, not_moved: [conflict(2)] });
+    const pending = mount().move(['f-1', 'f-2'], 'dir-b');
+    expect(await screen.findByText('1 of 2')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'New name' }), { target: { value: 'mine.pdf' } });
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-    expect(await screen.findByText('taken.jpg already exists in Folder B.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    expect(await screen.findByText('2 of 2')).toBeTruthy();
+    expect(screen.getByDisplayValue('scan 2 (1).pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
     const outcome = await pending;
-    expect(updateAttachment).toHaveBeenLastCalledWith('f-2', {
-      directory_id: 'dir-b',
-      on_conflict: 'rename',
-      stored_filename: 'taken (1).jpg',
+    expect(bulkMoveAttachments.mock.calls[1][2]).toEqual({
+      resolutions: { 'f-1': { action: 'rename', name: 'mine.pdf' }, 'f-2': { action: 'skip' } },
     });
-    expect(outcome.moved).toBe(1);
+    expect(outcome).toMatchObject({ renamed: 1, moved: 0, skipped: ['scan 2.pdf'], notMoved: [] });
   });
 
-  it('Replace: sends on_conflict replace', async () => {
-    bulkMoveAttachments.mockResolvedValue({ updated: 0, not_moved: [CLASH] });
-    updateAttachment.mockResolvedValue({});
-    const pending = mount().move(['f-2'], 'dir-b');
-    fireEvent.click(await screen.findByRole('button', { name: 'Replace' }));
-    await pending;
-    expect(updateAttachment).toHaveBeenCalledWith('f-2', {
-      directory_id: 'dir-b',
-      on_conflict: 'replace',
+  it('Replace for all sends replace for every conflict', async () => {
+    preflight([conflict(1), conflict(2), conflict(3)], { updated: 4, not_moved: [] });
+    const pending = mount().move(['plain', 'f-1', 'f-2', 'f-3'], 'dir-b');
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Do this for the remaining 2 conflicts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    const outcome = await pending;
+    expect(bulkMoveAttachments.mock.calls[1][2].resolutions).toEqual({
+      'f-1': { action: 'replace' },
+      'f-2': { action: 'replace' },
+      'f-3': { action: 'replace' },
     });
+    expect(outcome).toMatchObject({ moved: 1, replaced: 3 });
+  });
+
+  it('Cancel cancels the whole move: nothing moves, folders included', async () => {
+    preflight([conflict(1)]);
+    const pending = mount().move(['plain', 'f-1'], 'dir-b', [{ id: 'd-1', name: 'Specs' }]);
+    expect(await screen.findByText('scan 1.pdf already exists in Folder B.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const outcome = await pending;
+    expect(outcome.cancelled).toBe(true);
+    expect(bulkMoveAttachments).toHaveBeenCalledTimes(1); // the check only
+    expect(updateDirectory).not.toHaveBeenCalled();
+  });
+
+  it('Esc (closing the window) also cancels the whole move', async () => {
+    preflight([conflict(1), conflict(2)]);
+    const pending = mount().move(['f-1', 'f-2'], 'dir-b');
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(async () => expect((await pending).cancelled).toBe(true));
+    expect(bulkMoveAttachments).toHaveBeenCalledTimes(1);
+  });
+
+  it('one conflict shows no "1 of" counter and no tick box', async () => {
+    preflight([conflict(1)], { updated: 1, not_moved: [] });
+    const pending = mount().move(['f-1'], 'dir-b');
+    await screen.findByText('scan 1.pdf already exists in Folder B.');
+    expect(screen.queryByText('1 of 1')).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    expect((await pending).renamed).toBe(1);
   });
 
   it('Replace is not offered without the permission to delete files', async () => {
     canDelete = false;
-    bulkMoveAttachments.mockResolvedValue({ updated: 0, not_moved: [CLASH] });
-    const pending = mount().move(['f-2'], 'dir-b');
+    preflight([conflict(1)], { updated: 0, not_moved: [conflict(1)] });
+    const pending = mount().move(['f-1'], 'dir-b');
     await screen.findByRole('button', { name: 'Skip' });
     expect(screen.queryByRole('button', { name: 'Replace' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-    await waitFor(async () => expect((await pending).notMoved).toHaveLength(1));
+    expect((await pending).skipped).toEqual(['scan 1.pdf']);
   });
 
-  it('Skip after a second clash names the file as it is, with its first reason', async () => {
-    bulkMoveAttachments.mockResolvedValue({ updated: 0, not_moved: [CLASH] });
-    updateAttachment.mockRejectedValueOnce(
-      new AttachmentMoveClashError('taken.jpg already exists in Folder B.', {
-        file_name: 'taken.jpg',
-        folder_name: 'Folder B',
-        existing_file_name: 'taken.jpg',
-        suggested_name: 'taken (1).jpg',
-      })
-    );
-    const pending = mount().move(['f-2'], 'dir-b');
-    fireEvent.change(await screen.findByDisplayValue('photo (1).jpg'), { target: { value: 'taken.jpg' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-    await screen.findByText('taken.jpg already exists in Folder B.');
-    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-    expect((await pending).notMoved).toEqual([
-      { name: 'photo.jpg', reason: 'photo.jpg already exists in Folder B.' },
-    ]);
+  it('a file the server still refused is named with its reason', async () => {
+    preflight([conflict(1)], {
+      updated: 0,
+      not_moved: [{ ...conflict(1), message: 'You cannot change that file.' }],
+    });
+    const pending = mount().move(['f-1'], 'dir-b');
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace' }));
+    const outcome = await pending;
+    expect(outcome.replaced).toBe(0);
+    expect(outcome.notMoved).toEqual([{ name: 'scan 1.pdf', reason: 'You cannot change that file.' }]);
   });
 
-  it('folders move too; a refused folder is named and the files still move', async () => {
+  it('folders move after the decisions; a refused folder is named', async () => {
+    preflight([], { updated: 2, not_moved: [] });
     updateDirectory.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('Cannot move a folder into itself'));
-    bulkMoveAttachments.mockResolvedValue({ updated: 2, not_moved: [] });
     const outcome = await mount().move(['a', 'b'], 'dir-b', [
       { id: 'd-1', name: 'Specs' },
       { id: 'd-2', name: 'Drafts' },
     ]);
-    expect(updateDirectory).toHaveBeenCalledWith('d-1', { parent_id: 'dir-b' });
-    expect(summarizeMove(outcome).text).toBe('3 moved. 1 not moved: Drafts: Cannot move a folder into itself.');
+    expect(outcome.moved).toBe(3);
+    expect(outcome.notMoved).toEqual([{ name: 'Drafts', reason: 'Cannot move a folder into itself' }]);
   });
 });

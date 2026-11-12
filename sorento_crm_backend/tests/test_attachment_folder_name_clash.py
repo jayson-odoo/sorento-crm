@@ -570,3 +570,130 @@ def test_bulk_move_race_past_the_check_skips_only_that_file(db, monkeypatch):
     _assert_plain(not_moved[0]["message"], "photo.jpg", "Folder B")
     assert _reload(db, ok.id).directory_id == folder_b
     assert _reload(db, clashing.id).directory_id == folder_a
+
+
+# --- hand test 12 Nov: find every conflict first, decide once, cancel moves nothing ---- #
+
+
+def test_check_only_lists_every_conflict_and_moves_nothing(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "photo.jpg", folder_b)
+    clashing = _file(db, "photo.jpg", folder_a)
+    ok = _file(db, "ok.jpg", folder_a)
+    twin_1 = _file(db, "twin.jpg", folder_a)
+    folder_c = _folder(db, "Folder C")
+    twin_2 = _file(db, "Twin.jpg", folder_c)  # clashes with another file of the same batch
+
+    updated, conflicts = AttachmentService(db).bulk_move_report(
+        [clashing.id, ok.id, twin_1.id, twin_2.id], folder_b, check_only=True
+    )
+
+    assert updated == 0
+    assert [c["attachment_id"] for c in conflicts] == [clashing.id, twin_2.id]
+    assert conflicts[1]["existing_file_name"] == "twin.jpg"
+    for row, folder in ((clashing, folder_a), (ok, folder_a), (twin_1, folder_a), (twin_2, folder_c)):
+        assert _reload(db, row.id).directory_id == folder, "a check-only call moved a file"
+
+
+def test_one_decision_renames_a_hundred_conflicts_in_one_call(db):
+    """100 files, 100 conflicts: one apply-to-all Rename keeps both for every file."""
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    ids = []
+    for i in range(100):
+        _file(db, f"scan {i}.pdf", folder_b)
+        ids.append(_file(db, f"scan {i}.pdf", folder_a).id)
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        ids, folder_b, resolutions={aid: {"action": "rename"} for aid in ids}
+    )
+
+    assert (updated, not_moved) == (100, [])
+    names = {_reload(db, aid).stored_filename for aid in ids}
+    assert names == {f"scan {i} (1).pdf" for i in range(100)}
+    assert all(_reload(db, aid).directory_id == folder_b for aid in ids)
+
+
+def test_apply_to_all_rename_of_same_named_movers_gets_distinct_names(db):
+    folder_a = _folder(db, "Folder A")
+    folder_c = _folder(db, "Folder C")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "photo.jpg", folder_b)
+    first = _file(db, "photo.jpg", folder_a)
+    second = _file(db, "photo.jpg", folder_c)
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [first.id, second.id], folder_b,
+        resolutions={first.id: {"action": "rename"}, second.id: {"action": "rename"}},
+    )
+
+    assert (updated, not_moved) == (2, [])
+    assert {_reload(db, first.id).stored_filename, _reload(db, second.id).stored_filename} == {
+        "photo (1).jpg", "photo (2).jpg"
+    }
+
+
+def test_resolutions_replace_skip_and_custom_rename_in_one_call(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    old_a = _file(db, "a.jpg", folder_b)
+    _file(db, "b.jpg", folder_b)
+    _file(db, "c.jpg", folder_b)
+    a = _file(db, "a.jpg", folder_a)
+    b = _file(db, "b.jpg", folder_a)
+    c = _file(db, "c.jpg", folder_a)
+    plain = _file(db, "plain.jpg", folder_a)
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [a.id, b.id, c.id, plain.id], folder_b,
+        resolutions={
+            a.id: {"action": "replace"},
+            b.id: {"action": "skip"},
+            c.id: {"action": "rename", "name": "c final.jpg"},
+        },
+    )
+
+    assert updated == 3
+    assert [n["attachment_id"] for n in not_moved] == [b.id]
+    assert _reload(db, old_a.id).is_deleted is True
+    assert _reload(db, a.id).directory_id == folder_b
+    assert _reload(db, b.id).directory_id == folder_a
+    assert _reload(db, c.id).stored_filename == "c final.jpg"
+    assert _reload(db, plain.id).directory_id == folder_b
+
+
+def test_a_refused_replace_skips_only_that_file(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "a.jpg", folder_b)
+    a = _file(db, "a.jpg", folder_a)
+    plain = _file(db, "plain.jpg", folder_a)
+
+    def guard(row):
+        raise AppException(status_code=403, message="You cannot change that file.")
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [a.id, plain.id], folder_b, resolutions={a.id: {"action": "replace"}}, replace_guard=guard
+    )
+
+    assert updated == 1
+    assert not_moved[0]["attachment_id"] == a.id
+    assert not_moved[0]["message"] == "You cannot change that file."
+    assert _reload(db, plain.id).directory_id == folder_b
+
+
+def test_a_custom_rename_that_is_also_taken_is_named_not_moved(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    _file(db, "a.jpg", folder_b)
+    _file(db, "taken.jpg", folder_b)
+    a = _file(db, "a.jpg", folder_a)
+
+    updated, not_moved = AttachmentService(db).bulk_move_report(
+        [a.id], folder_b, resolutions={a.id: {"action": "rename", "name": "Taken.jpg"}}
+    )
+
+    assert updated == 0
+    _assert_plain(not_moved[0]["message"], "Taken.jpg", "Folder B")
+    assert _reload(db, a.id).directory_id == folder_a
