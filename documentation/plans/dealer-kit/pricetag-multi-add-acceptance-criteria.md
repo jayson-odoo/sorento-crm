@@ -1,6 +1,9 @@
 # UAC: PRICETAG-MULTI-ADD
 
 Answers (crew, 12/11/2026, owner may overrule): Q1 (a), Q2 (a), Q3 (b), Q4 (a), Q5 (a); rules 1-7 as written.
+Owner, mock v1 feedback 14:17: (1) each Item picker result is ONE line, code + name cut with an ellipsis, no price and
+no second line, hints on the same line; (2) Add N goes through the SAME function as adding a line individually (one
+path, no parallel copy); (3) reuse existing functions, not only components.
 
 ## AC-1 Tick and stay open
 Given row 1's Item picker is open with search "DIY", when the user clicks a result's tick box (or presses Space on the
@@ -49,6 +52,16 @@ shows a grey "Discontinued" hint and can still be picked, ticked and added.
 CRM create, CRM edit, portal create, portal edit behave identically (one component). Upload a file, Save Draft,
 Escalate to marketing and Preview are unchanged.
 
+## AC-13 One-line results (owner 14:17)
+Each Item picker result is one line: the code, then the name when it says more than the code, cut with "..." and the
+full text on hover. No price and no second line. A set shows a grey "Set" hint on the same line; "Already added" and
+"Discontinued" sit on that line too.
+
+## AC-14 One pick path (owner 14:17)
+Add N calls the editor's existing single-pick function `handleItemSelect` once per item, and the existing `addLine`
+(now able to insert after a given line) for each extra line. No other code sets a line's item. A test fails if Add N
+stops calling `handleItemSelect`.
+
 ## AC-12 Phone
 At 375 px the list fits the screen width and "Add N" stays visible at the bottom without horizontal page scroll.
 
@@ -65,16 +78,24 @@ Frontend, `components/common/SearchableSelect.tsx` (opt-in; every other caller u
     and closes the list.
   - Cap line text: "More match. Type more of the code to see them."
 
-Frontend, `hooks/usePriceTagLineEditor.ts`:
-- New `handleItemsAdd(key: string, options: SearchableSelectOption[])`: the first non-duplicate option is applied to
-  row `key` with the same patch `handleItemSelect` applies; each further one becomes a new line (`emptyDraftLine()` +
-  that patch) inserted directly after `key`, in order, in ONE state update. Options already on another line, or
-  repeated within the batch, are skipped.
-- `tagItemOption` sets `badgeText: 'Discontinued'` when `item.is_discontinued`.
+Frontend, `hooks/usePriceTagLineEditor.ts` (one pick path, AC-14):
+- `addLine(afterKey?: string): string` (existing function, extended): builds `emptyDraftLine()`, inserts it directly
+  after `afterKey` (or appends when no key / key not found), returns the new line's key. The form's "+ Add line"
+  button calls `() => lineEditor.addLine()` (it must not pass the click event).
+- Exported pure helper `addPickedItems(editor: Pick<PriceTagLineEditor, 'addLine' | 'handleItemSelect'>, lines: DraftLine[], key: string, options: SearchableSelectOption[])`:
+  drops options already on another line of `lines` and repeats within the batch; then `handleItemSelect(key, first)`,
+  and for each further option `k = addLine(prevKey); handleItemSelect(k, option)`. This is the ONLY multi-add code; it
+  sets no line field itself. `handleItemsAdd` and the separate patch path are removed.
+- `fetchItemOptions` maps through a one-line item option builder: `label` = code, plus two spaces and the name when
+  `distinctName`/`sameDisplayText` say the name adds something; NO price, NO `description`; `badgeText` = 'Set' for a
+  set, 'Discontinued' for a discontinued product. `code` and `name` stay set (handleItemSelect reads them). The part
+  picker (`fetchPartOptions`) keeps today's `tagItemOption` format.
 - `TagItemOption.is_discontinued?: boolean` (`app/(auth)/portal/lib/price-tag-request-service.ts`).
+- SearchableSelect in multiAdd mode shows the option's `badgeText` AND "Already added" side by side on the one line;
+  the Item picker no longer passes `wrapOptions`, so a long result is cut with "..." and carries `title` = full label.
 
 Frontend, `components/dealer-kit/PriceTagLinesTable.tsx`: the Item `SearchableSelect` passes `multiAdd` with
-`onAddMany = (opts) => editor.handleItemsAdd(line.key, opts)`, `isAdded` = on another line of `lines`, `capped` = 50
+`onAddMany = (opts) => addPickedItems(editor, lines, line.key, opts)`, `isAdded` = on another line of `lines`, `capped` = 50
 sets or 50 products among the options.
 
 Backend: `TagItemLookupItem.is_discontinued: bool = False`; `lookup_tag_items` fills it from `Product.is_discontinued`
