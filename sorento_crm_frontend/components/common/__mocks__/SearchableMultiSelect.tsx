@@ -63,11 +63,15 @@ export function ItemCellStandIn({
         }}
       >
         <option value="">{ITEM_CELL_LABEL}</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value} disabled={o.disabled}>
-            {o.label}
-          </option>
-        ))}
+        {options.map((o) => {
+          // Like the real list: an item already on the request is offered disabled, with the hint.
+          const taken = o.disabled || (value.includes(o.value) && o.value !== shown);
+          return (
+            <option key={o.value} value={o.value} disabled={taken}>
+              {taken ? `${o.label} - Already added` : o.label}
+            </option>
+          );
+        })}
       </select>
     </>
   );

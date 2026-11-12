@@ -461,10 +461,12 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     await pickTheCabinet();
     await screen.findByLabelText('Package');
 
+    fireEvent.click(screen.getByRole('button', { name: 'Clear item' }));
     await selectOption('Search a set or product...', `product:${SINK.id}`);
     await waitFor(() => expect(mockCombos).toHaveBeenCalledWith(SINK.id));
     expect(screen.queryByLabelText('Package')).toBeNull();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Clear item' }));
     await pickTheCabinet();
 
     await waitFor(() =>
