@@ -2,6 +2,7 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { REVISION_HEADER } from '@/lib/revision-fence';
+import type { DeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   OcnChangeType,
   OcnDetail,
@@ -103,6 +104,10 @@ export async function updateOrderChangeNotice(id: string, body: OcnWrite): Promi
   return read<OcnDetail>(res, 'Failed to save the order change notice');
 }
 
+/** What a move answers: the updated notice, or (a stage move inside its grace window) the
+ *  shared 202 "held, you can still undo" body every deferrable route answers. */
+export type OcnMoveResult = OcnDetail | DeferredFormAction;
+
 /** One move, sent at the revision on screen (the backend refuses a stale one, UAC B9). */
 async function move(
   id: string,
@@ -110,13 +115,13 @@ async function move(
   path: string,
   fallback: string,
   body?: unknown,
-): Promise<OcnDetail> {
+): Promise<OcnMoveResult> {
   const res = await apiFetch(recordPath(id, path), {
     method: 'POST',
     headers: { [REVISION_HEADER]: String(revisionNo ?? 0) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  return read<OcnDetail>(res, fallback);
+  return read<OcnMoveResult>(res, fallback);
 }
 
 export const submitOrderChangeNotice = (id: string, revisionNo: number) =>

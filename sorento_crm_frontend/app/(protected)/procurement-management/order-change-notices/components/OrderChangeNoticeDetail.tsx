@@ -11,7 +11,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Ban, Link2, RotateCcw } from 'lucide-react';
+import { Ban, Link2, RotateCcw, Undo2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,9 @@ import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLA
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useUrlTab } from '@/hooks/useUrlTab';
@@ -272,7 +275,16 @@ function Signoff({ r }: { r: OcnDetail }) {
 
 export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
   const { data, isLoading, isError, error, refetch } = useOrderChangeNoticeQuery(ocnId);
-  const { submit, send, back, decide, done, voidIt, revise } = useOrderChangeNoticeMutations();
+  // Form-action deferral, as on the purchase request (PLAN-form-sla-undo.md): a stage move held
+  // for its grace window shows the shared countdown with Undo, and every workflow button waits.
+  const formAction = useFormAction({
+    sourceEntityType: 'order_change_notice',
+    sourceEntityId: ocnId,
+    entityKey: data ? `${data.status}:${data.approval_status ?? ''}:${data.revision_no ?? 0}` : null,
+  });
+  const { submit, send, back, decide, done, voidIt, revise } = useOrderChangeNoticeMutations({
+    onDeferred: formAction.refresh,
+  });
   const canCreate = useHasPermission(OCN_CREATE);
   const canEdit = useHasPermission(OCN_EDIT);
   const canApprove = useHasPermission(OCN_APPROVE);
@@ -285,6 +297,7 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
   });
   const [tab, setTab] = useUrlTab({ tabs: DETAIL_TABS, defaultTab: 'details' });
   const [asking, setAsking] = useState<Asking | null>(null);
+  const [undoOpen, setUndoOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -319,16 +332,18 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
   // The stage work is gated by the handling lock, like the purchase request's.
   const stageLocked = !handlingLock.businessCtasEnabled;
   const workBusy = busy || stageLocked;
+  // While a held action counts down, no other move may be queued on the old state (AC-D-10).
+  const held = formAction.ctasDisabled;
   const lockedTitle = stageLocked
     ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'}. Take over to act.`
     : undefined;
 
-  const canSubmit = editable && canCreate && (mine || canEdit);
-  const canSend = awaiting && !pendingApproval && canEdit;
-  const canDecide = pendingApproval && canApprove;
-  const canDone = status === 'approved' && canEdit;
-  const canRevise = (status === 'approved' || status === 'rejected') && (canEdit || canApprove);
-  const canVoid = open && (canEdit || mine);
+  const canSubmit = !held && editable && canCreate && (mine || canEdit);
+  const canSend = !held && awaiting && !pendingApproval && canEdit;
+  const canDecide = !held && pendingApproval && canApprove;
+  const canDone = !held && status === 'approved' && canEdit;
+  const canRevise = !held && (status === 'approved' || status === 'rejected') && (canEdit || canApprove);
+  const canVoid = !held && open && (canEdit || mine);
   const canEditForm = editable && (mine || canEdit) && (canCreate || canEdit);
 
   const confirmAsk = async (value: string) => {
@@ -412,6 +427,13 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
                   Void
                 </DropdownMenuItem>
               )}
+              {/* Post-grace Undo: shown only when the server says the last action can be reversed. */}
+              {formAction.view.kind === 'undoable' && (
+                <DropdownMenuItem onSelect={() => setUndoOpen(true)} data-testid="undo-action-menu-item">
+                  <Undo2 className="size-4" />
+                  Undo last action
+                </DropdownMenuItem>
+              )}
               <HandlingLockReleaseMenuItem state={handlingLock.state} onRelease={handlingLock.release} />
             </DetailActionsMenu>
           }
@@ -478,6 +500,28 @@ export default function OrderChangeNoticeDetail({ ocnId }: { ocnId: string }) {
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoOpen}
+          onOpenChange={setUndoOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={r.ocn_number}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="w-full justify-start">

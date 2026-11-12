@@ -389,3 +389,64 @@ def test_f2_the_page_limit_is_capped(ocn):
 
 def test_f2_the_router_file_exists_where_the_wiring_test_reads_it():
     assert ROUTER.exists(), ROUTER
+
+
+# ================================================================== round 3: deferred actions + undo
+# Owner: full purchase request parity. The OCN stage moves run through the same dispatcher
+# (`dispatch_or_defer`, form_actions `ocn.*`), so a held move answers the PR's 202 shape, can be
+# cancelled inside its grace window, and a committed move can be undone.
+
+FORM_ACTIONS = "/api/v1/sla-management/form-actions"
+UNDO = "sla_management.form_sla.undo_action"
+#: The 202 body the dispatcher builds for every deferrable route (PR included).
+DEFERRED_KEYS = {"deferred", "pending_action_id", "action_key", "commit_at", "window_seconds"}
+
+
+def test_r3_a_held_approval_answers_the_pr_deferred_shape_and_cancel_changes_nothing(ocn, sla):
+    sla.approval.config.grace_seconds = 60
+    ocn.db.commit()
+    d = pending(ocn)
+    approval = open_tracker(ocn.db, KIND, d["id"])
+
+    parked = move(ocn, d["id"], "approval-decision", ocn.manager, json={"action": "approved", "comments": None})
+    assert parked.status_code == 202, parked.text
+    body = parked.json()
+    assert set(body) == DEFERRED_KEYS
+    assert body["deferred"] is True
+    assert body["action_key"] == "ocn.approval_decision"
+    assert body["window_seconds"] == 60
+    assert load(ocn, d["id"]).approval_status == "pending"  # nothing applied yet
+
+    q = {"source_entity_type": KIND, "source_entity_id": d["id"]}
+    current = ocn.as_(ocn.manager).get(f"{FORM_ACTIONS}/current", params=q)
+    assert current.status_code == 200, current.text
+    assert current.json()["pending"]["id"] == body["pending_action_id"]
+
+    cancel = ocn.as_(ocn.manager).post(f"{FORM_ACTIONS}/{body['pending_action_id']}/cancel")
+    assert cancel.status_code == 200, cancel.text
+    row = load(ocn, d["id"])
+    assert (row.status, row.approval_status, row.approver_id) == ("submitted", "pending", None)
+    assert open_tracker(ocn.db, KIND, d["id"]).id == approval.id  # the stage never moved
+
+
+def test_r3_an_approval_committed_then_undone_goes_back_to_pending(ocn, sla):
+    grant(ocn.db, ocn.manager, UNDO)
+    ocn.db.commit()
+    d = pending(ocn)
+    approval = open_tracker(ocn.db, KIND, d["id"])
+    ok = move(ocn, d["id"], "approval-decision", ocn.manager, json={"action": "approved", "comments": None})
+    assert ok.status_code == 200, ok.text  # grace 0: immediate
+    assert load(ocn, d["id"]).approver_id == ocn.manager
+
+    q = {"source_entity_type": KIND, "source_entity_id": d["id"]}
+    elig = ocn.as_(ocn.manager).get(f"{FORM_ACTIONS}/eligibility", params=q)
+    assert elig.status_code == 200, elig.text
+    assert elig.json()["can_undo"] is True
+
+    undo = ocn.as_(ocn.manager).post(f"{FORM_ACTIONS}/undo", json={**q, "reason": "approved the wrong one"})
+    assert undo.status_code == 200, undo.text
+    assert undo.json()["status"] == "undone"
+    row = load(ocn, d["id"])
+    assert (row.status, row.approval_status) == ("submitted", "pending")
+    assert row.approver_id is None  # the OCN's own stamp is restored too
+    assert open_tracker(ocn.db, KIND, d["id"]).id == approval.id  # the approval stage is reopened
