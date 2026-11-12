@@ -1,6 +1,6 @@
 # PLAN: Price tag request, tick several items from one search (PRICETAG-MULTI-ADD)
 
-Status: Plan. Behaviour card filed to the owner (12/11/2026); no product code until answered. Track: M (LEAD pattern), no migration expected.
+Status: Plan, waiting on owner answers (behaviour card + mock v1 filed on PR #2366, 12/11/2026). UAC draft: `pricetag-multi-add-acceptance-criteria.md`. Track: M (LEAD pattern), no migration expected.
 
 ## Owner ask (12 Nov ~13:20)
 
