@@ -235,8 +235,8 @@ def ocn(world):  # noqa: F811  (`world` comes from _forms_chain_support)
     o.p1 = product(db, "ABC123-RL")
     o.p2 = product(db, "ABC124-RL")
     o.customer = customer(db)
-    o.project = project(db, o.raiser, "ZZT Project Alpha")
-    o.other_project = project(db, o.raiser, "ZZT Project Beta")
+    o.project = project(db, o.raiser, "Saffron Ridge Towers")
+    o.other_project = project(db, o.raiser, "Oakvale Plaza")
     db.commit()
 
     def as_(user_id):

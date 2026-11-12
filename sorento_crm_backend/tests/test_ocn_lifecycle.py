@@ -394,7 +394,8 @@ def test_b8_revise_unlocks_back_to_draft_bumps_the_revision_and_clears_the_stamp
     s = svc()
     row = _to(ocn, _draft(ocn), "submit", "send", "approve")
     before = row.revision_no or 0
-    assert s.revise(ocn.db, row, actor=actor(ocn, ocn.sales_admin), reason="Customer changed the dates") == "submit"
+    # Lead ruling (plan + UAC B8): revise returns the OCN to draft and emits nothing.
+    assert s.revise(ocn.db, row, actor=actor(ocn, ocn.sales_admin), reason="Customer changed the dates") is None
     assert row.status == "draft"
     assert row.revision_no == before + 1
     assert row.approval_status in (None, "", "draft")

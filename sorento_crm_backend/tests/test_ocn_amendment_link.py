@@ -118,7 +118,7 @@ def test_e2_an_ocn_of_another_project_is_refused(build):
     from ._sample_request_seed import make_project
 
     b = build
-    elsewhere = make_project(b.db, b.company_id, b.owner, title="ZZT Project Elsewhere")
+    elsewhere = make_project(b.db, b.company_id, b.owner, title="Kestrel Point Lofts")
     theirs = _crm_ocn(b, elsewhere.id)
     with pytest.raises(AppException) as exc:
         _create(b, ocn_id=theirs.id)
@@ -208,7 +208,7 @@ def test_e4_an_amendment_born_ocn_keeps_its_links_through_edit(build):
     created = _create(b)
     row = b.db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
     links = (row.project_id, row.project_sales_order_id, row.purchase_order_id)
-    elsewhere = make_project(b.db, b.company_id, b.owner, title="ZZT Project Elsewhere")
+    elsewhere = make_project(b.db, b.company_id, b.owner, title="Kestrel Point Lofts")
     try:
         svc().update(b.db, row, actor=_actor(b), data={
             "project_id": elsewhere.id, "project_sales_order_id": None, "purchase_order_id": None,

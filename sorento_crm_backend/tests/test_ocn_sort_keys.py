@@ -53,7 +53,8 @@ def _seed(o, column):
         elif column == "change_type_name":
             cols["change_type_id"] = change_type(o.db, f"ZZT Type {letters[i]}", "Low").id
         elif column == "project_title":
-            cols["project_id"] = project(o.db, o.raiser, f"ZZT Project {letters[i]} {uid()[:4]}").id
+            # Titles share no word (the project clash check blocks lookalikes); they sort descending in i.
+            cols["project_id"] = project(o.db, o.raiser, ("Quillmoss Court", "Juniper Wharf", "Bexley Gardens")[i]).id
         elif column == "sales_in_charge_name":
             cols["sales_in_charge_user_id"] = user(o.db, f"Sales {letters[i]}")
         elif column == "risk_level":
