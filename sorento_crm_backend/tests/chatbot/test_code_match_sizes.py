@@ -238,13 +238,17 @@ def _closed_lists(monkeypatch) -> None:
     )
 
 
-def _head_plus_size(value: float, unit: str, head_code: str = FAM) -> dict[str, Any]:
+def _head_and_size(value: float, unit: str, head_code: str = FAM) -> tuple[dict[str, Any], dict[str, Any]]:
     head = {"raw": head_code, "hint": "product", "canonical_code": head_code, "current_message": True, "confident": True}
     size = {
         "raw": f"{value:g}{unit}", "hint": "specification", "canonical_code": None, "spec_key": "size",
         "spec_value": value, "spec_unit": unit, "current_message": True, "confident": True,
     }
-    return stock(head, size)
+    return head, size
+
+
+def _head_plus_size(value: float, unit: str, head_code: str = FAM) -> dict[str, Any]:
+    return stock(*_head_and_size(value, unit, head_code))
 
 
 @pytest.mark.parametrize("who", ["dealer", "staff"])
@@ -347,3 +351,91 @@ def test_ac25b_a_size_key_scoped_to_one_class_is_not_read_for_a_product_of_anoth
     text = c.say(f"{typed} x 1", stock(product(typed, 1)))
     assert a_code in text and "Size: 300 mm" in text, text  # control: the class the key scopes still matches
     assert "Size: 300 mm" not in _entry(text, b_code), f"the other class's product was matched on the key: {text!r}"
+
+
+# --------------------------------------------------------------------------- slice 4 round 3
+
+
+@pytest.mark.parametrize("held", [True, False], ids=["300_held", "300_not_held"])
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac4d_another_code_in_the_same_message_is_answered_beside_a_size_ask(session_factory, monkeypatch, stub_access, who, held):  # noqa: F811
+    other = "ZQX5521"  # in stock, another class, nothing stored, no size relation
+    c = _size_console(
+        session_factory, monkeypatch, stub_access, [FAM, FAM_300], {FAM_300: {"zz_size": 300 if held else 250}},
+        other_class={other: "bm"},
+    )
+    c.outcomes[other] = Stock(on_hand=100)
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    head, size = _head_and_size(300, "mm")
+    text = c.say(f"{other} x 2, {FAM} 300mm", stock(product(other, 2), head, size))
+    if who == "dealer":
+        assert f"{other} x 2: {TICK} Got stock." in text, text
+    else:
+        assert f"*Product Code:* {other}" in text, text
+    assert f"Couldn't find {other}" not in text and f'Couldn\'t find "{other}"' not in text, text
+    assert other not in _option_codes(c), c.stored_question
+    assert not re.search(rf"\d+[.)]\s+{other}", text), f"offered back to itself: {text!r}"
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac4e_a_code_typed_with_spaces_and_a_size_takes_the_same_path(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _size_console(session_factory, monkeypatch, stub_access, [FAM, FAM_300], {FAM_300: {"zz_size": 300}})
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    spaced = "twc8152 sh uf"
+    text = c.say(f"{spaced} 400mm stock", _head_plus_size(400, "mm", spaced))
+    _header(text, who, FAM, "400 mm")
+    assert "None with size" not in text, text
+    assert "Size: 300 mm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
+    assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac4e_a_spaced_code_alone_in_its_family_is_offered_with_size_not_recorded(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _size_console(session_factory, monkeypatch, stub_access, [FAM], {})
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    spaced = "twc8152 sh uf"
+    text = c.say(f"{spaced} 400mm stock", _head_plus_size(400, "mm", spaced))
+    _single_miss_header(text, who, FAM, "400 mm")
+    assert "Size: not recorded" in text, text
+    assert text.count(FAM) >= 2, text
+    assert "How many units of" not in text and "Stock summary" not in text and TICK not in text, text
+
+
+def test_ac26b_a_bare_centimetre_size_still_searches_the_millimetre_dimension_keys(session_factory):  # noqa: F811
+    """No class is known. The registry holds an mm length key (centimetres written as 10 mm through its aliases,
+    `matches_bare_size`) and a cm key scoped to ANOTHER class: "15cm" grounds as 150 mm over the mm dimension
+    keys, as it did before the slice. Adding the cm key beside it is allowed; dropping the mm search is not."""
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head.bare_size import ground_bare
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    db = session_factory()
+    try:
+        db.add_all(
+            [
+                ProductSpecRegistry(
+                    id=str(uuid.uuid4()), spec_key="zz_dim_len", label="Length", data_type="numeric", unit="mm",
+                    unit_aliases={"cm": 10}, synonyms={"_self": ["length"]},
+                ),
+                ProductSpecRegistry(
+                    id=str(uuid.uuid4()), spec_key="zz_cm_other", label="Other", data_type="numeric", unit="cm",
+                    synonyms={"_self": ["other"]}, applies_when={"class": ["bm"]},
+                ),
+            ]
+        )
+        db.flush()
+        db.execute(sql_text("UPDATE product_spec_registry SET matches_bare_size = true WHERE spec_key IN ('zz_dim_len', 'zz_cm_other')"))
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        entity = {"raw": "15cm", "hint": "specification", "spec_key": "size", "spec_value": 15, "spec_unit": "cm"}
+        grounded = ground_bare(db, entity, [entity], None, None)
+    finally:
+        db.close()
+    assert grounded is not None, "a bare 15cm grounded to nothing"
+    assert grounded.value == 150 and str(grounded.unit).casefold() == "mm", grounded
+    assert "zz_dim_len" in (grounded.any_keys or []), grounded
