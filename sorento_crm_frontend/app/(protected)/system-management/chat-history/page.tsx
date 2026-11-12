@@ -28,7 +28,14 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import {
+  formatDateTimeInMalaysia,
+  malaysiaCivilYyyyMmDdFromApi,
+  malaysiaDayEndIso,
+  malaysiaDayStartIso,
+  todayMalaysiaYyyyMmDd,
+} from '@/lib/helpers';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
@@ -43,12 +50,6 @@ import type {
   ChatHistoryGroupBy,
   ChatMessageRow,
 } from './types/chatHistory.types';
-
-function localInput(offsetHours: number): string {
-  const d = new Date(Date.now() - offsetHours * 3600_000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 const GROUP_BY_OPTIONS = [
   { value: 'none', label: 'No grouping' },
@@ -74,8 +75,8 @@ function LatencyCell({ seconds }: { seconds: number | null }) {
 
 export default function ChatHistoryPage() {
   // Default to the last 24h - an unbounded scan of this table is never the intent.
-  const [dateFrom, setDateFrom] = useState(() => localInput(24));
-  const [dateTo, setDateTo] = useState(() => localInput(0));
+  const [dateFrom, setDateFrom] = useState(() => malaysiaCivilYyyyMmDdFromApi(Date.now() - 86_400_000) ?? '');
+  const [dateTo, setDateTo] = useState(() => todayMalaysiaYyyyMmDd());
   const [direction, setDirection] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
   // AC-255. Narrows the LIST to contacts whose chatbot turns failed in this range.
@@ -111,8 +112,8 @@ export default function ChatHistoryPage() {
 
   const range: ChatHistoryFilters = useMemo(
     () => ({
-      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-      date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+      date_from: malaysiaDayStartIso(dateFrom),
+      date_to: malaysiaDayEndIso(dateTo),
       direction: direction || undefined,
       breached_only: breachedOnly || undefined,
     }),
@@ -324,31 +325,19 @@ export default function ChatHistoryPage() {
             activeCount: filtersActive,
             content: (
               <div className="space-y-4 w-72">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label htmlFor="from" className="text-xs">From</Label>
-                    <Input
-                      id="from"
-                      type="datetime-local"
-                      value={dateFrom}
-                      onChange={(e) => {
-                        setDateFrom(e.target.value);
-                        resetPage();
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="to" className="text-xs">To</Label>
-                    <Input
-                      id="to"
-                      type="datetime-local"
-                      value={dateTo}
-                      onChange={(e) => {
-                        setDateTo(e.target.value);
-                        resetPage();
-                      }}
-                    />
-                  </div>
+                <div className="space-y-1">
+                  <Label htmlFor="chat-date-range" className="text-xs">Date range</Label>
+                  <DateRangePicker
+                    id="chat-date-range"
+                    aria-label="Date range"
+                    from={dateFrom}
+                    to={dateTo}
+                    onChange={({ from, to }) => {
+                      setDateFrom(from ?? '');
+                      setDateTo(to ?? '');
+                      resetPage();
+                    }}
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Direction</Label>

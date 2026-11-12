@@ -10,7 +10,7 @@ const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.def
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useSLATrackingDashboardMetrics } from '../hooks/useConversationSLATracking';
-import { formatDate } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshCw } from 'lucide-react';
 
@@ -81,7 +81,7 @@ export default function SLATrackingDashboard() {
     xaxis: {
       categories: metrics.response_resolution_trends.map((t) => {
         const date = new Date(t.date);
-        return formatDate(date);
+        return formatDateInMalaysia(date);
       }),
       axisBorder: { show: false },
       axisTicks: { show: false },

@@ -36,7 +36,7 @@ import {
   useExportPurchaseRequestPdf,
   usePurchaseRequestRevisions,
 } from '../hooks/usePurchaseRequests';
-import { formatDate, formatCurrency } from '@/lib/helpers';
+import { formatDateInMalaysia, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -577,7 +577,7 @@ function StaffPurchaseRequestDetail({
   const expectedPoDisplay =
     request.expected_po_date_text?.trim() ||
     (request.expected_po_date
-      ? formatDate(new Date(request.expected_po_date))
+      ? formatDateInMalaysia(request.expected_po_date)
       : null);
   const sponsorshipTotalDisplay =
     request.total_project_value_text?.trim() ||
@@ -643,7 +643,7 @@ function StaffPurchaseRequestDetail({
           </h2>
           <p className="text-sm text-muted-foreground">
             {request.submitted_at
-              ? formatDate(new Date(request.submitted_at))
+              ? formatDateInMalaysia(request.submitted_at)
               : '-'}{' '}
             · {typeLabel}
           </p>
@@ -1288,7 +1288,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
-                        ? formatDate(new Date(request.submitted_at))
+                        ? formatDateInMalaysia(request.submitted_at)
                         : ' - '}
                     </p>
                   </div>
@@ -1326,7 +1326,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Expected date of delivery</p>
                     <p className="font-medium">
                       {request.expected_delivery_date
-                        ? formatDate(new Date(request.expected_delivery_date))
+                        ? formatDateInMalaysia(request.expected_delivery_date)
                         : ' - '}
                     </p>
                   </div>
@@ -1439,7 +1439,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
-                        ? formatDate(new Date(request.submitted_at))
+                        ? formatDateInMalaysia(request.submitted_at)
                         : ' - '}
                     </p>
                   </div>
@@ -1499,7 +1499,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Date of Delivery</p>
                     <p className="font-medium">
                       {request.expected_delivery_date
-                        ? formatDate(new Date(request.expected_delivery_date))
+                        ? formatDateInMalaysia(request.expected_delivery_date)
                         : ' - '}
                     </p>
                   </div>

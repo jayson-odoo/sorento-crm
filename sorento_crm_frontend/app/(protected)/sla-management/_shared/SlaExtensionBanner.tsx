@@ -3,7 +3,7 @@
 import { CalendarClock } from 'lucide-react';
 
 import { PersonLink } from '@/components/common/PersonLink';
-import { formatDateTime, formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 
 /**
  * Shows the LATEST extension reason of the form's CURRENT (active, unresolved)
@@ -17,7 +17,7 @@ import { formatDateTime, formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/
  *
  * WHO = the assignee when the extension was made, linked to wa.me when resolvable
  * (PersonLink). WHEN = the extend event time (`eventAt`) in Malaysia time. `newDue`
- * is the live resolution deadline and keeps its `formatDateTime` rendering.
+ * is the live resolution deadline and keeps its `formatDateTimeInMalaysia` rendering.
  */
 export function SlaExtensionBanner({
   reason,
@@ -36,7 +36,7 @@ export function SlaExtensionBanner({
 }) {
   if (!reason || !reason.trim()) return null;
   const clean = reason.trim();
-  const until = newDue ? formatDateTime(parseDateTimeAsUTC(newDue)) : null;
+  const until = newDue ? formatDateTimeInMalaysia(parseDateTimeAsUTC(newDue)) : null;
   const when = eventAt ? formatDateTimeInMalaysia(eventAt) : '';
   const assigneeName = assignee?.trim();
   const meta = [typeof tier === 'number' ? `tier ${tier}` : null, when || null]

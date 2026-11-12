@@ -31,7 +31,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useConversationSLATracking } from '../hooks/useConversationSLATracking';
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
-import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
@@ -310,7 +310,7 @@ export default function ConversationSLATrackingList() {
       {
         accessorKey: 'initiated_at',
         header: ({ column }) => <DataGridColumnHeader title="Initiated At" column={column} />,
-        cell: ({ row }) => formatDateTime(parseDateTimeAsUTC(row.original.initiated_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(parseDateTimeAsUTC(row.original.initiated_at)),
         size: 180,
         meta: { headerTitle: 'Initiated At' },
       },
@@ -323,7 +323,7 @@ export default function ConversationSLATrackingList() {
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(o.due_at))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(o.due_at))}
               </div>
               {overdue && (
                 <div className="text-xs text-destructive flex items-center gap-1">
@@ -348,7 +348,7 @@ export default function ConversationSLATrackingList() {
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(dueRes))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(dueRes))}
               </div>
               {overdue && (
                 <div className="text-xs text-destructive flex items-center gap-1">

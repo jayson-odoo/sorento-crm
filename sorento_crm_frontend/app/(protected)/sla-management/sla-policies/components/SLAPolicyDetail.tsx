@@ -8,7 +8,7 @@ import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSLAPolicy } from '../hooks/useSLAPolicies';
-import { formatDate } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
 import SLAPolicyDeleteDialog from './sla-policy-delete-dialog';
 import SLAPolicyTiersTable from './SLAPolicyTiersTable';
@@ -106,11 +106,11 @@ export default function SLAPolicyDetail({ slaPolicyId }: SLAPolicyDetailProps) {
             )}
             <div>
               <p className="text-sm text-muted-foreground">Created At</p>
-              <p className="font-medium">{formatDate(new Date(slaPolicy.created_at))}</p>
+              <p className="font-medium">{formatDateInMalaysia(slaPolicy.created_at)}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Updated At</p>
-              <p className="font-medium">{formatDate(new Date(slaPolicy.updated_at))}</p>
+              <p className="font-medium">{formatDateInMalaysia(slaPolicy.updated_at)}</p>
             </div>
           </div>
         </CardContent>

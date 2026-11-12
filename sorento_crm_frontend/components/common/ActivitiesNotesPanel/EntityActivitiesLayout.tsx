@@ -58,7 +58,7 @@ import type {
   InternalNote,
   PanelTab,
 } from './types';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { localStore } from '@/lib/storage';
 
 const PERSIST_KEY = 'sorento:activities-panel:tab';
@@ -69,8 +69,8 @@ function htmlToText(html: string): string {
   return (doc.body.textContent || '').trim();
 }
 
-function relativeTime(iso: string): string {
-  const d = new Date(iso);
+export function relativeTime(iso: string): string {
+  const d = parseDateTimeAsUTC(iso);
   const diff = (Date.now() - d.getTime()) / 1000;
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;

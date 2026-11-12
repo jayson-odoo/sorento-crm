@@ -26,7 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useEventLogs } from '../hooks/useEventLogs';
 import type { ConversationSLAEventLog } from '../types/eventLog.types';
 
@@ -93,7 +93,7 @@ export default function EventLogList() {
       {
         accessorKey: 'event_at',
         header: ({ column }) => <DataGridColumnHeader title="Event At" column={column} />,
-        cell: ({ row }) => formatDateTime(new Date(row.original.event_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.event_at),
         size: 200,
         meta: { headerTitle: 'Event At' },
       },

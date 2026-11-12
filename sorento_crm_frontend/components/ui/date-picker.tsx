@@ -161,3 +161,24 @@ export function DatePicker({
     </div>
   );
 }
+
+export interface DatePickerFieldProps
+  extends Omit<DatePickerProps, 'value' | 'onChange'> {
+  /** `YYYY-MM-DD` or empty. */
+  value?: string | null;
+  onChange: (value: string | null) => void;
+}
+
+/** `DatePicker` speaking the API's `YYYY-MM-DD` string, so a swapped native date input
+ *  changes no payload. The day is read and written by its own parts: no timezone shifts it. */
+export function DatePickerField({ value, onChange, ...rest }: DatePickerFieldProps) {
+  const date = React.useMemo(() => (value ? parseDateInput(value.slice(0, 10)) : undefined), [value]);
+  return <DatePicker {...rest} value={date} onChange={(next) => onChange(toIsoDay(next))} />;
+}
+
+function toIsoDay(value?: Date): string | null {
+  if (!value) return null;
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${m}-${d}`;
+}

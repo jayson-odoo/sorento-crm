@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
@@ -384,11 +385,10 @@ export function QuotationDocumentHeader({
                   header, the sample, the task) is this same one, and it holds the ISO string
                   the API already speaks, so nothing has to be parsed back out of a Date. */}
               <EditField id="quotation-doc-date" label="Date">
-                <Input
+                <DatePickerField
                   id="quotation-doc-date"
-                  type="date"
-                  value={(document.doc_date ?? '').slice(0, 10)}
-                  onChange={(event) => onChange({ doc_date: event.target.value || null })}
+                  value={(document.doc_date ?? '').slice(0, 10) || null}
+                  onChange={(value) => onChange({ doc_date: value })}
                 />
               </EditField>
             </div>

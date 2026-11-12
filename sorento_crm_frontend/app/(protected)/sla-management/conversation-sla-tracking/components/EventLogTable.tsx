@@ -36,7 +36,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/lib/toast';
 import { useConversationSLAEventLogs, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
-import { formatDateTime, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';
 import { useQuery } from '@tanstack/react-query';
 import { getUserLookup } from '@/services/userSelectService';
@@ -231,13 +231,13 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       {
         accessorKey: 'event_at',
         header: ({ column }) => <DataGridColumnHeader title="Event At" column={column} />,
-        cell: ({ row }) => formatDateTime(parseDateTimeAsUTC(row.original.event_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(parseDateTimeAsUTC(row.original.event_at)),
         size: 200,
       },
       {
         accessorKey: 'from_time',
         header: ({ column }) => <DataGridColumnHeader title="From Time" column={column} />,
-        cell: ({ row }) => row.original.from_time ? formatDateTime(parseDateTimeAsUTC(row.original.from_time)) : '-',
+        cell: ({ row }) => row.original.from_time ? formatDateTimeInMalaysia(parseDateTimeAsUTC(row.original.from_time)) : '-',
         size: 200,
       },
       {
@@ -452,7 +452,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                 <div className="mt-2 text-sm">
                   <strong>Event Type:</strong> {logToDelete.event_type}
                   <br />
-                  <strong>Event At:</strong> {formatDateTime(parseDateTimeAsUTC(logToDelete.event_at))}
+                  <strong>Event At:</strong> {formatDateTimeInMalaysia(parseDateTimeAsUTC(logToDelete.event_at))}
                 </div>
               )}
             </AlertDialogDescription>

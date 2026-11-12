@@ -27,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useFormSLATracking } from '../hooks/useFormSLATracking';
 import type { FormSLATracking } from '../types/formSLATracking.types';
-import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -199,7 +199,7 @@ export default function FormSLATrackingList() {
       {
         accessorKey: 'initiated_at',
         header: ({ column }) => <DataGridColumnHeader title="Initiated At" column={column} />,
-        cell: ({ row }) => formatDateTime(parseDateTimeAsUTC(row.original.initiated_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(parseDateTimeAsUTC(row.original.initiated_at)),
         size: 180,
         meta: { headerTitle: 'Initiated At' },
       },
@@ -212,7 +212,7 @@ export default function FormSLATrackingList() {
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(o.due_at))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(o.due_at))}
               </div>
               {overdue && (
                 <div className="text-xs text-destructive flex items-center gap-1">
@@ -237,7 +237,7 @@ export default function FormSLATrackingList() {
           return (
             <div className="space-y-1">
               <div className={overdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(parseDateTimeAsUTC(dueRes))}
+                {formatDateTimeInMalaysia(parseDateTimeAsUTC(dueRes))}
               </div>
               {overdue && (
                 <div className="text-xs text-destructive flex items-center gap-1">

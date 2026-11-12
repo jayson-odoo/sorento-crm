@@ -392,6 +392,24 @@ export function malaysiaCivilYyyyMmDdFromApi(
   return `${y}-${m}-${d}`;
 }
 
+/** True when `day` is a real YYYY-MM-DD calendar day (31 Feb is not). */
+function isRealIsoDay(day: string | null | undefined): day is string {
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const [y, m, d] = day.split('-').map(Number);
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
+}
+
+/** UTC ISO of 00:00:00.000 on a Malaysia day (UTC+8, no DST); undefined for a non-day. */
+export function malaysiaDayStartIso(day: string | null | undefined): string | undefined {
+  return isRealIsoDay(day) ? new Date(`${day}T00:00:00.000+08:00`).toISOString() : undefined;
+}
+
+/** UTC ISO of 23:59:59.999 on a Malaysia day (UTC+8, no DST); undefined for a non-day. */
+export function malaysiaDayEndIso(day: string | null | undefined): string | undefined {
+  return isRealIsoDay(day) ? new Date(`${day}T23:59:59.999+08:00`).toISOString() : undefined;
+}
+
 /** Today's date in Malaysia as YYYY-MM-DD (for form defaults). */
 export function todayMalaysiaYyyyMmDd(): string {
   return malaysiaCivilYyyyMmDdFromApi(Date.now()) ?? '';

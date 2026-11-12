@@ -19,6 +19,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { DatePickerField } from '@/components/ui/date-picker';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -611,7 +612,11 @@ export function PurchaseRequestDocumentEditCard({
                 render={({ field }) => (
                   <FormItem>
                     <FormControl>
-                      <Input type="date" {...field} value={field.value ?? ''} />
+                      <DatePickerField
+                        value={field.value ?? null}
+                        onChange={(v) => field.onChange(v ?? '')}
+                        ariaLabel="Expected date of delivery"
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -628,7 +633,11 @@ export function PurchaseRequestDocumentEditCard({
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <Input type="date" {...field} value={field.value ?? ''} />
+                          <DatePickerField
+                        value={field.value ?? null}
+                        onChange={(v) => field.onChange(v ?? '')}
+                        ariaLabel="Expected date to receive PO"
+                      />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
