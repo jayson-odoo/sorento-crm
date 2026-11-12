@@ -25,7 +25,7 @@ const COLUMNS: ColumnDef<Row>[] = [{ id: 'name', accessorKey: 'name', header: 'N
 
 function Harness({ total, capped, pageIndex = 0 }: { total: number; capped?: boolean; pageIndex?: number }) {
   const table = useReactTable({
-    data: [{ id: '1', name: 'Alpha' }],
+    data: total === 0 ? [] : [{ id: '1', name: 'Alpha' }],
     columns: COLUMNS,
     getRowId: (r) => r.id,
     manualPagination: true,
@@ -67,5 +67,13 @@ describe('DataGridPagination number format (one thousands format for from, to an
   it('formats all three numbers on a deep capped page: "9,951 - 10,000 of 19,950+"', () => {
     render(<Harness total={19950} capped pageIndex={199} />);
     expect(screen.getByText('9,951 - 10,000 of 19,950+')).toBeInTheDocument();
+  });
+});
+
+describe('DataGridPagination with no rows (INTLOG-SPEED-2 crew pass)', () => {
+  it('reads "0 of 0", never "1 - 0 of 0"', () => {
+    render(<Harness total={0} />);
+    expect(screen.getByText('0 of 0')).toBeInTheDocument();
+    expect(screen.queryByText(/1 - 0 of 0/)).toBeNull();
   });
 });
