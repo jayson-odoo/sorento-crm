@@ -17,3 +17,14 @@ proposal with SRTBT1872-17 x53, SRTWT51012 x53, SRTBT1500-15 x10. Login: superad
   was then normalised server-side to "53 to 40".)
 Not walked in the browser (backend + vitest only): PDF REMARK column, sign page, amendment publish and board Transfer
 to Cancel SO dialogs (same shared dialog component as the one walked above).
+
+## Pass 2 (12 Nov, fix round for crew-pass 878bb236), head 06e7680b, sandbox DB at alembic head
+- pass2-rules-countdown.png: toolbar "Create"; rows have no icon buttons; right-click gives Edit / Delete; Delete ran the
+  countdown and removed the row (a plain right-click opens no dialog).
+- pass2-series-1280.png: "Follows category" and "No" each on one line (16 px label height) in the products table.
+- pass2-override-dialog.png / pass2-proposal-history.png: SO-consumed bathtub line lowered 40 -> 39 in Edit proposal,
+  refused, Override with a reason saved it; the proposal History lists "Non-cancellable override: SRTBT1872-17 40 to
+  39. Reason: Customer pays storage (pass 2)" with name and time.
+- pass2-so-history.png / -375.png: the project SO page has a History tab on the shared AuditTrail (empty for this
+  seeded SO, which was written without an actor).
+- 375 px: SO page 360, rules list 375, series 360 wide: no page-level sideways scroll. Console: no errors.
