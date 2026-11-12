@@ -36,13 +36,14 @@ def run(engine) -> bool:
                 online_index.GOODS_CHAIN_KEY_INDEXES
                 + online_index.BILLING_FROM_DOC_INDEXES
                 + online_index.INTEGRATION_LOG_INDEXES
-                + online_index.INTEGRATION_LOG_SEARCH_INDEXES
                 + embedding_indexes.MIGRATION_INDEXES
                 + embedding_indexes.COVERAGE_INDEXES,
             )
-            # il_0002: statistics on the search expression once its index first turns VALID.
+            # il_0002's index on its own, longer budget (online_index.SEARCH_INDEX_RETRY_BUDGET_MS),
+            # then statistics on the search expression once the index first turns VALID.
+            search_ok = online_index.ensure_search_index_online(bind)
             online_index.analyze_after_search_index_build(bind, search_was_valid)
-            return ok
+            return ok and search_ok
         finally:
             # A session-level SET outlives this block on a pooled engine: the connection goes back
             # to the pool still at 512MB and the next borrower inherits it.

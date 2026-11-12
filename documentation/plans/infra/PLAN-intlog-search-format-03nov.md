@@ -76,3 +76,14 @@ Build: 134 s through the migration, 544 MB; ANALYZE 0.6 s.
 Tests (red first, 15a0fcab8): `tests/test_integration_logs_search_index.py` (EXPLAIN of the route's
 SQL uses the index for a Business ID prefix, a full UUID and a word; ANALYZE after a fresh build
 only), `IntegrationLogsList.pageReset.test.tsx`, the `0 of 0` pager case.
+
+Review round (reviewer subagent, no blockers):
+- The build (130-143 s at 1.3M rows) shares the migration's 180 s budget, and integration_log is
+  never pruned, so from ~1.8M rows the migration build times out. The background retry
+  (`scripts/ensure_goods_chain_indexes.py`) now builds this index on its own 30-minute budget
+  (`online_index.SEARCH_INDEX_RETRY_BUDGET_MS`); nothing waits on it there. Verified: shared budget
+  forced to 20 s, the retry still built the index on 1.3M rows (143 s) and analyzed it.
+- Accepted: a short hex term now also matches rows whose `id` / `correlation_id` contain it (it
+  matched `business_id` that way already); a term with a space can span two neighbouring columns.
+- Not measured: the GIN index's write cost on the log's insert path. Trigger to revisit: insert
+  latency on integration_log shows up in the API call log or n8n callbacks slow down.

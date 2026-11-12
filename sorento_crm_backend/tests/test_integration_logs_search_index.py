@@ -137,15 +137,29 @@ def test_the_migration_builds_it_online_and_the_retry_passes_it(monkeypatch):
     spec.loader.exec_module(module)
     assert module.revision == REVISION and len(REVISION) <= 32
 
-    captured = []
+    built = []
+    monkeypatch.setattr(online_index, "ensure_indexes_online", lambda _bind, _indexes: True)
+    monkeypatch.setattr(online_index, "ensure_search_index_online", lambda _bind: built.append(1) or True)
+    assert retry.run(engine) is True
+    assert built == [1]
 
-    def spy(_bind, indexes):
-        captured.append(tuple(indexes))
+
+def test_the_retry_builds_it_under_its_own_longer_budget(monkeypatch):
+    """integration_log is never pruned: the shared 180 s migration budget (130 s at 1.3M rows)
+    would time out on every backend start once the table grows, and the search would silently
+    fall back to reading the whole table. The retry runs after gunicorn is up, so it gets longer."""
+    seen = {}
+
+    def spy(_bind, table, name, columns, *, budget_ms=None):
+        seen.update(table=table, name=name, budget_ms=budget_ms)
         return True
 
-    monkeypatch.setattr(online_index, "ensure_indexes_online", spy)
-    assert retry.run(engine) is True
-    assert online_index.INTEGRATION_LOG_SEARCH_INDEXES[0] in captured[-1]
+    monkeypatch.setattr(online_index, "index_valid", lambda *_a: None)
+    monkeypatch.setattr(online_index, "ensure_index_online", spy)
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        assert online_index.ensure_search_index_online(conn) is True
+    assert seen["name"] == "ix_integration_log_search_trgm"
+    assert seen["budget_ms"] >= 20 * 60 * 1000
 
 
 def _scratch_with_log_table():

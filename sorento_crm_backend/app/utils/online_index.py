@@ -230,6 +230,32 @@ def _ensure_within_budget(bind, indexes: Sequence[Tuple[str, str, str]]) -> bool
     return all(results)
 
 
+#: The background retry's build budget for the search index. The migration keeps the shared 180 s
+#: (blue/green waits 4 minutes for health); the retry runs after gunicorn is up, so nothing waits on
+#: it. 130 s on 1.3M rows (sandbox, 12 Nov 2026) and integration_log is never pruned: at ~1.8M rows
+#: the shared budget would time out on every start and the search would silently fall back to a
+#: full read (reviewer, INTLOG-SPEED-2).
+SEARCH_INDEX_RETRY_BUDGET_MS = 30 * 60 * 1000
+
+
+def ensure_search_index_online(bind) -> bool:
+    """Build `ix_integration_log_search_trgm` under its own budget (the retry script's call),
+    under the same advisory lock as `ensure_indexes_online`. True when it is VALID afterwards."""
+    if not INTEGRATION_LOG_SEARCH_INDEXES:
+        return True
+    [(table, name, columns)] = INTEGRATION_LOG_SEARCH_INDEXES
+    if bind.execute(sa.text("SELECT to_regclass(:t)"), {"t": table}).scalar() is None:
+        return True  # no integration_log on this search_path: nothing to index
+    if index_valid(bind, table, name) is True:
+        return True
+    if not bind.execute(sa.text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY}).scalar():
+        log.warning("another backend is building the online indexes; leaving the search index to it.")
+        return False
+    try:
+        return ensure_index_online(bind, table, name, columns, budget_ms=SEARCH_INDEX_RETRY_BUDGET_MS)
+    finally:
+        bind.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_KEY})
+
 def search_index_valid(bind):
     """index_valid for `ix_integration_log_search_trgm`, or None when there is no integration_log
     on the search_path (a scratch schema built for another index's test) or the tuple is empty
