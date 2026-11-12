@@ -25,7 +25,7 @@ const COLUMNS: ColumnDef<Row>[] = [{ id: 'name', accessorKey: 'name', header: 'N
 
 function Harness({ total, capped, pageIndex = 0 }: { total: number; capped?: boolean; pageIndex?: number }) {
   const table = useReactTable({
-    data: [{ id: '1', name: 'Alpha' }],
+    data: total === 0 ? [] : [{ id: '1', name: 'Alpha' }],
     columns: COLUMNS,
     getRowId: (r) => r.id,
     manualPagination: true,
@@ -52,8 +52,28 @@ describe('DataGridPagination with a capped total (INTLOG-SPEED)', () => {
     expect(screen.getByText('101 - 150 of 10,100+')).toBeInTheDocument();
   });
 
-  it('an exact total keeps the old label', () => {
+  it('an exact total under a thousand reads plainly', () => {
     render(<Harness total={120} />);
     expect(screen.getByText('1 - 50 of 120')).toBeInTheDocument();
+  });
+});
+
+describe('DataGridPagination number format (one thousands format for from, to and count)', () => {
+  it('formats an exact total: "1 - 50 of 1,304"', () => {
+    render(<Harness total={1304} />);
+    expect(screen.getByText('1 - 50 of 1,304')).toBeInTheDocument();
+  });
+
+  it('formats all three numbers on a deep capped page: "9,951 - 10,000 of 19,950+"', () => {
+    render(<Harness total={19950} capped pageIndex={199} />);
+    expect(screen.getByText('9,951 - 10,000 of 19,950+')).toBeInTheDocument();
+  });
+});
+
+describe('DataGridPagination with no rows (INTLOG-SPEED-2 crew pass)', () => {
+  it('reads "0 of 0", never "1 - 0 of 0"', () => {
+    render(<Harness total={0} />);
+    expect(screen.getByText('0 of 0')).toBeInTheDocument();
+    expect(screen.queryByText(/1 - 0 of 0/)).toBeNull();
   });
 });
