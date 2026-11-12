@@ -227,8 +227,6 @@ class ContactService:
             empty=total == 0
         )
     
-    COST_REVEAL_KEY = "purchase_orders.cost"
-
     def _order_by(self, q, sort_field: str, desc: bool, viewer_id: Optional[str], include_linked_users: bool) -> list:
         """ORDER BY for the list: every grid column sorts on the server (ACCESS-SHEET-FIXES, owner
         27 Oct). A multi-value cell sorts by the first value it shows; an empty cell sorts last both
@@ -237,7 +235,6 @@ class ContactService:
 
         from app.models.access import (
             ContactAccessType,
-            ContactFieldReveal,
             ContactTag,
             RespondContactCustomer,
             respond_contact_access_types as type_pivot,
@@ -312,11 +309,9 @@ class ContactService:
                 else_=first(select(func.min(Brand.brand_name)).where(Brand.id == any_(RespondContact.brand_ids))),
             )
         elif sort_field == "cost_visible":
-            key = exists().where(
-                ContactFieldReveal.respond_contact_id == RespondContact.id,
-                ContactFieldReveal.field_key == self.COST_REVEAL_KEY,
-                ContactFieldReveal.granted.is_(True),
-            )
+            from app.services.cost_access import contact_cost_visible_expr
+
+            key = contact_cost_visible_expr()
         elif sort_field == "tag_settings":
             key = self._tag_settings_rank(q)
         elif sort_field == "linked_user" and include_linked_users:
@@ -358,24 +353,22 @@ class ContactService:
         return case(ranked, value=RespondContact.id, else_=None) if ranked else None
 
     def _cost_visible_ids(self, contact_ids: list[str]) -> set[str]:
-        """The contacts among ``contact_ids`` holding the cost reveal, in one query."""
+        """The contacts among ``contact_ids`` whose linked user holds `products.cost.view`, in one
+        query: the same expression the list filter and sort use."""
         if not contact_ids:
             return set()
-        from app.models.access import ContactFieldReveal
+        from app.services.cost_access import contact_cost_visible_expr
 
         return {
             str(cid)
-            for (cid,) in self.db.query(ContactFieldReveal.respond_contact_id).filter(
-                ContactFieldReveal.respond_contact_id.in_(contact_ids),
-                ContactFieldReveal.field_key == self.COST_REVEAL_KEY,
-                ContactFieldReveal.granted.is_(True),
+            for (cid,) in self.db.query(RespondContact.id).filter(
+                RespondContact.id.in_(contact_ids), contact_cost_visible_expr()
             )
         }
 
     def _apply_access_filters(self, q, f: dict, viewer_id: Optional[str] = None):
         """UAC A2.3-A2.6: each filter narrows; together they AND. `yes|no` for the switches."""
         from app.models.access import (
-            ContactFieldReveal,
             RespondContactCustomer,
             respond_contact_access_types as pivot,
         )
@@ -404,11 +397,9 @@ class ContactService:
             q = q.filter(or_(*clauses))
         cost = yes("cost")
         if cost is not None:
-            holds = exists().where(
-                ContactFieldReveal.respond_contact_id == RespondContact.id,
-                ContactFieldReveal.field_key == self.COST_REVEAL_KEY,
-                ContactFieldReveal.granted.is_(True),
-            )
+            from app.services.cost_access import contact_cost_visible_expr
+
+            holds = contact_cost_visible_expr()
             q = q.filter(holds if cost else ~holds)
         for name, column in (
             ("ai", RespondContact.chatbot_allowed),

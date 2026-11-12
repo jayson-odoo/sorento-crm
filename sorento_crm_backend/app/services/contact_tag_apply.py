@@ -125,7 +125,11 @@ def _w_portal_forms(db: Session, contact, items, actor_id) -> None:
 def _w_field_reveals(db: Session, contact, items, actor_id) -> None:
     from app.models.access import ContactFieldReveal as R
 
+    from app.services.contact_field_reveal_service import RETIRED_CHECKLIST_KEYS
+
     for item in items:
+        if item["key"] in RETIRED_CHECKLIST_KEYS:
+            continue  # the cost key follows the linked user, never a stored row
         want = bool(item["_raw"]["expected"])
         row = db.query(R).filter(R.respond_contact_id == str(contact.id), R.field_key == item["key"]).first()
         if row is None:

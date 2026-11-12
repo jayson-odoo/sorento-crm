@@ -57,6 +57,13 @@ class ContactTagResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("settings", mode="after")
+    @classmethod
+    def _drop_retired_reveals(cls, value: dict) -> dict:
+        from app.services.contact_tag_settings import without_retired_reveals
+
+        return without_retired_reveals(value)
+
 
 class ContactTagsSet(BaseModel):
     tag_ids: list[Annotated[str, Field(max_length=64)]] = Field(default_factory=list, max_length=1000)

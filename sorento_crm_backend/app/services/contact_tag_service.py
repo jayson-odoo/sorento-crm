@@ -144,7 +144,7 @@ class ContactTagService:
                 "description": t.description,
                 "is_active": t.is_active,
                 "sort_order": t.sort_order,
-                "settings": t.settings or {},
+                "settings": cts.without_retired_reveals(t.settings),
                 "contact_count": counts.get(str(t.id), 0),
                 "differs_count": self._differs(cts, t, counts_on),
                 "created_at": t.created_at,

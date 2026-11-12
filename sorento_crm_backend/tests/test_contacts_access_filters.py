@@ -33,6 +33,7 @@ from app.services.contact_access_copy_service import AGENTS_EDIT_PERMISSION
 from app.services.user_service import UserPermissionService
 
 from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+from tests._cost_viewer_seed import cost_viewer
 from tests._pg_fixture import blank_session, unique_code
 
 SORENTO = DEFAULT_COMPANY_ID
@@ -83,10 +84,13 @@ def client(db, state, perms, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: principal
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
     app.dependency_overrides[apply_company_scope] = _override_scope
+    real_check = UserPermissionService.check_user_has_permission
+
+    # Only the actor is faked; a contact's linked user is checked for real (COST-ACCESS-UNIFIED).
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
-        lambda self, uid, slug: slug in perms,
+        lambda self, uid, slug: (slug in perms) if uid == actor.id else real_check(self, uid, slug),
     )
     try:
         yield TestClient(app)
@@ -195,7 +199,8 @@ def seeded(db):
     tag = unique_code("F", alpha=True)
     ta, tb = _type(db, "a"), _type(db, "b")
     cust1, cust2 = _customer(db), _customer(db)
-    c1 = _contact(db, tag, "one", types=[ta], tier="dealer", reveals=[COST], escalation=True, packing=True, stock=True)
+    c1 = _contact(db, tag, "one", types=[ta], tier="dealer", escalation=True, packing=True, stock=True)
+    cost_viewer(db, c1.id)  # COST-ACCESS-UNIFIED: cost follows the linked user's permission, not a stored row
     c2 = _contact(db, tag, "two", types=[tb], tier="office", escalation=False, packing=False, stock=True)
     c3 = _contact(db, tag, "three", types=[ta, tb], tier="end_user", revoked=[COST], escalation=True, packing=False, stock=False)
     c4 = _contact(db, tag, "four", escalation=True, packing=False, stock=True)
@@ -432,3 +437,78 @@ def test_customers_column_hides_codes_of_companies_the_viewer_is_not_granted(cli
 
 def test_n1_malformed_customer_id_is_422_not_500(client):
     assert _list(client, customer_id="not-a-uuid").status_code == 422
+
+
+# ---------------------------------------------------------------- COST-ACCESS-UNIFIED AC-8
+
+
+@pytest.fixture
+def cost_world(db):
+    """Five contacts, one rule: cost_visible = the linked user is active and holds the permission.
+
+    viewer (yes), admin (yes: role bypass), stored (a granted row, no user: no), lacking (a granted
+    row, user without the permission: no), inactive (permission but INACTIVE: no)."""
+    from tests._cost_viewer_seed import COST_PERM, link_user
+
+    tag = unique_code("K", alpha=True)
+    viewer = _contact(db, tag, "viewer")
+    cost_viewer(db, viewer.id)
+    admin = _contact(db, tag, "admin")
+    link_user(db, admin.id, role_slug="admin")
+    stored = _contact(db, tag, "stored", reveals=[COST])
+    lacking = _contact(db, tag, "lacking", reveals=[COST])
+    link_user(db, lacking.id, slugs=(SELLABLE_PERM,))
+    inactive = _contact(db, tag, "inactive")
+    link_user(db, inactive.id, slugs=(COST_PERM,), status="INACTIVE")
+    return dict(tag=tag, viewer=viewer, admin=admin, stored=stored, lacking=lacking, inactive=inactive)
+
+
+SELLABLE_PERM = "inventory.stock.view"
+COST_YES = ("viewer", "admin")
+COST_NO = ("stored", "lacking", "inactive")
+
+
+def test_cost_unified_ac8_cost_visible_equals_the_linked_users_permission(client, cost_world):
+    by_id = {r["id"]: r for r in _list(client, query=cost_world["tag"]).json()["data"]}
+    assert set(by_id) == {cost_world[k].id for k in COST_YES + COST_NO}
+    for name in COST_YES:
+        assert by_id[cost_world[name].id]["cost_visible"] is True, name
+    for name in COST_NO:
+        assert by_id[cost_world[name].id]["cost_visible"] is False, name
+
+
+def test_cost_unified_ac8_filter_cost_yes_and_no_follow_the_user_not_the_stored_row(client, cost_world):
+    tag = cost_world["tag"]
+    assert _ids(_list(client, query=tag, cost="yes")) == {cost_world[k].id for k in COST_YES}
+    assert _ids(_list(client, query=tag, cost="no")) == {cost_world[k].id for k in COST_NO}
+    resp = _list(client, query=tag, cost="yes")
+    assert resp.json()["pagination"]["total"] == len(COST_YES)
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_cost_unified_ac8_sort_on_cost_visible_groups_by_the_same_rule(client, cost_world, direction):
+    tag = cost_world["tag"]
+    resp = client.get(CONTACTS, params={"limit": 1000, "query": tag, "sort": "cost_visible", "dir": direction})
+    assert resp.status_code == 200, resp.text
+    flags = [(r["id"], r["cost_visible"]) for r in resp.json()["data"]]
+    assert len(flags) == 5
+    visible = [f for _id, f in flags]
+    # one run of equal values, then the other: True first on desc, False first on asc
+    expected_first = direction == "desc"
+    assert visible == sorted(visible, reverse=expected_first), visible
+    # the sort key agrees with the row's own cost_visible: every viewer sits in the viewer run
+    assert {i for i, f in flags if f} == {cost_world[k].id for k in COST_YES}
+
+
+def test_cost_unified_ac8_a_sorted_page_two_agrees_with_the_filter(client, cost_world):
+    tag = cost_world["tag"]
+    seen: list[tuple[str, bool]] = []
+    for page in (1, 2, 3):
+        resp = client.get(
+            CONTACTS, params={"limit": 2, "page": page, "query": tag, "sort": "cost_visible", "dir": "desc"}
+        )
+        assert resp.status_code == 200, resp.text
+        seen += [(r["id"], r["cost_visible"]) for r in resp.json()["data"]]
+    assert len({i for i, _f in seen}) == 5, "a page repeated or skipped a row"
+    assert [f for _i, f in seen] == [True, True, False, False, False]
+    assert {i for i, f in seen if f} == _ids(_list(client, query=tag, cost="yes"))

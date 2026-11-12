@@ -100,7 +100,7 @@ _EMBEDDING_SKIP_TOOLS: set[str] = {
     # enabled_tools on the next `_sync_enabled_tools` pass.
     "crm_incoming_stock_grn",
     # SF1 (security review, PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026): purchase
-    # cost is per-contact RESTRICTED (`purchase_orders.cost`), and the gate lives ONLY
+    # cost is RESTRICTED (`purchase_orders.cost`, held by a contact iff its linked active user holds `products.cost.view`), and the gate lives ONLY
     # in the chatbot lane (`lanes/business.run_fetch`'s whole-domain check). RAG
     # tool-search - the in-app assistant's embedding pick, and n8n's cosine pick for
     # anything outside the chatbot's own `DOMAIN_SPEC -> select_tool` path - has NO

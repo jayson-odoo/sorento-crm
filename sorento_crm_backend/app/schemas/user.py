@@ -99,7 +99,7 @@ class RespondContactResponse(RespondContactBase):
     # Read-only: the system setting a blank cap falls back to (detail and chatbot save only).
     chatbot_agent_daily_turns_global: Optional[int] = None
     # CONTACT-BULK-ACCESS (UAC A2.1): `chatbot_profile.tier` flattened, and whether the
-    # contact holds the `purchase_orders.cost` reveal (filled by the list only; null on detail).
+    # contact's linked active user holds `products.cost.view` (filled by the list only; null on detail).
     chatbot_tier: Optional[str] = None
     cost_visible: Optional[bool] = None
     # Identity S3 1.7. List rows: linked_user_id/name only (one batched query per
