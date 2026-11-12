@@ -20,6 +20,9 @@ cleanly (tests/test_ocn_migration.py runs `upgrade()` twice on a blank scratch s
   column copied, linked in the same chain. The policy is the one the purchase request stages use
   (one company today; a second company's PR policy would need its own copy). Only when purchase request rows exist; an existing OCN row is kept.
 - An enabled `portal_revision_configs` row, which arms the revision fence on every move.
+- The form-comment CHECK on `entity_conversation_messages.entity_type` admits the notice (and the
+  sample request, which writes the thread too). The downgrade leaves it widened: narrowing it
+  would fail on any comment already written.
 
 The table has no rows on the 12 Nov production copy, so nothing is backfilled.
 
@@ -397,11 +400,34 @@ def _one_notice_per_amendment(bind, p: str) -> None:
     )
 
 
+#: The form-comment thread's allowed kinds (fcom_0002) plus the two form kinds that write it
+#: without being listed: the sample request and this notice. A superset of every earlier list.
+_CONVERSATION_TYPES = (
+    "'commercial_project','commercial_master_quotation','commercial_project_task',"
+    "'commercial_master_quotation_task','commercial_lead',"
+    "'complaint','stock_inquiry','purchase_request','sponsorship_form',"
+    "'sample_request','order_change_notice'"
+)
+
+
+def _conversation_kinds(bind) -> None:
+    """The Conversation tab writes entity_type = order_change_notice; the CHECK must admit it."""
+    ck = "ck_entity_conversation_messages_entity_type"
+    bind.execute(sa.text(f"ALTER TABLE entity_conversation_messages DROP CONSTRAINT IF EXISTS {ck}"))
+    bind.execute(
+        sa.text(
+            f"ALTER TABLE entity_conversation_messages ADD CONSTRAINT {ck} "
+            f"CHECK (entity_type IN ({_CONVERSATION_TYPES}))"
+        )
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     p = _schema(bind, "projects")
     _tables(bind, p)
     _one_notice_per_amendment(bind, p)
+    _conversation_kinds(bind)
     _project_optional(bind, p)
     _seeds(bind, p)
     _permissions(bind)
