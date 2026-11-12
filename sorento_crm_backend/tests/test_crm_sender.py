@@ -499,3 +499,191 @@ def test_send_never_raises_on_an_unexpected_error(db, factory, turn_id):
         direct_ingress.SEND_HTTP_ERROR,
     }
     assert result != direct_ingress.SEND_OK
+
+
+# --------------------------------------------------------------------------- #
+# Round 2: covers()
+# --------------------------------------------------------------------------- #
+
+
+def _row(mode=None, contacts=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(chatbot_reply_sender_mode=mode, chatbot_reply_sender_contacts=contacts)
+
+
+def test_covers_n8n_mode_covers_nobody():
+    from app.services.chatbot import crm_sender
+
+    assert crm_sender.covers(_row("n8n", "900000123"), CONTACT) is False
+    assert crm_sender.covers(_row(None), CONTACT) is False
+    assert crm_sender.covers(None, CONTACT) is False
+
+
+def test_covers_contacts_mode_only_listed():
+    from app.services.chatbot import crm_sender
+
+    row = _row("contacts", f"111\n{CONTACT},222")
+    assert crm_sender.covers(row, CONTACT) is True
+    assert crm_sender.covers(row, "999") is False
+
+
+def test_covers_all_mode_covers_everyone():
+    from app.services.chatbot import crm_sender
+
+    assert crm_sender.covers(_row("all"), CONTACT) is True
+    assert crm_sender.covers(_row("all"), "anyone") is True
+
+
+# --------------------------------------------------------------------------- #
+# Round 2: unknown outcome (timeout, 408, 5xx) and the conversation lookup
+# --------------------------------------------------------------------------- #
+
+import time  # noqa: E402
+
+_UNKNOWN = [
+    pytest.param(lambda: httpx.ReadTimeout("slow"), id="read_timeout"),
+    pytest.param(lambda: _status_error(408), id="http_408"),
+    pytest.param(lambda: _status_error(500), id="http_500"),
+    pytest.param(lambda: _status_error(503), id="http_503"),
+]
+
+
+def _outgoing_text(text, *, age_seconds=0, traffic="outgoing"):
+    ms = int((time.time() - age_seconds) * 1000)
+    return {
+        "messageId": ms * 1000,
+        "traffic": traffic,
+        "timestamp": ms,
+        "message": {"type": "text", "text": text},
+    }
+
+
+def _outgoing_attachment(url, *, age_seconds=0):
+    ms = int((time.time() - age_seconds) * 1000)
+    return {
+        "messageId": ms * 1000,
+        "traffic": "outgoing",
+        "timestamp": ms,
+        "message": {"type": "attachment", "attachment": {"type": "image", "url": url}},
+    }
+
+
+_NEXT = {"kind": "assign_conversation", "respond_user_id": "9"}
+
+
+@pytest.mark.parametrize("make_exc", _UNKNOWN)
+def test_unknown_text_found_in_conversation_counts_as_sent(db, factory, turn_id, make_exc):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: make_exc()}, lookup=[_outgoing_text("Hello customer")])
+    actions = [{"kind": "send_message", "text": "Hello customer"}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_OK
+    assert fake.names() == ["send_message", "set_conversation_assignee"], "the part must not be sent again"
+    assert len(fake.lookups) == 1
+    rows = _logs(db, turn_id)
+    first = [r for r in rows if _payload(r)["step"] == "0.0"]
+    assert len(first) == 1 and first[0].status == "success"
+    assert _payload(first[0]).get("confirmed_by") == "lookup"
+
+
+def test_unknown_quick_reply_found_in_conversation_counts_as_sent(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow")}, lookup=[_outgoing_text("Pick one")])
+    actions = [{"kind": "send_message", "text": "Pick one", "quick_replies": "A,B"}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_OK
+    assert fake.names() == ["send_quick_reply", "set_conversation_assignee"]
+
+
+def test_unknown_attachment_found_by_url_counts_as_sent(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    url = "https://cdn.test/zzt-file.png"
+    fake = FakeClient({0: _status_error(502)}, lookup=[_outgoing_attachment(url)])
+    actions = [{"kind": "send_attachments", "attachments_src": [{"url": url}]}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_OK
+    assert fake.names() == ["send_attachment", "set_conversation_assignee"]
+
+
+@pytest.mark.parametrize(
+    "lookup",
+    [
+        pytest.param([], id="empty_conversation"),
+        pytest.param([_outgoing_text("something else")], id="other_text"),
+        pytest.param([_outgoing_text("Hello customer", traffic="incoming")], id="incoming_same_text"),
+        pytest.param([_outgoing_text("Hello customer", age_seconds=3600)], id="same_text_long_before"),
+    ],
+)
+def test_unknown_text_not_found_is_refused_so_the_drain_resends(db, factory, turn_id, lookup):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow")}, lookup=lookup)
+    actions = [{"kind": "send_message", "text": "Hello customer"}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_REFUSED
+    assert fake.names() == ["send_message"], "later steps are not attempted"
+    rows = _logs(db, turn_id)
+    assert [r.status for r in rows] == ["failed"]
+
+
+def test_unknown_attachment_not_found_is_refused(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient(
+        {0: httpx.ReadTimeout("slow")}, lookup=[_outgoing_attachment("https://cdn.test/other.png")]
+    )
+    actions = [{"kind": "send_attachments", "attachments_src": [{"url": "https://cdn.test/a.png"}]}]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_REFUSED
+
+
+def test_unknown_text_with_failing_lookup_is_timeout(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow")}, lookup=httpx.ConnectError("down"))
+    actions = [{"kind": "send_message", "text": "Hello customer"}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_TIMEOUT
+    assert fake.names() == ["send_message"]
+    rows = _logs(db, turn_id)
+    assert rows and rows[-1].status == "failed"
+    assert rows[-1].error_message and "Traceback" not in rows[-1].error_message
+
+
+@pytest.mark.parametrize(
+    "action,method",
+    [
+        ({"kind": "assign_conversation", "respond_user_id": "9"}, "set_conversation_assignee"),
+        ({"kind": "update_contact_fields", "fields": {"a": "1"}}, "update_contact"),
+    ],
+)
+def test_unknown_on_idempotent_step_is_resent_once_in_the_run(db, factory, turn_id, action, method):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow")})
+    assert _run(factory, turn_id, [action], fake) == direct_ingress.SEND_OK
+    assert fake.names() == [method, method]
+    assert fake.lookups == []
+
+
+@pytest.mark.parametrize(
+    "action,method",
+    [
+        ({"kind": "assign_conversation", "respond_user_id": "9"}, "set_conversation_assignee"),
+        ({"kind": "update_contact_fields", "fields": {"a": "1"}}, "update_contact"),
+    ],
+)
+def test_unknown_twice_on_idempotent_step_is_refused(db, factory, turn_id, action, method):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow"), 1: httpx.ReadTimeout("slow")})
+    assert _run(factory, turn_id, [action], fake) == direct_ingress.SEND_REFUSED
+    assert fake.names() == [method, method]
+
+
+def test_unknown_on_comment_is_timeout_with_no_lookup(db, factory, turn_id):
+    from app.services.chatbot import direct_ingress
+
+    fake = FakeClient({0: httpx.ReadTimeout("slow")})
+    actions = [{"kind": "add_comment", "text": "note"}, _NEXT]
+    assert _run(factory, turn_id, actions, fake) == direct_ingress.SEND_TIMEOUT
+    assert fake.names() == ["create_comment"]
+    assert fake.lookups == []
