@@ -31,22 +31,33 @@ export function RegisteredProjectSelect({
   'aria-label'?: string;
 }) {
   return (
-    <SearchableSelect
-      id={id}
-      value={value || ''}
-      onChange={(next) => onChange(next || null)}
-      onOptionChange={onOptionChange}
-      selectedOption={selectedOption}
-      fetchOptions={(query, pageIndex) => searchProjectsForLink(query, pageIndex + 1)}
-      paginated
-      pageSize={25}
-      clearable
-      truncateTriggerLabel
-      disabled={disabled}
-      aria-label={ariaLabel}
-      placeholder="Search a project by code or title"
-      emptyMessage={emptyMessage}
-    />
+    // `contain: inline-size`: the control takes its cell's width and never sizes the cell from a
+    // long title, so a form never scrolls sideways and the clear button stays on screen.
+    <div className="w-full min-w-0 [contain:inline-size]">
+      <SearchableSelect
+        id={id}
+        value={value || ''}
+        onChange={(next) => onChange(next || null)}
+        onOptionChange={onOptionChange}
+        selectedOption={selectedOption}
+        fetchOptions={(query, pageIndex) => searchProjectsForLink(query, pageIndex + 1)}
+        paginated
+        pageSize={25}
+        clearable
+        truncateTriggerLabel
+        triggerClassName="w-full"
+        disabled={disabled}
+        aria-label={ariaLabel}
+        placeholder="Search a project by code or title"
+        emptyMessage={emptyMessage}
+        // AC-C3a: one line per project, code + title cut with "...", the full text on hover.
+        renderOption={(opt) => (
+          <span className="min-w-0 flex-1 truncate" title={opt.label}>
+            {opt.label}
+          </span>
+        )}
+      />
+    </div>
   );
 }
 

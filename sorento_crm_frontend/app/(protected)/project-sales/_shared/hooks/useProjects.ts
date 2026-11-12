@@ -1908,11 +1908,14 @@ export function useProjectRelatedRecords(
   });
 }
 
-export function useSponsorshipRollup(projectId: string | undefined) {
+export function useSponsorshipRollup(
+  projectId: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: [SPONSORSHIPS_KEY, 'rollup', projectId],
     queryFn: () => getSponsorshipRollup(projectId as string),
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
   });
 }
 

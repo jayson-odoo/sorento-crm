@@ -231,13 +231,17 @@ def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
     ]
 
 
-def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
+def sponsorship_rollup(db: Session, *, project_id: str, clause: Any = None) -> Dict[str, Any]:
     """AC-F7, per project AND per year.
 
     Per year as well, because "how much have we spent sponsoring this development" and
     "how much did we spend on sponsorship in 2026" are two different management questions
     and only the second one justifies next year's budget.
+
+    `clause` narrows the forms counted (a `view_own` reader: `own_scope.request_clause`, the
+    Related tab's own rule, PROJECT-RELATED-RECORDS AC-B2).
     """
+    extra = [clause] if clause is not None else []
     total, count = (
         db.query(
             func.coalesce(func.sum(PurchaseRequestHeader.total_project_value), 0),
@@ -246,6 +250,7 @@ def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
+            *extra,
         )
         .first()
     ) or (0, 0)
@@ -260,6 +265,7 @@ def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
             PurchaseRequestHeader.request_date.isnot(None),
+            *extra,
         )
         .group_by("year")
         .order_by("year")

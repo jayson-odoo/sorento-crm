@@ -579,13 +579,30 @@ def project_sponsorship_rollup(
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
-    """AC-F7, per project and per year."""
+    """AC-F7, per project and per year. Sponsorship data, so it follows the Related tab's rule for
+    sponsorship forms (`own_scope.request_access`, AC-B2): none -> 403, view_own -> their own
+    forms' totals only, view -> every form."""
     try:
         validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
+        from app.models.procurement import PurchaseRequestHeader
+        from app.services import own_scope
         from app.services import sponsorship_link_service as links
+        from app.services.error_handler import AppException
 
-        return links.sponsorship_rollup(db, project_id=project_id)
+        access = own_scope.request_access(permission_slugs(db, _user["id"]), links.SPONSORSHIP_TYPE)
+        if access is None:
+            raise AppException(
+                status_code=403,
+                message="Permission required: procurement.sponsorship_forms.view",
+                code="FORBIDDEN",
+            )
+        clause = (
+            own_scope.request_clause(PurchaseRequestHeader, own_scope.me(db, _user["id"]))
+            if access == "own"
+            else None
+        )
+        return links.sponsorship_rollup(db, project_id=project_id, clause=clause)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

@@ -161,3 +161,12 @@ Register the related-records route in `app/services/assistant_registry/<projects
   projects list's prev/next); a sort change goes back to page 1.
 - `scripts/project_link_review.py --apply` needs `--actor`.
 
+
+## 11. Fix round 3 (browser pass 1, 13 Nov)
+
+- `GET /projects/{id}/sponsorships/rollup` follows `own_scope.request_access(perms, "sponsorship_form")`: none -> 403,
+  `own` -> `sponsorship_link_service.sponsorship_rollup(..., clause=request_clause(...))` (their own forms), `all` ->
+  every form. The Related panel asks for the spend line only when the API's `types` include `sponsorship_form`.
+- The shared `RegisteredProjectSelect`: one line per option (truncate, full label on hover), the closed control cut
+  to one line inside its cell (`contain: inline-size`), clearable on every form.
+- `useSetRecordProject` refreshes `['audit-logs']` and the Related tabs, so History shows the change at once.

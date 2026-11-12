@@ -184,9 +184,12 @@ export function RelatedRecordsPanel({
     types,
     statuses,
   });
-  const rollup = useSponsorshipRollup(project.id);
-
   const data = related.data;
+  // The spend line is sponsorship data: asked for only when this viewer may see sponsorship
+  // forms (the API's `types`, own_scope.request_access), as the rows are (AC-B2).
+  const seesSponsorships = Boolean(data?.types?.some((t) => t.kind === 'sponsorship_form'));
+  const rollup = useSponsorshipRollup(project.id, { enabled: seesSponsorships });
+
   const rows = React.useMemo(() => data?.data ?? [], [data]);
   const apiTypes = React.useMemo(() => data?.types ?? [], [data]);
   const apiLabels = React.useMemo(
@@ -321,7 +324,8 @@ export function RelatedRecordsPanel({
     [apiLabels],
   );
 
-  const spend = rollup.data && rollup.data.form_count > 0 ? rollup.data : null;
+  const spend =
+    seesSponsorships && rollup.data && rollup.data.form_count > 0 ? rollup.data : null;
 
   return (
     <div className="space-y-3">

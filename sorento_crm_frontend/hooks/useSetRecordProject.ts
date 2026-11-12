@@ -11,7 +11,9 @@ export function useSetRecordProject(kind: RecordProjectKind, recordId: string) {
   return useMutation({
     mutationFn: (projectId: string | null) => setRecordProject(kind, recordId, projectId),
     onSuccess: () => {
-      // The project pages' Related tabs (old and new project) list this record.
+      // The record's History shows the change at once, and the project pages' Related tabs
+      // (old and new project) list this record.
+      void queryClient.invalidateQueries({ queryKey: ['audit-logs'] });
       void queryClient.invalidateQueries({ queryKey: [RELATED_RECORDS_KEY] });
       toast.success('Project saved');
     },
