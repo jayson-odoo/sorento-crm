@@ -16,6 +16,7 @@ from app.models.sales import SalesTarget
 from app.models.sales_agent import SalesAgent
 from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
+from app.utils.date_format import fmt_date_range
 
 TARGETS_VIEW = "sales.targets.view"
 
@@ -414,7 +415,7 @@ def _next_line(owner: str, live: dict) -> str:
     from app.services.sales.team_service import _today
 
     nxt, no = live["next"], live["target_no"]
-    when = f"{live['start']:%d/%m/%Y} to {live['end']:%d/%m/%Y}" + (" (closed)" if live["end"] < _today() else "")
+    when = fmt_date_range(live["start"], live["end"]) + (" (closed)" if live["end"] < _today() else "")
     if nxt is None or nxt["state"] != "next":
         return f"{no} ({owner}, {when}) " + NO_NEXT[nxt["state"] if nxt else "no_tiers"]
     unit = nxt["unit"]

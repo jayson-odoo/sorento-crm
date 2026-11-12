@@ -213,7 +213,7 @@ def test_W15_the_live_period_is_todays_not_the_windows_last_closed_one(targets):
     db, _c, t = targets
     row, out = _one(db, "Agent A", ["01/09/2026", "31/10/2026"])
     assert (row["next_tier"], row["to_next_tier"], row["next_tier_payout"]) == (2, 1000.0, 300.0)
-    assert "01/10/2026 to 31/10/2026" in out["scope_note"] and "top tier" not in out["scope_note"]
+    assert "01/10/2026 - 31/10/2026" in out["scope_note"] and "top tier" not in out["scope_note"]
 
 
 # ------------------------------------------------------------------ the helper on its own (review B1, S1, S3, S4)
@@ -304,4 +304,4 @@ def test_W22_a_window_running_past_today_answers_todays_period_not_a_future_one(
     db, _c, _t = targets
     row, out = _one(db, "Agent A", ["01/10/2026", "30/11/2026"])
     assert (row["next_tier"], row["to_next_tier"]) == (2, 1000.0)
-    assert "01/10/2026 to 31/10/2026" in out["scope_note"] and "01/11/2026" not in out["scope_note"]
+    assert "01/10/2026 - 31/10/2026" in out["scope_note"] and "01/11/2026" not in out["scope_note"]
