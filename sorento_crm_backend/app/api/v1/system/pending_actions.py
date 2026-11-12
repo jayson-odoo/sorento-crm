@@ -286,6 +286,11 @@ def _assert_entity_visible(
         from app.services import dealer_access_screen
 
         dealer_access_screen.own_link(db, str(actor_id or ""), entity_id)  # 404 unless one of the requester's own
+    elif action_key == "user_passkey.delete":
+        from app.services.passkey_service import owner_id
+
+        if owner_id(db, entity_id) is None:
+            raise handle_not_found("Passkey", entity_id)
     elif action_key == "customer_group.delete":
         from app.services.customer_group_service import CustomerGroupService
 
@@ -535,6 +540,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "translation_memory.delete",
     "user.delete",
     "user.unlink_contact",
+    "user_passkey.delete",
     "workflow_definition.delete",
     "workflow_submission.delete",
 })
@@ -704,6 +710,17 @@ def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slu
             )
 
 
+def _is_own_passkey(db: Session, body: "_CreateRequest", real_user_id: str) -> bool:
+    """PASSKEY-LOGIN AC-24: removing your OWN passkey needs no grant; someone else's needs the
+    action's declared `user_management.users.edit`. Ownership is the REAL user's, so an admin
+    viewing as someone else still removes their own passkeys from their own card."""
+    if body.action_key != "user_passkey.delete":
+        return False
+    from app.services.passkey_service import owner_id
+
+    return owner_id(db, body.entity_id) == str(real_user_id)
+
+
 def _window_seconds(row: SlaFormAction) -> Optional[int]:
     """The window as STORED, derived from the two timestamps.
 
@@ -842,7 +859,8 @@ def create_pending_action(
             f"Action {body.action_key!r} does not apply to {body.entity_type!r}."
         )
     actor_id = (current_user or {}).get("id")
-    _assert_permission(db, actor_id, action.key, action.permission)
+    if not _is_own_passkey(db, body, get_actor_user_id(request, current_user)):
+        _assert_permission(db, actor_id, action.key, action.permission)
     _assert_required_payload(body.action_key, body.payload, body.entity_id)
     # A contact belongs to no one company: park (and later commit, under the stored scope)
     # across every company the requester is granted, never more. Restored on exit.

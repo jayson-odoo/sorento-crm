@@ -51,6 +51,10 @@ class UserCompaniesUpdateRequest(BaseModel):
 class DailySummarySubscriptionUpdateRequest(BaseModel):
     subscribed: bool
 
+
+class PasskeyEnabledUpdateRequest(BaseModel):
+    enabled: bool
+
 router = APIRouter()
 
 
@@ -384,6 +388,40 @@ def update_user_daily_sla_summary_subscription(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/{user_id}/passkeys")
+def get_user_passkeys(
+    user_id: str,
+    current_user: dict = Depends(require_permission("user_management.users.view")),
+    db: Session = Depends(get_db),
+):
+    """Admin: that user's passkeys, newest first (PASSKEY-LOGIN AC-30). Removal is the
+    `user_passkey.delete` record action; there is no admin add or rename."""
+    from app.schemas.auth import PasskeyItem
+    from app.services import passkey_service
+
+    validate_uuid_path(user_id, resource="User")
+    UserService(db).get_user(user_id)
+    return [
+        PasskeyItem(**passkey_service.serialize(r)) for r in passkey_service.list_passkeys(db, user_id)
+    ]
+
+
+@router.patch("/{user_id}/passkey-enabled", status_code=status.HTTP_200_OK)
+def update_user_passkey_enabled(
+    user_id: str,
+    body: PasskeyEnabledUpdateRequest,
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
+    db: Session = Depends(get_db),
+):
+    """Admin: the per-user "Passkey sign-in" switch (PASSKEY-LOGIN AC-33). Off keeps the
+    stored passkeys. An admin may set it on their own row."""
+    from app.services import passkey_service
+
+    validate_uuid_path(user_id, resource="User")
+    user = UserService(db).get_user(user_id)
+    return passkey_service.set_enabled(db, user, body.enabled)
 
 
 @router.get("/respond-users", status_code=status.HTTP_200_OK)

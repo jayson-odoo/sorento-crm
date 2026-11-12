@@ -21,6 +21,8 @@ python-dotenv>=1.0.0
 apscheduler>=3.10.4
 httpx>=0.25.0
 bcrypt>=4.1.0
+# Passkey sign-in (PASSKEY-LOGIN): WebAuthn options + response verification.
+webauthn==3.0.1
 openpyxl>=3.1.2
 # Direct dependency since S21: product photographs are downscaled before they are embedded in a
 # quotation PDF or workbook (product_image_service). It already arrived transitively via
