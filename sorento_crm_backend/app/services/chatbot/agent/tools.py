@@ -337,6 +337,7 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
             schema["function"]["description"] += SELF_TOOL_NOTE.format(key=self_key)
         if tool.name in COUNT_TOOLS:
             schema["function"]["description"] += COUNT_NOTE
+            params["properties"][COUNTS_ONLY] = dict(COUNTS_ONLY_SCHEMA)
         out.append(schema)
     return out
 
@@ -791,6 +792,18 @@ COUNT_NOTE = (
     ' project has quotations without another read.'
 )
 NO_OWNER = "No owner"
+COUNTS_ONLY = "counts_only"
+COUNTS_ONLY_SCHEMA = {
+    "type": "boolean",
+    "description": (
+        'true for "how many" or "who owns them": returns the total, count_by_owner and your_projects over every '
+        "matching project, and no rows. Leave it out only when the user asks to see the projects themselves."
+    ),
+}
+
+
+def _truthy(value: Any) -> bool:
+    return value is True or (isinstance(value, str) and value.strip().lower() in ("true", "1", "yes"))
 
 
 #: An empty read of the asker's own rows ("me"): that IS the answer about their own projects (crew pass on 6aef629d:
@@ -1516,6 +1529,10 @@ def _dispatch_inner(
         return ToolResult("error", message=f"{name} is not available right now.")
     schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
     allowed = set((schema.get("properties") or {}).keys()) | set(GUARD_PARAMS) | {VIEW_PARAM}
+    # The agent seam's own mode, never sent to the route (crew live round 3: "who owns them" read every row, and
+    # the answer listed them all).
+    counts_only = name in COUNT_TOOLS and _truthy(args.get(COUNTS_ONLY))
+    args = {k: v for k, v in args.items() if k != COUNTS_ONLY} if name in COUNT_TOOLS else args
     if tool.name == GUIDES:
         # A model-supplied contact or space is dropped, never forwarded.
         args = {k: v for k, v in args.items() if k not in GUARD_PARAMS and k != VIEW_PARAM}
@@ -1574,6 +1591,10 @@ def _dispatch_inner(
         clean[VIEW_PARAM] = "render"
 
     try:
+        if counts_only:
+            from app.schemas.common import MAX_PAGE_LIMIT
+
+            clean = {**{k: v for k, v in clean.items() if k != "page"}, "limit": MAX_PAGE_LIMIT}
         raw = call(name, clean)
     except ToolNotAllowed as exc:
         return ToolResult("denied", message=str(exc) or f"{name} is not allowed for this contact.")
@@ -1604,6 +1625,12 @@ def _dispatch_inner(
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
         return ToolResult("empty", data={"applied_filters": filters}, message=_empty_message(name, filters, self_ids))
+    if counts_only and isinstance(data, dict):
+        pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
+        data = {
+            "total": pagination.get("total", data.get("total")),
+            **{k: data[k] for k in ("count_by_owner", "your_projects", "count_by_owner_note") if k in data},
+        }
     data, more = cap_result(_tidy_read_data(data))
     _collect_uuids(data, seen)
     message = (

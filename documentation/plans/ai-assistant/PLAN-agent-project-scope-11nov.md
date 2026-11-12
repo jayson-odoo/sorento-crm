@@ -88,3 +88,14 @@ answer-scope rule; the live set measures them. Live set: `agent-project-scope-li
 - Crew case A (J, "do any of my projects have quotations?", answered with 8 per-scope totals nobody asked for): the
   list row now carries `quotation_document_count` (one grouped count in `serialize_projects`), so the question is
   answered from the list with no totals read; the tool description says so.
+
+## Fix round after crew live round 3 on ec8fdf63 (12 Nov)
+x1 passed; x3 run 2 of C3.2 failed: the answer listed every project code per owner and called them "11 approved
+projects" (1 of 11 holds approval state approved).
+- "approved": the list tool's own description said "Only APPROVED projects are listed". Reworded in both catalogue
+  copies: a pending or rejected portal registration is left out, which says nothing about a listed project's stage
+  or approval, so never call the listed projects approved.
+- the per-project list: `crm_projects_list` gains an agent-seam `counts_only` mode (`tools.COUNTS_ONLY`). The seam
+  reads every matching row itself (limit = MAX_PAGE_LIMIT, never sent to the route as a param of its own) and hands
+  the model only `total`, `count_by_owner` and `your_projects`, no rows; above the route's limit it says so. The
+  property's description sends "how many" and "who owns them" there.

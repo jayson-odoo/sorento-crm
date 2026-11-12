@@ -406,3 +406,54 @@ def test_e_paging_and_sorting_are_not_filters(world):
                                    {"owner_user_ids": "me", "limit": "100", "page": "1", "sort": "title", "dir": "asc"},
                                    call=rec, catalog=catalog, timeout=5.0)
     assert out.message == agent_tools.NONE_OF_YOURS
+
+
+# --- crew live round 3 on ec8fdf63, x3 run 2, C3.2: every project code listed per owner, called "11 approved" -------
+COUNTS_ONLY = "counts_only"
+
+
+def test_g_counts_only_hands_the_model_counts_and_no_rows(world):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rows = [_row(i, "ZZT Oscar") for i in range(10)] + [_row(10, "ZZT Sally", True)]
+    rec = Recorder(result={"data": rows, "pagination": {"total": 11}})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, {COUNTS_ONLY: True}, call=rec,
+                                   catalog=_list_catalog(), timeout=5.0)
+    assert out.status == "ok", out.message
+    assert "data" not in out.data
+    assert out.data["total"] == 11
+    assert out.data["count_by_owner"] == [{"owner": "ZZT Oscar", "projects": 10}, {"owner": "ZZT Sally", "projects": 1}]
+    assert out.data["your_projects"] == 1
+    sent = rec.calls[0][1]
+    assert COUNTS_ONLY not in sent  # an agent-seam mode, never sent to the route
+    from app.schemas.common import MAX_PAGE_LIMIT
+    assert int(sent["limit"]) == MAX_PAGE_LIMIT  # every matching row is counted
+
+
+def test_g_counts_only_says_when_it_could_not_count_them_all(world):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    rec = Recorder(result={"data": [_row(1, "ZZT Oscar")], "pagination": {"total": 5000}})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, {COUNTS_ONLY: True}, call=rec,
+                                   catalog=_list_catalog(), timeout=5.0)
+    assert "count_by_owner" not in out.data and "data" not in out.data
+    assert "5000" in out.data["count_by_owner_note"]
+
+
+def test_g_the_model_is_offered_counts_only_for_how_many_and_who_owns():
+    from app.services.chatbot.agent import tools as agent_tools
+
+    schema = agent_tools.tool_schemas([agent_tools.REGISTRY[LIST]], _list_catalog())[0]
+    prop = schema["function"]["parameters"]["properties"][COUNTS_ONLY]
+    assert prop["type"] == "boolean" and "no rows" in prop["description"]
+
+
+def test_g_the_list_tool_never_calls_its_projects_approved():
+    from app.services.mcp_catalog_copy import CATALOG
+
+    spec = next(s for s in CATALOG if s.name == LIST)
+    assert "approved projects are listed" not in spec.description.lower()
