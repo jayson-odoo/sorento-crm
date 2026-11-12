@@ -64,7 +64,6 @@ import {
  */
 export const LINE_FLAG_FILTERS: { value: string; label: string; test: (facts: LineFacts) => boolean }[] = [
   { value: 'non_standard', label: 'Non-standard', test: (facts) => facts.nonStandard },
-  { value: 'below_default', label: 'Below default price', test: (facts) => facts.belowDefault },
   { value: 'below_floor', label: 'Below minimum price', test: (facts) => facts.belowFloor },
 ];
 

@@ -33,7 +33,7 @@ REASON_REVOKED = "session_revoked"
 REASON_EXPIRED = "session_expired"
 
 # How a session was minted (identity S0, AC-07). Mirrors `ck_user_sessions_auth_method`.
-AUTH_METHODS = ("password", "phone_otp", "portal_link", "impersonation", "dev_login")
+AUTH_METHODS = ("password", "phone_otp", "portal_link", "impersonation", "dev_login", "passkey")
 
 
 class SessionAuthError(Exception):
@@ -169,6 +169,26 @@ def revoke_all_for_user(
 
     db.query(User).filter(User.id == user_id).update(
         {User.connector_revoked_at: now}, synchronize_session=False
+    )
+    db.commit()
+    return count
+
+
+def revoke_for_auth_method(db: Session, user_id: str, auth_method: str) -> int:
+    """Revoke a user's active sessions minted by one sign-in method, keeping the rest.
+
+    Used by PASSKEY-LOGIN AC-28: removing a passkey, or turning the user's passkey sign-in
+    off, ends their `passkey` sessions while password and phone sessions stay. Returns the
+    count revoked.
+    """
+    count = (
+        db.query(UserSession)
+        .filter(
+            UserSession.user_id == str(user_id),
+            UserSession.auth_method == auth_method,
+            UserSession.revoked_at.is_(None),
+        )
+        .update({UserSession.revoked_at: _utcnow()}, synchronize_session=False)
     )
     db.commit()
     return count

@@ -2635,14 +2635,15 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
 // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026, Q1 + Q3): a banner count filters the lines to the
 // ones it counts and opens the first area holding one; the filter stays on across area tabs.
 describe('QuotationDocumentClient banner count opens the lines it counts', () => {
-  it('filters to Below default price and opens the first area with such a line', async () => {
+  it('filters to Below minimum price and opens the first area with such a line', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         requires_approval: true,
         approval_status_key: 'draft',
         approval_status_id: 's-draft',
         discounted_line_count: 1,
-        approval_reasons: 'One line is priced below the default price',
+        below_floor_line_count: 1,
+        approval_reasons: 'One line is priced below the minimum price',
         scopes: [
           scope(),
           scope({ id: 'q2', scope_label: 'Guard House', sort_order: 2, current_version_id: 'v9' }),
@@ -2665,7 +2666,7 @@ describe('QuotationDocumentClient banner count opens the lines it counts', () =>
         versionId === 'v9'
           ? [
               line({ id: 'g1', version_id: 'v9', product_id: 'p-a', product_code: 'GH-CLEAN', description: 'Clean one' }),
-              line({ id: 'g2', version_id: 'v9', product_id: 'p-b', product_code: 'GH-DISC', description: 'Discounted one', is_discounted: true, sort_order: 1 }),
+              line({ id: 'g2', version_id: 'v9', product_id: 'p-b', product_code: 'GH-DISC', description: 'Discounted one', is_discounted: true, is_below_floor: true, sort_order: 1 }),
             ]
           : [line({ product_id: 'p-wc' })],
       ),
@@ -2699,7 +2700,7 @@ describe('QuotationDocumentClient banner count opens the lines it counts', () =>
     );
     await waitFor(() => expect(screen.queryByText('Clean one')).toBeNull());
     expect(screen.getByRole('tab', { name: /Guard House/ })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getAllByText('Below default price').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Below minimum price').length).toBeGreaterThan(0);
 
     // Q3: back on Townhouse the filter is still on, so its clean line is hidden there too.
     fireEvent.mouseDown(screen.getByRole('tab', { name: /Townhouse/ }));

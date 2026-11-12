@@ -34,6 +34,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: (props: {
+    /** Only the Item cell passes this; these suites are about the other multi-selects. */
+    renderTrigger?: unknown;
     value: string[];
     options?: Option[];
     onChange: (v: string[]) => void;
@@ -41,6 +43,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     id?: string;
     'aria-label'?: string;
   }) => {
+    if (props.renderTrigger) return null;
     captured.multi.push({ ...props, options: props.options ?? [] });
     return (
       <div data-testid="multi" aria-label={props['aria-label']}>
