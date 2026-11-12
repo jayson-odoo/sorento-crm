@@ -93,3 +93,45 @@ See the crew-ask comment on PR #2381. Answers are recorded here once relayed.
 - Mock note 8 (12 Nov 20:00): no Consignment type (supersedes note 4). `inquiry_type` values: `sales_order` | `spare_part_request`.
 - Mock note 9: the approver edits qty, unit price and photos per line before approving; requested values kept on the row (`requested_qty`, `requested_unit_price`) and shown as "was ..."; each change audited (OI History). Photos via `SoLineAttachmentsButton` `canEdit`. Mock v5 + card v4 filed.
 - Card v4 + mock v5 APPROVED (owner 12 Nov 20:14: "Ok go, make sure reuse"): all five recommendations stand. Q1 one record (the request IS an OI of type spare_part_request); Q2 Form SLA stages, one chain, server-side team check; Q3 catalogue products only; Q4 Revise until purchasing acknowledges; Q5 approver edits qty / unit price / photos on existing lines only.
+
+## Build contract (approved design, 12 Nov 20:14; the tester and coder work from this)
+
+### Impact check (measured, 12 Nov)
+- `order_inquiries` / `order_inquiry_rows` carry no CHECK constraints; header `state` String(16) (`project_so.py:845`), row `state` default `raised` (`:1067`), row `so_line_id` already nullable (`:1011`); rows have no `product_id` / `unit_price`.
+- `scm.committed_v` FORM leg (`app/services/scm/demand.py:589-644`) counts rows with verb ORDER/ORDER_BACK and state raised/partly_linked, by `item_code` + `stock_location`, no header join. A spare-part row must never be counted: draft rows use row state `draft`, and approved rows use a NEW verb `REPLENISH` (crew-ask on PR #2381, recommendation (a)), which committed_v and every `IN ('raised','partly_linked')` reader already ignore. No view change.
+- `_refresh_inquiry_states` (`project_order_inquiry_service.py:10340-10363`) rewrites a header's state from its rows: must skip pre-approval headers.
+- `mark_rows` (`:9548`), `acknowledge_rows` (`:9605`), `reject_row` (`:9936`) accept rows by id: must refuse `draft` rows (409).
+- `live_row_clause` (`app/services/oi_row_visibility.py:33`) treats any non-cancelled row as live: must also exclude `draft`.
+- Header list/detail (`order_inquiry_header_service.py:169-172`) and worklist `_base` (`order_inquiry_worklist_service.py:1439-1443`) INNER JOIN the sales order: must become OUTER, so a spare-part inquiry is listed and opens. Worklist `product_id` (`:915`, `:1460`) must fall back to the row's own `product_id`.
+- Schemas `OrderInquiryHeaderOut.project_sales_order_id` (`app/schemas/project_order_inquiry.py:1508`) and `OrderInquiryDetail.project_sales_order_id` (`:390`) become Optional.
+- Purchasing handover email `_record_handover` (`:4747`) and notification `_notify_purchasing` (`:8467`) run at raise; for this type they run once, at final approval, never before.
+- `_LINKABLE_VERBS` (`:404`) gains `REPLENISH` so purchasing links POs to these rows as to ORDER rows.
+
+### Data (one additive migration, re-parented onto main's head)
+- `projects.order_inquiries`: `inquiry_type` varchar(32) NOT NULL DEFAULT 'sales_order' with CHECK IN ('sales_order','spare_part_request'); `project_sales_order_id` DROP NOT NULL with CHECK (`inquiry_type <> 'sales_order' OR project_sales_order_id IS NOT NULL`) (add CHECKs `NOT VALID` then `VALIDATE`); `currency` varchar(3), `requested_by` FK users, `needed_by` date, `default_location` varchar(80), `reason` text, `submitted_at`, `approved_at` timestamp, `approved_by` FK users, `reject_reason` text. All nullable.
+- `projects.order_inquiry_rows`: `product_id` uuid FK products, `description` text, `unit_price` numeric(15,4), `requested_qty` numeric(15,4), `requested_unit_price` numeric(15,4). All nullable.
+- New constants: header states `draft`, `pending_approval`, `rejected` (spare_part_request only); row state `draft`; verb `REPLENISH`; type constants `INQUIRY_TYPE_SALES_ORDER`, `INQUIRY_TYPE_SPARE_PART`.
+
+### Lifecycle (spare_part_request)
+- Create: header `draft`, rows `draft` (verb REPLENISH, ack awaiting), number from the existing `_stamp_inquiry_no` listener (same OI series). Requester = actor.
+- Edit (requester; draft or rejected): replace lines; currency, needed_by, default_location, reason; each line product (catalogue `product_id`, item_code + description from the product), stock_location (defaults to header default_location), qty, unit_price.
+- Submit (requester; draft or rejected): validate (currency set, >= 1 line, each line qty > 0, unit_price >= 0, location set); refuse 422 with a plain message when no active `form_sla_configs` row exists for `spare_part_request`; copy qty/unit_price into requested_qty/requested_unit_price; header `pending_approval`, `submitted_at`; `FormSLAOrchestrator.emit_event('spare_part_request', id, 'submitted', company_id=...)`.
+- Can decide = admin/superadmin, OR (actor is a member of the current stage's team: the active tracker from `active_trackers_for_source` (`form_sla_service.py:515`), its config's `agent_code` + `team_set_code`, membership by `UserService.get_user_tier_in_team_set` (`user_service.py:3162`)) AND actor is not the requester. Everyone else 403.
+- Approver edit (can decide; pending_approval): per line qty (>= 0) and unit_price (>= 0); requested_* never change; each change `log_audit` (old -> new). Photos: add / delete through the row attachment endpoints.
+- Approve (can decide): refuse 422 if every line qty is 0; emit 'approved'; if a further stage is now active, stay `pending_approval` (next team notified by the SLA machinery); if none, FINAL: header `raised`, `approved_at/by`, rows with qty > 0 -> state `raised`, rows with qty 0 -> `cancelled`, then purchasing notification (reuse `_purchasing_user_ids` + the existing order-inquiry notification queue) once, audit row.
+- Reject (can decide; reason required): header `rejected`, `reject_reason`, emit 'rejected'; requester edits and resubmits (back to level 1).
+- Revise (requester; header raised and NO row acknowledged and no links): header back to `draft`, rows back to `draft`, approval fields cleared, void SLA trackers (`void_active_for_source`), audit.
+
+### Visibility and permissions
+- New slug `procurement.spare_part_requests.create` (permission registry) for Create / own drafts.
+- A pre-approval header (draft, pending_approval, rejected) is visible only to its requester, to users who can decide on it, and to admins; never in purchasing's lists, counts, exports or notifications.
+- Approved spare-part inquiries are visible like any OI (`projects.projects.view`). Header list / detail / lines also open to a requester holding the create slug for their own spare-part inquiries.
+- Row attachment endpoints: write = requester while draft/rejected, can-decide while pending_approval; read = whoever can see the inquiry.
+
+### Reuse (no second copy)
+- OI page, header card, tabs: `OrderInquiryDetail.tsx`, `OrderInquiryGeneralTab.tsx`, `OrderInquiryLinesTab.tsx` + `orderInquiryHeaderLinesColumns.tsx`, `OrderInquiryHistory.tsx`; list `OrderInquiryHeadersList.tsx` (+ Type column / multi-select filter).
+- Stock per line: `OrderInquiryStockGrid` as is (needs `product_id`).
+- Attachments: `so_line_attachments.py` takes the entity type + its scope model as parameters (SO line stays the first caller); `SoLineAttachmentsButton.tsx` takes the target (SO line or OI row) instead of a hard-wired SO-line service.
+- Approval: Form SLA stages + `emit_event`; membership `get_user_tier_in_team_set`; `FORM_SLA_TYPES` gains `spare_part_request` with label + link to the OI page.
+- Form: `FormSection` + `openSectionOnce` pattern (`PriceTagRequestForm.tsx:525`), product picker by code and name, `lib/currencies.ts`, `formatMoneyExact` (`money.ts:128`), shared number input, location picker fed by `location_stock_service` / the existing warehouse select.
+- History: `log_audit` on `project_order_inquiries` entity type (same as OI history today).
