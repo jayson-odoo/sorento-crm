@@ -53,3 +53,34 @@ Frontend (v2, owner "ok" on mock v2 `mockups/standard-history-v2-10nov.html`, 10
   only the entries that touched that line's rows, each listing only that line's rows. Rows,
   Decisions and Reserve stay as they are.
 - AC-SH-B13: The 8 pages already on `AuditTrail` (product, PO, complaint, ...) are unchanged.
+
+## Wave 2: Sales Order + Fulfilment Planning (lane STANDARD-HISTORY-W2, DRAFT)
+
+Draft written while the behaviour card (PR #2355) waits on Q1-Q5; each criterion marked (Qn)
+changes with that answer.
+
+Backend:
+
+- AC-SH-W2-1: `GET /sales-orders/{id}/history` returns `{events: [...]}` in the wave 1 shape
+  (`schemas/order_inquiry_history.py`), newest first, read-only, covering every project SO
+  linked to that SO (`ProjectSalesOrder.so_id`).
+- AC-SH-W2-2: Events: plan confirmed / re-issued (revision N, ordered / order back / cancelled
+  lines), plan undone, confirm refused, OI rows confirmed / unconfirmed / cancelled for this SO's
+  OIs, AutoCount update (changed lines), handover email sent, line split changed (Q4), SO status
+  / published (Q5), attachment added to a line.
+- AC-SH-W2-3: Read gate (Q2): staff session with the SO view permission; an X-API-Key principal
+  is refused; unknown id or another company's SO is 404; another company's OI rows are redacted
+  as #2295 does. No IP or raw values in the response.
+- AC-SH-W2-4: Actor: a person's name; a write with no person (scheduler, worker, AutoCount push)
+  reads as the wave 1 "Automatic" label (card Q to confirm wording).
+- AC-SH-W2-5: The shared helpers (`_ROW_AUDIT_TYPES`, raise window, `_iso`) live in one module;
+  the OI history and the planning drawer return exactly what they returned before.
+
+Frontend:
+
+- AC-SH-W2-6: The SO detail page (Q1) has a History tab, last, rendering `AuditTrail` entries
+  mode exactly as the OI tab (AC-SH-B8 to B11): plain sentence, "dd/mm/yyyy, time · by <who>",
+  "Show N lines", search only past 10 entries, empty and error states.
+- AC-SH-W2-7 (Q3): Fulfilment Planning: a board SO's right-click menu has "History", which opens
+  that SO's same list in a centred lightbox; the admin `PlanningHistorySheet` is unchanged.
+- AC-SH-W2-8: No raw ids, UUIDs or codes in place of names; 375 px and 1280 px usable.
