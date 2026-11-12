@@ -13,13 +13,13 @@ Idempotent (`IF NOT EXISTS`) so the shared dev DB, which converges through `crea
 take it in any order.
 
 Revision ID: srv2_0001_ship_to_party
-Revises: pc_0001_product_costing
+Revises: qdp_0001_duplicate_party
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "srv2_0001_ship_to_party"
-down_revision = "pc_0001_product_costing"
+down_revision = "qdp_0001_duplicate_party"
 branch_labels = None
 depends_on = None
 
