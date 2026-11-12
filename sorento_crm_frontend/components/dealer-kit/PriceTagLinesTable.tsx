@@ -10,8 +10,8 @@
  * `app/(auth)/portal/components/PriceTagRequestForm.tsx` unchanged.
  */
 
-import { Fragment, useCallback, useMemo } from 'react';
-import { Eye, Trash2 } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, Eye, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
@@ -20,14 +20,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import {
+  SearchableMultiSelect,
+  type SearchableMultiSelectOption,
+} from '@/components/common/SearchableMultiSelect';
+import { selectTriggerVariants } from '@/components/common/select-trigger-variants';
 import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionLabel, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
 import { defaultOptionFor, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
-import { addPickedItems, type PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
+import { addPickedItems, type PriceTagLineEditor, type TagItemSearchOption } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
@@ -47,9 +51,6 @@ import {
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
-
-/** The most sets, and the most products, one Item search returns (the backend's `limit` max). */
-export const TAG_ITEM_SEARCH_LIMIT = 50;
 
 interface PriceTagLinesTableProps {
   lines: DraftLine[];
@@ -74,14 +75,6 @@ export function PriceTagLinesTable({
 }: PriceTagLinesTableProps) {
   // PRICETAG-LPSP: LP or SP is per line, so the Promotion / Selling price columns appear as
   // soon as any line is SP, not only under a Selling header.
-  const takenItems = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const l of lines) {
-      if (l.product_set_id) map.set(`product_set:${l.product_set_id}`, l.key);
-      if (l.product_id) map.set(`product:${l.product_id}`, l.key);
-    }
-    return map;
-  }, [lines]);
   const anySelling = lines.some((l) => linePriceType(l, priceMode) === 'selling');
   return (
     <div className="overflow-x-auto">
@@ -159,11 +152,9 @@ export function PriceTagLinesTable({
               isMobile={isMobile}
               anySelling={anySelling}
               pricing={editor.linePricing[line.key] ?? null}
-              fetchItemOptions={editor.fetchItemOptions}
+              lines={lines}
+              editor={editor}
               fetchPartOptions={editor.fetchPartOptions}
-              onItemSelect={editor.handleItemSelect}
-              onItemsAdd={(key, opts) => addPickedItems(editor, lines, key, opts)}
-              takenItems={takenItems}
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
@@ -272,12 +263,10 @@ interface LineRowProps {
   /** S1/S2: this line's latest `lookupLinePricing` answer, or null before
    *  the first one lands (no product yet, or still in flight). */
   pricing: LinePricingResult | null;
-  fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
+  /** Every line of the request, and the editor the Item picker adds them through. */
+  lines: DraftLine[];
+  editor: PriceTagLineEditor;
   fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
-  onItemsAdd: (key: string, options: SearchableSelectOption[]) => void;
-  /** `product:<id>` / `product_set:<id>` of every line, to the owning line's key. */
-  takenItems: Map<string, string>;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
@@ -482,17 +471,162 @@ function PartRow({
  */
 const PACKAGE_ROW = 'package:';
 
+/** Tells the picker when its list opens and closes, from inside the trigger (the multi-select only
+ *  hands `open` to `renderTrigger`). */
+function OpenWatcher({ open, onChange }: { open: boolean; onChange: (open: boolean) => void }) {
+  useEffect(() => {
+    onChange(open);
+  }, [open, onChange]);
+  return null;
+}
+
+const HINT = 'shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground';
+
+/**
+ * The Item cell (PRICETAG-MULTI-ADD, round 3): the list-filter `SearchableMultiSelect`, so a click on a
+ * result ticks it and the list stays open. A tick goes through the one pick path at once: the first
+ * fills this row when it is empty, every other lands on a new line below the one added last.
+ * Unticking an item ticked in this session removes its line while that line is untouched. Items on
+ * the request when the list opened are disabled ("Already added").
+ */
+function ItemPicker({
+  line,
+  lines,
+  editor,
+}: {
+  line: DraftLine;
+  lines: DraftLine[];
+  editor: PriceTagLineEditor;
+}) {
+  const requestValues = lines.map(itemValue).filter(Boolean);
+  const onRequestAtOpen = useRef<Set<string>>(new Set());
+  const ticked = useRef<Set<string>>(new Set());
+  const anchor = useRef(line.key);
+  const optionCache = useRef<Map<string, TagItemSearchOption>>(new Map());
+  const latest = useRef({ requestValues, lines });
+  latest.current = { requestValues, lines };
+
+  // The list keeps its last results while closed, so each close remounts it: the next open then
+  // lists only what its own fetch (made against the request as it stands) returns.
+  const [session, setSession] = useState(0);
+  const wasOpen = useRef(false);
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      ticked.current = new Set();
+      if (open) {
+        onRequestAtOpen.current = new Set(latest.current.requestValues);
+        anchor.current = line.key;
+      } else if (wasOpen.current) {
+        setSession((n) => n + 1);
+      }
+      wasOpen.current = open;
+    },
+    [line.key],
+  );
+
+  const fetchOptions = useCallback(
+    async (query: string): Promise<SearchableMultiSelectOption[]> => {
+      const found = await editor.fetchItemOptions(query);
+      return found.map((opt) => {
+        optionCache.current.set(opt.value, opt);
+        return { ...opt, disabled: onRequestAtOpen.current.has(opt.value) };
+      });
+    },
+    [editor],
+  );
+
+  const handleChange = (next: string[]) => {
+    const before = new Set(requestValues);
+    const after = new Set(next);
+    const added = next
+      .filter((v) => !before.has(v))
+      .map((v) => optionCache.current.get(v))
+      .filter((o): o is TagItemSearchOption => !!o);
+    if (added.length > 0) {
+      const hasItem = !!itemValue(line);
+      const target = hasItem ? editor.addLine(anchor.current) : line.key;
+      anchor.current = addPickedItems(editor, lines, target, added);
+      for (const o of added) ticked.current.add(o.value);
+    }
+    for (const v of requestValues) {
+      if (after.has(v) || !ticked.current.has(v)) continue;
+      const owner = lines.find((l) => itemValue(l) === v);
+      // A line the user has since edited keeps its item, and so its tick.
+      if (!owner || owner.quantity !== 1 || owner.remarks) continue;
+      ticked.current.delete(v);
+      if (owner.key === line.key) {
+        editor.handleItemSelect(owner.key, null);
+        continue;
+      }
+      if (anchor.current === owner.key) {
+        const at = lines.findIndex((l) => l.key === owner.key);
+        anchor.current = lines[at - 1]?.key ?? line.key;
+      }
+      editor.removeLine(owner.key);
+    }
+  };
+
+  const itemLabel = itemValue(line) ? line.name || line.code : '';
+
+  return (
+    <div className="flex items-center gap-1">
+      <div className="min-w-0 flex-1">
+        <SearchableMultiSelect
+          key={session}
+          value={requestValues}
+          onChange={handleChange}
+          fetchOptions={fetchOptions}
+          emptyMessage="No sets or products match."
+          renderOption={(opt) => (
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="min-w-0 truncate" title={opt.label}>
+                {opt.label}
+              </span>
+              {opt.badgeText ? <span className={HINT}>{opt.badgeText}</span> : null}
+              {opt.disabled ? <span className={HINT}>Already added</span> : null}
+            </span>
+          )}
+          renderTrigger={({ open }) => (
+            <button
+              type="button"
+              role="combobox"
+              aria-expanded={open}
+              aria-label={`Item for line ${lines.findIndex((l) => l.key === line.key) + 1}`}
+              className={cn(selectTriggerVariants({}), 'w-full')}
+            >
+              <span className={cn('min-w-0 flex-1 truncate text-left', !itemLabel && 'text-muted-foreground')}>
+                {itemLabel || 'Search a set or product...'}
+              </span>
+              <ChevronDown className="size-4 shrink-0 opacity-60" />
+              <OpenWatcher open={open} onChange={onOpenChange} />
+            </button>
+          )}
+        />
+      </div>
+      {itemValue(line) ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Clear item"
+          onClick={() => editor.handleItemSelect(line.key, null)}
+        >
+          <X className="size-4" />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function LineRow({
   line,
   index,
   priceMode,
   isMobile,
   pricing,
-  fetchItemOptions,
+  lines,
+  editor,
   fetchPartOptions,
-  onItemSelect,
-  onItemsAdd,
-  takenItems,
   onUpdate,
   onRemove,
   onChoosePackage,
@@ -538,13 +672,6 @@ function LineRow({
   // TO otherwise. Existing part rows (a reopened draft) still render with
   // their Remove regardless; this only gates the search below.
   const showParts = !isSet && !!line.product_id && line.combos_loaded && line.combos.length > 0;
-  const picked = itemValue(line);
-  const selectedItem: SearchableSelectOption | undefined = picked
-    ? {
-        value: picked,
-        label: line.name || line.code,
-      }
-    : undefined;
 
   // ---- S1/S2: price cells (product lines only - a set is priced whole,
   // no combo/promotion concept applies to it). ----
@@ -693,31 +820,7 @@ function LineRow({
       <tr className="border-t border-border align-top">
         <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
         <td className="px-2 py-2">
-          <SearchableSelect
-            value={picked}
-            onChange={() => {
-              /* the whole option is what carries the kind; see onOptionChange */
-            }}
-            onOptionChange={(option) => onItemSelect(line.key, option)}
-            fetchOptions={fetchItemOptions}
-            selectedOption={selectedItem}
-            // The closed cell reads the line's own item, not a picker option's
-            // "CODE  RM <price>" text when the picked value is among the options.
-            renderTriggerLabel={() => selectedItem?.label}
-            clearable
-            placeholder="Search a set or product..."
-            emptyMessage="No sets or products match."
-            multiAdd={{
-              onAddMany: (opts) => onItemsAdd(line.key, opts),
-              isAdded: (opt) => {
-                const owner = takenItems.get(opt.value);
-                return owner !== undefined && owner !== line.key;
-              },
-              capped: (opts) =>
-                opts.filter((o) => o.value.startsWith('product_set:')).length >= TAG_ITEM_SEARCH_LIMIT ||
-                opts.filter((o) => o.value.startsWith('product:')).length >= TAG_ITEM_SEARCH_LIMIT,
-            }}
-          />
+          <ItemPicker line={line} lines={lines} editor={editor} />
           {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
               the same fields stack here instead of living in their own
               columns - never both at once (isMobile picks exactly one), so

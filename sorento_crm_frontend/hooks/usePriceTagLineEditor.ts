@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import type {
   PriceMode,
   ProductCombosLookup,
@@ -108,7 +109,10 @@ function lineHoldsItem(line: DraftLine, option: SearchableSelectOption): boolean
 
 /** The Item picker's option (AC-13): one line, the code only. The name stays on the option for
  *  `handleItemSelect` and is matched server-side; a set and a discontinued product carry a hint. */
-function itemSearchOption(item: TagItemOption): SearchableSelectOption {
+/** What the Item picker lists: the multi-select's option, plus the code and name a pick reads. */
+export type TagItemSearchOption = SearchableMultiSelectOption & Pick<SearchableSelectOption, 'code' | 'name'>;
+
+function itemSearchOption(item: TagItemOption): TagItemSearchOption {
   return {
     ...tagItemOption(item),
     label: item.code,
@@ -630,7 +634,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   // marker (a set and a product look alike in a dropdown and picking the wrong one
   // produces a different tag); a product gets no word at all.
   const fetchItemOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
+    async (query: string): Promise<TagItemSearchOption[]> => {
       const items = await lookups.lookupTagItems(query);
       return items.map(itemSearchOption);
     },
@@ -735,14 +739,14 @@ export type PriceTagLineEditor = ReturnType<typeof usePriceTagLineEditor>;
  * `handleItemSelect`; each further one goes on a new line directly below the previous, via
  * `addLine` and the same `handleItemSelect`. Sets no line field itself. If the row already holds
  * one of the options it keeps it and the rest go below (`handleItemSelect` would otherwise refuse
- * that option on its new line, from its pre-batch `lines`).
+ * that option on its new line, from its pre-batch `lines`). Returns the key of the last line it filled.
  */
 export function addPickedItems(
   editor: Pick<PriceTagLineEditor, 'addLine' | 'handleItemSelect'>,
   lines: DraftLine[],
   key: string,
   options: SearchableSelectOption[],
-): void {
+): string {
   const fresh: SearchableSelectOption[] = [];
   for (const option of options) {
     if (lines.some((l) => l.key !== key && lineHoldsItem(l, option))) continue;
@@ -763,4 +767,5 @@ export function addPickedItems(
     previous = editor.addLine(previous);
     editor.handleItemSelect(previous, option);
   }
+  return previous;
 }
