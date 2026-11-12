@@ -1224,6 +1224,10 @@ EXPORT_HEADINGS = (
     "PROJECT/CUSTOMER",
     "LOCATION",
     "REMARK",
+    # OI-WHOLE-SO-CANCEL v2 (AC-V2-6): the same STATUS / WAS columns as the Lines export.
+    "STATUS",
+    "WAS QTY",
+    "WAS DATE",
 )
 
 # How an amendment's own verb reads as a change to this line. The delta service spells
@@ -1291,20 +1295,6 @@ def auto_confirm_rows_on_spo_allocations(db: Session, spo_allocation_ids: Sequen
     ]
     if row_ids:
         ProjectOrderInquiryService(db).auto_confirm(row_ids)
-
-
-# OI-WHOLE-SO-CANCEL Q1 (owner pending): True keeps the 30 Oct auto-done at sync for a header
-# cancel / SO delete; False leaves the rows live until CS confirms the board item.
-WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC = True
-
-
-def flag_rows_for_whole_so_cancel(
-    db: Session, core_line_ids: Sequence[Any]
-) -> int:
-    """`flag_rows_for_cancelled_lines` for a header cancel / SO delete, behind the Q1 seam."""
-    if not WHOLE_SO_CANCEL_AUTO_DONE_AT_SYNC:
-        return 0
-    return flag_rows_for_cancelled_lines(db, core_line_ids)
 
 
 def flag_rows_for_cancelled_lines(
@@ -9680,6 +9670,17 @@ class ProjectOrderInquiryService:
                 ),
                 code="order_inquiry_not_acknowledgeable",
             )
+        # AC-V2-3 (owner rule 12 Nov 2026): purchasing cannot take on a row whose SO line
+        # has a change waiting for CS; CS's Confirm clears it first.
+        from app.services.oi_waiting_for_cs import WAITING_FOR_CS_MESSAGE, waiting_row_ids
+
+        waiting = waiting_row_ids(self.db, [row.id for row in rows])
+        if waiting:
+            raise AppException(
+                status_code=409,
+                message=WAITING_FOR_CS_MESSAGE,
+                code="order_inquiry_waiting_for_cs",
+            )
         now = datetime.utcnow()
         transitioned = 0
         confirmed_ids: List[str] = []
@@ -10622,6 +10623,11 @@ class ProjectOrderInquiryService:
                     row.ack_override_by = None
                     row.ack_override_at = None
         done = compute_done(rows, linked, counts, cancelled)
+        # AC-V2-3: the system never acknowledges a row waiting for CS; CS's Confirm clears
+        # it, and the next evaluation then settles it.
+        from app.services.oi_waiting_for_cs import waiting_row_ids
+
+        waiting = waiting_row_ids(self.db, list(rows))
 
         now = datetime.utcnow()
         for row in rows.values():
@@ -10631,6 +10637,8 @@ class ProjectOrderInquiryService:
             if row.ack_override is not None:
                 continue
             if done[row.id]:
+                if row.id in waiting:
+                    continue
                 if row.ack_state != ACK_ACKNOWLEDGED:
                     row.ack_state = ACK_ACKNOWLEDGED
                     row.acknowledged_by = None
@@ -15047,21 +15055,38 @@ class ProjectOrderInquiryService:
         """
         from app.services import order_inquiry_export
 
+        from app.services.order_inquiry_worklist_service import (
+            OrderInquiryWorklistService,
+            change_columns,
+        )
+
         rows = self.all_rows(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
-        records = [
-            {
-                "SO DATE": self._as_naive(row.get("so_date")),
-                "S/O NO": row.get("sales_order_ref") or "",
-                "ITEM CODE": row.get("item_code") or "",
-                "QTY": float(_dec(row.get("qty"))),
-                "DELIVERY DATE": row.get("delivery_date"),
-                "PROJECT/CUSTOMER": row.get("project_customer") or "",
-                # Empty rather than a guess when no allocation is confirmed.
-                "LOCATION": row.get("stock_location") or "",
-                "REMARK": row.get("remark") or "",
-            }
-            for row in self.serialize_rows(rows)
-        ]
+        # AC-V2-6: the screen's own current qty, status and Was figures, off the worklist's
+        # projection (one query for the whole set). A row it does not list keeps this
+        # export's own figures.
+        shown = {
+            str(r["id"]): r
+            for r in OrderInquiryWorklistService(self.db)._all_rows(
+                row_ids=[row.id for row in rows]
+            )
+        }
+        records = []
+        for row in self.serialize_rows(rows):
+            facts = shown.get(str(row.get("id")), {})
+            records.append(
+                {
+                    "SO DATE": self._as_naive(row.get("so_date")),
+                    "S/O NO": row.get("sales_order_ref") or "",
+                    "ITEM CODE": row.get("item_code") or "",
+                    "QTY": float(_dec(facts.get("qty", row.get("qty")))),
+                    "DELIVERY DATE": row.get("delivery_date"),
+                    "PROJECT/CUSTOMER": row.get("project_customer") or "",
+                    # Empty rather than a guess when no allocation is confirmed.
+                    "LOCATION": row.get("stock_location") or "",
+                    "REMARK": row.get("remark") or "",
+                    **change_columns({**row, **facts}),
+                }
+            )
         body = order_inquiry_export.xlsx(records, EXPORT_HEADINGS)
         project = self.db.query(Project).filter(Project.id == project_id).first()
         stem = (project.project_code if project else "project") or "project"

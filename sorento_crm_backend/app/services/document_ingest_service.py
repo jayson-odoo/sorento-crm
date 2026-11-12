@@ -1816,19 +1816,14 @@ class DocumentIngestService(MasterRefResolver):
             ProjectOrderInquiryService(self.db).release_removed_lines(
                 po_line_ids=[r.id for r in removed_lines]
             )
-        if newly_cancelled_so_line_ids:
+        # OI-WHOLE-SO-CANCEL v2 (owner rule 12 Nov): a whole-header cancel flags nothing at sync;
+        # its rows wait for CS's Confirm on the board item.
+        if newly_cancelled_so_line_ids and header.status != CANCELLED:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,
-                flag_rows_for_whole_so_cancel,
             )
 
-            # OI-WHOLE-SO-CANCEL Q1: a header cancel goes through the whole-SO seam.
-            flag = (
-                flag_rows_for_whole_so_cancel
-                if header.status == CANCELLED
-                else flag_rows_for_cancelled_lines
-            )
-            flag(self.db, newly_cancelled_so_line_ids)
+            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)
         # Self-heal (issue #969): the ESB push is the true writer behind almost every
         # unmirrored line measured live (394 of them, all `source_system = autocount`) -
         # `_upsert_lines`'s self-heal never sees this write, it is the manual FE edit's

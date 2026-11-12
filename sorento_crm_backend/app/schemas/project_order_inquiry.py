@@ -604,6 +604,10 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: OI-WHOLE-SO-CANCEL v2: AC-V2-2 / AC-V2-5 / AC-V2-4b.
+    waiting_for_cs: bool = False
+    so_cancelled: bool = False
+    previous_so_line_qty: Optional[str] = None
     #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
     #: read-only expand; empty when not split. Declared because `response_model` drops a
     #: field it has not been told about.

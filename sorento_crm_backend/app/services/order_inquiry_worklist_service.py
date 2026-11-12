@@ -38,7 +38,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, and_, case, cast, func, or_, select, text
+from sqlalchemy import Date, Numeric, String, and_, case, cast, func, or_, select, text
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
@@ -90,7 +90,9 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.services.oi_row_visibility import live_row_clause
+from app.services.oi_waiting_for_cs import pending_change_clause, waiting_for_cs_clause
 from app.services.scm.so_party import so_parties, with_party
 from app.services import order_inquiry_export
 from app.utils.multi_value import multi_text, multi_values
@@ -200,6 +202,9 @@ MONTH_WORD = (
     "DEC",
 )
 
+#: OI-WHOLE-SO-CANCEL v2 (AC-V2-6): the three columns every OI export prints for an SO change.
+CHANGE_HEADINGS = ("STATUS", "WAS QTY", "WAS DATE")
+
 #: OI-EXPORT-SHARED (owner, 3 Nov 2026, answer (b)): one shared exporter, two layouts. This
 #: full layout is the LIST PAGE's own export (Excel and PDF); emails, their attachments and
 #: the per-project download print the eight-column `order_inquiry_export.HEADINGS`. Both are
@@ -250,6 +255,9 @@ EXPORT_HEADINGS = (
     "CHANGE DATE",
     # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
     "REMARK",
+    # OI-WHOLE-SO-CANCEL v2 (AC-V2-6): what the screen's status and Was figures say.
+    # APPENDED, so no existing column moves.
+    *CHANGE_HEADINGS,
 )
 
 #: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they
@@ -634,6 +642,57 @@ _LATEST_ANSWERED_QTY = (
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
+#: OI-WHOLE-SO-CANCEL v2 (AC-V2-2 .. AC-V2-5): the row waits for CS while its SO line has a
+#: pending planning-change row; the SO's current line quantity, the confirmed quantity the
+#: pending change says the line held, and whether the header is cancelled. All off the joins
+#: this query already makes plus two correlated subqueries; nothing per row in Python.
+_WAITING_FOR_CS = waiting_for_cs_clause(OrderInquiryRow)
+_SO_CANCELLED = case((SalesOrder.status == "cancelled", True), else_=False)
+_LIVE_SIBLING = aliased(OrderInquiryRow)
+_LIVE_ROWS_ON_LINE = (
+    select(func.count(_LIVE_SIBLING.id))
+    .where(
+        _LIVE_SIBLING.so_line_id == OrderInquiryRow.so_line_id,
+        live_row_clause(_LIVE_SIBLING),
+        _LIVE_SIBLING.ack_state != ACK_REJECTED,
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_LINE_NOW_QTY = (
+    SalesOrderLine.qty_ordered
+    - func.coalesce(SalesOrderLine.qty_cancelled, 0)
+    - func.coalesce(SalesOrderLine.qty_returned, 0)
+)
+#: The quantity the line held when CS last confirmed it: the newest pending change row's
+#: before quantity (`from_json.qty`).
+_PENDING_FROM_QTY = (
+    select(cast(PlanningChangeRow.from_json["qty"].astext, Numeric))
+    .where(*pending_change_clause(OrderInquiryRow.so_line_id))
+    .order_by(PlanningChangeRow.created_at.desc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+#: AC-V2-4: a waiting row alone on its line reads the line's current quantity, the stored one
+#: becoming "Was". With more than one live row (AC-V2-4b) each keeps its confirmed quantity.
+_SHOWS_LINE_QTY = and_(
+    _WAITING_FOR_CS,
+    SalesOrderLine.id.isnot(None),
+    _LIVE_ROWS_ON_LINE == 1,
+    _LINE_NOW_QTY != OrderInquiryRow.qty,
+)
+_ROW_QTY = case((_SHOWS_LINE_QTY, _LINE_NOW_QTY), else_=OrderInquiryRow.qty)
+_ROW_PREVIOUS_QTY = case(
+    (_SHOWS_LINE_QTY, OrderInquiryRow.qty), else_=OrderInquiryRow.previous_qty
+)
+_PREVIOUS_SO_LINE_QTY = case(
+    (
+        and_(_WAITING_FOR_CS, SalesOrderLine.id.isnot(None), _PENDING_FROM_QTY != _LINE_NOW_QTY),
+        _PENDING_FROM_QTY,
+    ),
+    else_=None,
+)
 #: The row's own quantity, UNCAPPED (owner ruling R1, 23 Sep 2026,
 #: `PLAN-oi-order-rows-uncapped.md`): "this is delivered already and we want to replenish,
 #: I don't mind order back or order, as long as it needs to order". SO421985 raised three
@@ -894,7 +953,7 @@ _COLUMNS = (
     OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
     OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
-    OrderInquiryRow.qty.label("qty"),
+    _ROW_QTY.label("qty"),
     _LINE_DATE.label("delivery_date"),
     OrderInquiryRow.state.label("state"),
     OrderInquiryRow.verb.label("verb"),
@@ -955,7 +1014,7 @@ _COLUMNS = (
     OrderInquiryRow.changed_at.label("changed_at"),
     # The Was half of a CHANGED row's Was / Now table, as figures. The row's note carries
     # the same fact as a sentence for a person; nothing parses that sentence.
-    OrderInquiryRow.previous_qty.label("previous_qty"),
+    _ROW_PREVIOUS_QTY.label("previous_qty"),
     _LINE_WAS.label("previous_delivery_date"),
     OrderInquiryRow.previous_item_code.label("previous_item_code"),
     # AC-RL-16 (`PLAN-oi-replan-received-links.md` S3): reaches the wire so the Qty
@@ -964,6 +1023,9 @@ _COLUMNS = (
     # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): off the SAME `SalesOrderLine`
     # outer join the location fallback already uses - no second join for this.
     _LINE_CANCELLED.label("line_cancelled"),
+    _WAITING_FOR_CS.label("waiting_for_cs"),
+    _SO_CANCELLED.label("so_cancelled"),
+    _PREVIOUS_SO_LINE_QTY.label("previous_so_line_qty"),
     _ACK_USER.name.label("acknowledged_by_name"),
     OrderInquiryRow.ack_override.label("ack_override"),
     OrderInquiryRow.ack_override_at.label("ack_override_at"),
@@ -1082,6 +1144,28 @@ def ack_label(row: Dict[str, Any]) -> str:
         head = f"Rejected by {who}" if who else "Rejected"
         return f"{head}: {reason}" if reason else head
     return "Awaiting"
+
+
+def status_label(row: Dict[str, Any]) -> str:
+    """AC-V2-5: the one status phrase the screen and the exports print for a row. A change
+    waiting for CS wins, then a cancelled SO, then a cancelled line, else the handshake."""
+    if row.get("waiting_for_cs"):
+        return "Waiting for CS"
+    if row.get("so_cancelled"):
+        return "SO cancelled"
+    if row.get("line_cancelled"):
+        return "Line cancelled"
+    return ack_label(row)
+
+
+def change_columns(row: Dict[str, Any]) -> Dict[str, Any]:
+    """STATUS / WAS QTY / WAS DATE for one export record."""
+    was_qty = row.get("previous_qty")
+    return {
+        "STATUS": status_label(row),
+        "WAS QTY": float(_dec(was_qty)) if was_qty not in (None, "") else None,
+        "WAS DATE": row.get("previous_delivery_date"),
+    }
 
 
 def month_label(month: str) -> str:
@@ -1658,7 +1742,9 @@ class OrderInquiryWorklistService:
                 # question - "what has purchasing not confirmed yet" - asked of two
                 # stored states.
                 base = base.filter(
-                    OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES)
+                    OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES),
+                    # AC-V2-3: a row waiting for CS is not purchasing's to confirm yet.
+                    ~_WAITING_FOR_CS,
                 )
             else:
                 # The literal `ack_state`, including `changed`: `_handshake_for_raise`
@@ -1836,6 +1922,7 @@ class OrderInquiryWorklistService:
                 OrderInquiryRow.id.in_(matched),
                 OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                ~_WAITING_FOR_CS,
             )
             .all()
         )
@@ -2735,6 +2822,14 @@ class OrderInquiryWorklistService:
             # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true only when the line
             # itself is cancelled - `closed` and `open` both read false.
             "line_cancelled": bool(row.line_cancelled),
+            # OI-WHOLE-SO-CANCEL v2 (AC-V2-2/4b/5).
+            "waiting_for_cs": bool(row.waiting_for_cs),
+            "so_cancelled": bool(row.so_cancelled),
+            "previous_so_line_qty": (
+                _qty_str(_dec(row.previous_so_line_qty))
+                if row.previous_so_line_qty is not None
+                else None
+            ),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             # AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises`
@@ -3309,8 +3404,15 @@ class OrderInquiryWorklistService:
         # all have to agree, and the filter and the cell both read `ack_state`).
         # The default view's own count (R3), summed from the two states rather than
         # queried again: a second query could disagree with the chip beside it.
-        counts[ACK_TO_CONFIRM] = sum(
-            counts[state] for state in ACK_TO_CONFIRM_STATES
+        # AC-V2-3: a row waiting for CS is not purchasing's to confirm yet, so the chip is
+        # counted over the same filter as the list it opens, not summed from the states.
+        counts[ACK_TO_CONFIRM] = int(
+            self._base(**filters)
+            .filter(OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES), ~_WAITING_FOR_CS)
+            .with_entities(func.count(OrderInquiryRow.id))
+            .order_by(None)
+            .scalar()
+            or 0
         )
         return counts
 
@@ -3996,6 +4098,7 @@ class OrderInquiryWorklistService:
                     else None,
                     "CHANGE DATE": row.get("change_date"),
                     "REMARK": row.get("split_remark") or "",
+                    **change_columns(row),
                     # A split line printed on one QTY / DELIVERY DATE (first row only) keeps
                     # its later rows under that first row.
                     order_inquiry_export.CONTINUED: not own_figures
