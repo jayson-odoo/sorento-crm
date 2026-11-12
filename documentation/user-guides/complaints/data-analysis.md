@@ -55,14 +55,14 @@ A single customer complaint about a delivered product / order, moving through a 
 
 **List filters (Complaints list / `GET /api/v1/complaints-management/complaints/`):**
 * `query` - free-text search across complaint number, DO number, customer name/type, contact person/number, address, product code/type, complaint type, defects, defect description, salesperson, project title, warranty, status, assignee (UI **Search complaints…**).
-* `assigned_to` - one or more staff members (CRM user id; a Respond.io agent id also works). A person matches complaints assigned under either of their ids. The dropdown lists every staff member, including deactivated ones and staff not linked to Respond.io. The sentinel `__unassigned__` matches unassigned complaints and can be ticked together with people (UI **All assignees**).
+* `assigned_to` - one or more staff members (CRM user id; a Respond.io agent id also works). It matches the person the **Assigned To** column shows: the assignee on the complaint's latest open SLA tracker, else the complaint's own `assigned_to`, under either of the person's ids. The dropdown lists every staff member, including deactivated ones and staff not linked to Respond.io. The sentinel `__unassigned__` matches complaints with no assignee by that rule and can be ticked together with people (UI **All assignees**).
 * `status` - exact status code (UI **All statuses**).
 * `contact_id` / `space_id` - scope to one Respond.io contact/space (external callers only).
 * `page`, `limit`, `sort`, `dir`.
 
 The Complaints list remembers each user's sort order and filters (Assigned to, Status, Root cause, Resolution) and restores them when the user comes back to it or reloads the page; page number and search always start fresh. The cross on the filter chip, or **Clear filters**, goes back to the default.
 
-**Sortable columns:** `complaint_date` (default, `asc`), `created_at`, `delivery_order_number`, `customer_name`, `product_code`, `salesperson`, `assigned_to`, `status`. (Unknown sort keys fall back to `complaint_date`; `complaints.id` is always the deterministic tie-breaker.)
+**Sortable columns:** `complaint_date` (default, `asc`), `created_at`, `delivery_order_number`, `customer_name`, `product_code`, `salesperson`, `assigned_to` (by the name the **Assigned To** column shows), `status`. (Unknown sort keys fall back to `complaint_date`; `complaints.id` is always the deterministic tie-breaker.)
 
 **List columns (UI, verbatim):** **DO Number**, **Complaint Number**, **Complaint Date**, **Created at**, **Customer Name**, **Product Code**, **Complaint Type**, **Project Title**, **Salesperson**, **Status**, **Assigned To**, **Attachments**, **Print Count**.
 
