@@ -174,7 +174,7 @@ export type QuotationDocument = {
   below_floor_line_count?: number;
   /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
   discounted_line_count?: number;
-  /** Discounted and not below the floor, per line: the "Below default price" pill's count. */
+  /** Discounted and not below the floor, per line: the banner's "priced below the default price" count. */
   below_default_line_count?: number;
   /** Lines outside the project's series. */
   off_series_line_count?: number;

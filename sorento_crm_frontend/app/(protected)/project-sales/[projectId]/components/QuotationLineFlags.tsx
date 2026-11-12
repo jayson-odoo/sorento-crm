@@ -44,12 +44,6 @@ function isPristine(line: QuotationLine | null, draft: LineDraft): line is Quota
 export interface LineFacts {
   nonStandard: boolean;
   belowFloor: boolean;
-  /**
-   * Below the default price but NOT below the minimum price: the approval banner's "priced below
-   * the default price" clause exactly (`reasons_text`, discounted minus below floor). A line below
-   * the minimum price carries the Below minimum price pill and the banner's other clause instead.
-   */
-  belowDefault: boolean;
   /** NON-CANCELLABLE-ITEMS F1: the badge under the description, by the same rule as the rest. */
   nonCancellable: boolean;
 }
@@ -70,27 +64,24 @@ export function lineFacts(
   if (isPristine(line, draft)) return storedLineFacts(line);
   const belowFloor = Boolean(verdict?.is_below_floor);
   const nonStandard = linked && Boolean(verdict?.is_non_standard);
-  const discounted = linked && Boolean(verdict?.is_discounted);
   const nonCancellable = linked && Boolean(verdict?.is_non_cancellable);
-  return { nonStandard, belowFloor, belowDefault: discounted && !belowFloor, nonCancellable };
+  return { nonStandard, belowFloor, nonCancellable };
 }
 
-/** A saved line's facts, off its stored flags: the ones the approval banner counts. */
+/** A heading, or a line with nothing to judge: no flag of any kind. */
 const NO_FACTS: LineFacts = {
   nonStandard: false,
   belowFloor: false,
-  belowDefault: false,
   nonCancellable: false,
 };
 
+/** A saved line's facts, off its stored flags: the ones the approval banner counts. */
 export function storedLineFacts(line: QuotationLine): LineFacts {
   if (line.is_section) return NO_FACTS;
   const linked = Boolean(line.product_id || line.product_set_id);
-  const belowFloor = Boolean(line.is_below_floor);
   return {
     nonStandard: linked && Boolean(line.is_non_standard),
-    belowFloor,
-    belowDefault: linked && Boolean(line.is_discounted) && !belowFloor,
+    belowFloor: Boolean(line.is_below_floor),
     nonCancellable: linked && Boolean(line.is_non_cancellable),
   };
 }
@@ -100,8 +91,8 @@ export function storedLineFacts(line: QuotationLine): LineFacts {
  *
  * **Non-standard** means the linked product or set is outside the series (the server's). **Minimum price** is the server's too: while the
  * draft matches the saved row the saved verdicts show, and the moment it diverges the server is
- * asked (debounced, via `useLineVerdict`) with the same functions the save runs. **Below default
- * price** is judged the same way, by the save's default-price rule.
+ * asked (debounced, via `useLineVerdict`) with the same functions the save runs. There is no
+ * "Below default price" pill (owner, 12 Nov 2026: the minimum price pill is enough).
  *
  * Two cells read it (owner meeting, 29 Oct): Non-standard stays in the Product cell, the floor
  * sits under the price in the Rate cell and reads "Below minimum price". Both ask the same query
@@ -186,7 +177,7 @@ export function useLinesFacts(
   }, [lines, verdicts, moved]);
 }
 
-/** The Product cell's flags: Non-standard and Below default price, each once. */
+/** The Product cell's flag: Non-standard. */
 export function LineFlags({
   quotationId,
   seriesId,
@@ -203,42 +194,21 @@ export function LineFlags({
   line: QuotationLine | null;
   draft: LineDraft;
 }) {
-  const { nonStandard, belowDefault } = useLineFacts(
-    quotationId,
-    seriesId,
-    line,
-    draft,
-    savedSeriesId,
-  );
-  if (!nonStandard && !belowDefault) return null;
+  const { nonStandard } = useLineFacts(quotationId, seriesId, line, draft, savedSeriesId);
+  if (!nonStandard) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {nonStandard && (
-        <Badge
-          variant="secondary"
-          // Wraps in the narrow Product column instead of spilling into the next cell, as the
-          // Below minimum price pill does.
-          className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
-          title="Outside the series this scope is quoted from"
-        >
-          <TriangleAlert className="size-3" aria-hidden />
-          Non-standard
-        </Badge>
-      )}
-      {/* The approval banner's own words, so the pill and the banner name one fact. */}
-      {belowDefault && (
-        <Badge
-          variant="secondary"
-          // Wraps in the narrow Product column instead of spilling into the next cell, as the
-          // Below minimum price pill does.
-          className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
-          title="Priced below the default price: this quotation needs a manager's approval"
-        >
-          <TriangleAlert className="size-3" aria-hidden />
-          Below default price
-        </Badge>
-      )}
+      <Badge
+        variant="secondary"
+        // Wraps in the narrow Product column instead of spilling into the next cell, as the
+        // Below minimum price pill does.
+        className="h-auto max-w-full gap-1 whitespace-normal py-0.5 text-start text-2xs leading-tight"
+        title="Outside the series this scope is quoted from"
+      >
+        <TriangleAlert className="size-3" aria-hidden />
+        Non-standard
+      </Badge>
     </div>
   );
 }

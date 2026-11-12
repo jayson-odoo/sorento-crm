@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from app.utils.date_format import fmt_datetime
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Optional, Tuple
 
