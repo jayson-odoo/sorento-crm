@@ -284,15 +284,27 @@ def save_columns(db: Session, run: ImportJob, *, sheets: list[str], columns: dic
             raise AppException(422, "A ticked sheet is not in this file.", code="project_import_sheet_unknown")
         if real not in picked:
             picked.append(real)
-    clean: dict[str, str] = {}
+    # A field not sent keeps the heading it has (auto-matched at upload, or chosen before); a
+    # sent heading overrides it, and a sent "ignore" leaves the field with no column. Only a
+    # field with neither is missing. `{"ignore": heading}` marks a heading as nothing.
+    clean: dict[str, str] = dict(meta.get("columns") or {})
     for key, header in (columns or {}).items():
         if key not in reader.FIELDS and key != IGNORE_FIELD:
             raise AppException(422, f"Unknown field: {key}.", code="project_import_field_unknown")
         if header is None or not str(header).strip():
             continue
-        clean[key] = str(header)
-        _save_alias(db, key, str(header))
-    chosen = {normalize_header(h): f for f, h in clean.items()}
+        header = str(header)
+        if key == IGNORE_FIELD:
+            clean = {f: h for f, h in clean.items()
+                     if normalize_header(h) != normalize_header(header)}
+            _save_alias(db, IGNORE_FIELD, header)
+        elif header == IGNORE_FIELD:
+            clean[key] = IGNORE_FIELD
+        else:
+            clean[key] = header
+            _save_alias(db, key, header)
+    clean.pop(IGNORE_FIELD, None)
+    chosen = {normalize_header(h): f for f, h in clean.items() if h != IGNORE_FIELD}
     for sheet in probe:
         for col in sheet.get("columns") or []:
             col["field"] = chosen.get(normalize_header(col["header"]), col.get("field"))
@@ -303,7 +315,7 @@ def save_columns(db: Session, run: ImportJob, *, sheets: list[str], columns: dic
 
 def _missing_required(run: ImportJob) -> list[str]:
     columns = _meta(run).get("columns") or {}
-    return [f for f in reader.REQUIRED_FIELDS if not columns.get(f)]
+    return [f for f in reader.REQUIRED_FIELDS if columns.get(f) in (None, "", IGNORE_FIELD)]
 
 
 def _assert_columns(run: ImportJob) -> None:

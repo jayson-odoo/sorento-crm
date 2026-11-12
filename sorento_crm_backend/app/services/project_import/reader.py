@@ -290,7 +290,7 @@ def read_rows(content: bytes, *, sheets: list[str], columns: dict[str, str]) -> 
     wanted = {str(s).strip() for s in sheets}
     keys = {
         f: normalize_header(h) for f, h in (columns or {}).items()
-        if f in FIELDS and h and normalize_header(h)
+        if f in FIELDS and h and h != IGNORE_FIELD and normalize_header(h)
     }
     result = ReadResult()
     for name, rows in _sheets(content):

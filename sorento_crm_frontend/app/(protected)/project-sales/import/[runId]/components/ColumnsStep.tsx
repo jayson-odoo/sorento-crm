@@ -62,12 +62,17 @@ export function ColumnsStep({ run }: { run: ProjectImportRun }) {
   const missing = unresolvedRequiredFields(probe, picks);
   const labelOf = (field: string) => FIELD_LABELS.find((f) => f.field === field)?.label ?? field;
 
+  // A field the server holds a heading for keeps it unless sent (round 4), so a field the
+  // person took away (its column set to Ignore) is sent as "ignore"; every pick is sent as is.
+  // Pressing Next on the auto-match sends the same headings back.
   const save = () => {
     const chosen: Record<string, string> = {};
     for (const pick of picks) {
-      if (pick.field) chosen[pick.field] = pick.header;
+      if (pick.field && pick.field !== IGNORE_FIELD) chosen[pick.field] = pick.header;
     }
-    if (chosen[IGNORE_FIELD] === undefined) delete chosen[IGNORE_FIELD];
+    for (const field of Object.keys(run.columns ?? {})) {
+      if (!(field in chosen)) chosen[field] = IGNORE_FIELD;
+    }
     columns.mutate({
       sheets: run.sheets.filter((s) => s.ticked).map((s) => s.name),
       columns: chosen,
