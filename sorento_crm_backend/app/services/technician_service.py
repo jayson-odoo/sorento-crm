@@ -52,14 +52,18 @@ def list_technicians(
     query: Optional[str],
     sort: Optional[str],
     direction: str,
-    is_active: Optional[bool],
+    employment_types: Optional[list] = None,
+    active_values: Optional[list] = None,
 ) -> Dict[str, Any]:
     q = db.query(Technician)
     if query and query.strip():
         like = f"%{query.strip()}%"
         q = q.filter(or_(Technician.name.ilike(like), Technician.phone.ilike(like)))
-    if is_active is not None:
-        q = q.filter(Technician.is_active.is_(is_active))
+    if employment_types:
+        q = q.filter(Technician.employment_type.in_(employment_types))
+    flags = {v.strip().lower() == "true" for v in (active_values or []) if v.strip().lower() in ("true", "false")}
+    if flags:
+        q = q.filter(Technician.is_active.in_(flags))
     total = q.count()
     column = SORTS.get(sort or "", Technician.name)
     order = desc(column) if (direction or "asc").lower() == "desc" else asc(column)

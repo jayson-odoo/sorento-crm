@@ -35,7 +35,7 @@ export default function ConfirmDateDialog({
   const [date, setDate] = useState<Date | undefined>(undefined);
   const [time, setTime] = useState(formatTimeAmPm(10, 0));
   const [agreedBy, setAgreedBy] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ field: 'when' | 'agreed'; message: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -49,9 +49,9 @@ export default function ConfirmDateDialog({
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const parsed = parseTimeText(time);
-    if (!date) return setError('Pick the date the customer agreed to.');
-    if (!parsed) return setError('Enter the time, for example 10:00 am.');
-    if (!agreedBy.trim()) return setError('Enter who agreed by name.');
+    if (!date) return setError({ field: 'when', message: 'Pick the date the customer agreed to.' });
+    if (!parsed) return setError({ field: 'when', message: 'Enter the time, for example 10:00 am.' });
+    if (!agreedBy.trim()) return setError({ field: 'agreed', message: 'Enter who agreed by name.' });
     setError(null);
     onSubmit({
       scheduled_from: mytIso(date, parsed.hour, parsed.minute),
@@ -83,14 +83,11 @@ export default function ConfirmDateDialog({
               />
             </div>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="confirm-agreed-by">Agreed by</Label>
-            <Input
-              id="confirm-agreed-by"
-              value={agreedBy}
-              onChange={(e) => setAgreedBy(e.target.value)}
-            />
-          </div>
+          {error?.field === 'when' && (
+            <p role="alert" className="text-sm text-destructive">
+              {error.message}
+            </p>
+          )}
           {/* Always occupies its line: a preview that appears on blur would push the button down
               between mouse-down and mouse-up, and the first click on Confirm would be lost. */}
           <p data-testid="date-preview" className="min-h-5 text-sm text-muted-foreground">
@@ -98,11 +95,19 @@ export default function ConfirmDateDialog({
               ? formatDateTimeInMalaysia(mytIso(date, parseTimeText(time)!.hour, parseTimeText(time)!.minute))
               : ''}
           </p>
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
+          <div className="space-y-1">
+            <Label htmlFor="confirm-agreed-by">Agreed by</Label>
+            <Input
+              id="confirm-agreed-by"
+              value={agreedBy}
+              onChange={(e) => setAgreedBy(e.target.value)}
+            />
+            {error?.field === 'agreed' && (
+              <p role="alert" className="text-sm text-destructive">
+                {error.message}
+              </p>
+            )}
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

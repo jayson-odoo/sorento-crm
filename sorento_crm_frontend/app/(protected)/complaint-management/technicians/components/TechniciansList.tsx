@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import {
   ColumnDef,
@@ -28,6 +28,11 @@ import {
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { Label } from '@/components/ui/label';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { listUrlSearch } from '../../service-jobs/lib/listUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useTechnicianMutations, useTechnicians } from '../hooks/useTechnicians';
@@ -49,18 +54,48 @@ export default function TechniciansList() {
     setValue: setSearchInput,
     debouncedValue: searchQuery,
     isSettling: searchSettling,
+    reset: resetSearchQuery,
   } = useDebouncedSearch();
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting.length ? state.sorting : [{ id: 'name', desc: false }]);
+    resetSearchQuery(state.searchQuery);
+    setTypeFilter(splitMulti(state.filters.employment_type));
+    setStatusFilter(splitMulti(state.filters.is_active));
+  });
   const [form, setForm] = useState<{ open: boolean; technician: Technician | null }>({
     open: false,
     technician: null,
   });
-  useResetPageOnFilterChange(setPagination, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchQuery, typeFilter.join(','), statusFilter.join(',')]);
+  // All list state lives in the address, so Back restores it.
+  useEffect(() => {
+    const next = listUrlSearch(window.location.search, {
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+      filters: {
+        employment_type: typeFilter.length ? joinMulti(typeFilter) : undefined,
+        is_active: statusFilter.length ? joinMulti(statusFilter) : undefined,
+      },
+    });
+    if (next !== window.location.search.replace(/^\?/, '')) {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}?${next}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, typeFilter.join(','), statusFilter.join(',')]);
+  const filtersActiveCount = (typeFilter.length ? 1 : 0) + (statusFilter.length ? 1 : 0);
 
   const { data, isLoading, isPlaceholderData, isFetching, refetch, error } = useTechnicians({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    employment_type: typeFilter,
+    is_active: statusFilter,
   });
   const { create, update } = useTechnicianMutations();
   const remove = useDeferredRowAction({
@@ -183,6 +218,43 @@ export default function TechniciansList() {
                   className="w-64"
                 />
               }
+              filters={{
+                kind: 'custom',
+                active: filtersActiveCount > 0,
+                activeCount: filtersActiveCount,
+                content: (
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Type</Label>
+                      <SearchableMultiSelect
+                        value={typeFilter}
+                        onChange={setTypeFilter}
+                        options={[
+                          { value: 'employee', label: 'Employee' },
+                          { value: 'contractor', label: 'Contractor' },
+                        ]}
+                        placeholder="All types"
+                        triggerClassName="mt-1"
+                        clearable
+                      />
+                    </div>
+                    <div>
+                      <Label>Status</Label>
+                      <SearchableMultiSelect
+                        value={statusFilter}
+                        onChange={setStatusFilter}
+                        options={[
+                          { value: 'true', label: 'Active' },
+                          { value: 'false', label: 'Inactive' },
+                        ]}
+                        placeholder="All statuses"
+                        triggerClassName="mt-1"
+                        clearable
+                      />
+                    </div>
+                  </div>
+                ),
+              }}
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
               primaryAction={

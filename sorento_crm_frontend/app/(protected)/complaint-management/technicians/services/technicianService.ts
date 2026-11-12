@@ -5,10 +5,18 @@ import type { Technician, TechnicianFormValues } from '../types/technician.types
 
 const BASE = '/api/v1/complaints-management/technicians';
 
+export type TechniciansListParams = DataGridApiFetchParams & {
+  employment_type?: string[];
+  is_active?: string[];
+};
+
 export async function getTechnicians(
-  params: DataGridApiFetchParams & { is_active?: boolean },
+  params: TechniciansListParams,
 ): Promise<DataGridApiResponse<Technician>> {
-  const qs = buildDataGridParams(params, { is_active: params.is_active });
+  const qs = buildDataGridParams(params, {
+    employment_type: params.employment_type?.length ? params.employment_type : undefined,
+    is_active: params.is_active?.length ? params.is_active : undefined,
+  });
   const response = await apiFetch(`${BASE}?${qs.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load technicians'));
   return response.json();
@@ -18,7 +26,7 @@ export async function getTechnicians(
 export async function getTechniciansSelect(): Promise<Technician[]> {
   const qs = buildDataGridParams(
     { pageIndex: 0, pageSize: 200, sorting: [{ id: 'name', desc: false }], searchQuery: '' },
-    { is_active: true },
+    { is_active: ['true'] },
   );
   const response = await apiFetch(`${BASE}?${qs.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load technicians'));

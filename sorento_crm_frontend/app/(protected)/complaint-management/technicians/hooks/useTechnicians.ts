@@ -1,19 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   createTechnician,
   deleteTechnician,
   getTechnicians,
   updateTechnician,
+  type TechniciansListParams,
 } from '../services/technicianService';
 import type { TechnicianFormValues } from '../types/technician.types';
 
-export function useTechnicians(params: DataGridApiFetchParams) {
+export function useTechnicians(params: TechniciansListParams) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: ['technicians', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
+    queryKey: [
+      'technicians',
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+      params.employment_type?.join(',') ?? '',
+      params.is_active?.join(',') ?? '',
+    ],
     queryFn: () => getTechnicians(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

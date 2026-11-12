@@ -1,5 +1,5 @@
 """Technician roster routes (after-sales P1)."""
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from app.dependencies import require_any_permission_with_api_key, require_permis
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.schemas.service_jobs import TechnicianCreate, TechnicianUpdate
 from app.services import technician_service
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -24,12 +25,15 @@ def list_technicians(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: str = Query("asc", pattern="^(asc|desc)$"),
-    is_active: Optional[bool] = Query(None),
+    employment_type: Optional[List[str]] = Query(None),
+    is_active: Optional[List[str]] = Query(None),
     current_user: dict = Depends(require_any_permission_with_api_key([VIEW, MANAGE])),
     db: Session = Depends(get_db),
 ):
     return technician_service.list_technicians(
-        db, page=page, limit=limit, query=query, sort=sort, direction=dir, is_active=is_active
+        db, page=page, limit=limit, query=query, sort=sort, direction=dir,
+        employment_types=multi_values(employment_type, "type"),
+        active_values=multi_values(is_active, "status"),
     )
 
 

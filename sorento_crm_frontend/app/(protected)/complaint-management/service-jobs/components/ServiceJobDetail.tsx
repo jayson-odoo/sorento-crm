@@ -66,7 +66,7 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
             <ServiceJobStatusPill status={job.status} label={job.status_label} />
           </div>
           <p className="text-sm text-muted-foreground">
-            {[job.complaint_number, job.customer_name].filter(Boolean).join(' · ') || '-'}
+            {job.complaint_number || '-'}
           </p>
         </div>
         <DetailActions
@@ -121,6 +121,7 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
             </CardHeader>
             <CardContent>
               <dl>
+                <Field label="Customer" value={dash(job.customer_name)} />
                 <Field label="Scheduled" value={when(job.scheduled_from)} />
                 <Field label="Technician" value={dash(job.technician_name)} />
                 <Field label="Agreed by" value={dash(job.customer_agreed_by)} />
