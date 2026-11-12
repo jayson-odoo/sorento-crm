@@ -31,8 +31,10 @@ marker or default size.
 
 ## Slice 2: all-typed-parts ranking (R2, R5)
 
-- AC-8 Token `SWTWC8354SHUF`: a candidate holding every typed part in order ranks above a higher-trigram candidate that
-  misses one.
+- AC-8 Typed `TWC8354-UF`: candidates holding every typed part (TWC, 8354, UF), in order, rank above a higher-trigram
+  candidate that misses one (`TWC8354-UP`). A typo inside a part (e.g. the first letters block) leaves today's order.
+- AC-8c Parts are split from the code AS TYPED: typed `TWC8354-SH-UF` treats SH and UF as two parts, so
+  `TWC8354-SH-N-UF` holds every part.
 - AC-9 Short token `8152` with 6 matching codes keeps the which-one picker (all 6), all-parts first.
 - AC-2b A code that differs only by a dash (shape of BT015SS-CR typed BT015SSCR or BT015SS CR) is answered directly,
   staff and dealer (guard; red-first shows whether main already passes).
