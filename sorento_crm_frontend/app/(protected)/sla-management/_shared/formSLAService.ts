@@ -54,7 +54,8 @@ export type FormSLASourceType =
   | 'workflow_submission'
   | 'price_tag_request'
   | 'sample_request'
-  | 'new_product_application';
+  | 'new_product_application'
+  | 'order_change_notice';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -384,6 +385,15 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'purchasing_respond',
     'completed',
   ],
+  // OCN-ORDER-CHANGE-NOTICE: the purchase request chain's events (a void stops the stages itself).
+  order_change_notice: [
+    'submit',
+    'send_for_approval',
+    'reject_submitted',
+    'approved',
+    'approval_rejected',
+    'resolved',
+  ],
 };
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
@@ -396,4 +406,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
+  order_change_notice: 'Order Change Notice',
 };
