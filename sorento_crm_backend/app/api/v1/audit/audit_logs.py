@@ -31,6 +31,8 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "product": "master_data.products.view",
     "project_sample_requests": "projects.sample_requests.view",
     "new_product_application": "procurement.new_product_applications.view",
+    # Order Change Notice detail, History tab (OCN-ORDER-CHANGE-NOTICE B11).
+    "order_change_notice": "procurement.order_change_notices.view",
     # Packing List detail, Timeline tab (usePackingLists.ts, R17).
     "inbound_shipments": "procurement.packing_lists.view",
     # Product Specifications record page, History tab.

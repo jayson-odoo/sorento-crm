@@ -11,9 +11,10 @@ find them identical. `capture` snapshots those columns before the method runs; `
 writes the snapshot back. An inverse that writes a constant instead of a captured value
 is a review failure.
 
-13 actions, from 18 live (form, resolve-event) pairs. `workflow_submission` is excluded:
-it carries an active config row but nothing in the codebase emits a form-SLA event for
-it and it has zero trackers.
+13 actions, from 18 live (form, resolve-event) pairs, plus the order change notice's run
+of the purchase request chain (`_declare_approval_chain`, OCN-ORDER-CHANGE-NOTICE).
+`workflow_submission` is excluded: it carries an active config row but nothing in the
+codebase emits a form-SLA event for it and it has zero trackers.
 """
 
 from __future__ import annotations
@@ -160,122 +161,167 @@ def _declare(
 
 
 PR_TYPES = ("purchase_request", "sponsorship_form")
+OCN_TYPES = ("order_change_notice",)
 
-# --------------------------------------------------------------------------------------
-# #3 pr.approval_decision - the incident this feature exists for.
-# --------------------------------------------------------------------------------------
 
-_declare(
-    key="pr.approval_decision",
-    entity_types=PR_TYPES,
-    label="Approval",
-    getter=_get_request,
-    columns=(
-        "approval_status",
-        "status",
-        "approved_at",
-        "approved_by",
-        "rejected_by_id",
-        "approval_signature_ref",
-        "approval_comments",
-    ),
-    # `decide_approval` re-asserts the request is still pending before acting, so it
-    # doubles as the commit-time premise check (AC-D-8).
-    runner=lambda db, p: _pr_service(db).decide_approval(
-        p["request_id"],
-        action=p["action"],
-        approved_by=p.get("approved_by"),
-        approval_comments=p.get("approval_comments"),
-        actor_user_id=p.get("actor_user_id"),
-    ),
-    resolve_event=lambda p: (
-        "approved" if p.get("action") == "approved" else "approval_rejected"
-    ),
-    tells_contact=True,
-)
+def _ocn_service(db: Session):
+    """The order change notice's chain runner: the purchase request service's method names
+    and signatures over the OCN (OCN-ORDER-CHANGE-NOTICE)."""
+    from app.services.order_change_notice_service import ChainRunner
 
-# --------------------------------------------------------------------------------------
-# #1, #2, #4, #5 - the rest of the PR / SF chain.
-# --------------------------------------------------------------------------------------
+    return ChainRunner(db)
 
-_declare(
-    key="pr.send_for_approval",
-    entity_types=PR_TYPES,
-    label="Send for approval",
-    getter=_get_request,
-    columns=(
-        "approval_status",
-        "approved_at",
-        "approved_by",
-        "approval_signature_ref",
-        "approval_comments",
-        "requested_approval_by_user_id",
-    ),
-    runner=lambda db, p: _pr_service(db).set_pending_approval(
-        p["request_id"], requested_by_user_id=p.get("actor_user_id")
-    ),
-    resolve_event=lambda _p: "send_for_approval",
-    # set_pending_approval messages the contact ("sent for approval") since the
-    # 2026-08 fix - the undo dialog must disclose that a correction will follow.
-    tells_contact=True,
-)
 
-_declare(
-    key="pr.reject_submitted",
-    entity_types=PR_TYPES,
-    label="Rejection",
-    getter=_get_request,
-    columns=(
-        "approval_status",
-        "status",
-        "approval_comments",
-        "approved_at",
-        "approved_by",
-        "rejected_by_id",
-        "approval_signature_ref",
-        "requested_approval_by_user_id",
-    ),
-    runner=lambda db, p: _pr_service(db).reject_submitted(
-        p["request_id"],
-        rejection_reason=p.get("rejection_reason"),
-        actor_user_id=p.get("actor_user_id"),
-    ),
-    resolve_event=lambda _p: "reject_submitted",
-    tells_contact=True,
-)
+def _get_ocn(db: Session, payload: dict):
+    from app.services import order_change_notice_service
 
-_declare(
-    key="pr.finalize",
-    entity_types=PR_TYPES,
-    label="Customer service outcome",
-    getter=_get_request,
-    # `_finalize_request` assigns ONLY `status` - the resolved_at / resolved_by pair
-    # belongs to the complaint finalize, not this one.
-    columns=("status",),
-    runner=lambda db, p: _pr_service(db)._finalize_request(
-        p["request_id"],
-        p["new_status"],
-        note=p.get("note"),
-        respond_user_id=p.get("respond_user_id"),
-        crm_sender_user_id=p.get("crm_sender_user_id"),
-    ),
-    resolve_event=lambda _p: "resolved",
-    tells_contact=True,
-)
+    return order_change_notice_service.find(db, payload["ocn_id"])
 
-_declare(
-    key="pr.void",
-    entity_types=PR_TYPES,
-    label="Void",
-    getter=_get_request,
-    columns=("status", "approval_status", "voided_by", "voided_at", "void_reason"),
-    runner=lambda db, p: _pr_service(db).void_request(
-        p["request_id"],
-        void_reason=p.get("void_reason"),
-        actor_user_id=p.get("actor_user_id"),
-        respond_user_id=p.get("respond_user_id"),
-    ),
-    resolve_event=lambda _p: "voided",
+
+def _declare_approval_chain(
+    prefix: str,
+    entity_types: tuple[str, ...],
+    getter: Callable,
+    service: Callable,
+    id_key: str,
+    *,
+    extra_columns: Optional[dict] = None,
+) -> None:
+    """The purchase request approval chain's five actions, for one form family.
+
+    Declared once and called per family (`pr.*` for the purchase request / sponsorship form,
+    `ocn.*` for the order change notice), so the two chains cannot drift: the same columns,
+    the same runner method names (`service(db)` must offer `decide_approval`,
+    `set_pending_approval`, `reject_submitted`, `_finalize_request`, `void_request`, each
+    taking the record id first) and the same resolve events. `extra_columns` widens one
+    action's capture for a family that writes a column the other has not got.
+    """
+    extra = dict(extra_columns or {})
+
+    def cols(action: str, base: tuple[str, ...]) -> tuple[str, ...]:
+        return base + tuple(extra.get(action, ()))
+
+    # #3 approval_decision - the incident this feature exists for.
+    _declare(
+        key=f"{prefix}.approval_decision",
+        entity_types=entity_types,
+        label="Approval",
+        getter=getter,
+        columns=cols("approval_decision", (
+            "approval_status",
+            "status",
+            "approved_at",
+            "approved_by",
+            "rejected_by_id",
+            "approval_signature_ref",
+            "approval_comments",
+        )),
+        # `decide_approval` re-asserts the record is still pending before acting, so it
+        # doubles as the commit-time premise check (AC-D-8).
+        runner=lambda db, p: service(db).decide_approval(
+            p[id_key],
+            action=p["action"],
+            approved_by=p.get("approved_by"),
+            approval_comments=p.get("approval_comments"),
+            actor_user_id=p.get("actor_user_id"),
+        ),
+        resolve_event=lambda p: (
+            "approved" if p.get("action") == "approved" else "approval_rejected"
+        ),
+        tells_contact=True,
+    )
+
+    # #1, #2, #4, #5 - the rest of the chain.
+    _declare(
+        key=f"{prefix}.send_for_approval",
+        entity_types=entity_types,
+        label="Send for approval",
+        getter=getter,
+        columns=cols("send_for_approval", (
+            "approval_status",
+            "approved_at",
+            "approved_by",
+            "approval_signature_ref",
+            "approval_comments",
+            "requested_approval_by_user_id",
+        )),
+        runner=lambda db, p: service(db).set_pending_approval(
+            p[id_key], requested_by_user_id=p.get("actor_user_id")
+        ),
+        resolve_event=lambda _p: "send_for_approval",
+        # set_pending_approval messages the contact ("sent for approval") since the
+        # 2026-08 fix - the undo dialog must disclose that a correction will follow.
+        tells_contact=True,
+    )
+
+    _declare(
+        key=f"{prefix}.reject_submitted",
+        entity_types=entity_types,
+        label="Rejection",
+        getter=getter,
+        columns=cols("reject_submitted", (
+            "approval_status",
+            "status",
+            "approval_comments",
+            "approved_at",
+            "approved_by",
+            "rejected_by_id",
+            "approval_signature_ref",
+            "requested_approval_by_user_id",
+        )),
+        runner=lambda db, p: service(db).reject_submitted(
+            p[id_key],
+            rejection_reason=p.get("rejection_reason"),
+            actor_user_id=p.get("actor_user_id"),
+        ),
+        resolve_event=lambda _p: "reject_submitted",
+        tells_contact=True,
+    )
+
+    _declare(
+        key=f"{prefix}.finalize",
+        entity_types=entity_types,
+        label="Customer service outcome",
+        getter=getter,
+        # `_finalize_request` assigns ONLY `status` - the resolved_at / resolved_by pair
+        # belongs to the complaint finalize, not this one.
+        columns=cols("finalize", ("status",)),
+        runner=lambda db, p: service(db)._finalize_request(
+            p[id_key],
+            p["new_status"],
+            note=p.get("note"),
+            respond_user_id=p.get("respond_user_id"),
+            crm_sender_user_id=p.get("crm_sender_user_id"),
+        ),
+        resolve_event=lambda _p: "resolved",
+        tells_contact=True,
+    )
+
+    _declare(
+        key=f"{prefix}.void",
+        entity_types=entity_types,
+        label="Void",
+        getter=getter,
+        columns=cols("void", ("status", "approval_status", "voided_by", "voided_at", "void_reason")),
+        runner=lambda db, p: service(db).void_request(
+            p[id_key],
+            void_reason=p.get("void_reason"),
+            actor_user_id=p.get("actor_user_id"),
+            respond_user_id=p.get("respond_user_id"),
+        ),
+        resolve_event=lambda _p: "voided",
+    )
+
+
+_declare_approval_chain("pr", PR_TYPES, _get_request, _pr_service, "request_id")
+# OCN-ORDER-CHANGE-NOTICE: the order change notice's Done also stores the CS comment.
+_declare_approval_chain(
+    "ocn",
+    OCN_TYPES,
+    _get_ocn,
+    _ocn_service,
+    "ocn_id",
+    extra_columns={"finalize": ("cs_comment",)},
 )
 
 # --------------------------------------------------------------------------------------

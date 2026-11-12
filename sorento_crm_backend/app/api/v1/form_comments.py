@@ -28,7 +28,9 @@ router = APIRouter()
 _VIEW_PERMISSION = VIEW_PERMISSION
 
 
-_MODULE = {"complaint": "complaints", "sample_request": "projects"}  # every other kind is procurement
+# every other kind is procurement (the order change notice included: its menu and routes are
+# the procurement module's, OCN-ORDER-CHANGE-NOTICE)
+_MODULE = {"complaint": "complaints", "sample_request": "projects", "order_change_notice": "procurement"}
 MAX_FILES = 5
 MAX_FILE_BYTES = 25 * 1024 * 1024
 

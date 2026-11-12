@@ -50,6 +50,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 from app.models.base import CompanyScopedMixin
@@ -665,20 +666,45 @@ VERB_REPOINT_SO = "REPOINT_SO"
 VERB_MODEL_CHANGE = "MODEL_CHANGE"
 
 
+#: The change types an order change notice names (UAC A5). A lookup seeded by migration
+#: `ocn_0001_order_change_notice` with no company column: every company reads the same four.
+class OrderChangeType(Base):
+    """Advance, Exchange, Cancellation, Delay: each with its risk level and a guide text."""
+
+    __tablename__ = "order_change_types"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(64), nullable=False)
+    risk_level = Column(String(16), nullable=False)  # Low | High | Highest
+    guide_text = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    position = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
+    __table_args__ = ({"schema": "projects"},)
+
+
 class OrderChangeNotice(Base, CompanyScopedMixin):
     """The client's only trusted hard gate (D15), auto drafted from the computed delta.
 
     Required for every amendment to a PUBLISHED SO. Editing an unpublished draft is not an
     amendment and raises none (finding G9).
+
+    OCN-ORDER-CHANGE-NOTICE: also raised by hand (`source = crm`) and run through the purchase
+    request's approval chain (`app.services.order_change_notice_service`). The lifecycle
+    columns carry the purchase request's names AND values, so the shared rules
+    (`app.services.approval_chain_rules`) and the deferred-action column captures apply as is.
     """
 
     __tablename__ = "order_change_notices"
     __audit_track__ = True
+    #: Pinned by tests/test_ocn_history.py; the History tab reads this entity type.
+    __audit_entity_type__ = "order_change_notice"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     ocn_number = Column(String(64), nullable=False)
+    #: Optional (UAC A3): deleting a project keeps its notices, with no project.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
@@ -692,13 +718,92 @@ class OrderChangeNotice(Base, CompanyScopedMixin):
     source_document_kind = Column(String(32), nullable=True)  # revised_po | revised_schedule | none
     source_document_id = Column(UUID(as_uuid=False), nullable=True)
     change_table_json = Column(JSONB, nullable=True)
+    #: The user who approved it (set by the approval decision).
     approver_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=False), nullable=True)
     created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
+    # ---- the form (OCN-ORDER-CHANGE-NOTICE)
+    #: crm (raised by hand) | amendment (drafted from an SO amendment).
+    source = Column(String(16), nullable=False, default="crm", server_default="crm")
+    ocn_date = Column(Date, nullable=True)
+    change_type_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.order_change_types.id", ondelete="SET NULL"), nullable=True
+    )
+    customer_id = Column(
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The typed name, kept as the display fallback beside the picked customer (UAC A7).
+    customer_name = Column(String(255), nullable=True)
+    customer_po_no = Column(String(128), nullable=True)
+    so_no_text = Column(String(128), nullable=True)
+    sales_in_charge_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    cs_in_charge_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    description = Column(Text, nullable=True)
+    cs_comment = Column(Text, nullable=True)
+
+    # ---- the lifecycle, the purchase request's columns and values
+    status = Column(String(32), nullable=False, default="draft", server_default="draft")
+    approval_status = Column(String(32), nullable=True)
+    #: The decision maker's display name (the purchase request's `approved_by`).
+    approved_by = Column(String(255), nullable=True)
+    approval_comments = Column(Text, nullable=True)
+    rejected_by_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    requested_approval_by_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at = Column(DateTime(timezone=False), nullable=True)
+    voided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    voided_at = Column(DateTime(timezone=False), nullable=True)
+    void_reason = Column(Text, nullable=True)
+    revision_no = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
+    lines = relationship(
+        "OrderChangeNoticeLine",
+        back_populates="notice",
+        cascade="all, delete-orphan",
+        order_by="OrderChangeNoticeLine.position",
+    )
+    change_type = relationship("OrderChangeType", lazy="joined")
+
     __table_args__ = (
         UniqueConstraint("company_id", "ocn_number", name="uq_ocn_number"),
+        {"schema": "projects"},
+    )
+
+
+class OrderChangeNoticeLine(Base):
+    """One changed product (UAC A6): always a catalogue product, never free text, and the
+    quantities are never capped by stock."""
+
+    __tablename__ = "order_change_notice_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    ocn_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_change_notices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    qty_before = Column(Numeric(18, 4), nullable=True)
+    qty_after = Column(Numeric(18, 4), nullable=True)
+    date_before = Column(Date, nullable=True)
+    date_after = Column(Date, nullable=True)
+    delivered_qty = Column(Numeric(18, 4), nullable=True)
+    remark = Column(Text, nullable=True)
+
+    notice = relationship("OrderChangeNotice", back_populates="lines")
+
+    __table_args__ = (
+        Index("ix_order_change_notice_lines_ocn", "ocn_id"),
         {"schema": "projects"},
     )
 

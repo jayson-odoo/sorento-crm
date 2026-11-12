@@ -41,6 +41,7 @@ FORM_COMMENT_KINDS = (
     "purchase_request",
     "sponsorship_form",
     "sample_request",
+    "order_change_notice",
 )
 MAX_BODY_CHARS = 4000
 VIEW_PERMISSION = {
@@ -49,6 +50,7 @@ VIEW_PERMISSION = {
     "purchase_request": "procurement.purchase_requests.view",
     "sponsorship_form": "procurement.sponsorship_forms.view",
     "sample_request": "projects.sample_requests.view",
+    "order_change_notice": "procurement.order_change_notices.view",
 }
 MAX_FILES = 5
 
@@ -61,6 +63,7 @@ _LABELS = {
     "purchase_request": "purchase request",
     "sponsorship_form": "sponsorship form",
     "sample_request": "sample request",
+    "order_change_notice": "order change notice",
 }
 _NUMBER_ATTR = {
     "complaint": "complaint_number",
@@ -68,6 +71,7 @@ _NUMBER_ATTR = {
     "purchase_request": "request_number",
     "sponsorship_form": "request_number",
     "sample_request": "request_no",
+    "order_change_notice": "ocn_number",
 }
 
 
@@ -133,6 +137,11 @@ class FormCommentService:
 
             model = SampleRequest
             q = self.db.query(SampleRequest)
+        elif kind == "order_change_notice":
+            from app.models.project_so import OrderChangeNotice
+
+            model = OrderChangeNotice
+            q = self.db.query(OrderChangeNotice)
         else:
             model = PurchaseRequestHeader
             q = self.db.query(PurchaseRequestHeader).filter(PurchaseRequestHeader.request_type == kind)

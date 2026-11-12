@@ -79,6 +79,8 @@ SOURCE_TYPE_READERS = {
         "procurement.new_product_applications.approve",
         "procurement.new_product_applications.open_code",
     ],
+    # OCN-ORDER-CHANGE-NOTICE: the notice's view-all slug.
+    "order_change_notice": ["procurement.order_change_notices.view"],
     # A quotation line's drawing or photo request is keyed on a product, and the product page
     # has no SLA tab: like a conversation ticket, it is read by the SLA module alone (its side
     # panel is GET /form-sla-tracking/{id}/media-request, scoped to the task's team chain).
@@ -111,15 +113,20 @@ def _require_tracker_reader(
 def _require_source_visible(
     db: Session, source_entity_type: Optional[str], source_entity_id: Optional[str]
 ) -> None:
-    """A New Product Application carries its own company (its read is company scoped), so its
-    trackers answer only a caller who can load the application in their company scope: 404
-    otherwise, the record's own answer (NPA-FORM-SLA security review S1). The other form types
-    keep the slug check alone."""
-    if source_entity_type != "new_product_application" or not source_entity_id:
+    """A New Product Application or an Order Change Notice carries its own company (its read
+    is company scoped), so its trackers answer only a caller who can load the record in their
+    company scope: 404 otherwise, the record's own answer (NPA-FORM-SLA security review S1).
+    The other form types keep the slug check alone."""
+    if not source_entity_id:
         return
-    from app.services import new_product_application_service as npa
+    if source_entity_type == "new_product_application":
+        from app.services import new_product_application_service as npa
 
-    npa.get_for(db, str(source_entity_id))
+        npa.get_for(db, str(source_entity_id))
+    elif source_entity_type == "order_change_notice":
+        from app.services import order_change_notice_service as ocn
+
+        ocn.get_for(db, str(source_entity_id))
 
 
 def _require_event_log_reader(db: Session, current_user: dict, tracking) -> None:
