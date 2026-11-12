@@ -173,6 +173,8 @@ export type QuotationDocument = {
   below_floor_line_count?: number;
   /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
   discounted_line_count?: number;
+  /** Discounted and not below the floor, per line: the "Below default price" pill's count. */
+  below_default_line_count?: number;
   /** Lines outside the project's series. */
   off_series_line_count?: number;
   /** The server's sentence naming every reason, e.g. "One line is outside the project's series". */
@@ -193,6 +195,9 @@ export type QuotationDocument = {
   source_label?: string | null;
   /** On a proposal: the quotation made from one of its revisions, when there is one. */
   quotation_document_id?: string | null;
+  /** QUOTE-DUPLICATE-PARTY: the document this one was duplicated from, and its number. */
+  copied_from_document_id?: string | null;
+  copied_from_label?: string | null;
   recipient_party_type?: string | null;
   /** The role the recipient plays on this project (PROJECT-PARTY-ROLES PR 2). */
   recipient_role?: string | null;
@@ -421,6 +426,28 @@ export async function makeQuotation(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to make the quotation'));
+  return response.json();
+}
+
+/** QUOTE-DUPLICATE-PARTY: who a duplicate is for (the header's own To / Attn pick). */
+export type QuotationDuplicateBody = {
+  recipient_party_id: string;
+  recipient_role?: string | null;
+  attn_contact_ids?: string[];
+};
+
+/** Copy this proposal / quotation, as it stands, for another party; returns the copy. */
+export async function duplicateQuotationDocument(
+  projectId: string,
+  documentId: string,
+  body: QuotationDuplicateBody,
+): Promise<QuotationDocument> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/duplicate`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to duplicate'));
   return response.json();
 }
 
@@ -880,7 +907,8 @@ export type QuotationDraftHolder = {
   holder_at?: string | null;
 };
 
-export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict';
+/** `event`: a line about something done to the document (Copied from ...), nothing to restore. */
+export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict' | 'event';
 
 export type QuotationHistoryEntry = {
   id: string;

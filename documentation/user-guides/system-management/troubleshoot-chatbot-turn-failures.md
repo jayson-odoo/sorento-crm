@@ -80,6 +80,18 @@ Opening the Turn trace on one of these messages shows one extra step, **Read the
 steps - naming what was read or heard, and whether it was accepted, denied or failed. This step
 does not appear at all on an ordinary text message.
 
+## Opening a trace from other screens
+
+Every **trace** link opens the same full trace panel at the side of the screen you are on, in the
+same tab. The screen behind it stays as it was, so you can close the panel and carry on where you
+left off. Press **Escape** or click **X** to close it. On a phone the panel fills the screen.
+
+* **Chatbot Console**: click **trace** under a bot reply.
+* **Contact > Chatbot > Conversations**: click a conversation row to open its first turn.
+* **AI assistant panel**: click **View trace** under a reply (admins only).
+* **AI Usage**: expand a row in Recent queries, then click **View full trace**.
+* A Chat History address that names a turn opens that turn's panel straight away.
+
 ## The full trace panel
 
 For more than the raw payload, click the small tree icon at the end of the Turn line (its label

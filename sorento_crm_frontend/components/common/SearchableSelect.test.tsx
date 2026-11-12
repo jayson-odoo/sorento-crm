@@ -259,3 +259,61 @@ describe('SearchableSelect scroll lock only while open (renderTrigger)', () => {
     );
   });
 });
+
+// PROJECT-QUOTE-LINE-TOOLS (crew browser pass, S9): a focused, closed picker that is typed into
+// opens with what was typed already in its search, like a native select or any combobox.
+describe('SearchableSelect typing on the focused trigger', () => {
+  const trigger = () =>
+    document.querySelector('[data-slot="searchable-select-trigger"]') as HTMLElement;
+
+  it('a printable key opens the picker with that key in the search, caret after it', async () => {
+    render(<SearchableSelect value="" onChange={vi.fn()} options={OPTIONS} />);
+    trigger().focus();
+    fireEvent.keyDown(trigger(), { key: 'g' });
+
+    const input = (await screen.findByPlaceholderText('Search...')) as HTMLInputElement;
+    expect(input.value).toBe('g');
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    await waitFor(() => expect(input.selectionStart).toBe(1));
+    // Static mode filters by it at once.
+    await waitFor(() => expect(optionLabels()).toEqual(['Europe/Kaliningrad']));
+  });
+
+  it('async: the typed key is the first question asked', async () => {
+    const fetchOptions = vi.fn(async (q: string) => OPTIONS.filter((o) => o.label.toLowerCase().includes(q)));
+    render(<SearchableSelect value="" onChange={vi.fn()} fetchOptions={fetchOptions} />);
+    trigger().focus();
+    fireEvent.keyDown(trigger(), { key: 'e' });
+    await waitFor(() => expect(fetchOptions).toHaveBeenCalledWith('e', 0));
+    expect(fetchOptions).not.toHaveBeenCalledWith('', 0);
+  });
+
+  it.each([
+    ['Ctrl+C', { key: 'c', ctrlKey: true }],
+    ['Meta+V', { key: 'v', metaKey: true }],
+    ['Tab', { key: 'Tab' }],
+    ['ArrowLeft', { key: 'ArrowLeft' }],
+  ])('%s on the trigger does not open it', (_name, init) => {
+    render(<SearchableSelect value="" onChange={vi.fn()} options={OPTIONS} />);
+    trigger().focus();
+    fireEvent.keyDown(trigger(), init);
+    expect(screen.queryByPlaceholderText('Search...')).toBeNull();
+  });
+
+  it('a disabled trigger ignores typing', () => {
+    render(<SearchableSelect value="" onChange={vi.fn()} options={OPTIONS} disabled />);
+    fireEvent.keyDown(trigger(), { key: 'k' });
+    expect(screen.queryByPlaceholderText('Search...')).toBeNull();
+  });
+
+  it('reopening after a typed open starts from a blank search again', async () => {
+    render(<SearchableSelect value="" onChange={vi.fn()} options={OPTIONS} />);
+    trigger().focus();
+    fireEvent.keyDown(trigger(), { key: 'k' });
+    const input = await screen.findByPlaceholderText('Search...');
+    fireEvent.keyDown(input, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Search...')).toBeNull());
+    openMenu();
+    expect(((await screen.findByPlaceholderText('Search...')) as HTMLInputElement).value).toBe('');
+  });
+});

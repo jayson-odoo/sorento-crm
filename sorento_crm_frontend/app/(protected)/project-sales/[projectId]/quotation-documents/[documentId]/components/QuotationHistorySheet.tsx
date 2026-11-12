@@ -45,6 +45,7 @@ export const HISTORY_KIND_LABEL: Record<QuotationHistoryKind, string> = {
   saved: 'Saved',
   before_restore: 'Before restore',
   conflict: 'Not saved: opened in another tab',
+  event: '',
 };
 
 /** "Version 3", and its note on the line under it, the tag designer's own History row. */
@@ -118,8 +119,15 @@ export function QuotationHistorySheet({
                 data-testid={`quotation-history-${entry.id}`}
               >
                 <div className="min-w-0">
-                  <span className="text-sm font-medium">Version {entry.version}</span>
-                  <p className="text-sm text-muted-foreground">{entryNote(entry)}</p>
+                  {/* QUOTE-DUPLICATE-PARTY: an event line is its note; nothing to view or restore. */}
+                  {entry.kind === 'event' ? (
+                    <span className="text-sm font-medium">{entry.note}</span>
+                  ) : (
+                    <>
+                      <span className="text-sm font-medium">Version {entry.version}</span>
+                      <p className="text-sm text-muted-foreground">{entryNote(entry)}</p>
+                    </>
+                  )}
                   {entry.grand_total !== null && (
                     <p className="text-sm text-muted-foreground">
                       {formatMyrExact(entry.grand_total)}
@@ -130,37 +138,39 @@ export function QuotationHistorySheet({
                     {entry.created_at ? ` / ${formatDateTimeInMalaysia(entry.created_at)}` : ''}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      void getQuotationHistoryEntry(projectId, documentId, entry.id)
-                        .then(setViewing)
-                        .catch(() => toast.error('Could not open that entry'));
-                    }}
-                  >
-                    <Eye className="size-3.5" />
-                    View
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={readOnly || restoring === entry.id}
-                    onClick={async () => {
-                      setRestoring(entry.id);
-                      try {
-                        await onRestore(entry.id);
-                        reload();
-                      } finally {
-                        setRestoring(null);
-                      }
-                    }}
-                  >
-                    <RotateCcw className="size-3.5" />
-                    {restoring === entry.id ? 'Restoring...' : 'Restore'}
-                  </Button>
-                </div>
+                {entry.kind === 'event' ? null : (
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void getQuotationHistoryEntry(projectId, documentId, entry.id)
+                          .then(setViewing)
+                          .catch(() => toast.error('Could not open that entry'));
+                      }}
+                    >
+                      <Eye className="size-3.5" />
+                      View
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={readOnly || restoring === entry.id}
+                      onClick={async () => {
+                        setRestoring(entry.id);
+                        try {
+                          await onRestore(entry.id);
+                          reload();
+                        } finally {
+                          setRestoring(null);
+                        }
+                      }}
+                    >
+                      <RotateCcw className="size-3.5" />
+                      {restoring === entry.id ? 'Restoring...' : 'Restore'}
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
           </SheetBody>
