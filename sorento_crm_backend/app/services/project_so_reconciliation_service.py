@@ -1580,10 +1580,17 @@ class ProjectSOReconciliationService:
             query = query.filter(SalesOrder.id == str(sales_order_id))
         if needle:
             like = f"%{needle}%"
+            # Name and code of any product on the order, as `_core_arm` searches them.
+            product_owners = (
+                self.db.query(SalesOrderLine.sales_order_id)
+                .join(Product, Product.id == SalesOrderLine.product_id)
+                .filter(Product.product_code.ilike(like) | Product.product_name.ilike(like))
+            )
             query = query.filter(
                 SalesOrder.so_number.ilike(like)
                 | SalesOrder.internal_note.ilike(like)
                 | SalesOrder.customer.has(Customer.customer_name.ilike(like))
+                | SalesOrder.id.in_(product_owners)
             )
         found = query.all()
         names = self._customer_names([row[3] for row in found])

@@ -974,7 +974,8 @@ class FulfilmentBoardService:
             ),
             "unplanned_orders": self._unplanned_orders(numbers, rows),
             "orders": self._standings(
-                rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so
+                rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so,
+                cancelled_rows=cancelled_rows,
             ),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
@@ -5989,6 +5990,7 @@ class FulfilmentBoardService:
         pending_by_so: Optional[Dict[str, str]] = None,
         undo_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         decision_headers_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        cancelled_rows: Sequence[_Row] = (),
     ) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.
 
@@ -6010,7 +6012,13 @@ class FulfilmentBoardService:
         undo_by_so = undo_by_so or {}
         decision_headers_by_so = decision_headers_by_so or {}
         by_order: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
+        # OI-WHOLE-SO-CANCEL (AC-WC-9d): an order whose ONLY board lines are read-only
+        # cancelled ones still needs its standing (the Confirm posts off it). They seed the
+        # entry and add nothing to any count, exactly as before for an ordinary order.
+        counted = {id(row) for row in rows}
+        for row in [*rows, *cancelled_rows]:
+            if id(row) not in counted and row.sales_order_id in by_order:
+                continue
             standing = by_order.setdefault(
                 row.sales_order_id,
                 {
@@ -6043,6 +6051,8 @@ class FulfilmentBoardService:
                     "decision": decision_headers_by_so.get(row.sales_order_id),
                 },
             )
+            if id(row) not in counted:
+                continue
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
