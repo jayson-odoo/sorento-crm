@@ -358,3 +358,52 @@ describe('F2: a cancelled line follows Decide -> Confirm', () => {
     expect(results).not.toHaveTextContent('applied the AutoCount change');
   });
 });
+
+/**
+ * Crew re-pass: after Confirm on a deleted SO the amber "Posted N, server confirmed 0: ..." line
+ * appeared, because the F2 path posts the saved cancels as lines and the server RETIRES them
+ * (they come back in `lines_retired`, not `lines_confirmed`). A posted line the server retired
+ * is accounted for; one it neither confirmed nor retired still shows the mismatch.
+ * ASSUMED result shape: `lines_retired: [{ project_line_id, line_no, item_code }]` (the backend
+ * test in tests/test_oi_cancel_decide_confirm.py pins `project_line_id` on it).
+ */
+describe('F2: the posted-vs-confirmed mismatch counts retired cancels as accounted for', () => {
+  async function pressWith(result: Record<string, unknown>) {
+    cancelOnlyBoard();
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381895', ok: true, decision_revision: 5, ...result }],
+    });
+    renderPanel();
+    await screen.findByText('Change proposed');
+    fireEvent.click(screen.getByRole('button', { name: /save all suggested/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+    await pressPreviewThenConfirm();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    return screen.findByTestId('board-confirm-results');
+  }
+
+  it('shows no mismatch when every posted cancel line came back retired', async () => {
+    const results = await pressWith({
+      planning_change_applied: true,
+      lines_confirmed: [],
+      lines_retired: [{ project_line_id: 'pl-381895-2', line_no: 2, item_code: 'SRTWCX7405-RL-S-PJ' }],
+      inquiry_rows_handed_over: 3,
+    });
+
+    expect(results).toHaveTextContent('confirmed as revision 5');
+    expect(screen.queryByTestId('board-confirm-mismatch-pso-so-381895')).not.toBeInTheDocument();
+  });
+
+  it('guard: a posted line the server neither confirmed nor retired still shows the mismatch', async () => {
+    await pressWith({
+      planning_change_applied: true,
+      lines_confirmed: [],
+      lines_retired: [],
+      inquiry_rows_handed_over: 0,
+    });
+
+    expect(screen.getByTestId('board-confirm-mismatch-pso-so-381895')).toBeInTheDocument();
+  });
+});

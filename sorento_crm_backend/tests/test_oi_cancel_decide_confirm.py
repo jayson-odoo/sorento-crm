@@ -150,3 +150,44 @@ def test_f2_saving_a_book_cancelled_line_through_the_draft_route_then_confirm_al
     assert res.json()["results"][0]["ok"] is True, res.text
     env.db.expire_all()
     _assert_rows_cancelled_once_and_one_cancel_mail(env, w["rows"], calls)
+
+
+@pytest.mark.parametrize("how", ("push", "delete"))
+def test_f2_confirm_all_names_the_retired_lines_by_project_line_id(env, how):
+    """The board matches each posted line to the result by `project_line_id`; a saved cancel
+    comes back in `lines_retired`, so each entry must carry the id (today it carries only
+    line_no / so_line_no / item_code / reason)."""
+    w = _world(env, how)
+    batch_id, rows = _batch_and_rows(env, w)
+    for row in rows:
+        planning_change_service.set_row_decision(env.db, batch_id, str(row.id), "confirm")
+    env.db.commit()
+    board = env.client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": w["so_number"]}
+    ).json()
+    contribution = next(c for c in board["contributions"] if c["line_id"] == w["line_x"])
+
+    res = env.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={
+            "orders": [
+                {
+                    "pso_id": w["pso_id"],
+                    "batch_id": batch_id,
+                    "lines": [
+                        {
+                            "project_line_id": contribution["project_line_id"],
+                            "timely_spo_qty": "0",
+                            "reserve": [],
+                            "borrow": [],
+                            "buy_qty": "0",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    retired = res.json()["results"][0].get("lines_retired") or []
+    assert [r.get("project_line_id") for r in retired] == [contribution["project_line_id"]], retired
