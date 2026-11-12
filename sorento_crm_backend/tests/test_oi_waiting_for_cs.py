@@ -308,16 +308,19 @@ def test_ac_v2_6_the_per_project_export_route_carries_status_and_was_columns(env
     """GET /projects/{project_id}/order-inquiry-export (ProjectOrderInquiryService.export_xlsx):
     the same STATUS / WAS QTY / WAS DATE columns, "Waiting for CS" for a date-changed row."""
     from app.models.project_so import ProjectSalesOrder
-    from app.services.project_service import register_project
+    from app.models.projects import Project
 
     w = _world(env, "date")
-    project = register_project(
-        env.db,
+    title = f"ZZT waiting project {w.so_number}"
+    project = Project(
         company_id=env.company_a,
-        actor_user_id=_USER_ID,
-        developer_party_id=None,
-        title=f"ZZT waiting project {w.so_number}",
+        project_code=f"ZZTWC{w.so_number[-6:]}",
+        title=title,
+        normalised_title=title.lower(),
+        owner_user_id=_USER_ID,
     )
+    env.db.add(project)
+    env.db.flush()
     pso = env.db.get(ProjectSalesOrder, str(_so_mirror_row.last[0].project_sales_order_id))
     pso.project_id = project.id
     env.db.commit()
