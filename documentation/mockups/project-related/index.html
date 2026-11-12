@@ -23,7 +23,7 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:96
 .qtag{display:inline-block;font:600 10px/1.5 Inter,system-ui,sans-serif;color:var(--q);background:var(--q-soft);border:1px solid #c4b5fd;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
 .row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
 .desk{width:1280px;max-width:100%;background:var(--page);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-.phone{width:375px;flex:none;background:var(--page);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.phone{width:375px;max-width:100%;flex:none;background:var(--page);border:1px solid var(--border);border-radius:16px;overflow:hidden}
 .shell{padding:22px;display:flex;flex-direction:column;gap:14px}
 .phone .shell{padding:12px;gap:10px}
 .btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:500;white-space:nowrap}
@@ -102,6 +102,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 /* phone list rows: one line each */
 .prow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:0 12px;height:40px;border-bottom:1px solid var(--border);font-size:12.5px;white-space:nowrap}
 .prow .m{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:600px){.form .fb{grid-template-columns:1fr}.desk .tabs{max-width:100%}}
 </style>
 </head>
 <body>
@@ -256,7 +257,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
       "Project name" stays. Nothing is filled from the typed name: a person picks. On a closed record the Project field alone stays
       editable on the record's page (Q5), and the change shows in History.</p>
     <div class="row">
-      <div class="form" style="flex:1;min-width:320px">
+      <div class="form" style="flex:1;min-width:min(320px,100%)">
         <div class="fh">New stock inquiry</div>
         <div class="fb">
           <div><div class="lbl">Customer</div><div class="inp sel">Sample Builders Sdn Bhd<span class="clr">&times;</span></div></div>
@@ -267,7 +268,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
         </div>
         <div class="ff"><span class="btn">Cancel</span><span class="btn pri">Submit</span></div>
       </div>
-      <div class="card" style="flex:1;min-width:320px;max-width:560px">
+      <div class="card" style="flex:1;min-width:min(320px,100%);max-width:560px">
         <div class="hdr" style="padding:14px 18px;border-bottom:1px solid var(--border)">
           <div><div class="t" style="font-size:17px">SI-002010 <span class="pill r">Rejected</span></div><div class="sub">Wall tile 300x600 white gloss</div></div>
         </div>
