@@ -166,7 +166,12 @@ export function DateRangePicker({
    *  field the caller never heard about. */
   const commit = () => {
     if (inputValue.trim() === '') {
-      if (from || to) onChange({ from: null, to: null });
+      if (from || to) {
+        onChange({ from: null, to: null });
+        // A parent that refuses the empty range leaves from/to unchanged, so the effect above never
+        // re-runs; snap the text back to the committed label (a parent that accepts it re-syncs via the effect).
+        setInputValue(formatRangeLabel(from, to));
+      }
       return;
     }
     const parsed = parseRangeInput(inputValue);
