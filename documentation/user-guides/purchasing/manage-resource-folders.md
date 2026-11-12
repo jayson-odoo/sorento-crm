@@ -57,7 +57,7 @@ Every file that can move goes straight away. A folder can hold only one file wit
 | Choice | What happens |
 |----|----|
 | **Rename** | The file moves under the new name shown in the box (for example `photo (1).jpg`). You can type another name. The file itself, its links to products, promotions and forms, and any link already shared stay the same. |
-| **Replace** | The file already in the target folder goes to **Trash** and this file takes its place. Records linked to the replaced file stay linked to it; restore it from **Trash** to undo. Only users who may delete files see this choice. |
+| **Replace** | The file already in the target folder goes to **Trash** and this file takes its place. Records linked to the replaced file stay linked to it. To undo, first rename or move the file that took its place, then search for the replaced file in **Trash** and restore it (while its name is taken in that folder, Restore says so and leaves it in Trash). Only users who may delete files see this choice. |
 | **Skip** | The file stays where it is. |
 
 When the move is done, one message sums it up, for example: *2 moved. 1 not moved: photo.jpg already exists in Folder B.*
