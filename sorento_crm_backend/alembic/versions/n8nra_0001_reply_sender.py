@@ -9,13 +9,13 @@ Additive only and idempotent (`IF NOT EXISTS`). Default `n8n` keeps every instal
 Plan: documentation/plans/chatbot/PLAN-n8n-retire-a-bot-reply-12nov.md.
 
 Revision ID: n8nra_0001_reply_sender
-Revises: pc_0001_product_costing
+Revises: qdp_0001_duplicate_party
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "n8nra_0001_reply_sender"
-down_revision = "pc_0001_product_costing"
+down_revision = "qdp_0001_duplicate_party"
 branch_labels = None
 depends_on = None
 
