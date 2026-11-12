@@ -3,6 +3,9 @@
 /** The backend's limit on values per search (`app/utils/multi_value.py`). */
 export const MAX_SEARCH_CHIPS = 200;
 
+/** The backend's limit on one value's length (`app/utils/list_search.py`); longer is cut. */
+export const MAX_SEARCH_VALUE_LENGTH = 100;
+
 /**
  * Commas and new lines always split. Spaces split only when every piece has a digit
  * (document numbers), so a name like "Acme Trading" stays one value.
@@ -14,10 +17,13 @@ export function splitPastedSearch(text: string): string[] {
     .filter(Boolean);
   if (pieces.length !== 1) return pieces;
   const words = pieces[0].split(/\s+/);
-  return words.length > 1 && words.every((word) => /\d/.test(word)) ? words : pieces;
+  return words.length > 1 && words.every((word) => /\d/.test(word))
+    ? words
+    : pieces;
 }
 
-/** Appends trimmed, non-blank values not already present (case-insensitive), up to `cap`. */
+/** Appends trimmed, non-blank values cut to `MAX_SEARCH_VALUE_LENGTH`, not already present
+ * (case-insensitive), up to `cap`. */
 export function addSearchChips(
   existing: string[],
   incoming: string[],
@@ -27,7 +33,7 @@ export function addSearchChips(
   const seen = new Set(existing.map((chip) => chip.toLowerCase()));
   let capped = false;
   for (const raw of incoming) {
-    const value = raw.trim();
+    const value = raw.trim().slice(0, MAX_SEARCH_VALUE_LENGTH);
     if (!value || seen.has(value.toLowerCase())) continue;
     if (chips.length >= cap) {
       capped = true;
