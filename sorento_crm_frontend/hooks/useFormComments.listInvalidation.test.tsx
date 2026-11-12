@@ -33,7 +33,7 @@ function setup() {
   );
   return { spy, wrapper };
 }
-const keys = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c) => (c[0] as { queryKey: unknown[] }).queryKey);
+const keys = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((c) => (c[0] as { queryKey: unknown[] }).queryKey);
 
 describe('posting a form comment refreshes the form list', () => {
   it.each(Object.keys(LIST_KEYS) as FormCommentKind[])('%s: list and detail keys are invalidated', async (kind) => {
