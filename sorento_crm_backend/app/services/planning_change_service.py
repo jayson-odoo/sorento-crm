@@ -946,6 +946,10 @@ def _nets_back_to_older(row: PlanningChangeRow) -> bool:
     if row.kind not in ("advanced", "delayed", "qty_up", "qty_down"):
         return False
     before, after = row.from_json or {}, row.to_json or {}
+    # Location and item code too (`_entry_differs_from_older_row`): a date put back while the
+    # product or the location also changed is still a change for CS to decide.
+    if after.get("location") or after.get("item_code"):
+        return False
     return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
 
 
@@ -5225,6 +5229,21 @@ def _apply_one_order(
             # cancelled ones included - the undo puts the whole batch back, and a row
             # retired by this apply is as much its work as a confirmed one.
             r.result_json["supply_decision_revision_no"] = revision_no
+
+    # OI-WHOLE-SO-CANCEL v2 (B2): rows are no longer waiting for CS now that this batch's rows
+    # are marked applied, so the system's own auto-confirm may settle the rows of these lines
+    # (it skipped them while they waited). One batched call.
+    applied_line_ids = [str(r.project_line_id) for r in live if r.project_line_id]
+    if applied_line_ids:
+        db.flush()
+        oi_row_ids = [
+            str(row_id)
+            for (row_id,) in db.query(OrderInquiryRow.id).filter(
+                OrderInquiryRow.so_line_id.in_(applied_line_ids)
+            )
+        ]
+        if oi_row_ids:
+            ProjectOrderInquiryService(db).auto_confirm(oi_row_ids)
 
     # B1 (review round 3, S5b, issue #1245): a leftover row of THIS SAME order, still
     # pending because nothing named it in this press (a `Change proposed` line nobody
