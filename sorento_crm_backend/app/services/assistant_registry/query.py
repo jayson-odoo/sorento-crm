@@ -608,9 +608,6 @@ def _base(db, user_id: str, entity: EntityDef, own_only: bool, stmt, paths: _Pat
     if entity.scope is not None:
         for clause in entity.scope(db):
             stmt = stmt.where(clause)
-    if entity.user_scope is not None:
-        for clause in entity.user_scope(db, user_id):
-            stmt = stmt.where(clause)
     if own_only:
         from app.services.own_scope import me
 

@@ -145,8 +145,6 @@ export function useUpdateComplaint() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['complaints'] });
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-service-jobs'] });
-      queryClient.invalidateQueries({ queryKey: ['service-jobs'] });
       toast.success('Complaint updated successfully');
     },
     onError: (error: Error) =>
@@ -168,8 +166,6 @@ export function useUpdateComplaintAndReply() {
       queryClient.invalidateQueries({ queryKey: ['complaints'] });
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
       queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-service-jobs'] });
-      queryClient.invalidateQueries({ queryKey: ['service-jobs'] });
       toast.success('Reply sent to customer successfully');
     },
     onError: (error: Error) =>

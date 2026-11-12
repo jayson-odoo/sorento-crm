@@ -13,6 +13,50 @@ from pydantic import BaseModel, field_validator
 TRANSITION_TARGETS = ("proposed", "confirmed", "on_the_way", "arrived", "completed", "verified", "cancelled")
 
 
+class ServiceJobCreate(BaseModel):
+    customer_name: str
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    site_address_line1: Optional[str] = None
+    site_address_line2: Optional[str] = None
+    site_postcode: Optional[str] = None
+    site_city: Optional[str] = None
+    site_state: Optional[str] = None
+    site_country: Optional[str] = None
+    problem: Optional[str] = None
+    complaint_id: Optional[str] = None
+
+    @field_validator("customer_name", mode="before")
+    @classmethod
+    def customer_not_blank(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("customer_name is required")
+        return v.strip()
+
+
+class ServiceJobUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    site_address_line1: Optional[str] = None
+    site_address_line2: Optional[str] = None
+    site_postcode: Optional[str] = None
+    site_city: Optional[str] = None
+    site_state: Optional[str] = None
+    site_country: Optional[str] = None
+    problem: Optional[str] = None
+    complaint_id: Optional[str] = None
+
+    @field_validator("customer_name", mode="before")
+    @classmethod
+    def customer_not_blank(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("customer_name must not be blank")
+        return v.strip()
+
+
 class ConfirmJobRequest(BaseModel):
     scheduled_from: datetime
     scheduled_to: Optional[datetime] = None

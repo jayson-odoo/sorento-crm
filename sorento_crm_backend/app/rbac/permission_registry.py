@@ -149,19 +149,19 @@ PERMISSION_REGISTRY.append({
     "description": "Void a complaint (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson).",
 })
 
-# After-sales P1: service jobs (a technician sent to a complaint's site) and the technician roster.
+# After-sales P1: service jobs (a technician sent to a customer's site) and the technician roster.
 PERMISSION_REGISTRY.append({
-    "slug": "complaint_management.service_jobs.view",
+    "slug": "after_sales.service_jobs.view",
     "name": "View Service Jobs",
     "description": "See service jobs, the dispatch board and the technician list.",
 })
 PERMISSION_REGISTRY.append({
-    "slug": "complaint_management.service_jobs.dispatch",
+    "slug": "after_sales.service_jobs.dispatch",
     "name": "Dispatch Service Jobs",
-    "description": "Raise service jobs, confirm dates, assign technicians and move a job through its steps.",
+    "description": "Create service jobs, confirm dates, assign technicians and move a job through its steps.",
 })
 PERMISSION_REGISTRY.append({
-    "slug": "complaint_management.technicians.manage",
+    "slug": "after_sales.technicians.manage",
     "name": "Manage Technicians",
     "description": "Create, edit, archive and delete technicians.",
 })

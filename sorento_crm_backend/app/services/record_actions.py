@@ -1349,7 +1349,7 @@ register(
         entity_types=("technician",),
         execute=_delete_technician,
         window=WINDOW_DESTRUCTIVE,
-        permission="complaint_management.technicians.manage",
+        permission="after_sales.technicians.manage",
         label="Delete technician",
     )
 )

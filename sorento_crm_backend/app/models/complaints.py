@@ -35,18 +35,6 @@ class Complaint(Base):
     contact_person = Column(Text, nullable=True)
     contact_number = Column(Text, nullable=True)
     customer_address = Column(Text, nullable=True)
-    # After-sales P1: where a technician goes. Separate from customer_address (the
-    # customer's billing/contact address); the job page shows these, never a copy.
-    site_address_line1 = Column(Text, nullable=True)
-    site_address_line2 = Column(Text, nullable=True)
-    site_postcode = Column(Text, nullable=True)
-    site_city = Column(Text, nullable=True)
-    site_state = Column(Text, nullable=True)
-    site_country = Column(Text, nullable=True)
-    site_contact_name = Column(Text, nullable=True)
-    site_contact_phone = Column(Text, nullable=True)
-    site_latitude = Column(Numeric(10, 7), nullable=True)
-    site_longitude = Column(Numeric(10, 7), nullable=True)
     project_title = Column(Text, nullable=True)
     # AC-L3: the reportable link to a registered project, added WITHOUT removing the text
     # above -- every historical complaint has only the text, and SET NULL rather than CASCADE

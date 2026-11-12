@@ -1,11 +1,11 @@
-"""After-sales P1: raising, moving and listing service jobs.
+"""After-sales P1: creating, moving and listing service jobs.
 
-A job is one visit to one complaint's site. Rules live here (UAC B, C, D, E, H3); the router only
-gates permissions and shapes HTTP.
+A job carries its own customer, contact, site and problem. It may name a complaint as a plain
+reference (owner ruling 12 Nov 2026: the live Complaints module is untouched), read-only here.
+Rules live here; the router only gates permissions and shapes HTTP.
 
-* Raise is idempotent per complaint. The complaint row is locked FOR UPDATE for the check and the
-  insert, so two concurrent raises leave one live job. (A partial unique index cannot name the
-  status because the status is an FK.) "Live" means any status except cancelled and verified.
+* One live job per related complaint (any status except cancelled and verified); an advisory lock
+  makes two simultaneous creates leave one.
 * Every move goes through the status graph; an illegal move is 409 and changes nothing.
 * ``scheduled_from`` is stored as naive UTC. The board's day is the Malaysian day (UTC+8).
 """
@@ -16,15 +16,15 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, asc, desc, false, func, or_
+from sqlalchemy import asc, desc, false, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
 from app.models.complaints import Complaint
 from app.models.service_jobs import ServiceJob, Technician
 from app.models.status import Status
-from app.services import own_scope
 from app.services.error_handler import AppException, handle_not_found
+from app.services.project_party_contact_service import clean_phone, display_phone
 from app.services.service_job_status_graph import SERVICE_JOB_ENTITY_TYPE
 
 logger = logging.getLogger(__name__)
@@ -51,55 +51,6 @@ def myt_day_bounds(day: date) -> Tuple[datetime, datetime]:
     """[start, end) of a Malaysian calendar day, as naive UTC."""
     start = datetime(day.year, day.month, day.day) - MYT
     return start, start + timedelta(days=1)
-
-
-# ------------------------------------------------------------------ scope (H3)
-
-
-class Limit:
-    """A user who holds complaints view_own and not view: only complaints of their contact."""
-
-    def __init__(self, contact_id: Optional[str]):
-        self.contact_id = contact_id
-
-    def clause(self):
-        if not self.contact_id:
-            return false()
-        return Complaint.contact_id == self.contact_id
-
-
-def limit_for(db: Session, user_id: str, *, strict: bool = True) -> Optional[Limit]:
-    """None = no limit (admin, or complaints ``view``). A reader with no complaints access at all
-    matches nothing (``strict``); a dispatcher's writes keep working without it (``strict=False``)."""
-    from app.services.user_service import UserPermissionService
-
-    service = UserPermissionService(db)
-    if service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
-        return None
-    perms = service.get_user_permission_slugs(user_id)
-    access = own_scope.request_access(perms, "complaint")
-    if access == "all":
-        return None
-    if access == "own":
-        return Limit(own_scope.me(db, user_id).contact_id)
-    return Limit(None) if strict else None
-
-
-def brand_clauses(db: Session) -> list:
-    """The complaints list's brand scope (a contact limited to some brands), on the job's complaint."""
-    from app.services.contact_brand_scope import complaint_in_scope_clauses
-
-    return list(complaint_in_scope_clauses(db))
-
-
-def job_brand_clauses(db: Session) -> list:
-    """The same scope stated on ``ServiceJob`` itself, for the assistant's query."""
-    from sqlalchemy import select
-
-    clauses = brand_clauses(db)
-    if not clauses:
-        return []
-    return [ServiceJob.complaint_id.in_(select(Complaint.id).where(*clauses))]
 
 
 def stamp_actor(db: Session, user: dict) -> None:
@@ -139,35 +90,35 @@ def status_by_key(db: Session, key: str) -> Optional[Status]:
     )
 
 
-def _base_query(db: Session, limit: Optional[Limit]):
-    q = (
+def _base_query(db: Session):
+    """Jobs with their status, technician and (optional) related complaint. Visibility is the module's
+    permissions and the company filter only: a related complaint is a plain reference, read-only."""
+    return (
         db.query(ServiceJob, Status, Technician, Complaint)
-        .join(Complaint, Complaint.id == ServiceJob.complaint_id)
+        .outerjoin(Complaint, Complaint.id == ServiceJob.complaint_id)
         .outerjoin(Status, Status.id == ServiceJob.status_id)
         .outerjoin(Technician, Technician.id == ServiceJob.technician_id)
     )
-    if limit is not None:
-        q = q.filter(limit.clause())
-    q = q.filter(*brand_clauses(db))
-    return q
 
 
-def serialize(row: Tuple[ServiceJob, Optional[Status], Optional[Technician], Complaint]) -> Dict[str, Any]:
+def serialize(row: Tuple[ServiceJob, Optional[Status], Optional[Technician], Optional[Complaint]]) -> Dict[str, Any]:
     job, status, tech, complaint = row
     return {
         "id": job.id,
         "job_number": job.job_number,
         "complaint_id": job.complaint_id,
-        "complaint_number": complaint.complaint_number,
-        "customer_name": complaint.customer_name,
-        "city": complaint.site_city,
-        "site_address_line1": complaint.site_address_line1,
-        "site_address_line2": complaint.site_address_line2,
-        "site_postcode": complaint.site_postcode,
-        "site_state": complaint.site_state,
-        "site_country": complaint.site_country,
-        "site_contact_name": complaint.site_contact_name,
-        "site_contact_phone": complaint.site_contact_phone,
+        "complaint_number": complaint.complaint_number if complaint is not None else None,
+        "customer_name": job.customer_name,
+        "contact_name": job.contact_name,
+        "contact_phone": job.contact_phone,
+        "contact_phone_display": display_phone(job.contact_phone),
+        "city": job.site_city,
+        "site_address_line1": job.site_address_line1,
+        "site_address_line2": job.site_address_line2,
+        "site_postcode": job.site_postcode,
+        "site_state": job.site_state,
+        "site_country": job.site_country,
+        "problem": job.problem,
         "status": status.key if status else None,
         "status_label": status.label if status else None,
         "status_color": status.color_hex if status else None,
@@ -185,44 +136,18 @@ def serialize(row: Tuple[ServiceJob, Optional[Status], Optional[Technician], Com
     }
 
 
-def get_row(db: Session, job_id: str, limit: Optional[Limit] = None):
+def get_row(db: Session, job_id: str):
     if not _valid_uuid(job_id):
         raise handle_not_found("Service job", str(job_id))
-    row = _base_query(db, limit).filter(ServiceJob.id == str(job_id)).first()
+    row = _base_query(db).filter(ServiceJob.id == str(job_id)).first()
     if row is None:
         raise handle_not_found("Service job", str(job_id))
     return row
 
 
-def get_job(db: Session, job_id: str, limit: Optional[Limit] = None) -> Dict[str, Any]:
+def get_job(db: Session, job_id: str) -> Dict[str, Any]:
     db.expire_all()
-    return serialize(get_row(db, job_id, limit))
-
-
-def _get_complaint(db: Session, complaint_id: str, limit: Optional[Limit], *, lock: bool = False) -> Complaint:
-    if not _valid_uuid(complaint_id):
-        raise handle_not_found("Complaint", str(complaint_id))
-    q = db.query(Complaint).filter(Complaint.id == str(complaint_id))
-    if limit is not None:
-        q = q.filter(limit.clause())
-    q = q.filter(*brand_clauses(db))
-    if lock:
-        q = q.with_for_update()
-    row = q.first()
-    if row is None:
-        raise handle_not_found("Complaint", str(complaint_id))
-    return row
-
-
-def list_for_complaint(db: Session, complaint_id: str, limit: Optional[Limit]) -> List[Dict[str, Any]]:
-    _get_complaint(db, complaint_id, limit)
-    rows = (
-        _base_query(db, limit)
-        .filter(ServiceJob.complaint_id == str(complaint_id))
-        .order_by(ServiceJob.created_at.desc(), ServiceJob.id)
-        .all()
-    )
-    return [serialize(r) for r in rows]
+    return serialize(get_row(db, job_id))
 
 
 SORTS = {
@@ -231,14 +156,13 @@ SORTS = {
     "status": lambda: Status.sort_order,
     "scheduled_from": lambda: ServiceJob.scheduled_from,
     "technician": lambda: Technician.name,
-    "city": lambda: Complaint.site_city,
-    "customer": lambda: Complaint.customer_name,
+    "city": lambda: ServiceJob.site_city,
+    "customer": lambda: ServiceJob.customer_name,
 }
 
 
 def list_jobs(
     db: Session,
-    limit_scope: Optional[Limit],
     *,
     page: int,
     limit: int,
@@ -250,15 +174,15 @@ def list_jobs(
     date_from: Optional[date],
     date_to: Optional[date],
 ) -> Dict[str, Any]:
-    q = _base_query(db, limit_scope)
+    q = _base_query(db)
     if query and query.strip():
         like = f"%{query.strip()}%"
         q = q.filter(
             or_(
                 ServiceJob.job_number.ilike(like),
                 Complaint.complaint_number.ilike(like),
-                Complaint.customer_name.ilike(like),
-                Complaint.site_city.ilike(like),
+                ServiceJob.customer_name.ilike(like),
+                ServiceJob.site_city.ilike(like),
             )
         )
     if statuses:
@@ -284,11 +208,11 @@ def list_jobs(
     }
 
 
-def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any]:
+def board(db: Session, day: date) -> Dict[str, Any]:
     start, end = myt_day_bounds(day)
     # Every Proposed job is waiting for a date, whatever day is picked: oldest raised first.
     waiting_rows = (
-        _base_query(db, limit_scope)
+        _base_query(db)
         .filter(Status.key == "proposed")
         .order_by(ServiceJob.created_at.asc(), ServiceJob.id)
         .limit(500)
@@ -296,7 +220,7 @@ def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any
     )
 
     day_rows = (
-        _base_query(db, limit_scope)
+        _base_query(db)
         .filter(
             Status.key != "cancelled",
             ServiceJob.scheduled_from >= start,
@@ -324,7 +248,20 @@ def board(db: Session, limit_scope: Optional[Limit], day: date) -> Dict[str, Any
     return {"day": day.isoformat(), "waiting": [serialize(r) for r in waiting_rows], "columns": columns}
 
 
-# ------------------------------------------------------------------ raise
+# ------------------------------------------------------------------ create and edit
+
+DETAIL_FIELDS = (
+    "customer_name",
+    "contact_name",
+    "contact_phone",
+    "site_address_line1",
+    "site_address_line2",
+    "site_postcode",
+    "site_city",
+    "site_state",
+    "site_country",
+    "problem",
+)
 
 
 def _number(db: Session) -> str:
@@ -354,53 +291,58 @@ def _number(db: Session) -> str:
     return number
 
 
-def live_job_row(db: Session, complaint_id: str):
-    return (
-        _base_query(db, None)
-        .filter(ServiceJob.complaint_id == str(complaint_id), Status.key.notin_(DEAD_KEYS))
-        .order_by(ServiceJob.created_at.desc())
-        .first()
-    )
+def _clean_details(values: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in DETAIL_FIELDS:
+        if key not in values:
+            continue
+        value = values[key]
+        if key == "contact_phone":
+            out[key] = clean_phone(value)  # E.164, or a 422 naming a valid example
+        else:
+            text = " ".join(str(value).split()) if key != "problem" and value is not None else value
+            out[key] = (str(text).strip() or None) if text is not None else None
+    return out
 
 
-def _live_job_elsewhere(db: Session, complaint_id: str) -> bool:
-    """A live job in ANY company (raw SQL: the company filter must not hide it)."""
-    from sqlalchemy import text
-
+def _live_job_for_complaint(db: Session, complaint_id: str, *, except_job_id: Optional[str] = None) -> bool:
+    """A live job (any company: a complaint is company-global) already names this complaint."""
     row = db.execute(
         text(
             "select 1 from service_jobs j join statuses s on s.id = j.status_id "
-            "where j.complaint_id = :c and s.key not in ('cancelled', 'verified') limit 1"
+            "where j.complaint_id = :c and s.key not in ('cancelled', 'verified') "
+            "and (cast(:skip as text) is null or j.id::text <> :skip) limit 1"
         ),
-        {"c": str(complaint_id)},
+        {"c": str(complaint_id), "skip": except_job_id},
     ).first()
     return row is not None
 
 
-def raise_job(
-    db: Session,
-    complaint_id: str,
-    actor_id: Optional[str],
-    limit: Optional[Limit] = None,
-    *,
-    commit: bool = True,
-) -> Tuple[Dict[str, Any], bool]:
-    """Raise a job for a complaint (any complaint status). Returns ``(job, created)``.
-
-    Commits on creation unless ``commit=False``. Idempotent: a live job is returned as is.
-    """
-    complaint = _get_complaint(db, complaint_id, limit, lock=True)
-    existing = live_job_row(db, complaint.id)
-    if existing is not None:
-        return serialize(existing), False
-    if _live_job_elsewhere(db, complaint.id):
-        # Complaints are company-global, so one live job per complaint holds across companies.
+def _check_related_complaint(db: Session, complaint_id: Optional[str], *, except_job_id: Optional[str] = None) -> None:
+    if not complaint_id:
+        return
+    exists = _valid_uuid(complaint_id) and db.execute(
+        text("select 1 from complaints where id::text = :c"), {"c": str(complaint_id)}
+    ).first()
+    if not exists:
+        raise AppException(status_code=422, message="complaint_id: complaint not found.", code="complaint_not_found")
+    # One at a time per complaint; the advisory lock makes two simultaneous creates leave one.
+    db.execute(text("select pg_advisory_xact_lock(hashtext(:c))"), {"c": str(complaint_id)})
+    if _live_job_for_complaint(db, complaint_id, except_job_id=except_job_id):
         raise AppException(
             status_code=409,
-            message="This complaint already has a live service job in another company.",
-            code="service_job_live_elsewhere",
+            message="This complaint already has a live service job.",
+            code="service_job_live_exists",
         )
 
+
+def create_job(db: Session, values: Dict[str, Any], actor_id: Optional[str]) -> Dict[str, Any]:
+    """Create a job in Proposed, numbered, with its own customer, contact, site and problem."""
+    details = _clean_details(values)
+    if not details.get("customer_name"):
+        raise AppException(status_code=422, message="customer_name is required.", code="service_job_customer_required")
+    complaint_id = values.get("complaint_id") or None
+    _check_related_complaint(db, complaint_id)
     proposed = status_by_key(db, "proposed")
     if proposed is None:
         raise AppException(
@@ -411,17 +353,35 @@ def raise_job(
     job = ServiceJob(
         id=str(uuid.uuid4()),
         job_number=_number(db),
-        complaint_id=complaint.id,
+        complaint_id=complaint_id,
         status_id=proposed.id,
         created_by=str(actor_id) if actor_id else None,
         created_at=_now(),
+        **details,
     )
     db.add(job)
     db.flush()
     job_id = job.id
-    if commit:
-        db.commit()
-    return get_job(db, job_id, limit), True
+    db.commit()
+    return get_job(db, job_id)
+
+
+def update_job(db: Session, job_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
+    """Edit a job's own details (the same fields as create). Status and schedule move through their actions."""
+    job = _lock_job(db, job_id)
+    details = _clean_details(values)
+    if "customer_name" in details and not details["customer_name"]:
+        raise AppException(status_code=422, message="customer_name is required.", code="service_job_customer_required")
+    if "complaint_id" in values:
+        complaint_id = values.get("complaint_id") or None
+        if complaint_id != job.complaint_id:
+            _check_related_complaint(db, complaint_id, except_job_id=job.id)
+        job.complaint_id = complaint_id
+    for key, value in details.items():
+        setattr(job, key, value)
+    job.updated_at = _now()
+    db.commit()
+    return get_job(db, job_id)
 
 
 # ------------------------------------------------------------------ moves
@@ -463,8 +423,8 @@ def _current_key(db: Session, job: ServiceJob) -> Optional[str]:
     return db.query(Status.key).filter(Status.id == job.status_id).scalar()
 
 
-def _lock_job(db: Session, job_id: str, limit: Optional[Limit]) -> ServiceJob:
-    row = get_row(db, job_id, limit)
+def _lock_job(db: Session, job_id: str) -> ServiceJob:
+    row = get_row(db, job_id)
     job = row[0]
     db.query(ServiceJob).filter(ServiceJob.id == job.id).with_for_update().first()
     db.refresh(job)
@@ -478,7 +438,6 @@ def confirm(
     scheduled_from: datetime,
     scheduled_to: Optional[datetime],
     customer_agreed_by: str,
-    limit: Optional[Limit] = None,
 ) -> Dict[str, Any]:
     start, end = to_naive_utc(scheduled_from), to_naive_utc(scheduled_to)
     if end is not None and end < start:
@@ -487,18 +446,18 @@ def confirm(
             message="scheduled_to must not be before scheduled_from.",
             code="service_job_schedule_invalid",
         )
-    job = _lock_job(db, job_id, limit)
+    job = _lock_job(db, job_id)
     _move_to(db, job, "confirmed")
     job.scheduled_from = start
     job.scheduled_to = end
     job.customer_agreed_by = customer_agreed_by.strip()
     job.rejection_reason = None
     db.commit()
-    return get_job(db, job_id, limit)
+    return get_job(db, job_id)
 
 
-def assign(db: Session, job_id: str, technician_id: str, limit: Optional[Limit] = None) -> Dict[str, Any]:
-    job = _lock_job(db, job_id, limit)
+def assign(db: Session, job_id: str, technician_id: str) -> Dict[str, Any]:
+    job = _lock_job(db, job_id)
     if _current_key(db, job) not in ("proposed", "confirmed"):
         raise AppException(
             status_code=409,
@@ -523,11 +482,11 @@ def assign(db: Session, job_id: str, technician_id: str, limit: Optional[Limit] 
     job.technician_id = tech.id
     job.updated_at = _now()
     db.commit()
-    return get_job(db, job_id, limit)
+    return get_job(db, job_id)
 
 
 def transition(
-    db: Session, job_id: str, to: str, reason: Optional[str], limit: Optional[Limit] = None
+    db: Session, job_id: str, to: str, reason: Optional[str]
 ) -> Dict[str, Any]:
     if to == "confirmed":
         raise AppException(
@@ -535,7 +494,7 @@ def transition(
             message="to: use the confirm action to confirm a date.",
             code="service_job_use_confirm",
         )
-    job = _lock_job(db, job_id, limit)
+    job = _lock_job(db, job_id)
     target = _check_edge(db, job, to)
     if to in ("on_the_way", "arrived") and not job.technician_id:
         raise AppException(
@@ -567,4 +526,4 @@ def transition(
     elif to == "cancelled":
         job.cancel_reason = reason
     db.commit()
-    return get_job(db, job_id, limit)
+    return get_job(db, job_id)

@@ -27,7 +27,7 @@ router = APIRouter()
 _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "complaint": "complaint_management.complaints.view",
     # Service job page, History tab (after-sales P1): the permission that opens the job page.
-    "service_jobs": "complaint_management.service_jobs.view",
+    "service_jobs": "after_sales.service_jobs.view",
     "stock_inquiry": "procurement.stock_inquiries.view",
     "purchase_request": "procurement.purchase_requests.view",
     "product": "master_data.products.view",

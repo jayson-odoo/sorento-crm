@@ -1,7 +1,7 @@
-"""After-sales P1: the service job (a technician sent to a complaint's site) and the technician.
+"""After-sales P1: the service job (a technician sent to a customer's site) and the technician.
 
-Plan: documentation/plans/after-sales/PLAN-service-jobs-p1-12nov.md. A job points at its
-complaint with a real FK; the Site lives on the complaint, never copied here. The technician is
+Plan: documentation/plans/after-sales/PLAN-service-jobs-p1-12nov.md. A job carries its
+own customer, contact, site and problem; the complaint is an optional reference. The technician is
 a column, not a table of attempts: earlier tries show in History through the audit trail.
 """
 from __future__ import annotations
@@ -39,9 +39,20 @@ class ServiceJob(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_number = Column(String(64), nullable=True, unique=True)
+    # Optional "Related complaint": a plain reference, nothing on the complaint side reads it.
     complaint_id = Column(
-        UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="SET NULL"), nullable=True
     )
+    customer_name = Column(Text, nullable=False)
+    contact_name = Column(Text, nullable=True)
+    contact_phone = Column(Text, nullable=True)  # E.164
+    site_address_line1 = Column(Text, nullable=True)
+    site_address_line2 = Column(Text, nullable=True)
+    site_postcode = Column(Text, nullable=True)
+    site_city = Column(Text, nullable=True)
+    site_state = Column(Text, nullable=True)
+    site_country = Column(Text, nullable=True)
+    problem = Column(Text, nullable=True)
     status_id = Column(
         UUID(as_uuid=False), ForeignKey("statuses.id", ondelete="SET NULL"), nullable=True
     )
@@ -65,6 +76,7 @@ class ServiceJob(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_service_jobs_complaint_id", "complaint_id"),
+        Index("ix_service_jobs_customer_name", "customer_name"),
         Index("ix_service_jobs_status_id", "status_id"),
         Index("ix_service_jobs_technician_id", "technician_id"),
         Index("ix_service_jobs_scheduled_from", "scheduled_from"),

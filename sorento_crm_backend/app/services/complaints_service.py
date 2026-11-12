@@ -1939,7 +1939,6 @@ class ComplaintService:
         complaint = self.get_complaint(complaint_id)
 
         update_data = complaint_data.model_dump(exclude_unset=True)
-        previous_resolution_id = str(complaint.resolution_id) if complaint.resolution_id else None
         if "project_id" in update_data:
             self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         explicit_lines = update_data.pop("product_lines", None)
@@ -1995,37 +1994,8 @@ class ComplaintService:
             self._populate_lines_from_legacy_csv(complaint)
 
         self.db.commit()
-        # Only a CHANGE to a flagged resolution raises: a later save of the same complaint must not
-        # bring back a job somebody cancelled.
-        if update_data.get("resolution_id") and str(update_data["resolution_id"]) != previous_resolution_id:
-            self._raise_service_job_for_resolution(complaint)
         self.db.refresh(complaint)
         return complaint
-
-    def _raise_service_job_for_resolution(self, complaint: Complaint) -> None:
-        """A resolution flagged ``requires_service_job`` raises a job (idempotent, never deletes).
-
-        Runs after the complaint save is committed and inside a savepoint, so a failure here
-        (graph or numbering not set up) leaves the save intact (after-sales P1, UAC B6/B7).
-        """
-        from app.models.complaint_master_data import ComplaintResolution
-        from app.services import service_job_service
-
-        try:
-            flagged = (
-                self.db.query(ComplaintResolution.requires_service_job)
-                .filter(ComplaintResolution.id == complaint.resolution_id)
-                .scalar()
-            )
-            if not flagged:
-                return
-            with self.db.begin_nested():
-                service_job_service.raise_job(self.db, str(complaint.id), None, commit=False)
-            self.db.commit()
-        except Exception:  # noqa: BLE001
-            logging.getLogger(__name__).warning(
-                "service job not raised for complaint %s", complaint.id, exc_info=True
-            )
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
         """Resolve contact identifier from respond_inbox_url to a numeric respond_io_id.

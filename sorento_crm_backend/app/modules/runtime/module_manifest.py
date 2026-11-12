@@ -65,6 +65,12 @@ _RAW: Dict[str, dict] = {
         "description": "Complaints and complaint attachments.",
         "dependencies": ["base", "resources"],
     },
+    "after_sales": {
+        "display_name": "After-sales service",
+        "description": "Service jobs, the dispatch board and technicians.",
+        # `complaints` because a job can name a complaint as its related complaint.
+        "dependencies": ["base", "complaints"],
+    },
     "sla": {
         "display_name": "SLA management",
         "description": "SLA policies, conversation tracking, escalation.",

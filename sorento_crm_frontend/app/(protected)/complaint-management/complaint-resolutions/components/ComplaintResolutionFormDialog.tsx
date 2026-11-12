@@ -7,7 +7,6 @@ import { z } from 'zod';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -22,7 +21,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import {
   useCreateComplaintResolution,
@@ -35,7 +33,6 @@ const FormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(150),
   description: z.string().max(2000).optional().nullable(),
   is_active: z.boolean(),
-  requires_service_job: z.boolean(),
 });
 
 interface Props {
@@ -52,7 +49,7 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
   const form = useForm<z.infer<typeof FormSchema>>({
     resolver: zodResolver(FormSchema),
     mode: 'onTouched',
-    defaultValues: { name: '', description: '', is_active: true, requires_service_job: false },
+    defaultValues: { name: '', description: '', is_active: true },
   });
 
   useEffect(() => {
@@ -62,10 +59,9 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
           name: row.name,
           description: row.description || '',
           is_active: row.is_active,
-          requires_service_job: row.requires_service_job ?? false,
         });
       } else {
-        form.reset({ name: '', description: '', is_active: true, requires_service_job: false });
+        form.reset({ name: '', description: '', is_active: true });
       }
     }
   }, [open, form, rowId, row]);
@@ -76,7 +72,6 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
         name: data.name,
         description: data.description ?? undefined,
         is_active: data.is_active,
-        requires_service_job: data.requires_service_job,
       };
       if (rowId) {
         await updateMutation.mutateAsync({ id: rowId, data: payload });
@@ -95,7 +90,6 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{rowId ? 'Edit Resolution' : 'Create Resolution'}</DialogTitle>
-          <DialogDescription className="sr-only">Resolution details.</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -141,24 +135,6 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
                   <FormControl>
                     <Switch checked={field.value} onCheckedChange={field.onChange} />
                   </FormControl>
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="requires_service_job"
-              render={({ field }) => (
-                <FormItem className="flex flex-row items-center gap-2 space-y-0">
-                  <FormControl>
-                    <Checkbox
-                      id="requires-service-job"
-                      checked={field.value}
-                      onCheckedChange={(v) => field.onChange(v === true)}
-                    />
-                  </FormControl>
-                  <FormLabel htmlFor="requires-service-job" className="font-normal">
-                    Requires service job
-                  </FormLabel>
                 </FormItem>
               )}
             />

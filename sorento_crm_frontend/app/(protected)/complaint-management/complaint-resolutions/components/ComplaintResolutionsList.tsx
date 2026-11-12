@@ -8,7 +8,6 @@ import {
   getCoreRowModel,
   type ColumnDef,
   type RowSelectionState,
-  type SortingState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -39,12 +38,11 @@ export default function ComplaintResolutionsList() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [rowToDelete, setRowToDelete] = useState<ComplaintResolution | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
 
   const { data, isLoading, isPlaceholderData, error, refetch } = useComplaintResolutions({
     pageIndex: 0,
     pageSize: 100,
-    sorting,
+    sorting: [{ id: 'name', desc: false }],
     searchQuery: '',
   });
   const rows = useMemo<ComplaintResolution[]>(() => data?.data ?? [], [data]);
@@ -77,7 +75,7 @@ export default function ComplaintResolutionsList() {
         id: 'name',
         accessorFn: (row) => row.name,
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        size: 200,
+        size: 300,
         enableSorting: true,
         meta: { headerTitle: 'Name' },
         cell: ({ row }) => <span className="font-medium truncate block">{row.original.name}</span>,
@@ -86,7 +84,7 @@ export default function ComplaintResolutionsList() {
         id: 'description',
         accessorFn: (row) => row.description,
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-        size: 200,
+        size: 360,
         enableSorting: false,
         meta: { headerTitle: 'Description' },
         cell: ({ row }) => (
@@ -102,7 +100,7 @@ export default function ComplaintResolutionsList() {
         id: 'is_active',
         accessorFn: (row) => row.is_active,
         header: ({ column }) => <DataGridColumnHeader title="Active" column={column} />,
-        size: 100,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Active' },
         cell: ({ row }) => (
@@ -117,21 +115,10 @@ export default function ComplaintResolutionsList() {
         ),
       },
       {
-        id: 'requires_service_job',
-        accessorFn: (row) => row.requires_service_job,
-        header: ({ column }) => <DataGridColumnHeader title="Requires service job" column={column} />,
-        size: 175,
-        enableSorting: true,
-        meta: { headerTitle: 'Requires service job' },
-        cell: ({ row }) => (
-          <span className="truncate block">{row.original.requires_service_job ? 'Yes' : 'No'}</span>
-        ),
-      },
-      {
         id: 'complaint_count',
         accessorFn: (row) => row.complaint_count ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="Complaints" column={column} />,
-        size: 110,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Complaints' },
         cell: ({ row }) => (
@@ -146,7 +133,7 @@ export default function ComplaintResolutionsList() {
       {
         id: 'actions',
         header: '',
-        size: 70,
+        size: 140,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
@@ -185,9 +172,7 @@ export default function ComplaintResolutionsList() {
     columns,
     data: filtered,
     getRowId: (row) => row.id,
-    state: { rowSelection, sorting },
-    manualSorting: true,
-    onSortingChange: setSorting,
+    state: { rowSelection },
     columnResizeMode: 'onChange',
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),

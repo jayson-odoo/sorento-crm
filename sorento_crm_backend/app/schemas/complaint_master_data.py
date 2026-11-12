@@ -56,7 +56,6 @@ class ComplaintResolutionBase(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: bool = True
-    requires_service_job: bool = False
 
     @field_validator("name", mode="before")
     @classmethod
@@ -74,7 +73,6 @@ class ComplaintResolutionUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
-    requires_service_job: Optional[bool] = None
 
     @field_validator("name", mode="before")
     @classmethod

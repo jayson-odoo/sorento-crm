@@ -3,7 +3,6 @@ export interface ComplaintResolution {
   name: string;
   description?: string | null;
   is_active: boolean;
-  requires_service_job?: boolean;
   created_at: string;
   updated_at?: string | null;
   complaint_count?: number;
@@ -13,5 +12,4 @@ export interface ComplaintResolutionFormData {
   name: string;
   description?: string;
   is_active: boolean;
-  requires_service_job?: boolean;
 }

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.service_jobs import ServiceJob, Technician
 from app.schemas.service_jobs import TechnicianCreate, TechnicianUpdate
 from app.services.error_handler import AppException, handle_not_found
+from app.services.project_party_contact_service import clean_phone, display_phone
 
 SORTS = {
     "name": Technician.name,
@@ -26,6 +27,7 @@ def serialize(row: Technician, in_use: bool = False) -> Dict[str, Any]:
         "id": row.id,
         "name": row.name,
         "phone": row.phone,
+        "phone_display": display_phone(row.phone),
         "employment_type": row.employment_type,
         "is_active": bool(row.is_active),
         "created_at": row.created_at,
@@ -83,7 +85,9 @@ def list_technicians(
 
 
 def create(db: Session, payload: TechnicianCreate) -> Dict[str, Any]:
-    row = Technician(id=str(uuid.uuid4()), **payload.model_dump())
+    values = payload.model_dump()
+    values["phone"] = clean_phone(values.get("phone"))  # E.164, or a 422
+    row = Technician(id=str(uuid.uuid4()), **values)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -93,6 +97,8 @@ def create(db: Session, payload: TechnicianCreate) -> Dict[str, Any]:
 def update(db: Session, technician_id: str, payload: TechnicianUpdate) -> Dict[str, Any]:
     row = get(db, technician_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == "phone":
+            value = clean_phone(value)
         if key in ("name", "employment_type", "is_active") and value is None:
             continue
         setattr(row, key, value)

@@ -24,16 +24,12 @@ def get_complaint_resolutions(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    sort: Optional[str] = Query(None),
-    dir: str = Query("asc", pattern="^(asc|desc)$"),
     current_user: dict = Depends(require_permission_with_api_key("master_data.complaint_resolutions.view")),
     db: Session = Depends(get_db),
 ):
     try:
         service = ComplaintResolutionService(db)
-        return service.list_resolutions(
-            page=page, limit=limit, query=query, is_active=is_active, sort=sort, direction=dir
-        )
+        return service.list_resolutions(page=page, limit=limit, query=query, is_active=is_active)
     except HTTPException:
         raise
     except Exception as e:

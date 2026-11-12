@@ -32,8 +32,6 @@ export interface MasterDataComplaintsDetailProps {
     description?: string | null;
     is_active: boolean;
     complaint_count?: number;
-    /** Resolutions only. */
-    requires_service_job?: boolean;
   };
   isLoading: boolean;
   /** Where "Back" and the not-found state return to. */
@@ -98,6 +96,14 @@ export function MasterDataComplaintsDetail({
             </span>
           </div>
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href={listHref}>
+              <MoveLeft className="size-4 mr-1" />
+              Back to {listLabel}
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -125,14 +131,6 @@ export function MasterDataComplaintsDetail({
               )}
             </p>
           </div>
-          {kind === 'resolution' && (
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Requires service job
-              </p>
-              <p className="mt-1 text-sm">{record.requires_service_job ? 'Yes' : 'No'}</p>
-            </div>
-          )}
         </CardContent>
       </Card>
 
