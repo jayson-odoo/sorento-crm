@@ -46,7 +46,7 @@ function Rows({ rows }: { rows: ([string, ReactNode] | [string, ReactNode, strin
               <td className="w-full max-w-0 py-1.5 pe-2">
                 <TruncatedTextCell text={label} dialogTitle="Full name" />
               </td>
-              <td className="py-1.5 text-end tabular-nums">{value}</td>
+              <td className="whitespace-nowrap py-1.5 text-end tabular-nums">{value}</td>
             </tr>
           ))}
         </tbody>

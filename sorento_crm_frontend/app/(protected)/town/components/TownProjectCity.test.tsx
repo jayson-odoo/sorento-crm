@@ -92,6 +92,8 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     // a site's stage and state on lines of their own, never joined with a dot
     const site = screen.getByText('Residensi Alpha').closest('tr') as HTMLElement;
     expect(site.querySelectorAll('td:last-child > div')).toHaveLength(2);
+    // crew pass 6d4572c6: the value cell never wraps word by word ("PO / Received / State not / set"); the name truncates instead
+    expect((site.querySelector('td:last-child') as HTMLElement).className).toMatch(/whitespace-nowrap/);
     expect(screen.getByRole('dialog').textContent).not.toMatch(/·/);
   });
 
