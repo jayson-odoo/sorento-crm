@@ -1,6 +1,6 @@
 # PLAN: Spare-part order request (stock replenishment, no SO)
 
-Status: Build (mock v5 + card v4 approved 12 Nov 20:14). Track L. as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
+Status: Review (built; fix round 2 from code review in progress; browser pass running). Track L. Mock v5 + card v4 approved 12 Nov 20:14. as crew-ask on PR #2381; waiting on owner answers. No product code yet. Track: L (migration, new flow, approval permissions; security-reviewer required).
 
 Lane: SPARE-PART-ORDER-REQUEST.
 
