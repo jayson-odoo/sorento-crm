@@ -163,6 +163,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           l.key,
           l.line_type,
           l.product_id,
+          l.product_set_id,
           l.parts.map((p) => [p.product_id, p.product_ids, p.candidates.map((c) => c.product_id)]),
           l.promotion_id,
           l.combo_id,
@@ -172,10 +173,11 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   );
   useEffect(() => {
     const inputs: LinePricingLineInput[] = linesRef.current
-      .filter((l) => l.line_type === 'product' && l.product_id)
+      .filter((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
       .map((l) => ({
         key: l.key,
         product_id: l.product_id,
+        product_set_id: l.product_set_id,
         part_product_ids: pickedProductIds(l.parts),
         candidate_product_ids: l.parts.flatMap((p) =>
           p.candidates.map((c) => c.product_id),

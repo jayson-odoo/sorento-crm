@@ -508,6 +508,9 @@ def line_pricing(
     for line in lines:
         key = line["key"]
         product_id = line.get("product_id")
+        if line.get("product_set_id") and not product_id:
+            results.append(_set_line_row(db, line, viewer))
+            continue
         part_ids = [pid for pid in (line.get("part_product_ids") or []) if pid]
         candidate_ids = [pid for pid in (line.get("candidate_product_ids") or []) if pid]
         given_promotion_id = line.get("promotion_id")
@@ -645,6 +648,35 @@ def line_pricing(
             }
         )
     return results
+
+
+def _set_line_row(db: Session, line: dict, viewer: ViewerContext) -> dict:
+    """A set line (F1-7), answered from the one function the printed set tag reads, so the form
+    and the tag cannot disagree. A set has no promotion choice; a price that cannot be worked
+    out stays None."""
+    from app.services.dealer_kit.tag_data_service import get_product_set, product_set_tag_data
+
+    product_set = get_product_set(db, line["product_set_id"])
+    data = product_set_tag_data(db, product_set, viewer) if product_set is not None else None
+    list_price = data["list_price"] if data else None
+    offer_price = data["offer_price"] if data else None
+    manual = line.get("manual_sell_price")
+    if manual is not None:
+        sell_price, basis = _as_decimal(manual), "manual"
+    elif offer_price is not None:
+        sell_price, basis = offer_price, "promotion"
+    else:
+        sell_price, basis = list_price, "list"
+    return {
+        "key": line["key"],
+        "list_price": list_price,
+        "promotion_options": [],
+        "auto_promotion_id": None,
+        "sell_price": sell_price,
+        "sell_price_basis": basis,
+        "parts_at_list": [],
+        "candidates": [],
+    }
 
 
 def combo_for_host(

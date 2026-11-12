@@ -536,15 +536,16 @@ function ItemPicker({
     [line.key],
   );
 
+  const fetchItemOptionsOf = editor.fetchItemOptions;
   const fetchOptions = useCallback(
     async (query: string): Promise<SearchableMultiSelectOption[]> => {
-      const found = await editor.fetchItemOptions(query);
+      const found = await fetchItemOptionsOf(query);
       return found.map((opt) => {
         optionCache.current.set(opt.value, opt);
         return { ...opt, disabled: onRequestAtOpen.current.has(opt.value) };
       });
     },
-    [editor],
+    [fetchItemOptionsOf],
   );
 
   const handleChange = (next: string[]) => {
@@ -693,7 +694,7 @@ function LineRow({
 
   // ---- S1/S2: price cells (product lines only - a set is priced whole,
   // no combo/promotion concept applies to it). ----
-  const showPricing = !isSet && !!line.product_id;
+  const showPricing = isSet ? !!line.product_set_id : !!line.product_id;
   const isSelling = linePriceType(line, priceMode) === 'selling';
   // A product with a finished lookup and no published template has nothing to draw.
   const noTemplate =
@@ -758,7 +759,16 @@ function LineRow({
     </div>
   );
 
-  const renderPromotionCell = (withLabel: boolean) => (
+  const renderPromotionCell = (withLabel: boolean) =>
+    isSet ? (
+      // A set has no promotion choice.
+      <div>
+        {withLabel && (
+          <div className="text-2xs uppercase tracking-wide text-muted-foreground">Promotion</div>
+        )}
+        <div className="text-sm text-muted-foreground">-</div>
+      </div>
+    ) : (
     <div>
       <Label
         className={
@@ -782,7 +792,7 @@ function LineRow({
         size="sm"
       />
     </div>
-  );
+    );
 
   const renderSellingPriceCell = (withLabel: boolean) => (
     <div>
@@ -791,7 +801,10 @@ function LineRow({
           Selling price
         </div>
       )}
-      {line.promotion_id ? (
+      {isSet ? (
+        // A set's selling price is the tag function's figure, never typed.
+        <div className="text-sm font-medium whitespace-nowrap">{formatRM(pricing?.sell_price)}</div>
+      ) : line.promotion_id ? (
         <div>
           <div
             className="text-sm font-medium whitespace-nowrap"
