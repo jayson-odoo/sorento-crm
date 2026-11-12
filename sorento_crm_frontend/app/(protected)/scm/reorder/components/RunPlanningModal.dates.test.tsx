@@ -315,4 +315,12 @@ describe('RunPlanningModal - dates (DATE-PICKER-UNIFY slice B)', () => {
       ),
     );
   });
+
+  it('portal: the open range calendar is rendered outside the dialog (portalled)', async () => {
+    await renderModal();
+    fireEvent.click(screen.getAllByRole('button', { name: /^Pick a date range/ })[0]);
+    const grid = await screen.findByRole('grid');
+    // The calendar popover itself carries role="dialog", so the modal is found by its slot.
+    expect(grid.closest('[data-slot="dialog-content"]')).toBeNull();
+  });
 });

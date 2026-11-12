@@ -300,4 +300,14 @@ describe('LoadingPlanView (the record)', () => {
       ),
     );
   });
+
+  it('portal: the open range calendar is rendered outside the dialog (portalled)', async () => {
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
+    await screen.findByText('Sales orders needed');
+    fireEvent.click(screen.getAllByRole('button', { name: /^Pick a date range/ })[0]);
+    const grid = await screen.findByRole('grid');
+    // The calendar popover itself carries role="dialog", so the modal is found by its slot.
+    expect(grid.closest('[data-slot="dialog-content"]')).toBeNull();
+  });
 });
