@@ -766,7 +766,7 @@ export interface OrderInquiryWorklistParams {
    * `to_confirm` is the page's own default (R3): awaiting AND changed in one word,
    * because both mean the same thing to purchasing - nobody has said yes to this yet.
    */
-  ack?: OrderInquiryAckState | 'to_confirm';
+  ack?: OrderInquiryAckState | 'to_confirm' | 'waiting_for_cs' | 'so_cancelled' | 'line_cancelled';
   /** The row's Location column, equality (S1, R-K). Warehouse code, never a UUID. */
   /** One location, or several (free text, each sent whole). */
   location?: string | string[];
@@ -927,6 +927,10 @@ export interface OrderInquiryAckCounts {
    * itself until it arrives.
    */
   to_confirm?: number;
+  /** F1b: the Status column's other words. */
+  waiting_for_cs?: number;
+  so_cancelled?: number;
+  line_cancelled?: number;
 }
 
 /**

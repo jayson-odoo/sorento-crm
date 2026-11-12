@@ -724,6 +724,10 @@ class OrderInquiryAckCounts(BaseModel):
     #: to answer. A fifth count rather than a fifth state - nothing is stored as
     #: `to_confirm` - so the chip on screen and the filter behind it read one number.
     to_confirm: int = 0
+    #: F1b: the Status column's other words, one count each.
+    waiting_for_cs: int = 0
+    so_cancelled: int = 0
+    line_cancelled: int = 0
 
 
 class OrderInquiryKindTotals(BaseModel):
@@ -1303,7 +1307,10 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     linked: Optional[Literal["po", "spo", "none"]] = None
     kind: Optional[Literal["spo", "po", "buy"]] = None
     ack: Optional[
-        Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
+        Literal[
+            "awaiting", "acknowledged", "changed", "rejected", "to_confirm",
+            "waiting_for_cs", "so_cancelled", "line_cancelled",
+        ]
     ] = None
     #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
     location: Optional[str | List[str]] = None

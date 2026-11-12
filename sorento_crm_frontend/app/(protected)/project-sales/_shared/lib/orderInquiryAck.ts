@@ -51,6 +51,10 @@ export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'to_confirm', label: ACK_LABELS.awaiting },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
   { value: 'rejected', label: ACK_LABELS.rejected },
+  // F1b: the Status column's other words, each filtering exactly the rows that read it.
+  { value: 'waiting_for_cs', label: 'Waiting for CS' },
+  { value: 'so_cancelled', label: 'SO cancelled' },
+  { value: 'line_cancelled', label: 'Line cancelled' },
   { value: ACK_ANY, label: 'All' },
 ];
 

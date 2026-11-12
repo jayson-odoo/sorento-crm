@@ -142,7 +142,13 @@ ACK_FILTER_STATES = ACK_STATES
 #: system has to learn a fifth word.
 ACK_TO_CONFIRM = "to_confirm"
 ACK_TO_CONFIRM_STATES = (ACK_AWAITING, ACK_CHANGED)
-ACK_FILTER_VALUES = tuple(ACK_FILTER_STATES) + (ACK_TO_CONFIRM,)
+#: F1b: the Status column's other words, as filters. Each matches exactly the rows the column
+#: prints that word for (same precedence as `_STATUS_SORT` and the FE `rowStatusPill`).
+ACK_WAITING_FOR_CS = "waiting_for_cs"
+ACK_SO_CANCELLED = "so_cancelled"
+ACK_LINE_CANCELLED = "line_cancelled"
+ACK_STATUS_WORDS = (ACK_WAITING_FOR_CS, ACK_SO_CANCELLED, ACK_LINE_CANCELLED)
+ACK_FILTER_VALUES = tuple(ACK_FILTER_STATES) + (ACK_TO_CONFIRM,) + ACK_STATUS_WORDS
 
 #: Every column the list renders is sortable, and this is the CLOSED SET. An unknown
 #: value is a 422 rather than a silent fall back to the default, for the same reason it
@@ -912,6 +918,12 @@ _LINE_WAS = oi_was_expr(OrderInquiryRow, _LINE_DATE)
 _ACK_USER = aliased(User)
 _REJECT_USER = aliased(User)
 _OVERRIDE_USER = aliased(User)
+
+#: F1b: the rows the Status column prints each word for. Waiting for CS outranks SO cancelled,
+#: which outranks Line cancelled; a row reading none of them is "plain" and reads its ack word.
+_STATUS_IS_SO_CANCELLED = and_(~_WAITING_FOR_CS, _SO_CANCELLED)
+_STATUS_IS_LINE_CANCELLED = and_(~_WAITING_FOR_CS, ~_SO_CANCELLED, _LINE_CANCELLED)
+_STATUS_IS_PLAIN = and_(~_WAITING_FOR_CS, ~_SO_CANCELLED, ~_LINE_CANCELLED)
 
 #: OI-WHOLE-SO-CANCEL v2 (H2): the Status column's sort key, the same words `status_label` prints.
 _STATUS_SORT = case(
@@ -1728,9 +1740,16 @@ class OrderInquiryWorklistService:
                 # stored states.
                 base = base.filter(
                     OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES),
-                    # AC-V2-3: a row waiting for CS is not purchasing's to confirm yet.
-                    ~_WAITING_FOR_CS,
+                    # AC-V2-3 / F1b: a row waiting for CS, or one the column reads SO
+                    # cancelled / Line cancelled, is not purchasing's to confirm yet.
+                    _STATUS_IS_PLAIN,
                 )
+            elif ack == ACK_WAITING_FOR_CS:
+                base = base.filter(_WAITING_FOR_CS)
+            elif ack == ACK_SO_CANCELLED:
+                base = base.filter(_STATUS_IS_SO_CANCELLED)
+            elif ack == ACK_LINE_CANCELLED:
+                base = base.filter(_STATUS_IS_LINE_CANCELLED)
             else:
                 # The literal `ack_state`, including `changed`: `_handshake_for_raise`
                 # and `_settle_row_in_place` (`PLAN-oi-confirm-per-so.md` S1) stamp
@@ -1739,7 +1758,8 @@ class OrderInquiryWorklistService:
                 # truer read than the column itself, and a row later re-acknowledged
                 # keeps its old `changed_at` (history) while reading `acknowledged`
                 # again, which `changed_at IS NOT NULL` would have miscounted.
-                base = base.filter(OrderInquiryRow.ack_state == ack)
+                # F1b: only the rows whose column reads that ack word.
+                base = base.filter(OrderInquiryRow.ack_state == ack, _STATUS_IS_PLAIN)
         # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
         # the Excel parity batch adds to the Filters popover.
         locations = multi_text(location)
@@ -3373,6 +3393,7 @@ class OrderInquiryWorklistService:
         counts = {state: 0 for state in ACK_FILTER_STATES}
         rows = (
             self._base(**filters)
+            .filter(_STATUS_IS_PLAIN)
             .with_entities(OrderInquiryRow.ack_state, func.count(OrderInquiryRow.id))
             .group_by(OrderInquiryRow.ack_state)
             .order_by(None)
@@ -3393,12 +3414,26 @@ class OrderInquiryWorklistService:
         # counted over the same filter as the list it opens, not summed from the states.
         counts[ACK_TO_CONFIRM] = int(
             self._base(**filters)
-            .filter(OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES), ~_WAITING_FOR_CS)
+            .filter(OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES), _STATUS_IS_PLAIN)
             .with_entities(func.count(OrderInquiryRow.id))
             .order_by(None)
             .scalar()
             or 0
         )
+        # F1b: the Status column's other words, counted over the same rows the filters list.
+        for word, predicate in (
+            (ACK_WAITING_FOR_CS, _WAITING_FOR_CS),
+            (ACK_SO_CANCELLED, _STATUS_IS_SO_CANCELLED),
+            (ACK_LINE_CANCELLED, _STATUS_IS_LINE_CANCELLED),
+        ):
+            counts[word] = int(
+                self._base(**filters)
+                .filter(predicate)
+                .with_entities(func.count(OrderInquiryRow.id))
+                .order_by(None)
+                .scalar()
+                or 0
+            )
         return counts
 
     def _stage_rows(
