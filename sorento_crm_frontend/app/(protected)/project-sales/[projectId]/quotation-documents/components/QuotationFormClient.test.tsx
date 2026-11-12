@@ -611,7 +611,8 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Attn')).toBeInTheDocument();
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    expect(screen.getByLabelText('Date')).toHaveValue(today);
+    const [ty, tm, td] = today.split('-');
+    expect(screen.getByLabelText('Date')).toHaveValue(`${td}/${tm}/${ty}`);
     // The subject arrives as the project's title, the same default the server would use.
     await waitFor(() =>
       expect(screen.getByLabelText('Project title')).toHaveValue('Menara Test'),
