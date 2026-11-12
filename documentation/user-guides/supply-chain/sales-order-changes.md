@@ -43,6 +43,20 @@ its next change, even when the move itself came earlier: a date change on it sho
 decision and has no Order Inquiry row against it, the order simply shows its new value with no
 badge and nothing to review - there's nothing a change could invalidate.
 
+**A whole order cancelled or deleted in AutoCount raises a change too.** When AutoCount cancels
+the whole sales order, deletes it, or removes the last line still open on it, every line that has
+an Order Inquiry row shows up on the board as **Cancelled**, the same as a single line removed.
+Purchasing is told nothing until you decide:
+
+* **The order really is cancelled:** click **Confirm**. The Order Inquiry rows close and
+  purchasing gets each line as **CANCEL** on the usual email.
+* **AutoCount re-issued the order under a new number:** plan the new sales order on the board as
+  any new order, then **Confirm** the old one's cancellation. Purchasing gets the CANCEL for the
+  old order and the ORDER for the new one.
+
+If AutoCount opens the order again before you decide, the cancellation drops off the board and
+there's nothing to do.
+
 ## What you see on the board
 
 Open the **Changed** badge (or find the order on Fulfilment Planning). Each changed line shows:
