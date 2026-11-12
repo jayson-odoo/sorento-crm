@@ -1,16 +1,19 @@
-"""ASSIGNED-FILTER-ALL-STAFF (owner, 12 Nov 2026): the Complaints "Assigned to" filter lists every
+"""ASSIGNED-FILTER-ALL-STAFF (owner, 12 Nov 2026; crew ruling (b) on dev-copy evidence): the Complaints "Assigned to" filter lists every
 staff member and takes their CRM user id. `complaints.assigned_to` holds either a CRM user id or a
 Respond.io agent id, so a chosen person matches rows stored under either. A Respond.io id value (a
-filter saved before this change) still matches. Postgres only; rows seeded here, fake names.
+filter saved before this change) still matches. Filter and sort follow the Assigned To column's
+rule: the latest open SLA tracker's assignee, else `complaints.assigned_to` (on the dev copy every
+assignee sits on a tracker and `complaints.assigned_to` is empty). Postgres only; rows seeded here, fake names.
 """
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 
 from app.models.complaints import Complaint
+from app.models.sla import ConversationSLATracking, SLAPolicy
 from app.models.user import User, UserStatus
 from app.services.user_service import UserPermissionService
 from tests._multi_filter_client import get, open_client
@@ -100,3 +103,76 @@ def test_unassigned_plus_two_people_or_combine(client, seeded):
     s = seeded
     got = _cp(client, s, f"__unassigned__,{s['plain']},{s['synced']}")
     assert got == {s["c_none"], s["c_plain"], s["c_synced_resp"], s["c_synced_crm"]}
+
+
+# ---- the Assigned To column rule: latest open SLA tracker first ------------------------------------
+
+def _tracker(db, policy_id, complaint_id, *, assigned_to_id=None, assigned_to=None, days=0,
+             resolved=False):
+    db.add(ConversationSLATracking(
+        id=str(uuid.uuid4()), policy_id=policy_id, current_tier=1,
+        due_at=datetime.now() + timedelta(days=1), initiated_at=datetime(2026, 6, 1) + timedelta(days=days),
+        source_entity_type="complaint", source_entity_id=complaint_id,
+        assigned_to_id=assigned_to_id, assigned_to=assigned_to, is_resolved=resolved,
+    ))
+    db.flush()
+
+
+@pytest.fixture
+def tracked(db):
+    tag = unique_code("AT", alpha=True)
+    policy = SLAPolicy(id=str(uuid.uuid4()), code=f"ZZT-{uuid.uuid4().hex[:6]}", name="ZZT policy")
+    db.add(policy)
+    db.flush()
+    amy = _user(db, "ZZT Amy Tracker")
+    zed = _user(db, "ZZT Zed Tracker")
+    old = _user(db, "ZZT Old Tracker")
+    # Only assignee is on the open tracker; complaints.assigned_to empty (the dev-copy shape).
+    c_amy = _complaint(db, tag, "1", None)
+    _tracker(db, policy.id, c_amy, assigned_to_id=amy)
+    c_zed = _complaint(db, tag, "2", "")
+    _tracker(db, policy.id, c_zed, assigned_to_id=zed)
+    # The latest open tracker wins over an older open one and over complaints.assigned_to.
+    c_latest = _complaint(db, tag, "3", old)
+    _tracker(db, policy.id, c_latest, assigned_to_id=old, days=0)
+    _tracker(db, policy.id, c_latest, assigned_to_id=amy, days=1)
+    # A resolved tracker does not count: falls back to complaints.assigned_to.
+    c_resolved = _complaint(db, tag, "4", old)
+    _tracker(db, policy.id, c_resolved, assigned_to_id=zed, resolved=True)
+    # Nobody anywhere.
+    c_none = _complaint(db, tag, "5", None)
+    return dict(tag=tag, amy=amy, zed=zed, old=old, c_amy=c_amy, c_zed=c_zed, c_latest=c_latest,
+                c_resolved=c_resolved, c_none=c_none)
+
+
+def test_filter_finds_a_complaint_whose_only_assignee_is_on_its_open_tracker(client, tracked):
+    s = tracked
+    assert _cp(client, s, s["amy"]) == {s["c_amy"], s["c_latest"]}
+    assert _cp(client, s, s["zed"]) == {s["c_zed"]}
+
+
+def test_filter_skips_resolved_trackers_and_older_tracker_assignees(client, tracked):
+    s = tracked
+    assert _cp(client, s, s["old"]) == {s["c_resolved"]}
+
+
+def test_unassigned_means_no_assignee_on_the_tracker_either(client, tracked):
+    s = tracked
+    assert _cp(client, s, "__unassigned__") == {s["c_none"]}
+
+
+def test_filter_matches_what_the_column_shows(client, tracked):
+    s = tracked
+    resp = get(client, COMPLAINTS, [("limit", 200), ("query", s["tag"]), ("assigned_to", s["amy"])])
+    assert {r["assigned_to_name"] for r in resp.json()["data"]} == {"ZZT Amy Tracker"}
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_sort_by_assigned_to_orders_by_the_name_the_column_shows(client, tracked, direction):
+    s = tracked
+    resp = get(client, COMPLAINTS, [("limit", 200), ("query", s["tag"]), ("sort", "assigned_to"),
+                                    ("dir", direction), ("assigned_to", f"{s['amy']},{s['zed']},{s['old']}")])
+    assert resp.status_code == 200, resp.text
+    names = [r["assigned_to_name"] for r in resp.json()["data"]]
+    assert names == sorted(names, reverse=(direction == "desc"))
+    assert set(names) == {"ZZT Amy Tracker", "ZZT Zed Tracker", "ZZT Old Tracker"}
