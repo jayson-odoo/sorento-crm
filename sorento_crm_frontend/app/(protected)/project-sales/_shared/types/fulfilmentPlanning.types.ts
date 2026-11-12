@@ -715,6 +715,8 @@ export interface ConfirmResult {
   confirmed_at?: string | null;
   review_state: string;
   inquiry_rows_created: number;
+  /** Purchasing handover lines the confirm queued (raised, changed, cancelled). */
+  inquiry_rows_handed_over?: number;
   exceptions: ConfirmException[];
   /**
    * The physical movements this confirmation raised, and how many it could NOT write
@@ -2792,6 +2794,7 @@ export interface ConfirmManyOrderResult {
   ok: boolean;
   decision_revision?: number | null;
   inquiry_rows_created?: number | null;
+  inquiry_rows_handed_over?: number | null;
   lines_decided?: number | null;
   lines_undecided?: number | null;
   /** The lines this order's press froze, and how many covered lines rode forward. */

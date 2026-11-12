@@ -12212,6 +12212,7 @@ class ProjectSupplyService:
                         **({"email_lines": email_lines} if email_lines is not None else {}),
                         "decision_revision": body.get("revision_no"),
                         "inquiry_rows_created": body.get("inquiry_rows_created"),
+                        "inquiry_rows_handed_over": body.get("inquiry_rows_handed_over"),
                         "lines_decided": body.get("lines_decided"),
                         "lines_undecided": body.get("lines_undecided"),
                         "lines_confirmed": body.get("lines_confirmed"),

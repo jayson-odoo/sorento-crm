@@ -327,7 +327,8 @@ function resultSentence(
   if (!result.ok) return result.error ?? 'refused';
   const cancelled = result.lines_cancelled?.length ?? 0;
   const confirmed = result.lines_confirmed?.length ?? 0;
-  const handedOver = result.inquiry_rows_created ?? 0;
+  // The rows handed to purchasing, not the rows created: a date move hands one over, creates none.
+  const handedOver = result.inquiry_rows_handed_over ?? result.inquiry_rows_created ?? 0;
   const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`;
   if (cancelled > 0 && confirmed === 0 && handedOver === 0) {
     return simulated
@@ -355,7 +356,7 @@ function retiredNoteApart(result: BoardBatchResult): boolean {
   return (
     (result.lines_cancelled?.length ?? 0) > 0 ||
     (result.lines_confirmed?.length ?? 0) > 0 ||
-    (result.inquiry_rows_created ?? 0) > 0
+    (result.inquiry_rows_handed_over ?? result.inquiry_rows_created ?? 0) > 0
   );
 }
 

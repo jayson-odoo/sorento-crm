@@ -555,6 +555,7 @@ def _run_confirm_many(
         return _with_split_edits(db, supply, order, entry)
 
     def write_one(order, entry):
+        handover_mark = _handover_mark(db)
         resolved_batch_id = batch_of_entry(entry)
         # `_confirm_with_possible_rejects` opens its OWN `UndoJournal` per branch (S1,
         # #978: `confirm_many` commits or rolls back each entry on its own, so a journal
@@ -588,6 +589,8 @@ def _run_confirm_many(
         ProjectOrderInquiryService(db).stamp_so_remark(
             str(order.id), getattr(entry, "so_remark", None)
         )
+        if isinstance(result, dict):
+            result["inquiry_rows_handed_over"] = _handed_over_since(db, handover_mark, order)
         return result
 
     results = supply.confirm_many(
@@ -1305,6 +1308,27 @@ def _reasons_for_rejected_lines(
     return reasons, "; ".join(sentences)
 
 
+def _handover_mark(db: Session) -> int:
+    """How many purchasing handover lines are queued on this session right now."""
+    from app.services.project_order_inquiry_service import _HANDOVER_PENDING_KEY
+
+    return len(db.info.get(_HANDOVER_PENDING_KEY) or [])
+
+
+def _handed_over_since(db: Session, mark: int, order) -> int:
+    """The purchasing handover lines (raised, changed, cancelled) this order's confirm queued
+    since `mark`: what the result sentence calls rows handed over. A count of the queue the
+    write already filled, no query."""
+    from app.services.project_order_inquiry_service import _HANDOVER_PENDING_KEY
+
+    pso_id = str(order.id)
+    return sum(
+        1
+        for item in (db.info.get(_HANDOVER_PENDING_KEY) or [])[mark:]
+        if str(item.get("pso_id") or "") == pso_id
+    )
+
+
 def _restamp_superseded_reason(db: Session, before_id, reason: str) -> None:
     """`_write_decision` always stamps a reconfirmed revision "Reconfirmed by CS." -
     right for an ordinary reconfirm, wrong for one that ALSO carried a withdrawal
@@ -1694,6 +1718,7 @@ def confirm_supply(
         # named or not, added once before the hold-back so a refused one is held back like
         # any line; beside a pending AutoCount batch too, as a line the batch does not carry.
         posted = _with_split_edits(db, service, order, payload)
+        handover_mark = _handover_mark(db)
         body, _entry, held = service._write_holding_back(
             order,
             posted,
@@ -1712,6 +1737,8 @@ def confirm_supply(
         )
         if held:
             body["lines_held_back"] = held
+        if isinstance(body, dict):
+            body["inquiry_rows_handed_over"] = _handed_over_since(db, handover_mark, order)
         db.commit()
         return body
     except Exception as exc:
