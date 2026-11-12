@@ -444,3 +444,18 @@ def test_r2_spec_preview_lists_the_include_list_cleared_by_the_one_rule_and_appl
     db.expire_all()
     row = db.query(SpecVisibilityPolicy).filter_by(contact_id=contact.id).one()
     assert row.spec_keys is None and list(row.excluded_spec_keys) == ["board_thickness"]
+
+
+def test_a_tag_switching_new_product_application_on_grants_it_to_the_holder_at_apply(client, db, all_perms):
+    """FORMS-TAG-CARD-FIX-A: the card now offers New Product Application; a tag that switches it On
+    grants it to every contact holding the tag when the settings are applied (intended)."""
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+
+    npa = _stag(client, db, {"portal_forms": {"new_product_application": True}})
+    holder = _holder(client, db, [npa])
+    assert "new_product_application" not in resolve_visible_form_types(db, str(holder.id))
+    _rows(_apply(client, [holder.id], dry_run=False))
+    db.expire_all()
+    rows = db.query(ContactPortalFormOverride).filter_by(contact_id=str(holder.id), form_type="new_product_application").all()
+    assert [r.is_enabled for r in rows] == [True]
+    assert "new_product_application" in resolve_visible_form_types(db, str(holder.id))
