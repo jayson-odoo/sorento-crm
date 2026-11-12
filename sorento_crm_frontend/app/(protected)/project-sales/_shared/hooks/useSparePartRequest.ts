@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { codeWithName } from '@/lib/product-display';
 import { searchStockVisibilityWarehouses } from '@/services/stockVisibilityService';
 import {
   approveSparePartRequest,
@@ -45,7 +46,7 @@ export function useSparePartLocations() {
     queryFn: async () =>
       (await searchStockVisibilityWarehouses('')).map((w) => ({
         value: w.code,
-        label: w.name ? `${w.code} · ${w.name}` : w.code,
+        label: codeWithName(w.code, w.name),
       })),
     staleTime: 5 * 60_000,
   });

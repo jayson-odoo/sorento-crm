@@ -169,6 +169,8 @@ export async function searchProductOptions(
   /** What an option's value is: the product code (default), or its id for a caller that
    *  stores the product itself (a spare part request line). */
   valueKey: 'product_code' | 'id' = 'product_code',
+  /** The label's code / name separator (`codeWithName`); the SCM pickers keep ' · '. */
+  sep = ' · ',
 ): Promise<Option[]> {
   const search = new URLSearchParams({
     limit: String(SELECT_PAGE_SIZE),
@@ -182,7 +184,7 @@ export async function searchProductOptions(
   };
   return (body.data ?? []).map((p) => ({
     value: valueKey === 'id' ? String(p.id) : p.product_code,
-    label: codeWithName(p.product_code, p.product_name, ' · '),
+    label: codeWithName(p.product_code, p.product_name, sep),
     searchText: `${p.product_code} ${p.product_name}`,
   }));
 }

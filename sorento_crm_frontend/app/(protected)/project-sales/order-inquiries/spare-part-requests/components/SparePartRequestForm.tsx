@@ -22,6 +22,7 @@ import {
 } from '@/components/common/SearchableSelect';
 import { BASE_CURRENCY, CURRENCY_NAMED_OPTIONS } from '@/lib/currencies';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { codeWithName } from '@/lib/product-display';
 import { searchProductOptions } from '@/app/(protected)/scm/services/scmOptionsService';
 import { toast } from '@/lib/toast';
 import { formatMoneyExact } from '../../../_shared/lib/money';
@@ -42,7 +43,7 @@ import {
 
 /** The catalogue by code and name (UAC R2), valued by product id. */
 const searchProducts = (query: string, pageIndex: number) =>
-  searchProductOptions(query, pageIndex, 'id');
+  searchProductOptions(query, pageIndex, 'id', ' - ');
 
 type SectionKey = 'request' | 'lines';
 
@@ -99,9 +100,7 @@ function fromRequest(request: SparePartRequest): DraftLine[] {
     product: l.product_id
       ? {
           value: l.product_id,
-          label: [l.item_code, l.product_name ?? l.description]
-            .filter(Boolean)
-            .join(' · '),
+          label: codeWithName(l.item_code, l.product_name ?? l.description),
         }
       : null,
     stockLocation: l.stock_location ?? '',
