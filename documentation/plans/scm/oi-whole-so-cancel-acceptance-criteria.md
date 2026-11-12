@@ -29,3 +29,5 @@ picks (a).
 - Q2 (a): plain cancel item, no auto-pairing, no new UI.
 - Q3 (a): read-only SQL list in `oi-whole-so-cancel-affected-rows.sql`; crew runs it on the dev prod-copy.
 - Q4 as recommended (AC-WC-8). Q5: a hard delete has no OI rows; delete and header cancel are treated the same.
+- AC-WC-7b (review, 12 Nov) A record of the push that FAILS (rolled back in its savepoint) raises no
+  `cancelled` row: the scope is only the SOs this push actually wrote.
