@@ -264,6 +264,9 @@ def test_every_kind_appears_with_its_exact_title_newest_first():
 
         ats = [e["at"] for e in events]
         assert ats == sorted(ats, reverse=True)
+        # Wave 1: an event with no person behind it reads "Automatic", never null.
+        assert [e["kind"] for e in events if e["actor"] is None] == []
+        assert _by_kind(events, "email_sent")[0]["actor"] == "Automatic"
 
 
 def test_an_unconfirm_press_of_four_rows_is_one_event_with_the_oi_title():
@@ -646,3 +649,24 @@ def test_a_user_holding_only_view_own_reads_the_history_of_an_order_they_can_ope
 
         assert _get(db, user, detail_url.format(foreign.id), own).status_code == 404
         assert _get(db, user, PSO_URL.format(foreign.id), own).status_code == 404
+
+
+def test_an_event_with_no_person_behind_it_reads_automatic_never_null():
+    """AC-SH-W2-4: a status UPDATE written with no user (a system write) and the handover
+    email both carry actor "Automatic" (`order_inquiry_history_service.AUTOMATIC`)."""
+    with blank_session() as db:
+        world = _world(db)
+        _audit(
+            db, entity_type="project_sales_orders", entity_id=world["order"].id,
+            action="UPDATE", user_id=None, changed_at=datetime(2026, 9, 22, 8, 0, 0),
+            company_id=world["company_id"],
+            old_values={"status": "published"}, new_values={"status": "amended"},
+        )
+        db.commit()
+
+        events = _pso_events(db, world)
+
+        system = [e for e in _by_kind(events, "status_changed") if e["at"].startswith("2026-09-22")]
+        assert [e["actor"] for e in system] == ["Automatic"]
+        assert _by_kind(events, "email_sent")[0]["actor"] == "Automatic"
+        assert [e["kind"] for e in events if e["actor"] is None] == []
