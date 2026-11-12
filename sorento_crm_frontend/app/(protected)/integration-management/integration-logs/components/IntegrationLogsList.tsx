@@ -132,7 +132,11 @@ export default function IntegrationLogsList() {
       {
         accessorKey: 'business_table',
         header: ({ column }) => <DataGridColumnHeader title="Business Table" column={column} />,
-        cell: ({ row }) => row.original.business_table,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.business_table}>
+            {row.original.business_table}
+          </span>
+        ),
         size: 150,
         meta: { headerTitle: 'Business Table' },
       },
