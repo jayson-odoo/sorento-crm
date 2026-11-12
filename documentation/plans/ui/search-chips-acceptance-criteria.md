@@ -1,6 +1,6 @@
 # UAC: List search chips (SEARCH-CHIPS), slice 1
 
-Status: draft on the recommended answers (Q1a, Q2a, Q3a, Q4a, Q5b); re-cut once the owner answers.
+Status: crew answered Q2a, Q3a, Q4a, Q5b (12 Nov). Q1 (combine) pending the owner; built on (a) ANY with the rule in ONE place (`SEARCH_VALUES_MATCH` in `app/utils/list_search.py`) so (b) ALL is a one-line switch. B2 is the only criterion that flips.
 Plan: `PLAN-search-chips-12nov.md`.
 
 ## Backend: `GET /api/v1/scm/sales-orders`
@@ -44,6 +44,22 @@ Plan: `PLAN-search-chips-12nov.md`.
 - S3. Adding or removing a chip returns to page 1; sort and filters are kept.
 - S4. Refresh keeps the chips (Q5b): the chips are in the address bar as they change.
 - S5. Ticked-row export exports the rows the chip result shows.
+
+## Contract (so tests and code agree)
+
+- Backend: `app/utils/list_search.py` holds `SEARCH_VALUES_MATCH = "any"` and
+  `search_values_filter(values, match)` where `match(values) -> clause` matches a row against a
+  LIST of values; "any" calls `match(values)` once (per-column `ILIKE ANY`), "all" ANDs
+  `match([v])` per value. The route reads `query` with `multi_text` (`app/utils/multi_value.py`).
+- `lib/searchChips.ts`: `splitPastedSearch(text): string[]` (F3) and
+  `addSearchChips(existing, incoming, cap = 200): { chips: string[]; capped: boolean }` (F2, F9).
+- `ListSearchInput`: chips mode when `onChipsChange` is passed; props `chips?: string[]`,
+  `onChipsChange?: (next: string[]) => void`. Text half unchanged (`value`/`onChange`).
+- `buildDataGridParams`: `searchQuery?: string | string[]`; an array becomes repeated `query`.
+- `parseDetailSearch`: keeps `searchQuery` (first value) and adds `searchQueries: string[]`.
+- Address bar (S4): the list writes its whole state (page, limit, sort, dir, query...) with the
+  same `buildDetailSearch` the row click uses, via `history.replaceState`, so the
+  `useListStateFromUrl` re-read that follows is a no-op.
 
 ## Standing rules that apply
 
