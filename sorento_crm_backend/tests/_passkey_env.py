@@ -285,7 +285,9 @@ def make_env(monkeypatch):
     from app.config import settings
     from app.database import get_db
     from app.main import app
+    from app.models.base import set_company_scope
     from app.services import rate_limit
+    from app.services.company_scope_resolver import apply_company_scope
 
     monkeypatch.setattr(settings, "webauthn_rp_ids", RP_IDS)
 
@@ -294,7 +296,14 @@ def make_env(monkeypatch):
         def _override():
             yield db
 
+        def _all_companies():
+            # Seeded users hold no company grants; without this `/pending-actions/current`
+            # hides their own `last_outcome` (same override tests/test_saved_views_routes.py uses).
+            set_company_scope(db, None)
+            return None
+
         app.dependency_overrides[get_db] = _override
+        app.dependency_overrides[apply_company_scope] = _all_companies
         try:
             with TestClient(app) as client:
                 env = PasskeyEnv(db, client, monkeypatch)
@@ -309,6 +318,7 @@ def make_env(monkeypatch):
                 yield env
         finally:
             app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(apply_company_scope, None)
 
 
 def recent(dt: Optional[datetime], *, within: timedelta = timedelta(minutes=5)) -> bool:
