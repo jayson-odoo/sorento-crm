@@ -192,7 +192,7 @@ export function useMoveFiles() {
             {forAll ? (
               // Same height as the box it stands in for, so ticking never moves the layout.
               <p className="flex h-8.5 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground">
-                Each file keeps its own name with (1) added.
+                Each file keeps its own name with a number added, like (1).
               </p>
             ) : (
               <Input
@@ -223,7 +223,7 @@ export function useMoveFiles() {
             </div>
           )}
         </div>
-        <DialogFooter className="flex-col-reverse gap-2 pt-2 sm:flex-row">
+        <DialogFooter className="flex-col-reverse gap-2 pt-4 sm:flex-row">
           <Button variant="ghost" onClick={() => answer({ kind: 'cancel' })}>
             Cancel
           </Button>

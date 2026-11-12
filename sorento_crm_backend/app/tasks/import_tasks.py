@@ -815,13 +815,17 @@ def process_attachment_bulk_import(
         from app.api.v1.resources.attachments import (
             _suffix_copy_name,
             _find_filename_collision,
+            _folder_name_collision,
         )
 
         def _name_taken_in_dir(_dir_id: Optional[str], _name: str) -> bool:
             key = (_dir_id, _name.lower())
             if key in seen_in_run:
                 return True
-            if _dir_id and _find_filename_collision(db, _dir_id, _name) is not None:
+            if _dir_id and (
+                _find_filename_collision(db, _dir_id, _name) is not None
+                or _folder_name_collision(db, _dir_id, _name) is not None
+            ):
                 return True
             return False
 
@@ -889,6 +893,7 @@ def process_attachment_bulk_import(
                     intra_collision = intra_key in seen_in_run
                     sys_collision = (
                         _find_filename_collision(db, directory_id, original_filename)
+                        or _folder_name_collision(db, directory_id, original_filename)
                         if directory_id
                         else None
                     )
