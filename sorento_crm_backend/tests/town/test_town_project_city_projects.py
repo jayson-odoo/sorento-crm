@@ -10,6 +10,7 @@ import pytest
 
 from app.main import app  # noqa: F401
 from app.models.base import set_company_scope
+from app.models.status import Status
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 from tests._pg_fixture import blank_session
@@ -112,11 +113,46 @@ def test_site_fields(db, ids):
         value="1234.5", launch=date(2025, 3, 1), delivery_from=date(2028, 3, 1),
     )
     (site,) = _projects(db)["sites"]
+    status = db.get(Status, ids["tendering"])
     assert site == {
         "key": proj.id, "name": "Residensi ZZT", "code": "ZZT-F1", "stage": "tendering",
+        # crew pass (11 Nov): the label and colour the CRM shows, from the statuses row itself
+        "stage_label": status.label, "stage_color": status.color_hex,
         "final_negotiation": True, "state": "Johor", "launch_date": "2025-03-01",
         "delivery_date": "2028-03-01", "estimated_value": "1234.50",
     }
+
+
+def test_a_stage_the_map_does_not_know_still_carries_the_crm_label_and_colour(db, ids):
+    """Dev runs funnel rungs no seed has (sponsorship_form, final_negotiation, sample_submission) and
+    relabels seeded ones (specified reads "Quotation"): the site carries the statuses row's own label
+    and colour, so the map shows exactly what the CRM shows."""
+    import uuid
+
+    seeded = db.get(Status, ids["quoted"])
+    custom = Status(
+        id=str(uuid.uuid4()), entity_type=seeded.entity_type, scope_id=seeded.scope_id, key="sponsorship_form",
+        label="Sponsorship Form", color_hex="#7c3aed", sort_order=99,
+    )
+    db.add(custom)
+    db.flush()
+    seeded_spec = db.get(Status, ids["specified"])
+    seeded_spec.label = "Quotation"
+    db.flush()
+    a = project(db, ids, code="ZZT-C1", value="2")
+    a.status_id = custom.id
+    project(db, ids, code="ZZT-C2", stage="specified", value="1")
+    db.flush()
+    sites = {s["code"]: s for s in _projects(db)["sites"]}
+    assert (sites["ZZT-C1"]["stage"], sites["ZZT-C1"]["stage_label"], sites["ZZT-C1"]["stage_color"]) == (
+        "sponsorship_form", "Sponsorship Form", "#7c3aed")
+    assert sites["ZZT-C2"]["stage_label"] == "Quotation"
+
+
+def test_a_site_with_no_stage_has_no_label(db, ids):
+    project(db, ids, code="ZZT-NS", stage=None)
+    site = _projects(db)["sites"][0]
+    assert (site["stage"], site["stage_label"], site["stage_color"]) == (None, None, None)
 
 
 def test_name_falls_back_to_title(db, ids):

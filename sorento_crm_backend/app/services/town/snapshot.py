@@ -523,7 +523,8 @@ def _projects(db: Session, company_id: str) -> dict:
     ).one()
     rows = db.execute(
         sa.select(
-            Project.id, Project.name, Project.title, Project.project_code, Status.key, Project.is_critical,
+            Project.id, Project.name, Project.title, Project.project_code, Status.key, Status.label, Status.color_hex,
+            Project.is_critical,
             ProjectSalesProfile.state, ProjectSalesProfile.launch_date,
             ProjectSalesProfile.expected_delivery_from, ProjectSalesProfile.expected_delivery_to,
             ProjectSalesProfile.estimated_sales_value,
@@ -539,10 +540,13 @@ def _projects(db: Session, company_id: str) -> dict:
         .limit(SITE_LIMIT)
     ).all()
     sites = []
-    for pid, name, title, code, stage, critical, state, launch, from_, to, value in rows:
+    for pid, name, title, code, stage, stage_label, stage_color, critical, state, launch, from_, to, value in rows:
         delivery = from_ or to
         sites.append({
             "key": str(pid), "name": name or title, "code": code, "stage": stage,
+            # the label and colour the CRM shows for this stage (the statuses row), so a renamed or
+            # added funnel rung reads the same on the map as everywhere else
+            "stage_label": stage_label, "stage_color": stage_color,
             "final_negotiation": bool(critical), "state": canonical_state(state),
             "launch_date": launch.isoformat() if launch else None,
             "delivery_date": delivery.isoformat() if delivery else None,

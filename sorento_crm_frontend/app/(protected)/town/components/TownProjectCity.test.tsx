@@ -1,9 +1,10 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TownCards } from './TownCards';
 import { TownLightbox } from './TownLightbox';
 import { townTip } from '../lib/townTips';
+import { stageColor, stageLabel } from '../lib/townMap';
 
 /** TOWN-PROJECT-CITY (plan PLAN-town-project-city-11nov.md, "Phase 2 contract"): the split board, project sites,
  * trading houses. Invented names only. */
@@ -79,5 +80,31 @@ describe('TOWN-PROJECT-CITY: split board, sites, trading houses', () => {
     expect(townTip(REDACTED as never, { kind: 'site', site: REDACTED.projects.sites[0] as never }).title).toBe('Project site');
     expect(townTip(FULL as never, { kind: 'trading_house', row: TH as never })).toEqual({ title: 'TH Alpha Trading', detail: '4 open projects · bought today' });
     expect(townTip(REDACTED as never, { kind: 'trading_house', row: REDACTED.trading_houses.rows[0] as never }).title).toBe('Trading house');
+  });
+
+  it('names a stage exactly as the CRM does, even one the map has never heard of (crew pass, 11 Nov)', () => {
+    const custom = { ...SITE, stage: 'sponsorship_form', stage_label: 'Sponsorship Form', stage_color: '#7c3aed' };
+    const renamed = { ...SITE, key: 'p2', stage: 'specified', stage_label: 'Quotation', stage_color: null };
+    const snap = { ...FULL, projects: { ...FULL.projects, sites: [custom, renamed] } };
+    render(<TownLightbox snapshot={snap as never} target={{ kind: 'site', key: 'p1' }} onClose={() => undefined} />);
+    expect(screen.getAllByText('Sponsorship Form').length).toBeGreaterThan(0);
+    expect(stageLabel(renamed)).toBe('Quotation');
+    expect(stageLabel({ stage: 'final_negotiation' })).toBe('Final negotiation');
+    expect(stageLabel({ stage: null })).toBe('Stage not set');
+    expect(townTip(snap as never, { kind: 'site', site: custom as never }).detail).toMatch(/^Sponsorship Form, final negotiation/);
+  });
+
+  it("colours a stage's flag with the CRM's colour, else a known default, else grey", () => {
+    expect(stageColor({ stage: 'x', stage_color: '#7c3aed' })).toBe(0x7c3aed);
+    expect(stageColor({ stage: 'quoted', stage_color: null })).toBe(0xf59e0b);
+    expect(stageColor({ stage: 'sponsorship_form', stage_color: 'not-a-colour' })).toBe(0x9ca3af);
+  });
+
+  it('lists anonymous sites in the projects popup without duplicate React keys', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const two = { ...REDACTED, projects: { ...REDACTED.projects, sites: [REDACTED.projects.sites[0], { ...REDACTED.projects.sites[0], key: 'opaque-site-2' }] } };
+    render(<TownLightbox snapshot={two as never} target={{ kind: 'projects' }} onClose={() => undefined} />);
+    expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    error.mockRestore();
   });
 });

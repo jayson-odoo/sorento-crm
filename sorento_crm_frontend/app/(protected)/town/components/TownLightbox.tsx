@@ -32,13 +32,15 @@ const ROUTES = {
   shipments: '/procurement-management/packing-lists',
 } as const;
 
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
+/** A label / value table. A row may carry a stable id as its third item (a list of sites, where two
+ * anonymous rows share the label "Project site"); otherwise the label is the key. */
+function Rows({ rows }: { rows: ([string, ReactNode] | [string, ReactNode, string])[] }) {
   return (
     <div className="mt-2 overflow-x-auto">
       <table className="w-full text-sm">
         <tbody>
-          {rows.map(([label, value]) => (
-            <tr key={label} className="border-b border-border last:border-0">
+          {rows.map(([label, value, id]) => (
+            <tr key={id ?? label} className="border-b border-border last:border-0">
               <td className="py-1.5 pe-2">{label}</td>
               <td className="py-1.5 text-end tabular-nums">{value}</td>
             </tr>
@@ -195,12 +197,12 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       if (!site) return { title: 'Project site', meta: '', content: null };
       return {
         title: siteTitle(site),
-        meta: `${stageLabel(site.stage)}${site.final_negotiation ? ' · final negotiation' : ''}`,
+        meta: `${stageLabel(site)}${site.final_negotiation ? ' · final negotiation' : ''}`,
         content: (
           <>
             <Rows
               rows={[
-                ['Stage', stageLabel(site.stage)],
+                ['Stage', stageLabel(site)],
                 ['Final negotiation', site.final_negotiation ? 'Yes' : 'No'],
                 ['State', site.state ?? 'State not set'],
                 ['Timeline', siteTimeline(site, snapshot.day)],
@@ -234,7 +236,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       return {
         title: `${count(p?.open_count ?? 0)} open projects`,
         meta: p ? `${count(p.sites.length)} on the map · +${count(p.more)} more · ${count(p.dormant)} dormant` : '',
-        content: p ? <Rows rows={p.sites.map((s): [string, ReactNode] => [siteTitle(s), `${stageLabel(s.stage)} · ${s.state ?? 'State not set'}`])} /> : null,
+        content: p ? <Rows rows={p.sites.map((s): [string, ReactNode, string] => [siteTitle(s), `${stageLabel(s)} · ${s.state ?? 'State not set'}`, s.key])} /> : null,
       };
     }
     case 'low':

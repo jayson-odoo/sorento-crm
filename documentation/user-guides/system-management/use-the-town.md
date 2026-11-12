@@ -33,7 +33,7 @@ the Roles screen). Amounts show only to users who may see the sales reports; eve
 | A small stall | A dealer outside the top 30 that bought today. |
 | A slate-blue glass tower | A trading house: a customer that is a project's trading house. Its windows light up when it has a project invoice today. |
 | A project site | An open project. How built-up it looks follows the project's own dates (launch to expected delivery): a marked-out plot before launch, then groundworks, a frame with a crane, cladding, a finished building. A project without both dates is a tidy prepared plot. |
-| The flag at a site | Our sales stage: grey Identified, blue Registered, teal Spec In, amber Quoted, orange Tendering, green PO Received. A red pennant above it: final negotiation. The flag never changes the building. |
+| The flag at a site | Our sales stage, in that stage's colour from the project funnel (the same name and colour the project page shows). A red pennant above it: final negotiation. The flag never changes the building. |
 | Lorries | Sales orders due today or overdue. A lorry drives to the dealer's shop; a project order's lorry drives to that state's project sites. A coaster ship carries Sabah, Sarawak and Labuan orders from Port Klang. |
 | The **State not set** islet | Dealers, sites and trading houses whose state is not known. |
 | Red | Low stock, late shipments, final negotiation. |
@@ -46,7 +46,7 @@ its sales profile.
 
 Hover anything for its name and one key number. Click it for its details:
 
-1. **A project site**: its name and code, **Stage**, **Final negotiation**, **State**, **Timeline** (for example
+1. **A project site**: its name and code, **Stage** (named as on the project page), **Final negotiation**, **State**, **Timeline** (for example
    *Launch Mar 2025 · Delivery Mar 2028 · 56% of the way*) and **Estimated value**. **Open project** opens the
    project.
 2. **A glass tower**: the customer, **State**, **Open projects** and **Project invoices today**.

@@ -71,16 +71,26 @@ export function siteLook(site: { launch_date: string | null; delivery_date: stri
   return k < 0.25 ? 'ground' : k < 0.6 ? 'frame' : k < 0.95 ? 'clad' : 'done';
 }
 
-/** Our sales stage per status key: the label and the flag colour at the site gate (the flag never changes the building). */
-export const STAGES: Record<string, { label: string; color: number }> = {
-  identified: { label: 'Identified', color: 0x9ca3af },
-  registered: { label: 'Registered', color: 0x2563eb },
-  specified: { label: 'Spec In', color: 0x0d9488 },
-  quoted: { label: 'Quoted', color: 0xf59e0b },
-  tendering: { label: 'Tendering', color: 0xea580c },
-  po_received: { label: 'PO Received', color: 0x16a34a },
+/** A flag colour per seeded status key, used only when the CRM's status carries no colour of its own. */
+const STAGE_COLORS: Record<string, number> = {
+  identified: 0x9ca3af, registered: 0x2563eb, specified: 0x0d9488, quoted: 0xf59e0b, tendering: 0xea580c, po_received: 0x16a34a,
 };
-export const stageLabel = (key: string | null) => (key && STAGES[key]?.label) || 'Stage not set';
+const GREY = 0x9ca3af;
+
+/** Our sales stage as the CRM names it (the status row's label, sent with the site); a stage the snapshot
+ * carries no label for reads as its key ("final_negotiation" -> "Final negotiation"). The flag only, never the building. */
+export function stageLabel(site: { stage: string | null; stage_label?: string | null }): string {
+  if (site.stage_label) return site.stage_label;
+  if (!site.stage) return 'Stage not set';
+  const words = site.stage.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The flag colour: the CRM status's own colour, else the default for a seeded key, else grey. */
+export function stageColor(site: { stage: string | null; stage_color?: string | null }): number {
+  if (site.stage_color && /^#[0-9a-f]{6}$/i.test(site.stage_color)) return parseInt(site.stage_color.slice(1), 16);
+  return (site.stage && STAGE_COLORS[site.stage]) || GREY;
+}
 
 export const LOOK_WORDS: Record<SiteLook, string> = {
   plain: 'no dates yet', before: 'launching', ground: 'groundworks', frame: 'frame going up', clad: 'cladding', done: 'finished',

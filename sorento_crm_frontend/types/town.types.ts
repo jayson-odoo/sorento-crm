@@ -30,6 +30,9 @@ export interface TownSite {
   name?: string;
   code?: string | null;
   stage: string | null;
+  /** the stage as the CRM names and colours it (the status row); absent on a snapshot built before 12 Nov */
+  stage_label?: string | null;
+  stage_color?: string | null;
   final_negotiation: boolean;
   state: string | null;
   launch_date: string | null;

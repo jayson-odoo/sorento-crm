@@ -12,7 +12,7 @@ import {
   type ScreenBox,
 } from '../lib/townFormat';
 import { DEFAULT_VIEW, cameraPosition, dragView, pinchZoom, stepZoom, wheelZoom, type TownView } from '../lib/townCamera';
-import { STAGES, STATES, STATE_BY, mapXZ, shopStateKey, siteLook, stateKeyOf, type StateDef } from '../lib/townMap';
+import { STATES, STATE_BY, mapXZ, shopStateKey, siteLook, stageColor, stateKeyOf, type StateDef } from '../lib/townMap';
 import { EASE, mulberry32, trapezoid, type SaleBeat, type Trapezoid } from '../lib/townMotion';
 import { townTip, type TipSubject } from '../lib/townTips';
 import type { TownTarget } from './TownLightbox';
@@ -143,6 +143,9 @@ interface Particle {
 
 interface Label {
   isState?: boolean;
+  /** a state pill's two places: its near shore (close up, off the street) and its island's centre (whole map) */
+  shoreAt?: THREE.Vector3;
+  centreAt?: THREE.Vector3;
   el: HTMLButtonElement;
   anchor: THREE.Vector3;
   fixed: boolean;
@@ -941,7 +944,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       scene.add(g);
       const m = mesh(siteGeo(look), stdMat(), { parent: g });
       mesh(merge([P(CYL(0.035, 0.035, p.final_negotiation ? 1.75 : 1.4, 6), 0x64748b)]), stdMat(), { parent: g }).position.set(1.3, 0, 1.3);
-      const f = mesh(siteFlagGeo.clone(), new THREE.MeshStandardMaterial({ color: (p.stage && STAGES[p.stage]?.color) || 0x9ca3af, side: THREE.DoubleSide, flatShading: true, roughness: 0.8 }), { parent: g });
+      const f = mesh(siteFlagGeo.clone(), new THREE.MeshStandardMaterial({ color: stageColor(p), side: THREE.DoubleSide, flatShading: true, roughness: 0.8 }), { parent: g });
       f.position.set(1.3, 1.12, 1.3);
       siteFlags.push(f);
       if (p.final_negotiation) mesh(pennantGeo, basicMat({ color: 0xdc2626, side: THREE.DoubleSide }), { parent: g, cast: false }).position.set(1.3, 1.45, 1.3);
@@ -1816,16 +1819,23 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       const nSites = sitesBy[d.key]?.length ?? 0;
       const nTowers = towersBy[d.key]?.length ?? 0;
       const bits = [dealers.length ? `${plural(dealers.length, 'dealer')}${lit ? `, ${lit} lit` : ''}` : '', nSites ? plural(nSites, 'site') : '', nTowers ? plural(nTowers, 'trading house', 'trading houses') : ''].filter(Boolean);
-      const [cx, cz] = d.key === 'selangor' ? polar(26.5, 330) : centreOf(d.key);
+      // the pill stands on the state's near (south) shore, not over its street, so a tap on a site or a shop
+      // is never taken by the pill
+      const [sx, sz] = mapXZ(0, -1);
+      const [cx, cz] = d.key === 'selangor' ? polar(26.5, 330) : edgeToward(d.key, centreOf(d.key)[0] + sx * 99, centreOf(d.key)[1] + sz * 99, -1);
       addLabel(
         { text: d.name, dot: lit ? 'lit' : undefined, muted: bits.length ? ` ${bits.join(' · ')}` : undefined },
-        new THREE.Vector3(cx, d.key === 'selangor' ? 3 : 4.5, cz),
+        new THREE.Vector3(cx, d.key === 'selangor' ? 3 : 1.2, cz),
         false,
         () => (d.key === 'selangor' ? flyTo('selangor') : flyTo(d.key)),
         () => ({ kind: 'state', name: d.name, detail: bits.join(' · ') }),
       );
-      labels[labels.length - 1].isState = true;
-      labels[labels.length - 1].el.dataset.townLabel = 'state';
+      const L = labels[labels.length - 1];
+      L.isState = true;
+      L.el.dataset.townLabel = 'state';
+      L.shoreAt = L.anchor.clone();
+      const [mx, mz] = centreOf(d.key);
+      L.centreAt = d.key === 'selangor' ? L.anchor.clone() : new THREE.Vector3(mx, 4.5, mz);
     });
     const pj = mapSnap.projects;
     if (pj && (pj.more || pj.dormant)) {
@@ -1853,7 +1863,21 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     _p.copy(v).project(cam);
     return { x: ((_p.x + 1) / 2) * w, y: ((1 - _p.y) / 2) * h, front: _p.z < 1 };
   };
+  let overviewShown: boolean | null = null;
   function updateLabels() {
+    // on the whole map a state pill shows its name only (its counts would make neighbours collide)
+    const overviewNow = view.current.zoom < 0.45;
+    if (overviewNow !== overviewShown) {
+      overviewShown = overviewNow;
+      labels.forEach((L) => {
+        if (!L.isState) return;
+        const counts = L.el.querySelector('span');
+        if (counts) counts.hidden = overviewNow;
+        const at = overviewNow ? L.centreAt : L.shoreAt;
+        if (at) L.anchor.copy(at);
+        L.w = 0;
+      });
+    }
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     // the board's face is a no-label zone, so a tag never covers the day's number

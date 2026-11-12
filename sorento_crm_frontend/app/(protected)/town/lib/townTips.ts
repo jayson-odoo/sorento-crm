@@ -89,7 +89,7 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
       const { site } = subject;
       return {
         title: siteTitle(site),
-        detail: `${stageLabel(site.stage)}${site.final_negotiation ? ', final negotiation' : ''} · ${LOOK_WORDS[siteLook(site, snapshot.day)]}`,
+        detail: `${stageLabel(site)}${site.final_negotiation ? ', final negotiation' : ''} · ${LOOK_WORDS[siteLook(site, snapshot.day)]}`,
       };
     }
     case 'trading_house': {
