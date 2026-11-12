@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 import pytest
+from sqlalchemy import text as sql_text
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
@@ -29,7 +30,7 @@ from app.services.chatbot import turn_runtime
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
 from tests.chatbot._avail_mode_console import AvailConsole, Stock, _seed
-from tests.chatbot._r9_engine_console import product, stock
+from tests.chatbot._r9_engine_console import answer, product, reply, stock
 from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
 from tests.chatbot.test_engine_company_scope import _seed_company, _seed_product
 
@@ -216,3 +217,80 @@ def test_ac17_a_miss_writes_a_code_candidates_trace_entry(session_factory, monke
         assert isinstance(row.get("similarity"), (int, float)) and 0 < row["similarity"] <= 1, row
     assert entry.get("outcome") in ("offered", "answered"), entry
     assert entry["outcome"] == "offered", entry
+
+
+# --------------------------------------------------------------------------- AC-20
+
+
+def _hide(session_factory, code: str, how: str) -> None:
+    """Make `code` unanswerable in chat: inactive, its own is_searchable false, or its category's."""
+    db = session_factory()
+    try:
+        if how == "inactive":
+            db.execute(sql_text("UPDATE products SET is_active = false WHERE product_code = :c"), {"c": code})
+        elif how == "product_not_searchable":
+            db.execute(sql_text("UPDATE products SET is_searchable = false WHERE product_code = :c"), {"c": code})
+        else:
+            db.execute(
+                sql_text(
+                    "UPDATE product_categories SET is_searchable = false WHERE id IN "
+                    "(SELECT category_id FROM products WHERE product_code = :c)"
+                ),
+                {"c": code},
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("how", ["inactive", "product_not_searchable", "category_not_searchable"])
+def test_ac20_dealer_never_offered_an_inactive_or_chat_hidden_code(session_factory, monkeypatch, stub_access, how):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, [TARGET])
+    _hide(session_factory, TARGET, how)
+    text = c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
+    assert REFER_TO_SALESMAN in text, text
+    assert "Did you mean" not in text, text
+    assert not _word(TARGET, text), text
+    options = (c.stored_question or {}).get("options") or []
+    assert not any(str(o.get("code")) == TARGET for o in options), c.stored_question
+
+
+# --------------------------------------------------------------------------- AC-21, AC-22
+
+
+def test_ac21_dealer_says_no_to_the_offer_gets_couldnt_find_and_the_refer_line(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, [TARGET], **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    first = c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
+    assert f"Did you mean {TARGET}?" in first, first
+    stocked_before = len(c.stock_calls)
+    text = c.say("no", reply(is_affirmative=False, open_question_answer=answer("no")))
+    assert f"Couldn't find {TYPO}." in text, text
+    assert REFER_TO_SALESMAN in text, text
+    assert "Got stock" not in text and TICK not in text, text
+    assert len(c.stock_calls) == stocked_before, "a stock read ran after the dealer declined the offer"
+
+
+def test_ac22_dealer_says_yes_to_the_offer_gets_the_stock_for_the_typed_quantity(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, [TARGET], **{"TWC8354_SH_UF": Stock(on_hand=100)})
+    first = c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
+    assert f"Did you mean {TARGET}?" in first, first
+    text = c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes")))
+    assert text == f"{TARGET} x 3: {TICK} Got stock.", text
+
+
+# --------------------------------------------------------------------------- AC-2b
+
+
+@pytest.mark.parametrize("typed", ["TWC015SSCR", "TWC015SS CR", "twc015ss-cr"])
+def test_ac2b_a_code_differing_only_by_a_dash_or_space_is_answered_directly(session_factory, monkeypatch, stub_access, typed):  # noqa: F811
+    code = "TWC015SS-CR"
+    c = _console(session_factory, monkeypatch, stub_access, [code], **{"TWC015SS_CR": Stock(on_hand=100)})
+    text = c.say(f"{typed} x 2", stock(product(typed, 2)))
+    assert text == f"{code} x 2: {TICK} Got stock.", text
+
+    c.as_staff()
+    c.stock_on_hand = 12
+    staff_text = c.say(f"{typed} x 2", stock(product(typed, 2)))
+    assert "Did you mean" not in staff_text, staff_text
+    assert "Couldn't find" not in staff_text, staff_text
+    assert code in staff_text, staff_text
