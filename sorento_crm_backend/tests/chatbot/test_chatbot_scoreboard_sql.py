@@ -175,3 +175,76 @@ def test_statement_2_uses_the_same_technical_split_by_topic():
     assert float(total["technical_pct"]) == 15.0
     assert float(order["technical_pct"]) == 75.0
     assert float(order["tech_delivery_pct"]) == 50.0
+
+
+# ------------------------------------------------------------------ the daily reading
+# Owner 12 Nov 2026: "how can we do this progressively for me to see some improvement day
+# by day". Statement 3: one line per day, each measure next to its trailing 7-day figure and
+# its target, from the same CTE block as the weekly statements; a measure whose denominator
+# is under the minimum prints "too few (n=N)" instead of a noisy %.
+
+DAY_TO = "2031-01-08"  # Wed; 7 Jan holds the data, 8 Jan has none
+
+
+def _statement_3(day_to: str = DAY_TO, days: int = 2) -> str:
+    sql = SQL_PATH.read_text()
+    assert "-- Statement 3" in sql, "the daily statement exists"
+    stmt = "-- Statement 3" + sql.split("-- Statement 3", 1)[1]
+    stmt, n1 = re.subn(r"DATE '\d{4}-\d{2}-\d{2}' AS day_to", f"DATE '{day_to}' AS day_to", stmt)
+    stmt, n2 = re.subn(r"\b\d+ AS days\b", f"{days} AS days", stmt)
+    assert (n1, n2) == (1, 1), "statement 3 carries the day_to and days parameters once each"
+    return stmt.strip().rstrip(";")
+
+
+def _seed_daily(db) -> None:
+    from app.services.analytics_connector.views import ensure_cost_views, ensure_views
+
+    ensure_views(db)
+    ensure_cost_views(db)
+    # 7 Jan: 60 stock asks (6 dead ends), 10 promotion asks (4 answered with a question).
+    for n in range(60):
+        _ask(db, n, intent="check_stock", outcome="answered_empty" if n < 6 else "answered")
+    for n in range(60, 70):
+        _ask(db, n, intent="check_promotion", outcome="clarified" if n < 64 else "answered")
+
+
+def test_cte_block_is_one_definition_across_all_three_statements():
+    """Daily and weekly numbers come from the same per-ask rows: the CTE block from
+    `went_out` to the end of `b` is identical in every statement."""
+    sql = SQL_PATH.read_text()
+    blocks = re.findall(r"went_out AS \(.*?\n   WHERE a\.day >= p\.week_from\n\)", sql, re.S)
+    assert len(blocks) == 3
+    assert blocks[0] == blocks[1] == blocks[2]
+
+
+def test_statement_3_prints_one_line_per_day_with_the_7_day_figure_and_target():
+    with pg_session() as db:
+        _seed_daily(db)
+        rows = _run(db, _statement_3())
+    assert [str(r["day"]) for r in rows] == ["2031-01-07", "2031-01-08"]
+    assert rows[0]["daily_line"] == (
+        "07/01/2031: stock not-found 10.0% (dead-end 10.0%) [7d 10.0%, target 8%]; "
+        "median 2.0 s [7d 2.0 s, target 5 s]; p90 2.0 s [7d 2.0 s]; "
+        "dealer asked-again too few (n=0) [7d too few (n=0), target 9.5%]; "
+        "promo answered with a question too few (n=10) [7d too few (n=10), target 30%]; "
+        "wrong answers - (sample check)"
+    )
+
+
+def test_statement_3_a_day_with_too_few_asks_says_so_and_keeps_the_7_day_figure():
+    with pg_session() as db:
+        _seed_daily(db)
+        rows = _run(db, _statement_3())
+    line = rows[1]["daily_line"]
+    assert line.startswith("08/01/2031: stock not-found too few (n=0) [7d 10.0%, target 8%]; ")
+    assert "median too few (n=0) [7d 2.0 s, target 5 s]" in line
+
+
+def test_statement_3_any_date_shows_its_window_only():
+    with pg_session() as db:
+        _seed_daily(db)
+        rows = _run(db, _statement_3(day_to="2031-01-15", days=1))
+    assert [str(r["day"]) for r in rows] == ["2031-01-15"]
+    assert rows[0]["daily_line"].startswith(
+        "15/01/2031: stock not-found too few (n=0) [7d too few (n=0), target 8%]; "
+    )
