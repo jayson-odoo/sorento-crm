@@ -84,6 +84,9 @@ SOURCE_TYPE_READERS = {
     # panel is GET /form-sla-tracking/{id}/media-request, scoped to the task's team chain).
     "product_drawing": [],
     "product_photo": [],
+    # SPARE-PART-ORDER-REQUEST: the request opens on the OI page, which has no SLA tab; its
+    # approval stage is read in the SLA module, like a conversation ticket.
+    "spare_part_request": [],
 }
 
 

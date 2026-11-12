@@ -2353,6 +2353,35 @@ register(
 )
 
 
+def _delete_order_inquiry_row_attachment(db: Session, payload: dict):
+    from app.services import so_line_attachments, spare_part_request_service
+
+    # SPARE-PART-ORDER-REQUEST: a spare part request line's photo. Authorised by the
+    # request's own rule (requester while draft / rejected, approver while pending),
+    # checked again here at commit, where the row's state is final.
+    row_id = str(payload.get("line_id") or "")
+    actor = payload.get("requested_by_id")
+    spare_part_request_service.assert_can_write_row_photos(db, row_id, actor)
+    return so_line_attachments.delete(
+        db, row_id, _entity_id(payload), actor, so_line_attachments.OI_ROW
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_row_attachment.delete",
+        entity_types=("order_inquiry_row_attachment",),
+        execute=_delete_order_inquiry_row_attachment,
+        # Destructive, as the SO line attachment delete above. The grant is the request's
+        # own write rule (`spare_part_request_service.assert_can_write_row_photos`), not
+        # a role slug, so it is checked in the handler.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete attachment",
+    )
+)
+
+
 def _delete_notification(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found
     from app.services.notification_service import NotificationService

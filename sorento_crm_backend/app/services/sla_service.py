@@ -2428,6 +2428,14 @@ class ConversationSLATrackingService:
             ids_by_type.get("new_product_application") or set(),
         )
 
+        from app.models.project_so import OrderInquiry
+
+        spr_map = _num_map(
+            OrderInquiry.id,
+            OrderInquiry.inquiry_no,
+            ids_by_type.get("spare_part_request") or set(),
+        )
+
         contact_map: dict[str, Optional[str]] = {}
         if contact_ids:
             try:
@@ -2457,6 +2465,8 @@ class ConversationSLATrackingService:
                 ref = product_map.get(sid)
             elif et == "new_product_application" and sid:
                 ref = npa_map.get(sid)
+            elif et == "spare_part_request" and sid:
+                ref = spr_map.get(sid)
             elif r.respond_contact_id:
                 ref = contact_map.get(str(r.respond_contact_id))
             result[str(r.id)] = ref

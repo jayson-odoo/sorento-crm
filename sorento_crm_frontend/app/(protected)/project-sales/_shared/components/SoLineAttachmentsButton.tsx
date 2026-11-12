@@ -17,7 +17,23 @@ import AttachmentPreviewModal, {
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { toast } from '@/lib/toast';
 import { SO_LINE_ATTACHMENTS_KEY, useUploadSoLineAttachments } from '../hooks/useSoLineAttachments';
-import { type SoLineAttachment } from '../services/soLineAttachmentService';
+import {
+  type AttachmentTarget,
+  type AttachmentTargetKind,
+  type SoLineAttachment,
+} from '../services/soLineAttachmentService';
+
+/** The deferred delete (D7) each target parks: one record action per kind of owner. */
+const DELETE_ACTION: Record<AttachmentTargetKind, { actionKey: string; entityType: string }> = {
+  sales_order_line: {
+    actionKey: 'sales_order_line_attachment.delete',
+    entityType: 'sales_order_line_attachment',
+  },
+  order_inquiry_row: {
+    actionKey: 'order_inquiry_row_attachment.delete',
+    entityType: 'order_inquiry_row_attachment',
+  },
+};
 
 /** Q3 (grill, recommended answer): images, PDF, Excel - what #1311's manual mails
  *  already carry. Same list the backend's own hardcoded gate enforces
@@ -40,6 +56,9 @@ export interface SoLineAttachmentsButtonProps {
   attachments: SoLineAttachment[];
   /** `projects.projects.edit` (Q6) - a viewer sees the list with no drop zone and no x. */
   canEdit: boolean;
+  /** What the files hang off. Defaults to the sales-order line `lineId` names; a spare part
+   *  request's line passes `{ kind: 'order_inquiry_row', id }` (SPARE-PART-ORDER-REQUEST). */
+  target?: AttachmentTarget;
 }
 
 /**
@@ -74,6 +93,7 @@ export function SoLineAttachmentsButton({
   label,
   attachments,
   canEdit,
+  target,
 }: SoLineAttachmentsButtonProps) {
   const [open, setOpen] = useState(false);
   const [everOpened, setEverOpened] = useState(false);
@@ -124,6 +144,7 @@ export function SoLineAttachmentsButton({
       {everOpened ? (
         <SoLineAttachmentsDialog
           lineId={lineId}
+          target={target}
           label={label}
           attachments={attachments}
           canEdit={canEdit}
@@ -143,6 +164,7 @@ export function SoLineAttachmentsButton({
  */
 function SoLineAttachmentsDialog({
   lineId,
+  target,
   label,
   attachments,
   canEdit,
@@ -157,12 +179,13 @@ function SoLineAttachmentsDialog({
   const [previewIndex, setPreviewIndex] = useState(0);
 
   const upload = useUploadSoLineAttachments();
+  const kind = target?.kind ?? 'sales_order_line';
+  const ownerId = target?.id ?? lineId;
 
   // Hard delete, no confirmation dialog (D7, Q8): the x parks the delete on the
   // server for the grace window and a toast carries the countdown.
   const removal = useDeferredRowAction({
-    actionKey: 'sales_order_line_attachment.delete',
-    entityType: 'sales_order_line_attachment',
+    ...DELETE_ACTION[kind],
     verb: 'Deleting',
     successMessage: 'Attachment deleted',
     invalidateKeys: [SO_LINE_ATTACHMENTS_KEY],
@@ -172,7 +195,7 @@ function SoLineAttachmentsDialog({
     removal.run({
       id: target.id,
       subject: target.filename ?? 'this file',
-      payload: { line_id: lineId },
+      payload: { line_id: ownerId },
     });
 
   const previewItems = useMemo<AttachmentPreviewItem[]>(
@@ -197,7 +220,7 @@ function SoLineAttachmentsDialog({
   const handleUpload = async () => {
     if (pendingFiles.length === 0) return;
     try {
-      await upload.mutateAsync({ lineId, files: pendingFiles });
+      await upload.mutateAsync({ lineId: ownerId, files: pendingFiles, kind });
       setPendingFiles([]);
     } catch {
       // The hook's own onError already toasted - the dialog stays open so the

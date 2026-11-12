@@ -387,7 +387,7 @@ class OrderInquiryDetail(BaseModel):
     #: `OI-000001` - what a person calls this inquiry. Optional only so a record written
     #: before the column existed still reads; everything created since carries one.
     inquiry_no: Optional[str] = None
-    project_sales_order_id: str
+    project_sales_order_id: Optional[str] = None
     amendment_id: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
@@ -432,6 +432,14 @@ class OrderInquiryWorklistRow(BaseModel):
     #: inquiry raised since carries one. The S/O no beside it does not answer the same
     #: question: an amendment raises a SECOND inquiry on the same sales order.
     inquiry_no: Optional[str] = None
+    #: SPARE-PART-ORDER-REQUEST: `sales_order` | `spare_part_request`; a spare part
+    #: request's unit price and line total, and the qty / unit price its requester
+    #: SUBMITTED (the "was" mark when an approver changed them). Null on a sales-order row.
+    inquiry_type: Optional[str] = None
+    unit_price: Optional[str] = None
+    line_total: Optional[str] = None
+    submitted_qty: Optional[str] = None
+    submitted_unit_price: Optional[str] = None
     so_date: Optional[date] = None
     so_number: Optional[str] = None
     item_code: Optional[str] = None
@@ -1505,7 +1513,13 @@ class OrderInquiryHeaderOut(BaseModel):
     sales_order_id: Optional[str] = None
     #: AC-CONSIGN-CRM: that core order's doc_type; null when there is no core order.
     so_doc_type: Optional[str] = None
-    project_sales_order_id: str
+    #: Null for a spare part request (it has no sales order).
+    project_sales_order_id: Optional[str] = None
+    #: SPARE-PART-ORDER-REQUEST: `sales_order` | `spare_part_request`, and the header's
+    #: own state (a spare part request is `draft` / `pending_approval` / `rejected` before
+    #: its final approval).
+    inquiry_type: str = "sales_order"
+    state: Optional[str] = None
     so_number: Optional[str] = None
     so_date: Optional[date] = None
     customer_name: Optional[str] = None
@@ -1540,6 +1554,22 @@ class OrderInquiryHeaderDetailOut(OrderInquiryHeaderOut):
 
     order_type: Optional[str] = None
     raise_history: List[OrderInquiryRaiseHistoryEntryOut] = []
+    #: SPARE-PART-ORDER-REQUEST: the request's own fields (null on a sales-order inquiry),
+    #: names resolved (no ids on screen), and what the viewer may do with it.
+    currency: Optional[str] = None
+    needed_by: Optional[date] = None
+    default_location: Optional[str] = None
+    reason: Optional[str] = None
+    requested_by: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    approved_by_name: Optional[str] = None
+    reject_reason: Optional[str] = None
+    can_decide: bool = False
+    can_edit: bool = False
+    can_revise: bool = False
 
 
 class OrderInquiryRelatedPOOut(BaseModel):

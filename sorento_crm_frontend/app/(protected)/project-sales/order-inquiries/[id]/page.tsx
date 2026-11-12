@@ -18,7 +18,7 @@ export default async function OrderInquiryDetailPage({
   const { id } = await params;
 
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess anyPermission={['projects.projects.view', 'procurement.spare_part_requests.create']}>
       <Container>
         <PageHeader
           title="Order Inquiry"

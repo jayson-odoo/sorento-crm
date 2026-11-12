@@ -1,9 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { FileStack, List } from 'lucide-react';
+import { FileStack, List, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/common/PageHeader';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { SPARE_PART_CREATE_PERMISSION } from '../../_shared/lib/sparePartRequest';
 import { OrderInquiriesClient } from './OrderInquiriesClient';
 import { OrderInquiryHeadersList } from './OrderInquiryHeadersList';
 
@@ -31,6 +34,8 @@ export function OrderInquiryHeadersOrLinesView() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const view = viewFrom(searchParams.get('display'));
+  // SPARE-PART-ORDER-REQUEST: a requester raises a spare part request from here.
+  const canCreate = useHasPermission(SPARE_PART_CREATE_PERMISSION);
 
   // A CLEAN url on every toggle press, never a clone of the current one: Documents and
   // Lines each own a `state`/`agent`/`query` param with a DIFFERENT meaning (header
@@ -107,7 +112,22 @@ export function OrderInquiryHeadersOrLinesView() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Order inquiries" actions={toggle} />
+      <PageHeader
+        title="Order inquiries"
+        actions={
+          <>
+            {toggle}
+            {canCreate ? (
+              <Button asChild>
+                <Link href="/project-sales/order-inquiries/spare-part-requests/new">
+                  <Plus className="size-4" aria-hidden />
+                  Create
+                </Link>
+              </Button>
+            ) : null}
+          </>
+        }
+      />
       <OrderInquiryHeadersList />
     </div>
   );

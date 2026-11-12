@@ -522,6 +522,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "reorder_policy.delete",
     "role.delete",
     "sales_agent_class.delete",
+    "order_inquiry_row_attachment.delete",
     "sales_order_line_attachment.delete",
     "shipment_line_photo.delete",
     "sla_tracking.delete",

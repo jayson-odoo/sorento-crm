@@ -24,6 +24,7 @@ from app.api.v1.projects import (
     samples_pos,
     schedules,
     so_line_attachments,
+    spare_part_requests,
     spec_sheet,
     status_graphs,
     stock_debt,
@@ -97,6 +98,8 @@ router.include_router(allocations.router, tags=["project-allocations"])
 # so it is root-mounted for the same reason. Before the projects router, or
 # /projects/{id}/order-inquiry-rows is captured by /projects/{project_id}.
 router.include_router(order_inquiries.router, tags=["project-order-inquiry"])
+# SPARE-PART-ORDER-REQUEST: an order inquiry raised without a sales order, and its row photos.
+router.include_router(spare_part_requests.router, tags=["project-spare-part-requests"])
 # Planning changes (PLAN-so-book-diff-replanning.md) are addressed by their own batch id,
 # never nested under a sales order, so root-mounted for the same reason order inquiry is.
 router.include_router(planning_changes.router, tags=["project-planning-changes"])

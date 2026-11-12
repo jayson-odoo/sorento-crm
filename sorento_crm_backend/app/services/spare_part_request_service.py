@@ -126,11 +126,19 @@ def _plain(value: Optional[Decimal]) -> Any:
 
 
 def is_admin(db: Session, user_id: Optional[str]) -> bool:
-    from app.services.user_service import UserPermissionService
+    """One read every call, never the 30 s RBAC cache: every list request then costs the
+    same queries whatever was cached before it (the header list's bounded-query rule)."""
+    from app.models.user import UserRole, UserRoleAssignment
 
     if not user_id:
         return False
-    return bool(UserPermissionService(db).get_user_role_slugs(str(user_id)) & _ADMIN_ROLE_SLUGS)
+    return (
+        db.query(UserRoleAssignment.id)
+        .join(UserRole, UserRole.id == UserRoleAssignment.role_id)
+        .filter(UserRoleAssignment.user_id == str(user_id), UserRole.slug.in_(_ADMIN_ROLE_SLUGS))
+        .first()
+        is not None
+    )
 
 
 def is_requester(inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
@@ -219,6 +227,25 @@ def can_write_photos(db: Session, inquiry: OrderInquiry, user_id: Optional[str])
     if inquiry.inquiry_type != KIND:
         return False
     return can_edit(inquiry, user_id) or can_decide(db, inquiry, user_id)
+
+
+def assert_can_write_row_photos(db: Session, row_id: str, user_id: Optional[str]) -> OrderInquiryRow:
+    """The row photo write rule (contract "Visibility and permissions"): the requester while
+    the request is theirs to edit, the current approver while it is pending; 403 for anyone
+    else, purchasing included. Shared by the upload / delete routes and the deferred delete."""
+    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == str(row_id)).first()
+    inquiry = (
+        db.query(OrderInquiry).filter(OrderInquiry.id == row.order_inquiry_id).first()
+        if row is not None
+        else None
+    )
+    if row is None or inquiry is None:
+        raise AppException(
+            404, "That order inquiry row no longer exists.", code="order_inquiry_row_not_found"
+        )
+    if not can_write_photos(db, inquiry, user_id):
+        raise _forbidden("You cannot change the photos on this line now.")
+    return row
 
 
 def decidable_ids(db: Session, user_id: Optional[str]) -> Set[str]:

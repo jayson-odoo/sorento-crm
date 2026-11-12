@@ -127,6 +127,7 @@ def history(db: Session, inquiry_id: str) -> List[dict]:
     rows = _Rows(db, inquiry_id)
     events: List[dict] = []
     events += _raises(db, inquiry_id, rows)
+    events += _request_events(db, inquiry_id, rows)
     if rows.ids:
         events += _presses(db, rows)
         events += _links(db, rows)
@@ -153,6 +154,72 @@ def _event(event_id: str, kind: str, at, actor_id, title: str, lines, actor=None
         "title": title,
         "lines": list(lines),
     }
+
+
+#: SPARE-PART-ORDER-REQUEST (UAC H1): the request's own moves, written by
+#: `spare_part_request_service` on the OI itself (`event` names the move).
+_REQUEST_KINDS = {
+    "SPR_CREATED": "created",
+    "SPR_EDITED": "edited",
+    "SPR_SUBMITTED": "submitted",
+    "SPR_APPROVED": "approved",
+    "SPR_REJECTED": "rejected",
+    "SPR_LINE_CHANGED": "changed",
+    "SPR_RAISED": "raised",
+    "SPR_REVISED": "revised",
+}
+_LINE_FIELD_LABEL = {"qty": "Qty", "unit_price": "Unit price"}
+
+
+def _request_events(db: Session, inquiry_id: str, rows: _Rows) -> List[dict]:
+    """A spare part request's submit / approve / reject / line change / revise / raise, and
+    the photos added to or removed from its lines. Nothing on a sales-order inquiry."""
+    audits = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.entity_type == "project_order_inquiries",
+            AuditLog.entity_id == str(inquiry_id),
+        )
+        .all()
+    )
+    if not audits:
+        return []
+    actors = audit_actor(db, audits)
+    out = []
+    for audit in audits:
+        old = audit.old_values or {}
+        new = audit.new_values or {}
+        kind = _REQUEST_KINDS.get(audit.event or "")
+        row_id = str(new.get("row_id") or old.get("row_id") or "")
+        lines = []
+        if kind == "changed" and row_id in rows.by_id:
+            field = next((f for f in _LINE_FIELD_LABEL if f in new), None)
+            if field:
+                lines = [
+                    rows.line(
+                        row_id,
+                        f"{_LINE_FIELD_LABEL[field]} {old.get(field)} → {new.get(field)}",
+                    )
+                ]
+        elif kind is None:
+            if "attachment_added" in new:
+                kind, verb, name = "photo_added", "Added", new.get("attachment_added")
+            elif "attachment_removed" in old:
+                kind, verb, name = "photo_removed", "Removed", old.get("attachment_removed")
+            else:
+                continue
+            if row_id in rows.by_id:
+                lines = [rows.line(row_id, f"{verb} {name}")]
+        title = audit.description or (kind or "").replace("_", " ").capitalize()
+        if kind in ("photo_added", "photo_removed"):
+            title = f"{'Added' if kind == 'photo_added' else 'Removed'} a file"
+        out.append(
+            _event(
+                f"audit-{audit.id}", kind, audit.changed_at, audit.user_id, title, lines,
+                actor=actors.get(str(audit.id)),
+            )
+        )
+    return out
 
 
 def _raises(db: Session, inquiry_id: str, rows: _Rows) -> List[dict]:

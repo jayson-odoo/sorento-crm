@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function OrderInquiriesPage() {
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess anyPermission={['projects.projects.view', 'procurement.spare_part_requests.create']}>
       <Container className="space-y-6">
         <OrderInquiryHeadersOrLinesView />
       </Container>
