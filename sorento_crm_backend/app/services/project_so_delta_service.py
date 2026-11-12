@@ -722,7 +722,12 @@ class ProjectSODeltaService:
         from app.services import order_change_notice_service
 
         picked = (
-            order_change_notice_service.assert_linkable(self.db, ocn_id, project_id=order.project_id)
+            order_change_notice_service.assert_linkable(
+                self.db,
+                ocn_id,
+                project_id=order.project_id,
+                actor=order_change_notice_service.actor_for_user(self.db, actor_user_id),
+            )
             if ocn_id
             else None
         )
@@ -764,7 +769,7 @@ class ProjectSODeltaService:
                 created_by=actor_user_id,
                 source=order_change_notice_service.SOURCE_AMENDMENT,
                 status=order_change_notice_service.DRAFT,
-                ocn_date=date.today(),
+                ocn_date=order_change_notice_service.today_malaysia(),
             )
             self.db.add(ocn)
         self.db.flush()

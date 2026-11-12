@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.project_so import OrderChangeNotice, OrderChangeNoticeLine, OrderChangeType
@@ -137,6 +137,13 @@ def actor_for_user(db: Session, user_id: Optional[str]) -> Actor:
 # ------------------------------------------------------------------ small helpers
 
 
+def today_malaysia() -> date:
+    """The notice's date is the Malaysia calendar day (a server day is the UTC one)."""
+    from app.services.certificate_service import today_malaysia as _today
+
+    return _today()
+
+
 def _clean(value: Any) -> Any:
     if isinstance(value, str):
         value = value.strip()
@@ -193,54 +200,14 @@ def _display_name(db: Session, user_id: Optional[str]) -> Optional[str]:
 # ------------------------------------------------------------------ numbering (shared)
 
 
-def _ensure_company_rule(db: Session, company_id: str) -> None:
-    """Give the company its own counter, copied from the unscoped rule the migration seeds,
-    the first time it numbers a notice (UAC A2: each company its own sequence). The unscoped
-    rule is locked first, so two first notices of one company cannot both copy it."""
-    from app.models.numbering import DocumentNumberingRule as Rule
-
-    def company_rule():
-        return (
-            db.query(Rule.id)
-            .filter(Rule.doc_type == NUMBERING_DOC_TYPE, Rule.company_id == company_id)
-            .first()
-        )
-
-    if company_rule() is not None:
-        return
-    template = (
-        db.query(Rule)
-        .filter(Rule.doc_type == NUMBERING_DOC_TYPE, Rule.company_id.is_(None), Rule.enabled.is_(True))
-        .order_by(Rule.id)
-        .with_for_update()
-        .first()
-    )
-    if template is None or company_rule() is not None:
-        return
-    db.add(
-        Rule(
-            company_id=company_id,
-            doc_type=NUMBERING_DOC_TYPE,
-            enabled=True,
-            prefix_template=template.prefix_template,
-            number_digits=template.number_digits,
-            next_value=template.next_value,
-            start_value=template.start_value,
-            reset_policy=template.reset_policy,
-            last_reset_key=template.last_reset_key,
-        )
-    )
-    db.flush()
-
-
 def next_ocn_number(db: Session, company_id: Optional[str]) -> str:
     """The next notice number of `company_id`: the one numbering function, used by the sales
     order amendment draft (`ProjectSODeltaService._next_ocn_number`) and by this service."""
     from app.services.numbering_service import NumberingService
 
+    # Each company has its own rule row (seeded per company by migration ocn_0001, like the
+    # purchase request's); an install without one falls back to the shared unscoped rule.
     company = str(company_id) if company_id else None
-    if company:
-        _ensure_company_rule(db, company)
     configured = NumberingService(db).get_next_number(
         NUMBERING_DOC_TYPE, company_id=company, commit_rule=False
     )
@@ -352,7 +319,7 @@ def _active_type(db: Session, type_id: Any) -> Optional[OrderChangeType]:
     return row if row is not None and row.is_active else None
 
 
-def _check_refs(db: Session, data: Dict[str, Any]) -> None:
+def _check_refs(db: Session, data: Dict[str, Any], *, current_project_id: Optional[str] = None) -> None:
     from app.models.order import Customer
     from app.models.product import Product
     from app.models.projects import Project
@@ -363,8 +330,15 @@ def _check_refs(db: Session, data: Dict[str, Any]) -> None:
         raise _invalid("change_type_id", "Choose one of the listed change types.")
     if data.get("customer_id") is not None and not _ref_exists(db, Customer, data["customer_id"]):
         raise _invalid("customer_id", "That customer is not in the debtor list.")
-    if data.get("project_id") is not None and not _ref_exists(db, Project, data["project_id"]):
-        raise _invalid("project_id", "That project does not exist.")
+    if data.get("project_id") is not None:
+        if not _ref_exists(db, Project, data["project_id"]):
+            raise _invalid("project_id", "That project does not exist.")
+        # A notice links a project, never a registration still waiting for approval (as the PR).
+        from app.services.project_service import assert_linkable_project
+
+        assert_linkable_project(
+            db, data["project_id"], current_project_id, code="order_change_notice_project_not_approved"
+        )
     for field, word in (("sales_in_charge_user_id", "sales"), ("cs_in_charge_user_id", "customer service")):
         value = data.get(field)
         if value is not None and db.query(User.id).filter(User.id == str(value)).first() is None:
@@ -380,11 +354,12 @@ def _apply(db: Session, row: OrderChangeNotice, data: Dict[str, Any]) -> None:
     """Check every reference first, then assign: no query runs between the assignments, so
     a new notice is inserted whole (one CREATE in its History, no UPDATE of its own fields)."""
     data = dict(data)
-    if row.source == SOURCE_AMENDMENT:
-        # UAC E4: the project, sales order and PO links came from the amendment.
+    if row.source == SOURCE_AMENDMENT or (row.id is not None and linked_amendment(db, row) is not None):
+        # UAC E4: the project, sales order and PO links came from the amendment (born from it,
+        # or picked by it), so they stay.
         for key in AMENDMENT_LINKS:
             data.pop(key, None)
-    _check_refs(db, data)
+    _check_refs(db, data, current_project_id=row.project_id)
     with db.no_autoflush:
         for key in ("change_type_id", "customer_id", "project_id", "sales_in_charge_user_id",
                     "cs_in_charge_user_id"):
@@ -436,7 +411,7 @@ def create_draft(
         status=DRAFT,
         source=source,
         created_by=actor.user_id,
-        ocn_date=date.today(),
+        ocn_date=today_malaysia(),
         revision_no=0,
     )
     _apply(db, row, data)
@@ -695,6 +670,53 @@ def notify(db: Session, row: OrderChangeNotice, event: Optional[str], actor_id: 
             actor_user_id=actor_id,
             user_ids=getattr(row, "_sla_voided_to", None) or set(),
         )
+    if event in RAISER_NOTICES:
+        _tell_raiser(db, row, event, actor_id)
+
+
+#: What the raiser is told, in-app, after each move that is theirs to know (review M3): a send
+#: back or a rejection is theirs to amend and submit again.
+RAISER_NOTICES = {
+    "reject_submitted": "was sent back to you",
+    "approval_rejected": "was rejected",
+    "approved": "was approved",
+    "resolved": "is done",
+    "voided": "was voided",
+}
+
+
+def _tell_raiser(db: Session, row: OrderChangeNotice, event: str, actor_id: Optional[str]) -> None:
+    """An in-app notice to the raiser (never to whoever made the move). Best effort: a failure
+    is logged and never undoes the committed move."""
+    raiser = str(row.created_by or "")
+    if not raiser or raiser == str(actor_id or ""):
+        return
+    title = f"Order change notice {row.ocn_number} {RAISER_NOTICES[event]}"
+    reason = row.approval_comments if event in ("reject_submitted", "approval_rejected") else (
+        row.void_reason if event == "voided" else None
+    )
+    try:
+        from app.services.notification_service import NotificationService
+
+        NotificationService(db).create_with_channel_preferences(
+            user_id=raiser,
+            type=f"order_change_notice_{event}",
+            title=title,
+            body=f"{title}. Reason: {reason}" if reason else title,
+            data={"link": f"/procurement-management/order-change-notices/{row.id}", "ocn_number": row.ocn_number},
+            source_entity_type=ENTITY,
+            source_entity_id=str(row.id),
+            dedup_key=f"{row.id}:{event}:{row.revision_no or 0}",
+            event_type=f"order_change_notice_{event}",
+            send_in_app=True,
+            send_email=False,
+            send_whatsapp=False,
+            send_web_push=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("order change notice raiser notice not sent: %s %s (%s)", event, row.id, exc)
+        if not db.is_active:
+            db.rollback()
 
 
 def finish(db: Session, row: OrderChangeNotice, event: Optional[str], actor_id: Optional[str]) -> Dict[str, Any]:
@@ -831,6 +853,41 @@ def serialize_summary(
     }
 
 
+def linked_amendment(db: Session, row: OrderChangeNotice):
+    """The sales order amendment that carries this notice, if any (one at most)."""
+    from app.models.project_so import SOAmendment
+
+    return db.query(SOAmendment).filter(SOAmendment.ocn_id == row.id).first()
+
+
+def _amendment_refs(db: Session, row: OrderChangeNotice) -> Dict[str, Any]:
+    """The sales order, PO and amendment a notice belongs to, by number (never an id on screen;
+    the ids only build the links)."""
+    from app.models.project_so import ProjectSalesOrder
+    from app.models.projects import ProjectPurchaseOrder
+
+    so = (
+        db.query(ProjectSalesOrder.provisional_ref, ProjectSalesOrder.autocount_doc_no)
+        .filter(ProjectSalesOrder.id == row.project_sales_order_id)
+        .first()
+        if row.project_sales_order_id
+        else None
+    )
+    po = (
+        db.query(ProjectPurchaseOrder.po_number).filter(ProjectPurchaseOrder.id == row.purchase_order_id).first()
+        if row.purchase_order_id
+        else None
+    )
+    amendment = linked_amendment(db, row) if row.id is not None else None
+    return {
+        "so_ref": (so.autocount_doc_no or so.provisional_ref) if so else None,
+        "po_number": po.po_number if po else None,
+        "amendment_id": str(amendment.id) if amendment else None,
+        "amendment_status": amendment.status if amendment else None,
+        "amendment_sales_order_id": str(amendment.project_sales_order_id) if amendment else None,
+    }
+
+
 def serialize_detail(db: Session, row: OrderChangeNotice) -> Dict[str, Any]:
     from app.models.product import Product
 
@@ -857,6 +914,7 @@ def serialize_detail(db: Session, row: OrderChangeNotice) -> Dict[str, Any]:
             "project_sales_order_id": str(row.project_sales_order_id) if row.project_sales_order_id else None,
             "purchase_order_id": str(row.purchase_order_id) if row.purchase_order_id else None,
             "change_table_json": row.change_table_json,
+            **_amendment_refs(db, row),
             "created_by": row.created_by,
             "created_by_name": names.get(str(row.created_by or "")) or None,
             "submitted_at": _iso(row.submitted_at),
@@ -926,6 +984,34 @@ def _sorts() -> Dict[str, Any]:
     }
 
 
+#: The list's "Pending approval" filter value: a submitted notice waiting on its approver (the
+#: word the rows show), which is not a stored status of its own.
+PENDING_APPROVAL = "pending_approval"
+
+
+def status_filter_clause(statuses: List[str]):
+    """The status filter as one OR: stored statuses, plus Pending approval when it is chosen.
+    A submitted notice waiting on approval reads Pending approval, so Submitted leaves it out."""
+    awaiting = OrderChangeNotice.status.in_(AWAITING_REVIEW)
+    pending = OrderChangeNotice.approval_status == "pending"
+    clauses = []
+    plain = [s for s in statuses if s != PENDING_APPROVAL]
+    awaiting_chosen = [s for s in plain if s in AWAITING_REVIEW]
+    others = [s for s in plain if s not in AWAITING_REVIEW]
+    if others:
+        clauses.append(OrderChangeNotice.status.in_(others))
+    if awaiting_chosen:
+        clauses.append(
+            and_(
+                OrderChangeNotice.status.in_(awaiting_chosen),
+                or_(OrderChangeNotice.approval_status.is_(None), OrderChangeNotice.approval_status != "pending"),
+            )
+        )
+    if PENDING_APPROVAL in statuses:
+        clauses.append(and_(awaiting, pending))
+    return or_(*clauses) if clauses else OrderChangeNotice.id.is_(None)
+
+
 def list_for(
     db: Session,
     *,
@@ -941,7 +1027,7 @@ def list_for(
 ) -> Dict[str, Any]:
     query = _visible(db.query(OrderChangeNotice), actor)
     if statuses:
-        query = query.filter(OrderChangeNotice.status.in_(statuses))
+        query = query.filter(status_filter_clause(statuses))
     if change_type_ids:
         query = query.filter(OrderChangeNotice.change_type_id.in_(change_type_ids))
     if risk_levels:
@@ -975,11 +1061,16 @@ def list_for(
     }
 
 
-def list_for_project(db: Session, project_id: str, *, actor: Actor) -> List[Dict[str, Any]]:
-    """The project page's panel: that project's notices, newest first."""
+def list_for_project(
+    db: Session, project_id: str, *, actor: Actor, linkable: bool = False
+) -> List[Dict[str, Any]]:
+    """The project page's panel: that project's notices, newest first. `linkable` keeps only
+    the ones an amendment may pick (`linkable_clause`, the same predicate the pick enforces)."""
+    query = _visible(db.query(OrderChangeNotice), actor).filter(OrderChangeNotice.project_id == project_id)
+    if linkable:
+        query = query.filter(linkable_clause())
     rows = (
-        _visible(db.query(OrderChangeNotice), actor)
-        .filter(OrderChangeNotice.project_id == project_id)
+        query
         .order_by(OrderChangeNotice.created_at.desc().nulls_last(), OrderChangeNotice.ocn_number.desc())
         .all()
     )
@@ -1011,23 +1102,53 @@ def change_types(db: Session) -> List[Dict[str, Any]]:
 # ------------------------------------------------------------------ amendment link (UAC E2)
 
 
-def assert_linkable(db: Session, ocn_id: str, *, project_id: Optional[str]) -> OrderChangeNotice:
-    """An existing notice an amendment may take: same project, not already linked to another
-    amendment, still open."""
+#: A notice an amendment may take (lead ruling, security H1): not waiting on an approver, not
+#: closed. Picking an approved one revises it back to draft, so its new change is approved again.
+LINKABLE_STATUSES = (DRAFT, SUBMITTED, RESUBMITTED, REJECTED, APPROVED)
+
+
+def linkable_clause():
+    """The ONE linkable predicate, as SQL: an open status, no approval pending, and no amendment
+    links it yet. `assert_linkable` and the project list's `linkable=true` both use it."""
     from app.models.project_so import SOAmendment
 
-    row = find(db, ocn_id)
+    return and_(
+        OrderChangeNotice.status.in_(LINKABLE_STATUSES),
+        or_(OrderChangeNotice.approval_status.is_(None), OrderChangeNotice.approval_status != "pending"),
+        ~exists().where(SOAmendment.ocn_id == OrderChangeNotice.id),
+    )
+
+
+def assert_linkable(
+    db: Session, ocn_id: str, *, project_id: Optional[str], actor: Actor
+) -> OrderChangeNotice:
+    """An existing notice an amendment may take: one the author can see, of the same project,
+    passing `linkable_clause`. The row is locked for the rest of the transaction, so two
+    amendments cannot link it at once (the partial unique index on so_amendments.ocn_id is the
+    backstop). An approved notice goes back to draft at the next revision before the change
+    table is put on it, so publishing waits for a fresh approval of this change."""
+    row = find(db, ocn_id, for_update=True)
     if row is None:
         raise _invalid("ocn_id", "That order change notice does not exist.")
+    assert_can_view(row, actor)
     if str(row.project_id or "") != str(project_id or ""):
         raise _invalid("ocn_id", "That order change notice belongs to another project.")
-    if db.query(SOAmendment.id).filter(SOAmendment.ocn_id == row.id).first() is not None:
+    if db.query(OrderChangeNotice.id).filter(OrderChangeNotice.id == row.id, linkable_clause()).first() is None:
         raise _conflict(
-            "That order change notice is already linked to another amendment.", "ORDER_CHANGE_NOTICE_LINKED"
+            f"A {ocn_status_word(row).lower()} or already linked order change notice cannot be picked.",
+            "ORDER_CHANGE_NOTICE_NOT_LINKABLE",
         )
-    if _status(row) in (VOIDED, DONE):
-        raise _conflict(f"A {_label(row)} order change notice cannot be linked.", "ORDER_CHANGE_NOTICE_CLOSED")
+    if _status(row) == APPROVED:
+        _back_to_draft(db, row, "Picked for a sales order amendment: the change needs approval.")
     return row
+
+
+def ocn_status_word(row: OrderChangeNotice) -> str:
+    """The status in plain words (a submitted notice waiting on its approver reads Pending
+    approval), the same words the screens use."""
+    if _status(row) in AWAITING_REVIEW and (row.approval_status or "") == "pending":
+        return "Pending approval"
+    return STATUS_LABELS.get(_status(row), _status(row))
 
 
 def is_approved(row: Optional[OrderChangeNotice]) -> bool:
