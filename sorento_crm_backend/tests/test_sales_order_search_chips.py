@@ -366,7 +366,8 @@ def test_all_ands_one_match_per_value(monkeypatch):
     assert len(re.findall(r"\bILIKE\b", sql)) == 3
     assert sql.count(" AND ") == 2
     for value in ["A1", "B2", "C3"]:
-        assert f"ARRAY['%{value}%']" in sql, sql
+        # The psycopg2 dialect renders a literal % as %% under literal_binds.
+        assert f"ARRAY['%%{value}%%']" in sql, sql
 
 
 def test_all_switch_reaches_the_list_route(client, seeded, monkeypatch):
