@@ -1,0 +1,170 @@
+# PLAN: After-sales P1, service jobs (send a technician to the site)
+
+Status: in build. Track: L (new tables, migration, new screens, new permissions). Lane AFTER-SALES-REVIVE,
+PR #2365, retitled to "AFTER-SALES-P1: service jobs". Slices P2 to P4 each go on a new branch and PR.
+Owner go: 12 Nov 14:20 MYT ("let's do this and bring the copy for me to test").
+UAC: `service-jobs-p1-acceptance-criteria.md` (alongside).
+Card: `P1-behaviour-card.md`. Its 5 questions were taken on their recommended defaults (crew-ask 12 Nov).
+Source being ported: PR #163 (`worktree-after-sales-warranty`), slices S6 and S7a, plus S1's site columns.
+
+## Journey
+
+CS gets a complaint that needs someone on site. From the complaint they raise a service job. They call the
+customer and confirm a date (and who agreed it), then assign a technician. On the day they record On the way,
+Arrived and Completed, then Verify the work. If the customer turns the date down, the job goes back to
+Proposed and the first try stays in History. The dispatch board shows each day's jobs per technician, with
+stalled jobs on top.
+
+## Simplest-thing decisions (what #163 had and P1 leaves out)
+
+| #163 | P1 | Trigger to add it back |
+|---|---|---|
+| Polymorphic job source (`source_entity_type` + `source_entity_id`, no FK) | `service_jobs.complaint_id` FK (NOT NULL). Complaints are the only source today. | A second record type that must raise a job |
+| `service_job_assignments` table (one row per try) | `service_jobs.technician_id` column. Earlier tries show in History through the audit trail (old -> new). | A report that needs per-try metrics (S9 reporting) |
+| Site copied onto the job | The Site lives on the complaint only, and the job shows the complaint's Site | A job that must go to a different address than its complaint |
+| `external_providers`, `case_cost_lines`, charge columns | Not built (no screen asked for them) | Owner keeps G7 (charges and costs) |
+| Separate job clocks (`proposed_at`, `confirmed_at`, ...) | `scheduled_from`, `scheduled_to`, `customer_agreed_by`, `arrived_at`, `completed_at`, `verified_at` | - |
+| Waiting-on columns (S4a) | Not built (S4a is deferred) | S4a slice |
+
+## Design lessons from project management (how each screen follows them)
+
+The lessons come from the owner standing rules in the brief, and from the project-management rulings in
+`documentation/plans/project-sales/` (CARD-*, PLAN-proposal-header-layout-05nov, PLAN-proposal-form-collapse-10nov,
+PLAN-project-sales-polish-13oct).
+
+1. **One main action per screen.** On a job page the single filled button is the job's next step: Confirm
+   date, Assign technician, On the way, Arrived, Complete or Verify. Everything else sits in the gear menu
+   (Cancel, Customer rejected the visit, Revisit needed, Reopen, Open complaint). The Complaint's Service Jobs
+   section has one button ("Raise service job"). The lists have "Create" only where a record can be created on
+   its own (Technicians). A job is raised from its complaint, so the Service Jobs list has no Create.
+2. **Minimal UI; lightbox over inline bloat.** Confirm date and Assign technician each open in a centred
+   dialog (the shared `Dialog`), never as inline forms on the page. The job page reads as two cards (Visit,
+   Site) plus a History tab. There is no explainer text on any screen.
+3. **CRM forms = portal forms, and Edit = Create.** The Technician create and edit dialog is the same
+   component. The Site on the complaint is edited in the complaint's existing edit form, in the same field
+   order as on the detail page (View and Edit share one layout). A portal form does not exist yet (P4 adds the
+   consumer's view of a Site with the same fields in the same order).
+4. **One History view.** The job's History tab is the shared `components/audit/AuditTrail.tsx`, which the
+   complaint already uses (`ComplaintDetail.tsx:1405`). It is fed by the audit listeners on `service_jobs`:
+   who, when, the plain action, and old -> new (status, technician, date, agreed by). There is no separate
+   timeline component.
+5. **Lists: one line per row, one value per column.** Service Jobs list columns: Job no., Complaint no.,
+   Status (pill), Scheduled (dd/mm/yyyy, h:mm am/pm), Technician, City, Customer. Each is its own column,
+   sortable on the server; long text is truncated with the full text on hover. Rows open the record. A
+   right-click menu (the shared `components/ui/context-menu.tsx`, as in
+   `project-sales/[projectId]/components/PurchaseOrdersPanel.tsx`) offers Open complaint and the job's
+   next-step actions. There are no icon buttons on rows. Filters are multi-select (Status, Technician) plus a
+   Scheduled date range; search covers job no., complaint no., customer and city. Columns can be hidden and
+   reordered, and the choice is kept per user (`listing_key`).
+6. **dd/mm/yyyy everywhere.** The shared formatters in `lib/helpers.ts` and the shared `DatePicker` (with
+   time) for Confirm date and the board's day picker. No browser-native date input (#163 used one on the
+   board and in its dialogs).
+7. **Plain states, no special logic.** Seven plain states (Proposed, Confirmed, On the way, Arrived,
+   Completed, Verified, Cancelled). "Stalled" means only "Proposed and past its date", with no windows or
+   buckets. A Confirmed job past its date is not stalled.
+8. **Reuse existing functions and components.**
+   - Numbering: `NumberingService.get_next_number` (`app/services/numbering_service.py:14`) with a seeded
+     `service_job` rule `SV{yy}/{mm}-{seq:4}`.
+   - Statuses: the status engine (`app/status_engine/registry.py:85`).
+   - Lists: DataGrid + `DataGridListToolbar` + `buildDataGridParams` + `lib/list-filters/multiValue.ts` +
+     `list_query_registry`.
+   - Record page: `PageHeader` + `RecordNavigation` + `DetailActions`.
+   - Technician delete: `DeferredActionButton` (a countdown, no confirm dialog); a technician used on any
+     job archives instead (sets inactive).
+   - Errors: `extractApiError`. Toasts: `lib/toast.ts`.
+   - Selects: `SearchableSelect`, clearable when optional.
+
+### Screen by screen
+
+| Screen | Lessons applied |
+|---|---|
+| Complaint detail: Site card + Service Jobs section | 2, 3 (Site edited in the complaint's edit form, same order), 1 (one "Raise service job" button), 5 (each job is one line: number, status pill, scheduled date, technician; click opens it) |
+| Service Jobs list | 5, 6, 8; no Create (raised from a complaint) |
+| Service job page | 1 (next-step button), 2 (Confirm / Assign dialogs), 4 (History tab), 6, 7, 8 (PageHeader + prev/next following the list's filter and sort) |
+| Dispatch board | 6 (shared date picker, dd/mm/yyyy), 7 (stalled = Proposed past its date), 2 (cards open the job page; no inline editing) |
+| Technicians list + dialog | 3 (one dialog for create and edit), 5, 8 (countdown delete, archive when in use) |
+| Resolutions master | one "Requires service job" checkbox in the existing dialog, plus a column |
+
+## Data (one additive migration on main's head `qdp_0001_duplicate_party`)
+
+- `technicians`: `id` uuid, `name` (not null), `phone`, `employment_type` (employee | contractor), `is_active`
+  (default true), `company_id` (company-scoped like complaints), `created_at`, `updated_at`.
+- `service_jobs`:
+  - `id` uuid; `job_number` (unique, assigned on create); `complaint_id` FK `complaints.id`, not null;
+    `status_id` FK `statuses.id`; `technician_id` FK `technicians.id`, nullable.
+  - `scheduled_from`, `scheduled_to`, `customer_agreed_by`, `rejection_reason`, `arrived_at`, `completed_at`,
+    `verified_at`, `cancel_reason`.
+  - `created_by`, `created_at`, `updated_at`, `company_id`.
+  - A partial unique index on `complaint_id` WHERE the status is live (not Cancelled and not Verified), so
+    two Raise clicks can never make two live jobs. It is implemented as a guard plus a row lock if a partial
+    index cannot reference status keys (the status is an FK). The coder picks one and writes a test for each
+    race.
+- `complaints`: `site_address_line1`, `site_address_line2`, `site_postcode`, `site_city`, `site_state`,
+  `site_country`, `site_contact_name`, `site_contact_phone`, `site_latitude`, `site_longitude` (all nullable).
+- `complaint_resolutions.requires_service_job` boolean, not null, default false.
+- Seeds:
+  - the service_job status graph (7 statuses, 12 transitions, copied verbatim from #163
+    `service_job_status_graph.py`);
+  - the numbering rule `service_job`;
+  - permissions `complaint_management.service_jobs.view`, `complaint_management.service_jobs.dispatch` and
+    `complaint_management.technicians.manage`, granted to the roles that hold
+    `complaint_management.complaints.edit`.
+- Seeds also run from `bootstrap_env` (#163's gap: a fresh database had no graph).
+- Every new id is a uuid (`tests/test_schema_uuid_id_principle.py`). The revision id is 32 characters or fewer.
+
+## API (`/api/v1/complaints-management`, complaints module guard)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/service-jobs` (DataGrid params, server-side sort and filter) | service_jobs.view |
+| GET | `/service-jobs/board?day=YYYY-MM-DD` | service_jobs.view |
+| GET | `/service-jobs/{id}` | service_jobs.view |
+| GET | `/complaints/{id}/service-jobs` | service_jobs.view |
+| POST | `/complaints/{id}/service-jobs` (raise; returns the live job if one exists, 200 vs 201) | service_jobs.dispatch |
+| POST | `/service-jobs/{id}/confirm` `{scheduled_from, scheduled_to?, customer_agreed_by}` | dispatch |
+| POST | `/service-jobs/{id}/assign` `{technician_id}` | dispatch |
+| POST | `/service-jobs/{id}/transition` `{to: on_the_way, arrived, completed, verified, proposed, cancelled; reason?}` | dispatch |
+| GET, POST, PUT, DELETE | `/technicians` (DELETE refused with 409 "in use" when any job references it; archive = PUT is_active=false) | technicians.manage (GET: service_jobs.view) |
+
+- A complaint update accepts the Site fields.
+- A resolution create or update accepts `requires_service_job`.
+- Setting a resolution with the flag on a complaint raises a job (after commit, idempotent, never deletes).
+
+## Rules (tests come from these; numbered as in the UAC)
+
+See the UAC. Summary:
+- Raise is idempotent per complaint.
+- Confirm needs both date and agreed-by.
+- Assign refuses an inactive technician.
+- Only the graph's moves are allowed.
+- Rejected / Revisit go to Proposed with a reason.
+- Every job is numbered on create.
+- Stalled = Proposed with `scheduled_from < now`.
+- The board shows jobs whose `scheduled_from` falls on the day (MYT), unassigned first.
+- A Proposed job with no date is listed under Unassigned only on the day it was raised, never as stalled.
+
+## Out of P1 (named)
+
+- Not taken by the owner: G4 WhatsApp the customer, G5 send the job to the technician, G6 completion report,
+  G7 charges and costs, G8 job sheet PDF, G10 stalled alert notification, G11 week view, G12 reports,
+  G13 assistant, G14 Excel export.
+- "Reported by" column + filter (decision 5): it needs a source for the value, which arrives with P4 (the
+  portal lodge).
+
+## Assistant coverage (PRINCIPLES DoD 6-8)
+
+The service job list and record need an assistant registry entry (`app/services/assistant_registry/`), with
+two eval prompts: "service jobs scheduled today" and "status of the job for complaint X". If the registry
+shape does not fit in this lane, the PR says why and names the follow-up.
+
+## User guide
+
+`documentation/user-guides/` gets a new service jobs page (raise, confirm, assign, board, technicians).
+
+## Phases
+
+1. Plan + UAC (this file).
+2. Tester: red pytest + vitest from the UAC.
+3. Coder: green.
+4. Reviewer + security-reviewer (new permissions) + browser passes at 1280 and 375 px.
+5. Hand test (`laneboard/scripts/2365.md`), then freeze.
