@@ -56,17 +56,19 @@ def _dmy(value: Any) -> str:
 
 def _sources():
     """(kind, model, typed-name column, number column, date column, extra filter)."""
-    from sqlalchemy import Date, cast, func
+    from sqlalchemy import func
 
     from app.models.complaints import Complaint
     from app.models.procurement import PurchaseRequestHeader, StockInquiry
+    from app.services.project_related_records import _malaysia_date
 
+    # Stored timestamps are naive UTC: the sheet's Date is the Malaysia day, as on the screen.
     request_date = func.coalesce(
-        PurchaseRequestHeader.request_date, cast(PurchaseRequestHeader.created_at, Date)
+        PurchaseRequestHeader.request_date, _malaysia_date(PurchaseRequestHeader.created_at)
     )
     return [
         ("stock_inquiry", StockInquiry, StockInquiry.project_name, StockInquiry.inquiry_number,
-         StockInquiry.created_at, None),
+         _malaysia_date(StockInquiry.created_at), None),
         ("complaint", Complaint, Complaint.project_title, Complaint.complaint_number,
          Complaint.complaint_date, None),
         ("purchase_request", PurchaseRequestHeader, PurchaseRequestHeader.project_title,

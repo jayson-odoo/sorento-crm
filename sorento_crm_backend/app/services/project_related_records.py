@@ -64,6 +64,13 @@ def register_related_type(rt: RelatedType) -> None:
 # ------------------------------------------------------------------ the five types
 
 
+def _malaysia_date(col):
+    """The Malaysia calendar day of a naive-UTC timestamp column, as SQL (the rule of
+    `analytics_connector/views._myt_naive` and the OI worklist's `_RAISED_DAY`): a record made
+    at 07:30 on the 13th in Malaysia is stored at 23:30 UTC on the 12th, and reads the 13th."""
+    return cast(func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", col)), Date)
+
+
 def _own(select_, access: str, clause):
     return select_.where(clause) if access == "own" else select_
 
@@ -78,7 +85,7 @@ def _stock_inquiry_select(me: Me, access: str):
             M.inquiry_number.label("number"),
             M.status.label("status"),
             cast(null(), String).label("approval_status"),
-            cast(M.created_at, Date).label("date"),
+            _malaysia_date(M.created_at).label("date"),
             M.salesperson.label("raised_by"),
             M.item_description.label("subject"),
             cast(null(), Numeric).label("value"),
@@ -143,7 +150,7 @@ def _npa_select(me: Me, access: str):
             M.application_no.label("number"),
             M.status.label("status"),
             cast(null(), String).label("approval_status"),
-            cast(func.coalesce(M.submitted_at, M.created_at), Date).label("date"),
+            _malaysia_date(func.coalesce(M.submitted_at, M.created_at)).label("date"),
             applicant.label("raised_by"),
             M.remark.label("subject"),
             M.cost_price.label("value"),
