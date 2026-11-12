@@ -140,6 +140,28 @@ describe('useSetUserPasskeyEnabledMutation', () => {
     expect(svc.setUserPasskeyEnabled).toHaveBeenCalledWith('user-1', true);
   });
 
+  it('refreshes the user detail AND the signed-in account profile on success', async () => {
+    // Browser pass: an admin switching it on for themselves must see the Passkeys card
+    // on My account > Security without a reload (layout.tsx reads ['account-profile']).
+    svc.setUserPasskeyEnabled.mockResolvedValue({ user_id: 'user-1', passkey_enabled: true });
+    const qc = newClient();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useSetUserPasskeyEnabledMutation(), {
+      wrapper: wrapperWith(qc),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ userId: 'user-1', enabled: true } as never);
+    });
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['account-profile'] }),
+      ),
+    );
+    expect(invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ['user-user', 'user-1'] }),
+    );
+  });
+
   it('toasts the extracted error message on failure', async () => {
     svc.setUserPasskeyEnabled.mockRejectedValue(
       new Error('You do not have permission to edit users.'),

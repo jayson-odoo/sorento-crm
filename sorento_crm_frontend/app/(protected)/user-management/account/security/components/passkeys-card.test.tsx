@@ -313,7 +313,14 @@ describe('PasskeysCard - add (AC-44)', () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
-  it('shows the backend message for a wrong password and registers nothing', async () => {
+  // Browser pass: a wrong proof is shown inline in the still-open dialog, never as a toast.
+  function expectInlineRefusal(dialog: HTMLElement, message: string) {
+    const shown = within(dialog).getByText(message);
+    const alertLike = shown.closest('[role="alert"], [data-slot="form-message"], [id$="-form-item-message"]');
+    expect(alertLike, `"${message}" is not in a role="alert" / form message`).not.toBeNull();
+  }
+
+  it('shows a wrong password inline in the open dialog, with no toast, and registers nothing', async () => {
     svc.fetchPasskeyRegistrationOptions.mockRejectedValue(
       new Error('That password is not right.'),
     );
@@ -324,13 +331,32 @@ describe('PasskeysCard - add (AC-44)', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
 
-    await waitFor(() => {
-      const shownInline = screen.queryByText('That password is not right.') !== null;
-      const toasted = toastError.mock.calls.some((c) => c[0] === 'That password is not right.');
-      expect(shownInline || toasted).toBe(true);
-    });
+    await waitFor(() => expectInlineRefusal(dialog, 'That password is not right.'));
+    expect(screen.getByRole('dialog', { name: "Confirm it's you" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Password')).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
     expect(mockStartRegistration).not.toHaveBeenCalled();
     expect(svc.registerPasskey).not.toHaveBeenCalled();
+  });
+
+  it('shows a wrong phone code inline in the open dialog, with no toast', async () => {
+    svc.fetchPasskeyRegistrationOptions.mockRejectedValue(new Error('That code is not right.'));
+    renderCard({ hasPassword: false });
+    const dialog = await openAddDialog();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send code' }));
+    await waitFor(() => expect(svc.sendPasskeyReauthCode).toHaveBeenCalledTimes(1));
+    fireEvent.change(within(dialog).getByPlaceholderText('6-digit code'), {
+      target: { value: '654321' },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    if (svc.fetchPasskeyRegistrationOptions.mock.calls.length === 0) {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    }
+
+    await waitFor(() => expectInlineRefusal(dialog, 'That code is not right.'));
+    expect(screen.getByRole('dialog', { name: "Confirm it's you" })).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(mockStartRegistration).not.toHaveBeenCalled();
   });
 });
 
