@@ -479,7 +479,20 @@ class ComplaintService:
                 clauses.append((Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == ""))
             real = [a for a in assignees if a.lower() != "__unassigned__"]
             if real:
-                clauses.append(Complaint.assigned_to.in_(real))
+                # `assigned_to` holds a CRM user id OR a Respond.io agent id; the filter
+                # offers every staff member by CRM id (ASSIGNED-FILTER-ALL-STAFF), and an
+                # older saved filter may hold a Respond id. Match a person under either.
+                from app.models.user import User
+                matched = set(real)
+                for uid, rid in (
+                    self.db.query(User.id, User.respond_user_id)
+                    .filter(or_(User.id.in_(real), User.respond_user_id.in_(real)))
+                    .all()
+                ):
+                    matched.add(str(uid))
+                    if rid:
+                        matched.add(str(rid))
+                clauses.append(Complaint.assigned_to.in_(sorted(matched)))
             q = q.filter(or_(*clauses))
         statuses = multi_values(status)
         if statuses:
