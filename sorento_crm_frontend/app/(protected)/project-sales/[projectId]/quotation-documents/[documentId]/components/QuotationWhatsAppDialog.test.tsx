@@ -103,7 +103,7 @@ beforeEach(() => {
 describe('QuotationWhatsAppDialog', () => {
   it('titles the prompt with the revision and mints the link once on open (AC-B1, B2)', async () => {
     renderDialog();
-    expect(await screen.findByText('Send R2 via WhatsApp')).toBeInTheDocument();
+    expect(await screen.findByText('Send R2 to the customer via WhatsApp')).toBeInTheDocument();
     await waitFor(() => expect(createQuotationSignLink).toHaveBeenCalledTimes(1));
     expect(createQuotationSignLink).toHaveBeenCalledWith('p1', 'd1', 'i2');
   });
@@ -171,7 +171,7 @@ describe('QuotationWhatsAppDialog', () => {
   it('is inert while the link is being minted (AC-B3)', async () => {
     createQuotationSignLink.mockReturnValue(new Promise(() => {}));
     renderDialog();
-    await screen.findByText('Send R2 via WhatsApp');
+    await screen.findByText('Send R2 to the customer via WhatsApp');
     const link = openLink();
     expect(link).toHaveAttribute('aria-disabled', 'true');
     expect(link).not.toHaveAttribute('href');
@@ -332,10 +332,10 @@ describe('QuotationWhatsAppDialog', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       renderDialog();
-      const dialog = await screen.findByRole('dialog', { name: 'Send R2 via WhatsApp' });
+      const dialog = await screen.findByRole('dialog', { name: 'Send R2 to the customer via WhatsApp' });
       const headings = within(dialog).getAllByRole('heading');
       expect(headings).toHaveLength(1);
-      expect(headings[0]).toHaveTextContent('Send R2 via WhatsApp');
+      expect(headings[0]).toHaveTextContent('Send R2 to the customer via WhatsApp');
       const said = [...warn.mock.calls, ...error.mock.calls].map((c) => c.map(String).join(' '));
       expect(said.some((m) => m.includes('Missing `Description`'))).toBe(false);
     } finally {

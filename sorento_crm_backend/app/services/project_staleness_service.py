@@ -305,7 +305,7 @@ def sweep(db: Session, *, notify: bool = True) -> Dict[str, int]:
 
 
 def _message(project: Project, level: int, result: Dict[str, Any]) -> Dict[str, str]:
-    from app.services.project_service import project_label
+    from app.services.project_service import project_display_name, project_label
 
     label = project_label(project)
     days = result.get("days") or 0
@@ -317,20 +317,20 @@ def _message(project: Project, level: int, result: Dict[str, Any]) -> Dict[str, 
     if level == LEVEL_NUDGE:
         return {
             "title": f"{label} needs an update",
-            "body": f"{project.title}: {why}. Log what happened, or set the next action.",
+            "body": f"{project_display_name(project)}: {why}. Log what happened, or set the next action.",
         }
     if level == LEVEL_WARN:
         return {
             "title": f"{label} is falling behind",
             "body": (
-                f"{project.title}: {why}. Your manager has been copied on this one. "
+                f"{project_display_name(project)}: {why}. Your manager has been copied on this one. "
                 "Update it or hand it over."
             ),
         }
     return {
         "title": f"{label} is unattended",
         "body": (
-            f"{project.title}: {why}. It is now flagged to everyone as unattended, and a "
+            f"{project_display_name(project)}: {why}. It is now flagged to everyone as unattended, and a "
             "colleague can ask to take it over. Nothing has been reassigned -- a manager decides."
         ),
     }

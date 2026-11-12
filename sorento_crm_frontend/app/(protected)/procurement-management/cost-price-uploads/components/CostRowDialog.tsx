@@ -22,13 +22,7 @@ import {
 } from '../services/costPriceService';
 import type { ProductSupplierCostRow } from '../types/costPrice.types';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-
-const CURRENCY_OPTIONS = [
-  { value: 'CNY', label: 'CNY' },
-  { value: 'USD', label: 'USD' },
-  { value: 'MYR', label: 'MYR' },
-  { value: 'EUR', label: 'EUR' },
-];
+import { CURRENCY_CODE_OPTIONS } from '@/lib/currencies';
 
 function toDateOnly(date: Date | undefined): string | null {
   if (!date) return null;
@@ -139,7 +133,7 @@ export function CostRowDialog({
                 id="cost-row-currency"
                 value={currency}
                 onChange={setCurrency}
-                options={CURRENCY_OPTIONS}
+                options={CURRENCY_CODE_OPTIONS}
                 triggerClassName="w-full"
               />
             </div>

@@ -521,6 +521,11 @@ def client(db):
     # through the DUAL-auth dependency specifically, and overriding only this one proves
     # the route depends on it rather than on JWT-only `get_current_user`.
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+    # SUPPLIER-COST-ACCESS: a staff caller also needs `products.cost.view` (pinned both ways
+    # in tests/test_supplier_cost_access.py); this suite is about the rows, so the gate passes.
+    from app.api.v1.procurement.purchase_orders import _cost_reader
+
+    app.dependency_overrides[_cost_reader] = lambda: principal
 
     async def _override_scope():
         scope = frozenset({DEFAULT_COMPANY_ID})

@@ -231,7 +231,7 @@ export function PipelineClient() {
       value={search}
       onChange={setSearch}
       isSettling={isSearchInFlight(debouncedSearchSettling, projects.isFetching, debouncedSearch)}
-      placeholder="Search title or code…"
+      placeholder="Search name, title or code…"
       aria-label="Search projects"
       className="w-full"
     />

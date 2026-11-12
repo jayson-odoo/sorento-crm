@@ -90,6 +90,8 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
   },
   useProject: () => ({ data: projectFixture, isLoading: false, isError: false }),
+  // PROJECT-PARTY-ROLES: the Parties section reads the editable role list.
+  usePartyRoles: () => ({ data: [] }),
   useChangeProjectStatus: () => ({ mutate: vi.fn(), isPending: false }),
   useSetProjectOutcome: () => ({ mutate: vi.fn(), isPending: false }),
   useQuotationLossReasons: () => ({ data: [{ value: 'price', label: 'Price' }] }),
@@ -182,7 +184,8 @@ describe('J3 an owner\'s draft page', () => {
     renderDetail();
     expect(within(header()).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Submit for approval' })).toBeInTheDocument();
-    expect(screen.getByText('Draf Menara CONTOH')).toBeInTheDocument();
+    // PROJECT-NAME: no name yet, so the title heads the page and also opens The development.
+    expect(screen.getAllByText('Draf Menara CONTOH').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('SP Setia CONTOH')).toBeInTheDocument();
   });
 

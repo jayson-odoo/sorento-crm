@@ -98,6 +98,38 @@ export function classifyPaste(
   return hasCopied ? { kind: 'layers' } : { kind: 'none' };
 }
 
+/**
+ * The system clipboard read through the async Clipboard API, in the shape `classifyPaste` takes,
+ * for a Paste that did not come with a `paste` event (the designer's context menu). Text types
+ * are read up front so `getData` can answer synchronously; pictures come back as files. Null
+ * when the browser has no Clipboard API or the user refused it: the caller then falls back to
+ * the editor's own copied layers.
+ */
+export async function readSystemClipboard(): Promise<PasteData | null> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard?.read) return null;
+  try {
+    const items = await navigator.clipboard.read();
+    const types: string[] = [];
+    const text: Record<string, string> = {};
+    const files: File[] = [];
+    for (const item of items) {
+      for (const type of item.types) {
+        if (!types.includes(type)) types.push(type);
+        const blob = await item.getType(type);
+        if (type.startsWith('image/')) {
+          files.push(new File([blob], `pasted.${type.split('/')[1] ?? 'png'}`, { type }));
+        } else if (type.startsWith('text/') && !(type in text)) {
+          text[type] = await blob.text();
+        }
+      }
+    }
+    if (files.length && !types.includes('Files')) types.push('Files');
+    return { types, getData: (type) => text[type] ?? '', files };
+  } catch {
+    return null;
+  }
+}
+
 /** Why a pasted image cannot be uploaded, or null when it can. */
 export function pastedImageProblem(file: File): string | null {
   if (!PASTE_IMAGE_TYPES.has(file.type)) {

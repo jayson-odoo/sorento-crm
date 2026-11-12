@@ -446,6 +446,10 @@ def get_activity_feed(
         .all()
     )
 
+    from app.services.dealer_kit.asset_service import redact_foreign_icon_ids
+
+    # Same as the History read: another company's icon ids never reach the feed.
+    redact_foreign_icon_ids(db, rows)
     labels = _resolve_labels(db, rows)
     actor_ids = list(
         {str(r.user_id) for r in rows if r.user_id}

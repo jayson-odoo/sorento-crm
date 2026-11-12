@@ -21,6 +21,8 @@ export interface FeatureIcon {
   name: string;
   spec_key: string;
   values: string[];
+  /** Other spec values the product must ALSO hold (an AND; absent or empty: none). */
+  conditions?: { spec_key: string; value: string }[];
 }
 
 /**
@@ -45,6 +47,7 @@ export function featureIconsFor(
   for (const icon of icons) {
     const raw = rawByKey.get(icon.spec_key);
     if (raw === undefined || !icon.values.includes(raw) || seen.has(icon.id)) continue;
+    if (!(icon.conditions ?? []).every((c) => rawByKey.get(c.spec_key) === c.value)) continue;
     out.push(icon);
     seen.add(icon.id);
   }
@@ -72,20 +75,58 @@ export function variantFeatureIcons(
   return out;
 }
 
+const NUMBER_TEXT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+/** The twin of the backend's `numeric_value_text`: 150, 150.0 and "150.50" -> "150", "150", "150.5". */
+export function numericText(value: string | number): string | null {
+  const text = String(value).trim();
+  if (!NUMBER_TEXT.test(text)) return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? String(number) : null;
+}
+
 /**
- * The icons ONE stored spec value carries (SPEC-VALUE-ICONS): `featureIconsFor` over a single
- * spec, so the product's Specifications tab answers "what does this value print" with the tag's
- * own rule. The stored value is read as the tag payload reads it (`_spec_raw_text`,
- * `tag_data_service.py`): a bool is `true` / `false`, anything else its text.
+ * A stored spec value as a tag's `raw` reads it (`_spec_raw_text`): a bool is `true` / `false`,
+ * a numeric key's number is normalised like the backend does; anything else is its text.
+ */
+export function specRaw(
+  value: string | number | boolean | null | undefined,
+  dataType?: string | null,
+): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (dataType === 'numeric') return numericText(value) ?? String(value);
+  return String(value);
+}
+
+/**
+ * The icons ONE stored spec value carries (SPEC-VALUE-ICONS): `featureIconsFor` over that spec
+ * plus, when given, the product's other specs, so a conditioned icon answers with the tag's own
+ * rule. Values are read as the tag payload reads them (`specRaw`).
  */
 export function iconsForSpecValue<T extends FeatureIcon>(
   specKey: string,
   value: string | number | boolean | null | undefined,
   icons: readonly T[] | null | undefined,
+  others: readonly {
+    specKey: string;
+    value: string | number | boolean | null | undefined;
+    dataType?: string | null;
+  }[] = [],
+  dataType?: string | null,
 ): T[] {
-  if (value === null || value === undefined) return [];
-  const raw = typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value);
-  return featureIconsFor([{ key: specKey, raw }], icons) as T[];
+  const raw = specRaw(value, dataType);
+  if (raw === null) return [];
+  const specs: { key: string; raw: string }[] = [{ key: specKey, raw }];
+  for (const other of others) {
+    const otherRaw = specRaw(other.value, other.dataType);
+    if (otherRaw !== null && other.specKey !== specKey) specs.push({ key: other.specKey, raw: otherRaw });
+  }
+  // Host row only: the other specs are there to satisfy conditions, never to print their icons here.
+  return featureIconsFor(
+    specs,
+    (icons ?? []).filter((icon) => icon.spec_key === specKey),
+  ) as T[];
 }
 
 /**

@@ -7,7 +7,7 @@
  * Type-specific sections render below based on `layer.props.kind`.
  */
 
-import { useCallback, useId, useMemo } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import type {
   AccessoriesLayerProps,
   CardElement,
@@ -23,6 +23,8 @@ import {
   type AccessoryRect,
 } from '@/lib/dealer-kit/accessory-box';
 import {
+  accessoryBinding,
+  accessoryDesignSamples,
   cardBoxLayout,
   cardDropped,
   cardFromLegacy,
@@ -83,6 +85,7 @@ import { ColorPicker } from '@/components/common/ColorPicker';
 import { richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { InsertFieldDialog } from './InsertFieldDialog';
 import type { Editor } from '@tiptap/react';
 
 // ---------------------------------------------------------------------------
@@ -295,8 +298,6 @@ interface InspectorPanelProps {
   /** The box being edited and the element selected in it; the element inspector replaces the box one. */
   accessoryEdit?: { layerId: string; target: 'card' | 'footer'; elementId: string | null } | null;
   onUpdateAccessoryElement?: (elementId: string, patch: Partial<CardElement>) => void;
-  /** S6: "Box style from <product or combo>: <name>" while previewing an owner that overrides the box. */
-  accessoryBoxStyleNote?: string | null;
   /** PRICETAG-HEADER-DRAG round 2: the box's header is selected (its band as drawn, box mm); the
    *  header inspector replaces the box one, as the element inspector does in card editing. */
   accessoryHeaderSelected?: AccessoryRect | null;
@@ -338,7 +339,6 @@ export function InspectorPanel({
   accessoryTemplate,
   accessoryEdit,
   onUpdateAccessoryElement,
-  accessoryBoxStyleNote,
   accessoryHeaderSelected,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
@@ -687,7 +687,6 @@ export function InspectorPanel({
                 onSaveAccessoryTemplate ? () => onSaveAccessoryTemplate(layer.id) : undefined
               }
               template={accessoryTemplate ?? null}
-              boxStyleNote={accessoryBoxStyleNote ?? null}
               onPatch={(changes) => onUpdateProps(layer.id, changes)}
             />
           )}
@@ -2124,7 +2123,6 @@ function AccessoriesInspector({
   onEditFooter,
   onSaveTemplate,
   template,
-  boxStyleNote,
   onPatch,
 }: {
   props: AccessoriesLayerProps;
@@ -2132,7 +2130,6 @@ function AccessoriesInspector({
   onEditFooter?: () => void;
   onSaveTemplate?: () => void;
   template: { name: string; usedIn: number } | null;
-  boxStyleNote: string | null;
   /** Only these props change (not the whole props sent back). */
   onPatch: (changes: Partial<AccessoriesLayerProps>) => void;
   fit?: { count: number; lines: number };
@@ -2315,7 +2312,6 @@ function AccessoriesInspector({
           </ToggleGroupItem>
         </ToggleGroup>
       </div>
-      {boxStyleNote && <p className="text-xs text-muted-foreground">{boxStyleNote}</p>}
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Columns</Label>
         <SearchableSelect
@@ -2373,15 +2369,37 @@ function AccessoriesInspector({
           min={0}
           max={50}
         />
-        {props.direction === 'horizontal' && (
-          <NumberInput
-            label="Card width (mm)"
-            value={props.cardWidth_mm}
-            onChange={(v) => onChange({ cardWidth_mm: v })}
-            step={0.5}
-            min={5}
-            max={300}
-          />
+        {props.card ? (
+          // TAG-ACC-CARD-RESIZE Q3: a designed card's own size, the same value its frame handles set.
+          <>
+            <NumberInput
+              label="Card width (mm)"
+              value={props.card.width_mm}
+              onChange={(v) => onChange({ card: { ...props.card!, width_mm: v } })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+            <NumberInput
+              label="Card height (mm)"
+              value={props.card.height_mm}
+              onChange={(v) => onChange({ card: { ...props.card!, height_mm: v } })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+          </>
+        ) : (
+          props.direction === 'horizontal' && (
+            <NumberInput
+              label="Card width (mm)"
+              value={props.cardWidth_mm}
+              onChange={(v) => onChange({ cardWidth_mm: v })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+          )
         )}
         <ColorPicker
           label="Card fill"
@@ -2816,6 +2834,7 @@ function AccessoryElementInspector({
   const element = elements?.find((candidate) => candidate.id === edit.elementId);
   const textId = useId();
   const prefixId = useId();
+  const [insertOpen, setInsertOpen] = useState(false);
   if (!element) return null;
   const patch = (changes: Partial<CardElement>) => onUpdate(element.id, changes);
   const inCard = edit.target === 'card';
@@ -2923,54 +2942,100 @@ function AccessoryElementInspector({
 
       {element.kind === 'text' && !element.field && (
         <div className="flex flex-col gap-1">
-          <Label htmlFor={textId} className="text-xs text-muted-foreground">
-            Text
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor={textId} className="text-xs text-muted-foreground">
+              Text
+            </Label>
+            {/* TAG-ACC-CARD-RESIZE Q4: the normal text layer's fields, read per accessory (card only). */}
+            {inCard && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-xs"
+                onClick={() => setInsertOpen(true)}
+              >
+                Insert field
+              </Button>
+            )}
+          </div>
           <Input
             id={textId}
             className="h-7 px-2 text-xs"
             value={element.text ?? ''}
             onChange={(e) => patch({ text: e.target.value })}
           />
+          {inCard && (
+            <InsertFieldDialog
+              open={insertOpen}
+              value={element.text ?? ''}
+              data={accessoryBinding(accessoryDesignSamples(props.list)[0])}
+              specKeys={[]}
+              groups={['Product']}
+              onCancel={() => setInsertOpen(false)}
+              onDone={(content) => {
+                setInsertOpen(false);
+                patch({ text: content });
+              }}
+            />
+          )}
         </div>
       )}
 
       {element.kind === 'text' && (
-        <TypographyControls
-          singleLine
-          values={{
-            fontFamily: element.fontFamily ?? '',
-            fontSize: element.fontSize ?? 6,
-            fontWeight: element.fontWeight ?? 400,
-            italic: element.italic ?? false,
-            underline: element.underline ?? false,
-            strikethrough: false,
-            align: element.align ?? 'left',
-            lineHeight: null,
-            letterSpacing: 0,
-            padding: ZERO_PADDING,
-          }}
-          onChange={(changes) => {
-            const { fontFamily, fontSize, fontWeight, italic, underline, align } = changes;
-            patch(
-              Object.fromEntries(
-                Object.entries({
-                  fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
-                  fontSize,
-                  fontWeight,
-                  italic,
-                  underline,
-                  align,
-                }).filter(([, value]) => value !== undefined),
-              ) as Partial<CardElement>,
-            );
-          }}
-          colour={element.color ?? '#111827'}
-          onColourChange={(value) => patch({ color: value })}
-          usedColours={usedColours}
-          fontOptions={fontOptions}
-          onUploadFont={onUploadFont}
-        />
+        // Owner 22:30: the header's controls (AccessoryHeaderInspector): typography with line height
+        // and padding, then Background and Corner Radius. Nothing stored = drawn as before.
+        <>
+          <TypographyControls
+            values={{
+              fontFamily: element.fontFamily ?? '',
+              fontSize: element.fontSize ?? 6,
+              fontWeight: element.fontWeight ?? 400,
+              italic: element.italic ?? false,
+              underline: element.underline ?? false,
+              strikethrough: false,
+              align: element.align ?? 'left',
+              lineHeight: element.lineHeight ?? 1.1,
+              letterSpacing: 0,
+              padding: element.padding ?? ZERO_PADDING,
+            }}
+            onChange={(changes) => {
+              const { fontFamily, fontSize, fontWeight, italic, underline, align, lineHeight, padding } = changes;
+              patch(
+                Object.fromEntries(
+                  Object.entries({
+                    fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
+                    fontSize,
+                    fontWeight,
+                    italic,
+                    underline,
+                    align,
+                    lineHeight: lineHeight ?? undefined,
+                    padding,
+                  }).filter(([, value]) => value !== undefined),
+                ) as Partial<CardElement>,
+              );
+            }}
+            colour={element.color ?? '#111827'}
+            onColourChange={(value) => patch({ color: value })}
+            usedColours={usedColours}
+            fontOptions={fontOptions}
+            onUploadFont={onUploadFont}
+          />
+          <ColorPicker
+            label="Background"
+            value={element.fill || 'transparent'}
+            onChange={(value) => patch({ fill: value })}
+            usedColours={usedColours}
+          />
+          <AccessoryNumberField
+            label="Corner Radius"
+            value={element.cornerRadius_mm ?? 0}
+            onChange={(value) => patch({ cornerRadius_mm: Math.max(0, value) })}
+            step={0.25}
+            min={0}
+          />
+        </>
       )}
 
       {element.kind === 'picture' && (

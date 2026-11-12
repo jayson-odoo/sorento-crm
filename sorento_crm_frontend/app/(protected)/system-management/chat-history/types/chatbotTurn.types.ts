@@ -474,6 +474,27 @@ export interface TurnDetailOrder {
   wait_ms: number | null;
   previous: TurnDetailOrderNeighbor | null;
   next: TurnDetailOrderNeighbor | null;
+  /** TRACE-ENTITY-TOOL: true when the neighbours were looked up, so a `null` one means there is none. */
+  neighbours_checked?: boolean;
+}
+
+/** TRACE-ENTITY-TOOL: one typed word and what the code lookup matched (`trace_detail._entity_match`). */
+export interface EntityMatchWord {
+  word: string;
+  /** At most 10; `more` counts the rest. */
+  codes: string[];
+  more: number;
+  tiers: string[];
+  kinds: string[];
+  ambiguous: boolean;
+}
+
+export interface EntityMatch {
+  words: EntityMatchWord[];
+  /** Words the lookup could not place. */
+  unplaced: string[];
+  /** Words past the lookup's ceiling, never looked up. */
+  not_checked: string[];
 }
 
 /**
@@ -578,7 +599,66 @@ export interface SpanExtract {
   final_block?: Record<string, { label: string; source: SpanExtractSource }[]>;
 }
 
+/** One model call of an agent turn (`agent_round` trace record, AGENT-PANEL-FIXES D). */
+export interface TurnDetailAgentRound {
+  n: number;
+  kind_of_call: string | null;
+  model: string | null;
+  ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cached_tokens: number | null;
+  reasoning_tokens: number | null;
+  /** `answer`, `tool_calls` or `text`; absent on a turn recorded before the lane. */
+  stop?: string | null;
+  called?: string[] | null;
+  tools_offered?: number | null;
+  tool_schema_chars?: number | null;
+  message_chars?: number | null;
+}
+
+export interface TurnDetailAgentTool {
+  name: string | null;
+  args: Record<string, unknown> | null;
+  status: string | null;
+  ms: number | null;
+  rows?: number | null;
+  result_chars: number | null;
+  more: number | null;
+  detail: unknown;
+}
+
+/** What the turn sent the model besides the user's message (`agent_context`). */
+export interface TurnDetailAgentContext {
+  prompt_key: string | null;
+  prompt_version: number | null;
+  system_chars: number | null;
+  context_before: string | null;
+  context_before_chars: number | null;
+  context_after: string | null;
+  context_after_chars: number | null;
+  history_messages: number | null;
+  history_summary: boolean | null;
+  history_chars: number | null;
+  file_text_chars: number | null;
+  images: number | null;
+  tools: string[] | null;
+  tool_schema_chars: number | null;
+}
+
+export interface TurnDetailAgent {
+  rounds: TurnDetailAgentRound[];
+  reasoning: { round: number | null; kind_of_call: string | null; text: string }[];
+  tools: TurnDetailAgentTool[];
+  plan: string[];
+  context: TurnDetailAgentContext | null;
+  failures: { error_class: string | null }[];
+  totals: { calls: number; ms: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number };
+}
+
 export interface TurnDetail {
+  /** An agent turn's rounds, tools and context; null for a bot turn, absent on an older backend. */
+  agent?: TurnDetailAgent | null;
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
   apply?: TurnDetailApply | null;
@@ -596,6 +676,8 @@ export interface TurnDetail {
   session: TurnDetailSession;
   /** `null` when the turn sent the full lists; absent on a trace composed before the lane shipped. */
   index_match?: IndexMatch | null;
+  /** `null` when the turn ran no code lookup; absent on a trace composed before the lane shipped. */
+  entity_match?: EntityMatch | null;
   span_extract?: SpanExtract | null;
   /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
   prompt_text?: string | null;

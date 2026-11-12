@@ -49,6 +49,7 @@ vi.mock('./AttachmentDropzone', () => ({
 }));
 
 import { getRequest } from '../lib/price-tag-request-service';
+import { chooseUpload } from '@/test-utils';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 beforeEach(() => {
@@ -65,7 +66,8 @@ describe('PriceTagRequestForm Sales Order box (ATTACH-ACCEPT)', () => {
     render(<PriceTagRequestForm />);
 
     // The Sales Order section starts collapsed on a new request.
-    fireEvent.click(await screen.findByRole('button', { name: /Sales Order & Lines/ }));
+    await screen.findByRole('button', { name: /^Price tags/ });
+    chooseUpload();
 
     await waitFor(() => {
       const editable = dropzoneProps.filter((p) => !p.readOnly);
@@ -107,7 +109,8 @@ describe('PriceTagRequestForm Sales Order box (ATTACH-ACCEPT)', () => {
     } as never);
     render(<PriceTagRequestForm requestId="req-1" />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Sales Order & Lines/ }));
+    await screen.findByRole('button', { name: /^Price tags/ });
+    chooseUpload();
 
     await waitFor(() => {
       const editable = dropzoneProps.filter((p) => !p.readOnly);

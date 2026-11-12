@@ -28,6 +28,8 @@ class ProductComboPartOut(BaseModel):
     sell_price: Optional[Decimal] = None
     topup_amount: Optional[Decimal] = None
     is_upgrade: bool = False
+    #: COMBO-SETTINGS-UX: the part's editable label ("CABINET"), null = none.
+    label: Optional[str] = None
 
 
 class ProductComboImageOut(BaseModel):
@@ -43,6 +45,9 @@ class ProductComboOut(BaseModel):
     name: str
     sort_order: int
     description: Optional[str] = None
+    #: COMBO-SETTINGS-UX: the main product's label and the rich-text line repeated once per part.
+    main_label: Optional[str] = None
+    parts_line: Optional[str] = None
     list_price: Optional[Decimal] = None
     sell_price: Optional[Decimal] = None
     parts: List[ProductComboPartOut] = []
@@ -77,6 +82,11 @@ RAW_DESCRIPTION_LIMIT = 20000
 #: not a DB error at commit.
 COMBO_NAME_MAX = 100
 
+#: `product_combo_parts.label` and `product_combos.main_label` are VARCHAR(100).
+LABEL_MAX = 100
+#: Raw cap on `parts_line` before sanitising (the stored value is capped in the service).
+PARTS_LINE_RAW_LIMIT = 20000
+
 
 class ProductComboCreate(BaseModel):
     name: str = Field(max_length=COMBO_NAME_MAX)
@@ -92,6 +102,9 @@ class ProductComboUpdate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
     list_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    #: Omitted = left alone; blank or null clears.
+    main_label: Optional[str] = Field(default=None, max_length=LABEL_MAX)
+    parts_line: Optional[str] = Field(default=None, max_length=PARTS_LINE_RAW_LIMIT)
 
 
 class ProductComboPartCreate(BaseModel):
@@ -112,6 +125,8 @@ class ProductComboPartUpdate(BaseModel):
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     topup_amount: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     is_upgrade: Optional[bool] = None
+    #: Omitted = left alone; blank or null clears.
+    label: Optional[str] = Field(default=None, max_length=LABEL_MAX)
 
 
 class ProductComboCopyIn(BaseModel):

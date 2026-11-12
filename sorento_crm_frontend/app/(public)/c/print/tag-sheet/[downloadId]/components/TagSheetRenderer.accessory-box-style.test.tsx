@@ -1,6 +1,6 @@
 /**
- * PRICETAG-ACCESSORY-DESIGNER S6: a product or combo on the tag may name its own box style; the print
- * page draws that design in the template's box (position and size kept).
+ * COMBO-SETTINGS-UX (owner 10 Nov): Box style is removed. Every tag draws its template's own accessories
+ * box, even when an older payload still names a style for the product or combo.
  */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -36,10 +36,10 @@ function mount(style: unknown) {
   return render(<TagSheetRenderer doc={doc} resolvedData={{ [TAG_ID]: data }} assets={{}} />);
 }
 
-describe('TagSheetRenderer, box style override', () => {
-  it('draws the box style the owner names instead of the box\'s own design', () => {
+describe('TagSheetRenderer, box style removed', () => {
+  it('ignores a box style an older payload still names and draws the box\'s own design', () => {
     mount({ id: 's1', name: 'FREE', design: { ...accessoryDesign(defaultAccessoriesProps()), headerText: 'STYLE HEADER', showHeader: true } });
-    expect(screen.getByTestId('accessories-header').textContent).toBe('STYLE HEADER');
+    expect(screen.getByTestId('accessories-header').textContent).toBe('OWN HEADER');
   });
 
   it('draws the box\'s own design when no style resolves', () => {

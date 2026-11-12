@@ -104,11 +104,11 @@ describe('TownPage', () => {
     expect(screen.getByText('What needs a decision?')).toBeTruthy();
   });
 
-  it('shows the cards and not the scene when the user prefers reduced motion', () => {
+  it('still shows the (static) scene and the cards when the user prefers reduced motion', () => {
     stubWebGL(true);
     stubMotion(true);
     renderPage();
-    expect(screen.queryByTestId('town-scene')).toBeNull();
+    expect(screen.getByTestId('town-scene')).toBeTruthy();
     expect(screen.getByText('What must go out?')).toBeTruthy();
   });
 

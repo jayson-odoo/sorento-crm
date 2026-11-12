@@ -79,6 +79,7 @@ EXPECTED_LABELS = [
     "the projects list",
     "one project's details",
     "a project's quotations",
+    "the lines of a project's quotations",
     "the project pipeline forecast",
     "order totals and trends",
 ]

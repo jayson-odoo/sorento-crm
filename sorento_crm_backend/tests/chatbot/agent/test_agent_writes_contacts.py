@@ -158,6 +158,25 @@ def dealer(db, w: CW, *, types=("end_user",), companies=(SORENTO,), customers=()
     return row
 
 
+SRT_TAG = "Sorento Business Owner"
+MCH_TAG = "Mocha Business Owner"
+
+
+def owner_tagged(db, row, *names: str):
+    """The contact holds the company's standard Business owner tag (the level IS the tag; the tag carries its types)."""
+    from sqlalchemy import func, insert
+
+    from app.models.access import ContactTag, respond_contact_tags
+
+    ensure_owner_tags(db)
+    db.commit()
+    for name in names or (SRT_TAG,):
+        tag = db.query(ContactTag).filter(func.lower(ContactTag.name) == name.lower()).one()
+        db.execute(insert(respond_contact_tags).values(contact_id=str(row.id), tag_id=str(tag.id)))
+    db.commit()
+    return row
+
+
 def state(db, contact_id: str) -> dict:
     db.expire_all()
     with company_scope(db, None):
@@ -219,9 +238,10 @@ def test_the_registry_holds_the_find_read_and_the_access_write():
 # ------------------------------------------------------------------ 1. find
 
 
+# DEALER-ACCESS-SCREEN crew pass: level = owner tag (owner ruling 9 Nov)
 def test_01_find_answers_each_phone_with_its_own_status(db):
     w = make_world(db)
-    found = dealer(db, w, types=("dealer", "end_user"), customers=(w.mine,))
+    found = owner_tagged(db, dealer(db, w, types=("dealer", "end_user"), customers=(w.mine,)))
     theirs = dealer(db, w, customers=(w.theirs,))
     dup_digits = fake_phone()
     dealer(db, w, phone=dup_digits)
@@ -271,14 +291,22 @@ def test_01_found_lists_only_the_accounts_of_the_users_own_agents_and_adds_the_i
     assert w.theirs.id.lower() not in seen
 
 
+# DEALER-ACCESS-SCREEN crew pass: level = owner tag (owner ruling 9 Nov)
 @pytest.mark.parametrize(
-    "types, ai, role",
-    [(("dealer", "end_user"), True, "owner"), (("end_user",), False, "employee"), ((), True, "none")],
-    ids=["owner", "employee", "none"],
+    "types, ai, role, tagged",
+    [
+        (("dealer", "end_user"), True, "owner", True),
+        (("dealer", "end_user"), True, "employee", False),  # dealer types without the owner tag are an employee
+        (("end_user",), False, "employee", False),
+        ((), True, "none", False),
+    ],
+    ids=["owner", "types-only", "employee", "none"],
 )
-def test_01_found_reports_the_role_from_the_access_types(db, types, ai, role):
+def test_01_found_reports_the_role_from_the_owner_tag(db, types, ai, role, tagged):
     w = make_world(db)
     row = dealer(db, w, types=types, ai=ai, customers=(w.mine,))
+    if tagged:
+        owner_tagged(db, row)
 
     got, _ = find(db, w, ["+" + row.phone_number])
 
@@ -349,24 +377,30 @@ def test_03_confirm_adds_owner_types_per_company_keeps_end_user_and_resigns(db):
 # ------------------------------------------------------------------ 4. downgrade
 
 
+# DEALER-ACCESS-SCREEN crew pass: level = owner tag (owner ruling 9 Nov)
 def test_04_employee_removes_the_owner_types_only_and_keeps_or_adds_end_user(db):
     from app.services.chatbot.agent import actions
 
     w = make_world(db)
-    with_end_user = dealer(db, w, types=("dealer", "cabana_dealer", "end_user", "zzt_extra"), customers=(w.mine,))
-    without = dealer(db, w, types=("dealer",), customers=(w.mine,))
+    with_end_user = owner_tagged(
+        db, dealer(db, w, types=("dealer", "cabana_dealer", "end_user", "zzt_extra"), customers=(w.mine,))
+    )
+    without = owner_tagged(db, dealer(db, w, types=("dealer",), customers=(w.mine,)))
+    legacy = dealer(db, w, types=("dealer", "cabana_dealer", "end_user"), customers=(w.mine,))  # types, no tag
     steps, row = propose_and_store(
         db, w,
-        [(UPDATE, {"contact_id": r.id, "role": "employee"}) for r in (with_end_user, without)],
-        seen_for(with_end_user, without),
+        [(UPDATE, {"contact_id": r.id, "role": "employee"}) for r in (with_end_user, without, legacy)],
+        seen_for(with_end_user, without, legacy),
     )
-    assert all("Business owner (Sorento) -> Employee" in s["summary"] for s in steps)
+    assert all("Business owner (Sorento) -> Employee" in s["summary"] for s in steps[:2])
+    assert "Employee with dealer prices -> Employee" in steps[2]["summary"]
 
     outcome = actions.confirm(db, w.respond_id, str(row.id), via="console")
 
     assert outcome.status == "executed"
     assert state(db, with_end_user.id)["types"] == ["end_user", "zzt_extra"]
     assert state(db, without.id)["types"] == ["end_user"]
+    assert state(db, legacy.id)["types"] == ["end_user"]  # the owner types go even with no tag (demote ruling)
 
 
 # ------------------------------------------------------------------ 5. scope
@@ -568,18 +602,21 @@ def test_08_a_contact_with_no_company_cannot_have_its_role_set(db):
     assert "This contact has no company, so its role cannot be set." in res.message
 
 
+# DEALER-ACCESS-SCREEN crew pass: level = owner tag (owner ruling 9 Nov)
 @pytest.mark.parametrize(
-    "types, ai, args",
+    "types, ai, args, tagged",
     [
-        (("dealer", "end_user"), True, {"role": "owner"}),
-        (("end_user",), True, {"role": "employee"}),
-        (("end_user",), True, {"chatbot_allowed": True}),
+        (("dealer", "end_user"), True, {"role": "owner"}, True),
+        (("end_user",), True, {"role": "employee"}, False),
+        (("end_user",), True, {"chatbot_allowed": True}, False),
     ],
     ids=["already owner", "already employee", "already on"],
 )
-def test_08_a_step_that_changes_nothing_is_invalid(db, types, ai, args):
+def test_08_a_step_that_changes_nothing_is_invalid(db, types, ai, args, tagged):
     w = make_world(db)
     row = dealer(db, w, types=types, ai=ai, customers=(w.mine,))
+    if tagged:
+        owner_tagged(db, row)
 
     res, step = _propose(db, w, {"contact_id": row.id, **args}, seen={row.id})
 
@@ -599,22 +636,20 @@ def test_08_a_call_with_no_field_to_change_is_invalid(db):
 # ------------------------------------------------------------------ re-check at confirm
 
 
+# DEALER-ACCESS-SCREEN crew pass: level = owner tag (owner ruling 9 Nov)
 def test_a_contact_changed_on_screen_since_the_proposal_is_rejected_and_nothing_is_written(db):
     from app.services.chatbot.agent import actions
 
     w = make_world(db)
     row = dealer(db, w, customers=(w.mine,))
     _, action = propose_and_store(db, w, [owner_step(row)], seen_for(row))
-    with company_scope(db, None):
-        live = db.query(RespondContact).filter(RespondContact.id == row.id).one()
-        live.access_types = [db.get(ContactAccessType, "dealer"), db.get(ContactAccessType, "end_user")]
-        db.commit()
+    owner_tagged(db, row)  # someone made them the owner on screen after the proposal
 
     outcome = actions.confirm(db, w.respond_id, str(action.id), via="console")
 
     assert outcome.status == "rejected"
     assert "changed" in (outcome.steps[0]["error"] or "").lower()
-    assert state(db, row.id)["types"] == ["dealer", "end_user"]
+    assert state(db, row.id)["types"] == ["end_user"]  # the owner step wrote nothing
     assert event_rows(db, row.id) == []
 
 

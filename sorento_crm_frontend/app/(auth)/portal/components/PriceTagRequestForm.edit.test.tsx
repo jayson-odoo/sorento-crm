@@ -26,7 +26,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -113,16 +113,12 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   ),
 }));
 
-let capturedOnPendingFilesChange: ((files: File[]) => void) | undefined;
 vi.mock('./AttachmentDropzone', () => ({
-  AttachmentDropzone: (props: { onPendingFilesChange?: (files: File[]) => void }) => {
-    capturedOnPendingFilesChange = props.onPendingFilesChange;
-    return null;
-  },
+  AttachmentDropzone: () => null,
 }));
 
 import { getRequest } from '../lib/price-tag-request-service';
-import { fetchSubmissionNeighbours, uploadAttachment } from '../lib/portal-client';
+import { fetchSubmissionNeighbours } from '../lib/portal-client';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -214,8 +210,8 @@ describe('PriceTagRequestForm - no Edit after submit (R3-1, AC-R7)', () => {
   );
 });
 
-describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (AC-R7)', () => {
-  it('renders exactly one gear, holding Duplicate, Download PDF and Revise when the policy allows it', async () => {
+describe('PriceTagRequestForm - one gear with Duplicate and Download PDF; Edit is a page button (owner, 11 Nov)', () => {
+  it('renders exactly one gear, holding Duplicate and Download PDF, and Edit beside it when the policy allows it', async () => {
     asMock(getRequest).mockResolvedValue(
       baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
     );
@@ -232,10 +228,11 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
     expect(
       screen.getByText(/^(Download PDF|Available after approval)$/),
     ).toBeInTheDocument();
-    expect(gear).toHaveTextContent('Edit');
+    expect(gear).not.toHaveTextContent('Edit');
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });
 
-  it('hides Revise and shows the blocked reason in the header line when the policy refuses it', async () => {
+  it('hides Edit and shows no status sentence in the header when the policy refuses it', async () => {
     asMock(getRequest).mockResolvedValue(
       baseRequest({ status: 'ready', portal_draft_at: null, revision: BLOCKED_POLICY }),
     );
@@ -243,146 +240,17 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    expect(screen.getByTestId('gear-menu')).not.toHaveTextContent('Edit');
-    expect(screen.getByText('You have used all 3 revisions.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    // Owner hand test 11 Nov struck the status sentence under the number: no reason line.
+    expect(screen.queryByText('You have used all 3 revisions.')).toBeNull();
   });
 });
 
-describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
-  it('tapping Revise shows a reason field and a Submit revision button', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByText('Edit'));
-
-    expect(await screen.findByLabelText(/reason/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Submit revision' })).toBeInTheDocument();
-  });
-
-  it('Submit revision calls the revise action and returns to the read view', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByText('Edit'));
-    const reasonField = await screen.findByLabelText(/reason/i);
-    fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
-
-    await waitFor(() =>
-      expect(reviseMock).toHaveBeenCalledWith(
-        expect.objectContaining({ reason: 'Dealer changed their mind' }),
-      ),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Submit revision' })).toBeNull(),
-    );
-    expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
-  });
-
-  it('AC-S1-2 (r10, supersedes live finding PT-202609-0013): the revision fields payload always carries print_by: self', async () => {
-    // r10 S1: the portal never asks who prints any more - `printBy` is a
-    // constant 'self' every payload sends, including revise, whatever the
-    // stored value on the request was (an old 'office' row included).
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({
-        status: 'new',
-        portal_draft_at: null,
-        revision: ALLOWED_POLICY,
-        print_by: 'office',
-      }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-    // AC-S1-1: the "Who prints" control (and its read-only "Printing" line)
-    // is gone from the portal form.
-    expect(screen.queryByText('Office prints')).toBeNull();
-    expect(screen.queryByText('I print myself')).toBeNull();
-
-    fireEvent.click(screen.getByText('Edit'));
-    const reasonField = await screen.findByLabelText(/reason/i);
-    fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
-
-    await waitFor(() =>
-      expect(reviseMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          fields: expect.objectContaining({ print_by: 'self' }),
-        }),
-      ),
-    );
-  });
-
-  it('after Submit revision succeeds, the Revisions tab reloads and the header line reflects the re-fetched policy (review round 3)', async () => {
-    asMock(getRequest)
-      .mockResolvedValueOnce(
-        baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
-      )
-      .mockResolvedValueOnce(
-        baseRequest({
-          status: 'new',
-          portal_draft_at: null,
-          revision_no: 1,
-          revision: { ...ALLOWED_POLICY, used: 1, remaining: 2 },
-        }),
-      );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByText('Edit'));
-    const reasonField = await screen.findByLabelText(/reason/i);
-    fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
-
-    await waitFor(() => expect(revisionReloadMock).toHaveBeenCalled());
-    expect(await screen.findByText(/2 of 3 revisions left/)).toBeInTheDocument();
-  });
-
-  it('a file added during revise mode is uploaded when Submit revision runs', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
-    );
-    asMock(uploadAttachment).mockResolvedValue({
-      link_id: 'link-1',
-      attachment_id: 'att-1',
-      filename: 'ZZT-po.pdf',
-      size: 3,
-      url: 'https://cdn.test/ZZT-po.pdf',
-      content_type: 'application/pdf',
-    });
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByText('Edit'));
-    const reasonField = await screen.findByLabelText(/reason/i);
-    fireEvent.change(reasonField, { target: { value: 'Attaching an updated PO' } });
-
-    const file = new File(['zzt'], 'ZZT-po.pdf', { type: 'application/pdf' });
-    expect(capturedOnPendingFilesChange).toBeDefined();
-    act(() => {
-      capturedOnPendingFilesChange?.([file]);
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
-
-    await waitFor(() => expect(uploadAttachment).toHaveBeenCalled());
-  });
-});
+// The old Revise mode (Reason box, Submit revision) is gone: owner hand test 11 Nov made Edit
+// the create path. Its replacement is pinned in PriceTagRequestForm.editAsCreate.test.tsx.
 
 describe('PriceTagRequestForm - prev/next counter (AC-R7, review round 3)', () => {
-  it('shows "N of M revisions left" and the "1 / 3" prev/next counter from the neighbours call', async () => {
+  it('shows the "1 / 3" prev/next counter from the neighbours call, and no revision budget (owner, 11 Nov)', async () => {
     asMock(getRequest).mockResolvedValue(
       baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
     );
@@ -396,13 +264,13 @@ describe('PriceTagRequestForm - prev/next counter (AC-R7, review round 3)', () =
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    expect(await screen.findByText(/3 of 3 revisions left/)).toBeInTheDocument();
     expect(await screen.findByText(/1 \/ 3/)).toBeInTheDocument();
+    expect(screen.queryByText(/revisions left/)).toBeNull();
   });
 });
 
-describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
-  it('a saved request with an enabled policy shows a Revisions tab listing the history rows', async () => {
+describe('PriceTagRequestForm - History tab (AC-R7 second half; named History, owner 11 Nov)', () => {
+  it('a saved request with an enabled policy shows a History tab listing the history rows', async () => {
     revisionHistoryMock.mockReturnValue({
       entries: [
         {
@@ -429,7 +297,7 @@ describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
           version_no: 1,
           revision_no: 1,
           kind: 'revision',
-          label: 'Revision 1',
+          label: 'Edit 1',
           reason: 'Dealer changed their mind',
           submitted_at: '2026-09-05T00:00:00Z',
           submitted_by: 'ZZT Dealer',
@@ -455,7 +323,7 @@ describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    const revisionsTab = screen.getByRole('tab', { name: /Revisions/ });
+    const revisionsTab = screen.getByRole('tab', { name: /History/ });
     // Radix Tabs' default `activationMode="automatic"` switches on FOCUS,
     // which a bare `fireEvent.click` does not synthesize in jsdom.
     revisionsTab.focus();
@@ -463,6 +331,6 @@ describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
     await waitFor(() => expect(revisionsTab).toHaveAttribute('data-state', 'active'));
 
     expect(await screen.findByText('Original')).toBeInTheDocument();
-    expect(screen.getByText('Revision 1')).toBeInTheDocument();
+    expect(screen.getByText('Edit 1')).toBeInTheDocument();
   });
 });

@@ -365,6 +365,13 @@ class ProductSimple(BaseModel):
     def _id_uuid(cls, v):
         return _uuid_to_str(v)
 
+    @field_serializer("cost_price")
+    def _cost_for_reader(self, value: Optional[Decimal]) -> Optional[Decimal]:
+        """Null unless the reader holds `products.cost.view` (SUPPLIER-COST-ACCESS)."""
+        from app.services.cost_access import cost_hidden
+
+        return None if cost_hidden() else value
+
     class Config:
         from_attributes = True
 

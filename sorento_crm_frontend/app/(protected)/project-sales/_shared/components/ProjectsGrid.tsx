@@ -26,6 +26,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import type { Project } from '../types/project.types';
 import { projectCodeLabel } from '../lib/projectCode';
+import { projectDisplayName } from '../lib/projectName';
 import { ApprovalStatePill, isAwaitingDecision } from './ApprovalStatePill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 
@@ -122,7 +123,7 @@ export function ProjectsGrid({
             className="block truncate"
             title={row.original.title}
           >
-            {row.original.title}
+            {projectDisplayName(row.original)}
           </Link>
         ),
       },

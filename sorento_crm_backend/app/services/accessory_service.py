@@ -250,7 +250,7 @@ def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> 
     price tag description unless the list row overrides it."""
     from app.services.dealer_kit.pricing import resolve_prices
     from app.services.dealer_kit.product_images import gallery_images
-    from app.services.dealer_kit.tag_data_service import staff_viewer
+    from app.services.dealer_kit.tag_data_service import spec_lines, staff_viewer
 
     viewer = viewer or staff_viewer()
     prices = resolve_prices(db, [product], viewer, None).get(product.id)
@@ -271,6 +271,11 @@ def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> 
         "colours": [],
         "code": product.product_code,
         "list_price": prices.list_price if prices else None,
+        # TAG-ACC-CARD-RESIZE Q4: what a card's `{{product.*}}` fields read for this item, as a
+        # normal text layer reads them for the tag's own product.
+        "sell_price": prices.offer_price if prices and prices.offer_price is not None else None,
+        "spec_lines": spec_lines(db, product),
+        "price_tag_description": product.price_tag_description,
     }
 
 
@@ -835,11 +840,10 @@ class AccessoryService:
         combo = self._combo_or_404(combo_id)
         style_id = self._resolve_box_style(box_style, self._product_or_404(combo.host_product_id).company_id)
         host = self._product_or_404(combo.host_product_id)
-        # One list of free products, never two: a product already IN the combo (a part) is not
-        # also its free item, and the host is the combo itself.
+        # The host is the combo itself, so it is never its own free item. A part may be
+        # (COMBO-FREE-PART, owner 9 Nov: the flyer lists the basin tap as a part AND prints it
+        # in the FREE box); it stays a part, and the combo's prices do not change.
         refused = {host.id: "The combo's own product cannot be its free item"}
-        for part in combo.parts or []:
-            refused.setdefault(part.part_product_id, "This product is already a part of this combo")
         resolved = self._resolve_items(items, host.company_id, refused=refused)
         self.db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo_id).delete(
             synchronize_session=False

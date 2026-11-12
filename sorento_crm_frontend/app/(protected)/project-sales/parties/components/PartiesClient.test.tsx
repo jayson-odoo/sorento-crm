@@ -48,6 +48,17 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   return {
     ...actual,
     listParties: (...args: unknown[]) => listParties(...args),
+    // PROJECT-PARTY-ROLES: the types are the editable role list.
+    listPartyRoles: async () => [
+      { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+      { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+      { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+      { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+      { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+      { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+      { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+      { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+    ],
     createParty: vi.fn(),
     updateParty: vi.fn(),
     deleteParty: vi.fn(async () => undefined),
@@ -229,6 +240,29 @@ describe('PartiesClient', () => {
     await waitFor(() =>
       expect(listParties).toHaveBeenCalledWith(
         expect.objectContaining({ sort: 'contact_count' }),
+      ),
+    );
+  });
+
+  // PARTIES-LIST-ONE-LINE (owner 10 Nov): one line per row; the registration no. is its
+  // own column, never a second line under the name.
+  it('keeps the name on one line and gives the registration no. its own sortable column', async () => {
+    listParties.mockResolvedValue(
+      envelope([party({ id: 'pt1', name: 'A. Example Architect', registration_no: 'SP/A 95' })]),
+    );
+    renderClient();
+
+    const name = await screen.findByText('A. Example Architect');
+    const reg = screen.getByText('SP/A 95');
+    expect(name.closest('td')).not.toBe(reg.closest('td'));
+    expect(name.closest('td')?.textContent).toBe('A. Example Architect');
+    expect(name).toHaveClass('truncate');
+    expect(name).toHaveAttribute('title', 'A. Example Architect');
+
+    fireEvent.click(screen.getByRole('button', { name: /^registration no\.$/i }));
+    await waitFor(() =>
+      expect(listParties).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'registration_no' }),
       ),
     );
   });

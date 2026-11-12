@@ -205,7 +205,7 @@ def update_option(
     from fastapi import HTTPException
     try:
         validate_uuid_path(set_id, resource="Lookup Set")
-        return LookupOptionService(db).update(option_id, data)
+        return LookupOptionService(db).update(option_id, data, set_id=set_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -222,7 +222,7 @@ def delete_option(
     from fastapi import HTTPException
     try:
         validate_uuid_path(set_id, resource="Lookup Set")
-        return LookupOptionService(db).delete(option_id)
+        return LookupOptionService(db).delete(option_id, set_id=set_id)
     except HTTPException:
         raise
     except Exception as e:

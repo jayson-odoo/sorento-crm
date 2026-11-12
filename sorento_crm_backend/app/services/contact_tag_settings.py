@@ -342,9 +342,9 @@ def _portal_kinds(db, cat) -> set[str]:
 
 
 def _reveal_keys(db, cat) -> set[str]:
-    from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
+    from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS, RETIRED_CHECKLIST_KEYS
 
-    return {k for k, _ in FIELD_REVEAL_KEYS}
+    return {k for k, _ in FIELD_REVEAL_KEYS} - RETIRED_CHECKLIST_KEYS
 
 
 def _v_bool(db, cat, section, value):
@@ -503,10 +503,22 @@ class TagRef:
     settings: dict
 
 
+def without_retired_reveals(settings: Optional[dict]) -> dict:
+    """COST-ACCESS-UNIFIED: tag settings stored before the cost key retired may still name it. Read,
+    serve, compare and apply all see the settings without it, so it never echoes into a 422 or a write."""
+    settings = settings or {}
+    reveals = settings.get("field_reveals")
+    if not isinstance(reveals, dict):
+        return settings
+    from app.services.contact_field_reveal_service import RETIRED_CHECKLIST_KEYS
+
+    return {**settings, "field_reveals": {k: v for k, v in reveals.items() if k not in RETIRED_CHECKLIST_KEYS}}
+
+
 def leaves(tag: TagRef) -> list[tuple[str, str, Any]]:
     """The settings the tag sets, flattened. A None value is "not set" (null = all, neutral)."""
     out: list[tuple[str, str, Any]] = []
-    for section, value in (tag.settings or {}).items():
+    for section, value in without_retired_reveals(tag.settings).items():
         if section not in SECTIONS or value is None:
             continue
         if section in ("access_types", "companies", "market_segments", "attachment_types", "regions"):
@@ -1169,7 +1181,7 @@ def settings_catalog(db: Session, can: Callable[[str], bool], is_superadmin: Cal
     A list the caller cannot read is ABSENT (companies: superadmin; agents and their field keys:
     access_agents.view; warehouses: inventory.stock.view); brands follow the caller's company scope."""
     from app.models.product_spec import ProductSpecRegistry
-    from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
+    from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS, RETIRED_CHECKLIST_KEYS
     from app.services.portal_form_visibility_service import _KIND_LABELS
     from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
 
@@ -1187,7 +1199,9 @@ def settings_catalog(db: Session, can: Callable[[str], bool], is_superadmin: Cal
         "item_classes": [{"value": c, "label": n} for c, n in cat._load("item_classes").items()],
         "market_segments": opts("market_segments"),
         "attachment_types": opts("attachment_types"),
-        "field_reveals": [{"value": k, "label": label} for k, label in sorted(FIELD_REVEAL_KEYS)],
+        "field_reveals": [
+            {"value": k, "label": label} for k, label in sorted(FIELD_REVEAL_KEYS) if k not in RETIRED_CHECKLIST_KEYS
+        ],
         "portal_forms": [
             {"value": k, "label": _KIND_LABELS.get(k, k.replace("_", " ").capitalize())}
             for k in GRANTABLE_PORTAL_FORM_TYPES

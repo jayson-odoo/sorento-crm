@@ -275,6 +275,60 @@ class PriceTagRequestLineResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PriceTagRequestCustomer(BaseModel):
+    """One customer a request prints for (PRICETAG-REQUEST-LAYOUT). ``code`` is the debtor code
+    when the pick came from the debtor lookup."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: Optional[str] = Field(None, max_length=100)
+    name: str = Field(..., max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("A customer needs a name.")
+        return v
+
+
+def _distinct_customers(customers):
+    """Each customer once, first pick wins its place (by code, else by name)."""
+    if customers is None:
+        return None
+    seen: set[str] = set()
+    kept = []
+    for customer in customers:
+        key = (customer.code or "").strip().lower() or f"name:{customer.name.lower()}"
+        if key not in seen:
+            seen.add(key)
+            kept.append(customer)
+    return kept
+
+
+def _customers_or_debtor(customers, debtor_code, debtor_name):
+    """A request saved before ``customers`` existed reads as its one debtor."""
+    if customers is not None:
+        return customers
+    if (debtor_name or "").strip():
+        return [PriceTagRequestCustomer(code=debtor_code, name=debtor_name)]
+    return []
+
+
+def customers_from_payload(value) -> Optional[list[dict]]:
+    """``customers`` from a raw dict (the revise path, which never runs through a Pydantic body):
+    the same rules as the request schemas - a name each, each once, at most 50."""
+    from pydantic import TypeAdapter
+
+    if value is None:
+        return None
+    parsed = TypeAdapter(
+        Annotated[list[PriceTagRequestCustomer], Field(max_length=50)]
+    ).validate_python(value)
+    return [c.model_dump() for c in _distinct_customers(parsed)]
+
+
 class PriceTagRequestCreate(BaseModel):
     """What the portal posts when it saves a draft (D48a).
 
@@ -304,6 +358,15 @@ class PriceTagRequestCreate(BaseModel):
     debtor_name: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # PRICETAG-REQUEST-LAYOUT: every customer, in pick order; declared AFTER the debtor pair so
+    # the model's mirror (first customer -> debtor pair) is the last write when both are sent.
+    customers: Optional[list[PriceTagRequestCustomer]] = Field(None, max_length=50)
+
+    @field_validator("customers")
+    @classmethod
+    def _each_customer_once(cls, v):
+        return _distinct_customers(v)
+
     # Header price mode (D5, r7): 'selling' requires a promotion, enforced on
     # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
     # before it has a promotion, same as it may have no debtor yet).
@@ -337,6 +400,15 @@ class PriceTagRequestUpdate(BaseModel):
     debtor_name: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # PRICETAG-REQUEST-LAYOUT: every customer, in pick order; declared AFTER the debtor pair so
+    # the model's mirror (first customer -> debtor pair) is the last write when both are sent.
+    customers: Optional[list[PriceTagRequestCustomer]] = Field(None, max_length=50)
+
+    @field_validator("customers")
+    @classmethod
+    def _each_customer_once(cls, v):
+        return _distinct_customers(v)
+
     # NOT Optional: the column is NOT NULL, and `price_mode: null` used to
     # reach `setattr(req, "price_mode", None)` in the route (`exclude_unset`
     # only drops an OMITTED field, not one explicitly sent as null) and 500
@@ -417,6 +489,14 @@ class PriceTagRequestAttachment(BaseModel):
 
 class PriceTagRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    # PRICETAG-REQUEST-LAYOUT: never null on the wire; an older request reads as its one debtor.
+    customers: Optional[list[PriceTagRequestCustomer]] = None
+
+    @model_validator(mode="after")
+    def _customers_fallback(self):
+        self.customers = _customers_or_debtor(self.customers, self.debtor_code, self.debtor_name)
+        return self
 
     id: str
     contact_id: str
@@ -502,6 +582,14 @@ class PriceTagRequestResponse(BaseModel):
 
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    # PRICETAG-REQUEST-LAYOUT: never null on the wire; an older request reads as its one debtor.
+    customers: Optional[list[PriceTagRequestCustomer]] = None
+
+    @model_validator(mode="after")
+    def _customers_fallback(self):
+        self.customers = _customers_or_debtor(self.customers, self.debtor_code, self.debtor_name)
+        return self
 
     id: str
     contact_id: str
@@ -1058,6 +1146,13 @@ class TagFont(BaseModel):
     url: str
 
 
+class FeatureIconCondition(BaseModel):
+    """One more spec value the product must hold for the icon to print (SPEC-ICON-COMBINED)."""
+
+    spec_key: str
+    value: str
+
+
 class FeatureIconOut(BaseModel):
     """One library icon and its "show when" rule (feature icons, contract B5)."""
 
@@ -1065,6 +1160,7 @@ class FeatureIconOut(BaseModel):
     name: str
     spec_key: str
     values: list[str]
+    conditions: list[FeatureIconCondition] = []
 
 
 class FeatureIconItem(FeatureIconOut):
@@ -1387,6 +1483,11 @@ class TagAccessory(BaseModel):
     colours: list[TagAccessoryColour] = []
     code: Optional[str] = None
     list_price: Optional[float] = None
+    #: TAG-ACC-CARD-RESIZE Q4, a catalogue product only: its offer for the viewer (null = none), its
+    #: spec lines and its own price tag description, which a card's `{{product.*}}` fields read.
+    sell_price: Optional[float] = None
+    spec_lines: Optional[list[str]] = None
+    price_tag_description: Optional[str] = None
 
 
 class TagComboOption(BaseModel):
@@ -1418,6 +1519,11 @@ class TagCombo(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    #: COMBO-SETTINGS-UX: the main product's label, the rich-text template repeated per part, and
+    #: `{part_product_id: label}` for every labelled part. Declared here or `response_model` drops them.
+    main_label: Optional[str] = None
+    parts_line: Optional[str] = None
+    part_labels: dict[str, str] = {}
     free_items: Optional[str] = None
     #: PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined.
     accessories: list[TagAccessory] = []
@@ -1442,6 +1548,8 @@ class ProductTagData(BaseModel):
     code: str
     name: str
     dimensions: str
+    #: COMBO-SETTINGS-UX: the flyer's `L780xW480xH400mm` form, "" when none is recorded.
+    dimensions_lwh: str = ""
     spec_lines: list[str] = []
     specs: list[SpecValue] = []
     images: list[TagImage] = []
@@ -1458,6 +1566,8 @@ class ProductTagData(BaseModel):
     # spec_lines/description. Declared here or `response_model` drops it
     # without a word - see `ResolvedLineData.data_changes`'s own note.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
@@ -1582,6 +1692,8 @@ class TagPartData(BaseModel):
     code: str
     name: str
     dimensions: str = ""
+    #: COMBO-SETTINGS-UX: `L780xW480xH400mm`; "" when none is recorded or the part was pinned before it.
+    dimensions_lwh: str = ""
     spec_lines: list[str] = []
     specs: list[SpecValue] = []
     images: list[TagImage] = []
@@ -1596,6 +1708,8 @@ class TagPartData(BaseModel):
     #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
     #: subjectPart layer reads THIS, never the host's.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
     #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
     accessories: list[TagAccessory] = []
     accessory_box_style: Optional[TagAccessoryBoxStyle] = None
@@ -1682,6 +1796,8 @@ class ResolvedLineData(BaseModel):
     # below - measured, `test_dealer_kit_tag_data_routes.py::
     # test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts`.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did
@@ -1911,6 +2027,11 @@ class TemplateAssignFilter(BaseModel):
     category_ids: list[str] = Field(default_factory=list, max_length=500)
     item_class_ids: list[str] = Field(default_factory=list, max_length=500)
     family_codes: list[str] = Field(default_factory=list, max_length=500)
+    # PRICETAG-TEMPLATE-PRODUCTS: the designer's picked products; ANDed with the kinds above.
+    product_ids: list[str] = Field(default_factory=list, max_length=500)
+    # Owner hand test 11 Nov: the designer links combos too (combo_tag_template, the combo page's
+    # rows). Combos are picked by id only; the product filters above never reach them.
+    combo_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class TemplateAssignIn(TemplateAssignFilter):
@@ -1924,6 +2045,33 @@ class TemplateAssignPreviewOut(BaseModel):
 
 class TemplateAssignOut(BaseModel):
     changed: int
+    # Picked combos the template cannot print (`template_needs.fit_reason`); omitted when none.
+    skipped: Optional[int] = None
+
+
+class TemplateComboRow(BaseModel):
+    """One combo in the template designer's Products view (PRICETAG-TEMPLATE-PRODUCTS)."""
+
+    id: str
+    name: str
+    host_product_id: str
+    host_code: str
+    host_name: str
+    category_name: Optional[str] = None
+    brand_name: Optional[str] = None
+    # Why this template cannot print the combo, or None when it can.
+    fit_reason: Optional[str] = None
+
+
+class TemplateComboPage(BaseModel):
+    total: int
+    page: int
+    limit: int
+
+
+class TemplateComboListOut(BaseModel):
+    data: list[TemplateComboRow]
+    pagination: TemplateComboPage
 
 
 class TagPreviewLineIn(BaseModel):

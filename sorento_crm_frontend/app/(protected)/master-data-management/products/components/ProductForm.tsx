@@ -96,7 +96,11 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const updateMutation = useUpdateProduct();
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
-  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
+  // SUPPLIER-COST-ACCESS: cost price and the supplier links (their unit costs) are for
+  // purchasing and management (`products.cost.view`).
+  const canViewCost = useHasPermission('products.cost.view');
+  const canViewSupplierLinks = useHasPermission('procurement.product_suppliers.view');
+  const canViewSuppliers = canViewCost && canViewSupplierLinks;
 
   const navigationBasePath = '/master-data-management/products';
 
@@ -242,7 +246,8 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         barcode: data.barcode ? data.barcode : isEditMode ? null : undefined,
         base_uom_id: data.base_uom_id,
         list_price: typeof data.list_price === 'number' ? data.list_price : Number(data.list_price),
-        cost_price: toOptionalNumber(data.cost_price, isEditMode),
+        // Not sent without the permission: the reader was served null, and the server ignores it anyway.
+        cost_price: canViewCost ? toOptionalNumber(data.cost_price, isEditMode) : undefined,
         invoice_price: toOptionalNumber(data.invoice_price, isEditMode),
         weight: toOptionalNumber(data.weight, isEditMode),
         dimensions_length: toOptionalNumber(data.dimensions_length, isEditMode),
@@ -678,30 +683,32 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="cost_price"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Cost Price</FormLabel>
-                      <FormControl>
-                        <NumberInput
-                          step="0.01"
-                          placeholder="0.00"
-                          name={field.name}
-                          ref={field.ref}
-                          onBlur={field.onBlur}
-                          value={field.value ?? null}
-                          onValueChange={field.onChange}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Internal cost price (hidden from viewers)
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {canViewCost ? (
+                  <FormField
+                    control={form.control}
+                    name="cost_price"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cost Price</FormLabel>
+                        <FormControl>
+                          <NumberInput
+                            step="0.01"
+                            placeholder="0.00"
+                            name={field.name}
+                            ref={field.ref}
+                            onBlur={field.onBlur}
+                            value={field.value ?? null}
+                            onValueChange={field.onChange}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Internal cost price (hidden from viewers)
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
 
                 <FormField
                   control={form.control}

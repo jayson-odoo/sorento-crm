@@ -29,7 +29,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -100,6 +100,14 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # the refusal can name the field that is missing.
     debtor_name = Column(String(255), nullable=True)
     needed_by_date = Column(Date, nullable=True)  # nullable since D48a, see debtor_name
+    # PRICETAG-REQUEST-LAYOUT: every customer this request prints for, ``[{code, name}]`` in the
+    # order picked (owner, 10 Nov: one request, N customers, one sheet; the tag carries no
+    # customer). The FIRST is mirrored into ``debtor_code`` / ``debtor_name`` by
+    # ``_mirror_first_customer`` so list, sort, search, SLA and revision labels keep reading the
+    # old pair. NULL on a request saved before this column: readers fall back to the pair.
+    # none_as_null: a None is SQL NULL, never a JSON null that the customer search's
+    # jsonb_array_elements would refuse (review, re-check round).
+    customers = Column(JSONB(none_as_null=True), nullable=True)
     notes = Column(Text, nullable=True)
     # Header-level price mode (D5, r7): 'list' | 'selling'. Replaces the old
     # per-line `show_promo_price` switch as the thing the salesperson picks;
@@ -134,6 +142,14 @@ class PriceTagRequest(Base, CompanyScopedMixin):
         onupdate=func.now(),
         nullable=False,
     )
+    @validates("customers")
+    def _mirror_first_customer(self, _key, value):
+        """Every write of ``customers`` (create, draft PUT, revise) moves the old pair with it."""
+        first = value[0] if value else None
+        self.debtor_code = first.get("code") if first else None
+        self.debtor_name = first.get("name") if first else None
+        return value
+
     # Portal submission revisions (R3-1, migration ptag_0006_revisions), denormalized
     # the same way StockInquiry / PurchaseRequestHeader carry their own pair.
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)

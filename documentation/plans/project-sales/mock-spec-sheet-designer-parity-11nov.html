@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spec sheet designer (mock)</title>
+<!--
+  SPEC-SHEET-DESIGNER-PARITY slice B mock. Static, no data. Names, codes and the project are fake.
+  Each element carries data-component = the existing component it maps to (or "NEW").
+-->
+<style>
+  :root {
+    --bg: #f9fafb; --card: #ffffff; --border: #e5e7eb; --muted: #f3f4f6; --muted-fg: #6b7280;
+    --fg: #111827; --primary: #1b84ff; --primary-soft: #eaf3ff; --ring: #93c5fd; --danger: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, sans-serif; color: var(--fg); background: var(--bg); }
+  .shell { display: flex; flex-direction: column; height: 100vh; padding: 12px 16px; gap: 10px; }
+  .header { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+  .header h1 { margin: 0; font-size: 18px; }
+  .header .sub { color: var(--muted-fg); font-size: 12px; }
+  .spacer { flex: 1; }
+  .btn { border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .btn.icon { width: 30px; height: 30px; padding: 0; justify-content: center; }
+  .toolbar { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .toolbar .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+  .toolbar .btn.on { background: var(--primary-soft); border-color: var(--ring); color: var(--primary); }
+  .tag-new { font-size: 10px; font-weight: 600; color: var(--primary); background: var(--primary-soft); border-radius: 4px; padding: 0 4px; }
+  .row { flex: 1; min-height: 0; display: flex; }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .panel h2 { margin: 0; padding: 8px 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-fg); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .handle { width: 12px; display: flex; align-items: center; justify-content: center; cursor: col-resize; }
+  .handle span { width: 4px; height: 28px; border-radius: 2px; background: #cbd5e1; }
+  .rail { width: 200px; }
+  .rail .thumb { margin: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 6px; font-size: 11px; color: var(--muted-fg); }
+  .rail .thumb.cur { border-color: var(--primary); }
+  .rail .thumb .pic { height: 70px; background: var(--muted); border-radius: 3px; margin-bottom: 4px; }
+  .stack { flex: 1; min-width: 0; background: #e5e7eb; border-radius: 10px; overflow: auto; padding: 16px; }
+  .page-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-weight: 600; }
+  .page-head .muted { color: var(--muted-fg); font-weight: 400; }
+  .chip { border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 3px 8px; font-weight: 400; font-size: 12px; }
+  /* The A4 landscape page, 297 x 210 mm drawn at ~2.6 px/mm. */
+  .sheet { position: relative; width: 772px; height: 546px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); margin: 0 auto; }
+  .el { position: absolute; }
+  .sel { outline: 1.5px solid var(--primary); outline-offset: 1px; }
+  .img { background: repeating-linear-gradient(45deg, #f3f4f6 0 8px, #e5e7eb 8px 16px); display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 11px; }
+  .title { font-weight: 800; font-size: 15px; }
+  .desc { font-size: 10px; line-height: 1.45; }
+  .slot-badge { position: absolute; top: -9px; left: 6px; font-size: 9px; background: var(--primary); color: #fff; border-radius: 3px; padding: 0 4px; }
+  .tbl { border-collapse: collapse; width: 100%; height: 100%; font-size: 9.5px; }
+  .tbl td { border: 1px solid #0f766e; padding: 5px 6px; vertical-align: top; }
+  .tbl td.cur { outline: 2px solid var(--primary); outline-offset: -2px; }
+  .tbl .lbl { font-weight: 700; display: block; }
+  .tok { color: #2563eb; background: #eff6ff; border-radius: 3px; padding: 0 2px; }
+  .logo { font-weight: 900; letter-spacing: .12em; font-size: 14px; }
+  .inspector { width: 290px; }
+  .insp-body { padding: 10px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 11px; color: var(--muted-fg); }
+  .input { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: #fff; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; background: #0f766e; vertical-align: -3px; margin-right: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg span { padding: 4px 8px; font-size: 12px; }
+  .seg span.on { background: var(--primary-soft); color: var(--primary); }
+  .menu { position: absolute; left: 300px; top: 300px; width: 210px; background: #fff; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 4px; font-size: 12px; z-index: 5; }
+  .menu div { padding: 5px 8px; border-radius: 4px; display: flex; justify-content: space-between; }
+  .menu div:hover { background: var(--muted); }
+  .menu .k { color: var(--muted-fg); }
+  .menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+  .note { font-size: 11px; color: var(--muted-fg); }
+  @media (max-width: 1100px) { .inspector { width: 240px; } .rail { width: 150px; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="header" data-component="components/common/PageHeader">
+    <div>
+      <div class="sub">&larr; Spec sheets</div>
+      <h1>SS1 &middot; PRJQ-2026-0099-A</h1>
+      <div class="sub">Catalogue cover v1 / Item with accessories v3 &middot; 6 pages &middot; Draft</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn">&larr;</button><button class="btn">&rarr;</button>
+    <!-- Export: PDF today (dealer kit render worker); PowerPoint is option (a) in the card. -->
+    <button class="btn primary" data-component="SpecSheetReader export (existing PDF) + NEW .pptx item">Export &#9662;</button>
+    <button class="btn icon" data-component="dealer-kit/components/FocusMode FocusToggle">&#x2922;</button>
+  </div>
+
+  <div class="toolbar" data-component="tag-templates/components/CanvasToolbar (shared)">
+    <button class="btn">Select</button>
+    <button class="btn">Text</button>
+    <button class="btn">Image</button>
+    <button class="btn">Shape</button>
+    <button class="btn on" data-component="NEW: table tool in CanvasToolbar">Table <span class="tag-new">new</span></button>
+    <button class="btn" data-component="CanvasToolbar Product block (existing), slot picker = InspectorPanel subjectSlot">Product slot</button>
+    <span class="sep"></span>
+    <button class="btn" data-component="TagCanvasEditor InsertFieldDialog">Insert field</button>
+    <span class="sep"></span>
+    <button class="btn">Undo</button><button class="btn">Redo</button>
+    <span class="spacer"></span>
+    <span class="note">Cmd+C / X / V / D and right-click work on the selected page (slice A)</span>
+  </div>
+
+  <div class="row">
+    <!-- Pages rail, resizable (slice A) -->
+    <div class="panel rail" data-component="spec-sheet/[sheetId]/components/PageRail in ResizablePanel">
+      <h2>Pages <span>&lsaquo;</span></h2>
+      <div class="thumb"><div class="pic"></div>1 Cover</div>
+      <div class="thumb cur"><div class="pic"></div>2 SRT-WC6405 + 2 accessories</div>
+      <div class="thumb"><div class="pic"></div>3 SRT-WB1413</div>
+      <div class="thumb"><div class="pic"></div>4 SRT-KS2001</div>
+    </div>
+    <div class="handle" data-component="components/ui/resizable ResizableHandle"><span></span></div>
+
+    <div class="stack" data-component="SpecSheetReader stack + ReaderPage">
+      <div class="page-head">2 SRT-WC6405 <span class="muted">&middot; Item with accessories</span>
+        <span class="chip" data-component="ReaderPage Add accessory (SearchableMultiSelect)">Accessories: AV-0120, FH-0450 &#9662;</span>
+        <span class="chip">Leave out</span>
+      </div>
+
+      <div class="sheet" data-component="TagCanvasEditor (embedded, active page)">
+        <!-- left: main product -->
+        <div class="el img" style="left:22px;top:30px;width:210px;height:270px" data-component="image layer bound to the main line photo">Main product photo</div>
+        <div class="el title" style="left:22px;top:318px;width:230px" data-component="text layer: SORENTO {{product.code}} *">SORENTO SRT-WC6405 *</div>
+        <div class="el desc" style="left:22px;top:342px;width:230px" data-component="text layer with {{product.description}} (slice A)">
+          Size: L700 x W380 x H780 mm<br>Rimless flush, soft close seat<br>S-trap 300 mm<br>Included: wall connector
+        </div>
+
+        <!-- middle top: drawings -->
+        <div class="el img" style="left:262px;top:30px;width:240px;height:190px" data-component="image layer bound to the line drawing">Technical drawing</div>
+
+        <!-- middle bottom: accessory slots from the same quotation -->
+        <div class="el sel" style="left:262px;top:250px;width:112px;height:200px" data-component="Accessory 1 slot = existing subjectPart layers (PS-SPEC-SHEET)">
+          <span class="slot-badge">Accessory 1</span>
+          <div class="img" style="height:110px">Photo</div>
+          <div class="title" style="font-size:11px;margin-top:6px">AQUAVIA AV-0120 **</div>
+          <div class="desc">Angle valve, chrome<br>1/2 in x 1/2 in</div>
+        </div>
+        <div class="el" style="left:390px;top:250px;width:112px;height:200px;outline:1px dashed #93c5fd" data-component="Accessory 2 slot">
+          <span class="slot-badge">Accessory 2</span>
+          <div class="img" style="height:110px">Photo</div>
+          <div class="title" style="font-size:11px;margin-top:6px">AQUAVIA FH-0450 **</div>
+          <div class="desc">Flexible hose 450 mm<br>Stainless braided</div>
+        </div>
+
+        <!-- right: info table -->
+        <div class="el" style="left:530px;top:30px;width:220px;height:440px" data-component="NEW: table layer (shared designer)">
+          <table class="tbl">
+            <tr style="height:44%"><td><span class="lbl">PROJECT</span><span class="tok">{{doc.project_title}}</span><br>Cadangan Pembangunan Kondominium 32 Tingkat Di Atas Lot 1234, Mukim Demo, Daerah Contoh (fake)</td></tr>
+            <tr><td class="cur"><span class="lbl">REF</span><span class="tok">{{doc.ref}}</span></td></tr>
+            <tr><td><span class="lbl">AREA</span><span class="tok">{{line.area}}</span> &middot; MASTER BATH</td></tr>
+            <tr><td><span class="lbl">PREPARED BY</span><span class="tok">{{doc.prepared_by}}</span><br><span class="tok">{{doc.prepared_by_phone}}</span></td></tr>
+            <tr><td><span class="lbl">DATE</span><span class="tok">{{doc.date}}</span> &middot; 11/11/2026</td></tr>
+            <tr style="height:14%"><td><span class="lbl">COMMENT</span><span class="tok">{{line.comment}}</span></td></tr>
+          </table>
+        </div>
+        <div class="el logo" style="left:640px;top:500px" data-component="image layer: brand logo asset">SORENTO</div>
+
+        <!-- right-click menu (slice A, shared) -->
+        <div class="menu" data-component="TagCanvasEditor ContextMenu (shared)">
+          <div>Cut <span class="k">&#8984;X</span></div>
+          <div>Copy <span class="k">&#8984;C</span></div>
+          <div>Paste <span class="k">&#8984;V</span></div>
+          <div>Duplicate <span class="k">&#8984;D</span></div>
+          <hr>
+          <div>Insert row below <span class="tag-new">new</span></div>
+          <div>Insert column right <span class="tag-new">new</span></div>
+          <div>Merge cells <span class="tag-new">new</span></div>
+          <hr>
+          <div style="color:var(--danger)">Delete <span class="k">Del</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="handle" data-component="components/ui/resizable ResizableHandle"><span></span></div>
+    <!-- Inspector, resizable (slice A); table cell section is NEW -->
+    <div class="panel inspector" data-component="ReaderInspector / InspectorPanel (shared)">
+      <h2>Inspector <span>&rsaquo;</span></h2>
+      <div class="insp-body">
+        <div class="field"><label>Apply to</label><div class="seg"><span class="on">This page</span><span>Every page</span></div></div>
+        <div class="field" data-component="NEW: InspectorPanel table section">
+          <label>Table</label>
+          <div class="grid2">
+            <div class="field"><label>Rows</label><div class="input">6</div></div>
+            <div class="field"><label>Columns</label><div class="input">1</div></div>
+          </div>
+        </div>
+        <div class="field" data-component="NEW: per-cell style">
+          <label>Cell: row 2 (REF)</label>
+          <div class="grid2">
+            <div class="field"><label>Border colour</label><div class="input"><span class="swatch"></span>#0F766E</div></div>
+            <div class="field"><label>Border width</label><div class="input">0.3 mm</div></div>
+            <div class="field"><label>Padding</label><div class="input">2 mm</div></div>
+            <div class="field"><label>Height</label><div class="input">Auto (fits text)</div></div>
+          </div>
+        </div>
+        <div class="field" data-component="InspectorPanel Content box + Insert field (existing)">
+          <label>Cell content</label>
+          <div class="input" style="min-height:52px"><b>REF</b><br><span class="tok">{{doc.ref}}</span></div>
+          <button class="btn">Insert field</button>
+        </div>
+        <div class="field" data-component="InspectorPanel text style (existing)">
+          <label>Text</label>
+          <div class="grid2"><div class="input">Inter 9 pt</div><div class="input">Left, top</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -115,6 +115,7 @@ def _serialize_part(part: ProductComboPart) -> Dict[str, Any]:
         "sell_price": part.sell_price,
         "topup_amount": part.topup_amount,
         "is_upgrade": bool(part.is_upgrade),
+        "label": part.label,
     }
 
 
@@ -151,6 +152,8 @@ def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
         "name": combo.name,
         "sort_order": combo.sort_order,
         "description": combo.description,
+        "main_label": combo.main_label,
+        "parts_line": combo.parts_line,
         "list_price": combo.list_price,
         "sell_price": combo.sell_price,
         "parts": [_serialize_part(part) for part in combo.parts],
@@ -294,6 +297,11 @@ class ProductComboService:
         for field in ("list_price", "sell_price"):
             if field in payload:
                 setattr(combo, field, payload[field])
+        if "main_label" in payload:
+            combo.main_label = (payload["main_label"] or "").strip() or None
+        if "parts_line" in payload:
+            # Rich-text HTML from the shared editor: same sanitiser and cap as the description.
+            combo.parts_line = _clean_description(payload["parts_line"], "Parts line")
         self.db.commit()
         return _serialize(self._combo_or_404(combo.id), self.db)
 
@@ -471,7 +479,10 @@ class ProductComboService:
             self.db.flush()
             self.db.expire(combo, ["parts"])
 
-        for field in ("description", "free_items", "list_price", "sell_price", "accessory_box_preset_id"):
+        for field in (
+            "description", "free_items", "list_price", "sell_price", "accessory_box_preset_id",
+            "main_label", "parts_line",
+        ):
             setattr(combo, field, getattr(source, field))
 
         previous_picture = combo.image_attachment_id
@@ -509,6 +520,7 @@ class ProductComboService:
                     sell_price=part.sell_price,
                     topup_amount=part.topup_amount,
                     is_upgrade=part.is_upgrade,
+                    label=part.label,
                 )
             )
         # A product is never its own free item (AccessoryService.set_combo_list).
@@ -809,6 +821,8 @@ class ProductComboService:
                 setattr(part, field, payload.get(field))
         if payload.get("is_upgrade") is not None:
             part.is_upgrade = bool(payload["is_upgrade"])
+        if "label" in fields_set:
+            part.label = (payload.get("label") or "").strip() or None
         self.db.commit()
         return _serialize_part(self._part_or_404(part.id))
 

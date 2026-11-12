@@ -87,6 +87,17 @@ const PARTIES = [
   { id: 'a1', party_type: 'architect', name: 'Arkitek CONTOH', is_active: true },
   { id: 'c1', party_type: 'main_contractor', name: 'Bina CONTOH', is_active: true },
 ];
+// PROJECT-PARTY-ROLES: the party roles are a lookup list (seed order).
+const ROLES = [
+  { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+  { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+  { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+  { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+  { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+  { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+  { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+  { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+];
 const CUSTOMERS = [
   { id: 'cust-1', customer_code: 'C-0001', customer_name: 'Aman Hartanah CONTOH' },
   { id: 'cust-2', customer_code: 'C-0002', customer_name: 'Bestari Dealer CONTOH' },
@@ -149,6 +160,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         );
         return json({ data, pagination: { total: data.length, page: 1, limit: 20 } });
       }
+      if (path.endsWith('/lookup/project_party_role/options')) return json(ROLES);
       if (path.endsWith('/project-sales/parties/') && method === 'GET') {
         const type = url.searchParams.get('party_type');
         const q = (url.searchParams.get('query') ?? '').toLowerCase();
@@ -656,7 +668,7 @@ describe('AC-W8 AI extract on step 1', () => {
     await waitFor(() => expect(registerBody()).toBeTruthy());
     expect(registerBody()).toMatchObject({
       developer_party_id: 'd1',
-      architect_party_id: 'a1',
+      party_links: [{ role: 'architect', party_id: 'a1' }],
       state: 'Selangor',
       mukim: 'Petaling',
     });

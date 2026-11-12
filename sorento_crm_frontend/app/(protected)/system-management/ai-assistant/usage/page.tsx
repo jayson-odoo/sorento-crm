@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useMemo, useState, type ComponentProps } from 'react';
-import Link from 'next/link';
+import { useTraceDrawer } from '../../chat-history/components/TraceDrawer';
 import { format } from 'date-fns';
 import { CalendarIcon, ChevronDown, ChevronRight, GitBranch, Loader2 } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
@@ -113,6 +113,7 @@ export default function AIUsagePage() {
   const recentQueriesQuery = useRecentQueries(from, to, 50, featureForApi);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { openMessageTrace, traceDrawer } = useTraceDrawer();
   const queryDetail = useQueryDetail(expandedId);
 
   const chartData = useMemo(() => {
@@ -538,14 +539,15 @@ export default function AIUsagePage() {
                                     <>
                                       {q.feature !== 'ai_extract' && q.message_id ? (
                                         <div>
-                                          <Link
-                                            href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(q.message_id)}`}
+                                          <button
+                                            type="button"
+                                            onClick={() => openMessageTrace(q.message_id as string)}
                                             className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
                                             data-testid="view-trace-link"
                                           >
                                             <GitBranch className="size-3" />
                                             View full trace
-                                          </Link>
+                                          </button>
                                         </div>
                                       ) : null}
                                       <div>
@@ -600,6 +602,7 @@ export default function AIUsagePage() {
           </Card>
         </div>
       </Container>
+      {traceDrawer}
     </>
   );
 }

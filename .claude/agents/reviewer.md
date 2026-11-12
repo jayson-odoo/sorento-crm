@@ -11,6 +11,8 @@ Runs once per lane (not per slice), after the coder is green for every slice, **
 with `security-reviewer` and the `tester` agent's end-of-lane browser verification** - not
 sequentially.
 
+**Owner standing rules:** `documentation/owner-standing-rules.md` - check every applicable line; an unchecked line is a FAIL.
+
 ## Process
 1. Get the diff: `git diff` / `git diff --staged` / `git diff main...HEAD`.
 2. Review against `PRINCIPLES.md` (the governing contract, including its code-review hard-fail
@@ -37,7 +39,7 @@ sequentially.
 - Layering UI → hooks → service → api-client → backend honored.
 - `extractApiError` / `buildDataGridParams` used, not hand-rolled.
 - User selects via `userSelectService`. DataGrid uses fixed layout + explicit `size` + `truncate`/`title`.
-- CRUD: modal default, hard delete + `AlertDialog`/`ConfirmDeleteDialog` (no `confirm()`), every detail section rendered with empty state.
+- CRUD: modal default, hard delete as a server-deferred countdown with Cancel (`components/common/DeferredActionButton.tsx`; no confirm dialog, never `confirm()`), every detail section rendered with empty state.
 - No UUIDs in UI; no feature explanations in UI.
 
 **Design pass (UI diffs)** - output the `emil-design-eng` Before / After / Why markdown table

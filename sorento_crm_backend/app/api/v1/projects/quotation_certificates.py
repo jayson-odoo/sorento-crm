@@ -99,8 +99,9 @@ def _with_rights(db: Session, project_id: str, user: dict, body: dict) -> dict:
     return {**body, "can_edit": _can_edit(db, project_id, user), "can_edit_defaults": _can_defaults(db, user)}
 
 
+# Not `@heavy` (CERT-TAB-UX): a warm list reads only the cached codes and boxes, and a first look
+# reads its files one at a time (`list_rows` releases each), so it must not queue behind an export.
 @router.get(BASE)
-@heavy
 def list_certificates(
     project_id: str,
     document_id: str,

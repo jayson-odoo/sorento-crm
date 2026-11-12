@@ -62,6 +62,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'BoardLineDecisionPanel - same as above',
   ],
   [
+    'app/(protected)/master-data-management/costing/components/CostingView.tsx',
+    'NESTED GRID: CostingSupplierGrid (PanelDataGrid), a row\'s suppliers. Fixed table layout, capped by the shared expanded-row wrapper',
+  ],
+  [
     'app/(protected)/scm/components/PlanRowDialog.tsx',
     'NESTED GRID: StockDocumentsPanel (PanelDataGrid) inside OnHandTable rows. Covered by the context default AND by its own scrollerMaxHeight={false}',
   ],

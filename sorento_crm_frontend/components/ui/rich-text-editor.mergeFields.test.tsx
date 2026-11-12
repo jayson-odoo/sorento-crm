@@ -246,3 +246,20 @@ describe('toolbar="none" (the canvas in-place editor)', () => {
     expect(editor.schema.marks.bold).toBeDefined();
   });
 });
+
+describe('mergeFieldLabel (COMBO-SETTINGS-UX: chips named by the part)', () => {
+  it('shows a chip by its readable name while the value keeps the plain token', async () => {
+    const label = (path: string) => (path === 'part.main.code' ? 'CABINET - SRTBF11829: code' : null);
+    const { container, editor, html } = await mount('<p>A {{part.main.code}} {{combo.name}}</p>', {
+      mergeFields: true,
+      mergeFieldLabel: label,
+    });
+    const chips = [...container.querySelectorAll('[data-merge-field]')].map((el) => el.textContent);
+    expect(chips).toEqual(['CABINET - SRTBF11829: code', '{{combo.name}}']);
+    act(() => {
+      insertMergeFieldText(editor, '!');
+    });
+    expect(html()).toContain('{{part.main.code}}');
+    expect(html()).not.toContain('CABINET - SRTBF11829');
+  });
+});

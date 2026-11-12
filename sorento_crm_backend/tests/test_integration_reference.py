@@ -155,6 +155,8 @@ class TestEntityTypeAllowlist:
             "brands",
             # ITEM-CLASS-MASTER (contract 2.11): AutoCount ItemClass joined as a master.
             "item_classes",
+            # QUOTE-TERMS-SELECT (contract 2.14): AutoCount Terms joined as a master.
+            "payment_terms",
             # Finance S0 (#1309): billing document headers, in the `finance` schema.
             "billing_documents",
             # AC-BILLING S5 (contract 2.10): a debtor ref, pointing at the customer's row.

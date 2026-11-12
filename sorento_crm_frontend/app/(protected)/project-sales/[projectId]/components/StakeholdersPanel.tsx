@@ -36,6 +36,7 @@ import type {
 } from '../../_shared/types/project.types';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { canWorkOnProject } from '../../_shared/lib/projectApproval';
+import { formatPhone } from '../../_shared/lib/phoneDisplay';
 
 const INFLUENCE_OPTIONS = [
   { value: 'high', label: 'High' },
@@ -154,7 +155,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
         accessorFn: (row) => [row.phone, row.email].filter(Boolean).join(' '),
         header: ({ column }) => <DataGridColumnHeader title="Phone / email" column={column} />,
         cell: ({ row }) => {
-          const reach = [row.original.phone, row.original.email].filter(Boolean).join(' · ');
+          const reach = [formatPhone(row.original.phone), row.original.email].filter(Boolean).join(' · ');
           return reach ? (
             <span className="truncate text-sm" title={reach}>
               {reach}
@@ -306,7 +307,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
                         )}
                         {(stakeholder.phone || stakeholder.email) && (
                           <p className="truncate text-xs text-muted-foreground">
-                            {[stakeholder.phone, stakeholder.email].filter(Boolean).join(' · ')}
+                            {[formatPhone(stakeholder.phone), stakeholder.email].filter(Boolean).join(' · ')}
                           </p>
                         )}
                         {stakeholder.notes && (

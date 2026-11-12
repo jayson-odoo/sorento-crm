@@ -141,12 +141,13 @@ def test_c2_text_alone_and_photo_alone_are_both_accepted(v2, extracted):
 # ------------------------------------------------------------------ C3 proposals
 
 
-def test_c3_parties_match_by_type_ignoring_case_and_spacing_else_new(v2, extracted):
+def test_c3_parties_match_by_name_ignoring_case_and_spacing_else_new(v2, extracted):
     seeded = _seed(v2)
     extracted["values"] = {
         "developer_name": "  contoh   DEVELOPER sdn bhd ",
         "architect_name": "CONTOH Architect Brand New",
-        "main_contractor_name": "CONTOH Developer Sdn Bhd",  # exists, but only as a developer
+        # Exists as a developer: one firm is one party whatever role it plays (PROJECT-PARTY-ROLES Q4 b).
+        "main_contractor_name": "CONTOH Developer Sdn Bhd",
     }
     res = _post(v2, v2.owner)
     assert res.status_code == 200, res.text
@@ -155,7 +156,8 @@ def test_c3_parties_match_by_type_ignoring_case_and_spacing_else_new(v2, extract
     assert got["developer"]["id"] == seeded.dev.id
     assert got["developer"]["name"] == "CONTOH Developer Sdn Bhd"
     assert got["architect"] == {"status": "new", "name": "CONTOH Architect Brand New"}
-    assert got["main_contractor"]["status"] == "new"
+    assert got["main_contractor"]["status"] == "match"
+    assert got["main_contractor"]["id"] == seeded.dev.id
 
 
 def test_c3_an_existing_architect_and_contractor_match(v2, extracted):

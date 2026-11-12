@@ -529,7 +529,7 @@ def test_r7_a_document_with_named_parents_is_never_decided_by_the_inference():
 
 def test_r7_the_ingest_accepts_and_echoes_the_v2_13_keys(env):  # noqa: F811
     contract = env.client.get("/api/v1/external/contract").json()
-    assert contract["version"] == "2.13"
+    assert contract["version"] == "2.14"
     assert {"lines.parent_line_ref", "lines.line_type"} <= set(contract["fields_added"]["billing_documents"])
 
     ref = f"MCH_DB:IV:{uuid.uuid4().int % 10**9}"

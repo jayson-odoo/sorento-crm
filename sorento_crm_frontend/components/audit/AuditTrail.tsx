@@ -1,5 +1,8 @@
 'use client';
 
+import { useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditLogs } from '@/hooks/useAuditLogs';
@@ -16,6 +19,7 @@ import {
   type AuditTrailHeading,
 } from '@/lib/audit-fields';
 import type { AuditLogEntry } from '@/types/audit.types';
+import type { RecordHistoryEvent, RecordHistoryLine } from '@/types/recordHistory.types';
 
 // The backend summarises a status move ("status: rejected → submitted"); that line leads,
 // so the raw field it already describes is not listed a second time.
@@ -58,7 +62,7 @@ function collectChangeLines(
   const resubmit = heading === 'Appealed' ? resubmittedSummary(summary) : summary;
   const shown = own && statusMove ? appealWording(resubmit) : resubmit;
   const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
-  for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {
+  for (const change of auditFieldChanges(entry.old_values, entry.new_values, entry.masked_fields)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
     const statusLine = own && STATUS_SUMMARY_KEYS.includes(change.key);
     lines.push(
@@ -78,7 +82,178 @@ interface AuditTrailProps {
   title?: string;
 }
 
-export default function AuditTrail({ entityType, entityId, title = 'Audit Trail' }: AuditTrailProps) {
+/**
+ * STANDARD-HISTORY v2 (owner "ok" on mock v2, 10 Nov 2026: "i want to reuse same component"):
+ * a record whose history is not one audit read (an order inquiry: presses, links, raises,
+ * reserve events) hands the Audit Trail its entries already in plain words, from its own
+ * history endpoint. Mock: `documentation/plans/audit/mockups/standard-history-v2-10nov.html`.
+ */
+interface AuditTrailEntriesProps {
+  entries: RecordHistoryEvent[];
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+  title?: string;
+}
+
+/** The one history component (STANDARD-HISTORY): a record's audit read, or plain entries. */
+export default function AuditTrail(props: AuditTrailProps | AuditTrailEntriesProps) {
+  if ('entries' in props) return <AuditTrailEntries {...props} />;
+  return <RecordAuditTrail {...props} />;
+}
+
+/** The one control a history gets, and only once it is long enough to need it (mock v2). */
+const SEARCH_AFTER = 10;
+
+function lineText(line: RecordHistoryLine): string {
+  return line.item_code ? `${line.item_code}: ${line.change}` : line.change;
+}
+
+function AuditTrailEntries({
+  entries,
+  isLoading,
+  isError,
+  onRetry,
+  title = 'History',
+}: AuditTrailEntriesProps) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  // Seconds only where two entries share a minute (the OI-2611-0019 Confirm and the Unconfirm
+  // 8 s later); everywhere else the Audit Trail's own minute.
+  const sharedMinute = useMemo(() => {
+    const seen = new Map<string, number>();
+    entries.forEach((e) => {
+      if (!e.at) return;
+      const minute = formatDateTimeInMalaysia(e.at);
+      seen.set(minute, (seen.get(minute) ?? 0) + 1);
+    });
+    return seen;
+  }, [entries]);
+
+  const needle = query.trim().toLowerCase();
+  const rows = entries.flatMap((entry) => {
+    if (!needle) return [{ entry, matched: [] as RecordHistoryLine[] }];
+    const matched = entry.lines.filter((line) => lineText(line).toLowerCase().includes(needle));
+    const hit = `${entry.title} ${entry.actor ?? ''}`.toLowerCase().includes(needle);
+    return hit || matched.length > 0 ? [{ entry, matched }] : [];
+  });
+
+  const toggle = (id: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : isError ? (
+          <div className="py-6 text-center">
+            <h3 className="text-sm font-semibold">Could not load the history</h3>
+            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+              Retry
+            </Button>
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="py-6 text-center">
+            <h3 className="text-sm font-semibold">No history yet</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Changes to this record appear here.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {entries.length > SEARCH_AFTER ? (
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search history"
+                aria-label="Search history"
+              />
+            ) : null}
+            {rows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing in this history matches.</p>
+            ) : (
+              <ul className="space-y-4">
+                {rows.map(({ entry, matched }) => {
+                  const isOpen = open.has(entry.id);
+                  const many = entry.lines.length > 1;
+                  const shown = isOpen
+                    ? entry.lines
+                    : matched.length > 0
+                      ? matched
+                      : many
+                        ? []
+                        : entry.lines;
+                  const when = entry.at
+                    ? formatDateTimeInMalaysia(entry.at, {
+                        seconds: (sharedMinute.get(formatDateTimeInMalaysia(entry.at)) ?? 0) > 1,
+                      })
+                    : 'Date not recorded';
+                  const who = entry.actor
+                    ? entry.actor === 'Automatic'
+                      ? 'Automatic'
+                      : `by ${entry.actor}`
+                    : null;
+                  return (
+                    <li
+                      key={entry.id}
+                      data-audit-entry="1"
+                      className="border-b border-border/50 pb-3 last:border-0 last:pb-0"
+                    >
+                      <p data-testid="audit-action" className="break-words text-sm font-medium">
+                        {entry.title}
+                      </p>
+                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-sm text-muted-foreground">
+                        <span>{when}</span>
+                        {who ? <span>· {who}</span> : null}
+                        {many ? (
+                          <>
+                            <span aria-hidden>·</span>
+                            <Button
+                              type="button"
+                              variant="link"
+                              size="sm"
+                              className="h-auto p-0"
+                              aria-expanded={isOpen}
+                              onClick={() => toggle(entry.id)}
+                            >
+                              {isOpen ? 'Hide' : `Show ${entry.lines.length} lines`}
+                            </Button>
+                          </>
+                        ) : null}
+                      </p>
+                      {shown.length > 0 ? (
+                        <ul className="mt-1.5 list-none space-y-1.5 text-sm text-muted-foreground">
+                          {shown.map((line) => (
+                            <li
+                              key={line.row_id}
+                              data-testid="audit-change-line"
+                              className="break-words border-l-2 border-border/50 pl-2"
+                            >
+                              {lineText(line)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecordAuditTrail({ entityType, entityId, title = 'Audit Trail' }: AuditTrailProps) {
   // Child rows share the page, so a record's trail reads more than the default 50.
   const { data, isLoading } = useAuditLogs(entityType, entityId, 1, TRAIL_LIMIT);
 

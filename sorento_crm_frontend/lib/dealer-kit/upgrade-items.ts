@@ -52,6 +52,10 @@ export function upgradesOf(data: TagBindingData | null | undefined): TagAccessor
         name: upgrade.description,
         spec: null,
         list_price: row?.list_price ?? null,
+        // TAG-ACC-CARD-RESIZE (owner 22:35): what a card's `{{product.*}}` fields read for this upgrade.
+        sell_price: row?.sell_price ?? null,
+        spec_lines: row?.spec_lines,
+        price_tag_description: row?.price_tag_description ?? null,
         image: images[0] ? { attachment_id: images[0].attachment_id, url: images[0].url } : null,
         images: images.map((image) => ({
           attachment_id: image.attachment_id,

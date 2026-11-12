@@ -17,6 +17,7 @@ from tests._pg_fixture import blank_session
 from tests.chatbot.agent._seed import seed_user
 from tests.chatbot.agent._ported_reads_support import (
     AC1,
+    LOCAL_PORTED,
     CAPABILITIES,
     ESCALATION_LOGS_VIEW,
     ORDERS_VIEW,
@@ -147,7 +148,7 @@ def test_AC1_the_slugs_are_the_tables_not_the_orders_one_by_accident(db):
 
 
 def test_AC1_ported_reads_is_the_ac1_set_less_find_and_capabilities():
-    assert ported_reads() == frozenset(r[0] for r in PORTED)
+    assert ported_reads() == frozenset(r[0] for r in PORTED) | frozenset(LOCAL_PORTED)
     assert "crm_find" not in ported_reads()
 
 

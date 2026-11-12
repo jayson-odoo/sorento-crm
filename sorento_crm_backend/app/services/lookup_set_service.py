@@ -3,6 +3,7 @@ import uuid
 from typing import Optional
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
+from app.services import project_party_roles
 from app.models.lookup import LookupSet, LookupOption, LookupBinding
 from app.schemas.lookup import LookupSetCreate, LookupSetUpdate
 from app.services.error_handler import handle_not_found, handle_conflict
@@ -94,6 +95,9 @@ class LookupSetService:
     def update(self, set_id: str, data: LookupSetUpdate) -> LookupSet:
         s = self.get(set_id)
         update = data.model_dump(exclude_unset=True)
+        project_party_roles.assert_set_change(
+            self.db, s, new_key=update.get("set_key"), deactivate=update.get("is_active") is False
+        )
         if "set_key" in update and update["set_key"] != s.set_key:
             clash = self.db.query(LookupSet).filter(
                 LookupSet.set_key == update["set_key"],
@@ -110,6 +114,7 @@ class LookupSetService:
 
     def delete(self, set_id: str) -> dict:
         s = self.get(set_id)
+        project_party_roles.assert_set_change(self.db, s, delete=True)
         self.db.delete(s)
         self.db.commit()
         return {"message": "Lookup set deleted"}

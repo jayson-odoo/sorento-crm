@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePartyMutations } from '../../_shared/hooks/useProjects';
 import type { PartyType, ProjectParty } from '../../_shared/types/project.types';
-import { PARTY_TYPE_OPTIONS } from './partyTypes';
+import { usePartyTypeOptions } from './partyTypes';
 
 /**
  * Create and edit in one modal, per the CRUD standard.
@@ -37,6 +37,7 @@ export function PartyFormDialog({
   const [name, setName] = React.useState(party?.name ?? '');
   const [registrationNo, setRegistrationNo] = React.useState(party?.registration_no ?? '');
   const [phone, setPhone] = React.useState(party?.phone ?? '');
+  const [fax, setFax] = React.useState(party?.fax ?? '');
   const [email, setEmail] = React.useState(party?.email ?? '');
   const [address, setAddress] = React.useState(party?.address ?? '');
   const [notes, setNotes] = React.useState(party?.notes ?? '');
@@ -44,7 +45,7 @@ export function PartyFormDialog({
 
   const isEdit = Boolean(party);
   const pending = create.isPending || update.isPending;
-  const selectedHint = PARTY_TYPE_OPTIONS.find((option) => option.value === partyType)?.hint;
+  const typeOptions = usePartyTypeOptions(party?.party_type);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -64,6 +65,7 @@ export function PartyFormDialog({
               name: name.trim(),
               registration_no: registrationNo.trim() || null,
               phone: phone.trim() || null,
+              fax: fax.trim() || null,
               email: email.trim() || null,
               address: address.trim() || null,
               notes: notes.trim() || null,
@@ -86,15 +88,9 @@ export function PartyFormDialog({
                 id="party-type"
                 value={partyType}
                 onChange={setPartyType}
-                options={PARTY_TYPE_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
+                options={typeOptions}
                 placeholder="Select a type"
               />
-              {selectedHint && (
-                <p className="text-xs text-muted-foreground">{selectedHint}</p>
-              )}
             </div>
 
             <div className="space-y-1.5">
@@ -125,6 +121,14 @@ export function PartyFormDialog({
                   id="party-phone"
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="party-fax">Fax</Label>
+                <Input
+                  id="party-fax"
+                  value={fax}
+                  onChange={(event) => setFax(event.target.value)}
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">

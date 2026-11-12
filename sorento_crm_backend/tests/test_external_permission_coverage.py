@@ -156,5 +156,24 @@ class TestSlugsAreReal:
         unknown = {v for v in EXTERNAL_ENDPOINT_PERMISSIONS.values() if v not in known}
         assert not unknown, f"mapped to non-existent permission slugs: {sorted(unknown)}"
 
+    def test_every_path_resolved_slug_exists_in_the_registry(self):
+        # Same permanent-403 trap for the per-entity ingest/read/delete maps: a slug only a
+        # migration creates never exists on a create_all + sync_permissions database (CI,
+        # bootstrap_env), so the act-as user is refused forever (QUOTE-TERMS-SELECT review).
+        from app.api.v1.external.ingest import (
+            DELETE_PERMISSIONS,
+            INGEST_PERMISSIONS,
+            READ_PERMISSIONS,
+        )
+
+        known = {p["slug"] for p in PERMISSION_REGISTRY}
+        unknown = {
+            slug
+            for mapping in (INGEST_PERMISSIONS, READ_PERMISSIONS, DELETE_PERMISSIONS)
+            for slug in mapping.values()
+            if slug not in known
+        }
+        assert not unknown, f"mapped to non-existent permission slugs: {sorted(unknown)}"
+
     def test_no_route_is_mapped_to_an_empty_slug(self):
         assert all(v and v.strip() for v in EXTERNAL_ENDPOINT_PERMISSIONS.values())

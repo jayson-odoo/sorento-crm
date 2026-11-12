@@ -74,9 +74,8 @@ CI result waits for the orchestrator to say so, it does not poll the PR itself. 
 removes the label again the moment it fires, so the operator recipe to re-run CI against a new
 head is always `gh pr edit <n> --add-label ci`, never leaving the label sitting on the PR.
 
-The `[skip ci]` convention for intermediate commits (a commit message containing it skips creating
-a run for that push) stays in place as belt and braces - it costs nothing now that pushes to a PR
-do not trigger runs on their own, and it still matters for pushes to `main`.
+Workers never put a CI-skip marker in a commit message: crew manages the `ci` label, and a push to
+a PR starts no run on its own.
 
 A `ci`-labelled PR run is `Changed areas` plus one `PR gate` job, **fast checks only**
 (CI-CLOUD-GATE, owner 4 Nov 2026): main's head merged in, the alembic head, PII, Outline-guide
@@ -85,7 +84,7 @@ and `tsc` plus ESLint over the changed frontend files (whole files: 54 files car
 errors on main today, so touching one means fixing its errors). No pytest test and no vitest executes on
 GitHub for a PR, and no job runs on the Mac runner: the tests run in the lane's own sandbox
 (next section). **A merge does not deploy**: a push to main runs only the alembic head gate. The
-release is `gh workflow run deploy.yml --repo foundryx-sdn-bhd/sorento-crm --ref main`,
+release is `gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main`,
 dispatched by the orchestrator after a batch has merged AND the release sweep below passed on
 that exact head; by default it runs no tests (`skip_tests` defaults to true), builds the images,
 and its deploy job then waits for the owner's approval in the GitHub `production` environment
@@ -246,9 +245,9 @@ old one-level regex missed 1,459 of those dependents.
 GitHub-hosted runners in parallel instead of serially in one sandbox (4 cores, 2 h command cap):
 
 ```
-gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
+gh workflow run tests-sharded.yml --repo jayson-odoo/sorento-crm \
   -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
-gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=full -f head=main -f comment_on=2176
+gh workflow run tests-sharded.yml --repo jayson-odoo/sorento-crm -f mode=full -f head=main -f comment_on=2176
 ```
 
 `select` plans the run (`sorento_crm_backend/scripts/sharded_tests_plan.py`): mode=full is every
@@ -291,7 +290,7 @@ reading a green `crew-tests: <sha> backend N passed/0 failed, vitest N/0` sweep 
 sha is exactly the release candidate (main's head to be dispatched):
 
 ```
-gh api -X POST repos/foundryx-sdn-bhd/sorento-crm/statuses/<sha> \
+gh api -X POST repos/jayson-odoo/sorento-crm/statuses/<sha> \
   -f state=success \
   -f context=release-sweep \
   -f description='crew-tests: backend N passed/0 failed, vitest N/0' \
@@ -299,9 +298,9 @@ gh api -X POST repos/foundryx-sdn-bhd/sorento-crm/statuses/<sha> \
 ```
 
 `description` is at most 140 characters. Check it took:
-`gh api repos/foundryx-sdn-bhd/sorento-crm/commits/<sha>/status --jq '.statuses[] | select(.context=="release-sweep") | .state'`
+`gh api repos/jayson-odoo/sorento-crm/commits/<sha>/status --jq '.statuses[] | select(.context=="release-sweep") | .state'`
 prints `success`. Then dispatch on main as usual:
-`gh workflow run deploy.yml --repo foundryx-sdn-bhd/sorento-crm --ref main`. If main moved after
+`gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main`. If main moved after
 the sweep, the new head has no status and the release is refused: sweep the new head.
 
 A red or failed sweep never gets the status (crew does not post `failure` or `pending` either:

@@ -57,6 +57,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { dateAnswerText } from '@/lib/sample-request-tracking';
 import { AsyncCombobox } from './AsyncCombobox';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import { projectDisplayName } from '@/app/(protected)/project-sales/_shared/lib/projectName';
 
 function FormField({
   label,
@@ -361,12 +362,12 @@ export default function SampleRequestForm({
                   onChange={(v, item) =>
                     patch({
                       project_id: v,
-                      project_label: item ? `${projectCodeLabel(item)} - ${item.title}` : '',
+                      project_label: item ? `${projectCodeLabel(item)} - ${projectDisplayName(item)}` : '',
                     })
                   }
                   fetchOptions={(q) => client.lookupProjects(q)}
                   optionValue={(o) => o.id}
-                  optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
+                  optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
                   optionMeta={(o) => o.company_name ?? ''}
                   placeholder="Search your registered projects"
                 />

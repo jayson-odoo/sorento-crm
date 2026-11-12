@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import type { ClashCandidate } from '../../_shared/types/project.types';
 
 /**
@@ -40,7 +41,10 @@ export function ClashWarningPanel({
   const context = candidates.filter((candidate) => !candidate.blocks);
 
   return (
-    <div className="w-full min-w-0 max-w-full space-y-2 overflow-hidden" aria-live="polite">
+    <div
+      className="w-full min-w-0 max-w-full space-y-2 overflow-hidden"
+      aria-live="polite"
+    >
       {blocking.map((candidate) => (
         <ClashLine
           key={candidate.project_id}
@@ -87,23 +91,36 @@ function ClashLine({
         }
         aria-hidden
       />
-      <p className="flex min-w-0 flex-1 flex-wrap sm:flex-nowrap items-baseline gap-x-1 text-sm">
-        <span className="shrink-0">{label}</span>{' '}
-        <Link
-          href={`/project-sales/${candidate.project_id}`}
-          className="shrink-0 font-medium underline-offset-2 hover:underline"
-        >
-          {candidate.project_code}
-        </Link>{' '}
-        <span className="min-w-0 basis-full truncate sm:basis-auto" title={candidate.title}>
-          {candidate.title}
-        </span>
-        {candidate.outcome && candidate.outcome !== 'open' && (
-          <Badge variant="secondary" className="shrink-0 capitalize">
-            {candidate.outcome}
-          </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="flex min-w-0 flex-wrap sm:flex-nowrap items-baseline gap-x-1 text-sm">
+          <span className="shrink-0">{label}</span>{' '}
+          <Link
+            href={`/project-sales/${candidate.project_id}`}
+            className="shrink-0 font-medium underline-offset-2 hover:underline"
+          >
+            {candidate.project_code}
+          </Link>{' '}
+          <span
+            className="min-w-0 basis-full truncate sm:basis-auto"
+            title={candidate.title}
+          >
+            {projectDisplayName(candidate)}
+          </span>
+          {candidate.outcome && candidate.outcome !== 'open' && (
+            <Badge variant="secondary" className="shrink-0 capitalize">
+              {candidate.outcome}
+            </Badge>
+          )}
+        </p>
+        {candidate.name?.trim() && (
+          <p
+            className="line-clamp-2 text-xs text-muted-foreground"
+            title={candidate.title}
+          >
+            {candidate.title}
+          </p>
         )}
-      </p>
+      </div>
     </div>
   );
 }

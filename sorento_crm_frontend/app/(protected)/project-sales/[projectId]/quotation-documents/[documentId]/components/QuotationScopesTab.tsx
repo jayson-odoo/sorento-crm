@@ -42,7 +42,23 @@ export function QuotationScopesTab() {
     versionNo,
     recheckResults,
     dismissRecheck,
+    lineFlags,
+    setLineFlags,
+    linesScrollRequest,
+    consumeLinesScroll,
   } = useQuotationDocumentScreen();
+  // A banner count was pressed: the area strip and its lines come into view.
+  const linesRef = React.useRef<HTMLDivElement | null>(null);
+  // Consumed inside the frame, not before it: StrictMode's double effect cancels the first
+  // frame, and a request taken there would be lost.
+  React.useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (consumeLinesScroll?.()) {
+        linesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [consumeLinesScroll, linesScrollRequest]);
   const quotations = useQuotations(projectId);
 
 
@@ -88,7 +104,12 @@ export function QuotationScopesTab() {
   }
 
   return (
-    <div className="space-y-5">
+    // Scrolled to sit just below the fixed top bar (70 px, 60 px on a phone) and the
+    // impersonation banner when it shows, not under them (crew re-pass at 375 px).
+    <div
+      ref={linesRef}
+      className="scroll-mt-[calc(var(--header-height,70px)+var(--impersonation-banner-height,0px)+0.75rem)] space-y-5"
+    >
       <QuotationScopeTabs
         scopes={scopes}
         activeScopeId={activeScope?.id ?? ''}
@@ -111,6 +132,7 @@ export function QuotationScopesTab() {
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
               feedback={openFeedback}
+              flagFilter={{ value: lineFlags, onChange: setLineFlags }}
               headerVersion={{
                 versionNo,
                 // Keyed by the version id each recheck ran on; the editor shows the one for the

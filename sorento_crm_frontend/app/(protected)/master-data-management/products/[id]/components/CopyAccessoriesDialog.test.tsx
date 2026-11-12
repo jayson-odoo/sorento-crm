@@ -211,7 +211,7 @@ describe('CopyAccessoriesDialog select all', () => {
 });
 
 describe('copySummaryLines', () => {
-  it('says what happens to products with and without a list', () => {
+  it('says what happens to products with and without a list, and never mentions box style (removed, owner 10 Nov)', () => {
     expect(
       copySummaryLines({
         targets: 12, targets_with_a_list: 4, entries_added: 32, entries_already_there: 4, box_style_set: 8,
@@ -221,7 +221,6 @@ describe('copySummaryLines', () => {
       '8 products with no list get the whole list.',
       '4 products already have a list: their entries stay, the missing ones are added at the end.',
       '32 entries will be added, 4 entries already there are left as they are.',
-      'The box style is set on 8 products that had none.',
     ]);
   });
 

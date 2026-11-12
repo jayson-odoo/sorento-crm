@@ -64,6 +64,7 @@ vi.mock('../services/projectService', async (importOriginal) => {
   return {
     ...actual,
     listParties: (...args: unknown[]) => listParties(...args),
+    listPartyRoles: async () => ROLES,
     listProjectTypes: (...args: unknown[]) => listProjectTypes(...args),
     listProjectTemplates: (...args: unknown[]) => listProjectTemplates(...args),
     previewClashes: (...args: unknown[]) => previewClashes(...args),
@@ -76,6 +77,18 @@ vi.mock('../services/projectService', async (importOriginal) => {
 });
 
 type Option = { value: string; label: string };
+
+// PROJECT-PARTY-ROLES: the party roles are a lookup list (seed order).
+const ROLES = [
+  { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+  { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+  { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+  { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+  { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+  { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+  { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+  { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+];
 
 // PS-REGISTRATION-V3: the lead source and district lists are lookup sets.
 vi.mock('@/hooks/useLookupSetOptions', () => ({
@@ -323,10 +336,10 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     launch_date: null,
     expected_delivery_from: '2027-01-01',
     expected_delivery_to: '2027-06-01',
-    architect_party_id: 'a1',
-    architect_name: 'Archico',
-    main_contractor_party_id: 'c1',
-    main_contractor_name: 'BuildIt',
+    party_links: [
+      { role: 'architect', party_id: 'a1', name: 'Archico' },
+      { role: 'main_contractor', party_id: 'c1', name: 'BuildIt' },
+    ],
     lead_id: 'lead-9',
     lead_code: 'LEAD-000009',
     next_action_overdue: false,
@@ -417,14 +430,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessionUser = { id: 'u-me', name: 'Me' };
   hasManagePermission.mockReturnValue(true);
-  listParties.mockImplementation(async (params: { party_type?: string }) => {
-    const byType: Record<string, unknown[]> = {
-      developer: [DEVELOPER],
-      architect: [ARCHITECT],
-      main_contractor: [CONTRACTOR],
-    };
+  // Any party can fill any role: the picker sends no party_type, only the query.
+  listParties.mockImplementation(async (params: { query?: string }) => {
+    const q = (params.query ?? '').toLowerCase();
     return {
-      data: byType[params.party_type ?? ''] ?? [],
+      data: [DEVELOPER, ARCHITECT, CONTRACTOR].filter((p) => p.name.toLowerCase().includes(q)),
       pagination: { total: 1, page: 1, limit: 200 },
     };
   });

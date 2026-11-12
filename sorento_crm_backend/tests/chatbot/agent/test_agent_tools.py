@@ -21,7 +21,7 @@ EXPECTED = {
     "crm_incoming_stock_by_product": "procurement.packing_lists.view",
     "crm_incoming_stock_shipments": "procurement.packing_lists.view",
     "crm_procurement_grn_summary": "procurement.grn.view",
-    "crm_procurement_po_last_cost_list": "scm.purchase_orders.view",
+    "crm_procurement_po_last_cost_list": "products.cost.view",  # SUPPLIER-COST-ACCESS
     "crm_procurement_po_placed_list": "scm.purchase_orders.view",
     "crm_procurement_spo_allocations_last_receipt_list": "procurement.spo_allocations.view",
     "crm_order_management_orders_by_product_list": "order_management.orders.view",
@@ -40,6 +40,7 @@ EXPECTED = {
     "crm_projects_list": "projects.projects.view",
     "crm_project_detail": "projects.projects.view",
     "crm_project_quotations_list": "projects.projects.view",
+    "crm_project_quotation_lines": "projects.projects.view",
     "crm_project_forecast": "projects.projects.view",
     "crm_order_analytics": "order_management.orders.view",
     "crm_find": "inventory.stock.view",

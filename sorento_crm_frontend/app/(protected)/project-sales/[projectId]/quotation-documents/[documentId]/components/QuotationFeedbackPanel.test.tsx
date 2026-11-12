@@ -74,6 +74,8 @@ function renderPanel(selectScope = vi.fn()) {
           sorentoSignature: null,
           activeScopeId: null,
           selectScope,
+          lineFlags: [],
+          setLineFlags: vi.fn(),
           versionNo: null,
           recheckResults: {},
           dismissRecheck: vi.fn(),

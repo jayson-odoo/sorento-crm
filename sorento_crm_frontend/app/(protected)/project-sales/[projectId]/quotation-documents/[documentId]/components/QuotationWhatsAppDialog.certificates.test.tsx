@@ -63,7 +63,7 @@ describe('QuotationWhatsAppDialog certificates line', () => {
 
   it('hides the line when the snapshot is empty', async () => {
     renderWith(0);
-    await screen.findByText(/Send R2 via WhatsApp/);
+    await screen.findByText(/Send R2 to the customer via WhatsApp/);
     expect(screen.queryByText(/Certificates\.pdf/)).toBeNull();
   });
 });

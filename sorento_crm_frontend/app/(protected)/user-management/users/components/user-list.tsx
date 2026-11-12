@@ -529,7 +529,7 @@ const UserList = () => {
           ),
         },
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
       },
       {
         accessorKey: 'email',

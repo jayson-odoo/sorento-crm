@@ -1,3 +1,4 @@
+import type { CoverSection } from '@/lib/quotation-cover';
 import { extractApiError } from '@/lib/api-client';
 import type { MatrixHeader } from '@/app/(protected)/project-sales/_shared/lib/quotationMatrix';
 
@@ -108,6 +109,8 @@ export type QuotationSignLine = {
   unit_price: string;
   complete_set: string | null;
   band_label: string | null;
+  /** A heading row: its band_label is the band, nothing else (PROPOSAL-FORM-COLLAPSE). */
+  is_section?: boolean;
   is_rate_only: boolean;
   /** Null on a rate-only line: the money column prints the words instead of a zero. */
   amount: string | null;
@@ -147,6 +150,8 @@ export type QuotationSignPage = {
   document_kind?: 'proposal' | 'quotation';
   /** The cover page rows of a new-layout issue; null for an issue from before the cover page. */
   cover_rows?: QuotationCoverRow[] | null;
+  /** Layout 4 (QUOTE-COVER-FIELDS): the sections; absent for layouts 1 to 3. */
+  cover_sections?: CoverSection[] | null;
   /** Layout 3 only: the design copied at send. Absent for layouts 1 and 2. */
   cover_title?: string | null;
   cover_show_letterhead?: boolean | null;
@@ -206,7 +211,12 @@ export type QuotationSignAmendment = {
   rows: QuotationSignAmendmentRow[];
 };
 
-export type QuotationFeedbackKind = 'note' | 'quantity' | 'unit_price' | 'remove' | 'model_swap';
+export type QuotationFeedbackKind =
+  | 'note'
+  | 'quantity'
+  | 'unit_price'
+  | 'remove'
+  | 'model_swap';
 
 /**
  * One feedback item: a note on a whole item, or on one cell (`cell_key`, kinds `note` and
@@ -240,7 +250,9 @@ export type QuotationSignAcceptBody = {
   terms_accepted: boolean;
 };
 
-export async function getQuotationSignPage(token: string): Promise<QuotationSignPage> {
+export async function getQuotationSignPage(
+  token: string,
+): Promise<QuotationSignPage> {
   const response = await fetch(signUrl(`/${encodeURIComponent(token)}`));
   if (!response.ok) {
     throw new QuotationSignError(
@@ -255,11 +267,14 @@ export async function acceptQuotation(
   token: string,
   body: QuotationSignAcceptBody,
 ): Promise<QuotationSignPage> {
-  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/accept`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const response = await fetch(
+    signUrl(`/${encodeURIComponent(token)}/accept`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
   if (!response.ok) {
     throw new QuotationSignError(
       await extractApiError(response, 'Your signature could not be saved.'),
@@ -273,11 +288,14 @@ export async function submitQuotationFeedback(
   token: string,
   body: QuotationFeedbackBody,
 ): Promise<QuotationSignPage> {
-  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/amendment-request`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const response = await fetch(
+    signUrl(`/${encodeURIComponent(token)}/amendment-request`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
   if (!response.ok) {
     throw new QuotationSignError(
       await extractApiError(response, 'Your feedback could not be sent.'),
@@ -292,7 +310,10 @@ export async function submitQuotationFeedback(
  * browser keeps; the backend stores only its digest, for the 30-minute "same browser" rule.
  * Best-effort by design: a lost beacon costs one count, never the customer's page.
  */
-export async function recordQuotationView(token: string, visitorId: string): Promise<void> {
+export async function recordQuotationView(
+  token: string,
+  visitorId: string,
+): Promise<void> {
   await fetch(signUrl(`/${encodeURIComponent(token)}/view`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

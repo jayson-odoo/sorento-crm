@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product costing mock</title>
+<style>
+:root{--bg:#f7f7f8;--card:#fff;--fg:#18181b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;
+--primary:#1b84ff;--primary-soft:#eef5ff;--primary-border:#b9d6ff;--success:#17863f;--success-soft:#eafff1;
+--warn:#a16207;--warn-soft:#fff8dd;--danger:#d61f4c;--danger-soft:#fff0f3;--radius:8px;--shadow:0 8px 24px rgba(0,0,0,.08)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0d;--card:#141417;--fg:#f4f4f5;--muted:#a1a1aa;--border:#2e2e33;--muted-bg:#18181b;
+--primary-soft:#0f2742;--primary-border:#1e3a5f;--success:#4ade80;--success-soft:#0d2d1a;--warn:#fcd34d;--warn-soft:#332600;--danger:#fb7185;--danger-soft:#3a0d18;--shadow:0 8px 24px rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--bg:#0b0b0d;--card:#141417;--fg:#f4f4f5;--muted:#a1a1aa;--border:#2e2e33;--muted-bg:#18181b;
+--primary-soft:#0f2742;--primary-border:#1e3a5f;--success:#4ade80;--success-soft:#0d2d1a;--warn:#fcd34d;--warn-soft:#332600;--danger:#fb7185;--danger-soft:#3a0d18;--shadow:0 8px 24px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.page{max-width:1240px;margin:0 auto;padding:16px}
+h1{font-size:20px;font-weight:600;margin:4px 0}
+.lead{color:var(--muted);margin:0 0 18px;max-width:90ch}
+.frame{margin:0 0 32px;min-width:0}
+.frame>h2{font-size:15px;font-weight:600;margin:0 0 4px}
+.frame>p.note{color:var(--muted);margin:0 0 10px;font-size:13px;max-width:100ch}
+.screen{border:1px solid var(--border);border-radius:14px;background:var(--bg);box-shadow:var(--shadow);overflow:hidden}
+.inner{padding:16px}
+.ph{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.ph .t{font-size:18px;font-weight:600}
+.ph .sub{color:var(--muted);font-size:13px}
+.ph .sp{flex:1}
+.btn{height:34px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--fg);font:inherit;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:12px}
+.meta b{color:var(--fg);font-weight:500}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted);font-size:13px}
+.tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary);font-weight:500}
+.tabs span.new::after{content:" new";color:var(--primary);font-size:11px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0}
+.card h3{font-size:14px;font-weight:600;margin:0 0 10px}
+.grid2{display:grid;gap:14px;grid-template-columns:1fr}
+@media(min-width:900px){.grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.tw{overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
+th,td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{color:var(--muted);font-weight:500;background:var(--muted-bg)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--muted-bg)}
+.pill.pri{background:var(--primary-soft);border-color:var(--primary-border);color:var(--primary)}
+.pill.ok{background:var(--success-soft);color:var(--success);border-color:transparent}
+.pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:13px}
+.dl dt{color:var(--muted)}
+.dl dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.dl dd.big{font-size:18px;font-weight:600}
+.dl .rule{grid-column:1/-1;border-top:1px solid var(--border);margin:4px 0}
+.muted{color:var(--muted)}
+.ann{font-size:12px;color:var(--muted);margin-top:8px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.search{height:34px;flex:1;min-width:180px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);padding:0 10px;display:flex;align-items:center;color:var(--muted)}
+.sw{display:inline-flex;align-items:center;gap:8px;font-size:13px}
+.sw i{width:32px;height:18px;border-radius:999px;background:var(--primary);position:relative;display:inline-block}
+.sw i::after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+.map td{white-space:normal}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--muted-bg);padding:1px 4px;border-radius:4px}
+.q{background:var(--warn-soft);color:var(--warn);font-size:12px;border-radius:6px;padding:1px 6px}
+.sel{height:34px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);padding:0 10px;display:flex;align-items:center;gap:8px;font-size:13px;min-width:0}
+.sel .x{margin-left:auto;color:var(--muted)}
+.menu{border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow);margin-top:6px;overflow:hidden}
+.menu div{display:flex;gap:8px;padding:8px 10px;font-size:13px;border-bottom:1px solid var(--border)}
+.menu div:last-child{border-bottom:0}
+.menu div.on{background:var(--primary-soft)}
+.menu div span:last-child{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.method{display:inline-flex;gap:6px;align-items:center;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary);border:1px solid var(--primary-border)}
+@media(max-width:600px){.dl{grid-template-columns:1fr;gap:0 16px}.dl dd{text-align:left;margin-bottom:8px}.dl dd.big{font-size:17px}}
+.v2{display:inline-block;font-size:11px;color:var(--primary);border:1px solid var(--primary-border);border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.cellin{display:inline-flex;align-items:center;justify-content:flex-end;height:26px;min-width:56px;padding:0 6px;border:1px solid var(--primary-border);border-radius:6px;background:var(--card);font-variant-numeric:tabular-nums}
+.cellsel{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 6px;border:1px solid var(--primary-border);border-radius:6px;background:var(--card)}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--primary);margin-left:4px;vertical-align:middle}
+tr.exp td{background:var(--muted-bg);white-space:normal}
+.sub td{font-size:12px}
+.party{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.party .sel{min-width:260px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.chips b{color:var(--fg);font-weight:500}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Product costing: the workbook in the system</h1>
+<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v5 on the owner's note of 11 Nov (00:2x): one costing page that is the owner's Internal_Costing_Formula workbook (Sheet1) inside the system, delivered the way Sales &gt; Targets was. One grid, the same toolbar, Edit then one Save (as Sales &gt; Targets), Excel export, history per row. Amended 11 Nov 00:3x: mark-up per row per party (QA), no Excel import (QC), Edit / Save (QD), "Has cost" on by default (QE, working answer).</p>
+<p class="lead">WB 245 (CGB9032B, RMB 34.50, +RM 8, 8%) is the workbook's own row. The other rows use the workbook's category rules with masked codes and illustrative prices. Party = the customer (debtor) record. Bath Plus = 304-R017 "RELATED - BATHPLUS SDN BHD". Management only (<code>products.cost.view</code>). Nothing is written back to AutoCount.</p>
+
+<!-- Frame 1 -->
+<section class="frame">
+<h2>1. Products &gt; Costing <small class="muted">(the page; Bath Plus picked)</small></h2>
+<p class="note">The party picker defaults to <b>Company standard</b>. In that view Mark-up is the achieved mark-up and Final is the AutoCount selling price, both read-only. Picking a party (here Bath Plus) shows its products at its mark-up. A row opens to its suppliers ("margin if bought from this supplier"). Columns follow Sheet1 left to right.</p>
+<div class="screen"><div class="inner">
+  <div class="ph"><span class="t">Costing</span><span class="sp"></span><button class="btn">Settings</button><button class="btn pri">Edit</button></div>
+  <div class="party">
+    <div class="sel">Pricing for: RELATED - BATHPLUS SDN BHD (304-R017)<span class="x">&#x2715; &#9662;</span></div>
+    <div class="chips"><span>Party mark-up <b>8%</b></span><span>Cost method <b>Company default (Primary supplier)</b></span><span>Rates <b>as of 11 Nov 2026</b></span><span>Products <b>8</b></span></div>
+  </div>
+  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Filters (Has cost)</button><button class="btn">Columns</button><button class="btn">Add products</button><button class="btn">Export</button></div>
+  <div class="tw"><table style="min-width:1480px">
+    <colgroup><col style="width:120px"><col style="width:110px"><col style="width:150px"><col style="width:90px"><col style="width:110px"><col style="width:80px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:170px"><col style="width:80px"><col style="width:100px"><col style="width:100px"><col style="width:90px"></colgroup>
+    <thead><tr><th>Category</th><th>Code</th><th>Name</th><th>Supplier</th><th class="n">Cost</th><th class="n">Rate</th><th class="n">SST</th><th>Transport</th><th class="n">Landing (RM)</th><th>Cost method</th><th class="n">Mark-up</th><th class="n">Final (RM)</th><th class="n">Selling (RM)</th><th class="n">Margin</th></tr></thead>
+    <tbody>
+      <tr><td>Ceramics</td><td>CGB9032B</td><td title="WB 245 Basin">WB 245 Basin</td><td>SUP-A01</td><td class="n">RMB 34.50</td><td class="n">1.6</td><td class="n">1.10</td><td>+ RM 8.00</td><td class="n">31.72</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>34.26</b></td><td class="n">79.00</td><td class="n">130.61%</td></tr>
+      <tr class="exp sub"><td colspan="14">
+        <div class="tw" style="margin:2px 0"><table><colgroup><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col style="width:130px"><col style="width:120px"><col style="width:150px"></colgroup>
+        <thead><tr><th>Supplier</th><th>Primary</th><th class="n">Lead time</th><th class="n">Cost</th><th class="n">Landing (RM)</th><th class="n">Final at 8% (RM)</th><th class="n">Margin if bought here</th></tr></thead>
+        <tbody>
+          <tr><td>SUP-A01</td><td><span class="pill pri">Primary</span></td><td class="n">45 d</td><td class="n">RMB 34.50</td><td class="n">31.72</td><td class="n">34.26</td><td class="n">130.61%</td></tr>
+          <tr><td>SUP-B07</td><td></td><td class="n">60 d</td><td class="n">RMB 38.00</td><td class="n">34.13</td><td class="n">36.86</td><td class="n">114.35%</td></tr>
+          <tr><td>SUP-L02</td><td></td><td class="n">7 d</td><td class="n">MYR 42.00</td><td class="n">54.20</td><td class="n">58.54</td><td class="n">34.96%</td></tr>
+        </tbody></table></div></td></tr>
+      <tr><td>WC</td><td>WC-5xx</td><td>WC (masked)</td><td>SUP-A01</td><td class="n">RMB 310.00</td><td class="n">1.6</td><td class="n">1.10</td><td>+ RM 8.00</td><td class="n">221.13</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>238.82</b></td><td class="n">599.00</td><td class="n">150.82%</td></tr>
+      <tr><td>Jacuzzi</td><td>JZ-1xx</td><td>Jacuzzi (masked)</td><td>SUP-J02</td><td class="n">RMB 2,450.00</td><td class="n">1.6</td><td class="n">1.10</td><td>+ RM 8.00</td><td class="n">1,692.38</td><td>Primary supplier</td><td class="n">10%<span class="dot" title="Row mark-up, overrides the party's 8%"></span></td><td class="n"><b>1,861.61</b></td><td class="n">3,999.00</td><td class="n">114.81%</td></tr>
+      <tr><td>Taps</td><td>T-1xx</td><td>Basin tap (masked)</td><td>SUP-A01</td><td class="n">RMB 120.00</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.07</td><td class="n">88.28</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>95.34</b></td><td class="n">189.00</td><td class="n">98.24%</td></tr>
+      <tr><td>Kitchen sinks</td><td>K-2xx</td><td>Kitchen sink (masked)</td><td>SUP-B07</td><td class="n">RMB 260.00</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.10</td><td class="n">196.63</td><td>Selected supplier<span class="dot" title="Product override"></span></td><td class="n">8%</td><td class="n"><b>212.36</b></td><td class="n">459.00</td><td class="n">116.15%</td></tr>
+      <tr><td>Shower</td><td>S-3xx</td><td>Shower set (masked)</td><td>SUP-E05</td><td class="n">USD 20.00</td><td class="n">0.2273</td><td class="n">1.10</td><td>x 1.07</td><td class="n">103.58</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>111.86</b></td><td class="n">239.00</td><td class="n">113.66%</td></tr>
+      <tr><td>Hose</td><td>H-0xx</td><td>Hose (masked)</td><td>SUP-A01</td><td class="n">RMB 6.80</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.07</td><td class="n">5.00</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>5.40</b></td><td class="n">15.00</td><td class="n">177.65%</td></tr>
+      <tr><td>Accessories</td><td>A-4xx</td><td>Accessory (masked)</td><td class="muted">-</td><td class="n muted">-</td><td class="n muted">-</td><td class="n">1.10</td><td>x 1.07</td><td class="n muted">-</td><td>Primary supplier</td><td class="n">8%</td><td class="n muted">-</td><td class="n">25.00</td><td><span class="pill warn">No cost</span></td></tr>
+    </tbody></table></div>
+  <p class="ann">Workbook formula, one row: 34.50 / 1.6 = 21.5625, x 1.10 = 23.71875, + 8 = 31.71875 landing, x 1.08 = 34.25625 final. Rate is units per MYR 1, as the workbook writes it, taken from the dated rate in force on the "as of" day. Margin = (selling - final) / final. A dot marks a value set on that row rather than inherited. Filters: Category, Brand, Cost method, Has cost. "Has cost" is on when the page opens, so it shows the costed products the way the workbook does; turn it off to see the gaps. Each row's menu has <b>History</b>, showing who changed its mark-up, transport or method, when, and from what.</p>
+
+  <h3 style="font-size:13px;margin:18px 0 8px">After pressing Edit (same grid, cells become inputs; Cancel and Save replace Edit in the header; one Save)</h3>
+  <div class="tw"><table style="min-width:900px">
+    <colgroup><col style="width:110px"><col style="width:150px"><col style="width:160px"><col style="width:110px"><col style="width:210px"><col style="width:90px"><col style="width:100px"></colgroup>
+    <thead><tr><th>Code</th><th>Name</th><th>Transport</th><th class="n">Landing (RM)</th><th>Cost method</th><th class="n">Mark-up</th><th class="n">Final (RM)</th></tr></thead>
+    <tbody>
+      <tr><td>CGB9032B</td><td>WB 245 Basin</td><td><span class="cellsel">Category: + RM 8.00 &#9662;</span></td><td class="n">31.72</td><td><span class="cellsel">Company default &#9662;</span></td><td class="n"><span class="cellin">8</span> %</td><td class="n">34.26</td></tr>
+      <tr><td>JZ-1xx</td><td>Jacuzzi (masked)</td><td><span class="cellsel">Category: + RM 8.00 &#9662;</span></td><td class="n">1,692.38</td><td><span class="cellsel">Company default &#9662;</span></td><td class="n"><span class="cellin">10</span> %</td><td class="n">1,861.61</td></tr>
+    </tbody></table></div>
+  <p class="ann">Editable: <b>Mark-up</b> (this party's row, cleared = the party's 8%), <b>Transport</b> (the product's override, cleared = the category rule), <b>Cost method</b> (the product's override, cleared = the party's or the company default). Transport and method belong to the product, so a change shows "applies to every party". Landing, Final and Margin recompute as you type. Save writes one audited change per changed cell. Cost, rate and SST are not edited here: supplier costs come in through the existing Upload cost price, and rates and SST through Settings. In Company standard view only Transport and Cost method are editable.</p>
+</div></div>
+</section>
+
+<!-- Frame 2 -->
+<section class="frame">
+<h2>2. Settings <small class="muted">(dialog from the page header)</small></h2>
+<div class="screen" style="max-width:760px"><div class="inner">
+  <div class="tabs"><span class="on">Exchange rates</span><span>SST and method</span><span>Transport by category</span></div>
+  <div class="tw"><table>
+    <colgroup><col style="width:90px"><col style="width:130px"><col style="width:140px"><col style="width:110px"><col></colgroup>
+    <thead><tr><th>Currency</th><th>Effective from</th><th class="n">Units per MYR 1</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>RMB</td><td>1 Dec 2026</td><td class="n">1.6300</td><td><span class="pill">Scheduled</span></td><td class="muted">Q4 budget</td></tr>
+      <tr><td>RMB</td><td>1 Nov 2026</td><td class="n">1.6000</td><td><span class="pill ok">In force</span></td><td class="muted">Workbook rate</td></tr>
+      <tr><td>RMB</td><td>1 Sep 2026</td><td class="n">1.6200</td><td><span class="pill">Past</span></td><td></td></tr>
+      <tr><td>USD</td><td>1 Nov 2026</td><td class="n">0.2273</td><td><span class="pill ok">In force</span></td><td></td></tr>
+    </tbody></table></div>
+  <p class="ann">Rates are dated, and the one used is the latest on or before the date. The SCM planner reads the same table. The other two tabs hold SST (1.10) with the default cost method (Primary supplier), and one rule per category (Add RM 8 for Ceramics / WC / Jacuzzi; x 1.07 for Accessories / Taps / Hose / Valves / Shower; x 1.10 for Kitchen sinks). Every change is audited.</p>
+</div></div>
+</section>
+
+<!-- Map -->
+<section class="frame">
+<h2>Element to component map <small class="muted">(reused from Sales &gt; Targets first)</small></h2>
+<div class="tw"><table class="map">
+<colgroup><col style="width:30%"><col></colgroup>
+<thead><tr><th>Element</th><th>Existing component (repo path, <code>sorento_crm_frontend/</code>)</th></tr></thead>
+<tbody>
+<tr><td>Page shell, grid card, toolbar (search, Filters, Columns, Export), pager</td><td>The Sales &gt; Targets list: <code>app/(protected)/sales/targets/components/SalesTargetsView.tsx:439-537</code> = <code>components/ui/data-grid.tsx</code> + <code>components/ui/data-grid-list-toolbar.tsx</code> + <code>components/ui/data-grid-table.tsx</code> + <code>components/ui/data-grid-pagination.tsx</code> in <code>components/ui/card.tsx</code>, header from <code>components/common/PageHeader.tsx</code>, search from <code>components/common/ListSearchInput.tsx</code>, fixed + resizable columns, <code>listingKey</code> for saved column choices</td></tr>
+<tr><td>Export</td><td><code>DataGridListToolbar exportConfig={{kind:'listQuery'}}</code> (server export of the whole filtered set, as <code>master-data-management/products/components/ProductsList.tsx:1170</code>); the sheet keeps Sheet1's column order</td></tr>
+
+<tr><td>Edit / Save in place</td><td>The Sales &gt; Targets record's edit mode (<code>sales/targets/components/TargetRecord.tsx:536-551</code>: Edit as the one primary button, Cancel and Save in the header, one PATCH of changed values, a failed save keeps the edit open; <code>TeamFigures</code> / <code>FigureInput</code>, NumberInput in cells, one Save); cell inputs <code>components/ui/number-input.tsx</code> (<code>NumberInput</code> / <code>LiveNumberInput</code>, as in <code>scm/components/SupplierSheet.tsx</code>) and <code>components/common/SearchableSelect.tsx</code> (clearable)</td></tr>
+<tr><td>Party picker</td><td><code>components/common/CustomerDebtorCombobox.tsx</code> with <code>pickOnly</code> (the stock inquiry / new product application customer picker); cleared = "Company standard"</td></tr>
+<tr><td>Row expand (suppliers)</td><td>A grid under an open row, as <code>products/[id]/components/ProductSuppliersTab.tsx:99</code> already draws its cost list (<code>components/common/PanelDataGrid.tsx</code> <code>expanded</code>; nested-grid rules in <code>components/ui/data-grid.nested.test.tsx</code>)</td></tr>
+<tr><td>Add products to a party</td><td><code>products/[id]/components/ProductTargetPicker.tsx</code> (<code>useProductTargetPicker</code>, made to work without a source product)</td></tr>
+<tr><td>Row History</td><td><code>components/common/RowActionsMenu.tsx</code> opening <code>components/audit/AuditTrail.tsx</code> for the row's product and party</td></tr>
+<tr><td>Settings dialog</td><td><code>components/common/FormDialogScaffold.tsx</code> + line tabs <code>components/ui/tabs.tsx</code>; the rates tab extends <code>app/(protected)/scm/policies/components/CurrencyRatesPanel.tsx</code> to dated rows</td></tr>
+<tr><td>No cost, Primary pills</td><td><code>components/ui/badge.tsx</code></td></tr>
+</tbody></table></div>
+<p class="ann">Dropped: Excel import (owner, 00:3x). Dropped from v4 because this page covers them: the product Pricing tab, the Purchasing tab extension (now the row expand), the customer Costing tab, the Party costing index, and the separate settings page.</p>
+</section>
+</div>
+</body>
+</html>

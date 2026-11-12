@@ -40,6 +40,7 @@ from app.models.projects import (
     QuotationTemplate,
 )
 from app.services.error_handler import AppException
+from app.services import quote_terms_service as quote_terms
 
 # ------------------------------------------------------------------ merge fields
 
@@ -83,7 +84,9 @@ MERGE_FIELDS: tuple[Dict[str, str], ...] = (
     },
     {
         "token": "subject_title",
-        "label": "Subject line",
+        # The form calls it Project title (owner, 10 Nov 2026); "on this quotation" keeps it
+        # apart from {{project_title}}, the project record's own title.
+        "label": "Project title on this quotation",
         "example": "CADANGAN MEMBINA PANGSAPURI RUMAH IDAMAN",
     },
     {
@@ -238,6 +241,24 @@ def salesperson_of(db: Session, project: Any, document: Any) -> Optional[str]:
         return None
     owner = db.query(User).filter(User.id == owner_id).first()
     return owner.name if owner else None
+
+
+def prepared_by_user(db: Session, document: Any) -> Any:
+    """Who prepared the document: its creator, never the project owner (owner ruling 11 Nov
+    2026, compliance). While an admin impersonates, ``created_by`` is the impersonated user, the
+    one the document is saved as. None when the creator is unknown."""
+    from app.models.user import User
+
+    creator_id = getattr(document, "created_by", None)
+    if not creator_id:
+        return None
+    return db.query(User).filter(User.id == creator_id).first()
+
+
+def prepared_by_of(db: Session, document: Any) -> Optional[str]:
+    """The Prepared By name: the document's creator (``prepared_by_user``)."""
+    user = prepared_by_user(db, document)
+    return user.name if user else None
 
 
 def build_document_context(
@@ -438,6 +459,8 @@ def create_template(
         is_active=wants_active,
         created_by=actor_user_id,
     )
+    if template.kind == TEMPLATE_KIND_TERMS:
+        quote_terms.apply(db, company_id=company_id, target=template, payload=payload)
     db.add(template)
     db.flush()
     return template
@@ -480,6 +503,8 @@ def update_template(
     for field in ("payment_terms", "validity"):
         if field in payload:
             setattr(template, field, payload[field])
+    if template.kind == TEMPLATE_KIND_TERMS:
+        quote_terms.apply(db, company_id=template.company_id, target=template, payload=payload)
     db.flush()
     return template
 
@@ -539,6 +564,14 @@ def delete_template(db: Session, *, template: QuotationTemplate) -> None:
 # -------------------------------------------------------------------- serialize
 
 
+def _design_of(template: QuotationTemplate) -> Optional[Dict[str, Any]]:
+    if not template.design:
+        return template.design
+    from app.services.quotation_cover_service import normalize_design
+
+    return normalize_design(template.design)
+
+
 def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
     return {
         "id": str(template.id),
@@ -547,7 +580,11 @@ def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
         "body_html": template.body_html,
         "payment_terms": template.payment_terms,
         "validity": template.validity,
-        "design": template.design,
+        "payment_term_id": str(template.payment_term_id) if template.payment_term_id else None,
+        "validity_value": template.validity_value,
+        "validity_unit": template.validity_unit,
+        # A design saved before QUOTE-COVER-FIELDS reads in the sections shape.
+        "design": _design_of(template),
         "is_active": bool(template.is_active),
         "created_at": template.created_at,
         "updated_at": template.updated_at,

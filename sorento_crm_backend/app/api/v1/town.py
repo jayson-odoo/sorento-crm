@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.dependencies import get_current_user, get_db
+from app.dependencies import get_current_user, get_db, require_permission
 from app.models.base import get_company_scope
 from app.services.error_handler import AppException
 from app.services.queue_service import redis_conn
@@ -26,6 +26,10 @@ from app.services.phone_signin_service import is_salesperson
 from app.services.user_service import UserService, holds_permission
 
 router = APIRouter()
+
+#: The Town is admin-only (owner, 10 Nov 2026, TOWN-V2): granted to `admin` / `superadmin` by migration
+#: `town_0001_view_perm`, and to any other role only by an admin on the Roles screen.
+TOWN_VIEW = "dashboards.town.view"
 
 RATE_LIMIT_PER_MINUTE = 30
 _HEADERS = {"Cache-Control": "private, no-cache"}
@@ -65,7 +69,7 @@ def _matches(header: Optional[str], etag: str) -> bool:
     return any(part.strip().removeprefix("W/") == etag for part in header.split(","))
 
 
-@router.get("/snapshot")
+@router.get("/snapshot", dependencies=[Depends(require_permission(TOWN_VIEW))])
 def get_snapshot(
     request: Request,
     mode: Optional[str] = Query(None),

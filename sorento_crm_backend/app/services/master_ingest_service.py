@@ -62,6 +62,7 @@ from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, Supplier
+from app.models.payment_term import PaymentTerm
 from app.models.product import Brand, ItemClass, ItemType, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.models.user import SystemSetting
@@ -69,6 +70,7 @@ from app.schemas.canonical_masters import (
     CanonicalBrand,
     CanonicalCustomer,
     CanonicalItemClass,
+    CanonicalPaymentTerm,
     CanonicalProductCategory,
     CanonicalSalesAgent,
     CanonicalUnitOfMeasure,
@@ -353,6 +355,7 @@ _NOT_NULL_DEFAULTS: dict[str, dict[str, Any]] = {
     "product_categories": {"is_active": True},
     "brands": {"is_active": True},
     "item_classes": {"is_active": True},
+    "payment_terms": {"is_active": True},
     "units_of_measure": {"is_active": True, "decimal_places": 0},
     "warehouses": {"is_active": True},
     "suppliers": {"is_active": True},
@@ -399,6 +402,15 @@ def _uom_columns(payload: Any, db: Session, company_id: str, warnings: list[str]
     # update, or the model's own 0 default on create - never a value this
     # module invents.
     _present(payload, columns, "decimal_places", "description", "is_active")
+    return columns
+
+
+def _payment_term_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
+    # QUOTE-TERMS-SELECT (contract 2.14): AutoCount `Terms`, read-only reference data.
+    columns: dict[str, Any] = {"term_code": payload.code.strip()}
+    if "rule" in payload.model_fields_set:
+        columns["term_rule"] = payload.rule
+    _present(payload, columns, "is_active")
     return columns
 
 
@@ -469,10 +481,11 @@ def _resolve_country_id(db: Session, value: str) -> Optional[str]:
 
 
 def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
-    # `credit_limit` / `payment_terms_days` / `payment_terms_code` are REMOVED
-    # (D15 end state, S4) - `customers` never had a matching column for any
-    # of the three, and an undeclared key is dropped (name logged, owner
-    # decision 1 Oct 2026) before this builder runs, so none is ever written.
+    # `credit_limit` / `payment_terms_days` are REMOVED (D15 end state, S4) -
+    # `customers` never had a matching column for either, and an undeclared key
+    # is dropped (name logged, owner decision 1 Oct 2026) before this builder
+    # runs, so neither is ever written. `payment_terms_code` came back at
+    # contract 2.14 as AutoCount Debtor.DisplayTerm (stored, below).
     columns: dict[str, Any] = {"customer_code": payload.code, "customer_name": payload.name}
     _present(
         payload,
@@ -484,6 +497,8 @@ def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list
         "country",
         "is_active",
         "region",
+        # Contract 2.14 (QUOTE-TERMS-SELECT): AutoCount Debtor.DisplayTerm.
+        "payment_terms_code",
     )
     # D16 (S2): folded through the same rule the customer importer uses
     # (`customer_rules.fold_market_segment`) so the two can never map a
@@ -718,6 +733,15 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
     # the code = name rows a product's `item_class_code` back-created.
     "item_classes": EntitySpec(
         "item_classes", CanonicalItemClass, "item_class_code", _item_class_columns, ItemClass
+    ),
+    # QUOTE-TERMS-SELECT (contract 2.14): AutoCount Terms, picked on a quotation. Default
+    # adoption (`resolve_master_by_code`, case/whitespace insensitive), the item classes rule.
+    "payment_terms": EntitySpec(
+        "payment_terms",
+        CanonicalPaymentTerm,
+        "term_code",
+        _payment_term_columns,
+        PaymentTerm,
     ),
     "units_of_measure": EntitySpec(
         "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns, UnitOfMeasure
