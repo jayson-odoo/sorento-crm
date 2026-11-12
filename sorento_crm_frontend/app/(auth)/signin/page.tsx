@@ -29,6 +29,7 @@ import { getSigninSchema, SigninSchemaType } from '../forms/signin-schema';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { PhoneSignIn } from './components/phone-signin';
 import { DevLoginPicker } from './components/dev-login-picker';
+import PasskeySignInButton from '@/components/passkey-signin-button';
 
 type SigninMode = 'email' | 'phone';
 
@@ -187,7 +188,13 @@ export default function Page() {
                   <FormItem>
                     <FormLabel>Email</FormLabel>
                     <FormControl>
-                      <Input placeholder="Your email" {...field} />
+                      {/* "webauthn" lets the browser offer a passkey in this field's
+                          autofill (PASSKEY-LOGIN AC-41). */}
+                      <Input
+                        placeholder="Your email"
+                        autoComplete="username webauthn"
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -278,7 +285,7 @@ export default function Page() {
             </span>
             <Separator className="flex-1" />
           </div>
-          <div className="flex justify-center">
+          <div className="flex justify-center gap-3">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -295,6 +302,17 @@ export default function Page() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom">Phone number</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PasskeySignInButton
+                  autofill
+                  onSignedIn={goToLandingUrl}
+                  onError={setError}
+                  disabled={isProcessing}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Passkey</TooltipContent>
             </Tooltip>
           </div>
         </>

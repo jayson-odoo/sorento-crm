@@ -68,6 +68,31 @@ async function fetchCompanyContext(
 }
 
 /**
+ * The NextAuth `User` every sign-in provider returns, from the backend's shared LoginResponse
+ * (`/auth/login`, `/auth/phone/verify`, `/auth/portal-link`, `/auth/passkey/verify`,
+ * `/auth/dev-login`).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function userFromLoginResponse(data: any): User {
+  return {
+    id: data.id,
+    email: data.email,
+    name: data.name || 'Anonymous',
+    avatar: data.avatar ?? null,
+    status: data.status,
+    roleId: data.role_id || (data.role_ids?.[0] ?? null),
+    roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
+    roleName: data.role_name ?? null,
+    // Opaque FastAPI session token  - carried in the NextAuth cookie.
+    apiToken: data.token,
+    // Where this user lands after signing in (AC-28) - a salesperson's
+    // portal home, the CRM home for anyone with a permission, else the
+    // portal home. Null on a backend that predates this field.
+    homePath: data.home_path ?? null,
+  } as User;
+}
+
+/**
  * DEV-LOGIN-BYPASS (PLAN-dev-login-bypass-03oct.md): passwordless sign-in for LOCAL test copies.
  * Registered only when `devLoginConfigured()` (server-only `DEV_AUTO_LOGIN=true` and not a
  * production build), and `authorize()` re-checks the browser Host. Takes only an email; the
@@ -106,20 +131,7 @@ export function devLoginProvider() {
           JSON.stringify({ code: res.status, message: 'Dev sign-in is not available.' }),
         );
       }
-      const data = await res.json();
-
-      return {
-        id: data.id,
-        email: data.email,
-        name: data.name || 'Anonymous',
-        avatar: data.avatar ?? null,
-        status: data.status,
-        roleId: data.role_id || (data.role_ids?.[0] ?? null),
-        roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
-        roleName: data.role_name ?? null,
-        apiToken: data.token,
-        homePath: data.home_path ?? null,
-      } as User;
+      return userFromLoginResponse(await res.json());
     },
   });
 }
@@ -172,22 +184,7 @@ const authOptions: NextAuthOptions = {
           throw new Error(JSON.stringify({ code: res.status, message }));
         }
 
-        return {
-          id: data.id,
-          email: data.email,
-          name: data.name || 'Anonymous',
-          avatar: data.avatar ?? null,
-          status: data.status,
-          roleId: data.role_id || (data.role_ids?.[0] ?? null),
-          roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
-          roleName: data.role_name ?? null,
-          // Opaque FastAPI session token  - carried in the NextAuth cookie.
-          apiToken: data.token,
-          // Where this user lands after signing in (AC-28) - a salesperson's
-          // portal home, the CRM home for anyone with a permission, else the
-          // portal home. Null on a backend that predates this field.
-          homePath: data.home_path ?? null,
-        } as User;
+        return userFromLoginResponse(data);
       },
     }),
     CredentialsProvider({
@@ -237,18 +234,56 @@ const authOptions: NextAuthOptions = {
           throw new Error(JSON.stringify({ code: res.status, message }));
         }
 
-        return {
-          id: data.id,
-          email: data.email,
-          name: data.name || 'Anonymous',
-          avatar: data.avatar ?? null,
-          status: data.status,
-          roleId: data.role_id || (data.role_ids?.[0] ?? null),
-          roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
-          roleName: data.role_name ?? null,
-          apiToken: data.token,
-          homePath: data.home_path ?? null,
-        } as User;
+        return userFromLoginResponse(data);
+      },
+    }),
+    CredentialsProvider({
+      // PASSKEY-LOGIN AC-42: the browser already ran the WebAuthn ceremony; the backend
+      // verifies the assertion against the challenge it stored and mints the same session.
+      id: 'passkey',
+      name: 'Passkey',
+      credentials: {
+        challengeId: { label: 'Challenge', type: 'text' },
+        credential: { label: 'Credential', type: 'text' },
+      },
+      async authorize(credentials, req) {
+        let credential: unknown = null;
+        try {
+          credential = credentials?.credential ? JSON.parse(credentials.credential) : null;
+        } catch {
+          credential = null;
+        }
+        if (!credentials?.challengeId || !credential) {
+          throw new Error(
+            JSON.stringify({ code: 400, message: "That passkey didn't work. Sign in another way." }),
+          );
+        }
+
+        let res: Response;
+        try {
+          res = await fetch(`${backendBaseUrl()}/api/v1/auth/passkey/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...forwardedForHeader(req?.headers) },
+            body: JSON.stringify({ challenge_id: credentials.challengeId, credential }),
+          });
+        } catch {
+          throw new Error(
+            JSON.stringify({ code: 503, message: 'Unable to reach the server. Please try again.' }),
+          );
+        }
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          // PASSKEY_FAILED / PASSKEYS_UNAVAILABLE / RATE_LIMITED are flat { code, message };
+          // an inactive account is the /auth/login { detail } 403.
+          const message =
+            (typeof data?.message === 'string' && data.message) ||
+            (typeof data?.detail === 'string' && data.detail) ||
+            "That passkey didn't work. Sign in another way.";
+          throw new Error(JSON.stringify({ code: res.status, message }));
+        }
+
+        return userFromLoginResponse(data);
       },
     }),
     ...(devLoginOn ? [devLoginProvider()] : []),
