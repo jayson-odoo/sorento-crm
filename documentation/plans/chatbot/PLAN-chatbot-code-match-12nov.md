@@ -8,6 +8,10 @@ Card: `CARD-chatbot-code-match-12nov.md` (v3, generic rules R0-R7). UAC: `chatbo
 Goal: fewer stock "Couldn't find" replies with no wrong answers (9.9% of stock asks on the 2 Nov week -> 8% or less,
 estimate); second line: dead-end replies (no code offered).
 
+Owner approved chatbot plan v2 (12 Nov 17:28): paid LLM runs (LIVE x3 etc.) use the owner's personal API key that
+the crew test copies use, never the production key; every paid run is asked of crew first with its cap. Daily loop:
+each slice that lands gives the 10:00 test card (3-5 Console questions, before/after).
+
 Owner rule (12 Nov): no rule so customised it cannot be replicated for another company in a different industry.
 
 ## Slices (one a day; each one PR commit series on this branch, each with red-first + kill proof)
