@@ -756,7 +756,7 @@ def confirm_sales_order_costing(
 @router.get("/sales-orders/{pso_id}/history", response_model=OrderInquiryHistoryResponse)
 def sales_order_history(
     pso_id: str,
-    _user: dict = Depends(require_permission("projects.projects.view")),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The detail page's History tab (STANDARD-HISTORY wave 2). Read-only; a staff session only

@@ -64,7 +64,7 @@ def _entry(index: int, event_id: str, so_line_no, item_code, qty, change: str) -
         "so_line_no": so_line_no,
         "item_code": item_code,
         "qty": qty,
-        "change": change,
+        "change": change.replace(" -> ", " → "),
     }
 
 
@@ -100,6 +100,8 @@ def _planning(db: Session, ids: List[str]) -> List[dict]:
         if kind == "revision_confirmed":
             lines = [_revision_line(i, event_id, l) for i, l in enumerate(source["lines"])]
             title = f"Plan confirmed, revision {source['revision_no']}"
+            if source.get("reissued_unchanged"):
+                title += ", no change"
         elif kind == "confirm_refused":
             lines = [
                 _entry(i, event_id, l.get("so_line_no"), l.get("item_code"), None,

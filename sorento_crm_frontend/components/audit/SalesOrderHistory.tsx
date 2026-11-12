@@ -1,12 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { useQuery } from '@tanstack/react-query';
 import AuditTrail from '@/components/audit/AuditTrail';
-import {
-  getProjectSalesOrderHistory,
-  getScmSalesOrderHistory,
-} from '@/services/salesOrderHistoryService';
+import { useSalesOrderHistory } from '@/hooks/useSalesOrderHistory';
 
 /**
  * STANDARD-HISTORY wave 2 (AC-SH-W2-6): one sales order's history in the ONE history
@@ -20,12 +16,7 @@ export default function SalesOrderHistory({
   source: 'project' | 'scm';
   id: string | undefined;
 }) {
-  const history = useQuery({
-    queryKey: ['sales-order-history', source, id],
-    queryFn: () =>
-      source === 'scm' ? getScmSalesOrderHistory(id as string) : getProjectSalesOrderHistory(id as string),
-    enabled: Boolean(id),
-  });
+  const history = useSalesOrderHistory(source, id);
   return (
     <AuditTrail
       title="History"
