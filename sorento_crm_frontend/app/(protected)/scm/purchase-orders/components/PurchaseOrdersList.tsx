@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { cn } from '@/lib/utils';
 import {
   ColumnDef,
   PaginationState,
@@ -53,7 +54,8 @@ import {
 import type { PurchaseOrder } from '../../types/scm.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight } from '@/hooks/useDebouncedSearch';
+import { useListChipSearch, useSearchInAddressBar } from '@/hooks/useListChipSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /** All / Outstanding / Completed - the buyer's "at a glance" read (the captain, 20 Aug: "how
@@ -109,13 +111,20 @@ const isDraft = isDraftPurchaseOrder;
 export default function PurchaseOrdersList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
+  // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; an order
+  // matching any of them is listed.
   const {
-    value: searchInput,
-    setValue: setSearchInput,
-    debouncedValue: searchQuery,
+    searchInput,
+    setSearchInput,
+    chips: searchChips,
+    setChips: setSearchChips,
+    searchTerms,
+    searchTermsKey,
     isSettling: searchSettling,
-    reset: resetSearchQuery,
-  } = useDebouncedSearch();
+    restore: restoreSearch,
+    writtenSearch,
+    isOwnWrite,
+  } = useListChipSearch();
   const [statusFilter, setStatusFilter] = useState('');
   // Default Outstanding: the buyer's "at a glance" question, answered without opening
   // the advanced Filters popover.
@@ -127,9 +136,11 @@ export default function PurchaseOrdersList() {
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
   useListStateFromUrl((state) => {
+    if (isOwnWrite()) return;
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    resetSearchQuery(state.searchQuery);
+    // Every `query` comes back as a chip, so the restored list is the one that was left.
+    restoreSearch(state.searchQueries);
     setStatusFilter(state.filters.status ?? '');
     setProductFilter(state.filters.product_code ?? '');
     setOutstandingFilter(
@@ -171,7 +182,7 @@ export default function PurchaseOrdersList() {
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
-    searchQuery,
+    searchQuery: searchTerms,
     status: statusFilter || null,
     supplier: null,
     productCode: productFilter || null,
@@ -189,7 +200,7 @@ export default function PurchaseOrdersList() {
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
   useResetPageOnFilterChange(setPagination, [
-    searchQuery,
+    searchTermsKey,
     statusFilter,
     productFilter,
     outstandingFilter,
@@ -201,7 +212,7 @@ export default function PurchaseOrdersList() {
   useEffect(() => {
     setRowSelection({});
   }, [
-    searchQuery,
+    searchTermsKey,
     statusFilter,
     productFilter,
     outstandingFilter,
@@ -217,7 +228,12 @@ export default function PurchaseOrdersList() {
   const detailSearch = useMemo(
     () =>
       buildDetailSearch(
-        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: searchTerms,
+        },
         {
           status: statusFilter || undefined,
           product_code: productFilter || undefined,
@@ -231,7 +247,7 @@ export default function PurchaseOrdersList() {
       pagination.pageIndex,
       pagination.pageSize,
       sorting,
-      searchQuery,
+      searchTerms,
       statusFilter,
       productFilter,
       outstandingFilter,
@@ -239,6 +255,10 @@ export default function PurchaseOrdersList() {
       unclaimedProjectBinFilter,
     ],
   );
+
+  // Once the search has changed, the list keeps its whole state in the address bar (Q5b), so
+  // a refresh keeps the chips.
+  useSearchInAddressBar({ detailSearch, searchTermsKey, enabled: true, writtenSearch });
 
   const detailHref = (po: PurchaseOrder) =>
     `/scm/purchase-orders/${po.id}${detailSearch ? `?${detailSearch}` : ''}`;
@@ -462,7 +482,7 @@ export default function PurchaseOrdersList() {
   // yet. The default toggle IS a filter, so it counts - otherwise a book with nothing
   // outstanding would tell the buyer he has never uploaded one.
   const emptyMessage =
-    filtersActive || searchQuery || outstandingFilter !== 'all' ? (
+    filtersActive || searchTerms.length || outstandingFilter !== 'all' ? (
       'No purchase order matches this search and filter.'
     ) : (
       <span>
@@ -542,9 +562,11 @@ export default function PurchaseOrdersList() {
                   <ListSearchInput
                     value={searchInput}
                     onChange={setSearchInput}
-                    isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                    chips={searchChips}
+                    onChipsChange={setSearchChips}
+                    isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
                     placeholder="Search PO or supplier..."
-                    className="w-64"
+                    className={cn('w-full', searchChips.length ? 'md:w-[420px]' : 'md:w-64')}
                   />
                   {/* "How do i know the open PO / outstanding PO" (the captain, 20 Aug) -
                       a glance-able control, not buried inside the Filters popover. */}

@@ -59,7 +59,8 @@ export interface PurchaseOrderListQuery {
   pageSize: number;
   sortField?: string;
   sortDir?: 'asc' | 'desc';
-  searchQuery?: string;
+  /** One `query` param per value; an order matching any is listed. */
+  searchQuery?: string | string[];
   status?: string | null;
   supplier?: string | null;
   /**
@@ -110,11 +111,18 @@ function mockPurchaseOrderList(
   params: PurchaseOrderListQuery,
 ): DataGridApiResponse<PurchaseOrder> {
   let rows = mockListPurchaseOrders();
-  const q = params.searchQuery?.trim().toLowerCase();
-  if (q) {
-    rows = rows.filter(
-      (p) =>
-        p.po_number.toLowerCase().includes(q) || p.supplier_name.toLowerCase().includes(q),
+  const terms = (
+    Array.isArray(params.searchQuery) ? params.searchQuery : [params.searchQuery ?? '']
+  )
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  if (terms.length) {
+    rows = rows.filter((p) =>
+      terms.some(
+        (q) =>
+          p.po_number.toLowerCase().includes(q) ||
+          p.supplier_name.toLowerCase().includes(q),
+      ),
     );
   }
   if (params.status) rows = rows.filter((p) => p.status === params.status);

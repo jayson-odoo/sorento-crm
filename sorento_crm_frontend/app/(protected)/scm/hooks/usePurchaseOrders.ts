@@ -14,7 +14,8 @@ export interface UsePurchaseOrdersParams {
   pageIndex: number;
   pageSize: number;
   sorting: SortingState;
-  searchQuery: string;
+  /** Search chips: one `query` per value, an order matching any is listed. */
+  searchQuery: string | string[];
   status: string | null;
   supplier: string | null;
   /** Keep only orders carrying this SKU; the response then carries what we last paid. */
@@ -52,7 +53,8 @@ export function purchaseOrdersListParamsFromUrl(
     pageIndex: params.pageIndex,
     pageSize: params.pageSize,
     sorting: params.sorting,
-    searchQuery: params.searchQuery,
+    // Every `query` on the URL, as the list holds its chips, so the pager hits its cache.
+    searchQuery: params.searchQueries ?? (params.searchQuery ? [params.searchQuery] : []),
     status: params.filters.status || null,
     supplier: null,
     productCode: params.filters.product_code || null,
