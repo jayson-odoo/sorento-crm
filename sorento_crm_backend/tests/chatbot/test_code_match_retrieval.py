@@ -171,3 +171,81 @@ def test_ac29_registering_a_set_does_not_change_a_family_listings_list_price_lin
     after = c.say("Srtwc8608 price", ask)
     prices = lambda t: [line for line in t.splitlines() if "List Price" in line]  # noqa: E731
     assert prices(after) == prices(before), (before, after)
+
+
+# --------------------------------------------------------------------------- replay review: the offer's order and bound
+
+TARGET = "TWC8152-SH-300"
+DECOYS = [f"AAB1{n:02d}300-SH-K" for n in range(25)]  # sort first, hold 300, SH and K, but in the wrong order
+#: Closer to "K-300-SH" by trigram than any AAB decoy (0.36 against 0.18), yet sorting after all of them. They hold
+#: 300 and SH but no K, so none of the 28 codes holds every typed part in order.
+NEAR = ["ZL300-SH", "ZM300-SH", "ZN300-SH"]
+
+
+def _crowded(session_factory, monkeypatch, stub_access, who: str) -> Console:  # noqa: F811
+    codes = [TARGET, *DECOYS, *NEAR]
+    c = _console(session_factory, monkeypatch, stub_access, codes, **_facts([TARGET]))
+    if who == "staff":
+        c.as_staff()
+    return c
+
+
+def _offered_in_order(text: str, known: list[str]) -> list[str]:
+    """The catalogue codes the offer names, in the order it names them (the typed echo before "Did you mean" skipped)."""
+    at = text.find("Did you mean")
+    tail = text[at:] if at >= 0 else ""
+    hits = []
+    for code in known:
+        pos = tail.find(code)
+        if pos >= 0:
+            hits.append((pos, code))
+    return [code for _pos, code in sorted(hits)]
+
+
+def _folded_similarity(session_factory, folded_typed: str, codes: list[str]) -> dict[str, float]:
+    db = session_factory()
+    try:
+        return {
+            code: float(
+                db.execute(
+                    sql_text("SELECT similarity(regexp_replace(lower(:c), '[^a-z0-9]', '', 'g'), :t)"), {"c": code, "t": folded_typed}
+                ).scalar()
+            )
+            for code in codes
+        }
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac27c_a_two_part_token_held_by_one_code_is_offered_that_code_first(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _crowded(session_factory, monkeypatch, stub_access, who)
+    text = c.say("SH 300 stock", stock(product("SH 300")))
+    # "SH 300" folds to "sh300", a substring of exactly one code (the AAB decoys hold "300sh"): a single offer.
+    offered = _offered_in_order(text, [TARGET, *DECOYS, *NEAR])
+    assert offered == [TARGET], (offered, text)
+    assert "AAB" not in text, text
+    assert "AAB" not in str(c.stored_question), c.stored_question
+    assert TICK not in text and "Stock summary" not in text and "How many units of" not in text, f"answered: {text!r}"
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac27d_the_offer_is_the_closest_codes_by_similarity_not_the_first_alphabetically(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _crowded(session_factory, monkeypatch, stub_access, who)
+    catalogue = [TARGET, *DECOYS, *NEAR]
+    sims = _folded_similarity(session_factory, "k300sh", catalogue)
+    cutoff = sorted(sims.values(), reverse=True)[2]
+    assert sims[NEAR[0]] > max(sims[d] for d in DECOYS), sims  # the seed discriminates: closest codes sort last
+    text = c.say("K-300-SH stock", stock(product("K-300-SH")))
+    offered = _offered_in_order(text, catalogue)
+    assert len(offered) == 3, (offered, text)
+    assert set(offered) == set(NEAR), (offered, text)  # the three closest sort after all 25 decoys: none cut by a code-ordered limit
+    assert all(sims[code] >= cutoff - 1e-9 for code in offered), ({code: sims[code] for code in offered}, cutoff, text)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac27e_a_typo_the_trigram_tier_already_finds_is_offered_that_code_first(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _crowded(session_factory, monkeypatch, stub_access, who)
+    text = c.say("TWC8125-SH-300 stock", stock(product("TWC8125-SH-300")))
+    offered = _offered_in_order(text, [TARGET, *DECOYS, *NEAR])
+    assert offered[:1] == [TARGET], (offered, text)
