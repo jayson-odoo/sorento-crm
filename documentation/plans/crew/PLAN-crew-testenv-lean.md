@@ -1,6 +1,6 @@
 # PLAN: CREW-TESTENV-LEAN (lean test copies)
 
-Status: Build (red tests), card answered by crew 12 Nov: Q1 b, Q2 yes, Q3 b, Q4 a, Q5 trial on slot 12 after crew GO. Track: M (crew tool, not the product). Code lives in
+Status: Built in crew-lean 5e5fa05 (238 OK, review clean, trial done 12 Nov 23:51); swap-in by crew pending (lean.patch). Card answered by crew 12 Nov: Q1 b, Q2 yes, Q3 b, Q4 a; trial on slot 1; cap 6 + drop .next/cache (ruling a98692627). Track: M (crew tool, not the product). Code lives in
 a COPY of crew at `foundryx/crew-lean/` (git repo of its own); crew swaps it in after review. This sorento PR carries
 the plan only.
 
