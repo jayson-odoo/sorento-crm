@@ -187,6 +187,37 @@ async function pickPrinting() {
   // reads the same as it always has.
 }
 
+describe('Save Draft and a blank line (D1)', () => {
+  it('drops a completely blank line from the payload, saves, and shows no error', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
+    fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
+
+    await waitFor(() => expect(createRequest).toHaveBeenCalled());
+    expect(asMock(createRequest).mock.calls[0][0].lines).toEqual([]);
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
+
+  it('a no-item line with remarks typed stops the save and names the row', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Customer', 'ZZTD01');
+    chooseTypedItems();
+    fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
+    fireEvent.change(screen.getAllByLabelText('Remarks for line 1')[0], {
+      target: { value: 'for the showroom' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
+
+    expect(await screen.findByText('Pick a set or a product for this line.')).toBeInTheDocument();
+    expect(createRequest).not.toHaveBeenCalled();
+    expect(updateRequest).not.toHaveBeenCalled();
+  });
+});
+
 describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has one line and no debtor and no date', async () => {
     render(<PriceTagRequestForm />);
