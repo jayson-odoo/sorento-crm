@@ -553,7 +553,7 @@ def _run_planning_change_hook(db: Session, service, *, actor: Optional[str]) -> 
         diff = diff_lines(
             service.so_diff_before,
             service.so_diff_after,
-            scope_documents=set(service.so_header_id_by_number),
+            scope_documents=set(service.so_numbers),
         )
         applied_line_ids: dict[int, str] = {}
         for change in diff.changes:

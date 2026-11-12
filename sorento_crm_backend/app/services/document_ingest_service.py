@@ -322,6 +322,44 @@ class _UnknownStatus(ValueError):
     """A status word outside the canonical vocabulary. Failed, never stored."""
 
 
+def planning_diff_line(
+    db: Session,
+    so_number: str,
+    row: Any,
+    *,
+    product_code_of: Optional[Any] = None,
+    warehouse_code_of: Optional[Any] = None,
+) -> "outstanding_diff.Line":
+    """One sales order line as the planning-change diff sees it. The single shaping for the
+    ingest's before and after capture and for `DeletionService`, so they cannot drift. The
+    ingest passes its memoised code lookups; a caller without them gets plain queries."""
+    if product_code_of is None:
+        product_code_of = lambda pid: (  # noqa: E731
+            db.query(Product.product_code).filter(Product.id == pid).scalar() if pid else None
+        )
+    if warehouse_code_of is None:
+        warehouse_code_of = lambda wid: (  # noqa: E731
+            db.query(Warehouse.warehouse_code).filter(Warehouse.id == wid).scalar()
+            if wid
+            else None
+        )
+    product_code = product_code_of(row.product_id)
+    warehouse_code = warehouse_code_of(row.warehouse_id)
+    return outstanding_diff.Line(
+        doc_number=so_number,
+        item_code=product_code or "",
+        location=warehouse_code or "",
+        # AC-CANCEL-CRM: the planned basis leaves out what Cancel SO took (and, CONSIGN-PLAN
+        # Q3, what a consignment return took back).
+        qty=float((row.qty_ordered or 0) - (row.qty_cancelled or 0) - (row.qty_returned or 0)),
+        required_date=row.required_date,
+        row_ref=str(row.id),
+        # Same identity `SalesOrderService._propagate_planning_change` sets: a product swap on
+        # the SAME line pairs by `line_id` into one `product_changed` row.
+        line_id=str(row.id),
+    )
+
+
 class DocumentIngestService(MasterRefResolver):
     """Same constructor and same ``ingest()`` contract as ``MasterIngestService``.
 
@@ -1287,24 +1325,13 @@ class DocumentIngestService(MasterRefResolver):
         for row in existing:
             if row.line_status == CANCELLED:
                 continue
-            self.so_diff_before.append(self._diff_line(payload.so_number, row))
-
-    def _diff_line(self, so_number: str, row: Any) -> "outstanding_diff.Line":
-        return outstanding_diff.Line(
-            doc_number=so_number,
-            item_code=self._product_code_of(row.product_id) or "",
-            location=self._warehouse_code_of(row.warehouse_id) or "",
-            # AC-CANCEL-CRM: the planned basis leaves out what Cancel SO took (and, CONSIGN-PLAN
-            # Q3, what a consignment return took back).
-            qty=float((row.qty_ordered or 0) - (row.qty_cancelled or 0)
-                       - (row.qty_returned or 0)),
-            required_date=row.required_date,
-            row_ref=str(row.id),
-            # Same identity `SalesOrderService._propagate_planning_change` sets
-            # (Slice A review round, R-S1): a product swap on the SAME line pairs by
-            # `line_id` into one `product_changed` row instead of `closed` plus `added`.
-            line_id=str(row.id),
-        )
+            self.so_diff_before.append(planning_diff_line(
+                    self.db,
+                    payload.so_number,
+                    row,
+                    product_code_of=self._product_code_of,
+                    warehouse_code_of=self._warehouse_code_of,
+                ))
 
     def _capture_planning_diff_after(self, header: Any, payload: Any) -> None:
         """The AFTER half of `_capture_planning_diff_before` - read back post-sync
@@ -1321,20 +1348,13 @@ class DocumentIngestService(MasterRefResolver):
         for row in current:
             if row.line_status == CANCELLED:
                 continue
-            self.so_diff_after.append(
-                outstanding_diff.Line(
-                    doc_number=payload.so_number,
-                    item_code=self._product_code_of(row.product_id) or "",
-                    location=self._warehouse_code_of(row.warehouse_id) or "",
-                    # AC-CANCEL-CRM: the planned basis leaves out what Cancel SO took (and, CONSIGN-PLAN
-                    # Q3, what a consignment return took back).
-                    qty=float((row.qty_ordered or 0) - (row.qty_cancelled or 0)
-                               - (row.qty_returned or 0)),
-                    required_date=row.required_date,
-                    row_ref=str(row.id),
-                    line_id=str(row.id),
-                )
-            )
+            self.so_diff_after.append(planning_diff_line(
+                    self.db,
+                    payload.so_number,
+                    row,
+                    product_code_of=self._product_code_of,
+                    warehouse_code_of=self._warehouse_code_of,
+                ))
 
     def _line_values(
         self,

@@ -645,13 +645,10 @@ class DeletionService:
     def _so_before_lines(self, header: Any, lines: list[Any]) -> list[Any]:
         """The header's not-yet-cancelled lines, shaped exactly as the ingest's
         `_capture_planning_diff_before` shapes them."""
-        from app.services.document_ingest_service import DocumentIngestService
+        from app.services.document_ingest_service import planning_diff_line
 
-        shaper = DocumentIngestService(
-            self.db, self.integration_id, company_id=self.company_id
-        )
         return [
-            shaper._diff_line(header.so_number, line)
+            planning_diff_line(self.db, header.so_number, line)
             for line in lines
             if line.line_status != CANCELLED
         ]
