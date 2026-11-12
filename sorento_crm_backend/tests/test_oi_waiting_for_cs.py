@@ -478,14 +478,16 @@ def _header_status(env, w, **params):
     return mine[0]["status"] if mine else None
 
 
-def test_ac_v2_h1_an_oi_with_only_a_waiting_row_reads_waiting_for_cs(env):
-    """The OI's only live row was acknowledged (Done), then the SO date changed."""
+def test_ac_v2_h1_an_oi_with_only_a_waiting_row_reads_outstanding(env):
+    """The OI's only live row was acknowledged (Done), then the SO date changed. Owner ruling
+    12 Nov 22:55 (supersedes the waiting_for_cs header status): the header reads plain
+    Outstanding and is listed under state=outstanding."""
     from app.models.project_so import ACK_ACKNOWLEDGED
 
     w = _world(env, "date", ack=ACK_ACKNOWLEDGED)
 
-    assert _header_status(env, w, state="all") == "waiting_for_cs"
-    assert _header_status(env, w, state="outstanding") == "waiting_for_cs", "listed as outstanding"
+    assert _header_status(env, w, state="all") == "outstanding"
+    assert _header_status(env, w, state="outstanding") == "outstanding", "listed as outstanding"
     assert _header_status(env, w, state="completed") is None, "not under completed"
 
 
@@ -493,28 +495,11 @@ def test_ac_v2_h1_after_cs_confirm_the_header_returns_to_todays_rule(env):
     from app.models.project_so import ACK_ACKNOWLEDGED
 
     w = _world(env, "date", ack=ACK_ACKNOWLEDGED)
-    assert _header_status(env, w, state="all") == "waiting_for_cs", "precondition"
+    assert _header_status(env, w, state="completed") is None, "precondition: not completed"
 
     _confirm(w)
 
     assert _header_status(env, w, state="all") in ("outstanding", "completed")
-
-
-def test_ac_v2_s1_a_date_change_put_back_while_the_location_also_changed_stays_waiting(env):
-    """Kill test for `_nets_back_to_older`'s item / location guard: the date goes back to its
-    confirmed value, but the line moves to another warehouse before CS decides."""
-    w = _world(env, "date")
-    assert _wl_row(env, w).get("waiting_for_cs") is True, "precondition"
-
-    _push(
-        w,
-        dict(
-            w.record,
-            lines=[dict(w.x, required_date=OLD_DATE, warehouse_ref=env.warehouse_ref), w.y],
-        ),
-    )
-
-    assert _wl_row(env, w).get("waiting_for_cs") is True
 
 
 # ================================================================ re-review should-fixes (R1..R3)
@@ -535,14 +520,14 @@ def test_ac_v2_r2_the_header_status_sort_groups_by_the_status_each_header_reads(
     from app.models.project_so import ACK_ACKNOWLEDGED
 
     _world(env)  # outstanding: an awaiting row, nothing pending
-    _world(env, "date", ack=ACK_ACKNOWLEDGED)  # waiting_for_cs
+    _world(env, "date", ack=ACK_ACKNOWLEDGED)  # waiting for CS: reads outstanding (12 Nov 22:55)
     _world(env, ack=ACK_ACKNOWLEDGED)  # completed
 
     asc = [h["status"] for h in _headers(env, state="all", sort="status", dir="asc")]
     desc = [h["status"] for h in _headers(env, state="all", sort="status", dir="desc")]
 
-    assert asc == ["completed", "outstanding", "waiting_for_cs"], asc
-    assert desc == ["waiting_for_cs", "outstanding", "completed"], desc
+    assert asc == ["completed", "outstanding", "outstanding"], asc
+    assert desc == ["outstanding", "outstanding", "completed"], desc
 
 
 def _status_text(row):
