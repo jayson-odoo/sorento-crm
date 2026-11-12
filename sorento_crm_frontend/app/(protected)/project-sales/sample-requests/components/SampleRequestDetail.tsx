@@ -1,5 +1,6 @@
 'use client';
 
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { SoCustomerProject, soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { RecordCardSlot } from '@/app/(protected)/sla-management/_shared/RecordCardSlot';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -786,10 +787,11 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
               </p>
             </div>
             <Field label="Project" wide>
-              <span className="line-clamp-2 break-words" title={project ?? undefined}>
-                {project}
-                {!r.project_id && r.project_name ? ' (not registered)' : ''}
-              </span>
+              {/* One clamped line, the whole title on hover and behind the eye (crew pass round 3). */}
+              <TruncatedTextCell
+                text={`${project ?? ''}${!r.project_id && r.project_name ? ' (not registered)' : ''}`}
+                dialogTitle="Project"
+              />
             </Field>
             {r.quotation_ref && <Field label="Quotation">{r.quotation_ref}</Field>}
             {/* Removed from the form (SAMPLE-REQUEST-V2 rule 3): only an old request that had it shows it. */}

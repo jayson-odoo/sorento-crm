@@ -225,7 +225,8 @@ describe('limited user, Sample Request seeded from a project (?project_id=)', ()
     mountForm(LIMITED, { projectId: PROJECT_ID });
     expect(await screen.findByRole('button', { name: 'Submit sample request' })).toBeInTheDocument();
     // The project reads as its one line in the picker; no second typed title repeats it (owner 12 Nov ~15:45).
-    await waitFor(() => expect(screen.getByDisplayValue(/PRJ-0001 - Project One/)).toBeInTheDocument());
+    // One clamped line, the whole label on hover (crew pass round 3).
+    expect(await screen.findByTitle('PRJ-0001 - Project One')).toBeInTheDocument();
     expect(document.getElementById('sr-project-title')).toBeNull();
     expect(document.body.textContent).not.toContain(PROJECT_ID);
     fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));

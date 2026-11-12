@@ -106,6 +106,7 @@ def build_html(d: Dict[str, Any]) -> str:
   .doc-title {{ text-align: center; font-size: 15px; font-weight: bold;
                 letter-spacing: .06em; text-decoration: underline; padding: 8px 0 10px; }}
   .meta {{ color: #666; font-size: 9px; text-align: center; margin-bottom: 12px; }}
+  .meta span + span {{ margin-left: 16px; }}
   table {{ width: 100%; border-collapse: collapse; margin-bottom: 12px; }}
   table.form {{ border: 2px solid #1a1a1a; }}
   th, td {{ border: 1px solid #b8b8b8; padding: 6px 8px; vertical-align: top; text-align: left; }}
@@ -117,7 +118,7 @@ def build_html(d: Dict[str, Any]) -> str:
 </style></head><body>
   <div class="company">SORENTO SDN BHD</div>
   <div class="doc-title">CONSIGNMENT REQUISITION FORM &nbsp; {escape(str(d.get('request_no') or ''))}</div>
-  <div class="meta">{escape(str(d.get('status_label') or ''))} &middot; printed {today_in_malaysia().strftime('%d/%m/%Y')}</div>
+  <div class="meta"><span>{escape(str(d.get('status_label') or ''))}</span><span>Printed {today_in_malaysia().strftime('%d/%m/%Y')}</span></div>
   <table class="form">{header}</table>
   <table class="form internal">
     <tr><th colspan="4">For Internal Purpose</th></tr>

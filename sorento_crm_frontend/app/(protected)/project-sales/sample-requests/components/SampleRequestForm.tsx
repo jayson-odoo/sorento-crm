@@ -230,9 +230,11 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
   const hasParty = Boolean(state.ship_to_party_id);
   const hasLine = state.lines.some((l) => l.product_id) || state.board_mounting;
   const hasDelivery = Boolean(state.delivery_date);
+  // The customer the project prefills is not "filled" by the person (crew pass round 3): Ship to
+  // opens on their own pick (the Customer field below), or for a loaded draft that holds one.
   useEffect(() => {
-    if (hasCustomer) openOnce('shipTo');
-  }, [hasCustomer, openOnce]);
+    if (Boolean(requestId) && hasCustomer) openOnce('shipTo');
+  }, [requestId, hasCustomer, openOnce]);
   useEffect(() => {
     if (hasParty || (Boolean(requestId) && hasLine)) openOnce('items');
   }, [hasParty, hasLine, requestId, openOnce]);
@@ -394,6 +396,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               onChange={(_v, item) => {
                 // A debtor only (owner, 11 Nov: "customer stay mandatory and source from debtor").
                 if (item && item.customer_id) {
+                  openOnce('shipTo');
                   patch({
                     customer_id: item.customer_id,
                     customer_label: item.debtor_name,
