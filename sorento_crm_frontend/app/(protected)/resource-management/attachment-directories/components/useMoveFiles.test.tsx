@@ -92,9 +92,10 @@ describe('useMoveFiles', () => {
     expect(screen.queryByRole('textbox', { name: 'New name' })).toBeNull();
     expect(screen.getByText('Each file gets a number added, like (1).')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Keep both' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Skip all' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Replace all' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep both' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename all' }));
     const outcome = await pending;
     const [, , opts] = bulkMoveAttachments.mock.calls[1];
     expect(Object.keys(opts.resolutions)).toHaveLength(100);
@@ -216,7 +217,7 @@ describe('useMoveFiles', () => {
     // Unticking brings the editable box back with the suggestion.
     expect(screen.getByDisplayValue('scan 1 (1).pdf')).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Keep both' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename all' }));
     expect(await pending).toMatchObject({ renamed: 2 });
   });
 });
