@@ -50,7 +50,7 @@ class World:
     pass
 
 
-def _world(env, change=None, *, qty=10, row_qtys=None):
+def _world(env, change=None, *, qty=10, row_qtys=None, ack=ACK_AWAITING):
     """Two-line SO (x carries one live OI row, qty `qty`, dated OLD_DATE; y stays), pushed
     open. If `change` is given it is then applied by an AutoCount push / delete."""
     w = World()
@@ -67,7 +67,7 @@ def _world(env, change=None, *, qty=10, row_qtys=None):
     w.so_number = w.record["so_number"]
     first_qty = (row_qtys or [qty])[0]
     w.row_id, _ = _so_mirror_row(
-        env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING, qty=str(first_qty)
+        env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ack, qty=str(first_qty)
     )
     w.inquiry_id = str(_so_mirror_row.last[1])
     w.mirror_id = str(_so_mirror_row.last[0].id)
@@ -546,3 +546,37 @@ def test_ac_v2_s4_a_cancel_so_document_line_waits_for_cs(env):
     assert env.so_lines(header["id"])[0]["line_status"] == "cancelled", "precondition"
     snap = _row_snapshot(env, str(row.id))
     assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
+
+
+# ============================================================================ H1
+def _headers(env, **params):
+    res = env.client.get(f"{BASE}/order-inquiry-headers", params={"limit": 100, **params})
+    assert res.status_code == 200, res.text
+    return res.json()["data"]
+
+
+def _header_status(env, w, **params):
+    mine = [h for h in _headers(env, **params) if h["id"] == w.inquiry_id]
+    return mine[0]["status"] if mine else None
+
+
+def test_ac_v2_h1_an_oi_with_only_a_waiting_row_reads_waiting_for_cs(env):
+    """The OI's only live row was acknowledged (Done), then the SO date changed."""
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    w = _world(env, "date", ack=ACK_ACKNOWLEDGED)
+
+    assert _header_status(env, w, state="all") == "waiting_for_cs"
+    assert _header_status(env, w, state="outstanding") == "waiting_for_cs", "listed as outstanding"
+    assert _header_status(env, w, state="completed") is None, "not under completed"
+
+
+def test_ac_v2_h1_after_cs_confirm_the_header_returns_to_todays_rule(env):
+    from app.models.project_so import ACK_ACKNOWLEDGED
+
+    w = _world(env, "date", ack=ACK_ACKNOWLEDGED)
+    assert _header_status(env, w, state="all") == "waiting_for_cs", "precondition"
+
+    _confirm(w)
+
+    assert _header_status(env, w, state="all") in ("outstanding", "completed")
