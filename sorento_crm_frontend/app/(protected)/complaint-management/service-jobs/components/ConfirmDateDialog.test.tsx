@@ -81,3 +81,20 @@ describe('ConfirmDateDialog (D4)', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe('ConfirmDateDialog layout (R3-3)', () => {
+  it('keeps a stable date-preview line so the button never moves under the pointer', () => {
+    // jsdom has no layout, so the lost first click cannot be reproduced here; this guards its cause:
+    // the preview line must exist (empty) before a date is committed, not appear on blur.
+    setup({ initialScheduledFrom: undefined });
+    expect(screen.getByTestId('date-preview')).toBeInTheDocument();
+    expect(screen.getByTestId('date-preview').textContent).toBe('');
+  });
+
+  it('the first click with no agreed-by shows the refusal at once', async () => {
+    const onSubmit = setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm date' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Enter who agreed by name.'));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});

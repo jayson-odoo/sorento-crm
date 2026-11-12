@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -94,6 +95,7 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{rowId ? 'Edit Resolution' : 'Create Resolution'}</DialogTitle>
+          <DialogDescription className="sr-only">Resolution details.</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">

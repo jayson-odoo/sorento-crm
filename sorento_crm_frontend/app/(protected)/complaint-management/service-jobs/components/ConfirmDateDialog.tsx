@@ -91,11 +91,13 @@ export default function ConfirmDateDialog({
               onChange={(e) => setAgreedBy(e.target.value)}
             />
           </div>
-          {date && parseTimeText(time) && (
-            <p className="text-sm text-muted-foreground">
-              {formatDateTimeInMalaysia(mytIso(date, parseTimeText(time)!.hour, parseTimeText(time)!.minute))}
-            </p>
-          )}
+          {/* Always occupies its line: a preview that appears on blur would push the button down
+              between mouse-down and mouse-up, and the first click on Confirm would be lost. */}
+          <p data-testid="date-preview" className="min-h-5 text-sm text-muted-foreground">
+            {date && parseTimeText(time)
+              ? formatDateTimeInMalaysia(mytIso(date, parseTimeText(time)!.hour, parseTimeText(time)!.minute))
+              : ''}
+          </p>
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}
