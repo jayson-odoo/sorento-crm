@@ -12,6 +12,12 @@ Owner approved chatbot plan v2 (12 Nov 17:28): paid LLM runs (LIVE x3 etc.) use 
 the crew test copies use, never the production key; every paid run is asked of crew first with its cap. Daily loop:
 each slice that lands gives the 10:00 test card (3-5 Console questions, before/after).
 
+Crew triage (12 Nov, evening): Phase 1 cap is US$0 (plan v2 section 7; US$1 only if the replay cannot re-run the
+lookup, and it can: the resolver runs in process). The frozen set is replayed at US$0 on crew's dev copy first. Any live
+x1 / x3 run and the letters-only digit rule (AC-19, recommendation b) are owner decisions. The slice 1 console pass is
+run by crew (cap US$0.50 inside the US$1 code-match fallback). The X insert stays as fallback until a data-driven
+replacement passes the owner #833 tests.
+
 Owner rule (12 Nov): no rule so customised it cannot be replicated for another company in a different industry.
 
 ## Slices (one a day; each one PR commit series on this branch, each with red-first + kill proof)
