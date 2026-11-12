@@ -948,27 +948,14 @@ export interface AutocountChangeNote {
 }
 
 export function autocountChangeNotes(
-  contributions: BoardContribution[],
-  draft: BoardDraft,
-  excludeKeys?: ReadonlySet<string>,
+  _contributions: BoardContribution[],
+  _draft: BoardDraft,
+  _excludeKeys?: ReadonlySet<string>,
 ): AutocountChangeNote[] {
-  const byOrder = new Map<string, AutocountChangeNote>();
-  for (const contribution of contributions) {
-    if (excludedFromPress(contribution, excludeKeys)) continue;
-    if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'cancelled') continue;
-    const note = byOrder.get(contribution.sales_order_id) ?? {
-      salesOrderId: contribution.sales_order_id,
-      soNumber: contribution.so_number ?? null,
-      count: 0,
-      itemCodes: [],
-    };
-    note.count += 1;
-    if (contribution.item_code && !note.itemCodes.includes(contribution.item_code)) {
-      note.itemCodes.push(contribution.item_code);
-    }
-    byOrder.set(contribution.sales_order_id, note);
-  }
-  return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
+  void [_contributions, _draft, _excludeKeys];
+  // Retired (OI-WHOLE-SO-CANCEL F2): a book-cancelled line is decided and confirmed like any
+  // other, so the board no longer keeps a separate note for the lines a press would retire.
+  return [];
 }
 
 /**
