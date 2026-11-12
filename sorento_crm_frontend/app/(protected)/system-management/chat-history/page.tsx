@@ -324,7 +324,7 @@ export default function ChatHistoryPage() {
             active: filtersActive > 0,
             activeCount: filtersActive,
             content: (
-              <div className="space-y-4 w-72">
+              <div className="space-y-4">
                 <div className="space-y-1">
                   <Label htmlFor="chat-date-range" className="text-xs">Date range</Label>
                   <DateRangePicker
