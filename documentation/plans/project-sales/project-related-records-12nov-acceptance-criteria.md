@@ -1,6 +1,7 @@
 # UAC: project related records (PROJECT-RELATED-RECORDS)
 
-Status: DRAFT. Crew answered Q1-Q4 = (a) from owner rulings (12 Nov). Open owner decisions: D1 (old-record linking), D2 (editable on closed/approved without Revise), D3 (project optional on new SI/NPA). Final when the owner approves mock v2 and D1-D3.
+Status: DRAFT. Crew answered Q1-Q4 = (a) from owner rulings (12 Nov). Owner decided D1-D3 on 13 Nov (card section 9). Final when the owner approves mock v3.
+
 Card: `CARD-project-related-records-12nov.md`. Mock: `documentation/mockups/project-related/index.html`.
 
 ## A. The Related tab
@@ -30,12 +31,12 @@ Card: `CARD-project-related-records-12nov.md`. Mock: `documentation/mockups/proj
 - AC-C2 The staff SI and NPA forms have a clearable, searchable Project picker (code and title), the same one the purchase request form uses. Only approved projects are offered and accepted (`assert_linkable_project`).
 - AC-C3 The portal SI, NPA, complaint and purchase request forms have the same project picker the portal sponsorship form has, offering only the contact's own company projects; a project outside them is refused with a plain message. (Today only the portal sponsorship form has it, `SubmissionForm.tsx:397`.)
 - AC-C3a Picker rows are one line: project code + short title clamped with "...", full title on hover, no price.
-- AC-C3b (D3, recommended) Project stays optional on new SI and NPA.
+- AC-C3b (D3) Project is optional for everyone on every form; the typed project name stays for unregistered projects.
 - AC-C4 An NPA raised from an SI starts with that SI's project picked; the person can change or clear it.
 - AC-C5 The typed "Project name" keeps working and is never used to fill the link.
 - AC-C6 Linking happens on the record's own page via its Project field; every change shows in that record's History tab (shared history component: who, on behalf of, when, old -> new).
-- AC-C6a (D2, pending owner) On a closed or approved record, the Project field alone stays editable without Revise.
-- AC-C8 (D1, pending owner) Existing records are never linked by name automatically. If D1 = reviewed list: a one-off list of exact-name proposals; only rows the owner ticks are written.
+- AC-C6a (D2) Anyone who may edit the record can set or change its Project field at any time, even when closed or approved, without Revise; the approval status does not change; the change shows in History.
+- AC-C8 (D1) Existing records are never linked automatically. A one-off review sheet (crew-run) lists each existing SI, complaint, purchase request and sponsorship form whose typed project name exactly equals the title of exactly ONE registered project of the same company; only rows the owner (or his named sales admin) ticks are linked, each with a History line; two matches or none = not listed.
 - AC-C7 The detail pages of SI and NPA show the linked project as its code + title, linking to the project.
 
 ## D. Extensibility (OCN)

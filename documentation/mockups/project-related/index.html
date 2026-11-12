@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project related records (mock v2)</title>
+<title>Project related records (mock v3)</title>
 <style>
 /* App tokens from sorento_crm_frontend/css/config.reui.css (light), as in the other mockups. */
 :root{--fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--q:#6d28d9;--q-soft:#f5f3ff;--page:#f7f7f8;--dis:#a1a1aa;
@@ -107,7 +107,8 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 </head>
 <body>
 <div class="doc">
-  <h1>Project related records &middot; mock v2 (PROJECT-RELATED-RECORDS)</h1>
+  <h1>Project related records &middot; mock v3 (PROJECT-RELATED-RECORDS)</h1>
+  <p class="intro"><b>v3:</b> owner decisions of 13 Nov folded in. D1 = a one-off reviewed list (section 5b, a review sheet crew runs; nothing is linked automatically). D2 = anyone who may edit the record can set or change its Project at any time, even closed or approved; the approval stays; the change shows in History. D3 = Project is optional for everyone; the typed name stays for projects that are not registered.</p>
   <p class="intro"><b>v2:</b> crew's answers applied (Q1-Q4 = a). Section 5 now shows the picker's list (one line per project: code + clamped short title, no price) and the portal forms. Complaint and purchase request portal forms get the same picker: today only the portal sponsorship form has it (see the note under section 5). Owner decisions D1-D3 are marked <span class="qtag">D1</span>-<span class="qtag">D3</span>.</p>
   <p class="intro">Static mock, nothing is built. Every project, person, customer and number below is made up. Amber
     <span class="newtag">NEW</span> = does not exist today; violet <span class="qtag">Q1</span> to <span class="qtag">Q5</span> = the
@@ -119,6 +120,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
     <a href="#empty">3. Empty</a>
     <a href="#phone">4. 375px</a>
     <a href="#link">5. Linking an SI / NPA</a>
+    <a href="#review">5b. Old records review</a>
     <a href="#map">6. What each piece reuses</a>
     <a href="#qs">7. Questions</a>
   </nav>
@@ -253,15 +255,15 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 
   <!-- ============================================================ 5 -->
   <section id="link">
-    <h2><span class="nb">5</span>Linking: a Project picker on the SI and NPA forms (staff and portal) <span class="qtag">Q1</span><span class="qtag">D2</span><span class="qtag">D3</span></h2>
+    <h2><span class="nb">5</span>Linking: a Project picker on the SI and NPA forms (staff and portal) <span class="qtag">Q1</span><span class="qtag">D2 yes</span><span class="qtag">D3 optional</span></h2>
     <p class="why">The same project picker the purchase request form uses (searchable by code and title, clearable). The typed
-      "Project name" stays. Nothing is filled from the typed name: a person picks. Every change shows in the record's History. Whether the field stays editable on a closed or approved record without Revise is owner decision D2 (drawn here as yes).</p>
+      "Project name" stays. Nothing is filled from the typed name: a person picks. Every change shows in the record's History. Anyone who may edit the record can set or change the Project at any time, even when it is closed or approved, without Revise; the approval stays (D2).</p>
     <div class="row">
       <div class="form" style="flex:1;min-width:min(320px,100%)">
         <div class="fh">New stock inquiry</div>
         <div class="fb">
           <div><div class="lbl">Customer</div><div class="inp sel">Sample Builders Sdn Bhd<span class="clr">&times;</span></div></div>
-          <div class="hl" style="position:relative"><div class="lbl">Project (optional) <span class="newtag">NEW</span><span class="qtag">D3</span></div><div class="inp sel">PS26-0001 Fake Tower Phase 1<span class="clr">&times;</span></div>
+          <div class="hl" style="position:relative"><div class="lbl">Project (optional) <span class="newtag">NEW</span></div><div class="inp sel">PS26-0001 Fake Tower Phase 1<span class="clr">&times;</span></div>
             <div class="pop" style="left:0;right:auto;top:58px;width:100%;padding:4px">
               <div class="search" style="margin:2px 2px 6px">fake</div>
               <div class="ms" style="border:0">
@@ -290,8 +292,31 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
       </div>
     </div>
     <p class="muted"><b>Portal forms (salesperson, WhatsApp link):</b> the SI, NPA, complaint and purchase request forms get the same picker the portal sponsorship form already has (<code>SubmissionForm.tsx:397</code>), listing only the contact's own company projects. Today the portal complaint and purchase request forms have only the typed "Project title" (<code>SubmissionForm.tsx</code> complaint / purchase_request field lists), which is why none of them is linked.</p>
-    <p class="muted">Existing records: nothing is written by name. Owner decision <span class="qtag">D1</span> (crew's recommendation): a one-off reviewed list of exact-name proposals, the owner ticks, only ticked rows are written.</p>
+    <p class="muted">Existing records: nothing is linked automatically. See 5b.</p>
     <p class="muted">The NPA form gets the same field next to Project name. An NPA raised from an SI starts with that SI's project picked, which the person can change or clear.</p>
+  </section>
+
+
+  <section id="review">
+    <h2><span class="nb">5b</span>Old records: one-off review sheet (D1) <span class="newtag">NEW</span></h2>
+    <p class="why">Run once by crew, not a screen in the app. It lists each existing SI, complaint, purchase request and sponsorship form
+      whose typed project name is EXACTLY the title of ONE registered project (same company). The owner, or the sales admin he names,
+      ticks the rows that are right. Only ticked rows are linked, each with a History line. A name that matches two projects, or none,
+      is not listed: those are picked by hand on the record.</p>
+    <div class="card" style="max-width:1100px">
+      <div class="gwrap">
+      <table class="grid" style="min-width:900px">
+        <colgroup><col style="width:56px"><col style="width:140px"><col style="width:120px"><col style="width:100px"><col style="width:220px"><col></colgroup>
+        <thead><tr><th>Link?</th><th>Type</th><th>Number</th><th>Date</th><th>Typed project name</th><th>Proposed project</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chk on">&#10003;</span></td><td>Sponsorship form</td><td class="code">SF-000042</td><td>14/08/2026</td><td>Fake Tower Phase 1</td><td><b>PS26-0001</b> Fake Tower Phase 1</td></tr>
+          <tr><td><span class="chk on">&#10003;</span></td><td>Stock Inquiry</td><td class="code">SI-001877</td><td>02/07/2026</td><td>Fake Lakeside Phase 2</td><td><b>PS26-0011</b> Fake Lakeside Phase 2</td></tr>
+          <tr><td><span class="chk">&nbsp;</span></td><td>Complaint</td><td class="code">CMP-000301</td><td>19/06/2026</td><td>Fake Lakeside Phase 2</td><td><b>PS26-0011</b> Fake Lakeside Phase 2</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="foot"><span>3 proposals (unticked rows stay unlinked)</span><span></span></div>
+    </div>
   </section>
 
   <!-- ============================================================ 6 -->
@@ -319,13 +344,13 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 
   <!-- ============================================================ 7 -->
   <section id="qs">
-    <h2><span class="nb">7</span>Card questions (crew answered Q1-Q4 = a; Q5 became D1-D3 for the owner)</h2>
+    <h2><span class="nb">7</span>Card questions: Q1-Q4 = a (crew, from owner rulings); Q5 became D1-D3, decided by the owner 13 Nov</h2>
     <ol class="qs">
       <li><b>Q1</b> SI and NPA: add a Project picker and link field (recommended) or show them only through another record?</li>
       <li><b>Q2</b> One Related tab replacing Sponsorship Form (recommended) or one tab per type?</li>
       <li><b>Q3</b> Purchase requests and sponsorship forms in the same grid with a Type column (recommended) or separately?</li>
       <li><b>Q4</b> Columns: Type, Number, Status, Approval, Date, Raised by, Subject, Value (recommended) or a shorter set?</li>
-      <li><b>Q5</b> Old or closed records: the Project field stays editable on the record's page, logged in History (recommended), only via normal edit, or a "Link records" picker on the project?</li>
+      <li><b>Q5</b> became <b>D1</b> reviewed list (5b), <b>D2</b> Project editable any time by whoever may edit the record, approval stays, History logged, <b>D3</b> Project optional for everyone.</li>
     </ol>
   </section>
 </div>

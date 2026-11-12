@@ -1,6 +1,6 @@
 # CARD: project related records (lane PROJECT-RELATED-RECORDS)
 
-Status: Q1-Q4 answered (a) by crew 12 Nov from owner rulings; D1-D3 with the owner; mock v2 filed. Track: L (migration: nullable `project_id` on SI and NPA).
+Status: Q1-Q4 answered (a) by crew 12 Nov from owner rulings; D1-D3 decided by the owner 13 Nov (section 9); mock v3 filed, waiting on the owner's OK on the mock. Track: L (migration: nullable `project_id` on SI and NPA).
 Pointers read from origin/main aa82463745. BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend`.
 
 ## 1. The six types today
@@ -70,3 +70,9 @@ Migration size: `stock_inquiries` 101 rows / 248 kB, `new_product_applications` 
 - Second cause: only 13 projects exist, and portal project registration arrived 26 Oct (#1849), so most of these records predate any project they could point to.
 - Complaints do carry a free-text project name: `complaints.project_title` (`models/complaints.py:38`), like `purchase_requests.project_title`.
 - Consequence for this lane: AC-C3 adds the portal picker to complaint and purchase request too (CRM forms = portal forms, owner 28 Oct).
+
+## 9. Owner decisions (13 Nov 00:02, via crew)
+
+- **D1 = (b) one-off reviewed list** ("ok"). Crew runs a review sheet listing each existing SI, complaint, purchase request and sponsorship form whose typed project name EXACTLY matches the title of ONE registered project of the same company. The owner or the sales admin he names ticks rows; only ticked rows are linked (each with a History line). A name matching two projects or none is not listed and is picked by hand on the record. Nothing is linked automatically.
+- **D2 = (a) yes.** Anyone who may edit the record can set or change its Project field at any time, even when closed or approved; the approval stays; the change shows in History.
+- **D3 = (a) optional** ("yeap correct"). Project is optional for everyone; the typed name stays for projects that are not registered.
