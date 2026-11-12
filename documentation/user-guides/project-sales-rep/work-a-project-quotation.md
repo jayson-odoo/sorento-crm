@@ -49,7 +49,7 @@ The card at the top reads like an order inquiry:
   every scope at once).
 
 The lines sit on the **Header** tab under the letterhead, one tab per scope above them, with
-**Search lines** and **Columns** on the table. **Edit proposal** shows the same card at the top
+**Search lines**, **Flags** and **Columns** on the table. **Edit proposal** shows the same card at the top
 (number, status, version); **Recheck alerts** is in the actions menu of the proposal itself, not
 on the edit page.
 
@@ -68,6 +68,39 @@ lines, on the **Header** tab under the letterhead. Reading a proposal and **New 
   until you click **Save proposal**, so **Cancel** brings it back. It is greyed out for a scope
   that was already sent to the customer, and for a saved scope when you do not have the right to
   delete one.
+
+## Send the same proposal to another party (Duplicate for another party)
+
+Use this when another party on the project (for example the main contractor or the architect)
+needs the same lines and prices. Each party gets its own proposal, with its own number, sends and
+counter-sign link. A party that needs different prices also starts here: duplicate, then change
+the copy.
+
+1. Open the proposal, press the gear (**Proposal actions**) and choose **Duplicate for another
+   party**. On the project's **Proposals** tab the same item is on the row's **...** menu.
+2. In **Party**, pick the party. The project's own parties are listed first. If the party has one
+   contact, Attn fills with it; otherwise press **Choose contacts**.
+3. Press **Duplicate**. The copy opens.
+
+What the copy holds:
+
+* A new number, the picked party as **To** with its Attn, today's date, and you as **Prepared By**.
+* Every scope, line, quantity and price, the cover letter, closing, terms, payment terms,
+  validity, spec sheet settings and Certification choices. The cover letter names the new party,
+  its Attn and the new number.
+* Not copied: **Your Ref**, the signature (sign the copy before you send it) and saved spec
+  sheets.
+* Duplicating the project's quotation makes a **proposal** for the new party, because a project
+  has one quotation.
+
+Approval: if the original was approved by a manager and its lines have not changed since, the
+copy opens **Approved** with no new request. Change a price on the copy and it needs its own
+approval, as usual.
+
+Where you can see it: the copy's header shows **Copied from** with a link to the original. History
+on the copy shows "Copied from ..." (and "Approval carried from ..." when the approval came with
+it); History on the original shows "Duplicated for ... as ...". The project's **Activity** tab
+shows "... copied from ... for ...".
 
 ## Won, Lost and Re-open (the project's outcome)
 
@@ -155,6 +188,20 @@ on the cover page, or after the price table when the design hides the Terms row.
 keeps the design it was sent with, so changing the design later never changes a sent quotation,
 and quotations sent before the cover page existed keep their old layout.
 
+## Work with lines while editing
+
+* **Duplicate line** (right-click a line, or its **...** menu) puts a copy right below it, with
+  the same product, rate, text, notes and every area quantity. The copy's product picker is
+  ready: start typing a product code to change it. The new product's description, brand and UOM
+  follow it, and its rate starts at the series price (or blank) like a new line.
+* **Remove line** takes the line out at once. There is no question and no struck-through row.
+* **Undo** and **Redo** (the curved arrows on the table, or Cmd+Z / Ctrl+Z and Shift+Cmd+Z /
+  Shift+Ctrl+Z) step back and forward through your line changes: a removed or duplicated line,
+  a product pick, an edited value. Each edit is one step. Inside a text box, Cmd+Z / Ctrl+Z
+  undoes your typing in that box instead.
+* Undo starts afresh each time you open the quotation for editing or switch scope tab, and when
+  you change the grid's columns.
+
 ## Every line must be a catalogue product or set
 
 A quotation line must name a product or a product set from the catalogue. You cannot type a
@@ -167,13 +214,31 @@ free-text description as a line.
   is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed, but
   the quotation then needs approval before it can be sent (see below).
 
-### Minimum price, while you type
+### Minimum price and default price, while you type
 
-* Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
-  lowest price allowed for that item. It shows on a new quotation too, before the first save.
+* Under a line's rate, **Below minimum price** appears as soon as the price you type is
+  below the lowest price allowed for that item. It shows on a new quotation too, before the
+  first save.
+* Under a line's product code, **Below default price** appears when the price is below the
+  line's default price (see below) but not below the minimum price. It sits beside
+  **Non-standard** when both apply.
 * **Non-standard** also appears while you pick, on a new quotation as on a saved one.
 * A quotation with a line below the minimum price says *One line is priced below the minimum
-  price* (or *N lines are ...*) and needs approval before it can be sent.
+  price* (or *N lines are ...*) and needs approval before it can be sent. The number of
+  **Below default price** flags across all scopes is the number in the banner's *... priced
+  below the default price*.
+
+### Find the flagged lines
+
+* **Flags**, beside **Search lines**, narrows the table to **Non-standard**, **Below default
+  price** and/or **Below minimum price** lines. Each option shows how many lines on the open
+  scope match it. Pick several to see lines matching any of them. Item numbers and the total do
+  not change.
+* The filter stays on when you switch scope tabs, so you can walk the tabs looking for them.
+* In the approval banner, click **One line is** / **N lines are** in front of a reason: the
+  table filters to those lines, opens the first scope that has one, and scrolls to it.
+* While editing, a line you change or add stays on screen until you change the filter, even if
+  it no longer matches.
 
 ### Which quotations need approval, and who approves
 
@@ -300,6 +365,19 @@ What counts as a view:
 
 Nothing that identifies the reader is kept: no IP address and no name, only the time, the
 revision and the kind of device.
+
+## Certificates for the quoted products (Certification tab)
+
+The quotation's **Certification** tab lists the certificates of the products on the quotation, one
+per row. Click a row to open the certificate. **Right-click** a row (on a phone or tablet, press and
+hold it) for **Open**, **Download** (the certificate file) and **Remove** (takes the certificate off
+this quotation; you have a few seconds to Cancel).
+
+Opening a certificate always takes you straight to its first marked box, whether it is the first
+time you open it or not. Draw, move or delete boxes, then click **Save boxes**. If you try to leave
+with boxes not saved yet (Back to certification, another link, your browser's Back, a refresh or
+closing the tab), you are asked first: **Keep editing** stays on the certificate with your changes,
+**Leave without saving** drops them.
 
 ## Quote in a grid (unit types or levels across, areas or rooms below)
 

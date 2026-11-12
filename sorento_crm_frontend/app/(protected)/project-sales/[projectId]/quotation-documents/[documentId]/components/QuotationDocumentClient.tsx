@@ -33,6 +33,7 @@ import {
 } from '../../../../_shared/hooks/useQuotationDocuments';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import {
+  useFindScopeWithLine,
   useProject,
   useProjectQuotationVersions,
   useQuotationMutations,
@@ -47,7 +48,13 @@ import {
   quotationStanding,
 } from '../../../../_shared/lib/quotationDecision';
 import { useQuotationDocumentActions } from '../../actions';
-import { APPROVE_PERMISSION, QuotationApprovalPanel } from './QuotationApprovalPanel';
+import {
+  APPROVE_PERMISSION,
+  QuotationApprovalPanel,
+  type ApprovalLineFlag,
+} from './QuotationApprovalPanel';
+import { LINE_FLAG_FILTERS } from '../../../components/QuotationVersionEditor';
+import { storedLineFacts } from '../../../components/QuotationLineFlags';
 import { QuotationRejectDialog } from './QuotationRejectDialog';
 import { ReviseApprovalDialog } from './ReviseApprovalDialog';
 import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
@@ -145,6 +152,46 @@ export function QuotationDocumentClient({
   );
 
   const selectScope = React.useCallback((scopeId: string) => setActiveScopeId(scopeId), []);
+
+  // The lines filter (PROJECT-QUOTE-LINE-TOOLS): on across area tabs, and set by the banner.
+  const [lineFlags, setLineFlags] = React.useState<string[]>([]);
+  const [linesScrollRequest, setLinesScrollRequest] = React.useState(0);
+  const linesScrollPending = React.useRef(false);
+  const consumeLinesScroll = React.useCallback(() => {
+    const pending = linesScrollPending.current;
+    linesScrollPending.current = false;
+    return pending;
+  }, []);
+  const findScopeWithLine = useFindScopeWithLine();
+  /**
+   * A banner count, pressed: the lines filtered to what it counts, on the first area holding one,
+   * on the Header tab where the lines are. Judged by the STORED flags, which are what it counts.
+   */
+  const showFlaggedLines = React.useCallback(
+    async (flag: ApprovalLineFlag) => {
+      setLineFlags([flag]);
+      // The banner counts the CURRENT versions, so the lines shown are the current ones too.
+      setVersionNo(null);
+      const header = `/project-sales/${projectId}/quotation-documents/${documentId}`;
+      if (pathname !== header) router.push(header);
+      const option = LINE_FLAG_FILTERS.find((row) => row.value === flag);
+      const scopes = [...(document.data?.scopes ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+      if (!option) return;
+      try {
+        const scopeId = await findScopeWithLine(
+          scopes.map((scope) => ({ scopeId: scope.id, versionId: scope.current_version_id })),
+          (line) => option.test(storedLineFacts(line)),
+        );
+        if (scopeId) setActiveScopeId(scopeId);
+      } catch {
+        // The filter is on all the same; the open area stays as it was.
+      }
+      // Bring the lines into view, after the area switch, whether or not one was found.
+      linesScrollPending.current = true;
+      setLinesScrollRequest((n) => n + 1);
+    },
+    [document.data?.scopes, documentId, findScopeWithLine, pathname, projectId, router],
+  );
 
   // Memoised because the total below is: `?? []` mints a new array whenever the document has no
   // scopes, which would re-sum the header on every render of the page.
@@ -665,7 +712,7 @@ export function QuotationDocumentClient({
 
       {/* The price-floor gate. Renders nothing at all unless a line on this quotation is
           priced below its floor, so the ordinary quotation gains no chrome and no extra step. */}
-      <QuotationApprovalPanel document={record} />
+      <QuotationApprovalPanel document={record} onShowLines={showFlaggedLines} />
 
       {/* The letterhead card and, under it, the lines are the Header tab (#1341; lines moved there
           by PROPOSAL-HEADER-LAYOUT, 5 Nov 2026). */}
@@ -686,6 +733,10 @@ export function QuotationDocumentClient({
           sorentoSignature,
           activeScopeId,
           selectScope,
+          lineFlags,
+          setLineFlags,
+          linesScrollRequest,
+          consumeLinesScroll,
           versionNo,
           recheckResults,
           dismissRecheck,

@@ -212,16 +212,37 @@ def off_series_line_count(db: Session, document: ProjectQuotationDocument) -> in
 def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
     """Every reason, together, for messages and the payload (one query for the three line flags;
     the below-proposal count compares against the source proposal's frozen lines)."""
-    from sqlalchemy import Integer, cast
+    from sqlalchemy import Integer, and_, cast
 
     version_ids = current_version_ids(db, document)
     if not version_ids:
-        return {"discounted": 0, "below_floor": 0, "off_series": 0, "below_proposal": 0}
+        return {
+            "discounted": 0,
+            "below_floor": 0,
+            "off_series": 0,
+            "below_proposal": 0,
+            "below_default": 0,
+        }
     row = (
         db.query(
             func.coalesce(func.sum(cast(ProjectQuotationLine.is_discounted, Integer)), 0),
             func.coalesce(func.sum(cast(ProjectQuotationLine.is_below_floor, Integer)), 0),
             func.coalesce(func.sum(cast(ProjectQuotationLine.is_non_standard, Integer)), 0),
+            # Per line, the lines the "Below default price" pill marks (PROJECT-QUOTE-LINE-TOOLS):
+            # discounted and NOT below the floor. Counted per line, not as discounted minus
+            # below floor, which miscounts a line below the floor that is not discounted.
+            func.coalesce(
+                func.sum(
+                    cast(
+                        and_(
+                            ProjectQuotationLine.is_discounted.is_(True),
+                            ProjectQuotationLine.is_below_floor.is_(False),
+                        ),
+                        Integer,
+                    )
+                ),
+                0,
+            ),
         )
         .filter(
             ProjectQuotationLine.version_id.in_(version_ids),
@@ -233,6 +254,7 @@ def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
         "discounted": int(row[0]),
         "below_floor": int(row[1]),
         "off_series": int(row[2]),
+        "below_default": int(row[3]),
         # PS-PROPOSAL-QUOTATION: a quotation priced below the proposal it was made from.
         "below_proposal": below_proposal_line_count(db, document),
     }
@@ -268,7 +290,11 @@ def reasons_text(c: Dict[str, int]) -> str:
         parts.append(f"{_lines(c['off_series'])} outside the project's series")
     if c.get("below_floor"):
         parts.append(f"{_lines(c['below_floor'])} priced below the minimum price")
-    other = max(0, (c.get("discounted") or 0) - (c.get("below_floor") or 0))
+    other = (
+        c["below_default"]
+        if "below_default" in c
+        else max(0, (c.get("discounted") or 0) - (c.get("below_floor") or 0))
+    )
     if other:
         parts.append(f"{_lines(other)} priced below the default price")
     if c.get("below_proposal"):
@@ -547,6 +573,71 @@ def mark_issued(db: Session, document: ProjectQuotationDocument) -> None:
     if current_key(db, document) != STATUS_APPROVED:
         return
     _set_status(db, document, _status_by_key(db, STATUS_ISSUED))
+
+
+def source_prices_approved(db: Session, source: ProjectQuotationDocument) -> bool:
+    """The source's lines, as they stand, are prices a manager approved (QUOTE-DUPLICATE-PARTY).
+
+    True while it stands on ``approved`` (locked, so its lines cannot have moved since), or on
+    ``issued`` when every scope's current version is the one its latest revision went out with:
+    sending spends the approval, and a send that needed one could not have happened without it.
+    """
+    key = current_key(db, source)
+    if key == STATUS_APPROVED:
+        return True
+    if key != STATUS_ISSUED:
+        return False
+    from app.models.projects import ProjectQuotationIssue, ProjectQuotationIssueScope
+
+    latest = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.document_id == source.id)
+        .order_by(ProjectQuotationIssue.issue_no.desc())
+        .first()
+    )
+    if latest is None:
+        return False
+    sent = {
+        str(row[0])
+        for row in db.query(ProjectQuotationIssueScope.version_id)
+        .filter(ProjectQuotationIssueScope.issue_id == latest.id)
+        .all()
+    }
+    current = {str(v) for v in current_version_ids(db, source)}
+    return bool(current) and current == sent
+
+
+def carry_approval(
+    db: Session,
+    *,
+    copy: ProjectQuotationDocument,
+    source: ProjectQuotationDocument,
+    actor_user_id: Optional[str] = None,
+) -> bool:
+    """Give a duplicate the source's approval when it needs one and the source's prices were
+    approved as they stand. The copy then sits on ``approved`` like any approved document:
+    locked, and spent by its own first send. Returns whether it was carried."""
+    if not requires_approval(db, copy):
+        return False
+    if not source_prices_approved(db, source):
+        return False
+    _set_status(db, copy, _status_by_key(db, STATUS_APPROVED))
+    copy.approver_user_id = source.approver_user_id
+    # Its own event (security review N1): the copy's approver never saw the copy, so the feed
+    # says whose approval it is and who carried it, rather than a second "approved".
+    _record(
+        db,
+        copy,
+        template="quotation_approval_carried",
+        body_text=(
+            f"{_actor_name(db, actor_user_id)} carried the approval of {source.document_no} "
+            f"to {copy.document_no}"
+        ),
+        actor_user_id=actor_user_id,
+        payload={"source_document_id": str(source.id), "source_document_no": source.document_no},
+    )
+    db.flush()
+    return True
 
 
 def assert_unlocked(db: Session, document: Optional[ProjectQuotationDocument]) -> None:
@@ -1108,6 +1199,8 @@ def serialize_approval(
         "below_floor_line_count": c["below_floor"],
         "below_proposal_count": c["below_proposal"],
         "discounted_line_count": c["discounted"],
+        # The banner's "priced below the default price" count, per line (the pill's rule).
+        "below_default_line_count": c["below_default"],
         "off_series_line_count": c["off_series"],
         "approval_reasons": reasons_text(c) if any(c.values()) else None,
         "approver_user_id": str(approver.id) if approver is not None else None,
