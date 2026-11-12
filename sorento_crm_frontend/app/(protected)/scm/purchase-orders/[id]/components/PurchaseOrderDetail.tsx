@@ -932,7 +932,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           }
           return row.original.expected_date ? fmtDate(row.original.expected_date) : '-';
         },
-        size: 150,
+        size: 190,
         meta: { headerTitle: 'Delivery date' },
       },
       {

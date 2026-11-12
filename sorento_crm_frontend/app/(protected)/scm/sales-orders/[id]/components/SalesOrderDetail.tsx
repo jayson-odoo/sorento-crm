@@ -1282,7 +1282,7 @@ export function SalesOrderDetail({
           }
           return row.original.required_date ? fmtDate(row.original.required_date) : '-';
         },
-        size: 150,
+        size: 190,
         meta: { headerTitle: 'Delivery date' },
       },
       {

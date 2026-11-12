@@ -94,11 +94,16 @@ export function DatePicker({
   };
 
   const commitTyped = () => {
+    const committed = value ? formatDDMMYYYY(value) : '';
     const parsed = parseDateInput(inputValue);
     if (parsed !== undefined) {
-      if (!value || formatDDMMYYYY(value) !== formatDDMMYYYY(parsed)) onChange?.(parsed);
+      setInputValue(formatDDMMYYYY(parsed));
+      if (!value || committed !== formatDDMMYYYY(parsed)) onChange?.(parsed);
     } else if (inputValue.trim() === '' && !required && value) {
       onChange?.(undefined);
+    } else {
+      // Junk, or an empty required box: leave showing the last committed text.
+      setInputValue(committed);
     }
   };
 
