@@ -57,6 +57,13 @@ Purchasing is told nothing until you decide:
 If AutoCount opens the order again before you decide, the cancellation drops off the board and
 there's nothing to do.
 
+**Until you confirm, the Order Inquiry reads "Waiting for CS".** Any change AutoCount sends after
+your last Confirm (a new date or quantity, a line removed, the order cancelled or deleted) shows on
+the Order Inquiry at once with its new value and the old one as **Was**, and the line reads
+**Waiting for CS**. Purchasing sees it but can't confirm it, and nothing is emailed. Your
+**Confirm** clears it and sends purchasing the email. If AutoCount changes the value back to what
+you last confirmed before you decide, there's nothing left to decide and it clears by itself.
+
 ## What you see on the board
 
 Open the **Changed** badge (or find the order on Fulfilment Planning). Each changed line shows:

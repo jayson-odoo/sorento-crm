@@ -143,6 +143,13 @@ Three more words belong to this tab alone:
 
 * **To order** - CS changed a line after it was taken on, or a used row is waiting; it turns
   Done on its own once its live links cover it, or when you **Confirm** it by hand.
+* **Waiting for CS** - the sales order changed in AutoCount since CS last confirmed it (new date,
+  new quantity, a line removed, or the whole order cancelled or deleted). The line already shows
+  the sales order's new values, with the old one as **Was**, but you can't confirm it yet: CS
+  decides the change on Fulfilment Planning first, and their **Confirm** sends you the usual
+  email. It isn't counted under **To confirm** until then.
+* **SO cancelled** - the whole sales order was cancelled or deleted in AutoCount, and CS has
+  already decided it.
 * **Line cancelled** - the sales order line itself was cancelled (greyed).
 * **Nothing to buy** - every instruction on the line has been used up or cancelled (greyed).
 
