@@ -1,7 +1,8 @@
 # PLAN: Passkey sign-in for CRM staff (PASSKEY-LOGIN)
 
-Status: Plan. Behaviour card + mock v1 filed as crew-ask, waiting on owner answers. Track: L
-(migration + auth change; security-reviewer required).
+Status: Build. Card approved by owner 12 Nov 17:36 (Q1 b, Q2 a, Q3 a, Q4 a, Q5 env-only) plus a
+per-user "Passkey sign-in" switch, default OFF. Track: L (migration + auth change; security-reviewer
+required).
 
 ## Goal
 Staff can sign in to the CRM with a passkey (Face ID / Touch ID / fingerprint / phone), per user,
@@ -112,4 +113,5 @@ empty), admin Sign-in card + lightbox.
 
 ## Status log
 - 12 Nov 2026: lane opened; discovery done; behaviour card + mock v1 filed.
+- 12 Nov 2026: owner approved card + mock: Q1 (b) re-check password or phone code before adding; per-user switch `users.passkey_enabled` (default OFF, admin sets it in the Sign-in card). UAC AC-06, AC-15, AC-26, AC-27, AC-33.
 - 12 Nov 2026: Q5 answered; config is a hostname list `WEBAUTHN_RP_IDS` (ports vary per test copy).

@@ -1,7 +1,9 @@
 # UAC: Passkey sign-in for CRM staff (PASSKEY-LOGIN)
 
-Plan: `PLAN-passkey-login-12nov.md`. Questions 1-4 assume the recommended answers until crew
-relays the owner's; any change is edited here first. Q5 answered (config hostname list).
+Plan: `PLAN-passkey-login-12nov.md`. Owner answers (12 Nov 17:36, relayed by crew): Q1 (b) adding
+a passkey asks for the password or a phone code first; Q2 (a) icon + autofill; Q3 (a) no nudge;
+Q4 (a) admin row in the Sign-in card only; Q5 one prod hostname (env only). NEW: a per-user
+switch "Passkey sign-in", default OFF, turned on per user by an admin (AC-06, AC-15, AC-33).
 
 ## Configuration
 - AC-01 `Settings.webauthn_rp_ids` (env `WEBAUTHN_RP_IDS`, comma-separated hostnames, default
@@ -20,6 +22,10 @@ relays the owner's; any change is edited here first. Q5 answered (config hostnam
   `name` varchar(100) not null, `created_at`, `last_used_at` nullable. Additive migration.
 - AC-05 `user_sessions.auth_method` accepts `'passkey'` (`AUTH_METHODS` + `ck_user_sessions_auth_method`,
   added NOT VALID then VALIDATE). Single alembic head.
+
+- AC-06 New column `users.passkey_enabled` boolean NOT NULL DEFAULT false (every existing user
+  OFF). It is returned as `passkey_enabled` by BOTH manual user dict builders (`GET /users/{id}`
+  and `GET /auth/me` / `get_me`) and is part of the admin user payload.
 
 ## Sign in (unauthenticated; prefix `/api/v1/auth`)
 - AC-10 `POST /passkey/options` (no body; origin from the `Origin` header) returns
@@ -43,6 +49,10 @@ relays the owner's; any change is edited here first. Q5 answered (config hostnam
   across these cases.
 - AC-13 A valid assertion for a user that is INACTIVE / BLOCKED (status not ACTIVE) answers
   `403` with the same detail `/auth/login` uses; a trashed user answers the AC-12 401. No session.
+- AC-15 Switch OFF: a valid assertion from a stored passkey of a user whose `passkey_enabled` is
+  false answers the AC-12 401 body, mints no session and does not touch `sign_count` /
+  `last_used_at`. Turning the switch off keeps the stored passkeys (turning it on again makes
+  them work again).
 - AC-14 `/passkey/verify` is rate-limited per IP (`rate_limit.hit`, own bucket); over limit = 429
   with Retry-After. Redis down: challenge store unavailable = `400 PASSKEYS_UNAVAILABLE`
   (fail closed for the challenge; never accept an assertion without a stored challenge).
@@ -50,7 +60,23 @@ relays the owner's; any change is edited here first. Q5 answered (config hostnam
 ## Own passkeys (authenticated; real user, prefix `/api/v1/auth`)
 - AC-20 `GET /passkeys` lists the REAL user's (`get_actor_user_id`) passkeys newest first:
   `[{id, name, created_at, last_used_at}]` (no credential id or key material).
-- AC-21 `POST /passkeys/register/options` returns `{"challenge_id", "options": PublicKeyCredentialCreationOptionsJSON}`
+- AC-26 Switch OFF: `GET /passkeys` answers `[]`; `POST /passkeys/register/options`, `POST /passkeys`
+  and `POST /passkeys/reauth-code` answer `403 {"code": "PASSKEY_NOT_ENABLED"}`; `PATCH` answers 403
+  the same way. (Removal of own passkeys via AC-24 still works.)
+- AC-27 Re-check before adding (Q1 b). `POST /passkeys/register/options` takes a body
+  `{"password": str}` OR `{"phone_code": str}`:
+  - password: checked with bcrypt against the user's hash; wrong = `401 {"code": "REAUTH_FAILED", "message": "That password is not right."}`,
+    counted with `login_throttle.record_failure(email, ip)` and refused with 429 while
+    `login_throttle.check` is locked (the SAME throttle as `/auth/login`).
+  - phone_code: the code sent by `POST /passkeys/reauth-code` (no body) to the user's OWN verified
+    phone (reusing `phone_signin_service` send / reserve / consume, one shared verify function
+    that `attempt_verify` also calls; the code is not usable to sign in anyone else and the sign-in
+    route cannot consume it as a session). No verified phone = 400 `{"code": "NO_PHONE"}`. Wrong =
+    `401 REAUTH_FAILED` "That code is not right." with the same per-number attempt budget as
+    phone sign-in (429 when spent).
+  - neither field = 422. Only a passed check issues the registration challenge, so the challenge
+    record IS the proof (single use, 300 s). A user with no password must use phone_code.
+- AC-21 `POST /passkeys/register/options` (after AC-27) returns `{"challenge_id", "options": PublicKeyCredentialCreationOptionsJSON}`
   with `rp.id` = origin hostname, `residentKey: "required"`, `userVerification: "required"`,
   `excludeCredentials` = the user's existing credential ids. While impersonating: `403` and no
   challenge.
@@ -71,6 +97,10 @@ relays the owner's; any change is edited here first. Q5 answered (config hostnam
 ## Admin (prefix `/api/v1/user-management/users`)
 - AC-30 `GET /{user_id}/passkeys` (`user_management.users.view`) returns that user's AC-20 list.
 - AC-31 Removal of a user's passkey uses AC-24 with `user_management.users.edit`. No admin add or rename.
+- AC-33 `PATCH /{user_id}/passkey-enabled` `{"enabled": bool}` (`user_management.users.edit`)
+  sets the switch, returns `{"user_id", "passkey_enabled"}`, audited (default-on ORM audit on
+  `users`). Without `users.edit` = 403. An admin may set it on their own row (owner tests on his
+  own account first).
 - AC-32 `GET /users/{id}` `last_sign_in_method` reports `'passkey'` after a passkey sign-in.
 
 ## Frontend
@@ -87,16 +117,21 @@ relays the owner's; any change is edited here first. Q5 answered (config hostnam
 - AC-42 NextAuth provider `id: 'passkey'` posts `{challenge_id, credential}` to
   `/api/v1/auth/passkey/verify` with `forwardedForHeader`, returns the same `User` shape as the
   credentials provider (`apiToken` = `token`).
-- AC-43 My account > Security: "Passkeys" Card between Password and Delete Account. Header button
+- AC-43 My account > Security: shown ONLY when the signed-in user's `passkey_enabled` is true
+  (from `get_me`); otherwise the page is exactly as today. "Passkeys" Card between Password and Delete Account. Header button
   "Add passkey" (outline). Rows: device icon, name (truncate + title), "Added dd/mm/yyyy" and
   "Last used dd/mm/yyyy, h:mm am/pm" (or "Never used") as separate lines, row menu (DropdownMenu)
   with Rename and Remove. Empty: heading "No passkeys yet" + hint "Sign in with Face ID, Touch ID or your fingerprint."
   Unsupported browser / insecure address / disabled: "Add passkey" disabled, hint "This browser can't use passkeys."
-- AC-44 Add: options -> `startRegistration` -> POST; success toast "Passkey added", list refreshes.
+- AC-44 Add: "Add passkey" opens a small Dialog "Confirm it's you": a password field (users with a
+  password) or "Send code" + 6-digit code input (users without one, or a "Use a phone code
+  instead" link when both exist); Continue -> options (with the proof) -> `startRegistration` -> POST; success toast "Passkey added", list refreshes.
   Cancel of the browser prompt = nothing. Rename: dialog shaped like `RenameAccessoryTemplateDialog`,
   Save disabled for blank. Remove: `useDeferredAction` + `DeferredActionButton` countdown
   "Removing", Cancel; no confirm dialog.
-- AC-45 Admin user detail, Sign-in card (`user-sign-in-section.tsx`): row "Passkeys" with
+- AC-45 Admin user detail, Sign-in card (`user-sign-in-section.tsx`): row "Passkey sign-in" with
+  the shared `Switch` (editable with `users.edit`, read-only "On"/"Off" otherwise; toast "Passkey
+  sign-in turned on/off"); row "Passkeys" with
   "N passkey(s)" link or "None"; the link opens a centred Dialog listing the user's passkeys with a
   row menu holding Remove (only with `users.edit`). `SIGN_IN_METHOD_WORDS.passkey = 'passkey'`.
 - AC-46 Layering: `services/passkeyService.ts` -> `hooks/usePasskeys.ts` -> UI; errors through

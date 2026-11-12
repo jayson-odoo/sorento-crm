@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Passkey sign-in mock v1</title>
+<title>Passkey sign-in mock v2</title>
 <style>
   /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light). */
   :root { --primary:#3b82f6; --fg:#09090b; --muted:#71717a; --border:#e4e4e7; --bg:#ffffff;
@@ -110,6 +110,19 @@
   </div>
 </div>
 
+<h1>2b. "Add passkey" first asks to confirm it's you (owner Q1 b)</h1>
+<div class="frame">
+  <div class="card lightbox">
+    <div class="card-h">Confirm it's you <button class="btn btn-ghost btn-sm" aria-label="Close">&#10005;</button></div>
+    <div class="card-b">
+      <div class="field"><label>Password</label><input class="input" type="password" placeholder="Your password"></div>
+      <p style="margin:-8px 0 16px"><a href="#">Use a phone code instead</a></p>
+      <button class="btn btn-primary">Continue</button>
+    </div>
+  </div>
+  <p class="note">Centred Dialog. Staff without a password see "Send code" and the 6-digit code input (the existing phone sign-in code input) instead. Continue, then the device's Face ID / fingerprint prompt. The Passkeys card only shows for users whose "Passkey sign-in" is On.</p>
+</div>
+
 <h1>3. Admin: Users &gt; user detail, Sign-in card (users/[id]/components/user-sign-in-section.tsx)</h1>
 <div class="frame grid2">
   <div>
@@ -121,11 +134,12 @@
           <dt>Phone</dt><dd>+60 12-*** 6789 <span class="badge">verified</span></dd>
           <dt>WhatsApp contact</dt><dd><a href="#">Staff One - +60 12-*** 6789</a></dd>
           <dt>Last sign-in</dt><dd>12/11/2026, 5:42 pm, passkey</dd>
+          <dt>Passkey sign-in</dt><dd><span style="display:inline-block;width:34px;height:20px;border-radius:999px;background:var(--primary);position:relative;vertical-align:middle"><span style="position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:999px;background:#fff"></span></span> On</dd>
           <dt>Passkeys</dt><dd><a href="#">2 passkeys</a></dd>
         </dl>
       </div>
     </div>
-    <p class="note">New row "Passkeys" ("None" when empty). "passkey" joins email / phone as a last-sign-in method word. The link opens the lightbox on the right.</p>
+    <p class="note">v2: new row "Passkey sign-in" (shared Switch, default Off, admin with users.edit turns it on per user). New row "Passkeys" ("None" when empty). "passkey" joins email / phone as a last-sign-in method word. The link opens the lightbox on the right.</p>
   </div>
   <div>
     <div class="card lightbox">
