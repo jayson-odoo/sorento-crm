@@ -461,6 +461,12 @@ def build_conversation_sla_tracking_response(
         "team_set_code": getattr(tracking, "team_set_code", None),
         "brand_code": getattr(tracking, "brand_code", None),
         "message_id": getattr(tracking, "message_id", None),
+        # The record a form stage belongs to (declared on the response for form-scoped
+        # listings; a record's SLA tab shows only its own stages). None on a conversation.
+        "source_entity_type": getattr(tracking, "source_entity_type", None),
+        "source_entity_id": (
+            str(tracking.source_entity_id) if getattr(tracking, "source_entity_id", None) else None
+        ),
         **timings,
     }
 

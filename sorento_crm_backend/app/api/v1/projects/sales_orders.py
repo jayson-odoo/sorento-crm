@@ -860,7 +860,8 @@ def create_amendment(
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """Persists the amendment and auto-drafts its order change notice from the same delta."""
+    """Persists the amendment and auto-drafts its order change notice from the same delta, or
+    links the existing notice the request picks (`ocn_id`, OCN-ORDER-CHANGE-NOTICE E2)."""
     try:
         _service, order = _order_for_edit(db, pso_id, current_user)
         body = ProjectSODeltaService(db).create(
@@ -869,6 +870,7 @@ def create_amendment(
             schedule_version_id=payload.schedule_version_id,
             reason=payload.reason,
             actor_user_id=current_user["id"],
+            ocn_id=payload.ocn_id,
         )
         db.commit()
         return body
