@@ -34,7 +34,7 @@ export interface UseListChipSearchResult {
   /** True while the box is ahead of the query. */
   isSettling: boolean;
   /** A URL's `query` values back as chips, the typed text emptied, at once. */
-  restore: (values: string[]) => void;
+  restore: (values: string[] | undefined) => void;
   /** The address-bar search the list last wrote itself; hand it to `useSearchInAddressBar`. */
   writtenSearch: MutableRefObject<string | null>;
   /** True while the address bar still holds the list's own write: reading it back from
@@ -49,7 +49,8 @@ function isOwnWriteOf(written: MutableRefObject<string | null>): boolean {
   );
 }
 
-export function useListChipSearch(): UseListChipSearchResult {
+/** `initialChips`: a list that reads its URL once, at mount, starts with those values. */
+export function useListChipSearch(initialChips?: string[]): UseListChipSearchResult {
   const {
     value: searchInput,
     setValue,
@@ -57,7 +58,9 @@ export function useListChipSearch(): UseListChipSearchResult {
     isSettling,
     reset,
   } = useDebouncedSearch();
-  const [chips, setChips] = useState<string[]>([]);
+  const [chips, setChips] = useState<string[]>(() =>
+    initialChips ? addSearchChips([], initialChips).chips : [],
+  );
   const writtenSearch = useRef<string | null>(null);
 
   const searchTerms = useMemo(
@@ -72,8 +75,8 @@ export function useListChipSearch(): UseListChipSearchResult {
   );
 
   const restore = useCallback(
-    (values: string[]) => {
-      setChips(addSearchChips([], values).chips);
+    (values: string[] | undefined) => {
+      setChips(addSearchChips([], values ?? []).chips);
       reset('');
     },
     [reset],
