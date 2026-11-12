@@ -415,6 +415,49 @@ def _three_superseded_old_runs(db, product) -> list[ReorderRun]:
     return runs
 
 
+def test_reorder_run_kept_for_a_decision_keeps_its_superseded_link(db, product):
+    """A run kept because a person decided on it must keep pointing at the run that
+    superseded it: the FK is ON DELETE SET NULL, so deleting that run would silently turn
+    the kept run back into a 'current' run. A run that a remaining run's
+    superseded_by_run_id points at is therefore kept (supersedes_run_id does NOT keep a
+    run; both links are seeded the way the real code writes them)."""
+    y = _run(db, days_ago=100)  # current
+    x = _run(db, days_ago=150, superseded_by=y.id)  # old, no decisions
+    k = _run(db, days_ago=200, superseded_by=x.id)  # old, overridden
+    y.supersedes_run_id = x.id
+    x.supersedes_run_id = k.id
+    rec = _rec(db, k, product)
+    db.add(RecommendationOverride(id=_u(), recommendation_id=rec.id, original_qty=5, override_qty=3))
+    db.commit()
+    x_id, k_id = _pk(x), _pk(k)
+
+    _svc().prune_reorder_runs(db, retention_days=90)
+
+    link = db.query(ReorderRun.superseded_by_run_id).filter(ReorderRun.id == k_id).first()
+    assert link is not None, "run K (has an override) was deleted"
+    assert link[0] == x_id, f"K.superseded_by_run_id became {link[0]!r}, expected run X"
+    assert _run_exists(db, x)
+    assert _run_exists(db, y)
+
+
+def test_reorder_run_chain_without_decisions_is_fully_pruned_in_one_call(db):
+    """R1 -> R2 -> R3 (current), no decisions: R2 is only pointed at (superseded_by) by R1,
+    which goes in the same call, so one call removes both. R2.supersedes_run_id = R1 and
+    R3.supersedes_run_id = R2 must not keep anything."""
+    r3 = _run(db, days_ago=100)
+    r2 = _run(db, days_ago=150, superseded_by=r3.id)
+    r1 = _run(db, days_ago=200, superseded_by=r2.id)
+    r3.supersedes_run_id = r2.id
+    r2.supersedes_run_id = r1.id
+    db.commit()
+
+    result = _svc().prune_reorder_runs(db, retention_days=90)
+
+    assert result["runs_deleted"] == 2 and result["finished"] is True
+    assert not _run_exists(db, r1) and not _run_exists(db, r2)
+    assert _run_exists(db, r3)
+
+
 def test_reorder_run_dry_run_counts_match_live_run_and_change_nothing(db, product):
     runs = _three_superseded_old_runs(db, product)
     recs_before = db.query(ReorderRecommendation).count()
