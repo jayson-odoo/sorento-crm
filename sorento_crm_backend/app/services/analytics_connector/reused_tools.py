@@ -634,7 +634,7 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'its locations, not `top_n` rows overall; with no product named, `top_n` is a '
             'plain cap over every line, newest first, across every product.\n\nRESTRICTED: '
             'unit_cost, discount_per_unit and unit_cost_after_discount are gated on the '
-            'contact holding purchase_orders.cost; Supplier is gated on '
+            'purchase_orders.cost, which a contact holds when its linked user holds products.cost.view; Supplier is gated on '
             'purchase_orders.supplier, independent of the cost grant - a dealer without the '
             'matching grant never sees that one field.'
         ),

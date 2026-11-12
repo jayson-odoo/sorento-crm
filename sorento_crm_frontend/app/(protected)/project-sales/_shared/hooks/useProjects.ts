@@ -144,6 +144,7 @@ import type {
   MediaKind,
   QuotationLine,
   QuotationLineBulkItem,
+  QuotationLineVerdict,
   QuotationVersion,
   SeriesProductImportBody,
   LeadQualifyBody,
@@ -1112,6 +1113,34 @@ export function useQuotationLines(versionId: string | undefined) {
 }
 
 /**
+ * The first scope, in order, whose lines hold one that `matches` (PROJECT-QUOTE-LINE-TOOLS: a
+ * banner count opens the first area tab with a line it counts). Reads each version's lines under
+ * the key `useQuotationLines` uses, so a scope already opened costs nothing. Null when none does.
+ */
+export function useFindScopeWithLine() {
+  const queryClient = useQueryClient();
+  return React.useCallback(
+    async (
+      scopes: { scopeId: string; versionId: string | null }[],
+      matches: (line: QuotationLine) => boolean,
+    ): Promise<string | null> => {
+      for (const scope of scopes) {
+        if (!scope.versionId) continue;
+        const versionId = scope.versionId;
+        const lines = await queryClient.fetchQuery({
+          queryKey: linesKey(versionId),
+          queryFn: () => listQuotationLines(versionId),
+          staleTime: 30_000,
+        });
+        if (lines.some(matches)) return scope.scopeId;
+      }
+      return null;
+    },
+    [queryClient],
+  );
+}
+
+/**
  * The lines of several versions at once, each under the same key `useQuotationLines` uses, so a
  * version already open costs nothing. One array per version that has loaded.
  */
@@ -1568,6 +1597,24 @@ export function useImportJobStatus(jobId: string | null) {
  * non-standard" is not something a disappearing notification should be the only record of.
  */
 /**
+ * The cache key of one draft's verdict. Exported so the lines filter reads the SAME cached answer
+ * the row's pills show (PROJECT-QUOTE-LINE-TOOLS): one question, one answer, two readers.
+ */
+export function lineVerdictKey(
+  target: { quotationId: string | null; seriesId?: string | null },
+  draft: { product_id?: string; product_set_id?: string; unit_price?: string },
+) {
+  return [
+    'quotation-line-verdict',
+    target.quotationId ?? '',
+    target.seriesId ?? '',
+    draft.product_id ?? '',
+    draft.product_set_id ?? '',
+    draft.unit_price ?? '',
+  ] as const;
+}
+
+/**
  * The verdict for one DRAFT line, kept current as it is typed.
  *
  * Debounced at 400ms: judging fires a request, and a keystroke-per-request would hammer
@@ -1605,14 +1652,7 @@ export function useLineVerdict(
 
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: [
-      'quotation-line-verdict',
-      target.quotationId ?? '',
-      target.seriesId ?? '',
-      settled.product_id ?? '',
-      settled.product_set_id ?? '',
-      settled.unit_price ?? '',
-    ],
+    queryKey: lineVerdictKey(target, settled),
     queryFn: () =>
       judgeQuotationLine(target, {
         product_id: settled.product_id,
@@ -1624,6 +1664,38 @@ export function useLineVerdict(
     // it, and retyping it should not be three requests.
     staleTime: 30_000,
   });
+}
+
+/**
+ * The verdicts the rows' own `useLineVerdict` calls hold, for many drafts at once (the lines
+ * filter, PROJECT-QUOTE-LINE-TOOLS). It never asks by itself (`enabled: false`), so filtering
+ * costs no request, yet it carries the REAL query function: an observer's options land on the
+ * shared query, so a global refetch of the key judges the draft rather than writing null over
+ * the answer. One observer per distinct draft; answers come back in `drafts` order, `undefined`
+ * where nothing has been answered yet.
+ */
+export function useCachedLineVerdicts(
+  target: { quotationId: string | null; seriesId?: string | null },
+  drafts: { product_id?: string; product_set_id?: string; unit_price?: string }[],
+): (QuotationLineVerdict | undefined)[] {
+  const ids = drafts.map((draft) => JSON.stringify(lineVerdictKey(target, draft)));
+  const distinct = Array.from(new Map(drafts.map((draft, index) => [ids[index], draft])));
+  const answers = useQueries({
+    queries: distinct.map(([, draft]) => ({
+      queryKey: lineVerdictKey(target, draft),
+      queryFn: () => judgeQuotationLine(target, draft),
+      enabled: false,
+      staleTime: 30_000,
+    })),
+    // Structurally shared, so the array keeps its identity until an answer actually changes.
+    combine: (results) => results.map((result) => result.data),
+  });
+  return React.useMemo(() => {
+    const byId = new Map(distinct.map(([id], index) => [id, answers[index]]));
+    return ids.map((id) => byId.get(id));
+    // `ids` is rebuilt every render; its joined text is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, ids.join('|')]);
 }
 
 /**

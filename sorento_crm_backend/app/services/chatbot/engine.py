@@ -10873,7 +10873,7 @@ def _dealer_cost_as_promotion(
     db: Session, verdict: dict[str, Any], access: dict[str, Any], contact_pk: Any, turn_trace: Any
 ) -> dict[str, Any]:
     """The verdict with a `purchase_cost` ask read as the `promotion` ask when the contact is a dealer
-    (an active `chatbot.tier` "dealer" tag, no other tier) and holds no `purchase_orders.cost` grant;
+    (an active `chatbot.tier` "dealer" tag, no other tier) and has no linked active user holding `products.cost.view` (so no `purchase_orders.cost` attribute);
     the verdict itself otherwise. The planner reads `asks` before `domain_hint`, so both move: every
     purchase_cost entry of `asks` becomes promotion (dropped when promotion is already there), and a
     purchase_cost `domain_hint` or `check_po_cost` `intent_hint` follows. Only that domain, only a dealer."""
