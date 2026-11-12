@@ -67,3 +67,8 @@ qty, line removed, whole-SO cancel, SO delete. The 30 Oct auto-done at sync is s
   golden eight headings (AC-I5). The Lines list export's STATUS / WAS QTY / WAS DATE sit in ONE commit of their
   own (a `git revert` of the commit that takes them out), pending crew's confirmation with the owner; reverting
   that one commit leaves the Lines export exactly as on main.
+- AC-V2-6 FINAL (owner 12 Nov 14:57 "no change to the exports" + 15:10 "yeah the excel stay the same"): NEITHER
+  OI export changes. The per-project golden export keeps exactly its eight headings and main's values; the Lines
+  list export stays exactly as on main (no STATUS / WAS QTY / WAS DATE; d3307330 reverted in 9ebb19af). Owner
+  exception to the "exports mirror the screen" standing rule for these two OI exports. The screens still show the
+  change and "Waiting for CS" (AC-V2-2..5).

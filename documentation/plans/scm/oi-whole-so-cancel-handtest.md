@@ -1,6 +1,6 @@
 # OI-WHOLE-SO-CANCEL hand test (v2: Waiting for CS)
 
-No Excel step: the owner ruled "no change to the exports" (12 Nov); the Lines export columns wait for crew's confirmation.
+No Excel step: neither OI export changes (owner 12 Nov 14:57 and 15:10, an exception to the export = screen rule).
 
 ## URL
 crew test copy

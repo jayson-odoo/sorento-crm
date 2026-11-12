@@ -55,3 +55,15 @@ behaviour card answers.
   whole-SO cancel / SO delete are removed; rows wait for CS (`app/services/oi_waiting_for_cs.py`).
 - Not in scope, noted: a sidebar click to Fulfilment Planning while a board is open keeps the board on screen
   until a reload (pre-existing, not touched here).
+
+## v2 built (12 Nov)
+
+- One rule: any AutoCount change since CS's last Confirm reads "Waiting for CS" on the OI screens (derived,
+  `app/services/oi_waiting_for_cs.py`); purchasing cannot acknowledge it (409; Confirm skips it with a notice);
+  the system auto-confirm skips it; CS Confirm clears it and the batch's rows are auto-confirmed after apply.
+- The 30 Oct auto-done at sync is removed (header cancel, SO delete).
+- OI header reads "Waiting for CS" (not Completed) and its to-confirm count leaves waiting rows out.
+- Lines list: a Status column (Waiting for CS > SO cancelled > Line cancelled > ack text), sorted server side.
+- Qty: one-row line shows the SO's qty with Was while waiting; multi-row shows SO Qty Was.
+- A change back to the confirmed values retires the pending row unless location or item still differ.
+- Exports: owner exception, NEITHER OI export changes (AC-V2-6 FINAL).
