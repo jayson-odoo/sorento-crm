@@ -99,6 +99,11 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
                   {m.label}
                 </DropdownMenuItem>
               ))}
+              {job.complaint_id && canViewComplaint && (
+                <DropdownMenuItem asChild>
+                  <Link href={`/complaint-management/complaints/${job.complaint_id}`}>Open related complaint</Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => setEditing(true)}>Edit</DropdownMenuItem>
             </DetailActionsMenu>
           }

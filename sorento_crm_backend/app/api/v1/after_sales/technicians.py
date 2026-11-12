@@ -43,7 +43,8 @@ def get_technician(
     current_user: dict = Depends(require_any_permission_with_api_key([VIEW, MANAGE])),
     db: Session = Depends(get_db),
 ):
-    return technician_service.serialize(technician_service.get(db, technician_id))
+    row = technician_service.get(db, technician_id)
+    return technician_service.serialize(row, technician_service.is_in_use(db, row.id))
 
 
 @router.post("", status_code=201)

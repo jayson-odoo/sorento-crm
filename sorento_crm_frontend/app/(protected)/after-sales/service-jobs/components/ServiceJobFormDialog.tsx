@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +48,21 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
   const [phone, setPhone] = useState({ e164: '', valid: true });
   const [complaint, setComplaint] = useState<{ id: string; label: string } | null>(null);
   const [tried, setTried] = useState(false);
+  const [complaintQuery, setComplaintQuery] = useState('');
+  const { data: found = [] } = useQuery({
+    queryKey: ['service-job-complaint-search', complaintQuery],
+    queryFn: () => searchComplaintNumbers(complaintQuery),
+    enabled: open && canPickComplaint,
+    staleTime: 30_000,
+  });
+  // Static options (the pattern every other select in a dialog uses), widened by the server search.
+  const complaintOptions = useMemo(() => {
+    const options = found.map((c) => ({ value: c.id, label: c.complaint_number }));
+    if (complaint && !options.some((o) => o.value === complaint.id)) {
+      options.unshift({ value: complaint.id, label: complaint.label });
+    }
+    return options;
+  }, [found, complaint]);
 
   useEffect(() => {
     if (!open) return;
@@ -156,12 +172,12 @@ export default function ServiceJobFormDialog({ open, onOpenChange, job, onSubmit
               <Label>Related complaint</Label>
               <SearchableSelect
                 value={complaint?.id ?? ''}
-                onChange={(v) => !v && setComplaint(null)}
-                onOptionChange={(o) => setComplaint(o ? { id: o.value, label: o.label } : null)}
-                selectedOption={complaint ? { value: complaint.id, label: complaint.label } : undefined}
-                fetchOptions={async (query) =>
-                  (await searchComplaintNumbers(query)).map((c) => ({ value: c.id, label: c.complaint_number }))
-                }
+                onChange={(v) => {
+                  const picked = complaintOptions.find((o) => o.value === v);
+                  setComplaint(picked ? { id: picked.value, label: picked.label } : null);
+                }}
+                options={complaintOptions}
+                onSearchChange={setComplaintQuery}
                 placeholder="Search complaint number"
                 aria-label="Related complaint"
                 clearable

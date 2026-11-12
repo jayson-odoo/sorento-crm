@@ -91,7 +91,7 @@ def create(db: Session, payload: TechnicianCreate) -> Dict[str, Any]:
     db.add(row)
     db.commit()
     db.refresh(row)
-    return serialize(row)
+    return serialize(row, False)
 
 
 def update(db: Session, technician_id: str, payload: TechnicianUpdate) -> Dict[str, Any]:
@@ -105,18 +105,27 @@ def update(db: Session, technician_id: str, payload: TechnicianUpdate) -> Dict[s
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
-    return serialize(row)
+    return serialize(row, is_in_use(db, row.id))
 
 
-def delete(db: Session, technician_id: str) -> Dict[str, str]:
+def is_in_use(db: Session, technician_id: str) -> bool:
+    """On any job, whatever its status."""
+    return db.query(ServiceJob.id).filter(ServiceJob.technician_id == str(technician_id)).first() is not None
+
+
+def assert_not_in_use(db: Session, technician_id: str) -> None:
     row = get(db, technician_id)
-    in_use = db.query(ServiceJob.id).filter(ServiceJob.technician_id == row.id).first() is not None
-    if in_use:
+    if is_in_use(db, row.id):
         raise AppException(
             status_code=409,
             message="This technician is in use on a service job. Archive instead.",
             code="technician_in_use",
         )
+
+
+def delete(db: Session, technician_id: str) -> Dict[str, str]:
+    row = get(db, technician_id)
+    assert_not_in_use(db, row.id)
     db.delete(row)
     db.commit()
     return {"message": "Technician deleted successfully"}

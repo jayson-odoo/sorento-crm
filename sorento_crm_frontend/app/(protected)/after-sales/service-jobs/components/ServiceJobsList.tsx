@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -68,7 +69,9 @@ function Text({ value }: { value: string | null | undefined }) {
 }
 
 export default function ServiceJobsList() {
+  const router = useRouter();
   const canDispatch = useHasPermission('after_sales.service_jobs.dispatch');
+  const canViewComplaint = useHasPermission('complaint_management.complaints.view');
   const { create, update } = useServiceJobMutations();
   const [form, setForm] = useState<{ open: boolean; job: ServiceJob | null }>({ open: false, job: null });
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -329,10 +332,17 @@ export default function ServiceJobsList() {
         <ContextMenuContent className="w-60">
           {menuJob && (
             <>
+              {menuJob.complaint_id && canViewComplaint && (
+                <ContextMenuItem
+                  onSelect={() => router.push(`/complaint-management/complaints/${menuJob.complaint_id}`)}
+                >
+                  Open related complaint
+                </ContextMenuItem>
+              )}
               {canDispatch && (
                 <ContextMenuItem onSelect={() => setForm({ open: true, job: menuJob })}>Edit</ContextMenuItem>
               )}
-              {canDispatch &&
+              {(canDispatch || canViewComplaint) &&
                 (menuStep || secondaryMoves(menuJob.status, !!menuJob.technician_id).length > 0) && (
                   <ContextMenuSeparator />
                 )}

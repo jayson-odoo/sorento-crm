@@ -886,6 +886,11 @@ def create_pending_action(
             db, body.action_key, body.entity_id, actor_id, body.entity_type, body.payload
         )
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
+        if body.action_key == "technician.delete":
+            # Refused at the click, not ten seconds later: a technician on any job is archived.
+            from app.services import technician_service
+
+            technician_service.assert_not_in_use(db, body.entity_id)
 
         try:
             service = FormActionService(db)

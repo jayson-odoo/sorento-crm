@@ -9,7 +9,6 @@ import {
   getServiceJobs,
   createServiceJob,
   updateServiceJob,
-  searchComplaintNumbers,
   transitionServiceJob,
   type ServiceJobsListParams,
 } from '../services/serviceJobService';
@@ -56,7 +55,7 @@ export function useTechniciansSelect() {
 function useInvalidateJobs() {
   const queryClient = useQueryClient();
   return () => {
-    for (const key of ['service-jobs', 'service-job', 'service-job-board']) {
+    for (const key of ['service-jobs', 'service-job', 'service-job-board', 'technicians']) {
       void queryClient.invalidateQueries({ queryKey: [key] });
     }
   };
@@ -81,15 +80,6 @@ export function useServiceJobMutations() {
     onError: (e: Error) => toast.error(e.message || 'Failed to update the service job'),
   });
   return { create, update };
-}
-
-export function useComplaintNumberSearch(query: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ['service-job-complaint-search', query],
-    queryFn: () => searchComplaintNumbers(query),
-    enabled,
-    staleTime: 30_000,
-  });
 }
 
 export function useServiceJobActions() {

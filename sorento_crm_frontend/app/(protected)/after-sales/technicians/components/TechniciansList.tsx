@@ -26,6 +26,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { formatPhone } from '@/app/(protected)/project-sales/_shared/lib/phoneDisplay';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { Label } from '@/components/ui/label';
@@ -43,6 +44,7 @@ const TYPE_LABEL: Record<string, string> = { employee: 'Employee', contractor: '
 
 interface TechnicianRow extends Technician {
   in_use?: boolean;
+  phone_display?: string | null;
 }
 
 export default function TechniciansList() {
@@ -127,11 +129,14 @@ export default function TechniciansList() {
         accessorFn: (r) => r.phone,
         header: ({ column }) => <DataGridColumnHeader title="Phone" column={column} />,
         size: 180,
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.phone ?? undefined}>
-            {row.original.phone || '-'}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const shown = row.original.phone_display || formatPhone(row.original.phone) || '-';
+          return (
+            <span className="block truncate" title={shown}>
+              {shown}
+            </span>
+          );
+        },
         meta: { headerTitle: 'Phone', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
