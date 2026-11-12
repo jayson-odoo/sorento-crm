@@ -993,7 +993,7 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
     expect(screen.queryByRole('tab', { name: /Activity/ })).not.toBeInTheDocument();
   });
 
-  it('S7-2: two tabs, Lines and AutoCount differences, and no Findings tab', async () => {
+  it('S7-2: three tabs, Lines, AutoCount differences and History, and no Findings tab', async () => {
     getProjectSalesOrder.mockResolvedValue(detail({ findings: [HARD] }));
 
     renderDetail();
@@ -1002,6 +1002,7 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Lines',
       'AutoCount differences',
+      'History',
     ]);
     expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
     expect(screen.queryByRole('tab', { name: /Findings/ })).not.toBeInTheDocument();

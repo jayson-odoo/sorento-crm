@@ -24,6 +24,7 @@ from app.models.product import Brand
 from app.models.user import User
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID
+from tests._cost_viewer_seed import cost_viewer
 from tests._pg_fixture import unique_code
 from tests.test_contacts_access_filters import (  # noqa: F401 - fixtures
     CONTACTS,
@@ -116,8 +117,8 @@ def _seed_tier(db, lo, hi, state):
 
 
 def _seed_cost(db, lo, hi, state):
-    db.add(ContactFieldReveal(respond_contact_id=hi.id, field_key="purchase_orders.cost", granted=True))
-    db.flush()
+    # COST-ACCESS-UNIFIED: the Cost column is the linked user's permission, not a stored row.
+    cost_viewer(db, hi.id)
 
 
 def _flag(column):
