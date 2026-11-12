@@ -541,6 +541,6 @@ describe('PriceTagRequestForm - AI extract reads match fields off the payload (A
     });
 
     await screen.findByLabelText('Quantity for line 1');
-    expect(screen.getByText(MATCHED_PRODUCT.name)).toBeInTheDocument();
+    expect(screen.getByTitle(MATCHED_PRODUCT.name)).toHaveTextContent(MATCHED_PRODUCT.code);
   });
 });

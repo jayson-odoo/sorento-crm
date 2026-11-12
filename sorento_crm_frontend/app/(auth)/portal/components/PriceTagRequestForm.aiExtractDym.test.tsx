@@ -235,7 +235,7 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
 
     expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1);
     expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('from the SO');
-    expect(screen.getAllByText(REAL.product_name).length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle(REAL.product_name).some((el) => el.textContent === REAL.product_code)).toBe(true);
     expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
     expect(toasts.error).not.toHaveBeenCalled();
   });

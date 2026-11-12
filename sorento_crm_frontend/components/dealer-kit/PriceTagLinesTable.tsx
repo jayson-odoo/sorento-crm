@@ -578,7 +578,10 @@ function ItemPicker({
     }
   };
 
-  const itemLabel = itemValue(line) ? line.name || line.code : '';
+  // Owner, 12 Nov 17:50: the cell shows the CODE for a set as for a product; the name stays in the
+  // list's search, on hover here, and in the eye preview.
+  const itemLabel = itemValue(line) ? line.code || line.name : '';
+  const itemTitle = itemValue(line) && line.name && line.name !== itemLabel ? line.name : undefined;
 
   return (
     <div className="flex items-center gap-1">
@@ -606,7 +609,10 @@ function ItemPicker({
               aria-label={`Item for line ${lines.findIndex((l) => l.key === line.key) + 1}`}
               className={cn(selectTriggerVariants({}), 'w-full')}
             >
-              <span className={cn('min-w-0 flex-1 truncate text-left', !itemLabel && 'text-muted-foreground')}>
+              <span
+                className={cn('min-w-0 flex-1 truncate text-left', !itemLabel && 'text-muted-foreground')}
+                title={itemTitle}
+              >
                 {itemLabel || 'Search a set or product...'}
               </span>
               <ChevronDown className="size-4 shrink-0 opacity-60" />
