@@ -1890,7 +1890,7 @@ class FulfilmentBoardService:
                 # invisible here while the board shows the order itself, so the one line
                 # this read exists for - the one ordinary demand cannot see - vanished on
                 # exactly the completed orders this lane put on screen.
-                SalesOrder.status.in_(["open", "closed"]),
+                SalesOrder.status.in_(["open", "closed", "cancelled"]),
                 admitted_to_planning(),
                 (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,

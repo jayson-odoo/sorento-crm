@@ -1260,6 +1260,9 @@ class ProjectSOReconciliationService:
 
         classes = _classes_wanted(demand_class)
         core_rows = self._core_arm(needle=needle, sales_order_id=sales_order_id, classes=classes)
+        core_rows += self._cancelled_pending_arm(
+            needle=needle, sales_order_id=sales_order_id, classes=classes
+        )
         records = self._records_for([row["sales_order_id"] for row in core_rows])
         # A planning record authored here is project work, so it answers to Project alone.
         authored_rows = (
@@ -1528,6 +1531,77 @@ class ProjectSOReconciliationService:
                 "demand_class": row[10],
             }
             for row in rows
+        ]
+
+    def _cancelled_pending_arm(
+        self, *, needle: str, sales_order_id: Optional[str], classes: Sequence[str]
+    ) -> List[Dict[str, Any]]:
+        """OI-WHOLE-SO-CANCEL AC-WC-9: a header-cancelled / deleted SO that still has a
+        PENDING `cancelled` planning-change row in an unapplied batch, so CS can reach its
+        Confirm. Ordinary demand is untouched: such an order owes nothing, so it carries no
+        outstanding quantity and no open lines. Once the batch applies, it leaves the list."""
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+
+        query = (
+            self.db.query(
+                SalesOrder.id,
+                SalesOrder.so_number,
+                SalesOrder.internal_note,
+                SalesOrder.customer_id,
+                SalesAgent.sales_agent,
+                SalesAgent.person_label,
+                SalesOrder.doc_type,
+                SalesOrder.demand_class,
+            )
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .filter(
+                SalesOrder.demand_class.in_(list(classes)),
+                admitted_to_planning(),
+                SalesOrder.status == "cancelled",
+                SalesOrder.id.in_(
+                    self.db.query(ProjectSalesOrder.so_id)
+                    .join(
+                        PlanningChangeRow,
+                        PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id,
+                    )
+                    .join(
+                        PlanningChangeBatch,
+                        PlanningChangeBatch.id == PlanningChangeRow.batch_id,
+                    )
+                    .filter(
+                        PlanningChangeRow.kind == "cancelled",
+                        PlanningChangeRow.applied_state == planning_change_service.PLANNING_CHANGE_STATE_PENDING,
+                        PlanningChangeBatch.applied_at.is_(None),
+                    )
+                ),
+            )
+        )
+        if sales_order_id:
+            query = query.filter(SalesOrder.id == str(sales_order_id))
+        if needle:
+            like = f"%{needle}%"
+            query = query.filter(
+                SalesOrder.so_number.ilike(like)
+                | SalesOrder.internal_note.ilike(like)
+                | SalesOrder.customer.has(Customer.customer_name.ilike(like))
+            )
+        found = query.all()
+        names = self._customer_names([row[3] for row in found])
+        return [
+            {
+                "sales_order_id": str(row[0]),
+                "so_number": row[1],
+                "project_string": _project_string(row[2], row[7]),
+                "customer_name": names.get(str(row[3] or "")),
+                "earliest_required_date": None,
+                "outstanding_qty": 0,
+                "open_line_count": 0,
+                "agent_code": row[4],
+                "agent_label": row[5],
+                "so_doc_type": row[6],
+                "demand_class": row[7],
+            }
+            for row in found
         ]
 
     def _core_orders_matching_product(self, like: str, classes: Sequence[str]) -> set:
