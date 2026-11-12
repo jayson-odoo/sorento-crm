@@ -94,3 +94,31 @@ kept. Migration: 8 task keys present; settings defaults. Global guards
 now"; "Reuse functions" (section 1); "Plain business words" for task names/descriptions;
 "One bad line never fails a whole batch" (a rule's failure is logged and the next rule still
 runs: each rule is its own task). The rest are UI/chat rules with no surface here.
+
+## 7. Contract (tester and coder both build against this)
+
+New module `app/services/data_retention_service.py`. Every rule function takes the session plus
+keyword knobs `dry_run: bool = False, batch_size: int = 5000, sleep_ms: int = 0,
+max_seconds: float | None = None` and returns a dict that always holds `dry_run` (bool) and
+`finished` (bool: false only when the time budget stopped it with work left), plus its counts. In
+dry-run the count keys hold what a live run would do and nothing is written. `max_seconds` is
+checked between batches, so a run always completes at least one batch.
+
+| function | extra kwargs | count keys |
+|---|---|---|
+| `prune_plan_exceptions(db, *, grace_days=1, ...)` | | `rows_deleted`, `batches_deleted` |
+| `prune_integration_log(db, *, payload_retention_days, row_retention_days, ...)` | | `payloads_cleared`, `rows_deleted` |
+| `prune_chatbot_turn_traces(db, *, retention_days, ...)` | | `traces_cleared` |
+| `prune_scheduled_task_runs(db, *, retention_days, ...)` | | `rows_deleted` |
+| `prune_reorder_runs(db, *, retention_days, ...)` | | `runs_deleted` |
+| `prune_superseded_embeddings(db, *, retention_days, ...)` | | `rows_deleted` |
+| existing `prune_api_call_log` (`api_call_log_service.py`) | same knobs added, old kwargs kept | `payloads_cleared`, `rows_deleted` |
+| existing `prune_import_job_rows` (`import_outcome.py`) | same knobs added, old kwargs kept | `rows_deleted`, `retention_days` |
+
+Scheduler handlers `_handler_<task key>` in `app/scheduler/task_scheduler.py` read the
+`system_settings` row (section 2 names and defaults; `data_retention_dry_run` bool default true,
+`data_retention_batch_size` 5000, `data_retention_batch_sleep_ms` 200,
+`data_retention_max_run_minutes` 30) and return the rule's dict. New task keys are registered with
+`background=True`. One migration adds the columns and seeds the 7 task rows (`ON CONFLICT (key)
+DO NOTHING`). CLI: `python -m app.scripts.run_data_retention --rule <task key> [--apply]
+[--batch-size N] [--sleep-ms N]` prints the dict and elapsed seconds; dry-run unless `--apply`.
