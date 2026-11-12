@@ -5,6 +5,7 @@
  */
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { project, renderWithClient, response, ROWS, TYPES } from './relatedRecordsTestKit';
 
@@ -89,7 +90,7 @@ describe('relatedRecordTypes registry', () => {
     );
   });
 
-  it('AC-D1 a sixth kind registered once renders in the grid, the filter and the row click', () => {
+  it('AC-D1 a sixth kind registered once renders in the grid, the filter and the row click', async () => {
     registerRelatedRecordType('zzt_fake_kind', {
       label: 'ZZT fake kind',
       href: (id: string) => `/zzt-fake/${id}`,
@@ -102,6 +103,8 @@ describe('relatedRecordTypes registry', () => {
     expect(row.textContent).toContain('ZZT fake kind');
     expect(row.textContent).toContain('Eve Fake');
 
+    // The Type filter sits in the toolbar's Filters popover (fix round 2, review S1).
+    await userEvent.setup().click(screen.getByRole('button', { name: /^filters/i }));
     const offered = screen
       .getAllByTestId('multi-select')
       .flatMap((el) => Array.from(el.querySelectorAll('button')))

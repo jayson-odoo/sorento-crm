@@ -8,6 +8,7 @@
  */
 import React from 'react';
 import { fireEvent, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { project, renderWithClient, response, ROWS, TYPES } from './relatedRecordsTestKit';
 
@@ -92,6 +93,11 @@ vi.mock('../../_shared/hooks/useProjects', async (importOriginal) => {
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 
 const KINDS = new Set(TYPES.map((t) => t.kind));
+
+/** The Type and Status filters sit in the toolbar's Filters popover (fix round 2, review S1). */
+async function openFilters() {
+  await userEvent.setup().click(screen.getByRole('button', { name: /^filters/i }));
+}
 
 function typeFilter(): HTMLElement {
   const found = screen
@@ -185,13 +191,14 @@ describe('RelatedRecordsPanel', () => {
     expect(within(rowOf('PR-ZZT-0001')).queryAllByRole('button')).toHaveLength(0);
   });
 
-  it('AC-A6 the Type filter offers only the types the API names', () => {
+  it('AC-A6 the Type filter offers only the types the API names', async () => {
     const visible = TYPES.filter((t) => t.kind !== 'complaint');
     state.related = response(
       ROWS.filter((r) => r.kind !== 'complaint'),
       visible,
     );
     renderWithClient(<RelatedRecordsPanel project={project()} />);
+    await openFilters();
     const offered = Array.from(typeFilter().querySelectorAll('button')).map((b) => ({
       kind: b.getAttribute('data-value'),
       label: b.textContent,
@@ -199,8 +206,9 @@ describe('RelatedRecordsPanel', () => {
     expect(offered).toEqual(visible);
   });
 
-  it('AC-A6 picking a type sends it to the server', () => {
+  it('AC-A6 picking a type sends it to the server', async () => {
     renderWithClient(<RelatedRecordsPanel project={project()} />);
+    await openFilters();
     const before = state.calls.length;
     fireEvent.click(
       within(typeFilter()).getByText('Complaint', { selector: 'button' }),
