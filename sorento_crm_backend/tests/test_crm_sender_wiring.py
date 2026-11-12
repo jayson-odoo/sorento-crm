@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import timedelta
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 import app.main  # noqa: F401  isort:skip - registers every model before any query
 from app.models.chatbot_turn import ChatbotTurn
@@ -276,7 +277,11 @@ def _dead_crm_row(db, *, steps):
         stage=inbox_queue.SENDING_STAGE,
         trace=inbox_queue.INBOX_MARKER,
     )
-    db.execute(text("UPDATE chatbot.turns SET finished_at = now() WHERE id = :i"), {"i": turn_id})
+    # Through the ORM: a raw `chatbot.turns` UPDATE names the real schema and misses the test
+    # schema's row (the fixture pins search_path).
+    db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).update(
+        {ChatbotTurn.finished_at: func.now()}, synchronize_session=False
+    )
     db.commit()
     for step in steps:
         _crm_log(db, turn_id, step)
@@ -749,9 +754,8 @@ def test_t8a_try_again_is_refused_while_staff_hold_the_contact(
 def test_t8b_try_again_is_refused_after_24_hours(api, db, workspace, fake_respond, session_patch):
     _settings(db, chatbot_reply_sender_mode="all")
     turn_id = _failed_crm_turn(db)
-    db.execute(
-        text("UPDATE chatbot.turns SET finished_at = now() - interval '25 hours' WHERE id = :i"),
-        {"i": turn_id},
+    db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).update(
+        {ChatbotTurn.finished_at: func.now() - timedelta(hours=25)}, synchronize_session=False
     )
     db.commit()
     _assert_refused_without_sending(api, db, turn_id, fake_respond["client"])
