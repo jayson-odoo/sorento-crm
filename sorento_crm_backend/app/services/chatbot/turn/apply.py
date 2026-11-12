@@ -2407,7 +2407,9 @@ def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
         e["quantity"] = bare
 
 
-def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
+def _did_you_mean_keeps_quantity(
+    focus: Focus, verdict: dict[str, Any], trace: Trace, pending: Pending | None = None
+) -> None:
     """Owner hand test 26 Sep, slice 6 (T15 -> T16): "ELP3753 10" missed and the reply
     offered ELP3754; the dealer typed "ELP3754" back and lost the 10, because the fetch
     reads only this message's quantities. The miss is still on the focus - a product
@@ -2426,11 +2428,26 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
     ]
     if len(named) != 1 or _stated_quantity(named[0].get("quantity")) is not None:
         return
+    if pending is not None and not (_row_codes(named[0]) & _option_codes(pending)):
+        # CHATBOT-CODE-MATCH AC-1c: an open question that did not offer this code says the
+        # code is not that miss retried; it is a new ask, at its own quantity.
+        return
     missed = _missed_quantity(focus)
     if missed is None:
         return
     named[0]["quantity"] = missed
     trace.rules_fired.append("did_you_mean_keeps_quantity")
+
+
+def _option_codes(pending: Pending) -> set[str]:
+    """The codes (and labels) an open question offered, folded as `_row_codes` folds a row."""
+    return {
+        str(value).strip().casefold()
+        for o in pending.options or []
+        if isinstance(o, dict)
+        for value in (o.get("code"), o.get("label"))
+        if isinstance(value, str) and value.strip()
+    }
 
 
 def _missed_quantity(focus: Focus) -> int | None:
@@ -3067,15 +3084,17 @@ def _spend_stock_pick(
             trace.rules_fired.append("stock_pick_carries_quantity")
 
 
-def _picked_code_keeps_quantity(
-    asked: Any, focus: Focus, verdict: dict[str, Any], plan: Plan, trace: Trace
-) -> None:
-    """CHATBOT-CODE-MATCH AC-1b: one product picked off a staff did-you-mean (a product
-    roster, not a dealer's `stock_pick`, whose own carry is `_spend_stock_pick`) is the
-    missed ask retried, at the quantity it was asked with (`_missed_quantity`), the way a
-    code typed back keeps it (`_did_you_mean_keeps_quantity`). Only when this message
-    stated no quantity and the stock fetch is about exactly that one picked product."""
+def _picked_code_keeps_quantity(asked: Any, verdict: dict[str, Any], plan: Plan, trace: Trace) -> None:
+    """CHATBOT-CODE-MATCH AC-1b/AC-1c: one product picked off a staff did-you-mean (a product
+    roster, not a dealer's `stock_pick`, whose own carry is `_spend_stock_pick`) is asked at
+    the quantity typed beside the miss it was offered for, which the offer recorded per code
+    (`answer_bridge._offered_quantities`). None recorded: nothing is carried, and the reply
+    asks for one. Only when this message stated no quantity and the stock fetch is about
+    exactly that one picked product."""
     if asked is None or _stock_pick(asked) or asked.kind not in ("product_pick", "product_set_pick"):
+        return
+    recorded = asked.payload.get(task_mod.QTY_BY_CODE)
+    if not isinstance(recorded, dict) or not recorded:
         return
     if "answer_pending" not in trace.rules_fired or _message_states_a_quantity(verdict):
         return
@@ -3086,10 +3105,10 @@ def _picked_code_keeps_quantity(
     ]
     if len(specs) != 1 or len(picked) != 1 or len(specs[0].entities) != 1 or picked[0].get("set_code"):
         return
-    missed = _missed_quantity(focus)
-    if missed is None or specs[0].filters.get("requested_quantities"):
+    quantity = next((recorded[c] for c in _row_codes(picked[0]) if c in recorded), None)
+    if _stated_quantity(quantity) is None or specs[0].filters.get("requested_quantities"):
         return
-    specs[0].filters["requested_quantities"] = {str(picked[0]["uuid"]): missed}
+    specs[0].filters["requested_quantities"] = {str(picked[0]["uuid"]): _stated_quantity(quantity)}
     trace.rules_fired.append("did_you_mean_keeps_quantity")
 
 
@@ -3284,7 +3303,7 @@ def _apply(
     # focus rules, the narrowing and the fetch all see one shape for "how many of this
     # product".
     _normalise_demand_qty(verdict)
-    _did_you_mean_keeps_quantity(state.focus, verdict, trace)
+    _did_you_mean_keeps_quantity(state.focus, verdict, trace, state.pending)
 
     if state.pending is not None and _fully_answered_roster(state.pending):
         # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
@@ -3848,7 +3867,7 @@ def _apply(
         trace.rules_fired.append("new_ask_closes_stale_roster")
 
     _spend_stock_pick(state.pending, verdict, plan, new_state, trace)
-    _picked_code_keeps_quantity(state.pending, state.focus, verdict, plan, trace)
+    _picked_code_keeps_quantity(state.pending, verdict, plan, trace)
 
     return new_state, plan
 

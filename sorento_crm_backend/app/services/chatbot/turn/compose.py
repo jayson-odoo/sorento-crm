@@ -528,10 +528,12 @@ def _did_you_mean_per_code(
                     "position": n,
                     "label": code,
                     "code": code,
-                    "entity_type": "product",
+                    "entity_type": row.get("entity_type") or "product",
                     "uuid": uuid,
                     "uuids": [uuid],
                     "payload": {},
+                    # CHATBOT-CODE-MATCH AC-1d: an offered set carries what its exact ask resolves to.
+                    **({"members": list(row["members"])} if row.get("members") else {}),
                 }
             )
         if lines:

@@ -5005,17 +5005,15 @@ def _set_then_its_members(keep: list, first: int, close: list) -> list:
     if at is None:
         return keep
     product_set = keep[at]
-    display = jsc.get(product_set, "display")
     members = [
         {
             "entity_type": "product",
-            "canonical_code": jsc.get(m, "product_code"),
-            "uuid": jsc.get(m, "uuid"),
+            "canonical_code": m["code"],
+            "uuid": m["uuid"],
             "match_tier": "set_member",
             "similarity": jsc.get(product_set, "similarity"),
         }
-        for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
-        if isinstance(m, dict) and jsc.truthy(jsc.get(m, "product_code")) and jsc.truthy(jsc.get(m, "uuid"))
+        for m in _set_members(product_set)
     ]
     group = [product_set, *members]
     codes = {jsc.get(g, "canonical_code") for g in group}
@@ -5030,13 +5028,30 @@ def set_members_of(match: Any) -> dict[str, Any]:
     `gate.run_gate`, reads the same `display.members`). Empty for any other row."""
     if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product_set":
         return {}
-    display = jsc.get(match, "display")
-    members = [
+    members = _set_members(match)
+    return {"members": members} if members else {}
+
+
+def _dym_type_label(pick: Any, asked: Any) -> str:
+    """A did-you-mean's entity-type label: the resolver's kind for its first candidate, the
+    parser's hint when the resolver has none, bare when neither is known. CHATBOT-CODE-MATCH
+    AC-1e: a product code asked reads "product" even when a close set leads the candidates."""
+    kind = jsc.get(pick, "entity_type")
+    hint = jsc.get(asked, "hint") if asked is not None else None
+    if jsc.js_string(kind or "").lower() == "product_set" and jsc.js_string(hint or "").lower() == "product":
+        kind = hint
+    return _prettify_type(kind) or (_prettify_type(hint) if jsc.truthy(hint) else "")
+
+
+def _set_members(product_set: Any) -> list[dict[str, Any]]:
+    """A resolver set row's member products (`display.members`, the membership table's
+    order, `entity_resolver._product_set_entities`) as `{"uuid", "code"}`, each with both."""
+    display = jsc.get(product_set, "display")
+    return [
         {"uuid": jsc.get(m, "uuid"), "code": jsc.get(m, "product_code")}
         for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
         if isinstance(m, dict) and jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(jsc.get(m, "product_code"))
     ]
-    return {"members": members} if members else {}
 
 
 #: The entity kinds whose did-you-mean is a code, ranked by the typed parts it holds.
@@ -5078,9 +5093,9 @@ def did_you_mean_by_token(
     its own (owner, 4 Oct 2026: "treat each product code individually"): the genuine-miss
     resolutions (`miss_resolutions`), each token's own non-exact matches plus the
     resolver's trigram `alternatives` (`miss_token_candidates`), the first three
-    (`_cap3`), a row with no human label dropped. Product rows only: a partial answer
-    offers a code to fetch in place of the one that missed, and only a product is that.
-    `typed_by_key` (the turn's unplaced words, `token_key` fold to the word as typed) ranks
+    (`_cap3`), a row with no human label dropped. Code rows only (a product, or a close set
+    with its members): a partial answer offers a code to fetch in place of the one that
+    missed. `typed_by_key` (the turn's unplaced words, `token_key` fold to the word as typed) ranks
     each token's candidates by the code as typed (`miss_token_candidates`).
     """
     g = gate if isinstance(gate, dict) else {}
@@ -5094,13 +5109,18 @@ def did_you_mean_by_token(
         rows: list[dict[str, Any]] = []
         typed = (typed_by_key or {}).get(token_key(token))
         for match in _cap3(miss_token_candidates(res, allowed_types, typed=typed)):
-            if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product":
+            kind = jsc.js_string(jsc.get(match, "entity_type") or "").lower()
+            if kind not in _CODE_KINDS:
                 continue
             label = _ms_human_label(match)
             uuid = jsc.get(match, "uuid")
             if not jsc.truthy(label) or not jsc.truthy(uuid):
                 continue
-            rows.append({"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": "product"})
+            # CHATBOT-CODE-MATCH AC-1d: a close set leads as it does asked alone, carrying
+            # what its exact ask resolves to (`set_members_of`).
+            rows.append(
+                {"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": kind, **set_members_of(match)}
+            )
         if rows:
             out[token] = rows
     return out
@@ -5591,9 +5611,7 @@ def build_suggest_offer(
             # entity-type-label: resolver PRIMARY (this token's own best non-exact candidate),
             # parser hint FALLBACK, bare when neither is known.
             first_pick = s["picks"][0] if s["picks"] else None
-            type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
-            )
+            type_label = _dym_type_label(jsc.get(first_pick, "m"), src_ent)
             type_sfx = f" ({jsc.js_string(type_label)})" if jsc.truthy(type_label) else ""
             cand_lines: list[str] = []
             for pick in s["picks"]:
@@ -5665,9 +5683,7 @@ def build_suggest_offer(
             any_uuid = any(_ms_is_uuid(jsc.get(p["m"], "canonical_code")) for p in picks)
             src_ent = ent_of_tok(d1["token"])
             first_pick = picks[0] if picks else None
-            d1_type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
-            )
+            d1_type_label = _dym_type_label(jsc.get(first_pick, "m"), src_ent)
             d1_type_sfx = f" ({jsc.js_string(d1_type_label)})" if jsc.truthy(d1_type_label) else ""
             out["suggest_offer"] = True
             out["suggest_selection_context"] = "suggest_offer"

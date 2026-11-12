@@ -103,7 +103,7 @@ from app.services.chatbot.tail import scope_block
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch
 from app.services.chatbot.turn import pending
-from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+from app.services.chatbot.turn.task import QTY_BY_CODE, REFER_TO_SALESMAN
 from app.services.chatbot.turn.state import escalation_barred, is_staff_profile, offers_escalation
 
 # AC-1691's umbrella: no roster is ever asked with fewer than two options, in any
@@ -1229,6 +1229,22 @@ def _hit_ladder_resolved(resolved: Any, focus_products: Any) -> Any:
     return base
 
 
+def _offered_quantities(offer: Mapping[str, Any], parser: Mapping[str, Any] | None) -> dict[str, int]:
+    """CHATBOT-CODE-MATCH AC-1c: each offered code (folded) with the quantity typed beside the
+    miss it was offered for (`dym_candidates[].for_raw`, `dealer_stock.quantity_of`), so a pick
+    of it carries that quantity and no other (the dealer's pick carries `stock_qty` the same way)."""
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    named = [e for e in (parser or {}).get("entities") or [] if isinstance(e, dict) and e.get("hint") in (None, "product")]
+    out: dict[str, int] = {}
+    for c in offer.get("dym_candidates") or []:
+        if isinstance(c, Mapping) and c.get("code") and c.get("for_raw"):
+            quantity = dealer_mod.quantity_of(named, c["for_raw"])
+            if quantity is not None:
+                out.setdefault(str(c["code"]).strip().casefold(), quantity)
+    return out
+
+
 def _miss_question(
     offer: Mapping[str, Any],
     producers: Mapping[str, Any],
@@ -1354,6 +1370,7 @@ def _miss_question(
         # module that was missing it (reviewer S5). A one-row `suggest_last_result_set`
         # is not a choice; the escalate offer below is the honest question for it.
         if len(roster_options) >= _MIN_ROSTER_OPTIONS:
+            quantities = _offered_quantities(offer, parser)
             return pending.ask(
                 roster_kind,
                 roster_options,
@@ -1364,6 +1381,7 @@ def _miss_question(
                     "escalate_offered": True,
                     "agent": agent,
                     "brand_code": brand,
+                    **({QTY_BY_CODE: quantities} if quantities else {}),
                 },
             )
 
