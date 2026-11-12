@@ -636,3 +636,14 @@ def test_catalogue_pdf_name_skips_a_visible_twin(db):
     root = db.query(AttachmentDirectory).filter(AttachmentDirectory.id == folder).one()
 
     assert _free_pdf_name(db, root, "catalogue.pdf") == "catalogue - copy.pdf"
+
+
+def test_bulk_restore_check_only_sees_two_trashed_files_of_one_name(db):
+    """Review: two files of one name coming back to one folder - the second is asked about."""
+    folder = _folder(db, "Folder B")
+    first = _trashed(db, "photo.jpg", folder)
+    second = _trashed(db, "PHOTO.jpg", folder)
+
+    _restored, conflicts = AttachmentService(db).bulk_restore_report([first.id, second.id], check_only=True)
+
+    assert [c["attachment_id"] for c in conflicts] == [second.id]

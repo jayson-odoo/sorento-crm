@@ -718,3 +718,34 @@ def test_bulk_move_replace_never_trashes_another_projects_file(db, world):
     assert [n["attachment_id"] for n in body["not_moved"]] == [mine]
     assert _row(db, theirs).is_deleted is False
     assert _row(db, plain).directory_id == folder_b
+
+
+def test_upload_create_copy_beside_another_records_file_gets_a_copy_name(db, world):
+    """Review blocker: the window offered Create copy for a same-named file on another record,
+    and the retry uploaded under the same name. Copy must pick a free copy name."""
+    _as(world, "siti")
+    folder = _folder(db)
+    name = f"{unique_code('other')}.pdf"
+    _seed_file(db, world["project_a"], name, directory_id=folder)
+
+    asked = world["client"].post(
+        f"{BASE}/",
+        data={"attachment_type_id": world["type_id"], "directory_id": folder},
+        files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
+    )
+    copied = world["client"].post(
+        f"{BASE}/",
+        data={"attachment_type_id": world["type_id"], "directory_id": folder, "on_conflict": "copy"},
+        files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
+    )
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["detail"]["existing_attachment_id"] is None
+    assert copied.status_code == 201, copied.text
+    assert copied.json()["stored_filename"] == name.replace(".pdf", " - copy.pdf")
+
+
+def test_bulk_restore_rejects_a_bad_id_plainly(db, world):
+    _as(world, "siti")
+    res = world["client"].post(f"{BASE}/bulk-restore", json={"attachment_ids": ["not-a-uuid"]})
+    assert res.status_code in (400, 422), res.text
