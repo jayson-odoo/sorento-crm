@@ -1,6 +1,7 @@
 # PLAN: MAIN-RED-TAGSHEET (12 Nov 2026)
 
-Status: in progress. Small fix track (one frontend function, two new test files, no migration, no auth/RBAC change).
+Status: PR #2359 open, review round 1 fixed, Merge-ready. Small fix track (one frontend function, three new test
+files, no migration, no auth/RBAC change).
 
 ## Problem
 
@@ -37,6 +38,9 @@ not change. No new classes, no new module.
 
 1. `text-layout.ts` `richLayerLines`: the space before a word group joins the line whenever the line already holds
    a piece (measured or not); the wrap/cut decisions stay gated on `measurable` as today.
+2. Review round 1: the space width, the overflow check and the word cut use the same "holds a piece" test, so a
+   0-px first word (U+200B) cannot let the next word overrun the box. Positive-width layouts unchanged (reviewer
+   probe, 32,000 random measured layouts vs origin/main: 0 differences).
 
 ## Tests
 
@@ -46,6 +50,7 @@ not change. No new classes, no new module.
   - `TagSheetRenderer.rich-text.no-canvas.test.tsx`: the AC-17 escaped `<img onerror>` string with
     `HTMLCanvasElement.prototype.getContext` returning null (the census environment) prints with its spaces, and
     still creates no img element and no handler attribute.
+  - `lib/dealer-kit/text-lines.zero-width.test.ts` (review round 1): every line fits its box after a 0-px word.
 - Existing AC-17 test stays unchanged (security assertion untouched).
 - Kill: revert the fix, both new files and the AC-17 test (with `canvas` hidden) go red; restore.
 - Green set: every TagSheetRenderer / rich-text / text-layout test file plus the census set
