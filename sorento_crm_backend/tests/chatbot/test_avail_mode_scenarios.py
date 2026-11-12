@@ -447,11 +447,13 @@ def test_S41_a_picked_code_owing_a_quantity_does_not_drop_the_other_list(console
     assert c.say("3", reply(demand_qty=3)) == f"SRTWC286-SH-150 x 3: {TICK} Got stock."
 
 
-def test_S42_a_near_miss_inside_a_mix_is_listed_without_a_did_you_mean(console):
-    """Reviewer S4: the did-you-mean is for a message that names one code (S11)."""
+def test_S42_a_near_miss_inside_a_mix_gets_its_own_did_you_mean(console):
+    """CHATBOT-CODE-MATCH AC-15 (lane rule R7, owner 4 Oct "treat each product code
+    individually"): a near miss beside a found code gets the did-you-mean it gets asked
+    alone. Supersedes reviewer S4's "listed without a did-you-mean"."""
     c = console(SRT5674=Stock(on_hand=100), ELP3754=Stock(on_hand=20))
     out = c.say("SRT5674 x 5, ELP3753 x 1", stock(product("SRT5674", 5), product("ELP3753", 1)))
-    assert out == f"SRT5674 x 5: {TICK} Got stock.\n\nCouldn't find: ELP3753."
+    assert out == f"SRT5674 x 5: {TICK} Got stock.\n\nCouldn't find ELP3753. Did you mean ELP3754?"
 
 
 # ================================================================== tester-local pass on 7fa5d654

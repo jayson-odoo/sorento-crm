@@ -258,16 +258,18 @@ def test_ac20_dealer_never_offered_an_inactive_or_chat_hidden_code(session_facto
 # --------------------------------------------------------------------------- AC-21, AC-22
 
 
-def test_ac21_dealer_says_no_to_the_offer_gets_couldnt_find_and_the_refer_line(session_factory, monkeypatch, stub_access):  # noqa: F811
+def test_ac21_dealer_says_no_to_the_offer_gets_the_refer_line_and_nothing_open(session_factory, monkeypatch, stub_access):  # noqa: F811
+    """Lead ruling 12 Nov: today's reply stays (the refer line alone, owner hand test ht26)."""
     c = _console(session_factory, monkeypatch, stub_access, [TARGET], **{"TWC8354_SH_UF": Stock(on_hand=100)})
     first = c.say(f"{TYPO} x 3", stock(product(TYPO, 3)))
     assert f"Did you mean {TARGET}?" in first, first
     stocked_before = len(c.stock_calls)
     text = c.say("no", reply(is_affirmative=False, open_question_answer=answer("no")))
-    assert f"Couldn't find {TYPO}." in text, text
-    assert REFER_TO_SALESMAN in text, text
+    assert text == REFER_TO_SALESMAN, text
     assert "Got stock" not in text and TICK not in text, text
     assert len(c.stock_calls) == stocked_before, "a stock read ran after the dealer declined the offer"
+    assert c.stored_question is None, c.stored_question
+    assert not _word(TARGET, text), text
 
 
 def test_ac22_dealer_says_yes_to_the_offer_gets_the_stock_for_the_typed_quantity(session_factory, monkeypatch, stub_access):  # noqa: F811
