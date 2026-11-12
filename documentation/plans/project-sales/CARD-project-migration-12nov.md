@@ -1,6 +1,6 @@
 # CARD: project import from the TOTAL SALES ORDER SUMMARY workbook (lane PROJECT-MIGRATION-TOOL)
 
-Status: behaviour card v2 (Gate 1). Crew answered Q1-Q4 from prior owner rulings (section "Crew answers" below supersedes any rule above it); owner decisions d1-d5 pending; PO issuer data request open. No code yet. Track: L (lead pattern).
+Status: behaviour card v2 (Gate 1). Crew answered Q1-Q4 from prior owner rulings (section "Crew answers" below supersedes any rule above it); owner decisions d1-d5 pending; PO issuer data request answered (interim rule stands). No code yet. Track: L (lead pattern).
 No screen is planned, so there is no mock (Gate 2 is only needed if the answers below add an upload screen).
 
 All examples are the MASKED shape crew sent (fake names, fake amounts). Nothing real is in this file.
@@ -203,6 +203,7 @@ Pass 2 (`--mapping mapping.xlsx`, dry run, then `--apply`):
 9. No emails, WhatsApp, notifications or template tasks from the import. On the dev copy, prove that `create_po` and the Won move send nothing and change no sales total (a test asserts no notification / outbound rows are written and the shared sales total is unchanged).
 10. Developer `NEW` only where the person writes `NEW`.
 11. PO issuer: mirror how hand-keyed dealer POs record `po_source` and the issuing party on the dev DB (data request filed). The PO form defaults to `contractor_direct` with no issuer (`PurchaseOrderDialog.tsx:76,79`). No trading-house party is created from a customer unless the dry run lists every new party first. Until the data answers: no party is created, and `issuing_party_id` is set only when an existing party already carries `customer_id` = the row's customer.
+    - Data answer (12 Nov prod clone, counts only): exactly 1 project PO exists (`contractor_direct`, no issuer), so there is no hand-keyed pattern to mirror. Parties: 212 developer, 1562 architect, 3 trading house (1 keyed to a customer), every other role unkeyed. RULED: the interim rule stands. `po_source = contractor_direct`; `issuing_party_id` only when an existing party already carries `customer_id` = the row's customer (today that can match at most 1 party); no party is ever created from a customer. The import will be almost the whole PO table, so the dry run states the before/after PO count.
 12. The real file, `mapping.xlsx` and the full report never leave the owner's Mac. Crew runs the real-data dry run locally; only the masked shared report is posted. Nothing runs on prod; the live-run method is owner decision d5.
 
 Owner decisions pending: d1 blank-name rows, d2 schedule codes O/C CBD YS, d3 who fills the mapping, d4 years + one-time vs monthly, d5 live run (CLI command vs upload page; an upload page adds the mock gate).
