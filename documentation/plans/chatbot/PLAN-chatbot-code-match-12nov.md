@@ -77,6 +77,11 @@ is the longest boundary-prefix parent. Neither field links an X sibling to its b
 remove the X insert: a hand-set `family_code` equal to the base family on each X-coded product, or a registered set
 holding both. Slice 5 plan: read the family by `family_code` (derived or hand-set) plus set membership; keep the X
 insert only for families where neither link exists, and report that count.
+Crew data (12 Nov prod clone, read-only): 111 active X-sibling products in 29 families. 57 are linked to their base
+by a registered set holding both, so the data read covers them. 0 have a hand-set family_code (0 of 15,167 active
+products). 54 have neither link: for these the X insert is still the only link. Generic audit: the X insert is KEPT
+until the catalogue carries the link for those 54. The data that removes it: set Family code on each, or register a set
+holding both codes. The list: `sorento_crm_backend/scripts/chatbot_x_siblings_without_link.sql` (read-only).
 
 Gate: the frozen set = the 23 sampled defect turns + the 34 recovered typos + every past owner-FAIL code-lookup /
 stock "not found" turn + multi-turn follow-ups (refine, answer the bot's question, topic switch). Pass = 0 wrong codes
