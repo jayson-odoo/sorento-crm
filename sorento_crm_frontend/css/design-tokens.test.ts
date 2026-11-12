@@ -744,3 +744,31 @@ describe('M1 motion perimeter hygiene', () => {
     });
   });
 });
+
+/**
+ * UI v2 phase 0, UAC C-10: the v2 token block exists in css/config.reui.css under `[data-ui="v2"]`.
+ *
+ * The provider (lib/theme + components/v2/theme) writes the BRAND variables at runtime; the neutrals, status
+ * tint and toggle-selected pair for v2 are static CSS and live in a `:root[data-ui="v2"]` block with a
+ * `.dark[data-ui="v2"]` counterpart. The v1 `:root` / `.dark` blocks above stay as they are. The rule that no
+ * file in components/v2 or lib/theme names a raw palette class or a hex literal is enforced by
+ * components/v2/v2-holistic.inventory.test.ts.
+ */
+describe('C-10 v2 token block', () => {
+  it('config.reui.css has a [data-ui="v2"] block', () => {
+    expect(configCss).toMatch(/\[data-ui="v2"\]\s*\{/);
+  });
+
+  it('the v2 block declares tokens, not an empty shell', () => {
+    const v2 = declarations(block(configCss, '[data-ui="v2"]'));
+    expect(Object.keys(v2).length).toBeGreaterThan(0);
+  });
+
+  it('has a dark counterpart so v2 dark mode is generated from tokens too', () => {
+    expect(configCss).toMatch(/\.dark\[data-ui="v2"\]\s*\{|\[data-ui="v2"\]\.dark\s*\{/);
+  });
+
+  it('the v1 :root block does not take the v2 attribute', () => {
+    expect(configCss).not.toMatch(/(^|\n)\s*:root\s*\{[^}]*data-ui/);
+  });
+});
