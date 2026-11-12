@@ -70,7 +70,10 @@ def _world(env, change=None, *, qty=10, row_qtys=None):
         env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING, qty=str(first_qty)
     )
     w.inquiry_id = str(_so_mirror_row.last[1])
+    w.mirror_id = str(_so_mirror_row.last[0].id)
+    w.pso_id = str(_so_mirror_row.last[0].project_sales_order_id)
     w.row_ids = [w.row_id]
+    w.confirm_qty = qty
     for extra_qty in (row_qtys or [])[1:]:
         more, _ = _so_mirror_row(
             env, w.header, w.line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING,
@@ -93,6 +96,7 @@ def _apply_change(w, change):
     if change == "date":
         _push(w, dict(w.record, lines=[dict(w.x, required_date=NEW_DATE), w.y]))
     elif change == "qty":
+        w.confirm_qty = 7
         _push(w, dict(w.record, lines=[dict(w.x, qty_ordered=7), w.y]))
     elif change == "one_removed":
         _push(w, dict(w.record, lines=[w.y]))
@@ -133,7 +137,10 @@ def _wl_row(env, w, **params):
 
 
 def _confirm(w):
-    """CS Confirm of the pending batch for the line (planning_change_service.apply)."""
+    """CS Confirm of the pending batch for the line, the way the board does. A date / qty
+    change goes through the board's own route (POST /sales-orders/{pso}/confirm with
+    batch_id, the line composed as a Buy of the SO's current qty); a cancel kind is applied
+    (`planning_change_service.apply`)."""
     env = w.env
     env.db.expire_all()
     rows = (
@@ -142,8 +149,25 @@ def _confirm(w):
         .all()
     )
     assert rows, "precondition: the change waits on the board"
-    planning_change_service.apply(env.db, str(rows[0].batch_id), _USER_ID)
-    env.db.commit()
+    batch_id = str(rows[0].batch_id)
+    if any(r.kind != "cancelled" for r in rows):
+        res = env.client.post(
+            f"{BASE}/sales-orders/{w.pso_id}/confirm",
+            json={
+                "batch_id": batch_id,
+                "lines": [
+                    {
+                        "project_line_id": w.mirror_id,
+                        "buy_qty": str(w.confirm_qty),
+                        "buy_reason": "ZZT no stock anywhere",
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 200, res.text
+    else:
+        planning_change_service.apply(env.db, batch_id, _USER_ID)
+        env.db.commit()
     env.db.expire_all()
 
 
@@ -156,7 +180,11 @@ def test_ac_v2_2_a_row_waits_for_cs_after_the_push_and_clears_after_confirm(env,
 
     _confirm(w)
 
-    assert _wl_row(env, w).get("waiting_for_cs") is False
+    # A cancel kind retires the OI row, which the list hides by default (#992): read it
+    # with the state filter that lists cancelled rows.
+    cancelled_kind = change in ("one_removed", "last_open", "header_cancel", "delete")
+    params = {"state": "cancelled"} if cancelled_kind else {}
+    assert _wl_row(env, w, **params).get("waiting_for_cs") is False
 
 
 def test_ac_v2_2_a_date_change_then_changed_back_before_confirm_is_not_waiting(env):
