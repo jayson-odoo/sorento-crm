@@ -24,7 +24,7 @@ def get_integration_logs(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query(None, description="Column to sort by; unknown columns fall back to created_at"),
     dir: Optional[str] = Query(None, description="asc or desc"),
-    query: Optional[str] = Query(None, description="Search box: channel, table, business id, endpoint, reference, error; a full UUID matches id/business_id/correlation_id exactly"),
+    query: Optional[str] = Query(None, description="Search box: channel, table, business id, endpoint, reference, error; a full UUID also matches id and correlation_id exactly"),
     status: Optional[List[str]] = Query(None),
     integration_channel: Optional[List[str]] = Query(None),
     business_table: Optional[List[str]] = Query(None),
