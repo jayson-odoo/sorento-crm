@@ -527,7 +527,7 @@ progress.*
 **Date columns:** `created_at` (**default sort, newest first**), `finished_at`. Shown on the Turn
 line as elapsed time, not raw timestamps.
 
-**Available filters (on the Chat History list, not a separate page):** date range, and **Failed
+**Available filters (on the Chat History list, not a separate page):** date range (one field, whole days in Malaysia time, yesterday to today by default), and **Failed
 turns only** - narrows the list to contacts with at least one failed turn in that range. Inside a
 thread, the drawer has its own **Failed turns only** toggle scoped to that one conversation.
 
