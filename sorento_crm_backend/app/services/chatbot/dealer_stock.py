@@ -128,6 +128,7 @@ def did_you_mean(
     *,
     quantity: Any = None,
     asked_at_turn: int | None = None,
+    size_asked: str = "",
 ) -> tuple[str, Pending] | None:
     """The dealer's did-you-mean: the suggested code(s) as a pick carrying the typed
     quantity, and no escalation. One candidate reads "Couldn't find ELP3753. Did you
@@ -160,7 +161,9 @@ def did_you_mean(
         return None
     shown = (typed or "").strip().upper() or "that"
     labels = [o["label"] for o in options]
-    text = did_you_mean_text(shown, labels, size_lines=[str(o.get("size_line") or "") for o in options])
+    # CHATBOT-CODE-MATCH R4: a size nothing holds is what was not found ("with size 400 mm").
+    said = f"{shown} {size_asked}".strip() if size_asked else shown
+    text = did_you_mean_text(said, labels, size_lines=[str(o.get("size_line") or "") for o in options])
     pick = ask(
         "product_pick",
         options,

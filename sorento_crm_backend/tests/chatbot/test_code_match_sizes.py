@@ -86,6 +86,15 @@ def _entry(text: str, code: str) -> str:
     return ""
 
 
+def _header(text: str, who: str, code: str, size: str) -> None:
+    """The reply's lead: the code exists but no member holds the size, so it names what is missing."""
+    if who == "dealer":
+        assert text.startswith(f"Couldn't find {code} with size {size}. Did you mean:"), text
+        return
+    first = text.splitlines()[0]  # staff keep their own quoted style
+    assert f'Couldn\'t find "{code}"' in first and f"with size {size}" in first and "Did you mean" in first, text
+
+
 def _as_staff(c: Console) -> None:
     c.as_staff()
     c.stock_on_hand = 12
@@ -220,7 +229,7 @@ def test_ac7b_a_size_the_parser_read_that_no_candidate_holds_is_never_the_bare_n
     # A "None with size ..." clause may appear only inside a reply that leads with "Couldn't find" and offers the close
     # codes with their stored sizes; never bare, never followed by an answer for the code with no stored size.
     # The code exists but no member holds the size: the header names what is missing, not the code itself.
-    assert text.startswith(f"Couldn't find {FAM} with size 400 mm. Did you mean:"), text
+    _header(text, who, FAM, "400 mm")
     assert "None with size" not in text, text
     assert "Size: 300 mm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
     assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text
@@ -236,7 +245,7 @@ def test_ac26_the_none_with_size_line_takes_its_unit_from_the_registry_key(sessi
     if who == "staff":
         _as_staff(c)
     text = c.say(f"{FAM} 30cm stock", _head_plus_size(30, "cm"))
-    assert text.startswith(f"Couldn't find {FAM} with size 30 cm. Did you mean:"), text
+    _header(text, who, FAM, "30 cm")
     assert "None with size" not in text, text
     assert "Size: 40 cm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
     assert "Stock summary" not in text and "How many units of" not in text and TICK not in text, text

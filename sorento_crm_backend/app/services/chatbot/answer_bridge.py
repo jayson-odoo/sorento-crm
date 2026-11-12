@@ -2358,4 +2358,5 @@ def _dealer_did_you_mean(
         [dict(row) for row in rows],
         quantity=quantity,
         asked_at_turn=asked_at_turn,
+        size_asked=str(offer.get("size_asked") or ""),
     )

@@ -134,6 +134,26 @@ def _size_line(rows: list[Any], values: dict[str, Any], numbers: list[float]) ->
     return f"{row.label}: {_plain(stored[row.spec_key])} {row.unit}".strip(), True
 
 
+#: The resolution key a size miss carries: the size asked, as "with size 400 mm".
+SIZE_ASKED = "size_asked"
+
+
+def _asked_size(parser: dict[str, Any], spec_none: Any) -> str:
+    """ "with size 400 mm" for the size `spec_none` says nothing holds: the grounded entity's
+    own label, value and unit (the registry key's, `head/bare_size`); "" when not one size."""
+    misses = [m for m in jsc.array(spec_none) if isinstance(m, dict)]
+    if len(misses) != 1:
+        return ""
+    for e in jsc.array(jsc.get(parser, "entities")):
+        if isinstance(e, dict) and e.get("spec_key") == misses[0].get("key") and e.get("spec_value") == misses[0].get("value"):
+            value = _number(e.get("spec_value"))
+            if value is None:
+                return ""
+            label = jsc.js_string(e.get("spec_label") or e.get("spec_key")).strip().lower()
+            return f"with {label} {_plain(value)} {jsc.js_string(e.get('spec_unit') or '').strip()}".strip()
+    return ""
+
+
 def _unheld_size_is_a_miss(db: Any, rows: list[Any], parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     """R4 (lead ruling, 12 Nov 2026): a size the parser read that no variant of the code's family
     holds (the route's `spec_none`, `narrow_code_tokens_by_specs`) is never answered with a code
@@ -180,6 +200,13 @@ def _unheld_size_is_a_miss(db: Any, rows: list[Any], parser: dict[str, Any], res
         if len(family) < 2:
             continue
         miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family}
+        # What was not found is the size, never the code (owner: state only what the data
+        # holds): the miss reads "Couldn't find <code> with size <N> <unit>", and the route's
+        # separate "None with size" clause has nothing left to say.
+        asked_size = _asked_size(parser, resolved.get("spec_none"))
+        if asked_size:
+            miss[SIZE_ASKED] = asked_size
+            resolved["spec_none"] = []
         if res is not None:
             res.update(miss)
         else:

@@ -5406,7 +5406,10 @@ def build_suggest_offer(
                     token = jsc.get(first, "raw")
                 if not jsc.truthy(token):
                     token = "that item"
-                d1s.append({"token": token, "cands": cands})
+                # CHATBOT-CODE-MATCH R4: a size nothing holds is what was not found
+                # (`code_sizes.SIZE_ASKED`, "with size 400 mm"), said after the code.
+                asked = jsc.get(res, "size_asked")
+                d1s.append({"token": token, "cands": cands, "asked": f" {asked}" if jsc.truthy(asked) else ""})
         d1s = d1s[:5]
 
     # D2's alternatives scan, HOISTED above D1 so the window-exculpation block can read the
@@ -5607,6 +5610,8 @@ def build_suggest_offer(
     # Route on the SURVIVING-token count: 0 falls through to D2; 1 takes the existing
     # single-token block; more than 1 takes the numbered multi-block.
     d1 = survivors[0]["block"] if len(survivors) == 1 else None
+    if d1 and d1.get("asked"):
+        out["size_asked"] = d1["asked"].strip()  # the dealer's pick says it the same way
 
     # MULTI-CODE-DYM Q5 (owner, 4 Oct 2026): beside a did-you-mean, a missed PRODUCT code
     # with nothing to suggest is still named, never dropped.
@@ -5687,7 +5692,7 @@ def build_suggest_offer(
             # MULTI-CODE-DYM Q5 (owner, 4 Oct 2026): each token reads as it would asked
             # alone (the single-token arm's own sentence), numbers running on across them.
             blocks.append(
-                f'Couldn\'t find "{jsc.js_string(raw_of_tok(token))}"{type_sfx}. Did you mean:\n'
+                f'Couldn\'t find "{jsc.js_string(raw_of_tok(token))}"{type_sfx}{s["block"]["asked"]}. Did you mean:\n'
                 + "\n".join(cand_lines)
             )
         out["suggest_offer"] = True
@@ -5797,7 +5802,7 @@ def build_suggest_offer(
                             sfx = _stamp(key)
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (
-                        f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
+                        f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}{d1["asked"]}. '
                         f"Did you mean:\n" + "\n".join(with_size_lines(dym_lines, size_lines)) + "\n"
                         + _cont(
                             "Reply with a code to continue",
@@ -5806,7 +5811,7 @@ def build_suggest_offer(
                     )
                 else:
                     out["suggest_response"] = (
-                        f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
+                        f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}{d1["asked"]}. '
                         f"Did you mean {_bso_human_list(codes)}? "
                         + _cont(
                             "Reply with a code to continue",
