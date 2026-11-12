@@ -30,7 +30,7 @@ export const VERB_LABEL: Record<string, string> = {
   RELEASE: 'RELEASE',
   // SPARE-PART-ORDER-REQUEST: a spare part request's line. Bought like an ORDER, never
   // customer demand.
-  REPLENISH: 'Replenish',
+  REPLENISH: 'REPLENISH',
 };
 
 /**
