@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { cn } from '@/lib/utils';
 import { useRetryChatbotTurn } from '../hooks/useChatbotTurns';
-import { TurnDetailDrawer } from './TurnDetailDrawer';
+import { useTraceDrawer } from './TraceDrawer';
 import {
   buildTimeline,
   canRetry,
@@ -44,7 +44,7 @@ export function TurnPanel({
   retryUnavailableReason?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [detailOpen, setDetailOpen] = useState(false);
+  const { openTrace, traceDrawer } = useTraceDrawer();
   const headline = useMemo(() => turnHeadline(turn), [turn]);
   const rows = useMemo(() => buildTimeline(turn), [turn]);
   const duration = turnDuration(turn);
@@ -110,16 +110,13 @@ export function TurnPanel({
           className="h-6 w-6 p-0 shrink-0"
           aria-label="Open full trace"
           title="Open full trace"
-          onClick={() => setDetailOpen(true)}
+          onClick={() => openTrace(turn.id)}
         >
           <ListTree className="size-3.5" />
         </Button>
       </div>
 
-      <TurnDetailDrawer
-        turnId={detailOpen ? turn.id : null}
-        onOpenChange={(o) => !o && setDetailOpen(false)}
-      />
+      {traceDrawer}
 
       {open && (
         <div className="mt-2">

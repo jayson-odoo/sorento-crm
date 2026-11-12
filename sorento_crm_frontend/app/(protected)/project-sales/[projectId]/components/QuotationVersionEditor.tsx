@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { richOneLine, richPlainText } from '@/lib/dealer-kit/rich-text';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -42,6 +43,7 @@ import { hasColumns, reshapeCells, type MatrixHeader } from '../../_shared/lib/q
 import { carryFeedback } from '../../_shared/lib/quotationFeedbackMarks';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
+import { useLinesFacts, type LineFacts } from './QuotationLineFlags';
 import {
   PICKED_CODE_KEY,
   cellsPatch,
@@ -55,6 +57,19 @@ import {
   totalFromDrafts,
   type LineDraft,
 } from './quotationLineDraft';
+
+/**
+ * The lines filter's options (PROJECT-QUOTE-LINE-TOOLS), in the pills' own words, each read off
+ * the same `lineFacts` the pill on the row shows.
+ */
+export const LINE_FLAG_FILTERS: { value: string; label: string; test: (facts: LineFacts) => boolean }[] = [
+  { value: 'non_standard', label: 'Non-standard', test: (facts) => facts.nonStandard },
+  { value: 'below_default', label: 'Below default price', test: (facts) => facts.belowDefault },
+  { value: 'below_floor', label: 'Below minimum price', test: (facts) => facts.belowFloor },
+];
+
+/** The lines filter's chosen options, held by the page so it stays on across area tabs. */
+export type LineFlagFilter = { value: string[]; onChange: (next: string[]) => void };
 
 /** Staged lines that are not ready to be written. Counted so a refusal can say how many. */
 export function unfinishedStagedLines(lines: StagedQuotationLine[]): number {
@@ -142,8 +157,14 @@ export function QuotationVersionEditor({
   siblingScopes,
   formCopySources,
   headerVersion,
+  flagFilter,
 }: {
   project: Project;
+  /**
+   * The lines filter's choice, from the page, so it survives an area tab switch (the editor is
+   * keyed per scope). Absent, the editor holds it itself.
+   */
+  flagFilter?: LineFlagFilter;
   /**
    * Set by the quotation page (PROPOSAL-HEADER-LAYOUT): the version is the record header's chip,
    * one number for the whole proposal, and Recheck alerts / Revise are its gear items. So this
@@ -672,19 +693,82 @@ export function QuotationVersionEditor({
     [canEditColumns, changeColumns, copySources, matrixColumns],
   );
 
+  // The flags filter (PROJECT-QUOTE-LINE-TOOLS): the page's choice when it holds one.
+  const [ownFlags, setOwnFlags] = React.useState<string[]>([]);
+  const chosenFlags = flagFilter?.value ?? ownFlags;
+  const setChosenFlags = flagFilter?.onChange ?? setOwnFlags;
+  const verdictSeriesId = (seriesId !== undefined ? seriesId : quotation?.series_id) ?? null;
+  const facts = useLinesFacts(
+    { quotationId: quotation?.id ?? null, seriesId: verdictSeriesId },
+    gridLines,
+  );
+  /**
+   * Lines added or edited while the filter is on stay on screen until the filter changes, so a
+   * row never vanishes from under the caret: a duplicated copy before its verdict answers, or a
+   * rate typed past the flag the filter was set on (owner ruling: alerts live, never lost work).
+   * Worked out during render, so the input being typed into is never unmounted.
+   */
+  const flagsKey = chosenFlags.join(',');
+  // Drafts compared by VALUE: seeding an edit session or a Save rebuilds every draft object
+  // without anybody typing, and that must not pin every row.
+  const touched = React.useRef<{ flags: string; keys: Set<string>; drafts: Map<string, string> }>({
+    flags: flagsKey,
+    keys: new Set(),
+    drafts: new Map(),
+  });
+  if (touched.current.flags !== flagsKey) {
+    touched.current = { flags: flagsKey, keys: new Set(), drafts: touched.current.drafts };
+  }
+  {
+    const held = touched.current;
+    const known = held.drafts.size > 0;
+    gridLines.forEach((line) => {
+      const before = held.drafts.get(line.key);
+      const now = JSON.stringify(line.draft);
+      if (flagsKey && known && before !== now) held.keys.add(line.key);
+      held.drafts.set(line.key, now);
+    });
+  }
+  const pinned = touched.current.keys;
+  const flagOptions = React.useMemo(
+    () =>
+      LINE_FLAG_FILTERS.map((option) => {
+        const count = gridLines.filter((line) => {
+          const fact = facts.get(line.key);
+          return !line.removed && fact != null && option.test(fact);
+        }).length;
+        return { value: option.value, label: option.label, badgeText: String(count) };
+      }),
+    [facts, gridLines],
+  );
+
   // Matched on the LIVE draft, so a description typed seconds ago is already findable, plus the
   // saved code the draft does not carry as text.
   const needle = lineSearch.trim().toLowerCase();
   const rowFilter = React.useMemo(() => {
-    if (!needle) return undefined;
-    return (line: StagedQuotationLine) =>
-      [
-        line.line?.product_code,
-        richPlainText(line.draft.description),
-        line.draft.brand_snapshot,
-        line.draft.band_label,
-      ].some((value) => (value ?? '').toLowerCase().includes(needle));
-  }, [needle]);
+    const tests = LINE_FLAG_FILTERS.filter((option) => chosenFlags.includes(option.value));
+    if (!needle && tests.length === 0) return undefined;
+    return (line: StagedQuotationLine) => {
+      if (pinned.has(line.key)) return true;
+      const fact = facts.get(line.key);
+      const flagged =
+        tests.length === 0 || (fact != null && tests.some((option) => option.test(fact)));
+      const found =
+        !needle ||
+        [
+          line.line?.product_code,
+          richPlainText(line.draft.description),
+          line.draft.brand_snapshot,
+          line.draft.band_label,
+        ].some((value) => (value ?? '').toLowerCase().includes(needle));
+      return flagged && found;
+    };
+    // `pinned` is read through the ref; `gridLines` is what changes it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosenFlags, facts, needle, gridLines]);
+  const filterEmptyHint = needle
+    ? `No line matches "${lineSearch.trim()}".`
+    : 'No line matches these flags.';
 
   const stageLines = edit?.stage;
   const toggleRemoved = edit?.toggleRemoved;
@@ -800,7 +884,7 @@ export function QuotationVersionEditor({
           lines={gridLines}
           editing={gridEditing}
           quotationId={quotation?.id ?? null}
-          seriesId={(seriesId !== undefined ? seriesId : quotation?.series_id) ?? null}
+          seriesId={verdictSeriesId}
           rowFilter={rowFilter}
           emptyHint={
             gridEditing
@@ -809,19 +893,30 @@ export function QuotationVersionEditor({
                 ? 'No lines yet.'
                 : 'This version was frozen without any lines.'
           }
-          filterEmptyHint={`No line matches "${lineSearch.trim()}".`}
+          filterEmptyHint={filterEmptyHint}
           fetchProducts={fetchProducts}
           resolveProduct={resolveProduct}
           productCodeOf={productCodeOf}
           toolbar={
             gridLines.length > 0 ? (
-              <ListSearchInput
-                value={lineSearchInput}
-                onChange={setLineSearchInput}
-                placeholder="Search lines"
-                aria-label="Search lines by product or description"
-                className="w-full sm:max-w-xs"
-              />
+              <>
+                <ListSearchInput
+                  value={lineSearchInput}
+                  onChange={setLineSearchInput}
+                  placeholder="Search lines"
+                  aria-label="Search lines by product or description"
+                  className="w-full sm:max-w-xs"
+                />
+                <SearchableMultiSelect
+                  aria-label="Flags"
+                  value={chosenFlags}
+                  onChange={setChosenFlags}
+                  options={flagOptions}
+                  placeholder="Flags"
+                  clearable
+                  triggerClassName="w-full sm:w-48"
+                />
+              </>
             ) : null
           }
           fillFromProduct={fillFromProduct}
