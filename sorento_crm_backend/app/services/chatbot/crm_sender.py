@@ -99,8 +99,8 @@ MAX_BUTTONS = 10
 def _button_labels(raw: Any) -> list[str]:
     """Quick-reply labels: split on commas, trimmed (agreed difference from n8n, which keeps a
     leading space on buttons 2..n), empty ones dropped, at most 10."""
-    items = raw.split(",") if isinstance(raw, str) else (raw or [])
-    return [s for s in (str(i).strip() for i in items) if s][:MAX_BUTTONS]
+    joined = raw if isinstance(raw, str) else ",".join(str(i) for i in (raw or []))
+    return [s for s in (i.strip() for i in joined.split(",")) if s][:MAX_BUTTONS]
 
 
 FAILURE_REPLY_TEXT = (
@@ -125,16 +125,28 @@ def _attachment_list(raw: Any) -> list[dict[str, Any]]:
 
 def _presign(db: Any, url: str, filename: str | None = None) -> str:
     """A one hour signed copy of a `cdn-sorento` url, in process, through the storage path the
-    /external/presigned-url route uses. Any other url, or a signing failure, gives the url back
-    (agreed difference: n8n drops the file on a failure, the customer still gets it here)."""
+    /external/presigned-url route uses, with the route's attachment-row guard. Any other url, a
+    path with no attachments row, or a signing failure gives the url back (agreed difference:
+    n8n drops the file on a failure, the customer still gets it here). `filename` is unused
+    (the route only echoes it)."""
     if "cdn-sorento" not in (url or ""):
         return url
     try:
         from app.api.v1.external.presigned_url import _normalize_to_s3_key, _provider_for_attachment, _resolve_attachment
+        from app.config import settings
         from app.services import storage_router
 
         key = _normalize_to_s3_key(url)
-        provider = _provider_for_attachment(_resolve_attachment(db, url, key), url)
+        try:
+            attachment = _resolve_attachment(db, url, key)
+        except Exception:  # noqa: BLE001
+            db.rollback()  # a failed lookup must not leave the sender's session aborted
+            raise
+        if attachment is None:
+            db.rollback()
+            if settings.presigned_require_attachment_row:
+                return url
+        provider = _provider_for_attachment(attachment, url)
         signed = storage_router.resolve_signed_url(key, provider=provider, expires_in=PRESIGN_SECONDS, strict=True)
         return signed or url
     except Exception:  # noqa: BLE001
@@ -176,6 +188,8 @@ class Step(NamedTuple):
     idempotent: bool = False
     # A file respond.io refuses is sent as this bare link instead (text), and the run goes on.
     link: Callable[[], str] | None = None
+    # A step that sends nothing but leaves its own success row (an assign with no id).
+    skip: str | None = None
 
 
 def covers(row: Any, contact_id: str) -> bool:
@@ -235,7 +249,7 @@ def _steps(
             for p, att in enumerate(_attachment_list(action.get("attachments_src"))):
                 kind_, url, cap = _attachment_type(att), att.get("url"), att.get("caption")
                 name = att.get("filename")
-                signed = _Lazy(lambda u=url, n=name: presign(u, n) if presign else u)
+                signed = _Lazy(lambda u=url: presign(u) if presign else u)
                 # A video travels with its original url; image and file with the signed one.
                 send_url = (lambda u=url: u) if kind_ == "video" else signed.get
                 steps.append(Step(f"{prefix}{a}.{p}", action.get("kind"), {"attachment_type": kind_, "url": url},
@@ -245,7 +259,9 @@ def _steps(
         elif kind == "assign_conversation":
             uid = action.get("respond_user_id")
             if uid is None or not str(uid).strip():
-                continue  # n8n errors on an empty id; here it is never sent
+                # n8n errors on an empty id; here nothing is sent and the skip is logged.
+                steps.append(Step(f"{prefix}{a}.0", kind, {"skipped": "empty_assignee"}, lambda c: None, skip="empty_assignee"))
+                continue
             steps.append(Step(f"{prefix}{a}.0", kind, {"respond_user_id": uid},
                               lambda c, u=uid: c.set_conversation_assignee(ident, u), idempotent=True))
         elif kind == "add_comment":
@@ -317,10 +333,11 @@ def all_confirmed(db: Any, turn_id: str, actions: list[dict[str, Any]]) -> bool:
 
 
 def _step_row(turn_id: str, contact_id: str, key: str, kind: str, detail: dict, *, attempted_at: str,
-              confirmed_by: str | None = None, unknown: bool = False) -> dict:
+              seq: int = 0, confirmed_by: str | None = None, unknown: bool = False) -> dict:
     # `attempted_at` is the ORIGINAL attempt's time, copied unchanged onto every later row of
     # the step: the lookup window starts there, never at a later row's own time.
-    body = {"sender": "crm", "step": key, "kind": kind, "attempted_at": attempted_at, **detail}
+    body = {"sender": "crm", "step": key, "kind": kind, "attempted_at": attempted_at,
+            "seq": seq, **detail}
     if confirmed_by:
         body["confirmed_by"] = confirmed_by
     if unknown:
@@ -381,9 +398,21 @@ def _finalise(db: Any, base: dict, stamp: Any, **kw: Any) -> bool:
     return True
 
 
-def _prior_attempt(db: Any, turn_id: str, key: str) -> tuple[Any, float | None]:
-    """(latest row of this step when its outcome is unknown, the ORIGINAL attempt's epoch), else
-    (None, None). Unknown = a `processing` stamp with no result, or a failure flagged unknown."""
+class _History(NamedTuple):
+    prior: Any = None  # latest row of the step when its outcome is unknown
+    prior_at: float | None = None  # the ORIGINAL attempt's epoch
+    prior_body: dict = {}
+    link_mode: bool = False  # a link fallback was started for this step
+    file_failures: int = 0  # file attempts that failed with an HTTP status
+    max_seq: int = 0  # the newest attempt number logged for the step
+
+
+FILE_TRIES_BEFORE_LINK = 3
+
+
+def _history(db: Any, turn_id: str, key: str) -> _History:
+    """What the log says about this step: an unknown latest attempt (with the ORIGINAL attempt
+    time), whether the link fallback began, and how many file tries failed with a status."""
     from datetime import datetime, timezone
 
     from app.models.integration import IntegrationLog
@@ -398,24 +427,37 @@ def _prior_attempt(db: Any, turn_id: str, key: str) -> tuple[Any, float | None]:
         .order_by(IntegrationLog.created_at.desc(), IntegrationLog.id)
         .all()
     )
+    prior, prior_at, prior_body, latest_seen = None, None, {}, False
+    link_mode, failures = False, 0
+    mine: list[tuple[Any, dict]] = []
     for row in rows:
         try:
             body = json.loads(row.request_payload or "{}")
         except ValueError:
             continue
-        if str(body.get("step")) != key:
+        if str(body.get("step")) == key:
+            mine.append((row, body))
+    # Newest first by the attempt number the sender stamps: row times tie inside one transaction.
+    mine.sort(key=lambda rb: int(rb[1].get("seq") or 0), reverse=True)
+    max_seq = int(mine[0][1].get("seq") or 0) if mine else 0
+    for row, body in mine:
+        if body.get("fallback") == "link":
+            link_mode = True
+        elif row.status == "failed" and row.status_code is not None:
+            failures += 1
+        if latest_seen:
             continue
-        unknown = row.status == "processing" or (row.status == "failed" and bool(body.get("unknown")))
-        if not unknown:
-            return None, None
-        try:
-            at = datetime.fromisoformat(str(body["attempted_at"]))
-            at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
-            return row, at.timestamp()
-        except (KeyError, ValueError):
-            created = row.created_at
-            return row, (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).timestamp()
-    return None, None
+        latest_seen = True
+        if row.status == "processing" or (row.status == "failed" and bool(body.get("unknown"))):
+            try:
+                at = datetime.fromisoformat(str(body["attempted_at"]))
+                at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+                prior_at = at.timestamp()
+            except (KeyError, ValueError):
+                created = row.created_at
+                prior_at = (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).timestamp()
+            prior, prior_body = row, body
+    return _History(prior, prior_at, prior_body, link_mode, failures, max_seq)
 
 
 def last_failure_reason(db: Any, turn_id: str, since: Any = None) -> str | None:
@@ -483,7 +525,7 @@ def _link_message_id(db: Any, turn_id: str, contact_id: str, response: Any) -> N
         logger.warning("crm sender: could not link message %s to turn %s", message_id, turn_id, exc_info=True)
 
 
-def _in_conversation(client: Any, ident: str, step: Step, attempted_at: float) -> bool:
+def _in_conversation(client: Any, ident: str, matches: Callable[[dict], bool], attempted_at: float) -> bool:
     """Is there an OUTGOING message of this step's, created since just before it was tried?"""
     payload = client.list_messages(ident, limit=20) or {}
     items = payload.get("items") if isinstance(payload.get("items"), list) else payload.get("data") or []
@@ -492,7 +534,7 @@ def _in_conversation(client: Any, ident: str, step: Step, attempted_at: float) -
         if not isinstance(item, dict) or str(item.get("traffic") or "").lower() != "outgoing":
             continue
         age = direct_ingress.message_age_seconds(item)
-        if age is not None and age <= window and step.matches(item):
+        if age is not None and age <= window and matches(item):
             return True
     return False
 
@@ -519,6 +561,114 @@ def _kept_response(response: Any) -> dict:
 _NOT_CONFIRMED = "Not confirmed: Respond.io could not be asked whether it arrived."
 
 
+_FILE_REFUSED = "file_refused"
+
+
+def _link_step(step: Step, ident: str, link_url: str) -> Step:
+    """The step as its link fallback: the bare url as a text message, looked up as text."""
+    return step._replace(
+        detail={**step.detail, "fallback": "link"},
+        call=lambda c, u=link_url: c.send_message(ident, u),
+        matches=_text_is(link_url),
+        link=None,
+    )
+
+
+def _run_step(
+    db: Any,
+    client: Any,
+    ident: str,
+    turn_id: str,
+    contact_id: str,
+    step: Step,
+    hist: _History,
+    prior_matches: Callable[[dict], bool] | None,
+    seq: int,
+) -> str | None:
+    """One step: None when it is confirmed sent, else the outcome the run ends with
+    (`_FILE_REFUSED` when respond.io refused a file, so the caller sends its link)."""
+    prior, prior_at = hist.prior, hist.prior_at
+    attempted_at = prior_at if prior_at is not None else time.time()
+    iso = datetime.fromtimestamp(attempted_at, timezone.utc).isoformat()
+
+    def row_for(**kw: Any) -> dict:
+        return _step_row(turn_id, contact_id, step.key, step.kind, step.detail, attempted_at=iso, seq=seq, **kw)
+
+    base = row_for()
+
+    # An earlier attempt with an unknown result: ask the conversation before sending again.
+    if prior is not None and prior_matches is not None:
+        try:
+            found = _in_conversation(client, ident, prior_matches, attempted_at)
+        except Exception:  # noqa: BLE001
+            logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
+            if prior.status == "processing":
+                row = _write_row(db, row_for(unknown=True), status="failed", error=_NOT_CONFIRMED)
+                if row is not None:
+                    _drop_stamp(db, prior)
+            return direct_ingress.SEND_TIMEOUT
+        if found:
+            # The earlier attempt's own row becomes the confirmed one (no second row).
+            try:
+                body = json.loads(prior.request_payload or "{}")
+                body.pop("unknown", None)
+                body["confirmed_by"] = "lookup"
+                prior.request_payload = json.dumps(body, default=str)
+                prior.status, prior.error_message = "success", None
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                logger.warning("crm sender: could not confirm step %s", step.key, exc_info=True)
+                return direct_ingress.SEND_HTTP_ERROR
+            return None
+
+    stamp = _write_row(db, base, status="processing")
+    if stamp is None:
+        return direct_ingress.SEND_HTTP_ERROR
+    if prior is not None and prior.status == "processing":
+        _drop_stamp(db, prior)
+    response, failure = _attempt(client, step)
+    if failure is None:
+        if not _finalise(db, base, stamp, status="success", status_code=200, response=_kept_response(response)):
+            return direct_ingress.SEND_HTTP_ERROR
+        _link_message_id(db, turn_id, contact_id, response)
+        return None
+    outcome, code, reason = failure
+    if outcome == direct_ingress.SEND_REFUSED:
+        _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
+        # A file respond.io refused goes out as its bare link (n8n does the same); a connection
+        # failure is not turned into a link, the drain retries it.
+        return _FILE_REFUSED if step.link is not None and code is not None else outcome
+    # Unknown: the request may have left.
+    unknown_base = row_for(unknown=True)
+    if step.idempotent:
+        _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
+        base = _step_row(turn_id, contact_id, step.key, step.kind, step.detail, attempted_at=iso, seq=seq + 1)
+        stamp = _write_row(db, base, status="processing")
+        response, failure = _attempt(client, step)
+        if failure is None:
+            if not _finalise(db, base, stamp, status="success", status_code=200, response=_kept_response(response)):
+                return direct_ingress.SEND_HTTP_ERROR
+            return None
+        _finalise(db, base, stamp, status="failed", status_code=failure[1], error=failure[2])
+        return direct_ingress.SEND_REFUSED
+    if step.matches is None:
+        _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
+        return direct_ingress.SEND_TIMEOUT
+    try:
+        found = _in_conversation(client, ident, step.matches, attempted_at)
+    except Exception:  # noqa: BLE001
+        logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
+        _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=_NOT_CONFIRMED)
+        return direct_ingress.SEND_TIMEOUT
+    if not found:
+        _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
+        return direct_ingress.SEND_REFUSED
+    if not _finalise(db, row_for(confirmed_by="lookup"), stamp, status="success"):
+        return direct_ingress.SEND_HTTP_ERROR
+    return None
+
+
 def send(
     session_factory: Callable[[], Any],
     *,
@@ -533,8 +683,19 @@ def send(
 
     Each attempt writes a `processing` stamp first and a result row after (the stamp is then
     dropped), so a process that dies mid-request leaves a stamp the next run looks up."""
-    if not str(turn_id or "").strip() or not str(contact_id or "").strip():
+    if not str(turn_id or "").strip():
         return direct_ingress.SEND_REFUSED  # n8n throws without either id; nothing is sent
+    if not str(contact_id or "").strip():
+        db = session_factory()
+        try:
+            iso = datetime.now(timezone.utc).isoformat()
+            _write_row(db, _step_row(turn_id, contact_id, "-", "send", {}, attempted_at=iso), status="failed",
+                       error="There was no contact to send to, so nothing was sent.")
+        except Exception:  # noqa: BLE001
+            logger.warning("crm sender: could not log a missing contact", exc_info=True)
+        finally:
+            db.close()
+        return direct_ingress.SEND_REFUSED
     if any(isinstance(a, dict) and a.get("dry_run") for a in actions or []):
         return direct_ingress.SEND_OK  # n8n drops the whole body when any action is a dry run
     db = session_factory()
@@ -546,107 +707,28 @@ def send(
             # The way the live path builds it for this contact (`direct_ingress._lookup_contact`).
             client = RespondClient.for_identifier(db, contact_id)
         done = confirmed_keys(db, turn_id)
-        for step in _steps(actions, ident, step_prefix, lambda u, n=None: _presign(db, u) if "cdn-sorento" in (u or "") else u):
+        for step in _steps(actions, ident, step_prefix, lambda u: _presign(db, u) if "cdn-sorento" in (u or "") else u):
             if step.key in done:
                 continue
-            # An earlier attempt with an unknown result: ask the conversation before sending again.
-            prior, prior_at = _prior_attempt(db, turn_id, step.key)
-            attempted_at = prior_at if prior_at is not None else time.time()
-            iso = datetime.fromtimestamp(attempted_at, timezone.utc).isoformat()
-
-            def row_for(**kw: Any) -> dict:
-                return _step_row(turn_id, contact_id, step.key, step.kind, step.detail, attempted_at=iso, **kw)
-
-            base = row_for()
-
-            if prior is not None and step.matches is not None:
-                try:
-                    found = _in_conversation(client, ident, step, attempted_at)
-                except Exception:  # noqa: BLE001
-                    logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
-                    if prior.status == "processing":
-                        row = _write_row(db, row_for(unknown=True),
-                                         status="failed", error=_NOT_CONFIRMED)
-                        if row is not None:
-                            _drop_stamp(db, prior)
-                    return direct_ingress.SEND_TIMEOUT
-                if found:
-                    # The earlier attempt's own row becomes the confirmed one (no second row).
-                    try:
-                        body = json.loads(prior.request_payload or "{}")
-                        body.pop("unknown", None)
-                        body["confirmed_by"] = "lookup"
-                        prior.request_payload = json.dumps(body, default=str)
-                        prior.status, prior.error_message = "success", None
-                        db.commit()
-                    except Exception:  # noqa: BLE001
-                        db.rollback()
-                        logger.warning("crm sender: could not confirm step %s", step.key, exc_info=True)
-                        return direct_ingress.SEND_HTTP_ERROR
-                    continue
-
-            stamp = _write_row(db, base, status="processing")
-            if stamp is None:
-                return direct_ingress.SEND_HTTP_ERROR
-            if prior is not None and prior.status == "processing":
-                _drop_stamp(db, prior)
-            response, failure = _attempt(client, step)
-            if failure is None:
-                if not _finalise(db, base, stamp, status="success", status_code=200, response=_kept_response(response)):
+            if step.skip:
+                iso = datetime.now(timezone.utc).isoformat()
+                if _write_row(db, _step_row(turn_id, contact_id, step.key, step.kind, step.detail, attempted_at=iso),
+                              status="success") is None:
                     return direct_ingress.SEND_HTTP_ERROR
-                _link_message_id(db, turn_id, contact_id, response)
                 continue
-            outcome, code, reason = failure
-            if outcome == direct_ingress.SEND_REFUSED:
-                _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
-                if step.link is None or code is None:
-                    return outcome
-                # A file respond.io refused goes out as its bare link (n8n does the same); a
-                # connection failure is not turned into a link, the drain retries it.
-                stamp = _write_row(db, base, status="processing")
-                if stamp is None:
-                    return direct_ingress.SEND_HTTP_ERROR
-                link = step.link()
-                response, failure = _attempt(client, step._replace(call=lambda c, u=link: c.send_message(ident, u)))
-                if failure is None:
-                    if not _finalise(db, base, stamp, status="success", status_code=200,
-                                     response=_kept_response(response)):
-                        return direct_ingress.SEND_HTTP_ERROR
-                    _link_message_id(db, turn_id, contact_id, response)
-                    continue
-                _finalise(db, row_for(unknown=failure[0] != direct_ingress.SEND_REFUSED), stamp, status="failed",
-                          status_code=failure[1], error=failure[2])
-                return failure[0]
-            # Unknown: the request may have left.
-            unknown_base = row_for(unknown=True)
-            if step.idempotent:
-                _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
-                stamp = _write_row(db, base, status="processing")
-                response, failure = _attempt(client, step)
-                if failure is None:
-                    if not _finalise(db, base, stamp, status="success", status_code=200,
-                                     response=_kept_response(response)):
-                        return direct_ingress.SEND_HTTP_ERROR
-                    continue
-                _finalise(db, base, stamp, status="failed", status_code=failure[1], error=failure[2])
-                return direct_ingress.SEND_REFUSED
-            if step.matches is None:
-                _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=reason)
-                return direct_ingress.SEND_TIMEOUT
-            try:
-                found = _in_conversation(client, ident, step, attempted_at)
-            except Exception:  # noqa: BLE001
-                logger.warning("crm sender: lookup failed for turn %s", turn_id, exc_info=True)
-                _finalise(db, unknown_base, stamp, status="failed", status_code=code, error=_NOT_CONFIRMED)
-                return direct_ingress.SEND_TIMEOUT
-            if not found:
-                _finalise(db, base, stamp, status="failed", status_code=code, error=reason)
-                return direct_ingress.SEND_REFUSED
-            if not _finalise(
-                db, row_for(confirmed_by="lookup"),
-                stamp, status="success",
-            ):
-                return direct_ingress.SEND_HTTP_ERROR
+            hist = _history(db, turn_id, step.key)
+            if step.link is not None and (hist.link_mode or hist.file_failures >= FILE_TRIES_BEFORE_LINK):
+                # Refused, or failed three times: the file goes out as its link from here on.
+                prior_matches = _text_is(step.link()) if hist.prior_body.get("fallback") == "link" else step.matches
+                result = _run_step(db, client, ident, turn_id, contact_id,
+                                   _link_step(step, ident, step.link()), hist, prior_matches, hist.max_seq + 1)
+            else:
+                result = _run_step(db, client, ident, turn_id, contact_id, step, hist, step.matches, hist.max_seq + 1)
+                if result == _FILE_REFUSED:
+                    result = _run_step(db, client, ident, turn_id, contact_id,
+                                       _link_step(step, ident, step.link()), _History(), None, hist.max_seq + 2)
+            if result is not None:
+                return result
         return direct_ingress.SEND_OK
     except Exception:  # noqa: BLE001
         logger.exception("crm sender: unexpected failure for turn %s", turn_id)

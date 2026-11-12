@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ipaddress
 import json
+import logging
 import os
 import socket
 import sys
@@ -32,21 +34,27 @@ class ReplayNetworkBlocked(Exception):
     """Raised by any Python socket connect while the replay runs."""
 
 
+_BLOCKED_METHODS = ("connect", "connect_ex", "sendto", "sendmsg")
+
+
 @contextlib.contextmanager
 def block_sockets() -> Iterator[None]:
-    real_connect = socket.socket.connect
-    real_create = socket.create_connection
-
+    """Every Python socket entry point that could reach out raises `ReplayNetworkBlocked`."""
     def blocked(*_a: Any, **_k: Any) -> None:
         raise ReplayNetworkBlocked("network access is blocked during a replay")
 
-    socket.socket.connect = blocked  # type: ignore[method-assign]
+    saved = {name: getattr(socket.socket, name) for name in _BLOCKED_METHODS}
+    real_create, real_gai = socket.create_connection, socket.getaddrinfo
+    for name in _BLOCKED_METHODS:
+        setattr(socket.socket, name, blocked)
     socket.create_connection = blocked  # type: ignore[assignment]
+    socket.getaddrinfo = blocked  # type: ignore[assignment]
     try:
         yield
     finally:
-        socket.socket.connect = real_connect  # type: ignore[method-assign]
-        socket.create_connection = real_create  # type: ignore[assignment]
+        for name, original in saved.items():
+            setattr(socket.socket, name, original)
+        socket.create_connection, socket.getaddrinfo = real_create, real_gai  # type: ignore[assignment]
 
 
 def _u16(value: str) -> int:
@@ -143,16 +151,48 @@ class FakeRespondClient:
         return {"id": ident, "custom_fields": []}
 
 
+def _is_loopback(host: str) -> bool:
+    if host in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
 def _loopback_database() -> bool:
+    """The configured target is loopback: no host or hostaddr override in the query, and an
+    empty host does not fall through to PGHOST / PGHOSTADDR pointing elsewhere."""
     from sqlalchemy.engine import make_url
 
     from app.config import settings
 
     try:
-        host = make_url(settings.database_url).host
+        url = make_url(settings.database_url)
     except Exception:  # noqa: BLE001
         return False
-    return (host or "") in LOOPBACK_HOSTS
+    if any(key in url.query for key in ("host", "hostaddr")):
+        return False
+    host = url.host or ""
+    if not host:
+        for name in ("PGHOSTADDR", "PGHOST"):
+            value = os.environ.get(name, "")
+            if value and not value.startswith("/") and not _is_loopback(value):
+                return False
+        return True
+    return _is_loopback(host)
+
+
+def _server_addr(connection: Any) -> str | None:
+    """The address the connected server reports for this session (NULL on a unix socket)."""
+    from sqlalchemy import text
+
+    value = connection.execute(text("SELECT inet_server_addr()")).scalar()
+    return None if value is None else str(value)
+
+
+class _Refused(Exception):
+    pass
 
 
 def _crm_requests(session: Any, sender_input: dict[str, Any]) -> list[dict[str, Any]]:
@@ -208,13 +248,24 @@ def run(folder: Path) -> dict[str, Any]:
 
     results: list[dict[str, Any]] = []
     connection = engine.connect()
+    try:
+        addr = _server_addr(connection)
+        connection.rollback()
+        if addr is not None and not _is_loopback(addr):
+            raise _Refused()
+    except BaseException:
+        connection.close()
+        raise
     transaction = connection.begin()
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    previous_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)  # the sender's log lines carry message text and ids
     try:
         with block_sockets():
             for path in sorted(folder.glob("*.json")):
                 results.append(_replay_one(session, path))
     finally:
+        logging.disable(previous_disable)
         session.close()
         transaction.rollback()
         connection.close()
@@ -257,7 +308,11 @@ def main(argv: list[str] | None = None) -> int:
     if not _loopback_database():
         print("Refused: the database host is not loopback, nothing was run.")
         return 2
-    report = run(Path(args.folder))
+    try:
+        report = run(Path(args.folder))
+    except _Refused:
+        print("Refused: the database server address is not loopback, nothing was run.")
+        return 2
     text = json.dumps(report, indent=2) + "\n" if args.json else render(report)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
