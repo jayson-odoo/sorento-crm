@@ -120,3 +120,26 @@ describe('EntityAttachmentsSection', () => {
     expect(screen.queryByRole('button', { name: /choose file/i })).toBeNull();
   });
 });
+
+describe('EntityAttachmentsSection dates (round 9)', () => {
+  it('reads Linked At as the Malaysia day, not the UTC one', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <EntityAttachmentsSection
+          entityId="ocn-1"
+          // 20:07 UTC on the 12th is 04:07 on the 13th in Malaysia.
+          attachments={[{ ...FILE, uploaded_at: '2026-11-12T20:07:45' }]}
+          editable={false}
+          linkAttachment={vi.fn()}
+          unlinkActionKey="order_change_notice_attachment.unlink"
+          unlinkEntityType="order_change_notice_attachment"
+          invalidateKeys={[['order-change-notice', 'ocn-1']]}
+          entityLabel="notice"
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('13/11/2026')).toBeTruthy();
+    expect(screen.queryByText('12/11/2026')).toBeNull();
+  });
+});

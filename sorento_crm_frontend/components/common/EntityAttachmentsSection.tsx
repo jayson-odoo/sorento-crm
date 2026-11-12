@@ -31,7 +31,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import { formatDate } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** One linked file, as `list_attachments_for_entity` answers it. */
 export interface EntityAttachmentRow {
@@ -165,7 +165,7 @@ export function EntityAttachmentsSection<T extends EntityAttachmentRow>({
         ),
         cell: ({ row }) =>
           row.original.uploaded_at
-            ? formatDate(new Date(row.original.uploaded_at))
+            ? formatDateInMalaysia(row.original.uploaded_at)
             : '-',
         size: 140,
         meta: { headerTitle: 'Linked At' },

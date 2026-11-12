@@ -38,6 +38,7 @@ import {
 } from '@/lib/helpers';
 import {
   FORM_SLA_TYPE_LABELS,
+  formSlaStageLabel,
   getFormSLATrackers,
   type FormSLASourceType,
 } from './formSLAService';
@@ -180,8 +181,15 @@ export default function FormSLATrackingTab({
         header: ({ column }) => (
           <DataGridColumnHeader title="Stage" column={column} />
         ),
-        cell: ({ row }) => row.original.team_set_code || '-',
-        size: 140,
+        cell: ({ row }) => {
+          const name = formSlaStageLabel(sourceEntityType, row.original.team_set_code);
+          return (
+            <span className="block truncate" title={name}>
+              {name}
+            </span>
+          );
+        },
+        size: 180,
       },
       {
         accessorKey: 'policy_name',
@@ -452,7 +460,7 @@ export default function FormSLATrackingTab({
         size: 60,
       },
     ],
-    [],
+    [sourceEntityType],
   );
 
   const trackers = data ?? NO_TRACKERS;

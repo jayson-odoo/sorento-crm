@@ -27,8 +27,54 @@ export function isUuidValue(v: unknown): boolean {
   return typeof v === 'string' && UUID_RE.test(v);
 }
 
-/** `defect_description` -> "Defect description", `root_cause_id` -> "Root cause". */
-export function auditFieldLabel(key: string): string {
+/**
+ * A record's own field names, where the column name does not read as its label on the page
+ * (`cs_comment` is "Customer Service comment"). Keyed by the audit row's `entity_type`; a field
+ * missing here falls back to the column name in words.
+ */
+export const AUDIT_FIELD_LABELS: Record<string, Record<string, string>> = {
+  // As the notice's detail page labels them (OrderChangeNoticeDetail).
+  order_change_notice: {
+    ocn_number: 'OCN no.',
+    ocn_date: 'Date',
+    project_id: 'Project',
+    purchase_order_id: 'Purchase order',
+    project_sales_order_id: 'Sales order',
+    change_type_id: 'Type of change',
+    customer_id: 'Customer',
+    customer_name: 'Customer',
+    customer_po_no: 'Customer PO no.',
+    so_no_text: 'SO no.',
+    sales_in_charge_user_id: 'Sales in charge',
+    cs_in_charge_user_id: 'C.S. in charge',
+    description: 'Description',
+    reason: 'Reason',
+    cs_comment: 'Customer Service comment',
+    status: 'Status',
+    approval_status: 'Approval status',
+    approver_id: 'Approver',
+    approved_at: 'Approved at',
+    approved_by: 'Approved by',
+    approval_comments: 'Approval remarks',
+    rejected_by_id: 'Rejected by',
+    requested_approval_by_user_id: 'Approval requester',
+    submitted_at: 'Submitted at',
+    voided_by: 'Voided by',
+    voided_at: 'Voided at',
+    void_reason: 'Void reason',
+    revision_no: 'Revision',
+    source: 'Source',
+    source_document_kind: 'Source document',
+    source_document_id: 'Source document',
+    change_table_json: 'Change rows',
+  },
+};
+
+/** `defect_description` -> "Defect description", `root_cause_id` -> "Root cause". A record's own
+ *  name for the field (`AUDIT_FIELD_LABELS`) wins when `entityType` is given. */
+export function auditFieldLabel(key: string, entityType?: string | null): string {
+  const named = entityType ? AUDIT_FIELD_LABELS[entityType]?.[key] : undefined;
+  if (named) return named;
   const words = key.replace(/_id$/, '').replace(/_/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
@@ -82,6 +128,7 @@ export function auditFieldChanges(
   oldValues: Record<string, unknown> | null,
   newValues: Record<string, unknown> | null,
   maskedFields?: readonly string[] | null,
+  entityType?: string | null,
 ): AuditFieldChange[] {
   const oldV = oldValues || {};
   const newV = newValues || {};
@@ -91,13 +138,13 @@ export function auditFieldChanges(
   for (const key of keys) {
     if (AUDIT_BOOKKEEPING_FIELDS.has(key)) continue;
     if (masked.has(key)) {
-      out.push({ kind: 'line', key, text: `${auditFieldLabel(key)} changed (values hidden)` });
+      out.push({ kind: 'line', key, text: `${auditFieldLabel(key, entityType)} changed (values hidden)` });
       continue;
     }
     const ov = oldV[key];
     const nv = newV[key];
     if (sameValue(ov, nv)) continue;
-    const label = auditFieldLabel(key);
+    const label = auditFieldLabel(key, entityType);
     // No ids on screen: a link that moved reads as "changed".
     if (isUuidValue(ov) || isUuidValue(nv)) {
       out.push({ kind: 'line', key, text: `${label} changed` });

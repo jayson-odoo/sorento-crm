@@ -237,3 +237,19 @@ describe('round 7: the SLA tab renders on the notice detail (browser pass blocke
     expect(screen.getByText('SALES_ADMIN')).toBeTruthy();
   });
 });
+
+describe('round 9: the SLA tab names the notice stages', () => {
+  it('reads Admin check, Management approval and Customer service action, never the codes', async () => {
+    state.trackers.mockResolvedValue([
+      { ...TRACKER, id: 'trk-a', team_set_code: 'project_sales' },
+      { ...TRACKER, id: 'trk-b', team_set_code: 'project_sales_manager' },
+      { ...TRACKER, id: 'trk-c', team_set_code: 'customer_service' },
+    ]);
+    mount(ocnDetail({ status: 'approved', approval_status: 'approved' }), []);
+    await openSla();
+    expect(await screen.findByText('Admin check')).toBeTruthy();
+    expect(screen.getByText('Management approval')).toBeTruthy();
+    expect(screen.getByText('Customer service action')).toBeTruthy();
+    expect(screen.queryByText('project_sales')).toBeNull();
+  });
+});

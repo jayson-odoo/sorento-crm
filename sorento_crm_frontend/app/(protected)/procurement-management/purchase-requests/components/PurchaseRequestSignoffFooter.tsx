@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { formatDate } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** Minimal fields for document-style sign-off (matches Excel footer + comments). */
 export type PurchaseRequestSignoffFields = {
@@ -23,11 +23,9 @@ type Variant = 'detailCard' | 'publicCard' | 'decision';
 
 function formatDateOrDash(value: string | null | undefined): string {
   if (value == null || value === '') return '-';
-  try {
-    return formatDate(new Date(value));
-  } catch {
-    return '-';
-  }
+  // The decision stamp is UTC; the day is Malaysia's, like every other date on the page (a
+  // morning decision in Malaysia is still the previous day in UTC).
+  return formatDateInMalaysia(value) || '-';
 }
 
 /**

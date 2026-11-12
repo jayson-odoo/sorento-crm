@@ -396,6 +396,23 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
   ],
 };
 
+/**
+ * A stage's name on a form's SLA tab, by its team set code, where the form names its stages
+ * (the order change notice's mock). A form missing here shows the code as before.
+ */
+export const FORM_SLA_STAGE_LABELS: Partial<Record<FormSLASourceType, Record<string, string>>> = {
+  order_change_notice: {
+    project_sales: 'Admin check',
+    project_sales_manager: 'Management approval',
+    customer_service: 'Customer service action',
+  },
+};
+
+export function formSlaStageLabel(type: FormSLASourceType, teamSetCode: string | null | undefined): string {
+  if (!teamSetCode) return '-';
+  return FORM_SLA_STAGE_LABELS[type]?.[teamSetCode] ?? teamSetCode;
+}
+
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   stock_inquiry: 'Stock Inquiry',
   purchase_request: 'Purchase Request',

@@ -54,7 +54,7 @@ describe('AuditTrail on an order change notice', () => {
     render(<AuditTrail entityType="order_change_notice" entityId={OCN_ID} />);
     const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
     expect(lines[0]).toBe('Status: Approved → Done');
-    expect(lines).toContain('Cs comment: (empty) → Stock released.');
+    expect(lines).toContain('Customer Service comment: (empty) → Stock released.');
     expect(document.body.textContent).not.toMatch(/processed_by_cs/);
   });
 
@@ -63,5 +63,50 @@ describe('AuditTrail on an order change notice', () => {
     render(<AuditTrail entityType="order_change_notice" entityId={OCN_ID} />);
     expect(screen.getAllByTestId('audit-change-line').map((li) => li.textContent)).toEqual(['Mark done applied']);
     expect(document.body.textContent).not.toMatch(/ocn\./);
+  });
+});
+
+describe('AuditTrail field names on an order change notice (round 9)', () => {
+  it('names each field as the notice does, never the column', () => {
+    mockEntries([
+      entry({
+        old_values: {
+          approval_comments: null,
+          void_reason: null,
+          customer_po_no: 'XT04/3871',
+          so_no_text: null,
+          requested_approval_by_user_id: null,
+          approver_id: null,
+        },
+        new_values: {
+          approval_comments: 'Fine by me',
+          void_reason: 'Raised by mistake',
+          customer_po_no: 'XT04/3871 (R1)',
+          so_no_text: 'SO397450',
+          requested_approval_by_user_id: '2f6b9d38-5e41-4c97-8a20-4d7c1b0e6f06',
+          approver_id: '638d8b89-42f4-45a1-9b0e-3c1b8f9a2d02',
+        },
+      }),
+    ]);
+    render(<AuditTrail entityType="order_change_notice" entityId={OCN_ID} />);
+    const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
+    expect(lines).toEqual([
+      'Approval remarks: (empty) → Fine by me',
+      'Void reason: (empty) → Raised by mistake',
+      'Customer PO no.: XT04/3871 → XT04/3871 (R1)',
+      'SO no.: (empty) → SO397450',
+      'Approval requester changed',
+      'Approver changed',
+    ]);
+  });
+
+  it('leaves every other record type as it was', () => {
+    mockEntries([
+      entry({ entity_type: 'complaint', old_values: { cs_comment: null }, new_values: { cs_comment: 'Called back' } }),
+    ]);
+    render(<AuditTrail entityType="complaint" entityId={OCN_ID} />);
+    expect(screen.getAllByTestId('audit-change-line').map((li) => li.textContent)).toEqual([
+      'Cs comment: (empty) → Called back',
+    ]);
   });
 });
