@@ -8,7 +8,7 @@ directly. Same build shape as sodv_0001_ol_from_doc_idx: CONCURRENTLY, bounded l
 leftover dropped and rebuilt.
 
 Revision ID: town_0003_orders_cust_date
-Revises: pc_0001_product_costing
+Revises: qdp_0001_duplicate_party
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "town_0003_orders_cust_date"
-down_revision = "pc_0001_product_costing"
+down_revision = "qdp_0001_duplicate_party"
 branch_labels = None
 depends_on = None
 
