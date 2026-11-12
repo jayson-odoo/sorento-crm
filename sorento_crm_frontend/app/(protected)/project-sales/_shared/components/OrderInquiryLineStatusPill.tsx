@@ -7,12 +7,26 @@ import { OrderInquiryLineStatePill, ReservePill } from './OrderInquiryVerbPill';
 import { OrderInquiryRejectedBadge } from './OrderInquiryRejectedBadge';
 
 /** The status pill keeps the text's own case ("To order · 220 left"), so no capitalize. */
-const ACK_PILL_BASE =
+export const ACK_PILL_BASE =
   'inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold';
 
 function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
   const state = ackStateOf(row);
   return state === 'acknowledged' ? 'approved' : state === 'rejected' ? 'voided' : 'pending';
+}
+
+/**
+ * The ONE status word and colour of a single worklist row, in the line pill's precedence:
+ * Waiting for CS, then SO cancelled, then Line cancelled, else today's acknowledgement text.
+ * The worklist's Status column prints this, and the server sorts on the same words.
+ */
+export function rowStatusPill(
+  row: Parameters<typeof ackStatusText>[0] & { line_cancelled?: boolean },
+): { text: string; palette: string } {
+  if (row.waiting_for_cs) return { text: 'Waiting for CS', palette: 'pending' };
+  if (row.so_cancelled) return { text: 'SO cancelled', palette: 'voided' };
+  if (row.line_cancelled) return { text: 'Line cancelled', palette: 'voided' };
+  return { text: ackStatusText(row), palette: ackPalette(row) };
 }
 
 const LIVE_LINE_STATES = ['raised', 'partly_linked', 'placed', 'to_confirm'];

@@ -22,9 +22,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
 import { statusPillClass } from '@/lib/status-pill';
+import { ACK_PILL_BASE, rowStatusPill } from '../../_shared/components/OrderInquiryLineStatusPill';
 import {
   ackStateOf,
-  ackStatusText,
   bundledHostChangeLines,
   movedNoteOf,
   previousValueOf,
@@ -1458,27 +1458,14 @@ export function useOrderInquiryWorklistColumns({
         // OI-WHOLE-SO-CANCEL v2 (H2): the row's status in the words the OI screens share
         // (`ackStatusText`): Waiting for CS, SO cancelled, To order, Done, Rejected.
         id: 'status',
-        accessorFn: (row) => ackStatusText(row),
+        accessorFn: (row) => rowStatusPill(row).text,
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 160,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => {
-          const text = ackStatusText(row.original);
-          const palette =
-            row.original.waiting_for_cs || row.original.so_cancelled
-              ? row.original.waiting_for_cs
-                ? 'pending'
-                : 'voided'
-              : ackStateOf(row.original) === 'acknowledged'
-                ? 'approved'
-                : ackStateOf(row.original) === 'rejected'
-                  ? 'voided'
-                  : 'pending';
+          const { text, palette } = rowStatusPill(row.original);
           return (
-            <span
-              className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ${statusPillClass(palette)}`}
-              title={text}
-            >
+            <span className={`${ACK_PILL_BASE} ${statusPillClass(palette)}`} title={text}>
               {text}
             </span>
           );

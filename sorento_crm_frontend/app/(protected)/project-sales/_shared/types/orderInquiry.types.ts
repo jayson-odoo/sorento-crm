@@ -1499,7 +1499,7 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
 }
 
 export interface OrderInquiryHeaderListParams {
-  state?: OrderInquiryHeaderStatus | 'all';
+  state?: 'outstanding' | 'completed' | 'all';
   query?: string;
   raised_by?: string;
   /** One agent name, or several (free text, each sent whole). */

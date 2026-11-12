@@ -231,7 +231,12 @@ class OrderInquiryHeaderService:
                 OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
                 func.bool_or(live_row_clause()).label("has_live"),
                 func.bool_or(
-                    and_(live_row_clause(), OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)))
+                    and_(
+                        live_row_clause(),
+                        OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
+                        # A row waiting for CS is not purchasing's to confirm yet.
+                        ~waiting_for_cs_clause(),
+                    )
                 ).label("waiting"),
                 # OI-WHOLE-SO-CANCEL v2 (H1): a live row whose SO line has a change waiting for CS.
                 func.bool_or(and_(live_row_clause(), waiting_for_cs_clause())).label(
@@ -520,9 +525,11 @@ class OrderInquiryHeaderService:
             "project": _PROJECT_TITLE,
             "agent": _AGENT_NAME,
             "so_date": _SO_DATE,
+            # The words the header's own status reads, so the sort groups them as shown.
             "status": case(
-                (func.coalesce(agg.c.lines_to_confirm, 0) > 0, "outstanding"),
-                else_="completed",
+                (func.coalesce(agg.c.lines_waiting_cs, 0) > 0, "Waiting for CS"),
+                (func.coalesce(agg.c.lines_to_confirm, 0) > 0, "Outstanding"),
+                else_="Completed",
             ),
         }
 
