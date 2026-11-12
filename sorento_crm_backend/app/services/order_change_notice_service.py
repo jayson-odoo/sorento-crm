@@ -286,17 +286,21 @@ def reader_for(db: Session, ocn_id: Any, user_id: Optional[str]) -> OrderChangeN
     return row
 
 
+def own_clause(user_id: Optional[str]):
+    """A `.view_own` reader's notices: the ones they raised or are named on (sales or customer
+    service in charge). One predicate for the list and the project's Related tab."""
+    uid = str(user_id or "")
+    return or_(
+        OrderChangeNotice.created_by == uid,
+        OrderChangeNotice.sales_in_charge_user_id == uid,
+        OrderChangeNotice.cs_in_charge_user_id == uid,
+    )
+
+
 def _visible(query, actor: Actor):
     if actor.can_view_all:
         return query
-    uid = str(actor.user_id or "")
-    return query.filter(
-        or_(
-            OrderChangeNotice.created_by == uid,
-            OrderChangeNotice.sales_in_charge_user_id == uid,
-            OrderChangeNotice.cs_in_charge_user_id == uid,
-        )
-    )
+    return query.filter(own_clause(actor.user_id))
 
 
 def _is_raiser(row: OrderChangeNotice, actor: Actor) -> bool:
