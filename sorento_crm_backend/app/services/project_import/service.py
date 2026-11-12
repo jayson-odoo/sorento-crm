@@ -1399,6 +1399,36 @@ def serialize_run(db: Session, run: ImportJob, *, users: Optional[dict] = None, 
 
 _RUN_SORTS = ("run_no", "filename", "uploaded_by", "uploaded_at", "status", "rows", "created",
               "skipped", "to_review")
+_LINE_SORTS = ("value_text", "rows", "customer_text", "set_at", "status")
+_ROW_SORTS = ("sheet", "row_number", "ps_number", "customer", "project", "po_number", "po_date",
+              "outcome")
+
+
+def _sort_and_page(
+    items: list[dict],
+    *,
+    sort: Optional[str],
+    direction: Optional[str],
+    allowed: tuple[str, ...],
+    tiebreak,
+    page: int,
+    limit: int,
+) -> tuple[list[dict], int]:
+    """ONE sort + page for the runs, lines and rows grids: a server sort whose order holds
+    across pages (`tiebreak` makes it total), text compared case-insensitively, blanks
+    together at one end. No `sort` keeps the caller's own order."""
+    if sort in allowed:
+        desc = (direction or "asc").lower() == "desc"
+
+        def key(item):
+            value = item.get(sort)
+            if isinstance(value, str):
+                value = value.strip().lower() or None
+            return (value is None, "" if value is None else value, tiebreak(item))
+
+        items = sorted(items, key=key, reverse=desc)
+    start = (max(page, 1) - 1) * limit
+    return items[start:start + limit], len(items)
 
 
 def list_runs(
@@ -1431,12 +1461,13 @@ def list_runs(
         items = [i for i in items if i["status"] in status]
     if uploaded_by:
         items = [i for i in items if i["uploaded_by_id"] in uploaded_by]
-    key = sort if sort in _RUN_SORTS else "uploaded_at"
-    reverse = (direction or ("desc" if key == "uploaded_at" else "asc")).lower() == "desc"
-    items.sort(key=lambda i: (i[key] is None, i[key] if i[key] is not None else ""), reverse=reverse)
-    total = len(items)
-    start = (page - 1) * limit
-    return {"data": items[start:start + limit], "total": total, "page": page, "limit": limit}
+    if sort not in _RUN_SORTS:
+        sort, direction = "uploaded_at", "desc"
+    data, total = _sort_and_page(
+        items, sort=sort, direction=direction, allowed=_RUN_SORTS,
+        tiebreak=lambda i: i["id"], page=page, limit=limit,
+    )
+    return {"data": data, "total": total, "page": page, "limit": limit}
 
 
 def list_rows(
@@ -1449,8 +1480,10 @@ def list_rows(
     code: Optional[list[str]] = None,
     sheet: Optional[list[str]] = None,
     query: Optional[str] = None,
+    sort: Optional[str] = None,
+    direction: Optional[str] = None,
 ) -> dict:
-    """The run's report rows (preview or import), filtered and paged."""
+    """The run's report rows (preview or import), filtered, sorted and paged."""
     rows = (
         db.query(ImportJobRow)
         .filter(ImportJobRow.import_job_id == run.id, ImportJobRow.entity_id.is_(None))
@@ -1486,7 +1519,51 @@ def list_rows(
         needle = query.strip().lower()
         items = [i for i in items if any(needle in str(i[k] or "").lower()
                                          for k in ("ps_number", "customer", "project", "po_number"))]
-    items.sort(key=lambda i: (sheet_rank.get(i["sheet"], 0), i["row_number"] or 0))
-    total = len(items)
-    start = (page - 1) * limit
-    return {"data": items[start:start + limit], "total": total, "page": page, "limit": limit}
+    def in_file(i):
+        return (sheet_rank.get(i["sheet"], 0), i["row_number"] or 0)
+
+    items.sort(key=in_file)
+    data, total = _sort_and_page(
+        items, sort=sort, direction=direction, allowed=_ROW_SORTS, tiebreak=in_file,
+        page=page, limit=limit,
+    )
+    return {"data": data, "total": total, "page": page, "limit": limit}
+
+
+def page_lines(
+    db: Session,
+    run: ImportJob,
+    *,
+    kind: str,
+    status: Optional[str] = None,
+    query: Optional[str] = None,
+    sort: Optional[str] = None,
+    direction: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+) -> dict:
+    """The Values grid: `list_lines`, searched (a substring of the value or its customer,
+    never a link), sorted and paged on the server."""
+    lines = list_lines(db, run, kind=kind, status=status)
+    if query and query.strip():
+        needle = query.strip().lower()
+        lines = [
+            line for line in lines
+            if needle in (line["value_text"] or "").lower()
+            or needle in (line["customer_text"] or "").lower()
+        ]
+    items, total = _sort_and_page(
+        lines, sort=sort, direction=direction, allowed=_LINE_SORTS,
+        tiebreak=lambda line: (line["customer_value_key"], line["value_key"]),
+        page=page, limit=limit,
+    )
+    return {"items": items, "total": total, "page": page, "limit": limit}
+
+
+def lines_summary(db: Session, run: ImportJob) -> dict:
+    """Per kind: how many lines, and how many are "To do" (the count the To do filter shows)."""
+    out = {}
+    for kind in KINDS:
+        lines = list_lines(db, run, kind=kind)
+        out[kind] = {"total": len(lines), "todo": sum(1 for line in lines if line["status"] == "todo")}
+    return out

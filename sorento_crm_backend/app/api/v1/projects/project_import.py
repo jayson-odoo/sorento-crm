@@ -5,6 +5,7 @@
     GET  /projects/import/runs/{run_id}             projects.import.view
     PUT  /projects/import/runs/{run_id}/columns     projects.import.run
     GET  /projects/import/runs/{run_id}/lines       projects.import.view
+    GET  /projects/import/runs/{run_id}/lines/summary  projects.import.view
     PUT  /projects/import/runs/{run_id}/lines       projects.import.run
     PUT  /projects/import/runs/{run_id}/lines/bulk  projects.import.run
     POST /projects/import/runs/{run_id}/preview     projects.import.run
@@ -142,14 +143,33 @@ def list_lines(
     run_id: str,
     kind: str = Query(...),
     status: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:
         run = service.get_run(db, run_id)
-        lines = service.list_lines(db, run, kind=kind, status=status)
-        todo = sum(1 for line in lines if line["status"] == "todo") if not status else None
-        return {"data": lines, "total": len(lines), "todo": todo}
+        return service.page_lines(
+            db, run, kind=kind, status=status, query=query, sort=sort, direction=dir,
+            page=page, limit=limit,
+        )
+    except Exception as exc:
+        _raise(exc)
+
+
+@router.get("/runs/{run_id}/lines/summary")
+def lines_summary(
+    run_id: str,
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Per kind: {total, todo}, for the "N to do" tab labels."""
+    try:
+        return service.lines_summary(db, service.get_run(db, run_id))
     except Exception as exc:
         _raise(exc)
 
@@ -230,13 +250,15 @@ def list_rows(
     outcome: Optional[list[str]] = Query(None),
     code: Optional[list[str]] = Query(None),
     sheet: Optional[list[str]] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:
         run = service.get_run(db, run_id)
         return service.list_rows(
-            db, run, page=page, limit=limit, query=query,
+            db, run, page=page, limit=limit, query=query, sort=sort, direction=dir,
             outcome=multi_values(outcome, "outcome"), code=multi_values(code, "code"),
             sheet=multi_values(sheet, "sheet"),
         )
