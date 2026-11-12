@@ -92,6 +92,14 @@ import type {
 } from '../../../_shared/services/orderInquiryReserveService';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
+import { SparePartRequestActions } from './SparePartRequestActions';
+import { useEditSparePartLine } from '../../../_shared/hooks/useSparePartRequest';
+import {
+  isPreApproval,
+  isSparePartInquiry,
+  sparePartStateLabel,
+  sparePartStateVariant,
+} from '../../../_shared/lib/sparePartRequest';
 import { RequestReserveDialog } from '../../../_shared/components/RequestReserveDialog';
 import { ReserveConfirmDialog, type ReserveConfirmLine } from './ReserveConfirmDialog';
 import { ReserveLineForm } from './ReserveLineForm';
@@ -214,6 +222,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   const lines = useMemo(() => linesQuery.data ?? [], [linesQuery.data]);
+  // SPARE-PART-ORDER-REQUEST: the approver's in-place qty / unit price change (UAC A3).
+  const editSparePartLine = useEditSparePartLine(id);
+  const handleEditSparePartLine = useCallback(
+    (row: OrderInquiryWorklistRow, edit: { qty?: string; unit_price?: string }) =>
+      editSparePartLine.mutate({ rowId: row.id, edit }),
+    [editSparePartLine],
+  );
   // OI-SPLIT-VIEW (UAC E5): the order's split sheet the read-only popups draw (the edit
   // view's own read), fetched only when a line of this inquiry is split.
   const hasSplitLines = useMemo(() => lines.some((row) => Boolean(row.split_view)), [lines]);
@@ -772,13 +787,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         title={header.inquiry_no}
         badges={
           <>
-            <Badge
-              variant={orderInquiryHeaderStatusVariant(header.status)}
-              appearance="light"
-              size="md"
-            >
-              {orderInquiryHeaderStatusLabel(header.status)}
-            </Badge>
+            {isSparePartInquiry(header) && isPreApproval(header.state) ? (
+              <Badge variant={sparePartStateVariant(header.state)} appearance="light" size="md">
+                {sparePartStateLabel(header.state)}
+              </Badge>
+            ) : (
+              <Badge
+                variant={orderInquiryHeaderStatusVariant(header.status)}
+                appearance="light"
+                size="md"
+              >
+                {orderInquiryHeaderStatusLabel(header.status)}
+              </Badge>
+            )}
             <ConsignmentBadge docType={header.so_doc_type} size="md" />
           </>
         }
@@ -958,7 +979,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 </DetailActionsMenu>
               }
               primary={
-                canAcknowledge || (canReserve && (Boolean(openReserveRequest) || stagedCount > 0)) ? (
+                isSparePartInquiry(header) &&
+                (header.can_decide || header.can_edit || header.can_revise) ? (
+                  <SparePartRequestActions header={header} rows={lines} />
+                ) : canAcknowledge || (canReserve && (Boolean(openReserveRequest) || stagedCount > 0)) ? (
                   <div className="flex items-center gap-2">
                     {canAcknowledge ? (
                       <Button
@@ -1041,6 +1065,18 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             onUndoStaged={handleUndoStaged}
             canEditAttachments={canEditAttachments}
             splitSheet={splitSheet}
+            sparePart={
+              isSparePartInquiry(header)
+                ? {
+                    headerState: header.state,
+                    canDecide: Boolean(header.can_decide),
+                    // Photos: the requester while it is theirs to edit, the approver while pending.
+                    canEditPhotos: Boolean(header.can_edit || header.can_decide),
+                    currency: header.currency,
+                    onEditLine: handleEditSparePartLine,
+                  }
+                : undefined
+            }
             decideSlot={
               canReserve && tickedPrimaryRows.length > 0 ? (
                 <ReserveDecideControl

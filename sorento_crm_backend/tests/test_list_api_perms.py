@@ -485,6 +485,9 @@ def test_source_type_readers_cover_every_form_sla_type():
             "procurement.new_product_applications.approve",
             "procurement.new_product_applications.open_code",
         ],
+        # SPARE-PART-ORDER-REQUEST: the request opens on the Order Inquiry page, which has no
+        # SLA tab; approvers reach the stage tracker through the SLA module, like drawings/photos.
+        "spare_part_request": [],
     }
 
 

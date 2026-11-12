@@ -56,6 +56,7 @@ import {
 } from '../../../_shared/components/LineSplitInfo';
 import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
 import { NumberInput } from '@/components/ui/number-input';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatMoneyExact } from '../../../_shared/lib/money';
 import { changedFrom, plainNumber } from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryType } from '../../../_shared/types/orderInquiry.types';
@@ -644,7 +645,14 @@ function sparePartLineColumns({
         return (
           <div className="flex min-w-0 items-center gap-1">
             <span className="shrink-0">
-              <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
+              {primary.state === 'draft' ? (
+                // Before final approval the line is nobody's work yet.
+                <span className={`${STATUS_PILL_BASE} ${statusPillClass('draft')}`}>
+                  Not approved yet
+                </span>
+              ) : (
+                <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
+              )}
             </span>
             <Button
               type="button"

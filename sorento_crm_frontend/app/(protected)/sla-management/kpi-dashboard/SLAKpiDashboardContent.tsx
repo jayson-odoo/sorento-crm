@@ -66,6 +66,7 @@ const ENTITY_ROUTES: Record<string, string> = {
   product_drawing: '/master-data-management/products',
   product_photo: '/master-data-management/products',
   new_product_application: '/procurement-management/new-product-applications',
+  spare_part_request: '/project-sales/order-inquiries',
 };
 
 function taskHref(t: KpiTaskRow): string {

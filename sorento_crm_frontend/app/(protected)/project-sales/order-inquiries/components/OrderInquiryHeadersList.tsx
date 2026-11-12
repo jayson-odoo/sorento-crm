@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Send } from 'lucide-react';
+import { Plus, Send } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -59,6 +59,7 @@ import {
   isSparePartInquiry,
   sparePartStateLabel,
   sparePartStateVariant,
+  SPARE_PART_CREATE_PERMISSION,
 } from '../../_shared/lib/sparePartRequest';
 import {
   ORDER_INQUIRY_RESERVE_STATUSES,
@@ -288,6 +289,8 @@ export function OrderInquiryHeadersList() {
   const worklistSummary = useOrderInquiryWorklistSummary({});
 
   const canAct = useHasPermission(ACTION_PERMISSION);
+  // SPARE-PART-ORDER-REQUEST: a requester raises a spare part request from this list.
+  const canCreateSparePart = useHasPermission(SPARE_PART_CREATE_PERMISSION);
   const reserveSummary = useReserveStatusSummary();
   const { actions: sendActions, dialog: parkedSendDialog } = useParkedSendActions();
 
@@ -659,6 +662,16 @@ export function OrderInquiryHeadersList() {
             }
             secondaryActions={sendActions}
             secondaryActionsAsMenu
+            primaryAction={
+              canCreateSparePart ? (
+                <Button asChild>
+                  <Link href="/project-sales/order-inquiries/spare-part-requests/new">
+                    <Plus className="size-4" aria-hidden />
+                    Create
+                  </Link>
+                </Button>
+              ) : undefined
+            }
             bulkActions={
               canAct
                 ? [

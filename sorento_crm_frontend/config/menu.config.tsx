@@ -514,6 +514,13 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'projects.projects.view',
           },
           {
+            // SPARE-PART-ORDER-REQUEST: a requester's own spare part requests. A spare part
+            // request IS an order inquiry, so this opens the Order Inquiries list on that type.
+            title: 'Spare Part Requests',
+            path: '/project-sales/order-inquiries?inquiry_type=spare_part_request&state=all',
+            permission: 'procurement.spare_part_requests.create',
+          },
+          {
             title: 'Purchase Orders',
             path: '/scm/purchase-orders',
             permission: 'scm.dashboard.view',
@@ -2363,6 +2370,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Order Inquiries',
         path: '/project-sales/order-inquiries',
         permission: 'projects.projects.view',
+      },
+      {
+        // SPARE-PART-ORDER-REQUEST: as the sidebar entry above.
+        title: 'Spare Part Requests',
+        path: '/project-sales/order-inquiries?inquiry_type=spare_part_request&state=all',
+        permission: 'procurement.spare_part_requests.create',
       },
       {
         // Where the re-uploaded book's reaction to a planned line is reviewed and
