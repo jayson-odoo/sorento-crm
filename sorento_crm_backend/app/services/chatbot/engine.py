@@ -9370,7 +9370,7 @@ def _run_stages_body(  # noqa: PLR0915
                         verdict.get("entities"),
                     )
                     if none_with:
-                        answer = dataclasses_replace(answer, text=none_with + "\n\n" + answer.text)
+                        answer = dataclasses_replace(answer, text=_with_none_clause(answer.text, none_with))
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`
                 # is the same seam every other domain's attachment already flows
@@ -9945,6 +9945,17 @@ def _shown_codes(question: Any) -> list[str] | None:
         if o.get("entity_type") in ("product", "product_set") and code:
             codes.append(str(code))
     return codes or None
+
+
+def _with_none_clause(text: str, clause: str) -> str:
+    """AC-6's "None with size 300 mm." above the reply; CHATBOT-CODE-MATCH R4 (lead ruling, 12 Nov
+    2026): inside a "Couldn't find X" did-you-mean it follows that first sentence instead, so the
+    reply still leads with what was not found and never shows the clause bare."""
+    first = text.split("\n", 1)[0]
+    at = first.find(". ") if first.startswith("Couldn't find") else -1
+    if at < 0:
+        return clause + "\n\n" + text
+    return f"{text[: at + 1]} {clause}{text[at + 1 :]}"
 
 
 def _dealer_refers_to_salesman(answer: Any, localizer: Any = None) -> Any:

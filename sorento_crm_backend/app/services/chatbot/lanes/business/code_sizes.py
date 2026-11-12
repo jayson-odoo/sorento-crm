@@ -134,6 +134,62 @@ def _size_line(rows: list[Any], values: dict[str, Any], numbers: list[float]) ->
     return f"{row.label}: {_plain(stored[row.spec_key])} {row.unit}".strip(), True
 
 
+def _unheld_size_is_a_miss(db: Any, rows: list[Any], parser: dict[str, Any], resolved: dict[str, Any]) -> None:
+    """R4 (lead ruling, 12 Nov 2026): a size the parser read that no variant of the code's family
+    holds (the route's `spec_none`, `narrow_code_tokens_by_specs`) is never answered with a code
+    that has no stored size. Such a code's resolution becomes a miss whose close codes are its
+    family (`product_code_family._family_rows`, the same family the narrowing read), so the
+    reply is "Couldn't find X" and the family with each one's stored size."""
+    from app.models.product import Product
+    from app.models.product_spec import ProductSpecifications
+    from app.services.chatbot.turn.state import token_key
+    from app.services.product_code_family import _CODE_WORD, _family_rows, _fold
+
+    # The rows each typed token matched: per token (OR mode), or the one token's rows (AND mode).
+    asked: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
+        (res, res.get("token"), res.get("matches") or [])
+        for res in resolved.get("resolutions") or []
+        if isinstance(res, dict) and res.get("resolved") is True
+    ]
+    tokens = resolved.get("tokens") or []
+    if isinstance(resolved.get("intersection"), list) and len(tokens) == 1:
+        asked.append((None, tokens[0], resolved["intersection"]))
+    for res, token, matched in asked:
+        if _typed_of(parser, token) is None:
+            continue
+        exact = [
+            m for m in matched
+            if isinstance(m, dict) and m.get("entity_type") == "product" and m.get("uuid")
+            and token_key(m.get("canonical_code")) == token_key(token)
+        ]
+        if len(exact) != 1 or not _CODE_WORD.match(_fold(exact[0].get("canonical_code"))):
+            continue
+        with db.begin_nested():
+            values = db.query(ProductSpecifications.values).filter(ProductSpecifications.product_id == str(exact[0]["uuid"])).scalar()
+        line = _size_line(rows, values or {}, [])
+        if line is None or line[1]:
+            continue  # its class has no size key, or the code holds a stored size: answered as today
+        codes = [code for code, _values, _text in _family_rows(db, _fold(exact[0]["canonical_code"]), loose=True)]
+        with db.begin_nested():
+            ids = dict(db.query(Product.product_code, Product.id).filter(Product.product_code.in_(codes)).all())
+        family = [
+            {"entity_type": "product", "canonical_code": code, "uuid": str(ids[code]), "match_field": "product_code",
+             "match_tier": "family", "similarity": None, "display": {}}
+            for code in codes if code in ids
+        ]
+        if len(family) < 2:
+            continue
+        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family}
+        if res is not None:
+            res.update(miss)
+        else:
+            # AND mode: the one token's rows become that token's miss, in the per-token shape.
+            resolved.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [miss]})
+        unresolved = resolved.setdefault("unresolved_tokens", [])
+        if token not in unresolved:
+            unresolved.append(token)
+
+
 def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     """Every missed product code of `resolved` (in place): the products a stored size equal
     to a typed number reaches, first among its close codes, and each close code's size line
@@ -141,14 +197,15 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     from app.models.product_spec import ProductSpecifications
     from app.services.chatbot.lanes.business.answer import _CODE_PART
 
-    resolutions = resolved.get("resolutions") if isinstance(resolved, dict) else None
-    if not isinstance(resolutions, list):
+    if not isinstance(resolved, dict):
         return
     try:
         rows = _size_rows(db)
         if not rows:
             return
-        for res in resolutions:
+        if resolved.get("spec_none"):
+            _unheld_size_is_a_miss(db, rows, parser, resolved)
+        for res in resolved.get("resolutions") or []:
             if not isinstance(res, dict) or res.get("resolved") is True:
                 continue
             typed = _typed_of(parser, res.get("token"))
