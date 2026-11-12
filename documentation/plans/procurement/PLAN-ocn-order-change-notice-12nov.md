@@ -19,7 +19,7 @@ Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Read from 
   `requested_approval_by_user_id`, `voided_by`, `voided_at`, `void_reason`, `revision_no`.
   Moves and SLA events: submit (`submit`), send for approval (`send_for_approval`), send back
   (`reject_submitted`), approval decision (`approved` / `approval_rejected`), done (`resolved`), void
-  (`voided`), revise (voids open stages, re-emits `submit`, like `npa.revise` :540).
+  (`voided`), revise (approved or rejected -> draft, bumps `revision_no`, clears the approval stamp, voids the open stages, emits nothing; the next Submit emits `submit` again; like `npa.revise` :540).
 - Routes: `/api/v1/procurement/order-change-notices` (module `procurement`, like PR/SF; the menu sits in
   Project Sales Admin which is module `procurement`). Project panel route
   `/api/v1/project-sales/projects/{project_id}/order-change-notices` (sponsorships shape,
