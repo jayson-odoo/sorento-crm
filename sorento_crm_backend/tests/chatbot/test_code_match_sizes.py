@@ -179,3 +179,53 @@ def test_ac25_a_number_stored_under_two_keys_offers_every_match_with_the_key_it_
     assert "Length: 300 mm" in _entry(text, long_code), (text, _entry(text, long_code))
     assert "Width: 300 mm" in _entry(text, wide_code), (text, _entry(text, wide_code))
     assert TICK not in text and "Stock summary" not in text, text
+
+
+# --------------------------------------------------------------------------- AC-7b, AC-26: a size the parser read apart from the code
+
+
+def _closed_lists(monkeypatch) -> None:
+    """The parser config the spec-entity turns need (closed lists, the state gate), as the near-code tests set it."""
+    import dataclasses
+
+    from app.services.chatbot.head import parser as parser_mod
+
+    real = parser_mod.resolve_config
+    monkeypatch.setattr(
+        parser_mod, "resolve_config", lambda db, **k: dataclasses.replace(real(db, **k), closed_lists=True, state_block=True)
+    )
+
+
+def _head_plus_size(value: float, unit: str) -> dict[str, Any]:
+    head = {"raw": FAM, "hint": "product", "canonical_code": FAM, "current_message": True, "confident": True}
+    size = {
+        "raw": f"{value:g}{unit}", "hint": "specification", "canonical_code": None, "spec_key": "size",
+        "spec_value": value, "spec_unit": unit, "current_message": True, "confident": True,
+    }
+    return stock(head, size)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac7b_a_size_the_parser_read_that_no_candidate_holds_is_never_the_bare_none_with_size_line(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _size_console(session_factory, monkeypatch, stub_access, [FAM, FAM_300], {FAM_300: {"zz_size": 300}})
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    text = c.say(f"{FAM} 400mm stock", _head_plus_size(400, "mm"))
+    assert "None with size 400 mm." not in text, text
+    assert "Couldn't find" in text, text
+    assert "Size: 300 mm" in _entry(text, FAM_300) and "Size: not recorded" in _entry(text, FAM), text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac26_the_none_with_size_line_takes_its_unit_from_the_registry_key(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """A size key held in centimetres: 30 cm is held by nothing (the variant stores 40), and the line says cm."""
+    c = _size_console(
+        session_factory, monkeypatch, stub_access, [FAM, FAM_300], {FAM_300: {"zz_size": 40}}, keys=[("zz_size", "Size", "cm")]
+    )
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    text = c.say(f"{FAM} 30cm stock", _head_plus_size(30, "cm"))
+    assert "None with size 30 cm." in text, text
+    assert " mm" not in text, text
