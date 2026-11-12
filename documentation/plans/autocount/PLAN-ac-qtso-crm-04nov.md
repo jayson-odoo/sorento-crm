@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Review (round 8, AC-QTSO-CRM-2: SS write API v2 quotation remove line + plain codes; CANCEL BALANCE ruled no-write 11 Nov).
+Lane: AC-QTSO-CRM. Status: Review (round 9: unknown edit outcome looked up first; round 8, AC-QTSO-CRM-2: SS write API v2 quotation remove line + plain codes; CANCEL BALANCE ruled no-write 11 Nov).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -294,6 +294,14 @@ recovery." SS stores an answer per Idempotency-Key; the CRM chooses the key, so 
   reason and **Try again** whenever the answer is not done or waiting (all five dialogs).
 - The Redis attempt counter and the `-r` line (B14 round) are retired for this service; #2223's helper stays for Stock
   Debt (VENDOR_REFUSED now counts as a definite refusal there too).
+
+- Edits look the document up first (crew re-brief, 12 Nov: "an unknown outcome is looked up before any resend"). The SO
+  amendment update now reads the order before its PATCH on every press (the QT update already did). When AutoCount
+  already holds every change (SO: qty / delivery date by DtlKey; QT: Remark1 and every line value), the step is recorded
+  done with AutoCount's stamp and nothing is written again. A failed read on an order with a stored stamp still sends:
+  the stamp check keeps the PATCH off a changed order. A DOC_STALE reuses that read for B10 (no second GET).
+- Batch PO links' `skipped[]` (SS #232) is not read here: this PR's QT / SO writes never call po-links; it only adds the
+  trace headers to Stock Debt's calls.
 
 ## Crew finding 11 Nov: SO lines say which quotation row they came from
 

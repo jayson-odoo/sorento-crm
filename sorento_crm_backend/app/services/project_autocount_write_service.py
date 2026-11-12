@@ -144,6 +144,23 @@ def _iso_date(value: Any) -> Optional[str]:
     return str(value)[:10]
 
 
+def _so_holds_edits(held_doc: dict, edits: Dict[int, Dict[str, Any]]) -> bool:
+    """True when the document read back already carries every edit (qty, delivery date) by
+    DtlKey: an earlier press landed, so nothing is sent again (owner, 11 Nov)."""
+    rows = {str(d.get("DtlKey")): d for d in held_doc.get("Details") or [] if d.get("DtlKey") is not None}
+    if not edits:
+        return False
+    for dtl, edit in edits.items():
+        row = rows.get(str(dtl))
+        if row is None:
+            return False
+        if "qty" in edit and (row.get("Qty") is None or _dec(row.get("Qty")) != _dec(edit["qty"])):
+            return False
+        if "deliveryDate" in edit and _iso_date(row.get("DeliveryDate")) != edit["deliveryDate"]:
+            return False
+    return True
+
+
 def _since(stored: Optional[str]) -> str:
     """The stored last-modified as dd/mm/yyyy in Malaysia time.
 
@@ -945,19 +962,31 @@ class ProjectAutocountWriteService:
         company = self._order_company_code(order)
         expected = order.autocount_last_modified
         doc_date = None
-        if not expected:
-            # Adopted order: nothing read back yet, so read the document before the PATCH.
-            try:
-                held = self._gateway().read_document("sales-orders", doc_key, company)
-            except FoundryxPullError as exc:
+        # Owner, 11 Nov: an unknown outcome is looked up before any resend. The order is read
+        # first on every press; when AutoCount already holds every change (an earlier press
+        # landed, its answer was lost), the amendment is recorded with no second write.
+        try:
+            held: Optional[dict] = self._gateway().read_document("sales-orders", doc_key, company)
+        except FoundryxPullError as exc:
+            held = None
+            if not expected:
+                # Adopted order: nothing read back yet, so the read is required.
                 failed = self._interpret(
                     {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message},
                     verb="updated",
                 )
                 failed["waiting"] = waiting
                 return failed
-            expected = (held.get("document") or held).get("LastModified")
-            doc_date = _iso_date((held.get("document") or held).get("DocDate"))
+            # A stored stamp: the PATCH still goes, and the stamp check keeps it off a changed order.
+        held_doc = (held.get("document") or held) if held else None
+        if held_doc is not None:
+            if not expected:
+                expected = held_doc.get("LastModified")
+                doc_date = _iso_date(held_doc.get("DocDate"))
+            if _so_holds_edits(held_doc, edits):
+                final = self._blank("done", "", order.autocount_doc_no)
+                final["lines"] = self._read_back(held_doc)
+                return self._so_update_done(order, amendment, final, held, _own_book, doc_key, expected, waiting)
         body = {
             "companyCode": company,
             "expectedLastModified": expected,
@@ -976,25 +1005,31 @@ class ProjectAutocountWriteService:
             refused["waiting"] = waiting
             if self._is_stale(answer):
                 # B10: keep AutoCount's own stamp, so the next press (after a person checked
-                # AutoCount) is not refused for good. A failed read keeps the old one.
-                try:
-                    held = self._gateway().read_document("sales-orders", doc_key, company)
-                except FoundryxPullError:
-                    held = None
+                # AutoCount) is not refused for good. The read before the PATCH is reused; with
+                # none, read now. A failed read keeps the old one.
+                if held is None:
+                    try:
+                        held = self._gateway().read_document("sales-orders", doc_key, company)
+                    except FoundryxPullError:
+                        held = None
                 stamp = self._held_last_modified(held)
                 if stamp:
                     order.autocount_last_modified = stamp
                     self.db.flush()
             return refused
         final = self._interpret(answer, verb="updated")
+        return self._so_update_done(order, amendment, final, answer, _own_book, doc_key, expected, waiting)
+
+    def _so_update_done(self, order, amendment, final, answer, own_book, doc_key, expected, waiting):
+        """Record a done amendment update: sent by this press, or found already in AutoCount."""
         final["doc_no"] = final["doc_no"] or order.autocount_doc_no
         final["message"] = f"{final['doc_no']} updated in AutoCount"
         final["waiting"] = waiting
         if not order.autocount_doc_key:
             # An adopted order's first done update: keep its key and the book it came from.
-            order.autocount_book = _own_book
+            order.autocount_book = own_book
         order.autocount_doc_key = order.autocount_doc_key or doc_key
-        order.autocount_last_modified = (answer.get("document") or {}).get("LastModified") or expected
+        order.autocount_last_modified = self._held_last_modified(answer) or expected
         amendment.autocount_edit_sent_at = datetime.utcnow()
         self.db.flush()
         return final
@@ -1311,6 +1346,17 @@ class ProjectAutocountWriteService:
             ]
         )
         edit_done = document.autocount_edit_issue_id == issue.id
+        held_header = held_doc.get("document") or held_doc
+        if not edit_done and not rows and str(held_header.get("Remark1") or "") == remark:
+            # Owner, 11 Nov: an unknown outcome is looked up before any resend. The read already
+            # holds this revision's header and every line value (an earlier PATCH landed, its
+            # answer was lost), so the edit step is recorded with AutoCount's stamp, not resent.
+            document.autocount_edit_issue_id = issue.id
+            stamp = self._held_last_modified(held_doc)
+            if stamp:
+                document.autocount_last_modified = stamp
+            self.db.flush()
+            edit_done = True
         if document.autocount_lines_issue_id == issue.id:
             adds = []
         removed: List[dict] = []

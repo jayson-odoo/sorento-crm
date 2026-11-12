@@ -491,7 +491,10 @@ def test_a_refusal_other_than_doc_stale_does_not_read_or_move_the_stamp(api, fak
 
     assert client.post(_url(amendment)).json()["outcome"] == "refused"
 
-    assert fake_ss.to("GET", DOC_PATH) == []
+    # One read, before the PATCH (an unknown outcome is looked up first, owner 11 Nov); none after.
+    paths = [(r.method, r.url.path) for r in fake_ss.writes()]
+    assert paths.count(("GET", DOC_PATH)) == 1
+    assert paths.index(("GET", DOC_PATH)) < paths.index(("PATCH", DOC_PATH))
     db.refresh(world.order)
     assert world.order.autocount_last_modified == LAST_MODIFIED
 
