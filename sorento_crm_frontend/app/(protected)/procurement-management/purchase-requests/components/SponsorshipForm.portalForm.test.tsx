@@ -411,6 +411,21 @@ describe('limited user, Sponsorship Form seeded from a project (?project_id=)', 
     await waitFor(() => expect(draftFields().project_id).toBe(PROJECT_ID));
   });
 
+  it('a submit refreshes the project Sponsorship Form tab at once, not after the 30 s cache (PROJECT-STAGE-ACTIONS)', async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    meNow = { requires_registered_project: false };
+    mountSeeded(PROJECT_ID);
+    await waitFor(() => expect((document.getElementById('project_title') as HTMLInputElement | null)?.value).toBe('Project One'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Submit/ }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+    const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
+    const confirm = dialog && Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
+    if (confirm) fireEvent.click(confirm);
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && /\/submit$/.test(c.url))).toBe(true));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['project-sponsorships'] }));
+    invalidate.mockRestore();
+  });
+
   it('no defaultProjectId: nothing is seeded and the draft has no project_id', async () => {
     meNow = { requires_registered_project: false };
     mountSeeded(undefined);

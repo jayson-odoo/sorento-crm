@@ -113,3 +113,15 @@ The clicking user is recorded by the audit log (the request actor); `purchase_re
   and the quotation pre-fill also needs `projects.sample_requests.create`
   (`my_requests.py:139`), both data/grants on the copy; admin Edit opens the staff form
   (`sponsorship-forms/[id]/edit/page.tsx` -> `PurchaseRequestForm` staff branch), untouched here.
+
+## Round 5 (crew pass on 974c3231)
+
+- A salesperson's submit from a project refreshes the project's Sponsorship Form tab at once
+  (`MyRequestClientProvider alsoRefresh`), as the staff path does; before, the tab showed the old
+  list until its 30 s cache ran out.
+- Evidence (no change): Sample Request is an opt-in portal form per contact
+  (`portal_service.SUPPORTED_TYPES` holds only the base four; `portal_form_visibility_service.
+  switched_form_types` adds it from an active market segment's `portal_form_types` or a
+  `contact_portal_form_overrides` row). A salesperson whose contact lacks it gets 403 on every
+  salesperson sample route (`portal_sample_request.py:37-43`, `_assert_visible`). Their "Sample
+  submitted" stage button still moves the stage, then opens a form they cannot file.

@@ -126,6 +126,10 @@ export default function PurchaseRequestForm(props: PurchaseRequestFormProps) {
   return <StaffPurchaseRequestForm {...props} />;
 }
 
+/** What a sponsorship save refreshes besides the kind's list: the project's Sponsorship Form tab
+ *  and its total (both under this key), on the salesperson's path as on the staff one. */
+const PROJECT_SPONSORSHIP_KEYS = [SPONSORSHIPS_KEY];
+
 /**
  * What a sponsorship form written from a project starts with, the salesperson's and staff's
  * alike: the project, its title, customer, contact person, address and value. Empty values are
@@ -248,6 +252,7 @@ function NewOwnRequestForm({
       initialValues={initialValues}
       paths={fromProject}
       aiExtract={false}
+      alsoRefresh={PROJECT_SPONSORSHIP_KEYS}
     />
   ) : (
     <MyRequestPortalForm kind={kind} initialValues={initialValues} />
