@@ -94,6 +94,7 @@ from app.services.scm.summary_order_service import compact_ddmmyyyy
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.list_search import search_values
 from app.utils.multi_value import multi_choices, multi_text, multi_values
 from app.utils.heavy_work import heavy
 
@@ -1972,7 +1973,6 @@ HeaderListSort = Literal[
     "so_date",
     "status",
 ]
-_MAX_HEADER_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 
 
 @router.get(
@@ -1986,12 +1986,12 @@ def list_order_inquiry_headers(
             "every non-cancelled row confirmed (or none at all); All = both."
         ),
     ),
-    query: Optional[str] = Query(
+    query: Optional[list[str]] = Query(
         None,
-        max_length=_MAX_HEADER_QUERY_LENGTH,
         description=(
             "OI no, legacy OI no, S/O no, customer, project, agent, or the product "
-            "code / location of any of the header's own non-cancelled lines."
+            "code / location of any of the header's own non-cancelled lines. One repeated "
+            "param per value (at most 200, 100 characters each); a header matching any is kept."
         ),
     ),
     raised_by: Optional[list[str]] = Query(
@@ -2032,10 +2032,11 @@ def list_order_inquiry_headers(
     for value in multi_values(inquiry_no, capped=False) or []:
         if len(value) > 200:
             raise handle_unprocessable("inquiry_no: value is too long")
+    search = search_values(query, "Search")
     try:
         result = OrderInquiryHeaderService(db).list(
             state=state,
-            query=query,
+            query=search,
             raised_by=raised_by,
             agent=agent,
             project=project,
