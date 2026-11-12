@@ -813,3 +813,15 @@ def test_scoreboard_a_quantity_question_with_no_lookup_is_clarified():
     """The task asks the quantity before any fetch (no `looked_up` stage)."""
     turn = turn_dict(_replied_asking(None), _state(_qty_task()), branch_kind="business_query")
     assert _outcome(turn) == ("clarified", None)
+
+
+# Review round 2: kinds the narrower mints at runtime (`f"{entity_kind}_pick"`, `_ask`).
+
+
+@pytest.mark.parametrize("kind", ["order_pick", "form_pick", "brand_pick", "warehouse_ask"])
+def test_scoreboard_a_runtime_minted_which_one_pick_is_clarified(kind):
+    """`turn/pending.is_roster` is the one definition of a which-one pick: the narrower
+    mints `<entity_kind>_pick` / `_ask` off an operator-editable table, so a literal list
+    cannot be complete."""
+    turn = turn_dict(looked_up(sections=2), _replied_asking(kind, sections=2), _state(open_question=_pick(kind)))
+    assert _outcome(turn) == ("clarified", None)
