@@ -302,8 +302,8 @@ async function confirmWith(result: Record<string, unknown>) {
   return screen.findByTestId('board-confirm-results');
 }
 
-describe('B1 regression: a deleted SO prints the apply-only sentence', () => {
-  it('prints "applied the AutoCount change", not "confirmed as revision", when the press only applied the change', async () => {
+describe('B1 regression (F2 12/13 Nov): a deleted SO reads the normal sentence', () => {
+  it('prints "confirmed as revision N (3 purchase rows handed over)" once the cancels are saved, never the apply-only sentence', async () => {
     const results = await confirmWith({
       decision_revision: 3,
       planning_change_applied: true,
@@ -317,8 +317,8 @@ describe('B1 regression: a deleted SO prints the apply-only sentence', () => {
       ],
     });
 
-    expect(results).toHaveTextContent('applied the AutoCount change');
-    expect(results).not.toHaveTextContent('confirmed as revision');
+    expect(results).toHaveTextContent('confirmed as revision 3 (3 purchase rows handed over)');
+    expect(results).not.toHaveTextContent('applied the AutoCount change');
   });
 
   it('guard: a date-moved Buy (1 confirmed, 1 handed over, none created) still reads confirmed as revision N', async () => {

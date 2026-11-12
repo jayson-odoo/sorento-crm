@@ -91,6 +91,11 @@ def _swap_fixture(api, *, old_row_state=None):
 def _confirm_with_batch(fixture, monkeypatch):
     _register(fixture["world"])
     calls = _captured_dispatches(monkeypatch)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from .._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(fixture["world"].db, fixture["batch"].id)
+    fixture["world"].db.commit()
     response = _confirm(
         fixture["client"], fixture["order"].id,
         [_line_payload(fixture["line_2"].id, buy_qty="14")],

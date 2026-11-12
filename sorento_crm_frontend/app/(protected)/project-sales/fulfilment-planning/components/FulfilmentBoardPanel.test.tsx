@@ -5441,6 +5441,11 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     );
   }
 
+  /** F2 12/13 Nov: a cancel is saved like any change before Confirm. */
+  function saveAllSuggested() {
+    fireEvent.click(screen.getByRole('button', { name: /save all suggested/i }));
+  }
+
   /** The pending batch b-1 names these planning lines (round 8: only a NAMED line is held). */
   function batchNaming(...lineIds: string[]) {
     getPlanningChangeBatch.mockResolvedValue({
@@ -5530,19 +5535,20 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
           lines_carried: 0,
           lines_retired: [{ line_no: 2, item_code: 'CB110' }],
           planning_change_applied: true,
+          inquiry_rows_handed_over: 1,
         },
       ],
     });
     renderPanel(['SO403340']);
-    // COUNT-DISPLAY (crew ruling b): no decision, so never an enabled Confirm (0).
+    // F2 12/13 Nov: a cancel is saved like any change before Confirm; the button is always
+    // Confirm (N) and there is no AutoCount change note.
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Apply AutoCount change'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
     );
-    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+    expect(screen.queryByTestId('board-autocount-change-note')).not.toBeInTheDocument();
+    saveAllSuggested();
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'Applies the AutoCount change from 01/09/2026: 1 old line (CB110) is retired',
-      ),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
     );
     await pressPreviewThenConfirm();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
@@ -5554,8 +5560,9 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('1 of 1 orders confirmed');
     expect(block).toHaveTextContent(
-      'SO403340: applied the AutoCount change from 01/09/2026: 1 old line (CB110) was retired',
+      'SO403340: confirmed as revision 4 (1 purchase row handed over)',
     );
+    expect(block).not.toHaveTextContent('applied the AutoCount change');
   });
 
   /** One book-cancelled line (CB110) on SO403340's pending change b-1, nothing decided. */
@@ -5568,35 +5575,32 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     );
   }
 
-  it('COUNT-DISPLAY review: the guide of a change-only press says Apply AutoCount change, never Confirm 0 orders', async () => {
+  it('COUNT-DISPLAY review (F2 12/13 Nov): the guide of a saved cancel-only press reads Confirm, never Apply AutoCount change or Confirm 0 orders', async () => {
     getPlanningBoard.mockResolvedValue(changeOnlyBoard());
     renderPanel(['SO403340']);
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 01/09/2026'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
+    );
+    saveAllSuggested();
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
     );
     await walkToConfirmStep();
     const guide = screen.getByTestId('confirm-guide');
-    expect(within(guide).getByRole('heading')).toHaveTextContent('Apply AutoCount change');
-    expect(screen.getByTestId('confirm-guide-confirm')).toHaveTextContent('Apply AutoCount change');
-    expect(guide).toHaveTextContent(
-      'Applies the AutoCount change from 01/09/2026: 1 old line (CB110) is retired',
-    );
+    expect(guide).not.toHaveTextContent('Apply AutoCount change');
+    expect(guide).not.toHaveTextContent('Applies the AutoCount change');
+    expect(screen.getByTestId('confirm-guide-confirm')).not.toHaveTextContent('Apply AutoCount change');
     expect(guide).not.toHaveTextContent(/0 orders/);
   });
 
-  it('COUNT-DISPLAY review: the guide of a mixed press also names the AutoCount change', async () => {
+  it('COUNT-DISPLAY review (F2 12/13 Nov): the guide of a mixed press names no AutoCount change note', async () => {
     retiredPlusNamedCancel();
     renderPanel(['SO403340']);
-    await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 01/09/2026'),
-    );
     await walkToConfirmStep();
-    expect(screen.getByTestId('confirm-guide')).toHaveTextContent(
-      'Also applies the AutoCount change from 01/09/2026: 1 old line (WESERP10B) is retired',
-    );
+    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent('AutoCount change');
   });
 
-  it('COUNT-DISPLAY review: the results keep the change date after the board re-reads it as applied', async () => {
+  it('COUNT-DISPLAY review (F2 12/13 Nov): the normal result sentence survives the board re-reading the order as applied', async () => {
     const pending = changeOnlyBoard();
     getPlanningBoard.mockResolvedValue(pending);
     confirmMany.mockImplementation(async () => {
@@ -5616,24 +5620,29 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
             lines_carried: 0,
             lines_retired: [{ line_no: 2, item_code: 'CB110' }],
             planning_change_applied: true,
+            inquiry_rows_handed_over: 1,
           },
         ],
       };
     });
     renderPanel(['SO403340']);
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 01/09/2026'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
+    );
+    saveAllSuggested();
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
     );
     await pressPreviewThenConfirm();
     const block = await screen.findByTestId('board-confirm-results');
     await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(1));
     expect(block).toHaveTextContent(
-      'SO403340: applied the AutoCount change from 01/09/2026: 1 old line (CB110) was retired',
+      'SO403340: confirmed as revision 4 (1 purchase row handed over)',
     );
     expect(block).not.toHaveTextContent('pending');
   });
 
-  it('COUNT-DISPLAY (crew audit c): a decision on one order beside two change-only orders reads Confirm (1) and names both changes', async () => {
+  it('COUNT-DISPLAY (crew audit c, F2 12/13 Nov): a decision on one order beside two change-only orders reads Confirm (1), then Confirm (3) once their cancels are saved', async () => {
     getPlanningChangeBatch.mockResolvedValue({
       id: 'b-1',
       created_at: '2026-09-01T00:00:00Z',
@@ -5664,19 +5673,14 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
       ),
     );
     renderPanel(['SO403340', 'SO398322', 'SO400001']);
-    await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'SO398322: from 01/09/2026, 1 old line (ZZT-B) is retired',
-      ),
-    );
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
-    const note = screen.getByTestId('board-autocount-change-note');
-    expect(note).toHaveTextContent('Also applies the AutoCount change on 2 orders');
-    expect(note).toHaveTextContent('SO400001: from 01/09/2026, 1 old line (ZZT-C) is retired');
-    expect(note).not.toHaveTextContent('SO403340');
+    // F2 12/13 Nov: the saved decision counts; the two cancels are saved like any change.
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
+    expect(screen.queryByTestId('board-autocount-change-note')).not.toBeInTheDocument();
+    saveAllSuggested();
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (3)'));
   });
 
-  it('COUNT-DISPLAY (crew ruling b): two orders with only pending changes read Apply AutoCount changes (2 orders)', async () => {
+  it('COUNT-DISPLAY (crew ruling b): two orders with only pending cancels read Confirm (0), then Confirm (2) once saved (F2 12/13 Nov)', async () => {
     getPlanningChangeBatch.mockResolvedValue({
       id: 'b-1',
       created_at: '2026-09-01T00:00:00Z',
@@ -5705,32 +5709,24 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     );
     renderPanel(['SO403340', 'SO398322']);
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-        'Apply AutoCount changes (2 orders)',
-      ),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
     );
-    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+    expect(screen.queryByTestId('board-autocount-change-note')).not.toBeInTheDocument();
+    saveAllSuggested();
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'SO403340: from 01/09/2026, 1 old line (WESERP10B) is retired',
-      ),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
     );
-    const note = screen.getByTestId('board-autocount-change-note');
-    expect(note).toHaveTextContent('Applies the AutoCount change on 2 orders');
-    expect(note).toHaveTextContent('SO398322: from 01/09/2026, 1 old line (ZZT-B) is retired');
   });
 
   // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15, crew ruling (b)): the count is
   // decisions only; the line the change retires is one note beside the button.
-  it('COUNT-DISPLAY D1/D2: Confirm counts the named cancel only, and the retired line is one note', async () => {
+  it('COUNT-DISPLAY D1/D2 (F2 12/13 Nov): Confirm counts the named cancel only, and there is no note', async () => {
     retiredPlusNamedCancel();
     renderPanel(['SO403340']);
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
-    await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'Also applies the AutoCount change from 01/09/2026: 1 old line (WESERP10B) is retired',
-      ),
-    );
+    // F2 12/13 Nov: no separate AutoCount change note any more.
+    expect(screen.queryByTestId('board-autocount-change-note')).not.toBeInTheDocument();
   });
 
   it('BATCH-HELD-CANCEL U2: the press posts batch_id with the named cancel in cancelled_lines', async () => {
@@ -5755,10 +5751,8 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     expect(block).toHaveTextContent('1 of 1 orders confirmed');
     expect(block).toHaveTextContent('SO403340: 1 line transferred to Cancel SO');
     expect(block).not.toHaveTextContent('applied the AutoCount change;');
-    // COUNT-DISPLAY D4: the retired line is the one note, not a list of lines.
-    expect(block).toHaveTextContent(
-      'Also applied the AutoCount change from 01/09/2026: 1 old line (WESERP10B) was retired',
-    );
+    // F2 12/13 Nov: no AutoCount change note in the results either.
+    expect(block).not.toHaveTextContent('AutoCount change from');
     expect(block).not.toHaveTextContent('Retired by the AutoCount change:');
     expect(block).toHaveTextContent(
       'Transferred to Cancel SO: line 2 CB110 (AutoCount Cancel SO CSO-0001)',
