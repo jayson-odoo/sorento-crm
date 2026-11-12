@@ -902,7 +902,7 @@ def test_t6_a_failed_engine_turn_sends_the_failure_reply_through_the_crm_sender(
     db, factory, workspace, fake_respond, monkeypatch
 ):
     from app.services.chatbot import engine
-    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
 
     _settings(db, chatbot_reply_sender_mode="all")
     _drain_one(
@@ -910,13 +910,13 @@ def test_t6_a_failed_engine_turn_sends_the_failure_reply_through_the_crm_sender(
         lambda *a, **k: engine._failed_result("t", "understood", "boom", [], False),
     )
     sent = [c[1][1] for c in fake_respond["client"].calls if c[0] == "send_message"]
-    assert sent == [CHATBOT_REPLY_TURN_FAILED]
+    assert sent == [FAILURE_REPLY_TEXT]
 
 
 def test_t6_an_engine_that_raises_still_sends_the_failure_reply(
     db, factory, workspace, fake_respond, monkeypatch
 ):
-    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
 
     _settings(db, chatbot_reply_sender_mode="all")
 
@@ -925,7 +925,7 @@ def test_t6_an_engine_that_raises_still_sends_the_failure_reply(
 
     _drain_one(db, factory, monkeypatch, boom)
     sent = [c[1][1] for c in fake_respond["client"].calls if c[0] == "send_message"]
-    assert sent == [CHATBOT_REPLY_TURN_FAILED]
+    assert sent == [FAILURE_REPLY_TEXT]
 
 
 def test_t7_repeated_refusals_end_failed_at_sent_with_the_refusal_reason(
@@ -984,7 +984,7 @@ def test_r2_a_sent_failure_reply_does_not_swallow_the_real_answers_first_part(
 ):
     from datetime import datetime
 
-    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
 
     _settings(db, chatbot_reply_sender_mode="all")
     turn_id, claimed_at = _claimed_row(db)
@@ -994,7 +994,7 @@ def test_r2_a_sent_failure_reply_does_not_swallow_the_real_answers_first_part(
 
     _drain_turn(db, factory, monkeypatch, turn_id, claimed_at, boom)
     first = fake_respond["client"]
-    assert [c[1][1] for c in first.calls if c[0] == "send_message"] == [CHATBOT_REPLY_TURN_FAILED]
+    assert [c[1][1] for c in first.calls if c[0] == "send_message"] == [FAILURE_REPLY_TEXT]
 
     # The row is recovered and the engine now answers.
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
