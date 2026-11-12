@@ -585,3 +585,20 @@ def test_ac_v2_h1_after_cs_confirm_the_header_returns_to_todays_rule(env):
     _confirm(w)
 
     assert _header_status(env, w, state="all") in ("outstanding", "completed")
+
+
+def test_ac_v2_s1_a_date_change_put_back_while_the_location_also_changed_stays_waiting(env):
+    """Kill test for `_nets_back_to_older`'s item / location guard: the date goes back to its
+    confirmed value, but the line moves to another warehouse before CS decides."""
+    w = _world(env, "date")
+    assert _wl_row(env, w).get("waiting_for_cs") is True, "precondition"
+
+    _push(
+        w,
+        dict(
+            w.record,
+            lines=[dict(w.x, required_date=OLD_DATE, warehouse_ref=env.warehouse_ref), w.y],
+        ),
+    )
+
+    assert _wl_row(env, w).get("waiting_for_cs") is True
