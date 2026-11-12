@@ -367,7 +367,8 @@ def snapshots(db: Session, contacts: Iterable[RespondContact]) -> dict[str, Acce
 
     # The EFFECTIVE reveals, so a DO key that is ON by default with no row counts as held
     # (owner, 4 Oct 2026; `contact_field_reveal_service.granted_keys_for`).
-    known = {key for key, _ in contact_field_reveal_service.FIELD_REVEAL_KEYS}
+    # The cost key is a rule on the linked user (COST-ACCESS-UNIFIED), not a copyable grant.
+    known = {key for key, _ in contact_field_reveal_service.FIELD_REVEAL_KEYS} - contact_field_reveal_service.RETIRED_CHECKLIST_KEYS
     for contact_id, keys in contact_field_reveal_service.granted_keys_for(db, ids).items():
         out[contact_id].reveals.extend(k for k in keys if k in known)
 

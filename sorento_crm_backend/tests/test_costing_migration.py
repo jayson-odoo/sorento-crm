@@ -9,7 +9,7 @@ drop is qualified with `current_schema()` so it can never reach a real table), t
 migration's own DDL.
 
 ASSUMED MIGRATION INTERFACE (alembic/versions/pc_0001_product_costing.py):
-    revision == "pc_0001_product_costing" (<= 32 chars); it is the SINGLE alembic head.
+    revision == "pc_0001_product_costing" (<= 32 chars); on the chain of the SINGLE alembic head.
     upgrade() / downgrade() as contract section 2.
     seed_exchange_rates(connection) -> int   the idempotent seed step upgrade() calls: inserts one
         exchange_rates row per scm.currency_rate row (effective_from = as_of, else today) with
@@ -140,7 +140,7 @@ NOW = date(2026, 11, 11)
 # ------------------------------------------------------------------ revision
 
 
-def test_migration_file_has_the_pinned_revision_and_is_the_single_head():
+def test_migration_file_has_the_pinned_revision_and_is_on_the_single_head_chain():
     assert MIGRATION_PATH.exists(), f"missing {MIGRATION_PATH}"
     module = _module()
     assert module.revision == "pc_0001_product_costing"
@@ -153,12 +153,12 @@ def test_migration_file_has_the_pinned_revision_and_is_the_single_head():
     cfg = Config(str(BACKEND / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND / "alembic"))
     script = ScriptDirectory.from_config(cfg)
+    # Exactly one head, and this migration is on its chain. Which revision is the head moves with
+    # every later migration, so the head itself is not pinned (TEST-COSTING-HEAD-PIN).
     heads = script.get_heads()
-    # One head, with this revision in its chain: a later lane's migration chains onto it
-    # (AC-QTSO-CRM's acqs_0001), so pinning it as THE head would fail on the next merge.
-    assert len(heads) == 1, heads
-    chain = {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
-    assert "pc_0001_product_costing" in chain
+    assert len(heads) == 1, f"expected a single alembic head, found {heads}"
+    ancestry = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert module.revision in ancestry, (heads, module.revision)
 
 
 # ------------------------------------------------------------------ tables and constraints

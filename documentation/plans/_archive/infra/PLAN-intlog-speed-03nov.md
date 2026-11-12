@@ -1,6 +1,6 @@
 # PLAN: Integration Log page speed (INTLOG-SPEED)
 
-Status: built, reviewer findings fixed, awaiting crew prod-clone measurement + browser pass (small fix track: no migration, no auth/RBAC change, the only UI change is the total label)
+Status: merged (#2129, 3 Nov 2026; crew GO on the prod clone: page 1 0.5 s cold, 3 ms warm, vs 19-26 s on main). Small fix track.
 
 ## Problem (measured by crew, 3 Nov 2026, on the 20 Oct prod clone: 1.2M rows, 1.5 GB)
 
