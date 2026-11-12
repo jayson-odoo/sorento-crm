@@ -119,8 +119,13 @@ function Pill({ status, kind }: { status: string | null; kind?: string }) {
   const def = kind ? RELATED_RECORD_TYPES[kind] : undefined;
   const label = (def?.statusLabel ?? formatStatusLabel)(status);
   const tone = (def?.statusPillClass ?? statusPillClass)(status);
+  // A type that names its own statuses ("Processed by CS") is shown as written; the shared
+  // base capitalizes, which is right only for the generic labels.
+  const base = def?.statusLabel
+    ? STATUS_PILL_BASE.replace(/\bcapitalize\b/, 'normal-case')
+    : STATUS_PILL_BASE;
   return (
-    <span className={`${STATUS_PILL_BASE} ${tone} truncate`} title={label}>
+    <span className={`${base} ${tone} truncate`} title={label}>
       {label}
     </span>
   );
