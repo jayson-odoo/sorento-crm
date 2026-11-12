@@ -26,7 +26,7 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/lib/toast';
-import { formatDateTime, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import {
   useTeamPendingSLA,
   useVisibleUsers,
@@ -146,7 +146,7 @@ export default function TeamPendingList() {
           const due = row.original.due_at;
           if (!due) return '-';
           const overdue = parseDateTimeAsUTC(due).getTime() < Date.now();
-          const text = formatDateTime(parseDateTimeAsUTC(due));
+          const text = formatDateTimeInMalaysia(parseDateTimeAsUTC(due));
           return (
             <span className={overdue ? 'text-destructive font-medium' : ''} title={text}>
               {text}
