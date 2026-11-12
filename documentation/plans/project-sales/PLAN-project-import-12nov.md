@@ -140,3 +140,29 @@ FE: `FileDropzone`, `WizardSteps`, `ImportColumnMapper`, `DataGrid` + `buildData
 - [ ] user guide `documentation/user-guides/` page for Project import
 - [ ] hand-test script `laneboard/scripts/2385.md`
 - [ ] standing rules self-check
+
+## Frontend contract (slice 2; tests are written against THIS)
+
+Backend as built (head 8094525d):
+- `/api/v1/projects/import/runs` returns `{data|items, total}`: read the route.
+- `/runs/{id}` gives the run, with `sheets`, `columns`, `missing_columns`, `preview_counts`, `preview_codes`, `result_counts`, `result_codes`.
+- `/runs/{id}/lines?kind&status&page&limit&sort&dir&query` returns `{items, total}`.
+- `/runs/{id}/lines/summary` returns `{kind: {total, todo}}`.
+- `PUT /runs/{id}/lines`, `PUT /runs/{id}/lines/bulk`, `POST /runs/{id}/preview`.
+- `/runs/{id}/rows?outcome&code&sheet&sort&dir&page&limit&query`.
+- `POST /runs/{id}/import` returns 202 `{job_id}`.
+- Revert is the pending action `project_import_run.revert`.
+
+Files:
+- `app/(protected)/project-sales/_shared/services/projectImportService.ts`: one function per route above. It uses `lib/api-client`, `extractApiError` and `buildDataGridParams`, and never hand-builds `URLSearchParams` for page/limit/sort/dir/query.
+- `app/(protected)/project-sales/_shared/hooks/useProjectImport.ts`: react-query reads plus mutations. On success, invalidate and toast. On error, the extracted message and a toast.
+- `app/(protected)/project-sales/import/page.tsx` + `components/ProjectImportListClient.tsx`: the runs DataGrid, plus `components/CreateImportDialog.tsx`.
+- `app/(protected)/project-sales/import/[runId]/page.tsx` + `components/ProjectImportRunClient.tsx`, which holds `ColumnsStep.tsx`, `ValuesStep.tsx`, `PreviewStep.tsx` and `ResultsView.tsx`.
+- `config/menu.config.tsx` (both trees): Project Sales > Configuration > "Project import" at `/project-sales/import`, permission `projects.import.view`. Also add `projects.import.view` to `_shared/projectViewPermissions.ts`, so a user holding only that permission reaches the page.
+
+Behaviour (mock v1 is the picture):
+- The run page shows the step from `status`: draft goes to Columns, or to Values once the required columns are set; previewed goes to Preview; importing / imported / reverted go to Results.
+- Values: the tab label shows "N to do" from `/lines/summary`; the "To do" filter calls `lines?status=todo`; the bulk "Set to" calls `PUT lines/bulk` ONCE with every ticked key.
+- Preview: tiles from `preview_counts`; Import is the only primary button; Outcome / Reason / Sheet are `SearchableMultiSelect` filters; a needs-review row click switches to Values on the blocking kind.
+- Results: `OutcomeBreakdownCard` + `ImportJobRowsCard` (or their data shape), tabs Results | Values | History (`AuditTrail`), and Revert as a `DeferredActionButton` in the gear menu.
+- Every date goes through `formatDate` (dd/mm/yyyy). No UUID is rendered.
