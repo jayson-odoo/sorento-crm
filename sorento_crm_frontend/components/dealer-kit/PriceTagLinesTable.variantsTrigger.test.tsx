@@ -12,10 +12,13 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: (props: {
+    /** Only the Item cell passes this; these suites are about the other multi-selects. */
+    renderTrigger?: unknown;
     value: string[];
     options?: { value: string; label: string }[];
     renderTriggerLabel?: (selected: { value: string; label: string }[]) => React.ReactNode;
   }) => {
+    if (props.renderTrigger) return null;
     const selected = (props.options ?? []).filter((o) => props.value.includes(o.value));
     return <div data-testid="trigger">{props.renderTriggerLabel?.(selected)}</div>;
   },

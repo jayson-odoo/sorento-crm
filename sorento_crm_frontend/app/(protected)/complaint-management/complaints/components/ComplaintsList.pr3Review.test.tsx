@@ -101,7 +101,7 @@ describe('Complaints - an assignee id the options do not hold', () => {
   });
 
   it('shows no raw id beside a known assignee either', async () => {
-    view.filters = { assigned_to: `resp-ann,${ORPHAN}` };
+    view.filters = { assigned_to: `u-ann,${ORPHAN}` };
     const user = userEvent.setup();
     await openFilters(user);
     await waitFor(() => expect(document.body.textContent ?? '').toContain('ZZT Ann'));

@@ -33,6 +33,50 @@ from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.banner_person_service import wa_phone_for_respond_user_id
 
 
+# ---- Assigned To: one rule for the column, the filter and the sort (ASSIGNED-FILTER-ALL-STAFF) ----
+# The person a complaint is assigned to is the assignee on its LATEST OPEN form-SLA tracker
+# (``assigned_to_id``, else the legacy ``assigned_to`` text), else ``complaints.assigned_to``.
+# Each value is a CRM user id or a Respond.io agent id. ``effective_assignee_key`` applies the
+# rule to loaded rows (the column); ``effective_assignee_key_sql`` is the same rule as a
+# correlated SQL expression (the filter and the sort). Change both together or neither.
+
+
+def effective_assignee_key(tracker, complaint) -> Optional[str]:
+    """The assignee key the Assigned To column shows for ``complaint``; None = unassigned."""
+    for value in (
+        getattr(tracker, "assigned_to_id", None) if tracker is not None else None,
+        getattr(tracker, "assigned_to", None) if tracker is not None else None,
+        getattr(complaint, "assigned_to", None),
+    ):
+        if value and str(value).strip():
+            return str(value)
+    return None
+
+
+def effective_assignee_key_sql():
+    """``effective_assignee_key`` as a SQL expression correlated to ``Complaint``."""
+    from sqlalchemy import select
+
+    on_tracker = (
+        select(
+            func.coalesce(
+                func.nullif(func.btrim(ConversationSLATracking.assigned_to_id), ""),
+                func.nullif(func.btrim(ConversationSLATracking.assigned_to), ""),
+            )
+        )
+        .where(
+            ConversationSLATracking.source_entity_type == "complaint",
+            ConversationSLATracking.source_entity_id == Complaint.id,
+            *open_tracker_scope(),
+        )
+        .order_by(ConversationSLATracking.initiated_at.desc())
+        .limit(1)
+        .correlate(Complaint)
+        .scalar_subquery()
+    )
+    return func.coalesce(on_tracker, func.nullif(func.btrim(Complaint.assigned_to), ""))
+
+
 # Sentinel: distinguishes "caller passed a precomputed value (maybe None)" from
 # "caller passed nothing, fall back to a per-row lookup" in _serialize_complaint.
 _UNSET = object()
@@ -254,10 +298,22 @@ class ComplaintService:
             return True
         return is_module_enabled(self.db, tenant_id, PUBLIC_VIEW_LINKS_MODULE_KEY)
 
-    def _latest_unresolved_sla_assignee_name(self, complaint_id: str) -> Optional[str]:
-        """Return display name of latest unresolved SLA tracker assignee for this complaint."""
-        from app.models.user import User
-        tracker = (
+    @staticmethod
+    def _assignee_display(key: Optional[str], tracker, name_of) -> Optional[str]:
+        """Display name for an effective assignee key. Legacy free text on the tracker's
+        ``assigned_to`` that names no user shows as written; an unknown id shows nothing."""
+        if not key:
+            return None
+        name = name_of(key)
+        if name:
+            return name
+        if tracker is not None and key == getattr(tracker, "assigned_to", None):
+            return key
+        return None
+
+    def _latest_open_sla_tracker(self, complaint_id: str):
+        """The complaint's latest open form-SLA tracker, or None."""
+        return (
             self.db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_type == "complaint",
@@ -267,15 +323,6 @@ class ComplaintService:
             .order_by(ConversationSLATracking.initiated_at.desc())
             .first()
         )
-        if tracker is None:
-            return None
-        if tracker.assigned_to_id:
-            user = self.db.query(User).filter(User.id == tracker.assigned_to_id).first()
-            if user:
-                return user.name or user.email or None
-        if tracker.assigned_to:
-            return self._resolve_user_display_name(tracker.assigned_to) or tracker.assigned_to
-        return None
 
     def _resolve_user_display_name(self, user_id: Optional[str]) -> Optional[str]:
         """Resolve user id (CRM id or respond_user_id) to display name (name or email)."""
@@ -373,13 +420,10 @@ class ComplaintService:
         if assigned_to_name_override is not _UNSET:
             data["assigned_to_name"] = assigned_to_name_override
         else:
-            sla_assignee_name = self._latest_unresolved_sla_assignee_name(str(complaint.id))
-            if sla_assignee_name:
-                data["assigned_to_name"] = sla_assignee_name
-            elif data.get("assigned_to"):
-                data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
-            else:
-                data["assigned_to_name"] = None
+            tracker = self._latest_open_sla_tracker(str(complaint.id))
+            data["assigned_to_name"] = self._assignee_display(
+                effective_assignee_key(tracker, complaint), tracker, self._resolve_user_display_name
+            )
         # handled_by_id lives on the active SLA tracker (the form-handling-lock
         # holder), not on the complaint row, so only the batched override path
         # can populate it. Detail path has no tracker batch -> stays None.
@@ -475,11 +519,25 @@ class ComplaintService:
         if assignees:
             # `__unassigned__` is a pseudo-value that ORs with real assignees.
             clauses = []
+            assignee_key = effective_assignee_key_sql()
             if any(a.lower() == "__unassigned__" for a in assignees):
-                clauses.append((Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == ""))
+                clauses.append(assignee_key.is_(None))
             real = [a for a in assignees if a.lower() != "__unassigned__"]
             if real:
-                clauses.append(Complaint.assigned_to.in_(real))
+                # The assignee key is a CRM user id OR a Respond.io agent id; the filter
+                # offers every staff member by CRM id (ASSIGNED-FILTER-ALL-STAFF), and an
+                # older saved filter may hold a Respond id. Match a person under either.
+                from app.models.user import User
+                matched = set(real)
+                for uid, rid in (
+                    self.db.query(User.id, User.respond_user_id)
+                    .filter(or_(User.id.in_(real), User.respond_user_id.in_(real)))
+                    .all()
+                ):
+                    matched.add(str(uid))
+                    if rid:
+                        matched.add(str(rid))
+                clauses.append(assignee_key.in_(sorted(matched)))
             q = q.filter(or_(*clauses))
         statuses = multi_values(status)
         if statuses:
@@ -521,7 +579,9 @@ class ComplaintService:
             "project_title": Complaint.project_title,
             "revision_no": Complaint.revision_no,
         }
-        if sort_field == "handled_by_name":
+        if sort_field == "assigned_to":
+            sort_map[sort_field] = self._assigned_to_name_sort()
+        elif sort_field == "handled_by_name":
             sort_map[sort_field] = self._handled_by_name_sort()
         elif sort_field == "attachments":
             sort_map[sort_field] = self._attachment_count_sort()
@@ -533,6 +593,21 @@ class ComplaintService:
         else:
             q = q.order_by(sort_column.asc(), Complaint.id.asc())
         return q
+
+    @staticmethod
+    def _assigned_to_name_sort():
+        """Name (or email) of the effective assignee: the value the Assigned To column shows."""
+        from sqlalchemy import select
+        from app.models.user import User
+
+        key = effective_assignee_key_sql()
+        return (
+            select(func.coalesce(User.name, User.email))
+            .where(or_(User.id == key, User.respond_user_id == key))
+            .order_by(User.id)
+            .limit(1)
+            .scalar_subquery()
+        )
 
     @staticmethod
     def _handled_by_name_sort():
@@ -805,7 +880,7 @@ class ComplaintService:
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
     ):
-        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
+        """List complaints. assigned_to filters by assignee: a CRM user id or a Respond.io id, each matching the person under both. status filters by complaint status.
 
         contact_id/space_id scope the result set to a single Respond.io contact/space (used by external callers).
         root_cause_ids/resolution_ids match ANY of the given ids per field (the list
@@ -866,16 +941,7 @@ class ComplaintService:
 
         def _assigned_name(complaint) -> Optional[str]:
             tracker = sla_tracker_map.get(str(complaint.id))
-            if tracker is not None:
-                if getattr(tracker, "assigned_to_id", None):
-                    name = user_name_map.get(str(tracker.assigned_to_id))
-                    if name:
-                        return name
-                if getattr(tracker, "assigned_to", None):
-                    return user_name_map.get(str(tracker.assigned_to)) or tracker.assigned_to
-            if getattr(complaint, "assigned_to", None):
-                return user_name_map.get(str(complaint.assigned_to))
-            return None
+            return self._assignee_display(effective_assignee_key(tracker, complaint), tracker, user_name_map.get)
 
         def _handled_name(complaint) -> Optional[str]:
             tracker = sla_tracker_map.get(str(complaint.id))

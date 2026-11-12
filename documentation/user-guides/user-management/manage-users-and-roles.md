@@ -83,5 +83,6 @@ Administrative Users use **trash → restore → permanently delete** (not the s
 
 * [User Management - Data reference for admins](data-analysis.md)
 * [Manage teams and round-robin assignment](manage-teams.md)
+* [Sign in with a passkey (turning it on per user, removing a user's passkeys)](sign-in-with-a-passkey.md)
 * [SLA - policies & notification matrix](../sla/sla-policies.md)
 </content>

@@ -19,6 +19,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { providerModelLabel } from '@/lib/ai/modelOptions';
+import { LANDING_KINDS, portalFormKindLabel } from '@/lib/portal-form-kinds';
 import type { ProviderModel } from '@/components/common/ProviderModelSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
@@ -140,17 +141,12 @@ const MODES: CatalogOption[] = [
   { value: 'compact', label: 'Compact' },
   { value: 'availability', label: 'Availability' },
 ];
-// The kinds a tag may switch; static so the rows show before any catalog arrives.
-const PORTAL_FORMS: CatalogOption[] = [
-  { value: 'complaint', label: 'Complaint' },
-  { value: 'stock_inquiry', label: 'Stock Inquiry' },
-  { value: 'purchase_request', label: 'Purchase Request' },
-  { value: 'sponsorship_form', label: 'Sponsorship Form' },
-  { value: 'price_tag_request', label: 'Price Tag Request' },
-  { value: 'sales_opportunity', label: 'Sales Opportunities' },
-  { value: 'customer_asks', label: 'Customer asks' },
-  { value: 'conversation', label: 'Conversation' },
-];
+// The kinds a tag may switch come from the catalog (backend order and labels); until it arrives,
+// or when it holds none, the frontend registry, so the rows still show.
+const REGISTRY_PORTAL_FORMS: CatalogOption[] = LANDING_KINDS.map((k) => ({
+  value: k,
+  label: portalFormKindLabel(k),
+}));
 
 const labelOf = (options: CatalogOption[], value: string) =>
   options.find((o) => o.value === value)?.label ?? 'Removed';
@@ -476,9 +472,12 @@ function GroupBody({
     }
     case 'portal_forms': {
       const p = (s.portal_forms ?? {}) as Record<string, boolean>;
+      const forms = catalog.portal_forms?.length
+        ? catalog.portal_forms
+        : REGISTRY_PORTAL_FORMS;
       return (
         <div>
-          {PORTAL_FORMS.map((o) => (
+          {forms.map((o) => (
             <BoolRow
               key={o.value}
               id={o.value}
