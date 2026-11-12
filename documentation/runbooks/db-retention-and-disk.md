@@ -4,8 +4,8 @@ Owner-run on the servers. Crew never SSHes prod and never runs VACUUM FULL there
 `documentation/plans/infra/PLAN-db-retention-12nov.md`; background and numbers:
 `documentation/plans/infra/db-growth-12nov.md` (owner rulings Q1-Q5, 12 Nov 2026).
 
-Order: 1 (WAL cap) and 2 (log cap) and 3 (disk alert) before the retention jobs go live (4), because
-the first plan-exception drain writes a lot of WAL. Then 5 (give the space back) once it has drained.
+Order: 1 (WAL cap), 2 (log cap) and 3 (disk alert) as soon as possible, ideally before the deploy
+that ships the retention jobs (4), because the first plan-exception drain writes a lot of WAL. Then 5 (give the space back) once it has drained.
 
 `PGC` below = the Postgres container on node A (`docker ps --format '{{.Names}}' | grep -iE 'postgres|db'`).
 
@@ -57,9 +57,8 @@ the repo. After HA phase 1, drop `DISK_ONLY=1` (the full checks include disk).
 
 ## 4. Turn the retention jobs live
 
-The jobs ship with dry-run ON: each one runs nightly and only counts. On **System management >
-Scheduled tasks**, open each task below and read its last run's summary: the counts are what a live
-run would delete or blank.
+The jobs ship live (owner approved the deletions, 12 Nov) and run nightly. Each task's last run
+summary on **System management > Scheduled tasks** shows what it deleted or blanked:
 
 | task | what it removes |
 |---|---|
@@ -72,11 +71,15 @@ run would delete or blank.
 | AI search chunk prune | superseded AI search chunks after 90 days |
 | Import row prune | per-row import detail after 90 days |
 
-When the counts look right, switch dry-run off (admin, one setting):
+To see counts without deleting (a timing or check run), use the command-line runner from the
+backend container; it only counts unless `--apply` is given:
 
-```sql
-UPDATE system_settings SET data_retention_dry_run = false;
+```bash
+docker compose exec -T backend python -m app.scripts.run_data_retention --rule plan_exception_prune
 ```
+
+To pause everything at once: `UPDATE system_settings SET data_retention_dry_run = true;` (the
+nightly runs then only count) or disable single tasks on the Scheduled tasks screen.
 
 Knobs, all on `system_settings` (change with the same kind of UPDATE): `data_retention_batch_size`
 (5000 rows a batch), `data_retention_batch_sleep_ms` (200 ms between batches),

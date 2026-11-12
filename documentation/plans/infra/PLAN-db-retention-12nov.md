@@ -1,6 +1,6 @@
 # PLAN: DB retention jobs (lane DB-RETENTION)
 
-Status: Plan, track L (migration + prod data). Behaviour card posted as a crew-ask; build waits on it.
+Status: Build, track L (migration + prod data). Behaviour card answered by crew 12 Nov: Q1 (a), Q2 (a), Q3 (b) ship live.
 
 Source: owner rulings 12 Nov 2026 on `documentation/plans/infra/db-growth-12nov.md` section 9
 (PR #2373, branch `crew/db-growth-scout`): Q1-Q5 all option (a). UAC:
@@ -26,16 +26,16 @@ Paths below are relative to `sorento_crm_backend/` unless they start with a top-
 All rules: keyset batches of `data_retention_batch_size` rows (default 5000), one commit per
 batch, `data_retention_batch_sleep_ms` (default 200) between batches, stop after
 `data_retention_max_run_minutes` (default 30) and report `finished: false` (the next run
-continues). `data_retention_dry_run` (default true, see question 3) makes every rule count only.
+continues). `data_retention_dry_run` (default false: the owner approved the deletions; crew ruling) makes every rule count only. The CLI is dry-run unless `--apply`.
 
 | # | rule | task key | selects | does |
 |---|---|---|---|---|
 | R1 | plan exceptions (Q1) | `plan_exception_prune` | `scm.plan_exception` rows whose batch is NOT the newest batch of its `run_id` (NULL run = one group), batch older than `plan_exception_superseded_grace_days` (default 1), and row `status = 'open' AND decided_at IS NULL` | delete rows; then delete batch rows left with zero exceptions. A decided row and its batch stay forever |
 | R2 | integration log (Q2) | `integration_log_prune` | `created_at` past 30 d (payload) / 180 d (row); never `status IN ('pending','processing')` | blank `request_payload`, `response_payload`, `request_headers`, `response_headers`; delete rows past 180 d |
 | R2b | api call log (existing) | `api_call_log_prune` | unchanged windows | same shared two-stage function, now batched |
-| R3a | chat turn traces (Q3) | `chatbot_turn_trace_prune` | `chatbot.turns.created_at` past 90 d, `trace IS NOT NULL` | blank `trace` (question 1) |
+| R3a | chat turn traces (Q3) | `chatbot_turn_trace_prune` | `chatbot.turns.created_at` past 90 d, `trace IS NOT NULL` | blank `trace`, keep the row (crew ruling) |
 | R3b | scheduler run history (Q3) | `scheduled_task_runs_prune` | `started_at` past 90 d, not the newest run of its task | delete |
-| R3c | superseded reorder runs (Q3) | `reorder_run_prune` | `scm.reorder_run.superseded_by_run_id IS NOT NULL`, created past 90 d, no `recommendation_override` / `plan_row_decision` on it (question 2) | delete the run (FK cascade removes its recommendations and order summary rows); one run per batch step |
+| R3c | superseded reorder runs (Q3) | `reorder_run_prune` | `scm.reorder_run.superseded_by_run_id IS NOT NULL`, created past 90 d, no `recommendation_override` / `plan_row_decision` on it (crew ruling: keep any run someone decided on) | no long transaction: delete the run's children (recommendations and their children, order summary rows) in keyset batches, one commit per batch, then the run row; same sleep and time budget |
 | R3d | superseded AI search chunks (Q3) | `embedding_superseded_prune` | `embedding_chunks.is_current = false AND superseded_at` past 90 d | delete |
 | R3e | import rows (Q3, existing code) | `import_job_rows_prune` | unchanged (90 d) | **seed the missing `scheduled_tasks` row** so it runs |
 | Q4 | audit_logs | - | - | no change |
@@ -116,9 +116,11 @@ checked between batches, so a run always completes at least one batch.
 | existing `prune_import_job_rows` (`import_outcome.py`) | same knobs added, old kwargs kept | `rows_deleted`, `retention_days` |
 
 Scheduler handlers `_handler_<task key>` in `app/scheduler/task_scheduler.py` read the
-`system_settings` row (section 2 names and defaults; `data_retention_dry_run` bool default true,
+`system_settings` row (section 2 names and defaults; `data_retention_dry_run` bool default false,
 `data_retention_batch_size` 5000, `data_retention_batch_sleep_ms` 200,
 `data_retention_max_run_minutes` 30) and return the rule's dict. New task keys are registered with
 `background=True`. One migration adds the columns and seeds the 7 task rows (`ON CONFLICT (key)
 DO NOTHING`). CLI: `python -m app.scripts.run_data_retention --rule <task key> [--apply]
 [--batch-size N] [--sleep-ms N]` prints the dict and elapsed seconds; dry-run unless `--apply`.
+
+No VACUUM FULL anywhere in code or jobs (crew ruling); the runbook leaves it to the owner.
