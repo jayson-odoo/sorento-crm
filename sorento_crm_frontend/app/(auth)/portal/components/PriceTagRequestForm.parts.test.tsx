@@ -52,6 +52,8 @@ vi.mock('../lib/price-tag-request-service', async () => {
 // labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
 vi.mock('@/components/dealer-kit/RequestCustomersSelect');
 
+vi.mock('@/components/common/SearchableMultiSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;

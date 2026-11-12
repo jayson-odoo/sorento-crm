@@ -115,17 +115,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: { value: string[]; disabled?: boolean }) => (
-    <select
-      multiple
-      aria-label="Alternatives"
-      disabled={props.disabled}
-      value={props.value}
-      onChange={() => {}}
-    />
-  ),
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 vi.mock('./AttachmentDropzone', () => ({
   AttachmentDropzone: () => null,

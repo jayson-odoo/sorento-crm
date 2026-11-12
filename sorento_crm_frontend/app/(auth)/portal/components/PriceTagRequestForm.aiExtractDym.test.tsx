@@ -96,9 +96,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: () => <select multiple aria-label="Alternatives" onChange={() => {}} />,
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 vi.mock('./AttachmentDropzone', () => ({ AttachmentDropzone: () => null }));
 
