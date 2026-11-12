@@ -165,6 +165,9 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
   not received yet, so nobody gets a part twice. If a part timed out, the CRM first checks the
   conversation: a part that did arrive is counted as sent. When that check itself fails, the turn
   shows **Not confirmed**: look at the conversation, then press Retry.
+* Retry on a reply the CRM sent is refused, with the reason, when staff have taken over the
+  conversation, when the message is more than 24 hours old, or when the contact belongs to another
+  respond.io workspace. Answer the customer in the conversation instead.
 * Retry needs a slightly wider permission than viewing the trace, so if you can see the trace but
   not the Retry button, that is expected for your role - ask an admin to retry it instead.
 

@@ -1,6 +1,6 @@
 # PLAN: N8N-RETIRE-A, the CRM sends bot replies (phase A of N8N-DECOM-HA)
 
-Status: Build (tests first). Behaviour card answered 12 Nov (section 0). Track: L, LEAD
+Status: Review done, hand test next (12 Nov). Behaviour card answered 12 Nov (section 0); review rounds folded in (section 4d). Track: L, LEAD
 pattern (tester, then coder, then reviewer + security-reviewer). Parent:
 `documentation/plans/infra/PLAN-n8n-decom-ha-01nov.md` section 4 stage 2, job J1 (section 2).
 UAC: `n8n-retire-a-bot-reply-acceptance-criteria.md` (this folder).
@@ -167,6 +167,29 @@ whether the sendmsg sub writes anything back to the CRM after a send.
 - Settings > Chatbot: a select "Bot replies sent by" with options `n8n`, `CRM for listed contacts`,
   `CRM for all`, and a contacts textarea shown only for the listed option, built exactly like the
   Direct ingress pair on the same page (`page.tsx:264-290`).
+
+## 4d. Decided in review (12 Nov)
+
+- Try again on a CRM-sent turn is refused (409, plain words) when staff now hold the contact, the
+  turn was created over 24 hours ago, or the contact is not on the default respond workspace; it
+  writes the same trace note and retry audit row as the n8n Retry (channel `chatbot_crm_sender`).
+- A turn any sender has touched keeps that sender's Retry; the switch decides only for an untouched
+  turn. So a turn n8n half-sent is never re-sent in full by the CRM.
+- Every step row carries `attempted_at`, the first attempt's time; the lookup window starts there
+  and never moves, so a failed lookup cannot hide a part that was delivered.
+- An internal comment has no read-back in respond.io: an unknown comment is never re-sent by the
+  drain (the turn reads "Not confirmed"); it is re-sent only when staff press Try again.
+- On the CRM path an engine that raises still sends the standard failure reply
+  (`CHATBOT_REPLY_TURN_FAILED`), under its own step keys (`f.`); the n8n path is unchanged.
+- After 3 refusals the turn is failed at "Sent" with the plain refusal reason; an unknown outcome
+  whose lookup failed reads "Not confirmed".
+- `integration_log.response_payload` keeps only the message id and status code.
+- Not done (named triggers): the lookup has a 5 s slack and no message-id lower bound, so an
+  identical text sent to the same contact inside that window by someone else would read as found;
+  revisit if a duplicate-free check is ever reported missing. The turns list runs one sender-row
+  query per failed row on the page; revisit if that page is reported slow.
+- No end-to-end run through n8n: with the switch on CRM no n8n workflow is involved, and n8n is
+  never touched by crew. The real-send proof is the owner's stage-2 test on his own number.
 
 ## 5. Build slices (one lane, one PR)
 
