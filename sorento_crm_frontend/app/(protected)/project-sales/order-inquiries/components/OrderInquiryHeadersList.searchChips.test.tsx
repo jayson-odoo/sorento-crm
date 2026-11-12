@@ -9,7 +9,13 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  cleanup,
+  waitFor,
+  fireEvent,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -168,6 +174,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   nav.search = '';
   answerList();
+  // Like the real router: a replace moves the URL the next render reads.
+  nav.replace.mockImplementation((u: unknown) => {
+    const url = String(u ?? '');
+    nav.search = url.includes('?') ? url.slice(url.indexOf('?') + 1) : '';
+  });
   replaceState = vi.spyOn(window.history, 'replaceState');
 });
 
@@ -234,5 +245,37 @@ describe('OrderInquiryHeadersList search chips', () => {
       expect(last.searchParams.getAll('query')).toEqual(['OI1', 'OI2']);
       expect(last.pathname).toBe('/project-sales/order-inquiries');
     });
+  });
+});
+
+describe('OrderInquiryHeadersList search chips: one URL writer', () => {
+  /** Every address-bar write, router.replace and history.replaceState counted together. */
+  const allWrites = () =>
+    replaceState.mock.calls.length + nav.replace.mock.calls.length;
+
+  it('adding a chip writes the address bar exactly once', async () => {
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByText('OI-ZZT-0001');
+    // Past the debounce, so nothing from the first render is still on its way.
+    await new Promise((r) => setTimeout(r, 400));
+    const before = allWrites();
+
+    // One action: the text becomes a chip before its debounce, so the search changes once.
+    await user.click(searchBox());
+    fireEvent.change(searchBox(), { target: { value: 'OI1' } });
+    await user.keyboard('{Enter}');
+    expect(
+      await screen.findByRole('button', { name: 'Remove OI1' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        writtenUrls().some(
+          (u) => u.searchParams.getAll('query').join() === 'OI1',
+        ),
+      ).toBe(true),
+    );
+    await new Promise((r) => setTimeout(r, 400));
+    expect(allWrites() - before).toBe(1);
   });
 });

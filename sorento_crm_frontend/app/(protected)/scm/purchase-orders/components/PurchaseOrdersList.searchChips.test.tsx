@@ -236,3 +236,35 @@ describe('PurchaseOrdersList search chips', () => {
     });
   });
 });
+
+describe('PurchaseOrdersList search chips: the Order Inquiries upload hand-off', () => {
+  // `?documents=a,b` is how the Order Inquiries page sends the buyer to the orders one upload
+  // wrote (OrderInquiriesClient.tsx `purchaseOrdersHref`). A search must not drop it from the
+  // address bar, or a reload / shared link shows the whole book.
+  it('adding chips keeps documents in the address bar beside the query params', async () => {
+    nav.search = 'documents=ZZT-PO-0001%2CZZT-PO-0002';
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByText('ZZT-PO-0001');
+    // Guard: the list itself is narrowed to those documents.
+    await waitFor(() =>
+      expect(lastListRequest().get('documents')).toBe(
+        'ZZT-PO-0001,ZZT-PO-0002',
+      ),
+    );
+
+    await user.type(searchBox(), 'PO1{Enter}PO2{Enter}');
+    await waitFor(() => {
+      const written = writtenUrls().filter(
+        (u) => u.searchParams.getAll('query').length === 2,
+      );
+      expect(written.length).toBeGreaterThan(0);
+      const last = written.at(-1)!;
+      expect(last.searchParams.getAll('query')).toEqual(['PO1', 'PO2']);
+      const docs = last.searchParams
+        .getAll('documents')
+        .flatMap((d) => d.split(','));
+      expect(docs.sort()).toEqual(['ZZT-PO-0001', 'ZZT-PO-0002']);
+    });
+  });
+});

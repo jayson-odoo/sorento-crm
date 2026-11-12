@@ -279,3 +279,52 @@ def test_get_a_value_over_100_characters_is_422(client, seeded):
 def test_get_a_value_of_exactly_100_characters_is_accepted(client, seeded):
     s = seeded
     assert _numbers(_get_list(client, [s["alpha"].order_number, "Z" * 100])) == _n(s, "alpha")
+
+
+# ---- export equals screen over EVERY search field (review S2) ------------------------------------------
+# Each order below matches ONLY through a field the old export never searched (debtor code,
+# customer code, the legacy transporter text, the transporter FK's code, a line's product code),
+# so an export that matches fewer fields than the list drops rows the screen shows.
+
+@pytest.fixture
+def wide(db, seeded):
+    from app.models.order import OrderLine, Transporter
+    from tests._mc_lookup_seed import product, warehouse
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    s, tag = seeded, seeded["tag"]
+    plain = Customer(id=_u(), customer_code=f"{tag}CCZZ", customer_name="ZZT Plain Customer")
+    carrier = Transporter(id=_u(), code=f"{tag}TCZZ", name="ZZT Plain Carrier",
+                          normalized_name="zzt plain carrier")
+    db.add_all([plain, carrier])
+    db.flush()
+    s["by_customer_code"] = _order(db, f"{tag}-HOTEL", customer_id=plain.id)
+    s["by_legacy_transporter"] = _order(db, f"{tag}-INDIA", transporter=f"{tag}LTZZ")
+    s["by_transporter_fk"] = _order(db, f"{tag}-JULIET", transporter_id=carrier.id)
+    s["by_line_product"] = _order(db, f"{tag}-KILO")
+    item = product(db, company_id=DEFAULT_COMPANY_ID, code=f"{tag}PCZZ")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    db.add(OrderLine(id=_u(), order_id=s["by_line_product"].id, product_id=item.id,
+                     warehouse_id=wh.id, line_sequence=1, quantity=1))
+    db.flush()
+    return s
+
+
+def test_export_equals_search_over_every_search_field(client, wide):
+    s, tag = wide, wide["tag"]
+    values = [f"{tag}DCZZ", f"{tag}CCZZ", f"{tag}LTZZ", f"{tag}TCZZ", f"{tag}PCZZ"]
+    searched = _numbers(_list(client, values))
+    # Guard: the screen finds each order through its one field.
+    assert searched == _n(s, "by_debtor_code", "by_customer_code", "by_legacy_transporter",
+                          "by_transporter_fk", "by_line_product")
+    assert _export(client, values) == searched
+
+
+@pytest.mark.parametrize("suffix,key", [
+    ("DCZZ", "by_debtor_code"), ("CCZZ", "by_customer_code"), ("LTZZ", "by_legacy_transporter"),
+    ("TCZZ", "by_transporter_fk"), ("PCZZ", "by_line_product"),
+])
+def test_export_finds_the_order_through_each_field(client, wide, suffix, key):
+    s = wide
+    values = [f"{s['tag']}{suffix}", s["alpha"].order_number]
+    assert _export(client, values) == _n(s, key, "alpha")
