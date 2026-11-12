@@ -28,3 +28,14 @@ to Cancel SO dialogs (same shared dialog component as the one walked above).
 - pass2-so-history.png / -375.png: the project SO page has a History tab on the shared AuditTrail (empty for this
   seeded SO, which was written without an actor).
 - 375 px: SO page 360, rules list 375, series 360 wide: no page-level sideways scroll. Console: no errors.
+
+## Pass 3 (12 Nov, crew re-pass on 6a728344): fixture + dialog wording, sandbox DB at alembic head
+- Fixture `laneboard/fixtures/2339-non-cancellable.sql` applied twice (idempotent). Project ZZT-NC-PRJ opened from the
+  sidebar (Projects); proposal ZZT-NC-Q1 shows the Non-cancellable badge under the ZZT-NC-TUB-A line.
+- pass3-fixture-block.png: Edit proposal, 5 -> 4, Save proposal: 409, "Non-cancellable lines" dialog lists
+  "ZZT-NC-TUB-A 5 to 4", Override disabled until a reason is typed. Reason "owner test", Override: saved (qty 4).
+- pass3-fixture-history.png: proposal History lists "Non-cancellable override: ZZT-NC-TUB-A 5 to 4. Reason: owner test".
+- ZZT-NC-SO-1 opens from the project's SO tab (Published, 1 line) with its History tab.
+- Revert run after that walk (proposal draft + History present): removes every fixture row; run twice, no error;
+  re-apply after revert works. audit_logs rows stay (append-only trigger).
+- Create dialog: title and submit read "Create" (vitest NonCancellableRuleDialog.test.tsx).

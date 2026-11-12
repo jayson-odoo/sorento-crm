@@ -22,7 +22,7 @@ import type { NonCancellableRule } from '../../_shared/types/project.types';
 
 type Kind = 'product' | 'category';
 
-/** Add or edit one company default. The target is fixed once saved; only the answer and notes move. */
+/** Create or edit one company default. The target is fixed once saved; only the answer and notes move. */
 export function NonCancellableRuleDialog({
   rule,
   onDone,
@@ -91,7 +91,7 @@ export function NonCancellableRuleDialog({
     <Dialog open onOpenChange={(open) => !open && onDone()}>
       <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>{rule ? 'Edit item' : 'Add item'}</DialogTitle>
+          <DialogTitle>{rule ? 'Edit item' : 'Create'}</DialogTitle>
         </DialogHeader>
         <form onSubmit={save}>
           <DialogBody className="space-y-4">
@@ -171,7 +171,7 @@ export function NonCancellableRuleDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={pending}>
-              {rule ? 'Save' : 'Add item'}
+              {rule ? 'Save' : 'Create'}
             </Button>
           </DialogFooter>
         </form>

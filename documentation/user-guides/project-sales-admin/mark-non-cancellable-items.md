@@ -24,7 +24,7 @@ the sales order is confirmed, for example a bathtub that Sorento cannot store.
 1. Open **Project Sales**, then **Configuration**, then **Non-cancellable Items**.
 2. Select **Create**. Pick the **Type** (**Product** or **Category**), the product or category,
    leave **Non-cancellable: Yes** on (or switch it to No to exempt one model from its category),
-   add **Notes** if you like, and select **Add item**.
+   add **Notes** if you like, and select **Create**.
 3. To change a row, select it (or right-click it and choose **Edit**), edit, and select **Save**.
    To remove it, right-click the row and choose **Delete**; the row is removed when the countdown
    ends (**Cancel** stops it).
