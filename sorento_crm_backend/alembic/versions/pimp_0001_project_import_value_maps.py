@@ -8,7 +8,7 @@
 Additive and idempotent. The run itself is an `import_jobs` row, so no other table changes.
 
 Revision ID: pimp_0001_import_value_maps
-Revises: acqs_0001_project_ac_write
+Revises: so_search_trgm_0001
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "pimp_0001_import_value_maps"
-down_revision = "acqs_0001_project_ac_write"
+down_revision = "so_search_trgm_0001"
 branch_labels = None
 depends_on = None
 
