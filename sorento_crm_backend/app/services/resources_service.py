@@ -2165,6 +2165,7 @@ class AttachmentService:
                 directory_id,
                 verb="added to",
                 code="ATTACHMENT_FOLDER_NAME_CLASH",
+                viewer_id=attachment_dict.get("uploaded_by"),
             )
         self.db.refresh(attachment)
 
@@ -2271,9 +2272,17 @@ class AttachmentService:
             f"{existing_name} there has the same original file name."
         )
 
-    def _clash_details(self, file_name: str, existing, directory_id: str, exclude_id=None) -> dict:
+    def _clash_details(
+        self, file_name: str, existing, directory_id: str, exclude_id=None, viewer_id: Optional[str] = None
+    ) -> dict:
         folder_name = self._folder_label(directory_id)
-        existing_name = (existing.stored_filename or existing.original_filename) if existing else None
+        # A private file of someone else still holds its name in the folder (the index counts
+        # it), but its own name is never handed to a viewer who cannot see it.
+        existing_name = (
+            (existing.stored_filename or existing.original_filename)
+            if existing is not None and not is_private_to_others(existing, viewer_id)
+            else None
+        )
         return {
             "file_name": file_name,
             "folder_name": folder_name,
@@ -2283,9 +2292,9 @@ class AttachmentService:
 
     def _clash_error(
         self, file_name: str, existing, directory_id: str, *, verb: str, exclude_id=None,
-        code: str = "ATTACHMENT_MOVE_NAME_CLASH",
+        code: str = "ATTACHMENT_MOVE_NAME_CLASH", viewer_id: Optional[str] = None,
     ) -> AppException:
-        details = self._clash_details(file_name, existing, directory_id, exclude_id)
+        details = self._clash_details(file_name, existing, directory_id, exclude_id, viewer_id)
         return AppException(
             status_code=409,
             message=self._clash_message(file_name, details["existing_file_name"], details["folder_name"], verb),
@@ -2294,7 +2303,11 @@ class AttachmentService:
         )
 
     def update_attachment(
-        self, attachment_id: str, attachment_data: AttachmentUpdate, actor_id: Optional[str] = None
+        self,
+        attachment_id: str,
+        attachment_data: AttachmentUpdate,
+        actor_id: Optional[str] = None,
+        replace_guard=None,
     ):
         """Update an attachment. Recalculates full_directory_path when directory_id changes.
 
@@ -2303,6 +2316,9 @@ class AttachmentService:
         "rename" makes ``stored_filename`` the visible AND original name first (DB only - the
         stored object is keyed on the attachment id and read back from ``file_path``, so its
         URL never changes).
+
+        ``replace_guard(row)`` is the caller's write check, run on the exact row Replace is about
+        to trash (locked FOR UPDATE), so the row checked is the row trashed.
         """
         attachment = self.get_attachment(attachment_id)
         
@@ -2325,10 +2341,25 @@ class AttachmentService:
             clash = self._folder_clash(target_dir, original_name, exclude_id=attachment.id)
             if clash is not None:
                 if on_conflict == "replace":
-                    replaced = clash
+                    replaced = (
+                        self.db.query(Attachment)
+                        .filter(Attachment.id == clash.id)
+                        .with_for_update()
+                        .one()
+                    )
+                    if replaced.is_deleted:
+                        replaced = None  # trashed meanwhile: nothing left to replace
+                    elif is_private_to_others(replaced, actor_id):
+                        raise handle_conflict(
+                            f"The file in {self._folder_label(target_dir)} with this name is "
+                            "private to another user, so it cannot be replaced. Choose Rename."
+                        )
+                    elif replace_guard is not None:
+                        replace_guard(replaced)
                 else:
                     raise self._clash_error(
-                        file_name, clash, target_dir, verb="moved into", exclude_id=attachment.id
+                        file_name, clash, target_dir, verb="moved into", exclude_id=attachment.id,
+                        viewer_id=actor_id,
                     )
         if "access_levels" in update_data and update_data["access_levels"]:
             from app.services.contact_access_type_service import ContactAccessTypeService
@@ -2376,6 +2407,7 @@ class AttachmentService:
                 target_dir,
                 verb="moved into",
                 exclude_id=attachment_id,
+                viewer_id=actor_id,
             )
         self.db.refresh(attachment)
         if type_changed:
@@ -2416,7 +2448,7 @@ class AttachmentService:
         return self.bulk_move_report(attachment_ids, directory_id)[0]
 
     def bulk_move_report(
-        self, attachment_ids: list[str], directory_id: Optional[str]
+        self, attachment_ids: list[str], directory_id: Optional[str], viewer_id: Optional[str] = None
     ) -> tuple[int, list[dict]]:
         """Move many attachments into the same folder; one clash never fails the batch.
 
@@ -2445,7 +2477,7 @@ class AttachmentService:
             if directory_id and str(row.directory_id or "") != str(directory_id):
                 clash = self._folder_clash(directory_id, original, exclude_id=row_id)
                 if clash is not None:
-                    not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id))
+                    not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
                     continue
             savepoint = self.db.begin_nested()
             try:
@@ -2459,7 +2491,7 @@ class AttachmentService:
                 if not _is_folder_name_clash(exc):
                     raise
                 clash = self._folder_clash(directory_id, original, exclude_id=row_id)
-                not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id))
+                not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
         rows = moved
 
         # PLAN-shared-brand-attachments R10/R19: a move never re-stamps a
@@ -2493,8 +2525,10 @@ class AttachmentService:
             )
         return len(rows), not_moved
 
-    def _not_moved_entry(self, attachment_id: str, file_name: str, existing, directory_id: str) -> dict:
-        details = self._clash_details(file_name, existing, directory_id, attachment_id)
+    def _not_moved_entry(
+        self, attachment_id: str, file_name: str, existing, directory_id: str, viewer_id: Optional[str] = None
+    ) -> dict:
+        details = self._clash_details(file_name, existing, directory_id, attachment_id, viewer_id)
         return {
             "attachment_id": attachment_id,
             "message": self._clash_message(

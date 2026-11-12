@@ -1002,6 +1002,7 @@ async def create_attachment(
                     directory_id,
                     verb="added to",
                     code="ATTACHMENT_FOLDER_NAME_CLASH",
+                    viewer_id=str(current_user["id"]),
                 )
 
         # Get attachment type: optional in DB (nullable); required by API for new uploads.
@@ -1621,15 +1622,14 @@ def update_attachment(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Replacing a file needs the permission to delete files.",
                 )
-            clash = service._folder_clash(
-                requested.get("directory_id", current.directory_id),
-                current.original_filename,
-                exclude_id=current.id,
-            )
-            if clash is not None:
-                assert_can_write_existing(db, clash.entity_type, clash.entity_id, current_user)
         attachment = service.update_attachment(
-            attachment_id, attachment_data, actor_id=str(current_user["id"])
+            attachment_id,
+            attachment_data,
+            actor_id=str(current_user["id"]),
+            # Run on the exact row Replace trashes (the service locks it first).
+            replace_guard=lambda row: assert_can_write_existing(
+                db, row.entity_type, row.entity_id, current_user
+            ),
         )
         # The bare ORM row serializes company_name as None; stamp it so the write
         # echo matches what the list and detail reads return.
@@ -1653,7 +1653,9 @@ def bulk_move_attachments(
         # A moved file is under that folder's delete / restore cascade from then on.
         assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
-        updated, not_moved = service.bulk_move_report(body.attachment_ids, body.directory_id)
+        updated, not_moved = service.bulk_move_report(
+            body.attachment_ids, body.directory_id, viewer_id=str(current_user["id"])
+        )
         return AttachmentsBulkMoveResponse(updated=updated, not_moved=not_moved)
     except HTTPException:
         raise

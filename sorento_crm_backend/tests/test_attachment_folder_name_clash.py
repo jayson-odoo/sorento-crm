@@ -400,3 +400,86 @@ def test_bulk_move_not_moved_entry_carries_the_dialog_details(db):
     assert entry["existing_file_name"] == "photo.jpg"
     assert entry["folder_name"] == "Folder B"
     assert entry["suggested_name"] == "photo (1).jpg"
+
+
+# --- security review: Replace and the 409 respect private files ------------- #
+
+
+def _make_private(db, row: Attachment, owner_id: str) -> None:
+    from app.models.resources import AttachmentType
+    from app.services.entity_attachment_service import PRIVATE_ATTACHMENT_TYPE_CODE
+
+    kind = db.query(AttachmentType).filter(AttachmentType.code == PRIVATE_ATTACHMENT_TYPE_CODE).first()
+    if kind is None:
+        kind = AttachmentType(
+            id=str(uuid.uuid4()), code=PRIVATE_ATTACHMENT_TYPE_CODE,
+            type_name=f"Private {uuid.uuid4().hex[:6]}", allowed_extensions="jpg", max_file_size_mb=10,
+        )
+        db.add(kind)
+        db.flush()
+    row.attachment_type_id = kind.id
+    row.uploaded_by = owner_id
+    db.flush()
+    db.expire_all()
+
+
+def test_replace_refuses_another_users_private_file(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    theirs = _file(db, "photo.jpg", folder_b)
+    _make_private(db, theirs, str(uuid.uuid4()))
+    moving = _file(db, "photo.jpg", folder_a)
+
+    with pytest.raises(AppException) as ei:
+        AttachmentService(db).update_attachment(
+            moving.id, AttachmentUpdate(directory_id=folder_b, on_conflict="replace"),
+            actor_id=str(uuid.uuid4()),
+        )
+
+    assert ei.value.status_code == 409
+    assert "private" in ei.value.detail["message"]
+    assert _reload(db, theirs.id).is_deleted is False
+    assert _reload(db, moving.id).directory_id == folder_a
+
+
+def test_clash_never_names_another_users_private_file(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    theirs = _file(db, "secret-plan.jpg", folder_b, original="photo.jpg")
+    _make_private(db, theirs, str(uuid.uuid4()))
+    moving = _file(db, "holiday.jpg", folder_a, original="photo.jpg")
+
+    with pytest.raises(AppException) as ei:
+        AttachmentService(db).update_attachment(
+            moving.id, AttachmentUpdate(directory_id=folder_b), actor_id=str(uuid.uuid4())
+        )
+
+    assert "secret-plan" not in ei.value.detail["message"]
+    assert ei.value.detail["details"]["existing_file_name"] is None
+    _assert_plain(ei.value.detail["message"], "holiday.jpg", "Folder B")
+    _updated, not_moved = AttachmentService(db).bulk_move_report(
+        [moving.id], folder_b, viewer_id=str(uuid.uuid4())
+    )
+    assert not_moved[0]["existing_file_name"] is None
+    assert "secret-plan" not in not_moved[0]["message"]
+
+
+def test_replace_guard_runs_on_the_row_it_trashes(db):
+    folder_a = _folder(db, "Folder A")
+    folder_b = _folder(db, "Folder B")
+    existing = _file(db, "photo.jpg", folder_b)
+    moving = _file(db, "photo.jpg", folder_a)
+    seen: list[str] = []
+
+    def guard(row):
+        seen.append(str(row.id))
+        raise AppException(status_code=403, message="no")
+
+    with pytest.raises(AppException) as ei:
+        AttachmentService(db).update_attachment(
+            moving.id, AttachmentUpdate(directory_id=folder_b, on_conflict="replace"), replace_guard=guard
+        )
+
+    assert ei.value.status_code == 403
+    assert seen == [existing.id]
+    assert _reload(db, existing.id).is_deleted is False
