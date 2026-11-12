@@ -324,6 +324,44 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
   });
 });
 
+describe('F2-1 the open list stays still while ticking', () => {
+  it('a tick triggers no new item search and the options never leave the list', async () => {
+    render(<Harness initial={[row('A')]} />);
+    openItemPicker();
+    await rowFor('DIY-BS-4501');
+    LOOKUPS.lookupTagItems.mockClear();
+
+    for (const code of ['DIY-BS-4501', 'DIY-BS-4502']) {
+      fireEvent.click(await rowFor(code));
+      expect(screen.queryByText('Searching...')).toBeNull();
+      expect(screen.getByRole('option', { name: new RegExp(code) })).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(screen.queryByText('Searching...')).toBeNull();
+      expect(screen.getByRole('option', { name: new RegExp(code) })).toBeInTheDocument();
+    }
+    await waitFor(() => expect(codes()).toHaveTextContent('DIY-BS-4501,DIY-BS-4502'));
+    expect(LOOKUPS.lookupTagItems).not.toHaveBeenCalled();
+  });
+});
+
+describe('F1-7 set lines are priced', () => {
+  it('the line-pricing lookup is sent a set line with its product_set_id', async () => {
+    const { result } = hookSetup([row('A')]);
+    const opts = await options(result);
+    LOOKUPS.lookupLinePricing.mockClear();
+
+    act(() =>
+      result.current.editor.handleItemSelect('A', opts.find((o) => o.value === 'product_set:s-z')!),
+    );
+
+    await waitFor(() => expect(LOOKUPS.lookupLinePricing).toHaveBeenCalled());
+    const sent = LOOKUPS.lookupLinePricing.mock.calls.flatMap(
+      (c: unknown[]) => c[1] as Array<Record<string, unknown>>,
+    );
+    expect(sent).toContainEqual(expect.objectContaining({ key: 'A', product_set_id: 's-z' }));
+  });
+});
+
 describe('AC-14 one pick path', () => {
   const opt = (id: string, code: string) =>
     ({ value: `product:${id}`, label: code, code, name: code }) as SearchableSelectOption;
