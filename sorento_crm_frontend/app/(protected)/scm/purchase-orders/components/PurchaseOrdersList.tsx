@@ -241,6 +241,9 @@ export default function PurchaseOrdersList() {
           allocated: ALLOCATED_TO_PARAM[allocatedFilter] ?? undefined,
           unclaimed_project_bin:
             UNCLAIMED_PROJECT_BIN_TO_PARAM[unclaimedProjectBinFilter] ?? undefined,
+          // The upload hand-off's own filter, in the comma-joined form it was read in, so the
+          // address bar this list writes keeps it beside the chips.
+          documents: documentsFilter.length ? documentsFilter.join(',') : undefined,
         },
       ),
     [
@@ -253,6 +256,7 @@ export default function PurchaseOrdersList() {
       outstandingFilter,
       allocatedFilter,
       unclaimedProjectBinFilter,
+      documentsFilter,
     ],
   );
 
