@@ -19,8 +19,8 @@ import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
  *
  * The location is resolved to its own warehouse row first, via `useWarehouseByCode` (over
  * `getWarehouses`, the only warehouse-list fetcher that carries `id`; `warehouseSelectService`
- * keys by CODE, which `stock-detail` cannot take), across every company the caller is
- * granted. Then (MOCHA-STOCK-GRID, crew ruling on #2381):
+ * keys by CODE, which `stock-detail` cannot take): the active company first, then every
+ * company the caller is granted. Then (MOCHA-STOCK-GRID, crew ruling on #2381):
  *
  * - `BRW-BB`, a bin IN fulfilment planning, is read as its ownership group `BB`
  *   (`groupOfWarehouseCode`). That is the backend's own membership rule: `group_netting`
@@ -28,8 +28,8 @@ import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
  *   bin is in fulfilment planning.
  * - Any other location - a bare pool code (`BRW`), or a hyphenated bin that belongs to no
  *   ownership group (`MOCHA-WH`, whose suffix is not a group) - is read as the LOCATION
- *   itself, by its own `warehouse_id`, with `company_scope=grants` (the bin may be another
- *   granted company's). Asking for group `WH` there answered "no stock".
+ *   itself, by its own `warehouse_id` (with `company_scope=grants` when only another granted
+ *   company holds it). Asking for group `WH` there answered "no stock".
  * - A code the warehouse list does not hold falls back to the suffix group, as before.
  *
  * `useStockDetail`'s own `enabled` gate stays off until that resolution lands, so no request
@@ -53,16 +53,16 @@ export function OrderInquiryStockGrid({
   // (a failed lookup reads the same). `isPending` only while a code is being resolved.
   const lookup = useWarehouseByCode(location);
   const resolving = Boolean(location) && lookup.isPending;
-  const warehouse = lookup.data ?? null;
+  const warehouse = lookup.data?.warehouse ?? null;
   const suffixGroup = location ? groupOfWarehouseCode(location) : null;
   // A known bin is read by group only when it is a member of that group (in planning);
   // an unknown code keeps the suffix rule it had before.
   const group = warehouse ? (warehouse.fulfilment_planning ? suffixGroup : null) : suffixGroup;
   const warehouseId = group ? null : (warehouse?.id ?? null);
-  // The lookup reached every granted company, so the location read has to as well: a line
-  // filed in one company can name another granted company's location. Group reads stay as
-  // today.
-  const companyScope = warehouseId ? ('grants' as const) : undefined;
+  // Only a location the active company does not hold widens: a line filed in one company can
+  // name another granted company's location, and both stock reads then have to reach it.
+  // Everything else, group reads included, reads as today.
+  const companyScope = warehouseId && lookup.data?.widened ? ('grants' as const) : undefined;
 
   // STOCK-STATUS round 6 (UAC AC-35): AutoCount's figures in the same table; a failed read
   // leaves today's. Read once the location is resolved, under the same scope as the stock
@@ -85,6 +85,15 @@ export function OrderInquiryStockGrid({
   // endpoint to carry a per-caller opinion about which of its own rows is "home". Declared
   // above every early return - React's rules of hooks - even though it has nothing to do
   // until the "no location" / loading / error returns below have already passed.
+  // A widened AutoCount read answers for every granted company; this table is about ONE
+  // location, so only that location's AutoCount row is kept (another company's locations,
+  // even under the same code, are not this line's stock).
+  const autoCountData = React.useMemo(() => {
+    const data = autoCount.data ?? null;
+    if (!data || !companyScope || !warehouseId) return data;
+    return { ...data, locations: data.locations.filter((loc) => loc.warehouse_id === warehouseId) };
+  }, [autoCount.data, companyScope, warehouseId]);
+
   const locations = React.useMemo(() => {
     const raw = detail.data?.locations ?? [];
     if (!location) return raw;
@@ -128,7 +137,7 @@ export function OrderInquiryStockGrid({
       locations={locations}
       lineIds={lineIds}
       showGroupSubtotal
-      autoCount={autoCount.data ?? null}
+      autoCount={autoCountData}
       companyScope={companyScope}
     />
   );
