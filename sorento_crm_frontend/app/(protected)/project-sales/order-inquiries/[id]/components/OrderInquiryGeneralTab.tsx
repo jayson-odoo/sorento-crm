@@ -5,7 +5,10 @@ import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { formatMoneyExact } from '../../../_shared/lib/money';
-import { isSparePartInquiry, sparePartStateLabel } from '../../../_shared/lib/sparePartRequest';
+import {
+  isSparePartInquiry,
+  sparePartRequestStatusLabel,
+} from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryHeaderDetail } from '../../../_shared/types/orderInquiry.types';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -74,7 +77,7 @@ export function SparePartRequestGeneralCards({ header }: { header: SparePartGene
           </CardHeading>
         </CardHeader>
         <section aria-label="Approval" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
-          <Field label="Status">{sparePartStateLabel(header.state)}</Field>
+          <Field label="Status">{sparePartRequestStatusLabel(header.state)}</Field>
           <Field label="Submitted at">
             {header.submitted_at ? formatDateTimeInMalaysia(header.submitted_at) : <NotStated />}
           </Field>

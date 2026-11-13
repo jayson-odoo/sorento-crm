@@ -106,8 +106,8 @@ export function SparePartRequestActions({
     invalidateKeys: [['order-inquiry-headers'], [SPARE_PART_REQUESTS_KEY]],
     onCommitted: () => router.push(SPARE_PART_REQUESTS_PATH),
   });
-  const approve = useApproveSparePartRequest(id);
-  const reject = useRejectSparePartRequest(id);
+  const approve = useApproveSparePartRequest(id, header.submitted_at);
+  const reject = useRejectSparePartRequest(id, header.submitted_at);
   const revise = useReviseSparePartRequest(id);
   const [approveOpen, setApproveOpen] = React.useState(false);
   const [rejectOpen, setRejectOpen] = React.useState(false);

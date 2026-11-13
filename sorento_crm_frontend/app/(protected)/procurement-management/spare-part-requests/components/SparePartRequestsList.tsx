@@ -129,7 +129,6 @@ export function SparePartRequestsList() {
         accessorKey: 'requested_by_name',
         header: ({ column }) => <DataGridColumnHeader title="Requested by" column={column} />,
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.requested_by_name ?? ''}>
             {row.original.requested_by_name || '-'}
@@ -155,7 +154,6 @@ export function SparePartRequestsList() {
         accessorKey: 'total',
         header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
         size: 150,
-        enableSorting: false,
         cell: ({ row }) => {
           const text =
             row.original.total == null

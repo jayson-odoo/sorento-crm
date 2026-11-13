@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import BackToList from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { OrderInquiryLinesTab } from '@/app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryLinesTab';
 import { SparePartRequestGeneralCards } from '@/app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryGeneralTab';
@@ -19,6 +20,7 @@ import { SparePartRequestActions } from '@/app/(protected)/project-sales/order-i
 import type { SparePartLineEdit } from '@/app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns';
 import { useOrderInquiryHeaderLines } from '@/app/(protected)/project-sales/_shared/hooks/useOrderInquiry';
 import {
+  sparePartRequestsPagerQuery,
   useEditSparePartLine,
   useSparePartRequest,
 } from '@/app/(protected)/project-sales/_shared/hooks/useSparePartRequest';
@@ -107,7 +109,17 @@ export function SparePartRequestRecord({ id }: { id: string }) {
           ) : null,
         ]}
         actions={
-          showActions ? <SparePartRequestActions header={request} rows={lines} /> : undefined
+          <DetailActions
+            pager={{
+              ...sparePartRequestsPagerQuery,
+              detailPath: SPARE_PART_REQUESTS_PATH,
+              currentId: id,
+              ariaLabel: 'spare part request',
+            }}
+            primary={
+              showActions ? <SparePartRequestActions header={request} rows={lines} /> : undefined
+            }
+          />
         }
       />
 

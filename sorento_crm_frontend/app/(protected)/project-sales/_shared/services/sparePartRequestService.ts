@@ -184,12 +184,30 @@ export function editSparePartLine(
   return send(`${BASE}/${id}/lines/${rowId}`, json('PATCH', edit), 'Failed to change the line');
 }
 
-export function approveSparePartRequest(id: string, note?: string): Promise<SparePartRequest> {
-  return send(`${BASE}/${id}/approve`, json('POST', { note: note || null }), 'Failed to approve');
+/** `submittedAt` is the submission the approver's page rendered: the server answers 409 when
+ *  the request was edited (approval restarted) since. */
+export function approveSparePartRequest(
+  id: string,
+  note?: string,
+  submittedAt?: string | null,
+): Promise<SparePartRequest> {
+  return send(
+    `${BASE}/${id}/approve`,
+    json('POST', { note: note || null, submitted_at: submittedAt ?? null }),
+    'Failed to approve',
+  );
 }
 
-export function rejectSparePartRequest(id: string, reason: string): Promise<SparePartRequest> {
-  return send(`${BASE}/${id}/reject`, json('POST', { reason }), 'Failed to reject');
+export function rejectSparePartRequest(
+  id: string,
+  reason: string,
+  submittedAt?: string | null,
+): Promise<SparePartRequest> {
+  return send(
+    `${BASE}/${id}/reject`,
+    json('POST', { reason, submitted_at: submittedAt ?? null }),
+    'Failed to reject',
+  );
 }
 
 export function reviseSparePartRequest(id: string): Promise<SparePartRequest> {

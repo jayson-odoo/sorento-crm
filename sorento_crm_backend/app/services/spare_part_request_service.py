@@ -416,7 +416,15 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
 
 
 #: G3: the columns the request list sorts on server-side (the rest are not sortable).
-_LIST_SORTS = ("inquiry_no", "state", "needed_by", "submitted_at", "line_count")
+_LIST_SORTS = (
+    "inquiry_no",
+    "state",
+    "needed_by",
+    "submitted_at",
+    "line_count",
+    "requested_by_name",
+    "total",
+)
 
 
 def list_requests(
@@ -455,6 +463,28 @@ def list_requests(
         .correlate(OrderInquiry)
         .scalar_subquery()
     )
+    from app.models.user import User
+
+    live_rows = and_(
+        OrderInquiryRow.order_inquiry_id == OrderInquiry.id,
+        OrderInquiryRow.state != INQUIRY_CANCELLED,
+    )
+    # Sort keys only: the payload's total is still masked per row below.
+    sort_columns = {
+        "line_count": line_count,
+        "total": (
+            select(func.coalesce(func.sum(OrderInquiryRow.qty * func.coalesce(OrderInquiryRow.unit_price, 0)), 0))
+            .where(live_rows)
+            .correlate(OrderInquiry)
+            .scalar_subquery()
+        ),
+        "requested_by_name": (
+            select(func.lower(func.coalesce(User.name, User.email)))
+            .where(User.id == OrderInquiry.requested_by)
+            .correlate(OrderInquiry)
+            .scalar_subquery()
+        ),
+    }
     q = db.query(OrderInquiry).filter(OrderInquiry.inquiry_type == KIND, or_(*seen))
     wanted = [s for s in (states or []) if s]
     if wanted:
@@ -465,7 +495,9 @@ def list_requests(
         q = q.filter(or_(OrderInquiry.inquiry_no.ilike(like), OrderInquiry.reason.ilike(like)))
     total = q.count()
     key = sort if sort in _LIST_SORTS else "submitted_at"
-    column = line_count if key == "line_count" else getattr(OrderInquiry, key)
+    column = sort_columns.get(key)
+    if column is None:
+        column = getattr(OrderInquiry, key)
     ordered = column.asc() if (direction or "desc").lower() == "asc" else column.desc()
     page = max(int(page or 1), 1)
     limit = max(int(limit or 50), 1)
@@ -882,12 +914,41 @@ def _actor_stage(db: Session, inquiry: OrderInquiry, user_id: Optional[str]):
     return None
 
 
-def _authorise(db: Session, inquiry: OrderInquiry, actor: str, verb: str, *, need_stage: bool):
+_STALE_DECISION = "This request was changed; reload to see the latest"
+
+
+def _naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None or value.tzinfo is None:
+        return value
+    from datetime import timezone
+
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _require_seen(inquiry: OrderInquiry, seen_submitted_at: Optional[datetime]) -> None:
+    """S2: a decision names the submission the approver saw; an edit that restarted approval
+    since then moved submitted_at, so the stale page is refused instead of approving unseen."""
+    if seen_submitted_at is None:
+        return
+    if _naive_utc(seen_submitted_at) != _naive_utc(inquiry.submitted_at):
+        raise _conflict(_STALE_DECISION, "SPARE_PART_REQUEST_STALE")
+
+
+def _authorise(
+    db: Session,
+    inquiry: OrderInquiry,
+    actor: str,
+    verb: str,
+    *,
+    need_stage: bool,
+    seen_submitted_at: Optional[datetime] = None,
+):
     """Lock the request, name the stage the actor decides on, authorise, then check that
     stage is STILL open: a decision is bound to the stage it was authorised on, so a second
     approve racing the first cannot carry over to the next level (security review B1)."""
     inquiry = _lock(db, inquiry)
     _require_pending(inquiry, verb)
+    _require_seen(inquiry, seen_submitted_at)
     stage = _actor_stage(db, inquiry, actor)
     if not can_decide(db, inquiry, actor):
         raise _forbidden("Only the current approver can decide on this request.")
@@ -1021,7 +1082,14 @@ def _notify_purchasing(db: Session, inquiry: OrderInquiry, rows: List[OrderInqui
     )
 
 
-def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] = None) -> OrderInquiry:
+def approve(
+    db: Session,
+    inquiry: OrderInquiry,
+    actor: str,
+    note: Optional[str] = None,
+    *,
+    seen_submitted_at: Optional[datetime] = None,
+) -> OrderInquiry:
     """A6: approve the stage the actor decides on, and only that stage (parallel levels each
     decide their own, security review S1). The request is raised only when no level is left
     open AND the configured chain has no next level for this one (S2: finality comes from
@@ -1029,7 +1097,9 @@ def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] 
     0 are cancelled."""
     from app.services.form_sla_service import FormSLAOrchestrator
 
-    inquiry, stage = _authorise(db, inquiry, actor, "approved", need_stage=True)
+    inquiry, stage = _authorise(
+        db, inquiry, actor, "approved", need_stage=True, seen_submitted_at=seen_submitted_at
+    )
     rows = [r for r in _rows(db, inquiry) if r.state != INQUIRY_CANCELLED]
     if not any(Decimal(r.qty or 0) > 0 for r in rows):
         raise _invalid("lines", "Every line is at 0. Reject the request instead.")
@@ -1092,11 +1162,20 @@ def approve(db: Session, inquiry: OrderInquiry, actor: str, note: Optional[str] 
     return inquiry
 
 
-def reject(db: Session, inquiry: OrderInquiry, actor: str, reason: Optional[str]) -> OrderInquiry:
+def reject(
+    db: Session,
+    inquiry: OrderInquiry,
+    actor: str,
+    reason: Optional[str],
+    *,
+    seen_submitted_at: Optional[datetime] = None,
+) -> OrderInquiry:
     """A5: rejected with a reason; the requester edits and resubmits from the first stage."""
     from app.services.form_sla_service import FormSLAOrchestrator
 
-    inquiry, stage = _authorise(db, inquiry, actor, "rejected", need_stage=False)
+    inquiry, stage = _authorise(
+        db, inquiry, actor, "rejected", need_stage=False, seen_submitted_at=seen_submitted_at
+    )
     reason = _text(reason)
     if not reason:
         raise _invalid("reason", "Enter the reason for rejecting.")

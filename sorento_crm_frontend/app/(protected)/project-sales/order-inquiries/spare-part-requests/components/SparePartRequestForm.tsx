@@ -286,6 +286,17 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     return found;
   };
 
+  /** S1: a line holding photos but no product is never saved (its photos would be lost). */
+  const heldWithoutProduct = (): Problems['byLine'] => {
+    const byLine: Problems['byLine'] = {};
+    for (const line of lines) {
+      if (!line.product && heldFiles[line.key]?.length) {
+        byLine[line.key] = 'Choose a product for this line, or its photos cannot be kept.';
+      }
+    }
+    return byLine;
+  };
+
   const showServerProblem = (error: unknown) => {
     const message =
       error instanceof Error ? error.message : 'Something went wrong.';
@@ -338,8 +349,13 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     router.push(`${SPARE_PART_REQUESTS_PATH}/${savedRequestId}`);
 
   const onSaveDraft = async () => {
-    setProblems({ byLine: {} });
     if (busyAll) return;
+    const held = heldWithoutProduct();
+    setProblems({ byLine: held });
+    if (Object.keys(held).length) {
+      toggleSection('lines', true);
+      return;
+    }
     try {
       const saved = await persist();
       if (!(await uploadHeld(saved))) return;
@@ -352,7 +368,8 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
 
   const onSubmit = async () => {
     if (busyAll) return;
-    const found = checkForSubmit();
+    const checked = checkForSubmit();
+    const found = { ...checked, byLine: { ...checked.byLine, ...heldWithoutProduct() } };
     setProblems(found);
     if (found.currency || found.lines || Object.keys(found.byLine).length) {
       if (found.lines || Object.keys(found.byLine).length)

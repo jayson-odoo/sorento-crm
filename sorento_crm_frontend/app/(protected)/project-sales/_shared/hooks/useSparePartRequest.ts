@@ -2,6 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { splitMulti } from '@/lib/list-filters/multiValue';
+import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
+import { sparePartFilterStates } from '../lib/sparePartRequest';
 import { toast } from '@/lib/toast';
 import { codeWithName } from '@/lib/product-display';
 import { searchStockVisibilityWarehouses } from '@/services/stockVisibilityService';
@@ -43,17 +46,41 @@ export function useSparePartRequest(id: string | null | undefined) {
   });
 }
 
+/** One key for the list and its record page's pager (`useListPager`), so both share a page. */
+export function sparePartRequestsListQueryKey(params: SparePartRequestListParams) {
+  return [
+    SPARE_PART_REQUESTS_KEY,
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.states,
+  ] as const;
+}
+
+/** The list query a record URL describes: the list writes its status filter as `status`. */
+function sparePartRequestListParamsFromUrl(params: ListPagerParams): SparePartRequestListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    states: sparePartFilterStates(splitMulti(params.filters.status ?? '')),
+  };
+}
+
+/** Prev / next on the record page, over the list page it was opened from. */
+export const sparePartRequestsPagerQuery = {
+  listQueryKey: (params: ListPagerParams) =>
+    sparePartRequestsListQueryKey(sparePartRequestListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listSparePartRequests(sparePartRequestListParamsFromUrl(params)),
+};
+
 export function useSparePartRequests(params: SparePartRequestListParams) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: [
-      SPARE_PART_REQUESTS_KEY,
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.states,
-    ],
+    queryKey: sparePartRequestsListQueryKey(params),
     queryFn: () => listSparePartRequests(params),
   });
 }
@@ -121,10 +148,11 @@ export function useEditSparePartLine(id: string) {
   });
 }
 
-export function useApproveSparePartRequest(id: string) {
+/** `submittedAt`: the submission the page rendered, so a stale page's decision is refused. */
+export function useApproveSparePartRequest(id: string, submittedAt?: string | null) {
   const refresh = useRefreshInquiry();
   return useMutation({
-    mutationFn: (note?: string) => approveSparePartRequest(id, note),
+    mutationFn: (note?: string) => approveSparePartRequest(id, note, submittedAt),
     onSuccess: (saved) => {
       refresh(id);
       toast.success(saved.state === 'raised' ? 'Approved and sent to purchasing' : 'Approved');
@@ -133,10 +161,10 @@ export function useApproveSparePartRequest(id: string) {
   });
 }
 
-export function useRejectSparePartRequest(id: string) {
+export function useRejectSparePartRequest(id: string, submittedAt?: string | null) {
   const refresh = useRefreshInquiry();
   return useMutation({
-    mutationFn: (reason: string) => rejectSparePartRequest(id, reason),
+    mutationFn: (reason: string) => rejectSparePartRequest(id, reason, submittedAt),
     onSuccess: () => {
       refresh(id);
       toast.success('Rejected');

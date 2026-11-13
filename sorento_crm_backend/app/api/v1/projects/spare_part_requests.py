@@ -172,7 +172,10 @@ def approve_spare_part_request(
     db: Session = Depends(get_db),
 ):
     inquiry = _to_decide(inquiry_id, db)
-    spr.approve(db, inquiry, str(current_user["id"]), note=payload.note)
+    spr.approve(
+        db, inquiry, str(current_user["id"]), note=payload.note,
+        seen_submitted_at=payload.submitted_at,
+    )
     db.commit()
     return _out(db, inquiry, current_user)
 
@@ -185,7 +188,10 @@ def reject_spare_part_request(
     db: Session = Depends(get_db),
 ):
     inquiry = _to_decide(inquiry_id, db)
-    spr.reject(db, inquiry, str(current_user["id"]), payload.reason)
+    spr.reject(
+        db, inquiry, str(current_user["id"]), payload.reason,
+        seen_submitted_at=payload.submitted_at,
+    )
     db.commit()
     return _out(db, inquiry, current_user)
 

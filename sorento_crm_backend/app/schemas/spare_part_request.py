@@ -42,11 +42,15 @@ class SparePartLineEditIn(BaseModel):
 
 class SparePartApproveIn(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
+    #: The submitted_at the approver's page rendered; a mismatch answers 409 (stale page).
+    submitted_at: Optional[datetime] = None
 
 
 class SparePartRejectIn(BaseModel):
     #: Required, checked by the service so the refusal reads as a sentence.
     reason: Optional[str] = Field(None, max_length=2000)
+    #: The submitted_at the approver's page rendered; a mismatch answers 409 (stale page).
+    submitted_at: Optional[datetime] = None
 
 
 class SparePartLineOut(BaseModel):
