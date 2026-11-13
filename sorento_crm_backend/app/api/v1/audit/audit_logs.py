@@ -27,6 +27,8 @@ router = APIRouter()
 # `getAuditLogs({ entity_type, entity_id })` needs its entity type here.
 _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "complaint": "complaint_management.complaints.view",
+    # Service job page, History tab (after-sales P1): the permission that opens the job page.
+    "service_jobs": "after_sales.service_jobs.view",
     "stock_inquiry": "procurement.stock_inquiries.view",
     "purchase_request": "procurement.purchase_requests.view",
     "product": "master_data.products.view",
@@ -236,6 +238,24 @@ def _project_description(it, labels: dict[str, str]) -> Optional[str]:
     return f"Project: {frm} → {to or '∅'}"
 
 
+def _technician_names(db: Session, items) -> dict[str, str]:
+    """Names for every `technician_id` on a service job's rows, so History reads names, never ids."""
+    ids = set()
+    for it in items:
+        if it.entity_type != "service_jobs":
+            continue
+        for values in (it.old_values or {}, it.new_values or {}):
+            value = values.get("technician_id")
+            if value and _is_uuid(str(value)):
+                ids.add(str(value))
+    if not ids:
+        return {}
+    from sqlalchemy import text
+
+    rows = db.execute(text("select id::text, name from technicians where id::text = any(:ids)"), {"ids": list(ids)}).all()
+    return {r[0]: r[1] for r in rows}
+
+
 def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> Optional[str]:
     if it.description:
         return it.description
@@ -398,6 +418,7 @@ def get_audit_logs(
 
     record_labels = entity_labels(db, items)
     status_labels = _id_labels(db, items)
+    technician_names = _technician_names(db, items)
     if include_children and entity_types and len(entity_types) == 1 and entity_id:
         record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
     # SUPPLIER-COST-ACCESS: a product's History shows THAT cost changed, who and when, with
@@ -430,6 +451,12 @@ def get_audit_logs(
             it, user_names, contact_names, integration_names, payload["user_display_name"],
             scheduled_names=scheduled_names,
         )
+        if technician_names:
+            for key in ("old_values", "new_values"):
+                values = payload.get(key)
+                tid = str((values or {}).get("technician_id") or "")
+                if tid:
+                    payload[key] = {**values, "technician_id": technician_names.get(tid, "Removed technician")}
         payload["description"] = _derive_description(it, status_labels)
         payload["entity_label"] = record_labels.get(str(it.id))
         if not is_audit_admin:

@@ -1161,6 +1161,12 @@ def _delete_message_snippet(db: Session, payload: dict):
     return MessageSnippetService(db).delete_snippet(_entity_id(payload))
 
 
+def _delete_technician(db: Session, payload: dict):
+    from app.services import technician_service
+
+    return technician_service.delete(db, _entity_id(payload))
+
+
 def _delete_automation(db: Session, payload: dict):
     from app.services.automation_service import AutomationService
 
@@ -1355,6 +1361,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="sla_management.message_snippets.delete",
         label="Delete snippet",
+    )
+)
+
+register(
+    FormAction(
+        key="technician.delete",
+        entity_types=("technician",),
+        execute=_delete_technician,
+        window=WINDOW_DESTRUCTIVE,
+        permission="after_sales.technicians.manage",
+        label="Delete technician",
     )
 )
 

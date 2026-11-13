@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Wrench,
   Award,
   Badge,
   Bell,
@@ -792,6 +793,28 @@ const STAFF_SIDEBAR: MenuConfig = [
         title: 'Resolutions',
         path: '/complaint-management/complaint-resolutions',
         permission: 'master_data.complaint_resolutions.view',
+      },
+    ],
+  },
+  {
+    title: 'After-Sales Service',
+    icon: Wrench,
+    moduleKey: 'after_sales',
+    children: [
+      {
+        title: 'Service Jobs',
+        path: '/after-sales/service-jobs',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/after-sales/dispatch-board',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/after-sales/technicians',
+        permissionsAny: ['after_sales.service_jobs.view', 'after_sales.technicians.manage'],
       },
     ],
   },
@@ -1984,6 +2007,28 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Resolutions',
         path: '/complaint-management/complaint-resolutions',
         permission: 'master_data.complaint_resolutions.view',
+      },
+    ],
+  },
+  {
+    title: 'After-Sales Service',
+    icon: Wrench,
+    moduleKey: 'after_sales',
+    children: [
+      {
+        title: 'Service Jobs',
+        path: '/after-sales/service-jobs',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/after-sales/dispatch-board',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/after-sales/technicians',
+        permissionsAny: ['after_sales.service_jobs.view', 'after_sales.technicians.manage'],
       },
     ],
   },
