@@ -23,7 +23,7 @@ project is not under MY REQUESTS; it is on the **Projects** page.
 
 The form is split into sections (some only show for certain types):
 
-* **Header** - project / customer / contact references and notes.
+* **Header** - project / customer / contact references and notes. On a stock inquiry, new product application, complaint or purchase request, the optional **Registered project** field lets you search by project code or title and pick a registered project, so the request appears on that project's **Related** tab. Leave it empty if the project is not registered and type the project name instead. See [Register a project](register-a-project.md).
 * **Items** - the product table. Add a row per product, set the quantity, and any per-line fields shown.
 * **Attachments** - photos, drawings, supplier quotes, etc.
 

@@ -67,6 +67,7 @@ import { withRevisionSuffix } from '@/lib/document-number';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { RecordProjectField } from '@/components/common/RecordProjectField';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -259,6 +260,9 @@ function StaffPurchaseRequestDetail({
   const canClose = useHasPermission('procurement.purchase_requests.close');
   const canVoid = useHasPermission('procurement.purchase_requests.void');
   const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
+  // PROJECT-RELATED-RECORDS D2: each kind's own edit right sets its project, at any status.
+  const canEditPurchaseRequest = useHasPermission('procurement.purchase_requests.edit');
+  const canEditSponsorshipForm = useHasPermission('procurement.sponsorship_forms.edit');
   const reassignMutation = useReassignSLATracking();
   const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -282,6 +286,24 @@ function StaffPurchaseRequestDetail({
   const { data: request, isLoading } = usePurchaseRequest(
     isValidId ? requestId : null,
   );
+  // PROJECT-RELATED-RECORDS D2: the registered project (code + title, opening it), changed in
+  // place by whoever may edit this kind, at any status. One element, in both layouts below.
+  const registeredProjectField = request ? (
+    <div className="sm:col-span-2">
+      <p className="text-sm text-muted-foreground">Registered project</p>
+      <RecordProjectField
+        kind={request.request_type === 'sponsorship_form' ? 'sponsorship_form' : 'purchase_request'}
+        recordId={request.id}
+        projectId={request.project_id}
+        projectCode={request.project_code}
+        projectTitle={request.project_name}
+        canEdit={
+          request.request_type === 'sponsorship_form' ? canEditSponsorshipForm : canEditPurchaseRequest
+        }
+        onSaved={() => void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] })}
+      />
+    </div>
+  ) : null;
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
@@ -1304,6 +1326,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
+                  {registeredProjectField}
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
                     <p className="font-medium">{request.purpose || ' - '}</p>
@@ -1459,6 +1482,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
+                  {registeredProjectField}
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Total Project Value</p>
                     <p className="font-medium">{sponsorshipTotalDisplay || ' - '}</p>
