@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
-from sqlalchemy import and_, delete, exists, func, null, or_, select, tuple_, update
+from sqlalchemy import String, and_, cast, delete, exists, func, null, or_, select, tuple_, update
 from sqlalchemy.orm import Session, aliased
 
 logger = logging.getLogger(__name__)
@@ -368,10 +368,10 @@ def prune_reorder_runs(
     sleep_ms: int = 0,
     max_seconds: Optional[float] = None,
 ) -> dict:
-    """R3c. A superseded planning run past the window goes, unless a person overrode or
-    decided a row on it. No long transaction: its children are deleted bottom-up in keyset
-    batches (location allocations of its order summary rows, the order summary rows, the
-    recommendations), one commit each, then the run row. Oldest run first, so a run is
+    """R3c. A superseded planning run past the window goes, unless somebody acted on it
+    (see ``acted_on`` below). No long transaction: its children are deleted bottom-up in
+    keyset batches (location allocations of its order summary rows, the order summary rows,
+    the recommendations), one commit each, then the run row. Oldest run first, so a run is
     never orphaned of its ``superseded_by_run_id`` while it still waits its turn.
 
     FK children found in pg_constraint: reorder_recommendation and order_summary_row
@@ -379,6 +379,7 @@ def prune_reorder_runs(
     under a recommendation: recommendation_override and plan_row_decision (CASCADE, and
     their presence keeps the run) and order_summary_location_allocation (SET NULL; under
     order_summary_row it CASCADEs)."""
+    from app.models.procurement import PurchaseOrderLine
     from app.models.scm import (
         OrderSummaryLocationAllocation,
         OrderSummaryRow,
@@ -388,17 +389,42 @@ def prune_reorder_runs(
         ReorderRun,
     )
 
-    def touched_by(model):
-        return exists().where(
-            model.recommendation_id == ReorderRecommendation.id,
+    rec_id = cast(ReorderRecommendation.id, String)
+    row_id = cast(OrderSummaryRow.id, String)
+    # Every trace of a person acting on a run, in ONE place: the live loop and the dry-run
+    # prediction both start from this candidate list.
+    acted_on = or_(
+        exists().where(
             ReorderRecommendation.run_id == ReorderRun.id,
-        )
-
+            or_(
+                ReorderRecommendation.status != "proposed",  # accepted / adjusted / dismissed
+                ReorderRecommendation.keyed_status != "not_keyed",
+                exists().where(RecommendationOverride.recommendation_id == ReorderRecommendation.id),
+                exists().where(PlanRowDecision.recommendation_id == ReorderRecommendation.id),
+                # A drafted PO line at location grain names the recommendation id
+                # (decision_service); served by ix_purchase_order_lines_source_ref_system.
+                exists().where(PurchaseOrderLine.source_ref == rec_id),
+            ),
+        ),
+        exists().where(
+            OrderSummaryRow.run_id == ReorderRun.id,
+            or_(
+                OrderSummaryRow.chosen_qty.isnot(None),
+                OrderSummaryRow.decided_at.isnot(None),
+                OrderSummaryRow.keyed_status != "not_keyed",
+                # Product grain: source_ref is "<order summary row id>:<warehouse id>". The
+                # split_part equality lets the planner hash-join instead of a LIKE per row.
+                exists().where(
+                    func.split_part(PurchaseOrderLine.source_ref, ":", 1) == row_id,
+                    PurchaseOrderLine.source_ref.like(row_id + ":%"),
+                ),
+            ),
+        ),
+    )
     candidate = [
         ReorderRun.superseded_by_run_id.isnot(None),
         ReorderRun.created_at < _cutoff(retention_days),
-        ~touched_by(RecommendationOverride),
-        ~touched_by(PlanRowDecision),
+        ~acted_on,
     ]
     # A run another remaining run names as its superseder stays: the link is ON DELETE SET
     # NULL, so deleting it would turn that run (kept for a decision) back into a current

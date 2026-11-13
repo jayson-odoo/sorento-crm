@@ -3,8 +3,9 @@
 PLAN-db-retention-12nov. Adds one system_settings column per retention value (plus the
 four knobs every rule shares), indexes the recommendation link on
 scm.order_summary_location_allocation, and seeds the seven daily scheduled tasks; the existing
-`api_call_log_prune` row is left alone. No rows are deleted here: the tasks do that,
-in batches, from their first night (02:00 Malaysia time = 18:00 UTC).
+`api_call_log_prune` row is left alone. No rows are deleted here. The tasks are seeded
+switched OFF (crew safety review): an admin turns each on from Scheduled Tasks, and it then
+runs nightly at 02:00 Malaysia time (18:00 UTC), in batches.
 
 Revision ID: dbr_0001_retention_settings
 Revises: passkey_0001_user_passkeys
@@ -119,7 +120,7 @@ def upgrade():
                     (id, key, name, description, enabled, interval_unit, interval_value,
                      timezone, start_at, next_run_at, created_at, updated_at)
                 VALUES
-                    (gen_random_uuid(), :key, :name, :description, true, 'days', 1,
+                    (gen_random_uuid(), :key, :name, :description, false, 'days', 1,
                      'UTC', {_NEXT_2AM_MYT}, {_NEXT_2AM_MYT},
                      now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
                 ON CONFLICT (key) DO NOTHING
