@@ -495,7 +495,7 @@ def update_kind(db: Session, kind_id: str, payload: KindUpdate) -> Dict[str, Any
     return get_kind(db, row.id)
 
 
-def delete_kind(db: Session, kind_id: str) -> Dict[str, str]:
+def assert_kind_unused(db: Session, kind_id: str) -> WarrantyProductKind:
     row = _kind_row(db, kind_id)
     counts = _kind_counts(db, [row.id])[row.id]
     # Raw SQL: a kind is shared, and a job line of another company is invisible to the scoped ORM.
@@ -509,6 +509,11 @@ def delete_kind(db: Session, kind_id: str) -> Dict[str, str]:
     ]
     if used:
         raise handle_conflict(f"This kind is in use by {', '.join(used)}. Archive it instead.")
+    return row
+
+
+def delete_kind(db: Session, kind_id: str) -> Dict[str, str]:
+    row = assert_kind_unused(db, kind_id)
     db.delete(row)
     db.commit()
     return {"message": "Warranty kind deleted successfully"}
@@ -651,3 +656,18 @@ def try_rules(db: Session, product_id: str) -> Dict[str, Any]:
         "resolved_kind": {"id": best.kind.id, "code": best.kind.code, "name": best.kind.name},
         "deciding_rule": {"id": best.rule.id, "match_type": best.rule.match_type, "match_value": best.rule.match_value},
     }
+
+
+# ------------------------------------------------------------------ defect types
+
+
+def list_defect_types(db: Session) -> List[Dict[str, Any]]:
+    """The options of the defect-type set, by option id (what a term and a job line store)."""
+    rows = (
+        db.query(LookupOption)
+        .join(LookupSet, LookupSet.id == LookupOption.set_id)
+        .filter(LookupSet.set_key == DEFECT_TYPE_SET_KEY, LookupOption.is_active.is_(True))
+        .order_by(LookupOption.sort_order, LookupOption.label)
+        .all()
+    )
+    return [{"id": o.id, "label": o.label} for o in rows]

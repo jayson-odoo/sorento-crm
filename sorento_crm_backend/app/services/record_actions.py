@@ -1167,6 +1167,41 @@ def _delete_technician(db: Session, payload: dict):
     return technician_service.delete(db, _entity_id(payload))
 
 
+def _delete_service_job_product(db: Session, payload: dict):
+    from app.models.service_jobs import ServiceJobProduct
+    from app.services import service_job_product_service
+    from app.services.error_handler import handle_not_found
+
+    line = db.query(ServiceJobProduct).filter(ServiceJobProduct.id == _entity_id(payload)).first()
+    if line is None:
+        raise handle_not_found("Service job product", _entity_id(payload))
+    return service_job_product_service.delete_line(db, line.service_job_id, line.id)
+
+
+def _delete_warranty_policy(db: Session, payload: dict):
+    from app.services import warranty_config_service
+
+    return warranty_config_service.delete_policy(db, _entity_id(payload))
+
+
+def _delete_warranty_term(db: Session, payload: dict):
+    from app.services import warranty_config_service
+
+    return warranty_config_service.delete_term(db, _entity_id(payload))
+
+
+def _delete_warranty_kind(db: Session, payload: dict):
+    from app.services import warranty_config_service
+
+    return warranty_config_service.delete_kind(db, _entity_id(payload))
+
+
+def _delete_warranty_kind_rule(db: Session, payload: dict):
+    from app.services import warranty_config_service
+
+    return warranty_config_service.delete_rule(db, _entity_id(payload))
+
+
 def _delete_automation(db: Session, payload: dict):
     from app.services.automation_service import AutomationService
 
@@ -1363,6 +1398,35 @@ register(
         label="Delete snippet",
     )
 )
+
+register(
+    FormAction(
+        key="service_job_product.delete",
+        entity_types=("service_job_product",),
+        execute=_delete_service_job_product,
+        window=WINDOW_DESTRUCTIVE,
+        permission="after_sales.service_jobs.dispatch",
+        label="Remove product",
+    )
+)
+
+# Warranty configuration is admin-only (owner Q1); the park route adds the role check.
+for _key, _entity, _fn, _label in (
+    ("warranty_policy.delete", "warranty_policy", _delete_warranty_policy, "Delete policy"),
+    ("warranty_term.delete", "warranty_term", _delete_warranty_term, "Delete term"),
+    ("warranty_kind.delete", "warranty_kind", _delete_warranty_kind, "Delete kind"),
+    ("warranty_kind_rule.delete", "warranty_kind_rule", _delete_warranty_kind_rule, "Delete rule"),
+):
+    register(
+        FormAction(
+            key=_key,
+            entity_types=(_entity,),
+            execute=_fn,
+            window=WINDOW_DESTRUCTIVE,
+            permission="after_sales.service_jobs.view",
+            label=_label,
+        )
+    )
 
 register(
     FormAction(

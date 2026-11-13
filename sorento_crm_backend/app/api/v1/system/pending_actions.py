@@ -56,7 +56,8 @@ from app.models.dealer_kit import (
     TileTemplate,
 )
 from app.models.inventory import Warehouse
-from app.models.service_jobs import Technician
+from app.models.service_jobs import ServiceJobProduct, Technician
+from app.models.warranty import WarrantyPolicy
 from app.models.marketing import MarketingCampaign, PromotionGroup, PromotionProduct, PromotionType
 from app.models.onboarding import OnboardingRequest
 from app.models.order import Order, SalesOrder
@@ -176,6 +177,11 @@ _ALSO_REQUIRED_PERMISSIONS: dict = {
     "costing_party_product.unlink": ("products.cost.view",),
     "exchange_rate.delete": ("products.cost.view",),
 }
+
+# Warranty configuration (after-sales P2, owner Q1): role admin or superadmin only.
+_ADMIN_ONLY_ACTIONS: frozenset = frozenset(
+    {"warranty_policy.delete", "warranty_term.delete", "warranty_kind.delete", "warranty_kind_rule.delete"}
+)
 
 _ANY_OF_PERMISSIONS: dict = {
     "form_comment.delete": (
@@ -477,6 +483,8 @@ _PARK_SCOPED_MODELS: dict = {
     "product.unlink_tag_templates": Product,
     "team.delete": Team,
     "technician.delete": Technician,
+    "service_job_product.delete": ServiceJobProduct,
+    "warranty_policy.delete": WarrantyPolicy,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,
 }
@@ -557,6 +565,10 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "sales_order_line_attachment.delete",
     "shipment_line_photo.delete",
     "sla_tracking.delete",
+    # Shared reference rows (no company column); admin-only like the whole configuration.
+    "warranty_term.delete",
+    "warranty_kind.delete",
+    "warranty_kind_rule.delete",
     "spec_key.delete",
     "spec_rule.remove",
     "spec_value.remove",
@@ -735,6 +747,14 @@ def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slu
                 message=f"Permission required: {needed}",
                 code="FORBIDDEN",
             )
+    if action_key in _ADMIN_ONLY_ACTIONS:
+        roles = UserPermissionService(db).get_user_role_slugs(str(user_id)) if user_id else set()
+        if not roles & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message="Admin access is required to change warranty configuration.",
+                code="FORBIDDEN",
+            )
 
 
 def _is_own_passkey(db: Session, body: "_CreateRequest", real_user_id: str) -> bool:
@@ -906,6 +926,11 @@ def create_pending_action(
             from app.services import technician_service
 
             technician_service.assert_not_in_use(db, body.entity_id)
+        if body.action_key == "warranty_kind.delete":
+            # Same: a kind in use is archived, and the click says so.
+            from app.services import warranty_config_service
+
+            warranty_config_service.assert_kind_unused(db, body.entity_id)
 
         try:
             service = FormActionService(db)
