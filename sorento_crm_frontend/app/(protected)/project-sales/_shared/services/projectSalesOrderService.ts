@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import { filenameFromContentDisposition } from './fileDownload';
+import { refusalAwareError } from '../lib/nonCancellable';
 import type {
   AmendmentCreateBody,
   AmendmentCreated,
@@ -525,12 +526,25 @@ export async function getAmendment(amendmentId: string): Promise<AmendmentDetail
   return response.json();
 }
 
-export async function publishAmendment(amendmentId: string): Promise<AmendmentDetail> {
+/**
+ * A 409 `non_cancellable_line` comes back as a `NonCancellableRefusalError`; retry with
+ * `overrideReason` when the caller holds `projects.non_cancellable.override`.
+ */
+export async function publishAmendment(
+  amendmentId: string,
+  overrideReason?: string,
+): Promise<AmendmentDetail> {
   const response = await apiFetch(`${BASE}/amendments/${amendmentId}/publish`, {
     method: 'POST',
+    ...(overrideReason
+      ? {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ non_cancellable_override_reason: overrideReason }),
+        }
+      : {}),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to publish this amendment'));
+    throw await refusalAwareError(response, 'Failed to publish this amendment');
   return response.json();
 }
 

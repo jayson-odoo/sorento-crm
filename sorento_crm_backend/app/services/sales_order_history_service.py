@@ -21,7 +21,9 @@ from app.models.planning_change import PlanningChangeBatch
 from app.models.project_so import OrderInquiry, ProjectSalesOrder
 from app.services import order_inquiry_history_service as oi_history
 from app.services import planning_history_service as planning
-from app.services.history_common import audit_actor, iso
+from app.services.history_common import audit_actor
+from app.services.history_common import history_event as _event
+from app.services.history_common import history_line as _entry
 from app.services.project_service import resolve_user_names
 
 _CAUSE_LABEL = {
@@ -57,17 +59,6 @@ def _label(value: Optional[str]) -> str:
     return (value or "").replace("_", " ").capitalize()
 
 
-def _entry(index: int, event_id: str, so_line_no, item_code, qty, change: str) -> dict:
-    # No OI row stands behind these lines, so the key is the event's own, never a UUID.
-    return {
-        "row_id": f"{event_id}:{index}",
-        "so_line_no": so_line_no,
-        "item_code": item_code,
-        "qty": qty,
-        "change": change.replace(" -> ", " → "),
-    }
-
-
 def _history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
     ids = list(pso_ids)
     events: List[dict] = []
@@ -75,6 +66,7 @@ def _history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
     events += _presses(db, ids)
     events += _splits(db, ids)
     events += _status(db, ids)
+    events += _non_cancellable(db, ids)
     names = resolve_user_names(db, {e["_actor_id"] for e in events if e.get("_actor_id")})
     for event in events:
         actor_id = event.pop("_actor_id", None)
@@ -82,13 +74,6 @@ def _history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
             event["actor"] = names.get(actor_id) or oi_history.AUTOMATIC
     events.sort(key=lambda e: e["at"] or "", reverse=True)
     return events
-
-
-def _event(event_id, kind, at, actor_id, title, lines, actor=None) -> dict:
-    return {
-        "id": event_id, "kind": kind, "at": iso(at) if hasattr(at, "isoformat") else at,
-        "actor": actor, "_actor_id": actor_id, "title": title, "lines": list(lines),
-    }
 
 
 def _planning(db: Session, ids: List[str]) -> List[dict]:
@@ -222,5 +207,34 @@ def _status(db: Session, ids: List[str]) -> List[dict]:
         old = (audit.old_values or {}).get("status")
         title = f"Status: {_label(old)} → {_label(new['status'])}" if old else f"Status: {_label(new['status'])}"
         out.append(_event(f"audit-{audit.id}", "status_changed", audit.changed_at, audit.user_id, title, [],
+                          actor=actors.get(str(audit.id))))
+    return out
+
+
+def _non_cancellable(db: Session, ids: List[str]) -> List[dict]:
+    """NON-CANCELLABLE-ITEMS: an override cut on this order (board Transfer to Cancel SO,
+    amendment publish), one event per audit row, with the reason the manager gave."""
+    from app.services.non_cancellable_service import AUDIT_EVENT
+
+    audits = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.entity_type == "project_sales_orders",
+            AuditLog.event == AUDIT_EVENT,
+            AuditLog.entity_id.in_(ids),
+        )
+        .all()
+    )
+    actors = audit_actor(db, audits)
+    out = []
+    for audit in audits:
+        new = audit.new_values or {}
+        event_id = f"audit-{audit.id}"
+        change = f"{new.get('from_qty') or '-'} to {new.get('to_qty') or '-'}"
+        if audit.reason:
+            change += f". Reason: {audit.reason}"
+        title = f"Non-cancellable override: {new.get('action') or 'Quantity cut'}"
+        out.append(_event(event_id, "non_cancellable_override", audit.changed_at, audit.user_id, title,
+                          [_entry(0, event_id, None, new.get("line"), None, change)],
                           actor=actors.get(str(audit.id))))
     return out

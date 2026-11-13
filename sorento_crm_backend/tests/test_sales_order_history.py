@@ -749,3 +749,35 @@ def test_an_unconfirm_press_written_by_an_integration_reads_on_behalf_of_too():
 
         unconfirm = _by_kind(events, "unconfirmed")[0]
         assert unconfirm["actor"] == "AutoCount ESB on behalf of ZZT Purchasing Person"
+
+
+# ----------------------------------------------------------------- NON-CANCELLABLE-ITEMS
+
+
+def test_a_non_cancellable_override_shows_with_its_reason():
+    """Owner rule (all tracked history in the record's one History): an override cut on this SO
+    (board Transfer to Cancel SO, amendment publish) is an event of its History."""
+    from app.services import non_cancellable_service as nc
+
+    with blank_session() as db:
+        world = _world(db)
+        order = world["order"]
+        _audit(
+            db, entity_type="project_sales_orders", entity_id=str(order.id), action="EVENT",
+            event=nc.AUDIT_EVENT, reason="Customer pays storage", user_id=world["cs"].id,
+            new_values={"action": "Transferred to Cancel SO", "line": "ZZT-CORE line 1",
+                        "from_qty": "5", "to_qty": "0"},
+            description="Non-cancellable override, transferred to Cancel SO: ZZT-CORE line 1, 5 to 0",
+            company_id=world["company_id"], changed_at=datetime(2026, 9, 25, 9, 0),
+        )
+        db.commit()
+        events = _by_kind(_pso_events(db, world), "non_cancellable_override")
+
+        assert len(events) == 1
+        event = events[0]
+        assert event["title"] == "Non-cancellable override: Transferred to Cancel SO"
+        assert event["actor"] == "ZZT CS Person"
+        assert [line["change"] for line in event["lines"]] == [
+            "5 to 0. Reason: Customer pays storage"
+        ]
+        assert event["lines"][0]["item_code"] == "ZZT-CORE line 1"

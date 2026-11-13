@@ -185,6 +185,7 @@ from app.models.scm import (
     MarketResearchRun,
     PriorityPolicy,
 )
+from app.models.project_import import ProjectImportValueMap  # noqa: F401
 from app.models.project_so import (  # noqa: F401
     ProjectPOVersion,
     ProjectPOLine,

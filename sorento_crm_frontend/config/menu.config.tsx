@@ -279,8 +279,18 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'projects.types.view',
           },
           {
+            title: 'Project import',
+            path: '/project-sales/import',
+            permission: 'projects.import.view',
+          },
+          {
             title: 'Price Floors',
             path: '/project-sales/price-floors',
+            permission: 'projects.types.view',
+          },
+          {
+            title: 'Non-cancellable Items',
+            path: '/project-sales/non-cancellable',
             permission: 'projects.types.view',
           },
           {
@@ -2437,8 +2447,18 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.types.view',
       },
       {
+        title: 'Project import',
+        path: '/project-sales/import',
+        permission: 'projects.import.view',
+      },
+      {
         title: 'Price Floors',
         path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Non-cancellable Items',
+        path: '/project-sales/non-cancellable',
         permission: 'projects.types.view',
       },
       {

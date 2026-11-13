@@ -33,6 +33,7 @@ vi.mock('./QuotationLineFlags', () => ({
   LineFlags: () => null,
   MinimumPriceBadge: () => null,
   MinimumPriceFlag: () => null,
+  NonCancellableFlag: () => null,
 }));
 vi.mock('@/hooks/useDeferredDeleteSeconds', () => ({ useDeferredDeleteSeconds: () => 10 }));
 vi.mock('@/lib/toast', () => ({

@@ -112,6 +112,9 @@ import {
   orderPartyLabels,
 } from '../../_shared/lib/fulfilmentBoard';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
+import { isOverridableRefusal, overridableRefusalOf } from '../../_shared/lib/nonCancellable';
+import { NonCancellableOverrideDialog } from '../../_shared/components/NonCancellableOverrideDialog';
+import type { NonCancellableRefusal } from '../../_shared/types/project.types';
 import type {
   BoardCell,
   BoardContribution,
@@ -119,6 +122,7 @@ import type {
   BoardDraft,
   BoardGranularity,
   BoardRowAxis,
+  CancelledLineBody,
   ConfirmEmailLine,
   ConfirmManyBody,
   ConfirmManyOrderResult,
@@ -1624,6 +1628,12 @@ export function FulfilmentBoardPanel({
    */
   const [undoAllOpen, setUndoAllOpen] = React.useState(false);
   const [confirmingAll, setConfirmingAll] = React.useState(false);
+  // A Confirm the server refused with an overridable `non_cancellable_line`: the dialog asks
+  // for a reason, then the same press runs again carrying it.
+  const [overrideAsk, setOverrideAsk] = React.useState<{
+    refusal: NonCancellableRefusal;
+    soRemarks?: ReadonlyMap<string, string>;
+  } | null>(null);
   const [batchResults, setBatchResults] = React.useState<BoardBatchResult[] | null>(null);
   // True while `batchResults` holds an admin Simulate confirm: nothing in it was saved.
   const [simulated, setSimulated] = React.useState(false);
@@ -2011,6 +2021,7 @@ export function FulfilmentBoardPanel({
    */
   const runConfirmAll = React.useCallback(async (
     soRemarks?: ReadonlyMap<string, string>,
+    nonCancellableOverrideReason?: string,
   ): Promise<boolean> => {
     if (!board.data) return false;
     setConfirmingAll(true);
@@ -2036,7 +2047,29 @@ export function FulfilmentBoardPanel({
       // answering per order which lines it would confirm or withdraw. The press then posts the
       // same body narrowed to exactly those lines, so hold-back and the recheck still protect
       // and "Posted P" is what the server said it would write. No step for the planner.
-      const dry = await previewConfirmMany.mutateAsync(built.body);
+      // The retry after a 409 `non_cancellable_line`: the reason rides on every cancelled line.
+      const withOverride = <T extends { orders: { cancelled_lines: CancelledLineBody[] }[] }>(
+        body: T,
+      ): T =>
+        nonCancellableOverrideReason
+          ? {
+              ...body,
+              orders: body.orders.map((order) => ({
+                ...order,
+                cancelled_lines: order.cancelled_lines.map((line) => ({
+                  ...line,
+                  non_cancellable_override_reason: nonCancellableOverrideReason,
+                })),
+              })),
+            }
+          : body;
+      const dry = await previewConfirmMany.mutateAsync(withOverride(built.body));
+      // An order refused for a non-cancellable line asks for a reason instead of reporting.
+      const dryRefusal = overridableRefusalOf(dry.results);
+      if (dryRefusal) {
+        setOverrideAsk({ refusal: dryRefusal, soRemarks });
+        return false;
+      }
       const answer = new Map(dry.results.map((entry) => [entry.pso_id, entry]));
       const refusals: BoardBatchResult[] = [];
       const orders = built.orders
@@ -2085,7 +2118,9 @@ export function FulfilmentBoardPanel({
             only_line_ids: only,
           };
         });
-      const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
+      const body = withOverride(
+        built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders },
+      );
       if (orders.length === 0) {
         setBatchResults(settleHeldBackNotes([...skipped, ...refusals]));
         return true;
@@ -2131,6 +2166,8 @@ export function FulfilmentBoardPanel({
         ),
       );
       setBatchResults(settleHeldBackNotes([...skipped, ...refusals, ...result.results]));
+      const postedRefusal = overridableRefusalOf(result.results);
+      if (postedRefusal) setOverrideAsk({ refusal: postedRefusal, soRemarks });
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists
@@ -2236,10 +2273,14 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
-      return true;
-    } catch {
+      // A fresh non-cancellable refusal keeps its dialog open: report "not done" so the
+      // override handler does not close the dialog it was just given.
+      return !postedRefusal;
+    } catch (error) {
       // The mutation's own `onError` already toasted the message; nothing here is left to say.
       // Caught only so the rejection does not float unhandled past this async click handler.
+      // An overridable non-cancellable refusal toasts nothing: the override dialog asks instead.
+      if (isOverridableRefusal(error)) setOverrideAsk({ refusal: error.details, soRemarks });
       return false;
     } finally {
       setConfirmingAll(false);
@@ -4212,6 +4253,17 @@ export function FulfilmentBoardPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {overrideAsk && (
+        <NonCancellableOverrideDialog
+          refusal={overrideAsk.refusal}
+          submitting={confirmingAll}
+          onCancel={() => setOverrideAsk(null)}
+          onOverride={async (reason) => {
+            const ok = await runConfirmAll(overrideAsk.soRemarks, reason);
+            if (ok) setOverrideAsk(null);
+          }}
+        />
+      )}
       {canSimulate && (
         <PlanningHistorySheet
           open={historyOpen}

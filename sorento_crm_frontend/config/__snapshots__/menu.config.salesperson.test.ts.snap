@@ -123,8 +123,16 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Series",
           },
           {
+            "path": "/project-sales/import",
+            "title": "Project import",
+          },
+          {
             "path": "/project-sales/price-floors",
             "title": "Price Floors",
+          },
+          {
+            "path": "/project-sales/non-cancellable",
+            "title": "Non-cancellable Items",
           },
           {
             "path": "/project-sales/quotation-templates",

@@ -103,7 +103,7 @@ from app.services.chatbot.tail import scope_block
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch
 from app.services.chatbot.turn import pending
-from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+from app.services.chatbot.turn.task import QTY_BY_CODE, REFER_TO_SALESMAN
 from app.services.chatbot.turn.state import escalation_barred, is_staff_profile, offers_escalation
 
 # AC-1691's umbrella: no roster is ever asked with fewer than two options, in any
@@ -618,6 +618,9 @@ def _roster_option(row: dict[str, Any], *, kind: str, position: int) -> dict[str
     stamp = row.get("stamp")
     if stamp:
         option["stamp"] = stamp
+    if row.get("members"):
+        # CHATBOT-CODE-MATCH R3: an offered set carries what its exact ask resolves to.
+        option["members"] = list(row["members"])
     for key in ("value", "team"):
         if row.get(key) is not None:
             option["payload"][key] = row[key]
@@ -1226,6 +1229,22 @@ def _hit_ladder_resolved(resolved: Any, focus_products: Any) -> Any:
     return base
 
 
+def _offered_quantities(offer: Mapping[str, Any], parser: Mapping[str, Any] | None) -> dict[str, int]:
+    """CHATBOT-CODE-MATCH AC-1c: each offered code (folded) with the quantity typed beside the
+    miss it was offered for (`dym_candidates[].for_raw`, `dealer_stock.quantity_of`), so a pick
+    of it carries that quantity and no other (the dealer's pick carries `stock_qty` the same way)."""
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    named = [e for e in (parser or {}).get("entities") or [] if isinstance(e, dict) and e.get("hint") in (None, "product")]
+    out: dict[str, int] = {}
+    for c in offer.get("dym_candidates") or []:
+        if isinstance(c, Mapping) and c.get("code") and c.get("for_raw"):
+            quantity = dealer_mod.quantity_of(named, c["for_raw"])
+            if quantity is not None:
+                out.setdefault(str(c["code"]).strip().casefold(), quantity)
+    return out
+
+
 def _miss_question(
     offer: Mapping[str, Any],
     producers: Mapping[str, Any],
@@ -1351,6 +1370,7 @@ def _miss_question(
         # module that was missing it (reviewer S5). A one-row `suggest_last_result_set`
         # is not a choice; the escalate offer below is the honest question for it.
         if len(roster_options) >= _MIN_ROSTER_OPTIONS:
+            quantities = _offered_quantities(offer, parser)
             return pending.ask(
                 roster_kind,
                 roster_options,
@@ -1361,6 +1381,7 @@ def _miss_question(
                     "escalate_offered": True,
                     "agent": agent,
                     "brand_code": brand,
+                    **({QTY_BY_CODE: quantities} if quantities else {}),
                 },
             )
 
@@ -2299,23 +2320,45 @@ def _dealer_did_you_mean(
         for e in ((parser or {}).get("entities") or [])
         if isinstance(e, Mapping) and e.get("hint") in (None, "product")
     ]
-    typed = next(
-        (
-            c.get("for_raw")
-            for c in (offer.get("dym_candidates") or [])
-            if isinstance(c, Mapping) and c.get("for_raw")
-        ),
-        None,
-    ) or next((e.get("raw") for e in named if e.get("raw")), "")
-    quantities = {
-        int(e["quantity"])
-        for e in named
-        if isinstance(e.get("quantity"), (int, float)) and not isinstance(e.get("quantity"), bool)
-    }
-    quantity = next(iter(quantities)) if len(quantities) == 1 else (parser or {}).get("demand_qty")
+    from app.services.chatbot.turn.state import token_key
+
+    def typed_of(token: Any) -> str | None:
+        # `for_raw` is the RESOLVER's token (dashes and spaces folded off); the dealer is shown
+        # what they typed, as the business lane's own did-you-mean quotes it (`raw_of_tok`).
+        return next(
+            (
+                e.get("raw")
+                for e in named
+                if e.get("raw") and token_key(token) in (token_key(e.get("raw")), token_key(e.get("canonical_code")))
+            ),
+            None,
+        )
+
+    by_token: dict[str, list[dict[str, Any]]] = {}
+    for c in offer.get("dym_candidates") or []:
+        if isinstance(c, Mapping) and c.get("for_raw"):
+            by_token.setdefault(str(c["for_raw"]), []).append(dict(c))
+    if len(by_token) > 1:
+        # CHATBOT-CODE-MATCH R7: several missed codes, each its own did-you-mean.
+        each = dealer_mod.did_you_mean_each(
+            [
+                (str(typed_of(token) or token), rows_of, dealer_mod.quantity_of(named, token))
+                for token, rows_of in by_token.items()
+            ],
+            asked_at_turn=asked_at_turn,
+        )
+        return (each[0], each[1]) if each is not None else None
+    token = next(iter(by_token), None)
+    typed = (typed_of(token) if token else None) or token or next((e.get("raw") for e in named if e.get("raw")), "")
+    # CHATBOT-CODE-MATCH R4: a size miss is about a code that exists; the reply names it.
+    typed = offer.get("size_code") or typed
+    quantity = dealer_mod.quantity_of(named, token or typed)
+    if quantity is None:
+        quantity = (parser or {}).get("demand_qty")
     return dealer_mod.did_you_mean(
         str(typed),
         [dict(row) for row in rows],
         quantity=quantity,
         asked_at_turn=asked_at_turn,
+        size_asked=str(offer.get("size_asked") or ""),
     )

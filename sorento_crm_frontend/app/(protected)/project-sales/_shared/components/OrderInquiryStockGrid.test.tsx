@@ -32,7 +32,13 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+
+/** The grid resolves its location through React Query, so every render gets a fresh client. */
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useStockDetailMock = vi.fn();
@@ -73,17 +79,27 @@ beforeEach(() => {
     isError: false,
   });
   getWarehousesMock.mockResolvedValue({
-    data: [{ id: 'wh-brw-pool', warehouse_code: 'BRW', warehouse_name: 'Batu Rakit Warehouse' }],
+    data: [
+      { id: 'wh-brw-pool', warehouse_code: 'BRW', warehouse_name: 'Pool', fulfilment_planning: false },
+      { id: 'wh-brw-bb', warehouse_code: 'BRW-BB', warehouse_name: 'BB', fulfilment_planning: true },
+    ],
   });
 });
+
+/** The last `useStockDetail` call that was allowed to fetch (its 5th argument, `enabled`). */
+function lastEnabledStockDetailCall() {
+  const enabled = useStockDetailMock.mock.calls.filter((call) => call[4] !== false);
+  return enabled[enabled.length - 1];
+}
 
 describe('OrderInquiryStockGrid - AC-RS-41: location resolves to group or warehouse id', () => {
   it('a hyphenated location (BRW-BB) is fetched by GROUP, product by id', async () => {
     render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
 
-    await waitFor(() => expect(useStockDetailMock).toHaveBeenCalled());
-    const [productId, warehouseId, , group] = useStockDetailMock.mock.calls[0];
+    await waitFor(() => expect(lastEnabledStockDetailCall()).toBeDefined());
+    const [productId, warehouseId, , group] = lastEnabledStockDetailCall();
     expect(productId).toBe(PRODUCT_ID);
+    expect(warehouseId).toBeNull();
     expect(group).toBe('BB');
     // Never the item code string - the plan is explicit ("Product = the row's product id,
     // never the item code string").
@@ -189,5 +205,128 @@ describe('STOCK-GROUPBY (AC-20): the OI line expand carries the Group by bar', (
       </QueryClientProvider>,
     );
     expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
+  });
+});
+
+
+describe('MOCHA-STOCK-GRID: a location outside every ownership group is read by itself', () => {
+  // crew-note on #2381: a line at a Mocha location (MOCHA-WH) asked `stock-detail` for
+  // group "WH", which no planning bin belongs to, so the table read "No stock position".
+  // The rule is the backend's own group membership (`group_netting`, planning_only): a bin
+  // is a member of its suffix group only when it is in fulfilment planning. Anything else
+  // is read as the location itself, by its own warehouse id. No name is special-cased.
+  beforeEach(() => {
+    getWarehousesMock.mockResolvedValue({
+      data: [
+        { id: 'wh-mocha-wh', warehouse_code: 'MOCHA-WH', warehouse_name: 'Mocha', fulfilment_planning: false },
+        { id: 'wh-brw-bb', warehouse_code: 'BRW-BB', warehouse_name: 'BB', fulfilment_planning: true },
+      ],
+    });
+  });
+
+  it('MOCHA-WH is read by its own warehouse id, never as group "WH"', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+    for (const call of useStockDetailMock.mock.calls) {
+      if (call[4] !== false) expect(call[3]).toBeNull();
+    }
+  });
+
+  it('an ownership-group location (BRW-BB, in planning) is still read by its group', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[3]).toBe('BB'));
+    expect(lastEnabledStockDetailCall()?.[1]).toBeNull();
+  });
+
+  it('no request goes out while the location is still being looked up', async () => {
+    getWarehousesMock.mockReturnValue(new Promise(() => {}));
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+    await waitFor(() => expect(getWarehousesMock).toHaveBeenCalled());
+    expect(screen.getByTestId('oi-stock-grid-loading')).toBeInTheDocument();
+    expect(useStockDetailMock.mock.calls.every((call) => call[4] === false)).toBe(true);
+  });
+
+  it('a location of the active company is read without widening anything', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+    expect(getWarehousesMock).toHaveBeenCalledTimes(1);
+    expect(getWarehousesMock.mock.calls[0][0]).not.toHaveProperty('companyScope');
+    expect(lastEnabledStockDetailCall()?.[5]).toBeUndefined();
+    expect(useStockStatusMock.mock.calls.every((call) => call[2] === undefined)).toBe(true);
+  });
+
+  describe('a location only another granted company holds', () => {
+    const otherCompanyBin = {
+      id: 'wh-mocha-wh', warehouse_code: 'MOCHA-WH', warehouse_name: 'Mocha', fulfilment_planning: false,
+    };
+    beforeEach(() => {
+      // The active company holds no MOCHA-WH; the grants read finds the other company's.
+      getWarehousesMock.mockImplementation(async (params: { companyScope?: string }) => ({
+        data: params.companyScope === 'grants' ? [otherCompanyBin] : [],
+      }));
+    });
+
+    it('the lookup widens to granted companies, and so do both stock reads', async () => {
+      render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+      await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+      expect(getWarehousesMock.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' });
+      expect(lastEnabledStockDetailCall()?.[5]).toBe('grants');
+      const enabled = useStockStatusMock.mock.calls.filter((call) => call[1] !== false);
+      expect(enabled.length).toBeGreaterThan(0);
+      // Never an unscoped AutoCount read for another company's location.
+      expect(enabled.every((call) => call[2] === 'grants')).toBe(true);
+      await screen.findByTestId('cell-stock-table');
+      expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' });
+    });
+
+    it('the widened AutoCount read shows the resolved location only, no other company rows', async () => {
+      const status = {
+        product_id: PRODUCT_ID,
+        locations: [
+          { warehouse_id: 'wh-mocha-wh', warehouse_code: 'MOCHA-WH', on_hand: 7, so_qty: 0, po_qty: 0, spo_qty: 0 },
+          { warehouse_id: 'wh-elsewhere', warehouse_code: 'ELSE-BB', on_hand: 3, so_qty: 0, po_qty: 0, spo_qty: 0 },
+          { warehouse_id: 'wh-same-code', warehouse_code: 'MOCHA-WH', on_hand: 99, so_qty: 0, po_qty: 0, spo_qty: 0 },
+        ],
+        incoming_pl: [],
+        totals: {},
+      };
+      useStockStatusMock.mockReturnValue({ data: status, isLoading: false });
+      render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+      await screen.findByTestId('cell-stock-table');
+      await waitFor(() =>
+        expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' }),
+      );
+      const autoCount = cellStockTableSpy.mock.calls.at(-1)?.[0].autoCount as typeof status;
+      expect(autoCount.locations.map((loc) => loc.warehouse_id)).toEqual(['wh-mocha-wh']);
+    });
+  });
+
+  it('a group read is sent as today, without the grants scope', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[3]).toBe('BB'));
+    expect(lastEnabledStockDetailCall()?.[5]).toBeUndefined();
+  });
+
+  it('a code no warehouse holds keeps the suffix group, as before', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="NEW-IB" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[3]).toBe('IB'));
+    expect(lastEnabledStockDetailCall()?.[1]).toBeNull();
+  });
+
+  it('a failed lookup does not hang: it falls back to the suffix group', async () => {
+    getWarehousesMock.mockRejectedValue(new Error('network down'));
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[3]).toBe('BB'));
+    await screen.findByTestId('cell-stock-table');
+    expect(screen.queryByTestId('oi-stock-grid-loading')).toBeNull();
   });
 });
