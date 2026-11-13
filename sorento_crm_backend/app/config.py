@@ -120,7 +120,10 @@ class Settings(BaseSettings):
 
     # Respond.io
     respond_api_key: str | None = None
-    respond_base_url: str = "https://api.respond.io"
+    # RESPOND_BASE_URL: when set, it overrides every workspace row's base_url for every
+    # Respond.io call (a test copy points it at a `.invalid` host). Unset = the workspace's
+    # base_url, else the default in `integration_service.RESPOND_DEFAULT_BASE_URL`.
+    respond_base_url: str | None = None
     respond_app_base_url: str = "https://app.respond.io"  # Base URL for inbox links (e.g. /space/{id}/inbox/{contact_id})
     respond_space_id: str | None = None
     
@@ -275,6 +278,14 @@ class Settings(BaseSettings):
     rate_limit_portal_otp_window_seconds: int = 60
     rate_limit_portal_link_max: int = 10       # portal-link session exchanges per window per IP
     rate_limit_portal_link_window_seconds: int = 300
+    # PASSKEY-LOGIN: passkey sign-in options and verify, per window per IP, each in its own bucket.
+    rate_limit_passkey_max: int = 30
+    rate_limit_passkey_window_seconds: int = 60
+    # PASSKEY-LOGIN: hostnames that may use passkeys (comma-separated, no scheme or port; the RP
+    # ID is the hostname). Empty = passkeys off. Live and test-copy values live only in each
+    # server's env, never in the repo.
+    webauthn_rp_ids: str = ""                   # WEBAUTHN_RP_IDS
+    webauthn_rp_name: str = "Sorento CRM"       # WEBAUTHN_RP_NAME
     # PHOTO-SEND-CAP: opens of a chatbot file short link (`/public/file-links/{code}`) per
     # window per IP. Generous for a dealer tapping through a photo list, tight for a guesser.
     rate_limit_file_link_max: int = 60

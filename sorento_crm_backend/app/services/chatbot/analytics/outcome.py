@@ -22,6 +22,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.chatbot.turn.pending import is_roster
+
+#: A roster kind whose list IS the answer (a ranking, with an offer to show a row's detail),
+#: so it asks nothing about the ask.
+_RANKING_KIND = "top_selling_pick"
+
 #: Outcomes that mean the bot let the customer down (the report's `failed` measure). A
 #: refusal by policy, a handover and a clarifying question are the bot working as designed.
 FAILED_OUTCOMES: tuple[str, ...] = ("technical", "cannot_do", "missed")
@@ -147,6 +153,61 @@ def _still_asking(turn: dict[str, Any]) -> bool:
     return any(e.get("done") is False for e in _events(turn, "required_ask"))
 
 
+def _state(turn: dict[str, Any]) -> dict[str, Any]:
+    """The `state` event: the focus and open question the turn handed to the next one,
+    written after the answer (the engine's `turn_trace.add("state", ...)`). Live turns carry
+    it from the week of 5 Oct 2026; an older turn has none, and the two stock rules below
+    then cannot tell what the reply asked, so they leave its outcome as it was."""
+    entries = _events(turn, "state")
+    return entries[-1] if entries else {}
+
+
+def _asks_which_one(turn: dict[str, Any]) -> bool:
+    """The reply ended in a which-one pick: the customer is asked to choose what they meant.
+    `replied.facts.asking` (the answer's `question.kind`) is a roster kind
+    (`turn/pending.is_roster`, which also covers the `<entity_kind>_pick` / `_ask` kinds the
+    narrower mints at runtime), less the ranking. Escalation offers (`team_pick`,
+    `member_offer`, `company_pick`) and drill-down offers (`outstanding_detail`,
+    `sales_report_detail`) ride after an answer, and `is_roster` says no to them."""
+    asking = _dict((_stage(turn, "replied") or {}).get("facts")).get("asking")
+    return isinstance(asking, str) and asking != _RANKING_KIND and is_roster(asking)
+
+
+def _asks_quantity(turn: dict[str, Any]) -> bool:
+    """The reply asked how many units: an open `stock_qty` task (`turn/task.py`) this turn
+    opened or asked again (`touched_at_turn` is this turn), and the reply carried no answer
+    sections. The stock reply that asks it has none (`engine._stock_ask_reply`), which would
+    otherwise read as an empty answer, i.e. a couldn't-find; the task can also ask before any
+    lookup. A partial fill (the lines answered now, the task left open for the rest) has
+    sections and asks nothing."""
+    if (_looked_up_facts(turn) or {}).get("sections"):
+        return False
+    state = _state(turn)
+    turn_no = state.get("turn_no")
+    tasks = _dict(state.get("focus")).get("tasks")
+    if not isinstance(turn_no, int) or isinstance(turn_no, bool) or not isinstance(tasks, list):
+        return False
+    return any(
+        isinstance(task, dict)
+        and task.get("kind") == "stock_qty"
+        and task.get("status") == "open"
+        and task.get("touched_at_turn") == turn_no
+        for task in tasks
+    )
+
+
+def _asks_which_stock_item(turn: dict[str, Any]) -> bool:
+    """The stock reply asked which item of a family the customer means: the stock task's
+    pick (`stock_pick` on the open question, `turn/task.py::stock_pick`), returned with no
+    sections like the quantity question. A did-you-mean ("Couldn't find X. Did you mean
+    Y?", `did_you_mean` on the same payload, `dealer_stock.py`) is a miss with a
+    suggestion and is not counted here."""
+    if not _asks_which_one(turn):
+        return False
+    payload = _dict(_dict(_state(turn).get("open_question")).get("payload"))
+    return payload.get("stock_pick") is True and payload.get("did_you_mean") is not True
+
+
 def turn_outcome(turn: dict[str, Any]) -> tuple[str, str | None]:
     """`(outcome, failure_reason)` for one closed turn. First matching rule wins.
 
@@ -184,7 +245,13 @@ def turn_outcome(turn: dict[str, Any]) -> tuple[str, str | None]:
     if branch == "not_supported":
         return "cannot_do", "cannot_do"
 
-    if branch in _CLARIFY_BRANCHES or plan.get("ask") or _still_asking(turn):
+    if (
+        branch in _CLARIFY_BRANCHES
+        or plan.get("ask")
+        or _still_asking(turn)
+        or _asks_quantity(turn)
+        or _asks_which_stock_item(turn)
+    ):
         return "clarified", None
 
     looked_up = _looked_up_facts(turn)
@@ -196,6 +263,12 @@ def turn_outcome(turn: dict[str, Any]) -> tuple[str, str | None]:
     # `sections` absent means the stage did not report it, which is not an empty answer.
     if looked_up is not None and looked_up.get("sections") == 0:
         return "answered_empty", None
+
+    # A pick-one menu after a lookup that found something: the customer is asked to choose.
+    # Only here, after the miss and empty rules: a pick offered because nothing was found is
+    # a did-you-mean, and that stays a miss whichever lane wrote it.
+    if _asks_which_one(turn):
+        return "clarified", None
 
     return "answered", None
 

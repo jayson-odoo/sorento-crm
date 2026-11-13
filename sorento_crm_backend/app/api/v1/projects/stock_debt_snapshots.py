@@ -289,7 +289,7 @@ def po_link_link(
     validate_uuid_path(row_id, resource="Snapshot row")
     _require_switch(db)
     try:
-        out = StockDebtPoLinkService(db).link(
+        out = StockDebtPoLinkService(db, current_user).link(
             snapshot_id, row_id, [line.model_dump() for line in payload.lines]
         )
         db.commit()
@@ -310,7 +310,7 @@ def po_link_unlink(
     validate_uuid_path(row_id, resource="Snapshot row")
     _require_switch(db)
     try:
-        out = StockDebtPoLinkService(db).unlink(snapshot_id, row_id, payload.po_line_ids)
+        out = StockDebtPoLinkService(db, current_user).unlink(snapshot_id, row_id, payload.po_line_ids)
         db.commit()
         return out
     except Exception as exc:
@@ -329,7 +329,7 @@ def po_link_relink(
     validate_uuid_path(row_id, resource="Snapshot row")
     _require_switch(db)
     try:
-        out = StockDebtPoLinkService(db).relink(
+        out = StockDebtPoLinkService(db, current_user).relink(
             snapshot_id, row_id, [move.model_dump() for move in payload.moves]
         )
         db.commit()
@@ -348,7 +348,7 @@ def po_link_relocate(
     _require_switch(db)
     try:
         validate_uuid_path(payload.po_line_id, resource="PO line")
-        out = StockDebtPoLinkService(db).relocate(payload.po_line_id)
+        out = StockDebtPoLinkService(db, current_user).relocate(payload.po_line_id)
         db.commit()
         return out
     except Exception as exc:
@@ -366,7 +366,7 @@ def po_link_resume(
     _require_switch(db)
     try:
         validate_uuid_path(payload.po_line_id, resource="PO line")
-        out = StockDebtPoLinkService(db).resume(
+        out = StockDebtPoLinkService(db, current_user).resume(
             operation_id, payload.po_line_id, payload.sales_order_line_id
         )
         db.commit()

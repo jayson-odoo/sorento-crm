@@ -45,6 +45,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -1192,6 +1193,22 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     your_ref = Column(String(120), nullable=True)
     doc_date = Column(Date, nullable=True)
 
+    # AC-QTSO-CRM: the AutoCount quotation this document became, written only by a `done`
+    # answer. `autocount_issue_id` is the accepted issue last sent (no FK: it is a marker).
+    autocount_doc_no = Column(String(80), nullable=True)
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_last_modified = Column(String(64), nullable=True)
+    autocount_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    # Per-step progress of an update for one issue, so a retry sends only what is left: the
+    # PATCH (header + line edits) and the added lines. Markers, no FK.
+    autocount_edit_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    autocount_lines_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    autocount_cancelled_by = Column(String(100), nullable=True)
+    autocount_book = Column(String(40), nullable=True)
+    # Owner 11 Nov: the key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSON(none_as_null=True), nullable=True)
+
     recipient_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
@@ -1276,6 +1293,15 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         nullable=True,
     )
 
+    # QUOTE-DUPLICATE-PARTY: the document this one was duplicated from for another party (the
+    # header's "Copied from" link). Not ``source_issue_id``, which means "the quotation made from
+    # this proposal" and feeds the below-proposal approval check.
+    copied_from_document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1284,6 +1310,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_quotation_documents_project", "project_id"),
+        Index("ix_quotation_documents_copied_from", "copied_from_document_id"),
         Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
         CheckConstraint("kind IN ('proposal', 'quotation')", name="ck_quotation_documents_kind"),
@@ -1373,7 +1400,8 @@ class QuotationDocumentSnapshot(Base):
 
     The form's whole state, in the shape the form holds it, so Restore can load it straight back.
     Immutable once written (``PageVersion``'s rule). ``draft_id`` carries an entry made before its
-    proposal had a number; the first Save moves it onto the new document.
+    proposal had a number; the first Save moves it onto the new document. ``event`` (QUOTE-DUPLICATE-
+    PARTY) is a line with a note and no restorable state (``doc`` = ``{}``).
 
     Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only
     through its document (or its owner's private draft), and every read goes through that first.
@@ -1384,7 +1412,7 @@ class QuotationDocumentSnapshot(Base):
     __table_args__ = (
         Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
         CheckConstraint(
-            "kind IN ('saved', 'before_restore', 'conflict')",
+            "kind IN ('saved', 'before_restore', 'conflict', 'event')",
             name="ck_quotation_document_snapshots_kind",
         ),
         {"schema": "projects"},

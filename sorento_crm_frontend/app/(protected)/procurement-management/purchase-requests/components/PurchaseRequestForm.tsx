@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
-import { searchProjectsForLink } from "../services/purchaseRequestService";
+import { RegisteredProjectSelect } from "@/components/common/RegisteredProjectSelect";
 import { getProject } from "@/app/(protected)/project-sales/_shared/services/projectService";
 import { RequestCustomerField } from "./RequestCustomerField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -903,19 +903,10 @@ function StaffPurchaseRequestForm({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Registered project (optional)</FormLabel>
-                      <SearchableSelect
-                        value={field.value || ""}
-                        onChange={(next) => field.onChange(next || null)}
+                      <RegisteredProjectSelect
+                        value={field.value}
+                        onChange={field.onChange}
                         selectedOption={defaultProject}
-                        fetchOptions={(query, pageIndex) =>
-                          searchProjectsForLink(query, pageIndex + 1)
-                        }
-                        paginated
-                        pageSize={25}
-                        clearable
-                        truncateTriggerLabel
-                        placeholder="Search a project by code or title"
-                        emptyMessage="No project matches that. Leave it empty if it was never registered."
                       />
                       <FormMessage />
                     </FormItem>

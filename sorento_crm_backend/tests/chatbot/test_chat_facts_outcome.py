@@ -565,3 +565,263 @@ def test_wu27_chat_asks_branch_words_carry_the_phone_lane_words():
     assert words["phone_linked"] == "Phone linked"
     assert words["phone_ignored"] == "Phone card ignored"
     assert words["phone_handoff"] == "Phone handed to staff"
+
+
+# ------------------------------------------------------------------ CHATBOT-SCOREBOARD: asked back
+# Plan: documentation/plans/chatbot/PLAN-chatbot-scoreboard-12nov.md (AC-1 to AC-4, AC-8).
+# The dealer quantity question and the pick-one menus are questions put to the customer, so
+# they are `clarified`, read from the structure the engine writes: the `state` event's open
+# `stock_qty` task (engine.py `turn_trace.add("state", ...)`) and `replied.facts.asking`
+# (`answer.question.kind`). "Couldn't find X. Did you mean Y?" stays a miss, and an answer
+# that only ends with an escalation offer stays answered.
+
+TURN_NO = 7
+
+
+def _qty_task(*, status="open", opened=TURN_NO, touched=TURN_NO):
+    return {
+        "kind": "stock_qty",
+        "domain": "inventory",
+        "status": status,
+        "slots": [{"key": "p1", "label": "ZZT-SB-001", "value": None}],
+        "not_checked": [],
+        "opened_at_turn": opened,
+        "touched_at_turn": touched,
+    }
+
+
+def _state(*tasks, open_question=None, turn_no=TURN_NO):
+    return event("state", focus={"tasks": list(tasks)}, open_question=open_question, turn_no=turn_no)
+
+
+def _replied_asking(asking, *, sections=0):
+    return stage(
+        "replied",
+        facts={"lane": "business_query", "sections": sections, "asking": asking, "files": 0},
+        raw={"reply": {"text": REPLY_WORDS, "quick_replies": None, "result_set": []}},
+    )
+
+
+def _pick(kind, **payload):
+    return {"kind": kind, "options": [{"position": 1, "label": "ZZT-SB-001"}], "asked_at_turn": TURN_NO,
+            "payload": payload}
+
+
+def test_scoreboard_a_quantity_question_is_clarified_not_answered_empty():
+    """AC-1: `_stock_ask_reply` returns the quantity question with `sections=[]`, so the
+    lookup says 0 sections; the open `stock_qty` task this turn touched says it asked."""
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking(None),
+        _state(_qty_task()),
+        branch_kind="business_query",
+    )
+    assert _outcome(turn) == ("clarified", None)
+
+
+def test_scoreboard_a_quantity_question_asked_again_is_clarified():
+    """The task was opened on an earlier turn and this turn asked it again (touched now)."""
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking(None),
+        _state(_qty_task(opened=TURN_NO - 2, touched=TURN_NO)),
+        branch_kind="business_query",
+    )
+    assert _outcome(turn) == ("clarified", None)
+
+
+def test_scoreboard_a_quantity_question_beside_a_miss_is_clarified():
+    """Same order as the existing rule: a clarifying ask beats a miss."""
+    turn = turn_dict(
+        looked_up(sections=0, missed=["inventory"], domains=["inventory"]),
+        _replied_asking(None),
+        _state(_qty_task()),
+    )
+    assert _outcome(turn) == ("clarified", None)
+
+
+def test_scoreboard_a_quantity_task_answered_this_turn_asks_nothing():
+    turn = turn_dict(
+        looked_up(sections=1, domains=["inventory"]),
+        _replied_asking(None, sections=1),
+        _state(_qty_task(status="answered", opened=TURN_NO - 1, touched=TURN_NO)),
+    )
+    assert _outcome(turn) == ("answered", None)
+
+
+def test_scoreboard_an_open_quantity_task_from_an_earlier_turn_does_not_hide_a_miss():
+    """Carried, not asked: the task was last touched on an earlier turn."""
+    turn = turn_dict(
+        looked_up(sections=0, missed=["inventory"], domains=["inventory"]),
+        _replied_asking(None),
+        _state(_qty_task(opened=TURN_NO - 3, touched=TURN_NO - 3)),
+    )
+    assert _outcome(turn) == ("missed", "missed")
+
+
+def test_scoreboard_a_quantity_task_on_another_turn_number_is_not_this_turns_question():
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking(None),
+        _state(_qty_task(opened=TURN_NO, touched=TURN_NO), turn_no=TURN_NO + 1),
+    )
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+def test_scoreboard_reply_words_alone_never_make_a_question():
+    """AC-8: no reply text is read. A reply that says it asks, with no structure behind it,
+    keeps the lookup's outcome."""
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        replied(reply_text="How many units of ZZT-SB-001?"),
+    )
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+@pytest.mark.parametrize("kind", ["product_pick", "customer_pick", "tier_pick", "kind_pick"])
+def test_scoreboard_a_pick_one_menu_is_clarified_not_answered(kind):
+    """AC-2: a reply whose question is a pick-one menu asked the customer to choose."""
+    turn = turn_dict(
+        looked_up(sections=2),
+        _replied_asking(kind, sections=2),
+        _state(open_question=_pick(kind)),
+        branch_kind="business_query",
+    )
+    assert _outcome(turn) == ("clarified", None)
+
+
+def test_scoreboard_a_family_pick_with_no_sections_is_clarified():
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking("product_pick"),
+        _state(open_question=_pick("product_pick", stock_pick=True)),
+    )
+    assert _outcome(turn) == ("clarified", None)
+
+
+def test_scoreboard_did_you_mean_stays_answered_empty():
+    """AC-3: "Couldn't find X. Did you mean Y?" is still a miss for the couldn't-find line."""
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking("product_pick"),
+        _state(open_question=_pick("product_pick", stock_pick=True, did_you_mean=True)),
+    )
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+def test_scoreboard_did_you_mean_with_a_reported_miss_stays_missed():
+    turn = turn_dict(
+        looked_up(sections=0, missed=["inventory"], domains=["inventory"]),
+        _replied_asking("product_pick"),
+        _state(open_question=_pick("product_pick", did_you_mean=True)),
+    )
+    assert _outcome(turn) == ("missed", "missed")
+
+
+@pytest.mark.parametrize("kind", ["team_pick", "member_offer", "company_pick"])
+def test_scoreboard_an_answer_ending_in_an_escalation_offer_stays_answered(kind):
+    """AC-4: the offer rides after the answer; the customer got the answer."""
+    turn = turn_dict(
+        looked_up(sections=2),
+        _replied_asking(kind, sections=2),
+        _state(open_question=_pick(kind)),
+    )
+    assert _outcome(turn) == ("answered", None)
+
+
+def test_scoreboard_an_escalation_offer_after_a_miss_stays_missed():
+    turn = turn_dict(
+        looked_up(sections=0, missed=["inventory"]),
+        _replied_asking("team_pick"),
+        _state(open_question=_pick("team_pick")),
+    )
+    assert _outcome(turn) == ("missed", "missed")
+
+
+def test_scoreboard_a_failed_turn_with_a_question_stays_technical():
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking("product_pick"),
+        _state(_qty_task(), open_question=_pick("product_pick")),
+        status="failed",
+    )
+    assert _outcome(turn) == ("technical", "technical")
+
+
+def test_scoreboard_a_turn_with_no_state_event_keeps_its_old_outcome():
+    """Turns from before the `state` event (week of 5 Oct 2026) cannot say whether a pick was
+    a did-you-mean, so the pick rule leaves them as the lookup put them."""
+    turn = turn_dict(looked_up(sections=0, domains=["inventory"]), _replied_asking("product_pick"))
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+def test_scoreboard_a_business_lane_did_you_mean_stays_answered_empty():
+    """The business lane's "Couldn't find X. Did you mean:" pick carries no `did_you_mean`
+    flag (its payload is the lane's `agent`, `brand_code`, `domain`): a pick after a lookup
+    that found nothing is a miss with a suggestion, whoever wrote it."""
+    turn = turn_dict(
+        looked_up(sections=0, domains=["inventory"]),
+        _replied_asking("product_pick"),
+        _state(open_question=_pick("product_pick", agent="stock", brand_code="ZZT", domain="inventory")),
+    )
+    assert _outcome(turn) == ("answered_empty", None)
+
+
+def test_scoreboard_a_pick_after_a_reported_miss_stays_missed():
+    turn = turn_dict(
+        looked_up(sections=1, missed=["inventory"]),
+        _replied_asking("product_pick", sections=1),
+        _state(open_question=_pick("product_pick", domain="inventory")),
+    )
+    assert _outcome(turn) == ("missed", "missed")
+
+
+def test_scoreboard_a_menu_after_an_answer_needs_no_state_event():
+    """The menu rule reads only `replied.facts.asking`, so turns from before the `state`
+    event are classified too."""
+    turn = turn_dict(looked_up(sections=2), _replied_asking("customer_pick", sections=2))
+    assert _outcome(turn) == ("clarified", None)
+
+
+# Review round 1 (reviewer findings 1 and 2).
+
+
+@pytest.mark.parametrize("kind", ["outstanding_detail", "sales_report_detail", "top_selling_pick"])
+def test_scoreboard_a_drill_down_offer_after_an_answer_stays_answered(kind):
+    """The report or ranking IS the answer; the offer to show a row's detail rides after it,
+    like an escalation offer. Only which-one picks (the roster kinds less the ranking) ask."""
+    turn = turn_dict(
+        looked_up(sections=2),
+        _replied_asking(kind, sections=2),
+        _state(open_question=_pick(kind)),
+    )
+    assert _outcome(turn) == ("answered", None)
+
+
+def test_scoreboard_a_partial_fill_answer_with_sections_is_answered():
+    """The stock task fetched the lines answered now and left the task open for the rest
+    without asking anything: an answer with sections, not a quantity question."""
+    turn = turn_dict(
+        looked_up(sections=2, domains=["inventory"]),
+        _replied_asking(None, sections=2),
+        _state(_qty_task(opened=TURN_NO - 1, touched=TURN_NO)),
+    )
+    assert _outcome(turn) == ("answered", None)
+
+
+def test_scoreboard_a_quantity_question_with_no_lookup_is_clarified():
+    """The task asks the quantity before any fetch (no `looked_up` stage)."""
+    turn = turn_dict(_replied_asking(None), _state(_qty_task()), branch_kind="business_query")
+    assert _outcome(turn) == ("clarified", None)
+
+
+# Review round 2: kinds the narrower mints at runtime (`f"{entity_kind}_pick"`, `_ask`).
+
+
+@pytest.mark.parametrize("kind", ["order_pick", "form_pick", "brand_pick", "warehouse_ask"])
+def test_scoreboard_a_runtime_minted_which_one_pick_is_clarified(kind):
+    """`turn/pending.is_roster` is the one definition of a which-one pick: the narrower
+    mints `<entity_kind>_pick` / `_ask` off an operator-editable table, so a literal list
+    cannot be complete."""
+    turn = turn_dict(looked_up(sections=2), _replied_asking(kind, sections=2), _state(open_question=_pick(kind)))
+    assert _outcome(turn) == ("clarified", None)

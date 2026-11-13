@@ -1,4 +1,6 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional
 
 
@@ -133,3 +135,67 @@ class MessageResponse(BaseModel):
     message: str
     count: int | None = None
 
+
+
+# --------------------------------------------------------------------------- #
+# Passkeys (PASSKEY-LOGIN)                                                     #
+# --------------------------------------------------------------------------- #
+
+
+class PasskeyStatusResponse(BaseModel):
+    enabled: bool
+
+
+class PasskeyOptionsResponse(BaseModel):
+    challenge_id: str
+    # PublicKeyCredentialRequestOptionsJSON / PublicKeyCredentialCreationOptionsJSON.
+    options: dict
+
+
+class PasskeyVerifyRequest(BaseModel):
+    challenge_id: str
+    # AuthenticationResponseJSON, as `@simplewebauthn/browser` sends it.
+    credential: dict
+
+
+class PasskeyRegisterOptionsRequest(BaseModel):
+    """The re-check before adding (AC-27): the password OR a phone code."""
+
+    password: Optional[str] = None
+    phone_code: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _one_proof(self):
+        if self.password is None and self.phone_code is None:
+            raise ValueError("Enter your password or a phone code.")
+        return self
+
+
+class PasskeyRegisterRequest(BaseModel):
+    challenge_id: str
+    # RegistrationResponseJSON, as `@simplewebauthn/browser` sends it.
+    credential: dict
+    name: Optional[str] = Field(None, max_length=100)
+
+
+class PasskeyRenameRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _trimmed_name(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not 1 <= len(v) <= 100:
+            raise ValueError("Name must be 1 to 100 characters.")
+        return v
+
+
+class PasskeyItem(BaseModel):
+    id: str
+    name: str
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
+class PasskeyReauthCodeResponse(BaseModel):
+    sent_to: str

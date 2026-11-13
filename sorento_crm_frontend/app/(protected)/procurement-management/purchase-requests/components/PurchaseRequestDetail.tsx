@@ -36,7 +36,7 @@ import {
   useExportPurchaseRequestPdf,
   usePurchaseRequestRevisions,
 } from '../hooks/usePurchaseRequests';
-import { formatDate, formatCurrency } from '@/lib/helpers';
+import { formatDateInMalaysia, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -67,6 +67,7 @@ import { withRevisionSuffix } from '@/lib/document-number';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { RecordProjectField } from '@/components/common/RecordProjectField';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -259,6 +260,9 @@ function StaffPurchaseRequestDetail({
   const canClose = useHasPermission('procurement.purchase_requests.close');
   const canVoid = useHasPermission('procurement.purchase_requests.void');
   const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
+  // PROJECT-RELATED-RECORDS D2: each kind's own edit right sets its project, at any status.
+  const canEditPurchaseRequest = useHasPermission('procurement.purchase_requests.edit');
+  const canEditSponsorshipForm = useHasPermission('procurement.sponsorship_forms.edit');
   const reassignMutation = useReassignSLATracking();
   const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -282,6 +286,24 @@ function StaffPurchaseRequestDetail({
   const { data: request, isLoading } = usePurchaseRequest(
     isValidId ? requestId : null,
   );
+  // PROJECT-RELATED-RECORDS D2: the registered project (code + title, opening it), changed in
+  // place by whoever may edit this kind, at any status. One element, in both layouts below.
+  const registeredProjectField = request ? (
+    <div className="sm:col-span-2">
+      <p className="text-sm text-muted-foreground">Registered project</p>
+      <RecordProjectField
+        kind={request.request_type === 'sponsorship_form' ? 'sponsorship_form' : 'purchase_request'}
+        recordId={request.id}
+        projectId={request.project_id}
+        projectCode={request.project_code}
+        projectTitle={request.project_name}
+        canEdit={
+          request.request_type === 'sponsorship_form' ? canEditSponsorshipForm : canEditPurchaseRequest
+        }
+        onSaved={() => void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] })}
+      />
+    </div>
+  ) : null;
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
@@ -577,7 +599,7 @@ function StaffPurchaseRequestDetail({
   const expectedPoDisplay =
     request.expected_po_date_text?.trim() ||
     (request.expected_po_date
-      ? formatDate(new Date(request.expected_po_date))
+      ? formatDateInMalaysia(request.expected_po_date)
       : null);
   const sponsorshipTotalDisplay =
     request.total_project_value_text?.trim() ||
@@ -643,7 +665,7 @@ function StaffPurchaseRequestDetail({
           </h2>
           <p className="text-sm text-muted-foreground">
             {request.submitted_at
-              ? formatDate(new Date(request.submitted_at))
+              ? formatDateInMalaysia(request.submitted_at)
               : '-'}{' '}
             · {typeLabel}
           </p>
@@ -1288,7 +1310,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
-                        ? formatDate(new Date(request.submitted_at))
+                        ? formatDateInMalaysia(request.submitted_at)
                         : ' - '}
                     </p>
                   </div>
@@ -1304,11 +1326,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
-                  {/* The registered project the form is linked to, by its code (never the id). */}
-                  <div className="sm:col-span-2">
-                    <p className="text-sm text-muted-foreground">Registered project</p>
-                    <p className="font-medium">{request.project_code || ' - '}</p>
-                  </div>
+                  {registeredProjectField}
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
                     <p className="font-medium">{request.purpose || ' - '}</p>
@@ -1331,7 +1349,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Expected date of delivery</p>
                     <p className="font-medium">
                       {request.expected_delivery_date
-                        ? formatDate(new Date(request.expected_delivery_date))
+                        ? formatDateInMalaysia(request.expected_delivery_date)
                         : ' - '}
                     </p>
                   </div>
@@ -1444,7 +1462,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
-                        ? formatDate(new Date(request.submitted_at))
+                        ? formatDateInMalaysia(request.submitted_at)
                         : ' - '}
                     </p>
                   </div>
@@ -1464,11 +1482,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
-                  {/* The registered project the form is linked to, by its code (never the id). */}
-                  <div className="sm:col-span-2">
-                    <p className="text-sm text-muted-foreground">Registered project</p>
-                    <p className="font-medium">{request.project_code || ' - '}</p>
-                  </div>
+                  {registeredProjectField}
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Total Project Value</p>
                     <p className="font-medium">{sponsorshipTotalDisplay || ' - '}</p>
@@ -1509,7 +1523,7 @@ function StaffPurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Date of Delivery</p>
                     <p className="font-medium">
                       {request.expected_delivery_date
-                        ? formatDate(new Date(request.expected_delivery_date))
+                        ? formatDateInMalaysia(request.expected_delivery_date)
                         : ' - '}
                     </p>
                   </div>

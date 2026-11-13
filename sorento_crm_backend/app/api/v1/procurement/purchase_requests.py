@@ -30,7 +30,7 @@ from app.schemas.procurement import (
     ViewLinkResponse,
     BulkDeletePurchaseRequestsRequest,
 )
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest, RecordProjectUpdate
 from app.schemas.download import PdfExportOptions
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
@@ -377,6 +377,29 @@ def update_purchase_request(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.patch("/{request_id}/project", response_model=PurchaseRequestHeaderResponse)
+def set_purchase_request_project(
+    request_id: str,
+    body: RecordProjectUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or clear the purchase request's or sponsorship form's registered project at any
+    status, approval untouched (PROJECT-RELATED-RECORDS D2)."""
+    from app.services import project_related_records as related
+
+    validate_uuid_path(request_id, resource="Request")
+    # Either edit right first, before the row is read: a refusal never says the id exists.
+    related.assert_can_set_project(db, ("purchase_request", "sponsorship_form"), current_user["id"])
+    kind = PurchaseRequestService(db).get_request(request_id).request_type
+    related.assert_can_set_project(db, kind, current_user["id"])
+    related.set_record_project(
+        db, kind=kind, record_id=request_id, project_id=body.project_id, actor=current_user["id"]
+    )
+    db.commit()
+    return get_purchase_request(request_id, current_user=current_user, db=db)
 
 
 @router.post(

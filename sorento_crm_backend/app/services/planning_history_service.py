@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy import or_
@@ -29,20 +29,16 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOSupplyDecision,
 )
+from app.services.history_common import RAISE_WINDOW, ROW_AUDIT_TYPES, iso
 from app.services.planning_change_service import change_text
 from app.services.project_line_split_service import display_line_nos
 from app.services.project_service import resolve_user_names
 from app.services.scm.so_party import so_parties, with_party
 
-#: The window around a revision in which a row it raised was created (AC-W10).
-_WINDOW = timedelta(seconds=5)
-#: Both spellings: the audit type the writer uses, and the table name older tooling used.
-_ROW_AUDIT_TYPES = ("project_order_inquiry_rows", "order_inquiry_rows")
+_WINDOW = RAISE_WINDOW
+_ROW_AUDIT_TYPES = ROW_AUDIT_TYPES
+_iso = iso
 _SUPERSEDED_NOTE = re.compile(r"Superseded by revision (\d+)")
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
 
 
 def _qty(value: Any) -> Any:

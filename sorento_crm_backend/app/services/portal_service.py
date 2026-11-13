@@ -624,6 +624,7 @@ class PortalService:
         task,
         *,
         dispatch_inline: bool = False,
+        purpose: str = "sign_in",
     ) -> PortalOtpCode:
         """Cooldown + daily-cap check, code creation and Respond.io dispatch.
 
@@ -673,6 +674,7 @@ class PortalService:
             space_id=space_id,
             code_hash=_hash_otp(code),
             expires_at=_utcnow() + OTP_TTL,
+            purpose=purpose,
         )
         self.db.add(otp)
         self.db.commit()
@@ -812,6 +814,8 @@ class PortalService:
             .filter(
                 PortalOtpCode.contact_id == contact.id,
                 PortalOtpCode.consumed_at.is_(None),
+                # A passkey re-check code never opens the portal (PASSKEY-LOGIN AC-27).
+                PortalOtpCode.purpose == "sign_in",
             )
             .order_by(PortalOtpCode.created_at.desc())
             .first()
@@ -1151,6 +1155,30 @@ class PortalService:
             self.db.refresh(row)
         return self.get_submission(token, kind, str(row.id))
 
+    def _assert_own_project(
+        self, kind: str, row: Any, project_id: Any, *, current: Any = None
+    ) -> None:
+        """A picked project must be one of the contact's own companies' and approved
+        (PROJECT-RELATED-RECORDS AC-C3): `sponsorship_link_service.assert_contact_may_link`, the
+        one check every portal path runs (create, draft save, submit, revise). The contact is the
+        record's own submitter. Optional for these kinds (D3): nothing picked is never refused,
+        and re-saving the link the record already has is not a change."""
+        contact_id = getattr(row, "contact_id", None)
+        if not project_id or str(project_id) == str(current or "") or not contact_id:
+            # No submitter: not a portal row (every portal create stamps its contact), the same
+            # rule as the sponsorship gate's `contact is None`.
+            return
+        from app.services import sponsorship_link_service
+
+        contact = self.db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
+        sponsorship_link_service.assert_contact_may_link(
+            self.db,
+            contact=contact,
+            project_id=str(project_id),
+            current=current,
+            code=f"{kind}_project_not_approved",
+        )
+
     def submit_draft(
         self,
         token: PortalToken,
@@ -1185,6 +1213,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
+            self._assert_own_project(kind, row, row.project_id)
             # A draft may be incomplete; a submission may not (FORM-REQUIRED-SERVER). Read
             # off the row after the body above, so a bare resubmit of a saved draft is
             # checked too; before any write below, so a refusal leaves the row as it was.
@@ -1199,6 +1228,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
+            self._assert_own_project(kind, row, row.project_id)
             portal_required_fields.require_complete(kind, row)
             # Portal submit mirrors the system "submit for project sales" flow:
             # advance directly to pending_project_sales so the Project Sales
@@ -1232,24 +1262,11 @@ class PortalService:
                 # so a bare resubmit of an already-saved draft is checked too, not only
                 # a submit that also sends a fresh `products` payload.
                 self._require_sponsorship_unit_prices(row)
-            elif getattr(row, "project_id", None):
-                # A purchase request may name a project too: never a registration still
-                # waiting for approval (PROJECT-REG-PORTAL R4). Checked on submit, as
-                # sponsorship's link is, because a draft may be incomplete.
-                from app.models.projects import Project
-                from app.services.project_service import approved_projects
-
-                if (
-                    approved_projects(
-                        self.db.query(Project.id).filter(Project.id == str(row.project_id))
-                    ).first()
-                    is None
-                ):
-                    raise AppException(
-                        status_code=422,
-                        message="That project is not approved yet. Pick a project from the list.",
-                        code="purchase_request_project_not_approved",
-                    )
+            else:
+                # A purchase request may name a project too: one of the contact's own (checked
+                # first, so another company's reads "not one of yours"), never a registration
+                # still waiting for approval (PROJECT-REG-PORTAL R4).
+                self._assert_own_project(kind, row, row.project_id)
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )
@@ -1724,6 +1741,9 @@ class PortalService:
                             "Pick a registered project from the list - the project field "
                             "does not take free text."
                         )
+                    # Before it is written: a draft, a submit and a revise all store only a
+                    # project of the contact's own companies (security review B1 / 3).
+                    self._assert_own_project(kind, row, value, current=getattr(row, "project_id", None))
                 if field == "customer_id":
                     from app.services.debtor_type import link_customer
 
@@ -1876,6 +1896,8 @@ class PortalService:
                 "contact_number",
                 "customer_address",
                 "project_title",
+                # PROJECT-RELATED-RECORDS AC-C3: the registered project, ownership checked on submit.
+                "project_id",
             )
         if kind == "stock_inquiry":
             return (
@@ -1885,6 +1907,8 @@ class PortalService:
                 "item_description",
                 "project_customer",
                 "project_name",
+                # PROJECT-RELATED-RECORDS AC-C3: the registered project, ownership checked on submit.
+                "project_id",
                 "quantity",
                 "delivery_date",
                 "remark",
@@ -2245,6 +2269,10 @@ class PortalService:
                 "contact_number": row.contact_number,
                 "customer_address": row.customer_address,
                 "project_title": row.project_title,
+                # PROJECT-RELATED-RECORDS AC-C3: the picked project round-trips by id and
+                # shows by code, as the sponsorship form's does.
+                "project_id": str(row.project_id) if row.project_id else None,
+                "project_code": self._project_code(row.project_id),
                 "technical_team_response": row.technical_team_response,
             }
         )
@@ -2303,6 +2331,9 @@ class PortalService:
                 "item_description": row.item_description,
                 "project_customer": row.project_customer,
                 "project_name": row.project_name,
+                # PROJECT-RELATED-RECORDS AC-C3, as the complaint above.
+                "project_id": str(row.project_id) if row.project_id else None,
+                "project_code": self._project_code(row.project_id),
                 "quantity": row.quantity,
                 "delivery_date": row.delivery_date,
                 "remark": row.remark,

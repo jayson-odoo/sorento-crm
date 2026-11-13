@@ -108,6 +108,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
+GET /projects/{project_id}/related-records
 GET /projects/{project_id}/sales-orders
 GET /projects/{project_id}/sample-requests
 GET /projects/{project_id}/sample-requests/quotation-prefill
@@ -136,6 +137,7 @@ GET /reports/dashboard
 GET /reports/forecast
 GET /sales-orders/{pso_id}
 GET /sales-orders/{pso_id}/allocations
+GET /sales-orders/{pso_id}/history
 GET /sales-orders/{pso_id}/import-file
 GET /sales-orders/{pso_id}/line-splits
 GET /sales-orders/{pso_id}/order-inquiry
@@ -228,6 +230,7 @@ POST /projects/{project_id}/quotation-documents/{document_id}/approval-status
 POST /projects/{project_id}/quotation-documents/{document_id}/approve
 POST /projects/{project_id}/quotation-documents/{document_id}/certificates
 POST /projects/{project_id}/quotation-documents/{document_id}/certificates/export
+POST /projects/{project_id}/quotation-documents/{document_id}/duplicate
 POST /projects/{project_id}/quotation-documents/{document_id}/form-draft/open
 POST /projects/{project_id}/quotation-documents/{document_id}/history/{entry_id}/restore
 POST /projects/{project_id}/quotation-documents/{document_id}/issue

@@ -73,6 +73,37 @@ INTEGRATION_LOG_INDEXES: Tuple[Tuple[str, str, str], ...] = (
     ("integration_log", "ix_integration_log_next_retry_at", "(next_retry_at)"),
 )
 
+#: INTLOG-SPEED-2: what the Integration Log search box matches (`IntegrationLogService._apply_search`),
+#: one text per row: the columns the grid shows or a person reads off a failure, plus `id` and
+#: `correlation_id`. The list's search runs `<this> ILIKE '%term%'` and the GIN trigram index
+#: below is built on exactly this expression, so the planner can use it: the two must stay
+#: byte-for-byte the same (tests/test_integration_logs_search_index.py EXPLAINs the route's SQL).
+#: Crew, 12 Nov 2026, dev copy (~1.2M rows): the earlier OR of seven ILIKEs could use no index,
+#: so a Business ID search read the whole table (19.5-28 s).
+INTEGRATION_LOG_SEARCH_EXPR = (
+    "(coalesce(integration_channel, '') || ' ' || coalesce(business_table, '') || ' ' || "
+    "coalesce(business_id::text, '') || ' ' || coalesce(endpoint, '') || ' ' || "
+    "coalesce(external_reference, '') || ' ' || coalesce(error_code, '') || ' ' || "
+    "coalesce(error_message, '') || ' ' || id::text || ' ' || coalesce(correlation_id::text, ''))"
+)
+
+#: Built online by il_0002_integration_log_search and retried by scripts/ensure_goods_chain_indexes.py.
+INTEGRATION_LOG_SEARCH_INDEXES: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "integration_log",
+        "ix_integration_log_search_trgm",
+        f"USING gin ({INTEGRATION_LOG_SEARCH_EXPR} gin_trgm_ops)",
+    ),
+)
+
+#: SEARCH-CHIPS: the Sales orders list search runs one `ILIKE ANY` per column
+#: (`SalesOrderService._search_match`). Built online by so_search_trgm_0001 and retried by
+#: scripts/ensure_goods_chain_indexes.py.
+SALES_ORDER_SEARCH_INDEXES: Tuple[Tuple[str, str, str], ...] = tuple(
+    ("sales_orders", f"ix_search_trgm_sales_orders_{column}", f"USING gin ({column} gin_trgm_ops)")
+    for column in ("so_number", "debtor_name", "project_label", "po_ref", "po_ref_key")
+)
+
 #: pg_try_advisory_lock key `ensure_indexes_online` takes, so two builders (the migration, the
 #: retry, blue and green starting together) never build the same index at once.
 ADVISORY_LOCK_KEY = 0x6763_6964_7830  # "gcidx0"
@@ -205,3 +236,70 @@ def _ensure_within_budget(bind, indexes: Sequence[Tuple[str, str, str]]) -> bool
             continue
         results.append(ensure_index_online(bind, table, name, columns, budget_ms=left_ms))
     return all(results)
+
+
+#: The background retry's build budget for the search index. The migration keeps the shared 180 s
+#: (blue/green waits 4 minutes for health); the retry runs after gunicorn is up, so nothing waits on
+#: it. 130 s on 1.3M rows (sandbox, 12 Nov 2026) and integration_log is never pruned: at ~1.8M rows
+#: the shared budget would time out on every start and the search would silently fall back to a
+#: full read (reviewer, INTLOG-SPEED-2).
+SEARCH_INDEX_RETRY_BUDGET_MS = 30 * 60 * 1000
+
+
+def ensure_search_index_online(bind) -> bool:
+    """Build `ix_integration_log_search_trgm` under its own budget (the retry script's call),
+    under the same advisory lock as `ensure_indexes_online`. True when it is VALID afterwards."""
+    if not INTEGRATION_LOG_SEARCH_INDEXES:
+        return True
+    [(table, name, columns)] = INTEGRATION_LOG_SEARCH_INDEXES
+    if bind.execute(sa.text("SELECT to_regclass(:t)"), {"t": table}).scalar() is None:
+        return True  # no integration_log on this search_path: nothing to index
+    if index_valid(bind, table, name) is True:
+        return True
+    if not bind.execute(sa.text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY}).scalar():
+        log.warning("another backend is building the online indexes; leaving the search index to it.")
+        return False
+    try:
+        return ensure_index_online(bind, table, name, columns, budget_ms=SEARCH_INDEX_RETRY_BUDGET_MS)
+    finally:
+        bind.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_KEY})
+
+def search_index_valid(bind):
+    """index_valid for `ix_integration_log_search_trgm`, or None when there is no integration_log
+    on the search_path (a scratch schema built for another index's test) or the tuple is empty
+    (a test that keeps the retry off integration_log)."""
+    if not INTEGRATION_LOG_SEARCH_INDEXES:
+        return None
+    [(table, name, _columns)] = INTEGRATION_LOG_SEARCH_INDEXES
+    if bind.execute(sa.text("SELECT to_regclass(:t)"), {"t": table}).scalar() is None:
+        return None
+    return index_valid(bind, table, name)
+
+
+def analyze_after_search_index_build(bind, was_valid) -> None:
+    """ANALYZE integration_log once the search index has just become VALID.
+
+    Postgres keeps statistics on an index EXPRESSION only from an ANALYZE run after the index
+    exists. Without them the planner guesses ~100 matches for every search term, so a common term
+    (a channel name, 216k rows of 1.3M) went through the trigram index and a full sort: 3-4 s,
+    against 70-160 ms once analyzed (sandbox, 1.3M rows, 12 Nov 2026). Autovacuum would only
+    re-analyze after ~10% of the table changed, days on this table. ANALYZE samples a fixed
+    30k rows (0.6 s there) and does not block writers. Under the migration limits; a failure is
+    a WARNING, never an error: the search still answers, only a common term is slower."""
+    if was_valid is True or search_index_valid(bind) is not True:
+        return
+    table = INTEGRATION_LOG_SEARCH_INDEXES[0][0]
+    previous = (
+        bind.execute(sa.text("SELECT current_setting('lock_timeout')")).scalar(),
+        bind.execute(sa.text("SELECT current_setting('statement_timeout')")).scalar(),
+    )
+    _set_limits(bind, *migration_timeouts())
+    try:
+        bind.execute(sa.text(f"ANALYZE {table}"))
+    except sa.exc.DBAPIError as exc:
+        log.warning(
+            "ANALYZE %s after building its search index failed (%s); autovacuum analyzes it later.",
+            table, str(getattr(exc, "orig", exc)).strip().splitlines()[0],
+        )
+    finally:
+        _set_limits(bind, *previous)

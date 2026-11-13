@@ -99,10 +99,13 @@ def client(db, perms, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: principal
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
     app.dependency_overrides[apply_company_scope] = _override_scope
+    real_check = UserPermissionService.check_user_has_permission
+
+    # Only the actor is faked; a contact's linked user is checked for real (COST-ACCESS-UNIFIED).
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
-        lambda self, uid, slug: slug in perms["granted"],
+        lambda self, uid, slug: (slug in perms["granted"]) if uid == actor.id else real_check(self, uid, slug),
     )
     try:
         yield TestClient(app)
@@ -366,8 +369,9 @@ def test_a1_10_change_rows_carry_facet_label_before_after_and_human_added_remove
     fr = by_facet["field_reveals"]
     assert fr["label"] == "Field reveals"
     assert fr["before"] == sorted([SELLABLE, PLACED, *DO_KEYS])
-    assert fr["after"] == sorted([COST, SELLABLE, *DO_KEYS])
-    assert fr["added"] == ["Last purchase cost"]
+    # COST-ACCESS-UNIFIED: the cost key is not part of the copied set, so the source's stored cost row adds nothing.
+    assert fr["after"] == sorted([SELLABLE, *DO_KEYS])
+    assert fr["added"] == []
     assert fr["removed"] == [LABELS[PLACED]]
 
     aa = by_facet["agent_access"]
@@ -673,10 +677,10 @@ def _facets(row):
 
 def test_do_default_on_copy_from_a_fresh_source_leaves_every_do_key_on_for_the_target(client, db):
     # The target differs on reveals (it holds one extra key), so the copy really writes them.
-    source, target = _contact(db, "freshsrc"), _contact(db, "freshtgt", reveals=[COST])
+    source, target = _contact(db, "freshsrc"), _contact(db, "freshtgt", reveals=[SELLABLE])
     assert _post(client, source, [target], dry_run=False).status_code == 200
     assert contact_field_reveal_service.granted_keys(db, target.id) == DO_KEYS
-    assert COST not in contact_field_reveal_service.granted_keys(db, target.id)
+    assert SELLABLE not in contact_field_reveal_service.granted_keys(db, target.id)
     assert _false_do_rows(db, target.id) == [], "a fresh source must not hide any DO field on the target"
 
 
@@ -708,3 +712,50 @@ def test_do_default_on_dry_run_shows_exactly_the_warehouse_difference(client, db
     assert [c["facet"] for c in row["changes"]] == ["field_reveals"], row["changes"]
     change = row["changes"][0]
     assert change["removed"] == [LABELS[WAREHOUSE]] and change["added"] == [], change
+
+
+# ---------------------------------------------------------------- COST-ACCESS-UNIFIED AC-7
+
+
+def _cost_rows_of(db, contact_id: str) -> list[tuple[str, bool]]:
+    db.expire_all()
+    return sorted(
+        (r.field_key, bool(r.granted))
+        for r in db.query(ContactFieldReveal).filter(
+            ContactFieldReveal.respond_contact_id == contact_id, ContactFieldReveal.field_key == COST
+        )
+    )
+
+
+def test_cost_unified_ac7_copy_creates_no_cost_row_on_a_target_without_one(client, db):
+    source, target = _contact(db, "costsrc", reveals=[COST, SELLABLE]), _contact(db, "costtgt")
+    assert _post(client, source, [target], dry_run=False).status_code == 200
+    assert _cost_rows_of(db, target.id) == []
+    assert COST not in contact_field_reveal_service.granted_keys(db, target.id)
+    assert SELLABLE in contact_field_reveal_service.granted_keys(db, target.id)  # other keys still copy
+
+
+def test_cost_unified_ac7_copy_leaves_a_target_cost_row_exactly_as_it_was(client, db):
+    # The source holds NO cost row, the target holds a granted one: the old copy revoked it.
+    source, target = _contact(db, "costsrc2", reveals=[SELLABLE]), _contact(db, "costtgt2", reveals=[COST])
+    assert _post(client, source, [target], dry_run=False).status_code == 200
+    assert _cost_rows_of(db, target.id) == [(COST, True)]
+
+
+def test_cost_unified_ac7_copy_does_not_change_the_targets_cost_visibility(client, db):
+    from tests._cost_viewer_seed import cost_viewer
+
+    source, target = _contact(db, "costsrc3", reveals=[COST]), _contact(db, "costtgt3")
+    cost_viewer(db, target.id)
+    assert COST in contact_field_reveal_service.granted_keys(db, target.id)
+    assert _post(client, source, [target], dry_run=False).status_code == 200
+    assert COST in contact_field_reveal_service.granted_keys(db, target.id)
+    assert _cost_rows_of(db, target.id) == []
+
+
+def test_cost_unified_ac7_a_cost_only_difference_is_not_a_difference(client, db):
+    """Source and target differ only by a stored cost row: nothing to copy, so the target is `unchanged`."""
+    source, target = _contact(db, "costsrc4", reveals=[COST]), _contact(db, "costtgt4")
+    body = _post(client, source, [target], dry_run=True).json()
+    assert body["results"][0]["status"] == "unchanged", body
+    assert "field_reveals" not in {c["facet"] for c in body["results"][0]["changes"]}

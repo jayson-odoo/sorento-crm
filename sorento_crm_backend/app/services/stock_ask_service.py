@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.utils.product_display import code_with_name
 from app.services.queue_service import enqueue_job
 from app.services.respond_messaging_service import send_text_or_template
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -422,7 +423,7 @@ def _log(
             business_id=facts.get("ask_id") or facts["turn_id"],
             external_reference=identifier,
             direction="outbound",
-            endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+            endpoint=respond_endpoint(f"/v2/contact/id:{identifier}/message"),
             http_method="POST",
             status=status,
             status_code=status_code,

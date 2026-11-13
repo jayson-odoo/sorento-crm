@@ -13,6 +13,10 @@ export interface StockInquiry {
   item_description?: string | null;
   project_customer?: string | null;
   project_name?: string | null;
+  /** The registered project (PROJECT-RELATED-RECORDS); shown as code + title, never the id. */
+  project_id?: string | null;
+  project_code?: string | null;
+  project_title?: string | null;
   quantity?: string | null;
   delivery_date?: string | null;
   remark?: string | null;
@@ -104,6 +108,8 @@ export interface StockInquiryFormData {
   item_description?: string;
   project_customer?: string;
   project_name?: string;
+  /** null clears the link. */
+  project_id?: string | null;
   quantity?: string;
   delivery_date?: string;
   remark?: string;

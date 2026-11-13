@@ -191,6 +191,31 @@ def _decrypt_workspace_key(workspace) -> Optional[str]:
         return None
 
 
+# The ONE place the Respond.io API host is written down. Every request URL and every
+# integration-log endpoint label is built from `resolve_respond_base_url`, so a test copy
+# that sets RESPOND_BASE_URL to a `.invalid` host can never reach the real API
+# (RESPOND-BASE-URL-LEAK; guarded by tests/test_respond_base_url_single_source.py).
+RESPOND_DEFAULT_BASE_URL = "https://api.respond.io"
+
+
+def resolve_respond_base_url(workspace_base_url: Optional[str] = None) -> str:
+    """Respond.io API base URL: env RESPOND_BASE_URL > workspace base_url > default.
+
+    The env override wins over a workspace row on purpose: a prod-clone database carries
+    the real workspace rows, and the env is the only lever a test copy controls.
+    """
+    for candidate in (settings.respond_base_url, workspace_base_url, RESPOND_DEFAULT_BASE_URL):
+        value = (candidate or "").strip()
+        if value:
+            return value.rstrip("/")
+    return RESPOND_DEFAULT_BASE_URL
+
+
+def respond_endpoint(path: str, workspace_base_url: Optional[str] = None) -> str:
+    """Full Respond.io URL for ``path`` (``/v2/...``), for request URLs and log labels alike."""
+    return f"{resolve_respond_base_url(workspace_base_url)}/{path.lstrip('/')}"
+
+
 def _resolve_workspace_credentials(
     db=None,
     *,
@@ -283,7 +308,7 @@ class RespondClient:
                     "RespondClient: no workspace API key resolved; falling back to "
                     "deprecated env RESPOND_API_KEY. Configure the workspace API key."
                 )
-        self.base_url = (base_url or settings.respond_base_url or "https://api.respond.io").rstrip("/")
+        self.base_url = resolve_respond_base_url(base_url)
         self.api_key = api_key
         self.space_id = space_id or settings.respond_space_id
 
@@ -910,6 +935,7 @@ class IntegrationLogService:
         limit: int = 50,
         sort: Optional[str] = None,
         sort_dir: Optional[str] = None,
+        search: Optional[str] = None,
         status: Optional[list[str] | str] = None,
         integration_channel: Optional[list[str] | str] = None,
         business_table: Optional[list[str] | str] = None,
@@ -969,6 +995,8 @@ class IntegrationLogService:
                     q = q.filter(
                         IntegrationLog.error_message.ilike(f"%{term}%", escape="\\")
                     )
+
+            q = self._apply_search(q, search)
 
             offset = (page - 1) * limit
             total, total_capped = self._capped_count(q, offset)
@@ -1034,6 +1062,43 @@ class IntegrationLogService:
             logger.error(f"Error in list_integration_logs: {str(e)}", exc_info=True)
             raise
     
+    @staticmethod
+    def _apply_search(q, search: Optional[str]):
+        """The list's search box (INTLOG-SEARCH, INTLOG-SPEED-2).
+
+        Every term is a case-insensitive substring of one search text per row: channel, business
+        table, business id (the grid shows its first 8 characters), endpoint, external reference,
+        error code, error message, id and correlation id (``online_index.INTEGRATION_LOG_SEARCH_EXPR``).
+        LIKE wildcards and backslashes in the term are literal. A term that is a UUID in another
+        spelling (upper case, no dashes, braces) is also searched in its stored form.
+
+        One ILIKE on one expression, not an OR across columns: the GIN trigram index
+        ``ix_integration_log_search_trgm`` is built on exactly that expression, so a term that
+        matches few rows (a Business ID) is an index lookup instead of a read of the whole table.
+        """
+        import uuid as _uuid
+
+        from sqlalchemy import literal_column, or_
+
+        from app.utils.online_index import INTEGRATION_LOG_SEARCH_EXPR
+
+        term = (search or "").strip()
+        if not term:
+            return q
+        terms = [term]
+        try:
+            canonical = str(_uuid.UUID(term))
+        except ValueError:
+            canonical = None
+        if canonical is not None and canonical != term.lower():
+            terms.append(canonical)
+        text = literal_column(INTEGRATION_LOG_SEARCH_EXPR)
+        matches = []
+        for t in terms:
+            escaped = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            matches.append(text.ilike(f"%{escaped}%", escape="\\"))
+        return q.filter(or_(*matches))
+
     @staticmethod
     def _capped_count(q, offset: int) -> tuple[int, bool]:
         """Count the filtered rows, but never more than ``offset + INTEGRATION_LOG_COUNT_CAP``.
@@ -1345,7 +1410,7 @@ def log_respond_send(
                 direction="outbound",
                 endpoint=(
                     endpoint
-                    or f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
+                    or respond_endpoint(f"/v2/contact/id:{identifier or ''}/message")
                 ),
                 http_method="POST",
                 status="failed" if exc is not None else "success",

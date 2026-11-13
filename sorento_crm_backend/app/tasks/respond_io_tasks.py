@@ -13,6 +13,7 @@ polling was removed (plan: docs/plans/PLAN-whatsapp-template-fallback.md).
 """
 import logging
 from typing import Optional
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ def _send_and_log(
                     business_id=business_id,
                     external_reference=identifier,
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier}/message"),
                     http_method="POST",
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
@@ -188,7 +189,7 @@ def _send_and_log(
                     business_id=business_id,
                     external_reference=identifier or "",
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier or ''}/message"),
                     http_method="POST",
                     status="failed",
                     status_code=resp_code,
@@ -795,7 +796,7 @@ def close_respond_conversation(tracking_id: str) -> dict:
                 "close_respond_conversation: no respond_io_id for %s; skipping", tracking_id
             )
             return {"tracking_id": tracking_id, "status": "skipped_no_respond_id"}
-        endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/conversation/status"
+        endpoint = respond_endpoint(f"/v2/contact/id:{identifier}/conversation/status")
         payload = {"status": "close", "category": "Resolved", "summary": "Resolved from Sorento CRM SLA tracking."}
         try:
             response = RespondClient.for_contact_id(
@@ -847,7 +848,7 @@ def set_respond_conversation_assignee(tracking_id: str, respond_user_id: str) ->
                 "set_respond_conversation_assignee: no respond_io_id for %s; skipping", tracking_id
             )
             return {"tracking_id": tracking_id, "status": "skipped_no_respond_id"}
-        endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/conversation/assignee"
+        endpoint = respond_endpoint(f"/v2/contact/id:{identifier}/conversation/assignee")
         payload = {"assigneeId": assignee_id}
         try:
             response = RespondClient.for_identifier(db, identifier).set_conversation_assignee(

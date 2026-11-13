@@ -149,7 +149,7 @@ Without that grant:
 * The scope question is never asked - there is nothing to choose, so the report simply runs against delivery orders only, with no offer to pick.
 * If you explicitly ask for sales orders (the word "SO", "sales order", or "both"), you get one extra line after the four header lines and before the delivery order block: `Sales order figures are not enabled for your account.` - then the delivery order outstanding block runs as normal.
 
-**Field reveals** is the same card that also gates the chatbot's last purchase cost answer - one screen, one switch per restricted answer, each off by default until an admin ticks it for that contact.
+**Field reveals** is one screen with one switch per restricted answer, each off by default until an admin ticks it for that contact. Purchase cost is not on it: it follows the linked user's **View Product Cost** permission.
 
 ## See also
 
