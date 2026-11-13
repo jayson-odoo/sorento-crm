@@ -474,6 +474,9 @@ logger = logging.getLogger(__name__)
 #: product entity whose canonical_code was dropped; `resolve_gate.pick_near_code_first` offers it
 #: first in the did-you-mean the raw then asks.
 NEAR_PICK_KEY = "near_pick"
+#: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose parser-corrected code is offered
+#: even when the raw resolved to it (stock and incoming); every other ask keeps today's answer.
+_CLOSE_CODE_ASKS = frozenset({"inventory", "incoming"})
 
 
 def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
@@ -496,7 +499,9 @@ def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
     return first if isinstance(first, dict) else {}
 
 
-def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any] | None:
+def _pick_as_trgm_neighbour(
+    db: "Session", raw: str, pick: str, *, offer_resolved: bool = False
+) -> dict[str, Any] | None:
     """The resolver's own row for the parser's `pick` when it is a trigram neighbour of the typed
     `raw`, else None: the raw is resolved once (`_product_resolution`).
 
@@ -505,7 +510,12 @@ def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any
     has the pick as a near code when the pick scores at least `ENTITY_MISS_SUGGEST_FLOOR` against
     the raw, scored as `entity_resolver._trgm_lookup` scores. Its row then comes from the
     resolver too (the pick's own resolution), offered as that trigram neighbour. A raw that
-    resolved (a narrowing to one prefix match included) answers as today."""
+    resolved (a narrowing to one prefix match included) answers as today.
+
+    `offer_resolved` (CHATBOT-CLOSE-CODES B1, crew ruling (a), stock and incoming asks): a raw
+    that resolved to the pick is still offered it when the pick corrects or completes what was
+    typed (`answer.corrects_or_completes`: INLT for INLET, SRTWC287-S for SRTWC287-S-150); a
+    pick that restates the raw (dashes and spaces, or words the parser mapped) answers as today."""
     # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
     from sqlalchemy import text
 
@@ -527,7 +537,14 @@ def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any
         ):
             return dict(row)
     if resolution.get("resolved") is True or resolution.get("matches"):
-        return None
+        from app.services.chatbot.lanes.business.answer import corrects_or_completes
+
+        to_pick = any(
+            isinstance(m, dict) and token_key(str(m.get("canonical_code") or "")) == wanted
+            for m in resolution.get("matches") or []
+        )
+        if not (offer_resolved and to_pick and corrects_or_completes(raw, pick)):
+            return None
     token = str(_token_of({"raw": raw, "hint": _PRODUCT_HINT}) or "")
     pn = _strip_all_ws(token).lower() or token.lower()
     try:
@@ -999,7 +1016,9 @@ def ground(
 
             typed = token_key(raw)
             if typed != token_key(canonical) and typed not in roster_codes and not _types_the_code_whole(raw, canonical):
-                near = _pick_as_trgm_neighbour(db, raw, canonical)
+                near = _pick_as_trgm_neighbour(
+                    db, raw, canonical, offer_resolved=verdict.get("domain_hint") in _CLOSE_CODE_ASKS
+                )
                 if near is not None:
                     notes.append({"from": hint, "raw": raw, "to": f"did you mean: {canonical} (a typed code corrected)"})
                     entity = {**entity, "canonical_code": None, NEAR_PICK_KEY: near}
