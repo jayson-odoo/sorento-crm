@@ -231,15 +231,16 @@ def classify(method: str, path_format: str):
     """How a limited user reaches this route: ``"open"`` (no id to check), an anchor resolver
     (or ``_MODULE_RULE``) for its first id, or ``None`` when it is refused."""
     path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
+    if "autocount" in path.split("/"):
+        # An ERP write (AC-QTSO-CRM) is an admin's job: refused outright, own project included,
+        # and ahead of the open prefixes so no future AutoCount route slips under one.
+        return None
     if path.startswith(_REFERENCE_PREFIXES) or path in _REFERENCE_PATHS:
         return "open"
     if (method, path) in _REFERENCE_ROUTES:
         return "open"
     if path.startswith(_OWN_PERMISSION_PREFIXES):
         return "open"
-    if "autocount" in path.split("/"):
-        # An ERP write (AC-QTSO-CRM) is an admin's job: refused outright, own project included.
-        return None
     names = _PARAM.findall(path)
     if not names:
         return "open" if (method, path) in _ID_LESS else None
