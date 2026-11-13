@@ -519,3 +519,94 @@ def test_G7_the_service_link_guard_refuses_a_draft_row(staged):
     with pytest.raises(AppException) as excinfo:
         ProjectOrderInquiryService(w.db)._assert_linkable(row)
     assert excinfo.value.status_code == 409
+
+
+# =============================================================================
+# S1 (security review gap) - a create-only requester on `company_scope=grants`
+# =============================================================================
+
+_DOC_TOP = ("sales_orders", "purchase_orders", "spos", "incoming_pl", "incoming", "holds")
+
+
+@pytest.fixture
+def create_only_grants():
+    """A requester holding ONLY the spare part create grant, granted companies A and B; a third
+    company C is not granted. B and C each own a bin carrying stock of one product."""
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+    from app.main import app
+    from app.models.base import company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+    from tests import test_stock_detail_company_grants as sd
+    from tests._pg_fixture import blank_session
+    from tests.chatbot.agent._seed import seed_user
+
+    with blank_session() as db:
+        with company_scope(db, frozenset({sd.COMPANY_A})):
+            company_b = sd._company(db)
+            company_c = sd._company(db)
+            requester = seed_user(
+                db, contact_pk=None, slugs=("procurement.spare_part_requests.create",)
+            )
+            sd._grant(db, requester, sd.COMPANY_A)
+            sd._grant(db, requester, company_b)
+            product = sd._product(db)
+            with company_scope(db, frozenset({company_b})):
+                bin_b = sd._warehouse(db, company_b)
+                sd._stock(db, product, bin_b, on_hand=7)
+            with company_scope(db, frozenset({company_c})):
+                bin_c = sd._warehouse(db, company_c)
+                sd._stock(db, product, bin_c, on_hand=9)
+            who = {"user": {"id": requester, "email": "r@zzt.test", "auth_method": "password"}}
+
+            def _db():
+                yield db
+
+            app.dependency_overrides[get_db] = _db
+            app.dependency_overrides[get_current_user] = lambda: who["user"]
+            app.dependency_overrides[get_current_user_or_api_key] = lambda: who["user"]
+            app.dependency_overrides[apply_company_scope] = lambda: frozenset({sd.COMPANY_A})
+            try:
+                with TestClient(app) as c:
+                    yield SimpleNamespace(c=c, product=product, bin_b=bin_b, bin_c=bin_c)
+            finally:
+                app.dependency_overrides.clear()
+
+
+def _assert_no_documents(body: dict) -> None:
+    for key in _DOC_TOP:
+        assert not body.get(key), f"{key} must be empty for a create-only requester: {body.get(key)!r}"
+    for loc in body.get("locations") or []:
+        for key in _DOC_TOP:
+            assert not loc.get(key), f"locations[].{key} must be empty: {loc.get(key)!r}"
+
+
+def test_S1_guard_stock_status_grants_gives_a_create_only_requester_no_documents(create_only_grants):
+    g = create_only_grants
+    res = g.c.get(
+        "/api/v1/inventory/stock-status",
+        params={"product_id": str(g.product.id), "company_scope": "grants"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    _assert_no_documents(body)
+    ids = {loc["warehouse_id"] for loc in body["locations"]}
+    assert str(g.bin_b.id) in ids, "the granted company's bin is listed (quantities)"
+    assert str(g.bin_c.id) not in ids, "an ungranted company's bin never is"
+
+
+def test_S1_guard_stock_detail_grants_gives_a_create_only_requester_no_documents(create_only_grants):
+    g = create_only_grants
+    url = "/api/v1/project-sales/fulfilment-planning/stock-detail"
+    ok = g.c.get(
+        url,
+        params={"product_id": str(g.product.id), "warehouse_id": str(g.bin_b.id), "company_scope": "grants"},
+    )
+    assert ok.status_code == 200, ok.text
+    _assert_no_documents(ok.json())
+    denied = g.c.get(
+        url,
+        params={"product_id": str(g.product.id), "warehouse_id": str(g.bin_c.id), "company_scope": "grants"},
+    )
+    assert denied.status_code == 404, denied.text

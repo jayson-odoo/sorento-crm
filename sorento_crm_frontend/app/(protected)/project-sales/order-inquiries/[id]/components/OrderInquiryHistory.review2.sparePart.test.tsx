@@ -115,3 +115,14 @@ describe('R9: History rows carry one value per element, no " · " joins', () => 
     ).toBeGreaterThan(0);
   });
 });
+
+describe('R15: History row text reads cleanly for copy and screen readers', () => {
+  it('whitespace separates the date-time from "by <person>", still with no " · "', async () => {
+    mount();
+    await screen.findByText('Approved');
+    const [approved] = entries();
+    const text = approved.textContent ?? '';
+    expect(text, `row text: ${text}`).toMatch(/\d{1,2}:\d{2}( (am|pm))?\s+by Approver B/i);
+    expect(text).not.toContain('·');
+  });
+});

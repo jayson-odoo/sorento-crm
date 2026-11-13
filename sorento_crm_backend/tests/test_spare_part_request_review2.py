@@ -308,3 +308,13 @@ def test_R8_a_view_only_approver_reaches_the_list_and_sees_what_they_decide(stag
     res = w.as_user(approver).get(SPR, params={"limit": 100})
     assert res.status_code == 200, res.text
     assert str(inquiry.id) in [i["id"] for i in res.json()["data"]]
+
+
+def test_R16_the_stale_decision_message_ends_with_a_full_stop(restarted):
+    w = restarted
+    res = w.as_user(w.stage1.tier1).post(
+        f"{SPR}/{w.inquiry.id}/approve", json={"note": None, "submitted_at": w.stale}
+    )
+    assert res.status_code == 409, res.text
+    message = _message(res)
+    assert message.endswith("."), f"sibling conflict messages end with a full stop, got {message!r}"
