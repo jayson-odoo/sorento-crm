@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import MAX_PAGE_LIMIT
+from app.schemas.service_job_products import ServiceJobProductCreate, ServiceJobProductUpdate
 from app.schemas.service_jobs import (
     AssignJobRequest,
     ConfirmJobRequest,
@@ -15,8 +16,9 @@ from app.schemas.service_jobs import (
     ServiceJobUpdate,
     TransitionJobRequest,
 )
+from app.services import service_job_product_service as lines
 from app.services import service_job_service as svc
-from app.utils.multi_value import multi_values
+from app.utils.multi_value import multi_choices, multi_values
 
 router = APIRouter()
 
@@ -33,6 +35,7 @@ def list_service_jobs(
     dir: str = Query("desc", pattern="^(asc|desc)$"),
     status: Optional[List[str]] = Query(None),
     technician_id: Optional[List[str]] = Query(None),
+    warranty_summary: Optional[List[str]] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key(VIEW)),
@@ -47,6 +50,7 @@ def list_service_jobs(
         direction=dir,
         statuses=multi_values(status, "status"),
         technician_ids=multi_values(technician_id, "technician"),
+        warranty_summaries=multi_choices(warranty_summary, lines.SUMMARY_ORDER, "warranty_summary"),
         date_from=date_from,
         date_to=date_to,
     )
@@ -128,3 +132,46 @@ def transition_service_job(
 ):
     svc.stamp_actor(db, current_user)
     return svc.transition(db, job_id, payload.to, payload.reason)
+
+
+@router.get("/service-jobs/{job_id}/products")
+def list_job_products(
+    job_id: str,
+    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    return lines.list_lines(db, job_id)
+
+
+@router.post("/service-jobs/{job_id}/products", status_code=201)
+def add_job_product(
+    job_id: str,
+    payload: ServiceJobProductCreate,
+    current_user: dict = Depends(require_permission(DISPATCH)),
+    db: Session = Depends(get_db),
+):
+    svc.stamp_actor(db, current_user)
+    return lines.add_line(db, job_id, payload)
+
+
+@router.patch("/service-jobs/{job_id}/products/{line_id}")
+def update_job_product(
+    job_id: str,
+    line_id: str,
+    payload: ServiceJobProductUpdate,
+    current_user: dict = Depends(require_permission(DISPATCH)),
+    db: Session = Depends(get_db),
+):
+    svc.stamp_actor(db, current_user)
+    return lines.update_line(db, job_id, line_id, payload)
+
+
+@router.delete("/service-jobs/{job_id}/products/{line_id}")
+def delete_job_product(
+    job_id: str,
+    line_id: str,
+    current_user: dict = Depends(require_permission(DISPATCH)),
+    db: Session = Depends(get_db),
+):
+    svc.stamp_actor(db, current_user)
+    return lines.delete_line(db, job_id, line_id)

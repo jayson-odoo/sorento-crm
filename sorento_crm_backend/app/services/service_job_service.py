@@ -146,8 +146,13 @@ def get_row(db: Session, job_id: str):
 
 
 def get_job(db: Session, job_id: str) -> Dict[str, Any]:
+    from app.services.service_job_product_service import warranty_for_job
+
     db.expire_all()
-    return serialize(get_row(db, job_id))
+    row = get_row(db, job_id)
+    data = serialize(row)
+    data["warranty"] = warranty_for_job(db, row[0].id)  # computed now, never stored
+    return data
 
 
 def _text(column):
@@ -178,7 +183,10 @@ def list_jobs(
     technician_ids: Optional[Sequence[str]],
     date_from: Optional[date],
     date_to: Optional[date],
+    warranty_summaries: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
+    from app.services.service_job_product_service import SUMMARY_ORDER, summaries_for_jobs
+
     q = _base_query(db)
     if query and query.strip():
         like = f"%{query.strip()}%"
@@ -200,14 +208,35 @@ def list_jobs(
     if date_to:
         q = q.filter(ServiceJob.scheduled_from < myt_day_bounds(date_to)[1])
 
-    total = q.count()
-    column = SORTS.get(sort or "", SORTS["job_number"])()
-    order = asc(column) if (direction or "desc").lower() == "asc" else desc(column)
-    if not sort:
-        order = desc(ServiceJob.created_at)
-    rows = q.order_by(order.nulls_last(), ServiceJob.id).offset((page - 1) * limit).limit(limit).all()
+    if sort == "warranty_summary" or warranty_summaries:
+        # The summary is computed, so filter and order happen on the server over every matching job
+        # (one batched resolution), then the page is cut.
+        ids = [str(i) for (i,) in q.with_entities(ServiceJob.id).order_by(ServiceJob.id).all()]
+        summaries = summaries_for_jobs(db, ids)
+        if warranty_summaries:
+            ids = [i for i in ids if summaries.get(i) in warranty_summaries]
+        rank = {key: n for n, key in enumerate(SUMMARY_ORDER)}
+        sign = 1 if (direction or "desc").lower() == "asc" else -1
+        ids.sort(key=lambda i: sign * rank.get(summaries.get(i), len(rank)))  # stable: ties stay by id
+        total = len(ids)
+        page_ids = ids[(page - 1) * limit : page * limit]
+        found = {str(r[0].id): r for r in _base_query(db).filter(ServiceJob.id.in_(page_ids)).all()}
+        rows = [found[i] for i in page_ids if i in found]
+    else:
+        total = q.count()
+        column = SORTS.get(sort or "", SORTS["job_number"])()
+        order = asc(column) if (direction or "desc").lower() == "asc" else desc(column)
+        if not sort:
+            order = desc(ServiceJob.created_at)
+        rows = q.order_by(order.nulls_last(), ServiceJob.id).offset((page - 1) * limit).limit(limit).all()
+        summaries = summaries_for_jobs(db, [str(r[0].id) for r in rows])
+    data = []
+    for r in rows:
+        item = serialize(r)
+        item["warranty_summary"] = summaries.get(str(r[0].id))
+        data.append(item)
     return {
-        "data": [serialize(r) for r in rows],
+        "data": data,
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
     }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, func, text
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -80,4 +80,36 @@ class ServiceJob(Base, CompanyScopedMixin):
         Index("ix_service_jobs_status_id", "status_id"),
         Index("ix_service_jobs_technician_id", "technician_id"),
         Index("ix_service_jobs_scheduled_from", "scheduled_from"),
+    )
+
+
+class ServiceJobProduct(Base, CompanyScopedMixin):
+    """One product on a service job, with the facts the warranty answer needs (after-sales P2).
+
+    The verdicts are never stored: they are computed from the policy in force when read.
+    """
+
+    __tablename__ = "service_job_products"
+    __audit_parent__ = "service_job_id"  # history rolls up to the job
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    service_job_id = Column(
+        UUID(as_uuid=False), ForeignKey("service_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    kind_id = Column(
+        UUID(as_uuid=False), ForeignKey("warranty_product_kinds.id", ondelete="RESTRICT"), nullable=True
+    )
+    purchase_date = Column(Date, nullable=True)
+    # lookup_options.id of the after_sales_defect_type set
+    defect_type_id = Column(
+        UUID(as_uuid=False), ForeignKey("lookup_options.id", ondelete="SET NULL"), nullable=True
+    )
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        Index("ix_service_job_products_job", "service_job_id"),
+        Index("ix_service_job_products_kind_id", "kind_id"),
     )
