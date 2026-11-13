@@ -258,11 +258,15 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             family = [_row(p.canonical_code, str(p.uuid), "family") for p in probed if p.uuid and p.canonical_code]
             if family:
                 break
+        # A-92: plus the code's catalogue family (slice 5's read), so a sibling holding the size
+        # is offered beside it.
+        family = _size_family(db, [str(exact[0]["canonical_code"]), typed], family)
         if not family:
             # The code alone, when the chat may offer it (owner Q3); else the miss offers nothing
             # (R4: a code is never answered for a size it does not store).
             alone = _offerable_rows(db, [exact[0]])
             family = [_row(str(r["canonical_code"]), str(r["uuid"]), "family") for r in alone]
+        family = _size_first(db, family, typed, value, keys)
         miss = {
             "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
             # The code exists; what is missing is the size, so the reply names the code itself.
@@ -277,6 +281,69 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         unresolved = resolved.setdefault("unresolved_tokens", [])
         if token not in unresolved:
             unresolved.append(token)
+    # A-92: the one code MISSED (no exact code, e.g. a typed fragment the lone-substring offer
+    # caught): its close codes gain the catalogue family, the code holding the size first.
+    for res in resolved.get("resolutions") or []:
+        if not isinstance(res, dict) or res.get("resolved") is True or token_key(res.get("token")) != owner:
+            continue
+        typed = _typed_of(parser, res.get("token"))
+        if typed is None:
+            continue
+        seed = [a for a in res.get("alternatives") or [] if isinstance(a, dict)]
+        # The family of the typed code and of each close code it already has (a fragment's
+        # own family word may not reach the catalogue family its close code sits in).
+        words = [typed, *(str(a.get("canonical_code") or "") for a in seed)]
+        family = _size_first(db, _size_family(db, words, seed), typed, value, keys)
+        if family:
+            res.update({"alternatives": family, SIZE_ASKED: said})
+            resolved["spec_none"] = []
+
+
+def _size_family(db: Any, words: list[str], seed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A-92: `seed` and the catalogue family of each word (`product_family.family_code_for`, then
+    `product_code_family._family_rows`, slice 5's read: stored family codes, sets, the code
+    pattern), offerable only (`offerable_products`), each code once, seed first."""
+    from app.models.product import Product, offerable_products
+    from app.services.product_code_family import _CODE_WORD, _family_rows, _fold
+    from app.services.product_family import family_code_for
+
+    codes: list[str] = []
+    for word in dict.fromkeys(w for w in words if w):
+        key = _fold(family_code_for(word) or "")
+        if key and _CODE_WORD.match(key):
+            codes += [code for code, _values, _text in _family_rows(db, key, loose=True)]
+    rows = list(seed)
+    if codes:
+        with db.begin_nested():
+            ids = dict(
+                db.query(Product.product_code, Product.id)
+                .filter(Product.product_code.in_(sorted(set(codes))), offerable_products())
+                .all()
+            )
+        rows += [_row(code, str(ids[code]), "family") for code in dict.fromkeys(codes) if code in ids]
+    unique = list({str(r.get("uuid")): r for r in reversed(rows) if r.get("uuid")}.values())[::-1]
+    return _offerable_rows(db, unique)
+
+
+def _size_first(db: Any, rows: list[dict[str, Any]], typed: str, value: float, keys: list[str]) -> list[dict[str, Any]]:
+    """A-92: the codes holding the asked size first (stored under one of its keys, or holding
+    every typed part and the size number as a part of the code: `answer.holds_every_typed_part`,
+    `answer.typed_code_parts`), then the rest; order kept within each."""
+    from app.services.chatbot.lanes.business.answer import (
+        holds_every_typed_part,
+        typed_code_parts,
+    )
+
+    facts = _product_facts(db, [str(r["uuid"]) for r in rows if r.get("uuid")])
+    number = str(_plain(value))
+
+    def holds(row: dict[str, Any]) -> bool:
+        values = (facts.get(str(row.get("uuid"))) or ({}, ""))[0]
+        code = str(row.get("canonical_code") or "")
+        stored = any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys)
+        return stored or (holds_every_typed_part(typed, code) and number in typed_code_parts(code))
+
+    return sorted(rows, key=lambda r: not holds(r))
 
 
 def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
