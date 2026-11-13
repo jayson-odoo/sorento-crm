@@ -125,21 +125,22 @@ export function OrderChangeNoticeLines({
   return (
     <div>
       {/* The form card is about 853 px at 1280: the columns add up to 840 (Remark takes the rest,
-          at least 120), so nothing scrolls sideways on a desktop; a phone scrolls the table in this
+          at least 96), so nothing scrolls sideways on a desktop; a phone scrolls the table in this
           wrapper, never the page (SampleRequestLines). A date cell holds "DD/MM/YYYY" beside the
-          34 px calendar button through the picker's own compact props (text-xs, gap-1). */}
+          34 px calendar button through the picker's own compact props (text-xs, gap-1); the
+          quantity boxes use the same compact padding so 842 shows whole beside the number spinner. */}
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[840px] table-fixed text-sm">
           <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="w-8 px-1 py-2 text-left">No.</th>
               <th className="w-[9.25rem] px-1 py-2 text-left">Item Code</th>
-              <th className="w-16 px-1 py-2 text-left">Qty before</th>
-              <th className="w-16 px-1 py-2 text-left">Qty after</th>
+              <th className="w-[4.75rem] px-1 py-2 text-left">Qty before</th>
+              <th className="w-[4.75rem] px-1 py-2 text-left">Qty after</th>
               <th className="w-[9.25rem] px-1 py-2 text-left">Date before</th>
               <th className="w-[9.25rem] px-1 py-2 text-left">Date after</th>
               <th className="w-[4.75rem] px-1 py-2 text-left">Delivered</th>
-              <th className="min-w-[7.5rem] px-1 py-2 text-left">Remark</th>
+              <th className="min-w-[6rem] px-1 py-2 text-left">Remark</th>
               <th className="w-10 px-0.5 py-2">
                 <span className="sr-only">Remove</span>
               </th>
@@ -171,6 +172,7 @@ export function OrderChangeNoticeLines({
                       inputMode="decimal"
                       min={0}
                       aria-label={caption}
+                      className="px-2 text-xs"
                       disabled={disabled}
                       value={line[field]}
                       error={errors[`${field}_${line.key}`]}
@@ -203,6 +205,7 @@ export function OrderChangeNoticeLines({
                     inputMode="decimal"
                     min={0}
                     aria-label="Delivered"
+                    className="px-2 text-xs"
                     disabled={disabled}
                     value={line.delivered_qty}
                     error={errors[`delivered_qty_${line.key}`]}
