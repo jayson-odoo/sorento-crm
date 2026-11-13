@@ -1,14 +1,16 @@
 # UAC: WA-COMPLAINT-INTAKE (issue reports on the ideation path, typed submissions)
 
-Plan: `PLAN-wa-complaint-intake-13nov.md` (card v2). Q1 (type storage), Q2 (who), Q3 (dealers) pending: rows
-marked [Q1]/[Q2] follow the recommendation and change in one place if the answer differs.
+Plan: `PLAN-wa-complaint-intake-13nov.md` (card v2). Q1 answered (a) real ss `type`; Q2 (who), Q3 (dealers) pending with the owner: rows marked [Q2] follow the
+recommendation and change in one place if the answer differs.
 
 ## T: one typed seam
 - T-1 A submission has a type, `idea` or `issue`, from ONE type table (label, required field, ask-back, reply
   copy). Unknown or missing type = `idea` (today's behaviour unchanged for every existing caller).
 - T-2 The bot lane (`handle_capture_turn`) and the agent tool (`crm_idea_create`) both build the ss create through
-  `build_create_payload`, which writes the type through ONE mapping function. [Q1 b] `issue` -> ss
-  `department = "Issue"`; `idea` sends no department. Reading back: one function maps an ss idea to its type.
+  `build_create_payload`, which writes the type through ONE mapping function. Q1 (a), crew 13 Nov: a real ss
+  `type` field (lane SS-IDEA-TYPE). `issue` -> `"type": "issue"`; `idea` sends no `type` (today's payload
+  byte-identical). Reading back: one function maps an ss idea's `type` to the CRM type (missing/unknown = idea).
+  No `department` bridge. The staff embed create forwards `type`; the list forwards `type=` to ss.
 - T-3 The type is read from meaning: the extractor's JSON schema has `type` (enum idea|issue); the agent tool has a
   `type` argument (enum). No keyword lists, no post-parse word guards. Tests: an EN bug report, a Malay bug report
   with a typo, a feature request, a greeting-prefixed report (model scripted in unit tests; live set separately).

@@ -1,6 +1,6 @@
 # PLAN: WhatsApp issue reports via the ideation path (typed submissions)
 
-Status: Build (card v2 posted 13 Nov ~19:30, Q1-Q3 pending; answer-independent parts in build). Track: L (lead pattern).
+Status: Build (card v2 posted 13 Nov ~19:30; Q1 (a) real ss `type` via lane SS-IDEA-TYPE, no department bridge; Q2-Q3 pending; answer-independent parts in build). Track: L (lead pattern).
 Lane: WA-COMPLAINT-INTAKE. Owner ask 13 Nov 2026, demo Mon 16 Nov 09:30.
 UAC: `wa-complaint-intake-acceptance-criteria.md`.
 
@@ -18,7 +18,7 @@ was reverted on this branch (81f26d30, 0c19cf80).
   table (PRINCIPLES "simplest thing"): the owner asked for it explicitly ("we should be able to scale from
   there") and two types exist on day one.
 - The type travels through the ONE existing create builder `ideation_capture_service.build_create_payload`
-  (shared by the bot lane and `crm_idea_create`), via ONE mapping function type -> ss fields (Q1).
+  (shared by the bot lane and `crm_idea_create`), via ONE mapping function type <-> ss `type` field (Q1 a; contract posted as crew-note on #2400).
 - The extractor (`ideation_extractor`) reads the type by meaning (schema enum); `crm_idea_create` takes a
   `type` argument. No keywords.
 - Chat photos/screenshots sent in the 30 min before filing (and after the contact's previous submission) are
