@@ -68,3 +68,20 @@ def test_the_lookup_time_is_the_takeover_check(world, monkeypatch):
     monkeypatch.setattr(direct_ingress, "_lookup_contact", slow)
     event = _inbox_events(_drain_one(world, "time3"))[0]
     assert event["lookup_ms"] >= 200, event
+
+
+def test_the_sender_post_goes_through_the_keep_alive_helper(world, monkeypatch):
+    """CHATBOT-SPEED: the drain's sender POST uses `http_keepalive.post` (one open connection per process); the
+    world's `httpx.post` fake still answers it (the stand-in rule)."""
+    from app.services import http_keepalive
+
+    used: list[str] = []
+    real = http_keepalive.post
+
+    def spy(name, url, **kwargs):
+        used.append(name)
+        return real(name, url, **kwargs)
+
+    monkeypatch.setattr(http_keepalive, "post", spy)
+    _drain_one(world, "time4")
+    assert used, "the sender POST did not go through http_keepalive.post"
