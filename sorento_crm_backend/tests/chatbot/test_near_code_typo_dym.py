@@ -715,8 +715,7 @@ def test_q1w_guard_a_far_pick_outside_the_cap_is_answered_directly(session_facto
 
 
 @PATHS
-@pytest.mark.parametrize("raw,pick", [("SRTUB668-BACK INLT", INLET), ("SRTWT8259 gun metal", "SRTWT8259-GM")],
-                         ids=["inlt_typo_word", "code_and_colour_words"])
+@pytest.mark.parametrize("raw,pick", [("SRTWT8259 gun metal", "SRTWT8259-GM")], ids=["code_and_colour_words"])
 def test_q1w_guard_a_raw_that_resolves_by_narrowing_is_answered_directly(
     session_factory, monkeypatch, stub_access, gate, raw, pick  # noqa: F811
 ):
@@ -733,6 +732,27 @@ def test_q1w_guard_a_raw_that_resolves_by_narrowing_is_answered_directly(
     assert "Did you mean" not in text, text
     assert text.startswith("Stock summary") and f"*Product Code:* {pick}" in text, text
     assert _stocked(c, 0) == [pick], _stocked(c, 0)
+
+
+@PATHS
+@pytest.mark.parametrize("raw,pick", [("SRTUB668-BACK INLT", INLET)], ids=["inlt_typo_word"])
+def test_q1w_a_typo_word_that_resolves_by_narrowing_is_offered_not_answered(
+    session_factory, monkeypatch, stub_access, gate, raw, pick  # noqa: F811
+):
+    """W4 updated (CHATBOT-CLOSE-CODES, crew ruling (a) on parser-corrected codes, 13 Nov): the raw still resolves to
+    one prefix match, but a typo in the code's words ("INLT") is not the code, so the parser's pick is offered, not
+    answered. Was: answered directly (guard of 23 Oct)."""
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
+
+    c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+60000027{2 + len(raw) % 2}{int(gate)}", gate)
+    db = _scoped(session_factory)
+    res = _raw_resolution(db, raw)
+    assert res.get("resolved") is True and [m.get("canonical_code") for m in res.get("matches") or []] == [pick], res
+    assert _similarity(db, pick, raw) >= ENTITY_MISS_SUGGEST_FLOOR, _similarity(db, pick, raw)
+    text = c.say(f"{raw} stock", _ask(raw, pick, gate))
+    assert "Did you mean" in text and pick in text, text  # staff offer shape: "Did you mean:" then "1. <pick> ..."
+    assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's correction: {text!r}"
+    assert _stocked(c, 0) == [], _stocked(c, 0)
 
 
 @PATHS

@@ -190,13 +190,84 @@ def test_r3_5_a_greeting_first_gets_the_same_offer_as_without_it(session_factory
     assert _option_codes(c) == plain_options, (c.stored_question, plain_options)
 
 
-# --------------------------------------------------------------------------- 6. AC-6, parser-corrected code
+# --------------------------------------------------------------------------- 6. parser-corrected codes (crew (a), 13 Nov)
+#
+# The parser stub hands `canonical_code` = the catalogue code. Crew ruling (a): the parser's correction does not make a
+# direct answer. Only a raw equal to the code but for case, dashes and spaces (R5), or a raw the resolver narrows to the
+# code by its own words (R2, the colour words), is answered; a typo in the code or its words (R1, R3) and a lone prefix
+# (R4) are offered.
+
+INLET = "SRTUB668-BACK INLET"
+GM = "SRTWT8259-GM"
+WHO = pytest.mark.parametrize("who", ["dealer", "staff"])
 
 
-@pytest.mark.xfail(strict=True, reason="pending crew ruling on parser-corrected codes")
-def test_r3_6_a_lone_prefix_the_parser_corrected_to_the_full_code_is_still_offered(session_factory, monkeypatch, stub_access):  # noqa: F811
-    raw, full = "SRTWC287-S", "SRTWC287-S-150"
-    c = _console(session_factory, monkeypatch, stub_access, [], **_facts(full))
-    text = c.say(f"{raw} x 3", stock({**product(raw, 3), "canonical_code": full}))
+def _corrected(raw: str, canonical: str, qty: int | None = None) -> dict[str, Any]:
+    return stock({**product(raw, qty), "canonical_code": canonical})
+
+
+def _who(session_factory, monkeypatch, stub_access, who: str, codes: list[str]) -> Console:  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, codes, **_facts(*codes))
+    if who == "staff":
+        c.as_staff()
+        c.stock_on_hand = 12
+    return c
+
+
+def _assert_offered_not_answered(c: Console, text: str, who: str, raw: str, code: str) -> None:
     assert TICK not in text and "Got stock" not in text, f"answered on the parser's correction: {text!r}"
-    assert f"Couldn't find {raw}. Did you mean {full}?" in text, text
+    assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's correction: {text!r}"
+    # Staff keep their own offer shape ("Did you mean:" then "1. <code> - has stock details"), so only the dealer's
+    # wording is pinned.
+    assert "Did you mean" in text and code in text, text
+    if who == "dealer":
+        assert f"Couldn't find {raw.upper()}. Did you mean {code}?" in text, text
+        assert R not in text, text
+        assert _option_codes(c) == [code], c.stored_question
+
+
+def _assert_answered(text: str, who: str, code: str, qty: int) -> None:
+    assert "Did you mean" not in text and "Couldn't find" not in text, text
+    if who == "dealer":
+        assert text == f"{code} x {qty}: {TICK} Got stock.", text
+    else:
+        assert f"*Product Code:* {code}" in text, text
+
+
+@WHO
+def test_r3_6_r1_a_typo_word_the_parser_corrected_is_offered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw = "SRTUB668-BACK INLT"
+    c = _who(session_factory, monkeypatch, stub_access, who, [INLET])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, INLET, 2))
+    _assert_offered_not_answered(c, text, who, raw, INLET)
+
+
+@WHO
+def test_r3_6_r2_a_code_with_colour_words_the_parser_mapped_is_answered_directly(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw = "SRTWT8259 gun metal"
+    c = _who(session_factory, monkeypatch, stub_access, who, [GM])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, GM, 2))
+    _assert_answered(text, who, GM, 2)
+
+
+@WHO
+def test_r3_6_r3_a_letter_the_parser_fixed_in_the_code_is_offered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _who(session_factory, monkeypatch, stub_access, who, CLOSE3[:1])
+    text = c.say(f"{TYPO3} x 3", _corrected(TYPO3, CLOSE3[0], 3))
+    _assert_offered_not_answered(c, text, who, TYPO3, CLOSE3[0])
+
+
+@WHO
+def test_r3_6_r4_a_lone_prefix_the_parser_corrected_to_the_full_code_is_offered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw, full = "SRTWC287-S", "SRTWC287-S-150"  # the console's own code
+    c = _who(session_factory, monkeypatch, stub_access, who, [])
+    text = c.say(f"{raw} x 3", _corrected(raw, full, 3))
+    _assert_offered_not_answered(c, text, who, raw, full)
+
+
+@WHO
+def test_r3_6_r5_a_code_typed_with_spaces_the_parser_folded_is_answered_directly(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw = "srtwc 8354 sh uf"
+    c = _who(session_factory, monkeypatch, stub_access, who, CLOSE3[:1])
+    text = c.say(f"{raw} x 3", _corrected(raw, CLOSE3[0], 3))
+    _assert_answered(text, who, CLOSE3[0], 3)
