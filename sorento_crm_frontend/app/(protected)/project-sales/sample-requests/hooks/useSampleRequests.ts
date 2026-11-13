@@ -32,6 +32,8 @@ export function sampleRequestsListQueryKey(params: SampleRequestListParams): Que
     params.stage,
     params.projectId,
     params.salespersonId,
+    params.lastActivityFrom,
+    params.lastActivityTo,
   ];
 }
 
@@ -45,6 +47,8 @@ function listParamsFromUrl(params: ListPagerParams): SampleRequestListParams {
     stage: params.filters.stage,
     projectId: params.filters.project_id,
     salespersonId: params.filters.salesperson_id,
+    lastActivityFrom: params.filters.last_activity_from,
+    lastActivityTo: params.filters.last_activity_to,
   };
 }
 

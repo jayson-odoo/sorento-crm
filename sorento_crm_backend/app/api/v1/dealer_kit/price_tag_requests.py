@@ -13,7 +13,7 @@ Permission gates:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, status
@@ -175,8 +175,10 @@ def list_price_tag_requests(
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    sort: Optional[str] = Query(None),
-    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    sort: Optional[str] = Query("last_activity_at"),
+    dir: str = Query("desc", pattern="^(asc|desc)$"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW_OR_OWN),
 ):
@@ -206,6 +208,8 @@ def list_price_tag_requests(
         limit=limit,
         sort=sort,
         direction=dir,
+        last_activity_from=last_activity_from,
+        last_activity_to=last_activity_to,
     )
     # AC-D4 (PLAN price-tag-currency-token-extract-prompt.md section D):
     # refresh the stored product-data-change count for the touched rows on

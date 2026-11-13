@@ -64,6 +64,7 @@ export interface Complaint {
   last_responded_by_name?: string | null;
   last_responded_at?: string | null;
   created_at?: string | null;
+  last_activity_at?: string | null;
   assigned_to?: string | null;
   assigned_to_name?: string | null;
   handled_by_name?: string | null;

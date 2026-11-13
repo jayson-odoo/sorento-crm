@@ -355,6 +355,10 @@ class FormCommentService:
         )
         self.db.add(msg)
         self.db.flush()
+        # A person's comment is activity on the form (not an edit or a delete of one).
+        from app.services.audit_service import stamp_form_activity
+
+        stamp_form_activity(self.db, form_entity_type(kind), entity_id)
         return msg
 
     def _store_staff_files(self, kind: str, entity_id: str, comment_id: str, user_id: str, files: Sequence[CommentFile], company_id: Optional[str] = None) -> None:

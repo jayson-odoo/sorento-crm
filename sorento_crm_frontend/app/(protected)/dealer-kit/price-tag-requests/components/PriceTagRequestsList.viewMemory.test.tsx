@@ -139,7 +139,7 @@ describe('Price Tag Requests list remembers sort and filters', () => {
     renderIt();
     await screen.findByText('PT-000001');
     const last = calls().at(-1)!;
-    expect(last.sort).toBe('created_at');
+    expect(last.sort).toBe('last_activity_at');
     expect(last.dir).toBe('desc');
     expect(last.status).toBeUndefined();
   });

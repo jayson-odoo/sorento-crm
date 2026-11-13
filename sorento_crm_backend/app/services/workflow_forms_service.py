@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.utils.multi_value import multi_values
 from app.models.user import UserRoleAssignment
 from app.models.workflow_forms import (
@@ -594,9 +595,11 @@ class WorkflowFormsService:
         definition_id: Optional[str] = None,
         state_code: Optional[Any] = None,
         query: Optional[str] = None,
-        sort_field: str = "updated_at",
+        sort_field: str = "last_activity_at",
         sort_dir: str = "desc",
         advanced_filter_clause: Optional[Any] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ) -> Dict[str, Any]:
         q = self.db.query(WorkflowSubmission).options(
             joinedload(WorkflowSubmission.lines),
@@ -621,6 +624,9 @@ class WorkflowFormsService:
                     WorkflowFormDefinition.code.ilike(like),
                 )
             )
+        in_range = last_activity_range(WorkflowSubmission.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            filters.append(in_range)
         if advanced_filter_clause is not None:
             filters.append(advanced_filter_clause)
         if filters:
@@ -632,11 +638,14 @@ class WorkflowFormsService:
             "updated_at": WorkflowSubmission.updated_at,
             "definition_id": WorkflowSubmission.definition_id,
         }
-        col = sort_map.get(sort_field, WorkflowSubmission.updated_at)
-        if sort_dir == "desc":
-            q = q.order_by(col.desc())
+        if sort_field == "last_activity_at" or sort_field not in sort_map:
+            q = q.order_by(*last_activity_order(
+                WorkflowSubmission.last_activity_at, WorkflowSubmission.created_at, WorkflowSubmission.id,
+                sort_dir if sort_field == "last_activity_at" else "desc",
+            ))
         else:
-            q = q.order_by(col.asc())
+            col = sort_map[sort_field]
+            q = q.order_by(col.desc() if sort_dir == "desc" else col.asc(), WorkflowSubmission.id.asc())
 
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
@@ -713,6 +722,7 @@ class WorkflowFormsService:
             "transition_logs": logs,
             "created_at": s.created_at,
             "updated_at": s.updated_at,
+            "last_activity_at": s.last_activity_at,
             "created_by_user_id": s.created_by_user_id,
             "definition_name": def_name,
             "definition_code": def_code,
