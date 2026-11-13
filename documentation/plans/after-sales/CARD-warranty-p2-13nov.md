@@ -73,6 +73,23 @@ Data request (crew-ask, masked): 5 dev complaints that have a product code and a
 text, with product code, product category and complaint date. The purpose is to replace these shapes with
 real ones and to see which product categories reach which v15 kind.
 
+### Real shapes from dev (crew, 13 Nov; codes only)
+
+The 5 newest complaints with a product code and a filled "Within warranty" text:
+
+| Product code | Category | Complaint date |
+|---|---|---|
+| CB110 | CB-FT | 12/11/2026 |
+| CB110 | CB-FT | 12/11/2026 |
+| SRTWC6020-SH-UF | SRT-WC | 11/11/2026 |
+| CB110 | CB-FT | 10/11/2026 |
+| SRT134 | SRT-BA | 10/11/2026 |
+
+None of these codes matches the two v15 rules (Honeycomb series, the mirror cabinet model list). So on day one
+a job line for any of them gets no suggested kind: CS picks the kind by hand, or the answer reads Unknown
+("Kind not set") until ops adds a rule such as category SRT-WC -> Water Closet (Q3). The tests use these codes
+with their own test rules.
+
 ## Edge cases
 
 - The product's kind is missing, the rules don't reach it, and CS doesn't pick one: every answer is Unknown
