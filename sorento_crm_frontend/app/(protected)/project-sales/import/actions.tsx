@@ -21,6 +21,7 @@ import {
   PROJECT_IMPORT_RUN_KEY,
   PROJECT_IMPORT_RUNS_KEY,
   RUN_PERMISSION,
+  runHistoryKey,
 } from '../_shared/hooks/useProjectImport';
 import type { ProjectImportStatus } from '../_shared/types/projectImport.types';
 
@@ -62,7 +63,7 @@ export function useProjectImportRunActions(
     invalidateKeys: [
       [PROJECT_IMPORT_RUN_KEY, run?.id],
       [PROJECT_IMPORT_RUNS_KEY],
-      ['audit-logs', 'project_import_run', run?.id],
+      runHistoryKey(run?.id),
     ],
   });
   const deleting = useDeferredAction({

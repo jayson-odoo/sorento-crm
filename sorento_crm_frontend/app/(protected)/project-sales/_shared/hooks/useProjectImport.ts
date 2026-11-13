@@ -101,14 +101,31 @@ export function useProjectImportRuns(grid: DataGridParamsInput, filters: Project
   });
 }
 
+/** The run's History (its audit trail, `hooks/useAuditLogs.ts`'s key). */
+export function runHistoryKey(runId: string | undefined) {
+  return ['audit-logs', 'project_import_run', runId] as const;
+}
+
 export function useProjectImportRun(runId: string | undefined) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: [PROJECT_IMPORT_RUN_KEY, runId],
     queryFn: () => getRun(runId as string),
     enabled: Boolean(runId),
     // While the worker imports, re-read until the run says where it ended.
-    refetchInterval: (query) => (query.state.data?.status === 'importing' ? 2000 : false),
+    refetchInterval: (q) => (q.state.data?.status === 'importing' ? 2000 : false),
   });
+  // The worker writes the "Imported" History entry: once the polled run leaves importing,
+  // the History is read again (the same refresh a Revert does).
+  const status = query.data?.status;
+  const previous = React.useRef(status);
+  React.useEffect(() => {
+    if (previous.current === 'importing' && status && status !== 'importing') {
+      void qc.invalidateQueries({ queryKey: runHistoryKey(runId) });
+    }
+    previous.current = status;
+  }, [qc, runId, status]);
+  return query;
 }
 
 export function useProjectImportLines(
