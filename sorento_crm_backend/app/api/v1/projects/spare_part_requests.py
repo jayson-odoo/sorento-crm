@@ -80,6 +80,7 @@ def _out(db: Session, inquiry: OrderInquiry, user: dict) -> dict:
     return spr.detail(db, inquiry, str(user.get("id")))
 
 
+# ai: not-for-assistant deferred, not excluded: the Order Inquiry assistant reader incl. spare part requests (list mine / pending my approval / status of one) lands in follow-up slice SPARE-PART-ORDER-REQUEST-B (crew ruling); Order Inquiries had no assistant reader before this lane
 @router.get("/spare-part-requests", response_model=ListResponse[SparePartRequestListItem])
 def list_spare_part_requests(
     page: int = Query(1, ge=1),
