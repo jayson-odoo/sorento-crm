@@ -635,7 +635,7 @@ function sparePartLineColumns({
       // G1: the requester's own description, else the product's name.
       accessorFn: (row) => row.line_description || row.product_name || '',
       header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-      size: 100,
+      size: 96,
       meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-32" /> },
       cell: ({ row }) => {
         const description = row.original.line_description || row.original.product_name || '';
@@ -650,7 +650,7 @@ function sparePartLineColumns({
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      size: 88,
+      size: 92,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;

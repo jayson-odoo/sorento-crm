@@ -185,7 +185,7 @@ describe('crew pass 0f6da244: one name everywhere', () => {
     });
     renderContent();
     await waitFor(() => expect(screen.getAllByText('Approver B').length).toBeGreaterThanOrEqual(1));
-    expect(screen.getAllByText('Order Request').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/^order request$/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/spare part request/i)).toBeNull();
   });
 });

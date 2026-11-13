@@ -272,7 +272,9 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
         cell: ({ row }) => {
           // One name everywhere: the same label map the SLA tab and Form SLA config use.
           const type = row.original.source_entity_type || 'conversation';
-          return FORM_SLA_TYPE_LABELS[type as FormSLASourceType] ?? type.replace(/_/g, ' ');
+          // Sentence case, as the My pending tasks widget above it reads ("Order request").
+          const label = FORM_SLA_TYPE_LABELS[type as FormSLASourceType] ?? type.replace(/_/g, ' ');
+          return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
         },
         size: 150,
       },
