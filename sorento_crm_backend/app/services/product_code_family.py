@@ -12,9 +12,11 @@ The rule, in order:
   1. A token is a code token when a word of the message is letters then digits and the
      token starts with it (the lane folds "Srtwc7604 p trap" into one token, so the word
      is read back off the message).
-  2. The family is every active product whose code, with separators removed, starts with
-     that word, or with the same word with an "X" after its letters (SRTWC7604 and
-     SRTWCX7604), and does not go on with another digit (8840 is not 88401).
+  2. The family is what the catalogue links: every active product whose code, with
+     separators removed, starts with that word and does not go on with another digit (8840
+     is not 88401), every product whose stored Family code is the word's family, and the
+     members of a registered set of that family. A variant coded differently (SRTWCX7604)
+     is in the family only through one of those links; no letter is inserted into the code.
   3. The other words of the code's OWN LINE of the message are matched against each
      variant's code, name, description and spec values: first two-word phrases ("p trap",
      "seat cover"), then single words of three letters or more. A word no variant carries
@@ -91,6 +93,29 @@ def _family_set_members(db: Session, family: str) -> list[str]:
     ]
 
 
+def _set_code_tokens(db: Session, tokens: list[str]) -> set[str]:
+    """The tokens that ARE the code of a registered set the contact may be told about, folded
+    the way the resolver's exact set tier folds them (`entity_resolver._probe_product_set`:
+    case, dashes and spaces only), so "qwc604 p rl" is the set QWC604-P-RL and "qwc604/p/rl"
+    is not."""
+    from app.models.product_set import ProductSet
+    from app.services.entity_resolver import (
+        _strip_all_ws,
+        _ws_insensitive_lower,
+        visible_set_clauses,
+    )
+
+    folds = {_strip_all_ws(str(t or "").lower()): t for t in tokens if str(t or "").strip()}
+    if not folds:
+        return set()
+    rows = (
+        db.query(ProductSet.set_code)
+        .filter(_ws_insensitive_lower(ProductSet.set_code).in_(list(folds)), *visible_set_clauses(db))
+        .all()
+    )
+    return {folds[_strip_all_ws(str(code).lower())] for (code,) in rows if _strip_all_ws(str(code).lower()) in folds}
+
+
 def _family_rows(
     db: Session, code_word: str, *, loose: bool = False
 ) -> list[tuple[str, dict[str, Any], str]]:
@@ -109,12 +134,13 @@ def _family_rows(
 
     letters, rest = _CODE_WORD.match(code_word).groups()  # type: ignore[union-attr]
     boundary = "([^0-9]|$)" if not loose or rest[-1].isdigit() else ""
-    body = f"({re.escape(letters)}|{re.escape(letters)}X){re.escape(rest)}{boundary}"
+    body = f"{re.escape(letters)}{re.escape(rest)}{boundary}"
     folded_code = func.upper(func.regexp_replace(Product.product_code, "[^A-Za-z0-9]", "", "g"))
     # CHATBOT-CODE-MATCH AC-24 (crew ruling, 12 Nov 2026): the family is ALSO what the catalogue
     # says - a product whose stored `family_code` is the word's family (derived or set by hand,
     # one column, `product_family.family_code_for`), and the members of a registered set of that
-    # family - beside the code pattern above, which stays as the fallback.
+    # family - beside the code pattern above. CHATBOT-SET-CODES Q2 (13 Nov 2026): the pattern is
+    # the typed word only; a variant coded with another letter joins through these links alone.
     family = family_code_for(code_word)
     by_data = [Product.family_code == family] if family else []
     members = _family_set_members(db, family) if family else []
@@ -325,7 +351,7 @@ def _pick(family: list[tuple[str, str]], descriptor: list[str]) -> tuple[list[st
     picked = [code for score, code in scored if score == best]
     if len(picked) == len(family):
         # Every variant carries what was said ("SRTWC286 water closet"): the words
-        # picked nothing, and swapping the code for its whole family (X siblings too)
+        # picked nothing, and swapping the code for its whole family (its linked variants too)
         # would widen the ask rather than narrow it.
         return None
     return picked, terms
@@ -349,7 +375,13 @@ def narrow_code_tokens(
     folded_tokens = [_fold(t) for t in tokens]
     replaced: dict[int, list[str]] = {}
     consumed: set[str] = set()
+    # CHATBOT-SET-CODES AC-2: a token that is a registered set's code ("qwc604 p rl") is that
+    # set, answered by the resolver's exact set tier; its words are part of the code, never
+    # words that pick among the family's variants.
+    set_codes = _set_code_tokens(db, list(tokens))
     for i, token in enumerate(tokens):
+        if token in set_codes:
+            continue
         folded = folded_tokens[i]
         code_word = _code_word_for(str(token or ""), message)
         if not code_word:

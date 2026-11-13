@@ -9568,9 +9568,10 @@ def _run_stages_body(  # noqa: PLR0915
             )
             turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
-        if answer is not None and unplaced_tokens:
+        if answer is not None and (unplaced_tokens or resolver_payload):
             # CHATBOT-CODE-MATCH R6: every missed code, single or beside found ones, and the
             # close codes it was offered from (the same `did_you_mean_by_token` read).
+            # CHATBOT-SET-CODES AC-8: and every set a typed word was answered as.
             for event in trace_mod.code_candidates_events(
                 resolver_payload,
                 unplaced=unplaced_tokens,
@@ -9578,6 +9579,7 @@ def _run_stages_body(  # noqa: PLR0915
                 question=getattr(answer, "question", None),
                 shown_codes=getattr(answer, "shown_codes", None),
                 answered=turn_compose.answered_codes(envelopes),
+                typed_words=_typed_product_words(verdict),
             ):
                 turn_trace.add("code_candidates", event)
 
@@ -10168,6 +10170,20 @@ def _with_settled_picks(
         if isinstance(p, dict) and p.get("uuid") and str(p.get("uuid")) not in held
     ]
     return [*compatible, *extra] if extra else compatible
+
+
+def _typed_product_words(verdict: Any) -> dict[str, str]:
+    """The product words the parser read off this message, folded the way the resolver's
+    token is (`turn.state.token_key`) to the word as typed (CHATBOT-SET-CODES AC-8)."""
+    out: dict[str, str] = {}
+    for e in (verdict.get("entities") if isinstance(verdict, dict) else None) or []:
+        if not isinstance(e, dict) or e.get("hint") not in (None, "product"):
+            continue
+        word = str(e.get("raw") or e.get("canonical_code") or "").strip()
+        for value in (e.get("canonical_code"), e.get("raw")):
+            if isinstance(value, str) and value.strip() and word:
+                out.setdefault(turn_state.token_key(value), word)
+    return out
 
 
 def _unplaced_suggestions(

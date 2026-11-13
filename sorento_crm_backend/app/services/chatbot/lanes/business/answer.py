@@ -5018,15 +5018,22 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
     )
     for i, match in zip(slots, ranked):
         keep[i] = match
-    return _set_then_its_members(keep, first, close)
+    return _set_then_its_members(keep, first, close, token)
 
 
-def _set_then_its_members(keep: list, first: int, close: list) -> list:
+def _set_then_its_members(keep: list, first: int, close: list, token: Any = None) -> list:
     """CHATBOT-CODE-MATCH R3: a close registered set leads the offer, then its member products
     in the membership table's order (the resolver's set row carries them,
     `entity_resolver._product_set_entities`), then the other candidates, a code never twice.
     Only a close set (the token's trigram `alternatives`, never one its own probe matched)
-    and only one the contact may be told about (`visible_set_clauses`)."""
+    and only one the contact may be told about (`visible_set_clauses`).
+
+    CHATBOT-SET-CODES AC-1: when more than one close set holds every typed part
+    (`holds_every_typed_part`), the contact is choosing between those sets, so they are the
+    offer, in the order ranked above, and nothing else (the caller caps it)."""
+    whole = several_close_sets(keep[first:], close, token)
+    if whole:
+        return keep[:first] + whole
     at = next(
         (
             i
@@ -5053,6 +5060,21 @@ def _set_then_its_members(keep: list, first: int, close: list) -> list:
     codes = {jsc.get(g, "canonical_code") for g in group}
     rest = [m for i, m in enumerate(keep[first:], first) if i != at and jsc.get(m, "canonical_code") not in codes]
     return keep[:first] + group + rest
+
+
+def several_close_sets(candidates: list, close: list, token: Any) -> list:
+    """CHATBOT-SET-CODES AC-1: the close sets among `candidates` (in their order) that hold
+    every typed part of `token`, when there are more than one; else empty. Those sets are the
+    whole offer (`_set_then_its_members`), so the has-stock probe planner reads this too
+    (`miss_suggest._token_candidates`) and probes no code the offer does not hold."""
+    whole = [
+        m
+        for m in candidates
+        if jsc.js_string(jsc.get(m, "entity_type") or "").lower() == "product_set"
+        and any(m is a for a in close)
+        and holds_every_typed_part(token, jsc.get(m, "canonical_code"))
+    ]
+    return whole if len(whole) > 1 else []
 
 
 def offer_extras(match: Any) -> dict[str, Any]:

@@ -484,6 +484,7 @@ def code_candidates_events(
     question: Any = None,
     shown_codes: list[str] | None = None,
     answered: set[str] | None = None,
+    typed_words: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """CHATBOT-CODE-MATCH R6: one `code_candidates` event per product code this turn missed.
 
@@ -497,6 +498,12 @@ def code_candidates_events(
     `answered` when the reply answered it, else `not_shown`), the offered ones first in
     offered order, and the miss's `offered` when any candidate was, else `answered`.
     Codes only, never a row id.
+
+    CHATBOT-SET-CODES AC-8: `typed_words` is the turn's product words (folded key to the word as
+    typed). A registered set the resolver placed on one of them exactly (its code folded is
+    the word folded) and the reply did not offer is answered: one event per such word, its
+    one candidate the set code with its member codes in membership order (the set row's own
+    `display.members`, `entity_resolver._product_set_entities`).
     """
     from app.services.chatbot.turn.state import token_key
 
@@ -544,6 +551,37 @@ def code_candidates_events(
                 "typed": typed,
                 "candidates": candidates,
                 "outcome": "offered" if any(c["outcome"] == "offered" for c in candidates) else "answered",
+            }
+        )
+    placed = [
+        match
+        for group in [
+            resolved.get("intersection") or [],
+            *((r.get("matches") or []) for r in resolved.get("resolutions") or [] if isinstance(r, dict)),
+        ]
+        for match in group
+        if isinstance(match, dict) and match.get("entity_type") == "product_set" and match.get("canonical_code")
+    ]
+    words = {key: word for key, word in (typed_words or {}).items() if key not in {token_key(w) for w in (unplaced or {}).values()}}
+    seen: set[str] = set()
+    for match in placed:
+        code = str(match["canonical_code"])
+        word = words.get(token_key(code))
+        if word is None or code in offered or token_key(code) in seen:
+            continue
+        seen.add(token_key(code))
+        display = match.get("display")
+        display = display if isinstance(display, dict) else {}
+        members = [
+            str(m["product_code"]) for m in display.get("members") or [] if isinstance(m, dict) and m.get("product_code")
+        ]
+        events.append(
+            {
+                "typed": word,
+                "candidates": [
+                    {"code": code, "members": members, "tier": match.get("match_tier"), "outcome": "answered"}
+                ],
+                "outcome": "answered",
             }
         )
     return events

@@ -271,6 +271,13 @@ def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool) -> list
     alternatives = jsc.get(res, "alternatives")
     if isinstance(alternatives, list):
         acc.extend(alternatives)
+        from app.services.chatbot.lanes.business.answer import several_close_sets
+
+        if (allowed_types is None or "product" in allowed_types) and several_close_sets(
+            alternatives, alternatives, jsc.get(res, "token")
+        ):
+            # CHATBOT-SET-CODES AC-1: the offer is those sets alone, so no product is probed.
+            return []
     seen: list = []
     keep: list = []
     for match in acc:

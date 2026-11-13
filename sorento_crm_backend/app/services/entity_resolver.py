@@ -2138,8 +2138,8 @@ def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
     (`_code_prefix_then_substring`: prefix, else substring).
 
     The catalogue prints the family code (SRTWC7405, SRTWC8826) and the sets carry it as their
-    head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their parts carry a role letter inside it
-    (SRTWCX7405-..., SRTWCY7405-...), so `_prefix_probe_product` finds only the seat cover.
+    head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their member products may be coded otherwise,
+    so `_prefix_probe_product` can miss them; the set's own code is what is matched here.
     Scoped by the ORM listener as `_probe_product_set`.
     """
     from app.models.product_set import ProductSet
@@ -4009,7 +4009,14 @@ def _and_probe_product_set(db: Session, tokens: list[str]) -> list[ResolvedEntit
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
-    rows = base.filter(tier).order_by(ProductSet.set_code, ProductSet.id).limit(AND_MODE_LIMIT).all()
+    matched = base.filter(tier).order_by(ProductSet.set_code, ProductSet.id)
+    # CHATBOT-SET-CODES AC-3: a token that IS a set's code (the exact tier's fold,
+    # `_probe_product_set`) answers that set only, never the longer set codes it is a part
+    # of; the same order `resolve_references` keeps, where an exact set hit leaves the
+    # prefix set tier unrun for the token.
+    folds = [_strip_all_ws(t.lower()) for t in tokens if t]
+    exact = matched.filter(_ws_insensitive_lower(ProductSet.set_code).in_(folds)).all() if folds else []
+    rows = exact or matched.limit(AND_MODE_LIMIT).all()
     out = []
     for product_set, entity in _product_set_entities(db, rows, match_tier="and"):
         entity.match_blob = product_set.set_code
