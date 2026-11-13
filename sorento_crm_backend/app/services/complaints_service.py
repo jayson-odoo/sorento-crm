@@ -11,6 +11,7 @@ import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect, func
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.utils.multi_value import multi_values
 from typing import List, Optional, Iterable
 from app.config import settings
@@ -473,6 +474,8 @@ class ComplaintService:
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[str] = None,
+        last_activity_to: Optional[str] = None,
     ):
         """Build the filtered + sorted complaints query shared by ``list_complaints``
         and ``neighbours`` so the two can never drift.
@@ -565,6 +568,10 @@ class ComplaintService:
             wanted = [" ".join(str(n).split()).lower() for n in customer_names if str(n).strip()]
             q = q.filter(func.lower(func.btrim(Complaint.customer_name)).in_(wanted))
 
+        in_range = last_activity_range(Complaint.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
+
         sort_map = {
             "complaint_date": Complaint.complaint_date,
             "created_at": Complaint.created_at,
@@ -587,6 +594,8 @@ class ComplaintService:
             sort_map[sort_field] = self._attachment_count_sort()
         elif sort_field == "print_count":
             sort_map[sort_field] = self._print_count_sort(viewer_user_id)
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(Complaint.last_activity_at, Complaint.created_at, Complaint.id, sort_dir))
         sort_column = sort_map.get(sort_field, Complaint.complaint_date)
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc(), Complaint.id.asc())
@@ -879,6 +888,8 @@ class ComplaintService:
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
+        last_activity_from: Optional[str] = None,
+        last_activity_to: Optional[str] = None,
     ):
         """List complaints. assigned_to filters by assignee: a CRM user id or a Respond.io id, each matching the person under both. status filters by complaint status.
 
@@ -898,6 +909,8 @@ class ComplaintService:
             resolution_ids=resolution_ids,
             customer_names=customer_names,
             viewer_user_id=viewer_user_id,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         from sqlalchemy.orm import joinedload

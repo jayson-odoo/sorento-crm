@@ -659,9 +659,12 @@ def test_every_company_id_table_is_registered():
     #   rate is the same for every company = 188.
     # + 2 (AFTER-SALES-P1: technicians, service_jobs): one company's technician roster and its
     #   service jobs; complaints themselves stay company-global = 190.
+    # + 1 (PROJECT-MIGRATION-TOOL, #2385): `projects.import_value_maps`, one company's saved
+    #   project-import value links (a value from the file -> a record, Create new, Skip or None);
+    #   a later file of the same company reuses them, never another company's = 191.
     # + 1 (NON-CANCELLABLE-ITEMS, #2339): `non_cancellable_rules`, one company's default list of
-    #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 191.
-    expected_owned = 191
+    #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 192.
+    expected_owned = 192
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
