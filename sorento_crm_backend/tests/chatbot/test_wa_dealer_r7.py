@@ -288,3 +288,73 @@ def test_R7_facts_who_control_a_linked_staff_user_is_staff():
         _user(db, contact_id=contact.id, roles=("salesperson",))
         got = _who(db, contact.respond_io_id)
         assert got["audience"] == "staff" and got["contact_type"] == "office"
+
+
+# --------------------------------------------------------------------------- #
+# R8 S4: a console test turn by an existing dealer-own user                   #
+# --------------------------------------------------------------------------- #
+def test_R8_S4_a_test_turn_by_an_existing_dealer_user_says_test_turn_and_writes_nothing(env):
+    from tests.test_wa_dealer_submitter import TEST_NOTE
+
+    contact, user = _existing_dealer(env)
+    contact.session_vars = {"keep": "me"}
+    env.db.flush()
+    # The reference: the same test turn from a dealer with no user yet (D-4).
+    fresh = Env(env.db, env.svc, env.mp)
+    fresh_contact = fresh.seed_contact()
+    fresh_contact.chatbot_allowed = True
+    fresh_contact.chatbot_agent_enabled = True
+    env.db.flush()
+    env.created()
+    text_ = env.idea_message(language="en")
+    reference = fresh.turn(text_, is_test=True)
+    assert reference["status"] == "test_turn" and TEST_NOTE in reference["reply_text"], "fixture: D-4 reference"
+
+    out = env.turn(text_, is_test=True)
+    assert out["status"] == "test_turn", out["status"]
+    assert out["reply_text"] == reference["reply_text"]
+    assert TEST_NOTE in out["reply_text"]
+    assert env.create_calls == [] and env.similar_calls == []
+    assert [u.id for u in _linked_users(env.db, contact.id)] == [user.id]
+    assert _linked_users(env.db, fresh_contact.id) == []
+    assert env.persisted() == {"keep": "me"}
+
+
+# --------------------------------------------------------------------------- #
+# R8 sec nit: the sample request own-project guard still binds a non-staff    #
+# linked user (only the salesperson assignment ignores a dealer's own user)   #
+# --------------------------------------------------------------------------- #
+def _own_projects_guard(*roles: str):
+    """A contact linked to a user holding `roles`, each role granted `projects.projects.view_own` only."""
+    from types import SimpleNamespace
+
+    from app.api.v1.public.portal_sample_request import _assert_own_quoted_project
+    from app.services import own_scope
+
+    def run(db) -> None:
+        contact = _portal_contact(db)
+        for slug in roles:
+            _role(db, slug, own_scope.PROJECTS_VIEW_OWN)
+        _user(db, contact_id=contact.id, roles=roles)
+        # A project the user neither owns nor collaborates on (no row at all: never in scope).
+        _assert_own_quoted_project(db, SimpleNamespace(contact_id=contact.id), str(uuid.uuid4()))
+
+    return run
+
+
+def _assert_refused(run) -> None:
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        with pytest.raises(AppException) as exc:
+            run(db)
+    assert exc.value.status_code == 422
+    assert getattr(exc.value, "code", None) == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
+
+
+def test_R8_sec_own_project_guard_still_binds_a_portal_user_with_view_own():
+    _assert_refused(_own_projects_guard("portal_user"))
+
+
+def test_R8_sec_control_own_project_guard_binds_a_staff_user_with_view_own():
+    _assert_refused(_own_projects_guard("salesperson"))
