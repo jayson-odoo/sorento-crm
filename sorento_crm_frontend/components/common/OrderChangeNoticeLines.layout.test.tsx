@@ -5,6 +5,11 @@
  * "DD/MM/YYYY" beside its calendar button through the shared picker's compact props. jsdom has no
  * layout, so this pins the classes that make it so; the browser pass checks the pixels. (Round 16
  * is a width tweak on round 15's red test, so it was not re-run red first.)
+ *
+ * Round 18 (crew pass 6848092891, 1280 px): a 64 px Qty column showed 842 as "84" (the input's
+ * 12 px side padding and the browser's number spinner left room for two digits). The Qty columns
+ * now match Delivered (4.75rem) and every quantity box uses the compact padding the date boxes use;
+ * Remark gives up the 24 px, so the columns still add up to 840.
  */
 import React from 'react';
 import { render } from '@testing-library/react';
@@ -45,10 +50,10 @@ describe('OrderChangeNoticeLines layout', () => {
     expect(minWidthPx(table)).toBe(840);
     expect(th('No.').className).toMatch(/\bw-8\b/);
     expect(remOf(th('Item Code'))).toBe(9.25);
-    for (const name of ['Qty before', 'Qty after']) expect(th(name).className).toMatch(/\bw-16\b/);
+    for (const name of ['Qty before', 'Qty after']) expect(remOf(th(name))).toBe(4.75);
     expect(remOf(th('Delivered'))).toBe(4.75); // the header word DELIVERED fits
     for (const name of ['Date before', 'Date after']) expect(remOf(th(name))).toBe(9.25);
-    expect(th('Remark').className).toMatch(/min-w-\[7\.5rem\]/);
+    expect(th('Remark').className).toMatch(/min-w-\[6rem\]/);
     expect(th('Remove').className).toMatch(/\bw-10\b/);
   });
 
@@ -58,6 +63,15 @@ describe('OrderChangeNoticeLines layout', () => {
       const input = getByLabelText(name);
       expect(input.className).toMatch(/\btext-xs\b/);
       expect((input.parentElement as HTMLElement).className).toMatch(/\bgap-1\b/);
+    }
+  });
+
+  it('draws every quantity box compact so a 4-digit quantity shows whole (842 never reads "84")', () => {
+    const { getByLabelText } = render(<OrderChangeNoticeLines lines={[blankOcnLine()]} onChange={() => {}} />);
+    for (const name of ['Qty before', 'Qty after', 'Delivered']) {
+      const input = getByLabelText(name);
+      expect(input.className).toMatch(/\btext-xs\b/);
+      expect(input.className).toMatch(/\bpx-2\b/);
     }
   });
 });
