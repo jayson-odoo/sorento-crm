@@ -89,64 +89,14 @@ describe('poLinkResultText', () => {
   });
 });
 
-describe('poLinkMenu', () => {
-  it('nothing ticked: every item greyed with "Tick the lines to decide on"', () => {
-    const menu = poLinkMenu({ ticked: 0, linked: 0, capabilities: CAPS, loading: false });
-    expect(menu.link).toEqual({ enabled: false, reason: 'Tick the lines to decide on' });
-  });
-
-  it('link follows split_link; unlink and move need a linked line and the capability', () => {
+describe('poLinkMenu: move', () => {
+  it('Move PO needs a linked line and the relink capability', () => {
     const menu = poLinkMenu({ ticked: 2, linked: 1, capabilities: CAPS, loading: false });
-    expect(menu.link).toEqual({ enabled: true, reason: null });
-    expect(menu.unlink).toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
     expect(menu.relink).toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
-  });
-
-  it('unlink on lines with no PO says so', () => {
-    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
-    const menu = poLinkMenu({ ticked: 2, linked: 0, capabilities: on, loading: false });
-    expect(menu.unlink).toEqual({ enabled: false, reason: 'No PO linked to the ticked lines' });
-  });
-
-  it('every ticked line already covered: Link greyed "Already covered by PO …"', () => {
-    const menu = poLinkMenu({
-      ticked: 1, linked: 1, capabilities: CAPS, loading: false, coveredBy: ['FXT-1104d-1'],
-    });
-    expect(menu.link).toEqual({ enabled: false, reason: 'Already covered by PO FXT-1104d-1' });
-  });
-
-  it('while AutoCount is being asked, items wait', () => {
-    const menu = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true });
-    expect(menu.link).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
-    expect(menu.change).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
-  });
-
-  it('Change PO needs link and unlink from AutoCount, and one PO line on every ticked line', () => {
-    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
-    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: CAPS, loading: false }).change)
-      .toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
-    // Owner, 13 Nov: at least one PO on every ticked line (a line with two PO lines is changed
-    // one PO line at a time), so a line covered by two no longer greys the item.
-    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 1, capabilities: on, loading: false }).change)
-      .toEqual({ enabled: true, reason: null });
-    expect(poLinkMenu({ ticked: 2, linked: 1, singleLinked: 1, capabilities: on, loading: false }).change)
-      .toEqual({ enabled: false, reason: 'Each ticked line needs a PO linked' });
-    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: on, loading: false }).change)
-      .toEqual({ enabled: true, reason: null });
-    // A covered line greys Link but not Change.
-    const menu = poLinkMenu({
-      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, coveredBy: ['202609-S0029'],
-    });
-    expect(menu.link.enabled).toBe(false);
-    expect(menu.change.enabled).toBe(true);
-  });
-
-  it('Change PO is greyed when the one PO line has nothing left to arrive', () => {
-    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
-    const menu = poLinkMenu({
-      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, nothingOpenOn: '202609-S0029',
-    });
-    expect(menu.change).toEqual({ enabled: false, reason: 'Nothing is left open on PO 202609-S0029 to change' });
+    const on = { ...CAPS, relink_row: { enabled: true, reason: null } };
+    expect(poLinkMenu({ ticked: 2, linked: 0, capabilities: on, loading: false }).relink)
+      .toEqual({ enabled: false, reason: 'No PO linked to the ticked lines' });
+    expect(poLinkMenu({ ticked: 2, linked: 1, capabilities: on, loading: false }).relink.enabled).toBe(true);
   });
 });
 

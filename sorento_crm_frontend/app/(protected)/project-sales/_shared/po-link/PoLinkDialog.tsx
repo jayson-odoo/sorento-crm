@@ -33,7 +33,7 @@ import type {
 } from '../../stock-debt/types/stockDebtSnapshot.types';
 import { usePoLinkMutations } from './usePoLink';
 import type { PoLinkLine, PoLinkSkippedRow, PoLinkTarget } from './poLink.types';
-import { poLinkResultText, type PoLinkKind } from './poLinkWording';
+import { poLinkResultText, type PoLinkDialogMode, type PoLinkKind } from './poLinkWording';
 
 /**
  * AC-LINK-CRM-UI: the Decide menu's PO popup (mock v4, approved 4 Nov). The same shell as
@@ -49,7 +49,7 @@ import { poLinkResultText, type PoLinkKind } from './poLinkWording';
  * Resume where AutoCount left it part way. The CRM never re-sends a step itself.
  */
 export interface PoLinkDialogProps {
-  mode: PoLinkKind;
+  mode: PoLinkDialogMode;
   /** Where this screen's PO link calls go (Stock Debt snapshot row, Order Inquiry rows). */
   target: PoLinkTarget;
   /** The ticked lines. */
@@ -113,6 +113,45 @@ function qtyCap(line: PoLinkLine, po: PoLinkOption | undefined): number {
 }
 
 const OTHER_BOOK = 'In another AutoCount book from this sales order';
+
+/** One Link row's message: the typed qty against what the line still needs and the PO line has free,
+ *  `totalOnPo` being everything ticked on that PO line (rows share its free stock). */
+function linkRowError(
+  line: PoLinkLine,
+  po: PoLinkOption | undefined,
+  typed: string | undefined,
+  totalOnPo: number,
+  capabilities: PoLinkCapabilities,
+  cap: (line: PoLinkLine, po: PoLinkOption | undefined) => number = qtyCap,
+): string | undefined {
+  if (!po) return 'No PO line picked';
+  const max = cap(line, po);
+  const value = typed ?? String(max);
+  const error = numberFieldError(value, { min: 1, max, integer: true });
+  if (error) return error;
+  if (Number(value) === po.po_qty && !capabilities.link_row.enabled) {
+    return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
+  }
+  if (totalOnPo > po.free_qty) return `PO ${po.po_number} has ${po.free_qty.toLocaleString()} free in total`;
+  return undefined;
+}
+
+/** One Change row's message: the new PO line must have the whole open balance free. */
+function changeRowError(
+  needs: number,
+  po: PoLinkOption | undefined,
+  totalOnPo: number,
+  capabilities: PoLinkCapabilities,
+): string | undefined {
+  if (!po) return 'No PO line picked';
+  if (needs >= po.po_qty && !capabilities.link_row.enabled) {
+    return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
+  }
+  if (needs > po.free_qty || totalOnPo > po.free_qty) {
+    return `PO ${po.po_number} has only ${po.free_qty.toLocaleString()} free`;
+  }
+  return undefined;
+}
 
 const TONE = {
   ok: 'bg-emerald-100 text-emerald-800',
@@ -225,7 +264,7 @@ function ResultCard({
   );
 }
 
-export function PoLinkDialog({
+function SingleModeDialog({
   mode,
   target: poTarget,
   lines,
@@ -235,7 +274,7 @@ export function PoLinkDialog({
   soBooks,
   skipped,
   onClose,
-}: PoLinkDialogProps) {
+}: PoLinkDialogProps & { mode: PoLinkKind }) {
   const { link, unlink, relink, change } = usePoLinkMutations(poTarget);
   const rows = React.useMemo<DialogRow[]>(() => {
     if (mode === 'link') {
@@ -309,39 +348,19 @@ export function PoLinkDialog({
     if (mode === 'relink') return target[row.id] ? undefined : 'Pick the sales order line';
     if (mode === 'change') {
       const po = poById.get(picked[row.id] ?? '');
-      if (!po) return 'No PO line picked';
-      const needs = row.linkedQty ?? 0;
-      if (needs >= po.po_qty && !capabilities.link_row.enabled) {
-        return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
-      }
       // Card 3a: the new PO line must have the whole linked qty free (shared across lines).
       const total = rows
-        .filter((other) => rowSelection[other.id] && picked[other.id] === po.po_line_id)
+        .filter((other) => rowSelection[other.id] && picked[other.id] === po?.po_line_id)
         .reduce((sum, other) => sum + (other.linkedQty ?? 0), 0);
-      if (needs > po.free_qty || total > po.free_qty) {
-        return `PO ${po.po_number} has only ${po.free_qty.toLocaleString()} free`;
-      }
-      return undefined;
+      return changeRowError(row.linkedQty ?? 0, po, total, capabilities);
     }
     if (mode !== 'link') return undefined;
     const po = poById.get(picked[row.id] ?? '');
-    if (!po) return 'No PO line picked';
-    const typed = qty[row.id] ?? String(qtyCap(row.line, po));
-    const max = qtyCap(row.line, po);
-    const error = numberFieldError(typed, { min: 1, max, integer: true });
-    if (error) return error;
-    if (Number(typed) === po.po_qty && !capabilities.link_row.enabled) {
-      return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
-    }
     // Two ticked lines on one PO line share its free stock.
     const total = rows
-      .filter((other) => rowSelection[other.id] && picked[other.id] === po.po_line_id)
-      .reduce(
-        (sum, other) => sum + Number(qty[other.id] ?? String(qtyCap(other.line, po))),
-        0,
-      );
-    if (total > po.free_qty) return `PO ${po.po_number} has ${po.free_qty.toLocaleString()} free in total`;
-    return undefined;
+      .filter((other) => rowSelection[other.id] && picked[other.id] === po?.po_line_id)
+      .reduce((sum, other) => sum + Number(qty[other.id] ?? String(qtyCap(other.line, po))), 0);
+    return linkRowError(row.line, po, qty[row.id], total, capabilities);
   }
 
   const stateRef = React.useRef({ picked, qty, target, showErrors, rowError });
@@ -731,6 +750,441 @@ export function PoLinkDialog({
               </Button>
               <Button type="button" onClick={handleSend} disabled={sending || ticked.length === 0}>
                 {`${SEND[mode]} ${ticked.length} line${ticked.length === 1 ? '' : 's'}`}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+export function PoLinkDialog(props: PoLinkDialogProps) {
+  if (props.mode === 'manage') return <ManageDialog {...props} />;
+  return <SingleModeDialog {...(props as PoLinkDialogProps & { mode: PoLinkKind })} />;
+}
+
+/* ------------------------------------------------------------------------------------------
+ * Link PO (owner, 13 Nov 18:55: "1 button ... then they can link or change link or unlink in the
+ * popup"). One grid: a row per (ticked SO line, linked PO line) with an Action (Keep, Unlink,
+ * Change to <PO line>), and a "new" row per line that still needs qty or has no PO. Save sends
+ * unlink, then change, then link, through the target's own apis; answers come back in one list.
+ * ---------------------------------------------------------------------------------------- */
+
+/** A new row's qty cap: what the line still needs, never above its own outstanding. */
+function manageCap(line: PoLinkLine, po: PoLinkOption | undefined): number {
+  const needs = Math.min(stillNeeds(line), Math.floor(line.open_qty));
+  return po ? Math.min(needs, Math.floor(po.free_qty)) : needs;
+}
+
+interface ManageRow {
+  id: string;
+  line: PoLinkLine;
+  kind: 'linked' | 'new';
+  /** linked rows: the PO line now covering the SO line. */
+  poLineId: string | null;
+  poLabel: string | null;
+  /** The open balance Change PO would move. */
+  linkedQty: number;
+}
+
+type Batch = 'unlink' | 'change' | 'link';
+type TaggedResult = PoLinkResult & { _batch?: Batch };
+
+function ManageDialog({
+  target: poTarget,
+  lines,
+  capabilities,
+  poLines,
+  soBooks,
+  skipped,
+  onClose,
+}: PoLinkDialogProps) {
+  const { link, unlink, change } = usePoLinkMutations(poTarget);
+  const rows = React.useMemo<ManageRow[]>(
+    () =>
+      lines.flatMap((line) => {
+        const linked: ManageRow[] = (line.now?.po_links ?? []).map((po) => ({
+          id: `${line.sales_order_line_id}:${po.po_line_id}`,
+          line,
+          kind: 'linked',
+          poLineId: po.po_line_id,
+          poLabel: `${po.po_number} · line ${po.po_line_no ?? '-'}`,
+          linkedQty: po.open_qty ?? po.qty,
+        }));
+        const fresh: ManageRow[] =
+          stillNeeds(line) > 0 || linked.length === 0
+            ? [{ id: `${line.sales_order_line_id}:new`, line, kind: 'new', poLineId: null, poLabel: null, linkedQty: 0 }]
+            : [];
+        return [...linked, ...fresh];
+      }),
+    [lines],
+  );
+
+  const poById = React.useMemo(() => new Map(poLines.map((po) => [po.po_line_id, po])), [poLines]);
+  const labelOf = React.useCallback(
+    (po: PoLinkOption) => poOptionLabel(po, poLines.filter((other) => other.po_number === po.po_number).length > 1),
+    [poLines],
+  );
+  const bookNote = React.useCallback(
+    (line: PoLinkLine, po: PoLinkOption) => {
+      const book = soBooks?.[line.sales_order_line_id];
+      return book && po.book && po.book !== book ? OTHER_BOOK : undefined;
+    },
+    [soBooks],
+  );
+  /** Action of a linked row: '' is Keep, 'unlink', or `change:<po line id>`. */
+  const [action, setAction] = React.useState<Record<string, string>>({});
+  const [picked, setPicked] = React.useState<Record<string, string>>({});
+  const [qty, setQty] = React.useState<Record<string, string>>({});
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [showErrors, setShowErrors] = React.useState(false);
+  const [results, setResults] = React.useState<TaggedResult[] | null>(null);
+  const [version, setVersion] = React.useState(0);
+  const [sent, setSent] = React.useState<{
+    changes: Array<{ sales_order_line_id: string; po_line_id: string; from_po_line_id: string }>;
+    links: Record<string, { sales_order_line_id: string; po_line_id: string; qty: number }>;
+  }>({ changes: [], links: {} });
+
+  const chosenPo = (row: ManageRow): string | undefined =>
+    row.kind === 'new'
+      ? picked[row.id] || undefined
+      : action[row.id]?.startsWith('change:')
+        ? action[row.id].slice('change:'.length)
+        : undefined;
+  const isUnlink = (row: ManageRow) => row.kind === 'linked' && action[row.id] === 'unlink';
+  const effective = (row: ManageRow) =>
+    Boolean(rowSelection[row.id]) && (row.kind === 'new' ? Boolean(picked[row.id]) : Boolean(action[row.id]));
+
+  function rowError(row: ManageRow): string | undefined {
+    if (row.kind === 'linked') {
+      if (isUnlink(row)) return undefined;
+      const po = poById.get(chosenPo(row) ?? '');
+      const total = rows
+        .filter((o) => o.kind === 'linked' && effective(o) && chosenPo(o) === po?.po_line_id)
+        .reduce((sum, o) => sum + o.linkedQty, 0);
+      return changeRowError(row.linkedQty, po, total, capabilities);
+    }
+    const po = poById.get(picked[row.id] ?? '');
+    const total = rows
+      .filter((o) => o.kind === 'new' && effective(o) && picked[o.id] === po?.po_line_id)
+      .reduce((sum, o) => sum + Number(qty[o.id] ?? String(manageCap(o.line, po))), 0);
+    return linkRowError(row.line, po, qty[row.id], total, capabilities, manageCap);
+  }
+
+  const stateRef = React.useRef({ action, picked, qty, showErrors, rowError });
+  stateRef.current = { action, picked, qty, showErrors, rowError };
+
+  const tick = (rowId: string, on: boolean) => setRowSelection((prev) => ({ ...prev, [rowId]: on }));
+
+  const columns = React.useMemo<ColumnDef<ManageRow>[]>(() => {
+    const wrongBook = (row: ManageRow, po: PoLinkOption) => bookNote(row.line, po);
+    const changeReason = !capabilities.split_link.enabled
+      ? (capabilities.split_link.reason ?? 'Waiting for AutoCount')
+      : !capabilities.unlink_row.enabled
+        ? (capabilities.unlink_row.reason ?? 'Waiting for AutoCount')
+        : null;
+    return [
+      buildSelectColumn<ManageRow>({
+        rowLabel: (row) => `Select ${row.original.line.so_number} line ${soLine(row.original.line)}`,
+      }),
+      {
+        id: 'so',
+        header: 'Sales order',
+        size: 120,
+        cell: ({ row }) => <span className="font-medium">{row.original.line.so_number}</span>,
+      },
+      {
+        id: 'location',
+        header: 'Location',
+        size: 100,
+        cell: ({ row }) => <span>{row.original.line.warehouse_code ?? '-'}</span>,
+      },
+      {
+        id: 'delivery_date',
+        header: 'Delivery date',
+        size: 110,
+        cell: ({ row }) =>
+          row.original.line.required_date ? (
+            <span>{formatDateInMalaysia(row.original.line.required_date)}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+      },
+      {
+        id: 'outstanding',
+        header: 'Outstanding',
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        cell: ({ row }) => <span className="tabular-nums">{row.original.line.open_qty.toLocaleString()}</span>,
+      },
+      {
+        id: 'po',
+        header: 'PO',
+        size: 220,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (r.kind === 'linked') return <span className="tabular-nums">{r.poLabel}</span>;
+          return (
+            <>
+              <Label htmlFor={`po-manage-po-${r.id}`} className="sr-only">
+                PO
+              </Label>
+              <SearchableSelect
+                id={`po-manage-po-${r.id}`}
+                value={stateRef.current.picked[r.id] ?? ''}
+                placeholder="Pick a PO line"
+                clearable
+                truncateTriggerLabel
+                onChange={(value) => {
+                  setPicked((prev) => ({ ...prev, [r.id]: value }));
+                  tick(r.id, Boolean(value));
+                }}
+                options={poLines.map((po) => {
+                  const note = wrongBook(r, po);
+                  return { value: po.po_line_id, label: labelOf(po), ...(note ? { disabled: true, description: note } : {}) };
+                })}
+              />
+            </>
+          );
+        },
+      },
+      {
+        id: 'action',
+        header: 'Action',
+        size: 240,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (r.kind === 'new') {
+            const po = poById.get(stateRef.current.picked[r.id] ?? '');
+            const cap = manageCap(r.line, po);
+            return (
+              <>
+                <Label htmlFor={`po-manage-qty-${r.id}`} className="sr-only">
+                  Qty
+                </Label>
+                <NumberInput
+                  id={`po-manage-qty-${r.id}`}
+                  min={1}
+                  max={cap}
+                  disabled={!po}
+                  value={stateRef.current.qty[r.id] ?? String(cap)}
+                  error={stateRef.current.showErrors && effective(r) ? stateRef.current.rowError(r) : undefined}
+                  onChange={(event) => {
+                    const typed = event.target.value;
+                    setQty((prev) => ({ ...prev, [r.id]: typed }));
+                  }}
+                />
+              </>
+            );
+          }
+          const options: SearchableSelectOption[] = [
+            {
+              value: 'unlink',
+              label: 'Unlink',
+              ...(capabilities.unlink_row.enabled
+                ? {}
+                : { disabled: true, description: capabilities.unlink_row.reason ?? 'Waiting for AutoCount' }),
+            },
+            ...poLines
+              .filter((po) => po.po_line_id !== r.poLineId)
+              .map((po) => {
+                const note = changeReason ?? wrongBook(r, po);
+                return {
+                  value: `change:${po.po_line_id}`,
+                  label: `Change to ${labelOf(po)}`,
+                  ...(note ? { disabled: true, description: note } : {}),
+                };
+              }),
+          ];
+          return (
+            <>
+              <Label htmlFor={`po-manage-action-${r.id}`} className="sr-only">
+                Action
+              </Label>
+              <SearchableSelect
+                id={`po-manage-action-${r.id}`}
+                value={stateRef.current.action[r.id] ?? ''}
+                placeholder="Keep"
+                truncateTriggerLabel
+                onChange={(value) => {
+                  setAction((prev) => ({ ...prev, [r.id]: value }));
+                  tick(r.id, Boolean(value));
+                }}
+                options={options}
+              />
+              {stateRef.current.showErrors && effective(r) && stateRef.current.rowError(r) ? (
+                <p className="mt-1 truncate text-xs text-destructive" role="alert">
+                  {stateRef.current.rowError(r)}
+                </p>
+              ) : null}
+            </>
+          );
+        },
+      },
+    ];
+    // Cells read live values through `stateRef` (the RequestReserveDialog G6 lesson).
+  }, [capabilities, poLines, poById, labelOf, bookNote]);
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.id,
+    getCoreRowModel: getCoreRowModel(),
+    enableRowSelection: true,
+    state: { rowSelection },
+    onRowSelectionChange: setRowSelection,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  const todo = rows.filter(effective);
+  const sending = link.isPending || unlink.isPending || change.isPending;
+
+  async function handleSave() {
+    if (todo.some((row) => rowError(row))) {
+      setShowErrors(true);
+      return;
+    }
+    const unlinks = todo.filter(isUnlink);
+    const changes = todo
+      .filter((row) => row.kind === 'linked' && !isUnlink(row))
+      .map((row) => ({
+        sales_order_line_id: row.line.sales_order_line_id,
+        po_line_id: chosenPo(row) as string,
+        from_po_line_id: row.poLineId as string,
+      }));
+    const links = todo
+      .filter((row) => row.kind === 'new')
+      .map((row) => {
+        const po = poById.get(picked[row.id]) as PoLinkOption;
+        return {
+          sales_order_line_id: row.line.sales_order_line_id,
+          po_line_id: po.po_line_id,
+          qty: Number(qty[row.id] ?? String(manageCap(row.line, po))),
+        };
+      });
+    setSent({ changes, links: Object.fromEntries(links.map((item) => [item.sales_order_line_id, item])) });
+    const collected: TaggedResult[] = [];
+    try {
+      if (unlinks.length) {
+        const out = await unlink.mutateAsync(unlinks.map((row) => row.poLineId as string));
+        collected.push(...out.results.map((r) => ({ ...r, action: r.action ?? 'unlink', _batch: 'unlink' as Batch })));
+      }
+      if (changes.length) {
+        const out = await change.mutateAsync(changes);
+        collected.push(...out.results.map((r) => ({ ...r, _batch: 'change' as Batch })));
+      }
+      if (links.length) {
+        const out = await link.mutateAsync(links);
+        collected.push(...out.results.map((r) => ({ ...r, action: r.action ?? 'link', _batch: 'link' as Batch })));
+      }
+    } catch {
+      // The mutation hook already toasted the error; what was answered so far stays on screen.
+    }
+    if (collected.length) setResults(collected);
+  }
+
+  async function retryChange(item: { sales_order_line_id: string; po_line_id: string; from_po_line_id: string }) {
+    const out = await change.mutateAsync([item]);
+    setResults((prev) => [
+      ...(prev ?? []).filter((r) => !(r._batch === 'change' && r.sales_order_line_id === item.sales_order_line_id)),
+      ...out.results.map((r) => ({ ...r, _batch: 'change' as Batch })),
+    ]);
+    setVersion((v) => v + 1);
+  }
+
+  async function retryUnlink(poLineId: string) {
+    const out = await unlink.mutateAsync([poLineId]);
+    setResults((prev) =>
+      (prev ?? []).flatMap((r) =>
+        r._batch === 'unlink' && r.po_line_id === poLineId
+          ? out.results.map((n) => ({ ...n, action: n.action ?? 'unlink', _batch: 'unlink' as Batch }))
+          : [r],
+      ),
+    );
+    setVersion((v) => v + 1);
+  }
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-5xl" data-testid="po-link-dialog">
+        <DialogHeader>
+          <DialogTitle>Link PO</DialogTitle>
+          <DialogDescription>
+            {results ? `${results.length} result${results.length === 1 ? '' : 's'}` : `${todo.length} of ${rows.length} lines`}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="flex-1 space-y-3 overflow-y-auto">
+          {results ? (
+            results.map((result, index) => {
+              const batch = result._batch;
+              const item =
+                batch === 'change' && result.action === 'unlink'
+                  ? sent.changes.find(
+                      (c) => c.sales_order_line_id === result.sales_order_line_id && c.from_po_line_id === result.po_line_id,
+                    )
+                  : null;
+              return (
+                <ResultCard
+                  key={`${result.sales_order_line_id}-${result.action}-${index}-${version}`}
+                  result={result}
+                  kind={(result.action ?? 'link') as PoLinkKind}
+                  target={poTarget}
+                  onRetryChange={
+                    item
+                      ? () => retryChange(item)
+                      : batch === 'unlink' && result.po_line_id
+                        ? () => retryUnlink(result.po_line_id as string)
+                        : null
+                  }
+                  retryItem={
+                    batch === 'link' || (batch === 'change' && result.action === 'link')
+                      ? (sent.links[result.sales_order_line_id ?? ''] ??
+                        (result.sales_order_line_id && result.po_line_id && result.qty != null
+                          ? { sales_order_line_id: result.sales_order_line_id, po_line_id: result.po_line_id, qty: result.qty }
+                          : null))
+                      : null
+                  }
+                />
+              );
+            })
+          ) : rows.length === 0 ? (
+            <div className="px-6 py-10 text-center">
+              <p className="text-sm font-semibold">Nothing to link</p>
+            </div>
+          ) : (
+            <DataGrid
+              table={table}
+              recordCount={rows.length}
+              tableLayout={{ width: 'fixed', columnsResizable: true, columnsDraggable: false, scrollerMaxHeight: false }}
+            >
+              <DataGridTable />
+            </DataGrid>
+          )}
+          {!results && skipped?.length ? (
+            <ul className="space-y-0.5 text-xs text-muted-foreground" data-testid="po-link-skipped">
+              {skipped.map((row, index) => (
+                <li key={`${row.inquiry_no}-${row.item_code}-${index}`} className="truncate">
+                  {`${row.inquiry_no ?? '-'} ${row.item_code ?? ''}: ${row.reason}`}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </DialogBody>
+        <DialogFooter className="flex-wrap items-center gap-2">
+          {results ? (
+            <Button type="button" onClick={onClose}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button type="button" variant="outline" onClick={onClose} disabled={sending}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleSave} disabled={sending || todo.length === 0}>
+                {`Save (${todo.length})`}
               </Button>
             </>
           )}
