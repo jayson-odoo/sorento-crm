@@ -66,6 +66,12 @@ COST_PRICE_CHANGE_SET_PREFIX_TEMPLATE = "CPC-"
 COST_PRICE_CHANGE_SET_NUMBER_DIGITS = 4
 COST_PRICE_CHANGE_SET_RESET_POLICY = "none"
 
+#: `NumberingService` doc_type for a service job (after-sales P1): `SV26/11-0001`, monthly.
+SERVICE_JOB_DOC_TYPE = "service_job"
+SERVICE_JOB_PREFIX_TEMPLATE = "SV{yy}/{mm}-"
+SERVICE_JOB_NUMBER_DIGITS = 4
+SERVICE_JOB_RESET_POLICY = "monthly"
+
 
 _INSERT = text(
     """
@@ -155,6 +161,21 @@ def seed_crm_spo_rule(connection, *, company_id: Optional[str] = None) -> None:
             "prefix": CRM_SPO_PREFIX_TEMPLATE,
             "digits": CRM_SPO_NUMBER_DIGITS,
             "reset": CRM_SPO_RESET_POLICY,
+            "company_id": str(company_id) if company_id else None,
+        },
+    )
+
+
+def seed_service_job_rule(connection, *, company_id: Optional[str] = None) -> None:
+    """Give the service job series to `company_id`, or to every company when it is None.
+    Same shape and reasoning as `seed_inbound_shipment_draft_rule` above."""
+    connection.execute(
+        _INSERT,
+        {
+            "doc_type": SERVICE_JOB_DOC_TYPE,
+            "prefix": SERVICE_JOB_PREFIX_TEMPLATE,
+            "digits": SERVICE_JOB_NUMBER_DIGITS,
+            "reset": SERVICE_JOB_RESET_POLICY,
             "company_id": str(company_id) if company_id else None,
         },
     )
