@@ -198,6 +198,12 @@ export interface CellStockTableProps {
   /** The SPO document the active suggestion names, if any (AC-3.4). */
   documentInfo?: StockDocumentMatch | null;
   /**
+   * `grants`: a location row's documents may belong to another company the caller is granted
+   * (the OI stock grid reading a location by itself, MOCHA-STOCK-GRID). Group sections are
+   * read as today.
+   */
+  companyScope?: 'grants';
+  /**
    * The sticky toolbar's search (AC-3.5), filtering the documents inside whichever sections
    * are already expanded. Never triggers an expansion by itself - a search answers "what is
    * in what I opened", not "open something for me".
@@ -291,6 +297,7 @@ export const CellStockTable = React.forwardRef<
     showGroupSubtotal = true,
     stockOnly = false,
     autoCount = null,
+    companyScope,
   },
   ref,
 ) {
@@ -981,6 +988,7 @@ export const CellStockTable = React.forwardRef<
                             filterText={filterText}
                             jumpTarget={activeJump}
                             autoCount={autoCount}
+                            companyScope={companyScope}
                           />
                         </td>
                       </tr>

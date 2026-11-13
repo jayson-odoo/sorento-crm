@@ -549,13 +549,13 @@ describe('PriceTagRequestDetail', () => {
 // ---------------------------------------------------------------------------
 
 describe('PriceTagRequestDetail - tabs', () => {
-  it('renders the tabs in order: Request, Lines, Files', async () => {
+  it('renders the tabs in order: Request, Lines, Files, History (STANDARD-HISTORY-W5)', async () => {
     mockGet.mockResolvedValue(requestWith());
     renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
-    expect(tabLabels).toEqual(['Request', 'Lines', 'Files']);
+    expect(tabLabels).toEqual(['Request', 'Lines', 'Files', 'History']);
   });
 
   it('has no standalone Proof card and no Proof tab at all, at any status (D10)', async () => {
@@ -572,7 +572,7 @@ describe('PriceTagRequestDetail - tabs', () => {
       expect(screen.queryByRole('heading', { name: 'Proof' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
       const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
-      expect(tabLabels).toEqual(['Request', 'Lines', 'Files']);
+      expect(tabLabels).toEqual(['Request', 'Lines', 'Files', 'History']);
 
       unmount();
     }

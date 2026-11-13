@@ -99,7 +99,10 @@ rows were all cancelled is not shown at all.
 Each row also carries a small chevron beside its checkbox: click it to expand a stock breakdown
 for that product without leaving the page. The breakdown stays inside the grid's own width, and
 its **Location** column can be dragged wider or narrower - the width you set is remembered on
-this browser.
+this browser. A line whose **Location** belongs to an ownership group (such as `BRW-BB`) shows
+every location of that group with the group's subtotal; a line at any other location (a site
+pool such as `BRW`, or a location outside every ownership group) shows that location's own
+stock.
 
 **Requested** is what the line's live buy instructions ask for, added up. **Taken** is how much
 of that is already on a PO or SPO link or reserved by CS. **Remaining** is Requested minus Taken,

@@ -23,8 +23,8 @@ vi.mock('./QuotationsPanel', () => ({
   formatMyr: (value: string) => `RM ${value}`,
 }));
 
-import { LineFlags, MinimumPriceFlag } from './QuotationLineFlags';
-import { emptyDraft } from './quotationLineDraft';
+import { LineFlags, MinimumPriceFlag, NonCancellableFlag } from './QuotationLineFlags';
+import { emptyDraft, sectionDraft } from './quotationLineDraft';
 
 function line(overrides: Partial<QuotationLine> = {}): QuotationLine {
   return {
@@ -261,5 +261,121 @@ describe('MinimumPriceFlag', () => {
       />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+/**
+ * NON-CANCELLABLE-ITEMS F1 (owner hand test, 12 Nov): the badge under the description is live,
+ * like Non-standard: off the saved row while the draft matches it, off the line verdict the moment
+ * the item, the series or the price moves. Values invented.
+ */
+describe('NonCancellableFlag', () => {
+  const draftOf = (extra: Record<string, string> = {}) => ({
+    ...emptyDraft(),
+    unit_price: '900.00',
+    ...extra,
+  });
+  const verdict = (isNonCancellable: boolean) => ({
+    data: {
+      is_non_standard: false,
+      is_below_floor: false,
+      is_non_cancellable: isNonCancellable,
+      floor_value: null,
+      floor_level: null,
+    },
+  });
+
+  it('(b) shows on an item just added under a series, before any save', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag quotationId={null} seriesId="s1" line={null} draft={draftOf({ product_id: 'p1' })} />,
+    );
+    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+  });
+
+  it('(a) shows on a saved line once a series is picked after the item', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId={null}
+        line={line({ product_id: 'p1', is_non_cancellable: false })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+    // The verdict is asked against the editor's series, not skipped as "pristine".
+    expect(useLineVerdict).toHaveBeenLastCalledWith(
+      { quotationId: 'q1', seriesId: 's1' },
+      expect.objectContaining({ product_id: 'p1' }),
+      true,
+    );
+  });
+
+  it('(c) goes away when the series is cleared or the item changes to a cancellable one', () => {
+    useLineVerdict.mockReturnValue(verdict(false));
+    const { rerender } = render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId={null}
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
+    rerender(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf({ product_id: 'p2' })}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
+  });
+
+  it('(c) goes away when the item is cleared', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf()}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
+  });
+
+  it('reads the saved flag while nothing moved, without asking', () => {
+    useLineVerdict.mockReturnValue({ data: undefined });
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+    expect(useLineVerdict).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), false);
+  });
+
+  it('never shows on a section heading', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        line={null}
+        draft={{ ...sectionDraft('Bathrooms'), product_id: 'p1' }}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
   });
 });
