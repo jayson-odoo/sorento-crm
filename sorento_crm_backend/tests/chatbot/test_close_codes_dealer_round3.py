@@ -410,3 +410,24 @@ def test_r6_a_letter_added_to_a_code_word_is_offered_never_answered(session_fact
     c = _who(session_factory, monkeypatch, stub_access, who, [INLET])
     text = c.say(f"{raw} x 2 stock", _corrected(raw, INLET, 2))
     _assert_offered_not_answered(c, text, who, raw, INLET)
+
+
+@pytest.mark.parametrize(
+    "typed,code,expected",
+    [
+        ("SRTWT8259 in gold?", "SRTWT8259-GLD", False),
+        ("SRTWT8259 gold, please", "SRTWT8259-GLD", False),
+        ("SRTWT8259 (gold)", "SRTWT8259-GLD", False),
+        ("SRTWT8259 grey!", "SRTWT8259-GRY", False),
+        ("SRTWT8259 Gold.", "SRTWT8259-GLD", False),
+        # guards: a real swap or a truncated name is still offered
+        ("SRTWT8259 GDL!", "SRTWT8259-GLD", True),
+        ("SRTUB668-BACK INLT?", "SRTUB668-BACK INLET", True),
+    ],
+    ids=[
+        "in_gold_q", "gold_comma_please", "paren_gold", "grey_bang", "Gold_dot",
+        "guard_GDL_bang", "guard_BACK_INLT_q",
+    ],
+)
+def test_r7_punctuation_around_a_colour_word_is_still_said_in_words(typed, code, expected):
+    assert corrects_or_completes(typed, code) is expected, (typed, code)
