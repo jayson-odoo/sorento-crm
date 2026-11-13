@@ -518,3 +518,41 @@ def test_a92_a_size_beside_a_code_that_does_not_hold_it_offers_the_code_that_doe
         assert "Size: not recorded" in text, text
         order = _order_after_header(text, [WITH_SIZE, CORRECTED])
         assert order[:1] == [WITH_SIZE], (order, text)
+
+
+# --------------------------------------------------------------------------- PR review round: A-92b, A-92c
+
+OTHER_MODEL = "BRWC8516-SH-UF"  # another model that contains the typed fragment
+
+
+@pytest.mark.parametrize("stored", ["size_stored", "nothing_stored"])
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_a92b_a_fragment_shared_with_another_model_still_offers_the_code_holding_the_size_first(session_factory, monkeypatch, stub_access, who, stored):  # noqa: F811
+    c = _size_console(
+        session_factory, monkeypatch, stub_access, [CORRECTED, WITH_SIZE, OTHER_MODEL],
+        {WITH_SIZE: {"zz_size": 300}} if stored == "size_stored" else {},
+    )
+    _closed_lists(monkeypatch)
+    if who == "staff":
+        _as_staff(c)
+    text = c.say("Wc8516-sh-UF 300mm stock", _typed_with_correction(False))  # no parser correction
+    assert "How many units of" not in text and "Stock summary" not in text and TICK not in text, f"answered: {text!r}"
+    order = _order_after_header(text, [WITH_SIZE, CORRECTED, OTHER_MODEL])
+    assert order[:1] == [WITH_SIZE], (order, text)
+
+
+def test_a92c_the_size_family_keeps_first_seen_order_seed_first_duplicates_dropped(session_factory):  # noqa: F811
+    from app.services.chatbot.lanes.business import code_sizes
+    from tests.chatbot._avail_mode_console import _seed
+    from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+
+    f1, s1, f2 = "SRTWC8516-A-UF", "SRTWC8516-B-UF", "SRTWC8516-C-UF"  # the family read returns them in code order
+    ids = {code: pid for pid, code in _seed(session_factory, [f1, s1, f2]).items()}
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    try:
+        seed = [code_sizes._row(s1, ids[s1], "trgm"), code_sizes._row(s1, ids[s1], "trgm")]
+        got = [r["canonical_code"] for r in code_sizes._size_family(db, [s1], seed)]
+    finally:
+        db.close()
+    assert got == [s1, f1, f2], got
