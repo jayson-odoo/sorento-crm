@@ -1,14 +1,47 @@
-# PLAN: WhatsApp complaint intake via the ideation path (typed submissions)
+# PLAN: WhatsApp issue reports via the ideation path (typed submissions)
 
-Status: Plan, behaviour card posted as crew-ask (PR #2400), waiting on owner answers. Track: L (lead pattern).
+Status: Build (card v2 posted 13 Nov ~19:30, Q1-Q3 pending; answer-independent parts in build). Track: L (lead pattern).
 Lane: WA-COMPLAINT-INTAKE. Owner ask 13 Nov 2026, demo Mon 16 Nov 09:30.
+UAC: `wa-complaint-intake-acceptance-criteria.md`.
 
-## Goal
+## Re-scope (owner 13 Nov ~19:10, verbatim)
 
-Generalise the WhatsApp ideation path into typed submissions (type = idea | complaint | later types, one
-shared path). A dealer reports a complaint on WhatsApp; the bot gathers what a complaint needs, shows a
-confirm summary, and on "yes" creates the complaint in the CRM complaints module through the existing
-create function, linked back to the conversation; CS is notified as usual.
+"when i say file complaint menas complaint to the system or a feature request not a sorento complaint like DO
+all those". So a "complaint" is an ISSUE with the CRM or the AI, filed on the ideation path with a type:
+idea (today) | issue (new). Card v1 below (product/DO complaints, revive #2095) is SUPERSEDED; the #2095 merge
+was reverted on this branch (81f26d30, 0c19cf80).
+
+## Design (card v2)
+
+- One type table `app/services/submission_types.py` (core): per type its label, the one required field, the
+  ask-back, the reply copy keys. `idea` and `issue` today; a new type is a row, not a path. Justification for the
+  table (PRINCIPLES "simplest thing"): the owner asked for it explicitly ("we should be able to scale from
+  there") and two types exist on day one.
+- The type travels through the ONE existing create builder `ideation_capture_service.build_create_payload`
+  (shared by the bot lane and `crm_idea_create`), via ONE mapping function type -> ss fields (Q1).
+- The extractor (`ideation_extractor`) reads the type by meaning (schema enum); `crm_idea_create` takes a
+  `type` argument. No keywords.
+- Chat photos/screenshots sent in the 30 min before filing (and after the contact's previous submission) are
+  uploaded to the new item as the submitting user through the existing embed upload (`api/v1/ideation/ideas.py:148`
+  -> `call_ss`).
+- /ideas: Type column + multi-select Type filter + Type on the detail page, all read through one FE helper.
+- Parser rule: a problem with the CRM / the assistant is `ideate`; a complaint about a product or an order
+  stays `portal_link` (`chatbot/head/parser_template.py:239-240`).
+
+## Reuse map (card v2)
+
+| Need | Existing function | Use |
+|---|---|---|
+| Create item in ss | `ideation_capture_service.build_create_payload` :208, `call_create_idea` :113 | extend (type) |
+| Bot-lane turn | `handle_capture_turn` :244 | extend (type, photos, reply per type) |
+| Agent tool | `agent/writes.py` `crm_idea_create` :2108, `_idea_create_execute` | extend (type arg, photos) |
+| Meaning -> fields | `ideation_extractor.extract_ideate_turn` :354 | extend (type in schema) |
+| Reply words en/ms/zh | `ideation_capture_replies.render_reply`, `chatbot_reply_copy` | reuse, new copy rows |
+| Upload to ss as the user | `api/v1/ideation/ideas.py:148` body, `ideation_gateway_service.call_ss` | extract the upload body into one function both call |
+| Chat photos | `tasks/media_tasks.py:118` `_store_media_bytes` (attachments linked to `chatbot_turn`) | read |
+| /ideas list | `components/ideas/IdeasListView.tsx` | extend (column + filter) |
+
+## Superseded: card v1 (product/DO complaints)
 
 ## Discovery (what exists, file:line)
 
