@@ -65,8 +65,9 @@ export function OrderInquiryStockGrid({
   const companyScope = warehouseId ? ('grants' as const) : undefined;
 
   // STOCK-STATUS round 6 (UAC AC-35): AutoCount's figures in the same table; a failed read
-  // leaves today's.
-  const autoCount = useStockStatus(productId, Boolean(location));
+  // leaves today's. Read once the location is resolved, under the same scope as the stock
+  // read, or a granted company's location would read 0 over the stock-detail figures.
+  const autoCount = useStockStatus(productId, Boolean(location) && !resolving, companyScope);
   const detail = useStockDetail(
     productId,
     warehouseId,
