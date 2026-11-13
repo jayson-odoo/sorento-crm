@@ -66,12 +66,36 @@ describe('OrderChangeNoticeLines layout', () => {
     }
   });
 
-  it('draws every quantity box compact so a 4-digit quantity shows whole (842 never reads "84")', () => {
+  // Round 19 (crew pass 6849135759): 1249.5 read "1249.!" because the number spinner took ~15 px
+  // of a 66 px box. The quantity boxes drop the spinner (typing is the input) and use px-1.5, which
+  // leaves room for 12345.25 at text-xs; the browser pass checks 1249.5, 12345.25 and 0.5 in pixels.
+  it('draws every quantity box compact with no spinner so a decimal quantity shows whole (1249.5, 12345.25)', () => {
     const { getByLabelText } = render(<OrderChangeNoticeLines lines={[blankOcnLine()]} onChange={() => {}} />);
     for (const name of ['Qty before', 'Qty after', 'Delivered']) {
       const input = getByLabelText(name);
       expect(input.className).toMatch(/\btext-xs\b/);
-      expect(input.className).toMatch(/\bpx-2\b/);
+      expect(input.className).toMatch(/\bpx-1\.5\b/);
+      expect(input.className).toContain('[appearance:textfield]');
+      expect(input.className).toContain('[&::-webkit-inner-spin-button]:appearance-none');
+      expect(input.className).toContain('[&::-webkit-outer-spin-button]:appearance-none');
     }
+  });
+
+  it('shows the whole quantity in a box and in its tooltip (no truncation)', () => {
+    const line = { ...blankOcnLine(), qty_before: '12345.25', qty_after: '1249.5', delivered_qty: '0.5' };
+    const { getByLabelText } = render(<OrderChangeNoticeLines lines={[line]} onChange={() => {}} />);
+    expect((getByLabelText('Qty before') as HTMLInputElement).value).toBe('12345.25');
+    expect(getByLabelText('Qty before').getAttribute('title')).toBe('12345.25');
+    expect(getByLabelText('Qty after').getAttribute('title')).toBe('1249.5');
+    expect(getByLabelText('Delivered').getAttribute('title')).toBe('0.5');
+  });
+
+  it('formats read-only quantities with the shared project-sales formatQty (1249.5000 reads 1249.5)', () => {
+    const line = { ...blankOcnLine(), qty_before: '1249.5000', qty_after: '12345.25', delivered_qty: '0.5000' };
+    const { getAllByRole } = render(<OrderChangeNoticeLines lines={[line]} onChange={() => {}} readOnly />);
+    const cells = getAllByRole('row')[1].querySelectorAll('td');
+    expect(cells[1].textContent).toBe('1249.5');
+    expect(cells[2].textContent).toBe('12345.25');
+    expect(cells[5].textContent).toBe('0.5');
   });
 });
