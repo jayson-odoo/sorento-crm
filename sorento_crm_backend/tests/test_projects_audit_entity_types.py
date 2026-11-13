@@ -123,6 +123,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # its change-type lookup, born straight into `projects` beside `order_change_notices`.
     "order_change_notice_lines",
     "order_change_types",
+    # PROJECT-MIGRATION-TOOL (#2385, migration pimp_0001_import_value_maps): the project import's
+    # saved value links, born straight into `projects`.
+    "import_value_maps",
 })
 
 # A kept-name model whose audit entity type was deliberately re-pinned after the move, with
@@ -202,6 +205,10 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     from app.models.sample_request import SampleRequest
 
     assert _audit_entity_type(SampleRequest) == "project_sample_requests"
+    # PROJECT-MIGRATION-TOOL (#2385): the same convention, pinned at birth.
+    from app.models.project_import import ProjectImportValueMap
+
+    assert _audit_entity_type(ProjectImportValueMap) == "project_import_value_maps"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
