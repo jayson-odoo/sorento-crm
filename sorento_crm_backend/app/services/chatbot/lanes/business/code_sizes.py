@@ -226,6 +226,7 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
     if asked is None:
         return
     keys, value, said, owner = asked
+    rows = _size_rows(db)
     # The rows each typed token matched: per token (OR mode), or the one token's rows (AND mode).
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
@@ -244,9 +245,31 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             and token_key(m.get("canonical_code")) == owner
         ]
         typed = _typed_of(parser, token) or (str(exact[0]["canonical_code"]) if exact else None)
+        hits = [
+            m for m in matched
+            if isinstance(m, dict) and m.get("entity_type") == "product" and m.get("uuid")
+        ]
+        if not exact and typed is not None and len(hits) > 1 and token_key(token) == owner:
+            # A-92b: the one code typed is a fragment several codes hold (today's which-one
+            # picker): with a size of their class that not every one of them holds, and that a
+            # code of their family does hold, it is the same size miss, that code first.
+            ids = [str(m["uuid"]) for m in hits]
+            facts = _product_facts(db, ids)
+            if _is_size_ask(db, rows, keys, ids) and not all(
+                _holds_size(facts.get(str(m["uuid"])), str(m.get("canonical_code") or ""), typed, value, keys) for m in hits
+            ):
+                seed = [_row(str(m["canonical_code"]), str(m["uuid"]), str(m.get("match_tier") or "substring")) for m in hits]
+                words = [typed, *(r["canonical_code"] for r in seed)]
+                family = _size_first(db, _size_family(db, words, seed), typed, value, keys)
+                held = _product_facts(db, [str(r["uuid"]) for r in family[:1]])
+                # Only when some code of the family holds the size: when none does, today's
+                # "None with size" over the family listing says so (AC-6).
+                if family and _holds_size(held.get(str(family[0]["uuid"])), str(family[0]["canonical_code"]), typed, value, keys):
+                    _make_miss(resolved, res, token, {"alternatives": family, SIZE_ASKED: said})
+            continue
         if typed is None or len(exact) != 1:
             continue
-        if not _is_size_ask(db, keys, [str(exact[0]["uuid"])]):
+        if not _is_size_ask(db, rows, keys, [str(exact[0]["uuid"])]):
             continue  # not a size key of the code's class (a named spec): narrowed as today
         values = (_product_facts(db, [str(exact[0]["uuid"])]).get(str(exact[0]["uuid"])) or ({}, ""))[0]
         if any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys):
@@ -269,20 +292,10 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             alone = _offerable_rows(db, [exact[0]])
             family = [_row(str(r["canonical_code"]), str(r["uuid"]), "family") for r in alone]
         family = _size_first(db, family, typed, value, keys)
-        miss = {
-            "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
-            # The code exists; what is missing is the size, so the reply names the code itself.
-            SIZE_CODE: str(exact[0]["canonical_code"]),
-        }
-        if res is not None:
-            res.update(miss)
-        else:
-            # AND mode: the one token's rows become that token's miss, in the per-token shape.
-            resolved.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [miss]})
-        resolved["spec_none"] = []
-        unresolved = resolved.setdefault("unresolved_tokens", [])
-        if token not in unresolved:
-            unresolved.append(token)
+        # The code exists; what is missing is the size, so the reply names the code itself.
+        _make_miss(
+            resolved, res, token, {"alternatives": family, SIZE_ASKED: said, SIZE_CODE: str(exact[0]["canonical_code"])}
+        )
     # A-92: the one code MISSED (no exact code, e.g. a typed fragment the lone-substring offer
     # caught): its close codes gain the catalogue family, the code holding the size first.
     for res in resolved.get("resolutions") or []:
@@ -292,7 +305,7 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         if typed is None:
             continue
         seed = [a for a in res.get("alternatives") or [] if isinstance(a, dict)]
-        if not _is_size_ask(db, keys, [str(a.get("uuid")) for a in seed if a.get("uuid")]):
+        if not _is_size_ask(db, rows, keys, [str(a.get("uuid")) for a in seed if a.get("uuid")]):
             continue
         # The family of the typed code and of each close code it already has (a fragment's
         # own family word may not reach the catalogue family its close code sits in).
@@ -303,14 +316,43 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
             resolved["spec_none"] = []
 
 
-def _is_size_ask(db: Any, keys: list[str], product_ids: list[str]) -> bool:
+def _make_miss(resolved: dict[str, Any], res: dict[str, Any] | None, token: Any, fields: dict[str, Any]) -> None:
+    """The token's resolution as a size miss with `fields` (in place): per token (OR mode), or the
+    one token's rows reshaped to the per-token shape (AND mode). The route's separate "None with
+    size" clause is said by the miss and dropped."""
+    miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], **fields}
+    if res is not None:
+        res.update(miss)
+    else:
+        resolved.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [miss]})
+    resolved["spec_none"] = []
+    unresolved = resolved.setdefault("unresolved_tokens", [])
+    if token not in unresolved:
+        unresolved.append(token)
+
+
+def _holds_size(facts: tuple[dict[str, Any], str] | None, code: str, typed: str, value: float, keys: list[str]) -> bool:
+    """Does a code hold the asked size: stored under one of its keys, or holding every typed part
+    and the size number as a part of the code (`answer.holds_every_typed_part`, `typed_code_parts`)?"""
+    from app.services.chatbot.lanes.business.answer import (
+        holds_every_typed_part,
+        typed_code_parts,
+    )
+
+    values = (facts or ({}, ""))[0]
+    if any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys):
+        return True
+    return holds_every_typed_part(typed, code) and str(_plain(value)) in typed_code_parts(code)
+
+
+def _is_size_ask(db: Any, rows: list[Any], keys: list[str], product_ids: list[str]) -> bool:
     """Is the asked spec a SIZE of these products: one of their class's size keys
     (`bare_size.size_key_rows`, R6-1)? A named spec outside them (a width the class does not
     size by) is narrowed as before, never made a size miss."""
     from app.services.chatbot.head.bare_size import size_key_rows
 
     classes = {cls for _values, cls in _product_facts(db, product_ids).values() if cls}
-    return bool({r.spec_key for r in size_key_rows(_size_rows(db), classes)} & set(keys))
+    return bool({r.spec_key for r in size_key_rows(rows, classes)} & set(keys))
 
 
 def _size_family(db: Any, words: list[str], seed: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -335,29 +377,22 @@ def _size_family(db: Any, words: list[str], seed: list[dict[str, Any]]) -> list[
                 .all()
             )
         rows += [_row(code, str(ids[code]), "family") for code in dict.fromkeys(codes) if code in ids]
-    unique = list({str(r.get("uuid")): r for r in reversed(rows) if r.get("uuid")}.values())[::-1]
-    return _offerable_rows(db, unique)
+    unique: dict[str, dict[str, Any]] = {}
+    for row in rows:  # first seen wins: the seed, then the family in its read order
+        if row.get("uuid"):
+            unique.setdefault(str(row["uuid"]), row)
+    return _offerable_rows(db, list(unique.values()))
 
 
 def _size_first(db: Any, rows: list[dict[str, Any]], typed: str, value: float, keys: list[str]) -> list[dict[str, Any]]:
     """A-92: the codes holding the asked size first (stored under one of its keys, or holding
     every typed part and the size number as a part of the code: `answer.holds_every_typed_part`,
-    `answer.typed_code_parts`), then the rest; order kept within each."""
-    from app.services.chatbot.lanes.business.answer import (
-        holds_every_typed_part,
-        typed_code_parts,
-    )
-
+    `answer.typed_code_parts`, `_holds_size`), then the rest; order kept within each."""
     facts = _product_facts(db, [str(r["uuid"]) for r in rows if r.get("uuid")])
-    number = str(_plain(value))
-
-    def holds(row: dict[str, Any]) -> bool:
-        values = (facts.get(str(row.get("uuid"))) or ({}, ""))[0]
-        code = str(row.get("canonical_code") or "")
-        stored = any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys)
-        return stored or (holds_every_typed_part(typed, code) and number in typed_code_parts(code))
-
-    return sorted(rows, key=lambda r: not holds(r))
+    return sorted(
+        rows,
+        key=lambda r: not _holds_size(facts.get(str(r.get("uuid"))), str(r.get("canonical_code") or ""), typed, value, keys),
+    )
 
 
 def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
