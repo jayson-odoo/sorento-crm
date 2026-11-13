@@ -44,6 +44,8 @@ import { listUrlSearch } from '../lib/listUrl';
 import type { ServiceJob, ServiceJobStatus } from '../types/serviceJob.types';
 import ServiceJobStatusPill from './ServiceJobStatusPill';
 import ServiceJobFormDialog from './ServiceJobFormDialog';
+import WarrantyPill from './WarrantyPill';
+import { SUMMARY_OPTIONS } from '../lib/warrantyAnswers';
 
 const STATUS_OPTIONS: { value: ServiceJobStatus; label: string }[] = [
   { value: 'proposed', label: 'Proposed' },
@@ -85,6 +87,7 @@ export default function ServiceJobsList() {
   } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [technicianFilter, setTechnicianFilter] = useState<string[]>([]);
+  const [warrantyFilter, setWarrantyFilter] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [menuJob, setMenuJob] = useState<ServiceJob | null>(null);
@@ -95,6 +98,7 @@ export default function ServiceJobsList() {
     resetSearchQuery(state.searchQuery);
     setStatusFilter(splitMulti(state.filters.status));
     setTechnicianFilter(splitMulti(state.filters.technician_id));
+    setWarrantyFilter(splitMulti(state.filters.warranty_summary));
     setDateFrom(state.filters.date_from ?? '');
     setDateTo(state.filters.date_to ?? '');
   });
@@ -102,12 +106,13 @@ export default function ServiceJobsList() {
     searchQuery,
     statusFilter.join(','),
     technicianFilter.join(','),
+    warrantyFilter.join(','),
     dateFrom,
     dateTo,
   ]);
 
   // The list keeps ALL its state in its own address, so the browser's Back restores it.
-  const filtersKey = [statusFilter.join(','), technicianFilter.join(','), dateFrom, dateTo].join('|');
+  const filtersKey = [statusFilter.join(','), technicianFilter.join(','), warrantyFilter.join(','), dateFrom, dateTo].join('|');
   useEffect(() => {
     const next = listUrlSearch(window.location.search, {
       pageIndex: pagination.pageIndex,
@@ -117,6 +122,7 @@ export default function ServiceJobsList() {
       filters: {
         status: statusFilter.length ? joinMulti(statusFilter) : undefined,
         technician_id: technicianFilter.length ? joinMulti(technicianFilter) : undefined,
+        warranty_summary: warrantyFilter.length ? joinMulti(warrantyFilter) : undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
       },
@@ -134,6 +140,7 @@ export default function ServiceJobsList() {
     searchQuery,
     status: statusFilter,
     technician_id: technicianFilter,
+    warranty_summary: warrantyFilter,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
   });
@@ -143,6 +150,7 @@ export default function ServiceJobsList() {
   const filtersActiveCount =
     (statusFilter.length ? 1 : 0) +
     (technicianFilter.length ? 1 : 0) +
+    (warrantyFilter.length ? 1 : 0) +
     (dateFrom || dateTo ? 1 : 0);
 
   const rowHref = (row: ServiceJob) => {
@@ -151,6 +159,7 @@ export default function ServiceJobsList() {
       {
         status: statusFilter.length ? joinMulti(statusFilter) : undefined,
         technician_id: technicianFilter.length ? joinMulti(technicianFilter) : undefined,
+        warranty_summary: warrantyFilter.length ? joinMulti(warrantyFilter) : undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
       },
@@ -192,6 +201,19 @@ export default function ServiceJobsList() {
       ),
       col('technician', 'Technician', 110, (r) => r.technician_name),
       col('complaint_number', 'Related complaint', 165, (r) => r.complaint_number),
+      {
+        id: 'warranty_summary',
+        accessorFn: (r) => r.warranty_summary,
+        header: ({ column }) => <DataGridColumnHeader title="Warranty" column={column} />,
+        size: 130,
+        cell: ({ row }) =>
+          row.original.warranty_summary ? (
+            <WarrantyPill code={row.original.warranty_summary} summary />
+          ) : (
+            <Text value={null} />
+          ),
+        meta: { headerTitle: 'Warranty', skeleton: <Skeleton className="h-4 w-16" /> },
+      },
     ],
     [],
   );
@@ -280,6 +302,17 @@ export default function ServiceJobsList() {
                               onChange={setTechnicianFilter}
                               options={technicians.map((t) => ({ value: t.id, label: t.name }))}
                               placeholder="All technicians"
+                              triggerClassName="mt-1"
+                              clearable
+                            />
+                          </div>
+                          <div>
+                            <Label>Warranty</Label>
+                            <SearchableMultiSelect
+                              value={warrantyFilter}
+                              onChange={setWarrantyFilter}
+                              options={SUMMARY_OPTIONS}
+                              placeholder="All warranty answers"
                               triggerClassName="mt-1"
                               clearable
                             />

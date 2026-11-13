@@ -821,6 +821,11 @@ const STAFF_SIDEBAR: MenuConfig = [
         path: '/after-sales/technicians',
         permissionsAny: ['after_sales.service_jobs.view', 'after_sales.technicians.manage'],
       },
+      {
+        title: 'Warranty Configuration',
+        path: '/after-sales/warranty',
+        superadminOnly: true,
+      },
     ],
   },
   {
@@ -2034,6 +2039,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Technicians',
         path: '/after-sales/technicians',
         permissionsAny: ['after_sales.service_jobs.view', 'after_sales.technicians.manage'],
+      },
+      {
+        title: 'Warranty Configuration',
+        path: '/after-sales/warranty',
+        superadminOnly: true,
       },
     ],
   },

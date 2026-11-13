@@ -31,7 +31,7 @@ export async function extractApiError(
   response: Response,
   fallbackMessage = 'An error occurred'
 ): Promise<string> {
-  const contentType = response.headers.get('content-type') || '';
+  const contentType = response.headers?.get('content-type') ?? 'application/json';
   if (!contentType.includes('application/json')) {
     const text = await response.text().catch(() => '');
     if (text && responseBodyLooksLikeHtml(text)) {

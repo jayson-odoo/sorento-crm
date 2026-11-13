@@ -4,6 +4,9 @@ import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/u
 import type {
   ConfirmJobValues,
   ServiceJobFormValues,
+  ServiceJobProduct,
+  ServiceJobProductValues,
+  CatalogueProduct,
   DispatchBoard,
   ServiceJob,
   TransitionValues,
@@ -14,6 +17,7 @@ const BASE = '/api/v1/after-sales';
 export type ServiceJobsListParams = DataGridApiFetchParams & {
   status?: string[];
   technician_id?: string[];
+  warranty_summary?: string[];
   date_from?: string;
   date_to?: string;
 };
@@ -22,6 +26,7 @@ export function serviceJobListExtraParams(params: ServiceJobsListParams) {
   return {
     status: params.status?.length ? params.status : undefined,
     technician_id: params.technician_id?.length ? params.technician_id : undefined,
+    warranty_summary: params.warranty_summary?.length ? params.warranty_summary : undefined,
     date_from: params.date_from,
     date_to: params.date_to,
   };
@@ -108,5 +113,69 @@ export function transitionServiceJob(id: string, values: TransitionValues) {
 export async function getDispatchBoard(day: string): Promise<DispatchBoard> {
   const response = await apiFetch(`${BASE}/service-jobs/board?day=${encodeURIComponent(day)}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the dispatch board'));
+  return response.json();
+}
+
+const jsonInit = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+export async function getServiceJobProducts(jobId: string): Promise<ServiceJobProduct[]> {
+  const response = await apiFetch(`${BASE}/service-jobs/${jobId}/products`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the products'));
+  return response.json();
+}
+
+export async function addServiceJobProduct(
+  jobId: string,
+  values: ServiceJobProductValues,
+): Promise<ServiceJobProduct> {
+  const response = await apiFetch(`${BASE}/service-jobs/${jobId}/products`, jsonInit('POST', values));
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the product'));
+  return response.json();
+}
+
+export async function updateServiceJobProduct(
+  jobId: string,
+  lineId: string,
+  values: Partial<Omit<ServiceJobProductValues, 'product_id'>>,
+): Promise<ServiceJobProduct> {
+  const response = await apiFetch(
+    `${BASE}/service-jobs/${jobId}/products/${lineId}`,
+    jsonInit('PATCH', values),
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update the product'));
+  return response.json();
+}
+
+export async function deleteServiceJobProduct(jobId: string, lineId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/service-jobs/${jobId}/products/${lineId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to remove the product'));
+}
+
+/** Catalogue products for the Add product picker: the existing products list, read-only. */
+export async function searchCatalogueProducts(query: string): Promise<CatalogueProduct[]> {
+  const qs = buildDataGridParams({
+    pageIndex: 0,
+    pageSize: 20,
+    sorting: [{ id: 'product_code', desc: false }],
+    searchQuery: query,
+  });
+  const response = await apiFetch(`/api/v1/products?${qs.toString()}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to search products'));
+  const body = await response.json();
+  return (body.data ?? []).map((p: CatalogueProduct) => ({
+    id: p.id,
+    product_code: p.product_code,
+    product_name: p.product_name,
+  }));
+}
+
+/** The defect-type options (id and label) a product line can name. */
+export async function getDefectOptions(): Promise<{ id: string; label: string }[]> {
+  const response = await apiFetch(`${BASE}/warranty/defect-types`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load defect types'));
   return response.json();
 }

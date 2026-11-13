@@ -19,6 +19,8 @@ import { nextStepFor, secondaryMoves } from '../lib/nextStep';
 import { serviceJobsPagerQuery } from '../lib/listQuery';
 import ServiceJobStatusPill from './ServiceJobStatusPill';
 import ServiceJobFormDialog from './ServiceJobFormDialog';
+import ServiceJobProductsCard from './ServiceJobProductsCard';
+import ServiceJobWarrantyCard from './ServiceJobWarrantyCard';
 
 const TABS = ['details', 'history'] as const;
 
@@ -43,6 +45,7 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
   const { data: job, isLoading } = useServiceJob(jobId);
   const moves = useServiceJobMoves();
   const canViewComplaint = useHasPermission('complaint_management.complaints.view');
+  const canDispatch = useHasPermission('after_sales.service_jobs.dispatch');
   const { update } = useServiceJobMutations();
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useUrlTab({ tabs: TABS, defaultTab: 'details' });
@@ -202,6 +205,8 @@ export default function ServiceJobDetail({ jobId }: { jobId: string }) {
               </dl>
             </CardContent>
           </Card>
+          <ServiceJobProductsCard jobId={jobId} canEdit={canDispatch} />
+          <ServiceJobWarrantyCard warranty={job.warranty ?? []} />
         </TabsContent>
         <TabsContent value="history">
           <AuditTrail entityType="service_jobs" entityId={jobId} />
