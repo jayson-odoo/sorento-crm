@@ -318,6 +318,57 @@ def test_routes_outside_the_map_are_refused_to_a_limited_user(scene, method, pat
         assert response.status_code == 403, response.text
 
 
+# AutoCount writes (#2173 AC-QTSO-CRM): an ERP write is refused to a limited user outright, on
+# their own project too. The quotation-document and amendment AutoCount routes were already
+# refused (no anchor); the two sales-order routes sat under the `sales-orders/{pso_id}` anchor.
+_AUTOCOUNT_SO_ROUTES = ("/sales-orders/{pso}/autocount", "/sales-orders/{pso}/autocount/cancel")
+_AC_WRITE = "projects.autocount.write"
+
+
+def _autocount_reached(monkeypatch) -> list:
+    """Switch ON and the write service stubbed, so a request that passes every gate is seen
+    here instead of reaching the Shared Service."""
+    from app.api.v1.projects import project_autocount_write as route
+
+    calls: list = []
+    monkeypatch.setattr(route, "_switch_on", lambda db: True)
+    for name in ("create_sales_order", "cancel_sales_order"):
+        monkeypatch.setattr(
+            route.ProjectAutocountWriteService,
+            name,
+            lambda self, pso_id, user, _n=name: calls.append((_n, pso_id)) or {"outcome": "done", "message": "ok"},
+        )
+    return calls
+
+
+@pytest.mark.parametrize("template", _AUTOCOUNT_SO_ROUTES)
+@pytest.mark.parametrize("key", ["p1", "p4"])
+def test_a_limited_user_cannot_write_a_sales_order_to_autocount(scene, monkeypatch, template, key):
+    """Own project (p1) and another salesperson's (p4) alike: 403 from the guard, even holding
+    the AutoCount permission with the switch on, and the write service is never called."""
+    db, w, p = scene
+    calls = _autocount_reached(monkeypatch)
+    order = _children(db, w.company_id, db.get(Project, p[key]))["order"]
+    with acting(db, w.a, LIMITED | {_AC_WRITE}) as client:
+        response = client.post(BASE + template.format(pso=order), json={})
+    assert response.status_code == 403, response.text
+    assert "own records only" in response.text, response.text
+    assert calls == []
+
+
+@pytest.mark.parametrize("template", _AUTOCOUNT_SO_ROUTES)
+def test_a_view_holder_still_reaches_the_autocount_sales_order_routes(scene, monkeypatch, template):
+    """Control: the guard steps aside for a user who is not limited, so the refusal above is the
+    guard's and not a broken route."""
+    db, w, p = scene
+    calls = _autocount_reached(monkeypatch)
+    order = _children(db, w.company_id, db.get(Project, p["p1"]))["order"]
+    with acting(db, w.a, {VIEW, EDIT, _AC_WRITE}) as client:
+        response = client.post(BASE + template.format(pso=order), json={})
+    assert response.status_code == 200, response.text
+    assert [pso for _n, pso in calls] == [order]
+
+
 def test_the_guard_map_names_only_routes_that_exist():
     """Kill test for the map itself: every anchor and id-less entry matches a live route, so a
     renamed route cannot leave a stale entry behind that silently stops matching."""

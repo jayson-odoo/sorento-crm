@@ -40,6 +40,8 @@ export interface PurchaseRequest {
   /** AC-L3: reportable link to a registered project. `project_code` is the display value. */
   project_id?: string | null;
   project_code?: string | null;
+  /** The linked project's title (`project_title` is the typed text). */
+  project_name?: string | null;
   purpose?: string | null;
   delivery_address?: string | null;
   total_project_value?: number | null;
@@ -147,7 +149,7 @@ export interface PurchaseRequestFormData {
   products?: PurchaseRequestLineFormData[];
 }
 
-export interface PurchaseRequestDetail extends PurchaseRequest {}
+export type PurchaseRequestDetail = PurchaseRequest;
 
 /** One row of the customer picker; `sales_type` is the server's mapping of the debtor type. */
 export interface CustomerLookupItem {

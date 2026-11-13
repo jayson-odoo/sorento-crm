@@ -1,4 +1,4 @@
-"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no`, `lec_0002_embedding_indexes`, `epp_0001_chunk_coverage_idx`, `il_0001_integration_log_indexes` and `il_0002_integration_log_search` could not build.
+"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no`, `lec_0002_embedding_indexes`, `epp_0001_chunk_coverage_idx`, `il_0001_integration_log_indexes`, `il_0002_integration_log_search` and `so_search_trgm_0001` (its sales_orders indexes) could not build.
 
 GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX, LOOKUP-EMBED-CENTRAL. Those revisions let a deploy succeed when an
 index build times out (`app/utils/online_index.py`), so something has to try again: `start.sh`
@@ -31,13 +31,18 @@ def run(engine) -> bool:
         bind.exec_driver_sql("SET maintenance_work_mem = '512MB'")
         try:
             search_was_valid = online_index.search_index_valid(bind)
+            # SEARCH-CHIPS: only where this search_path has a sales_orders table to index.
+            has_sales_orders = bind.exec_driver_sql(
+                "SELECT to_regclass('sales_orders')"
+            ).scalar() is not None
             ok = online_index.ensure_indexes_online(
                 bind,
                 online_index.GOODS_CHAIN_KEY_INDEXES
                 + online_index.BILLING_FROM_DOC_INDEXES
                 + online_index.INTEGRATION_LOG_INDEXES
                 + embedding_indexes.MIGRATION_INDEXES
-                + embedding_indexes.COVERAGE_INDEXES,
+                + embedding_indexes.COVERAGE_INDEXES
+                + (online_index.SALES_ORDER_SEARCH_INDEXES if has_sales_orders else ()),
             )
             # il_0002's index on its own, longer budget (online_index.SEARCH_INDEX_RETRY_BUDGET_MS),
             # then statistics on the search expression once the index first turns VALID.
