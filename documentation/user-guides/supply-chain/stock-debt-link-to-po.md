@@ -37,10 +37,51 @@ Each line then shows its own result:
 The **Now** column of the drill then shows the PO covering the line, e.g. **PO 202608-S0040
 (10)**, without taking a new snapshot.
 
+## What a snapshot keeps, and what it reads today
+
+A snapshot keeps the sales order lines as they were when you saved it: which lines are in it,
+**Ordered**, **Delivered**, **Outstanding**, the delivery date, the location, and the board's
+month figures and totals. Everything about how a line is covered is read again each time you
+open the drill, so a link you just made shows straight away and after a reload:
+
+* **Assigned**, **Covered by** and **Status** (for example **Pinned** once a PO is linked).
+* **Short**: the saved **Outstanding** less what covers the line today.
+* **Now**, the order inquiry rows and **Request CS to reserve**.
+
+A line that is no longer open (delivered or cancelled since) keeps what it showed when saved,
+and **Now** says why, for example **SO cancelled** or **Open 0**.
+
+## Change the PO covering a line
+
+Use this when a line is already covered by one PO and you want another PO to cover it instead.
+
+1. Tick the lines, press **Decide (N)**, choose **Change PO…** (right under **Link to PO…**).
+2. Each line shows the PO covering it now and **Open**: what is still to arrive on that PO line.
+   That is what moves; anything already received stays with the old PO.
+3. In **Change to**, pick the new PO line (the one covering it now is not offered), then press
+   **Change N lines**.
+
+Each line then shows two results, in this order:
+
+* **Unlinked**: "SO… line … is no longer covered by PO … (qty)." The old PO line stays open as
+  free stock, with its quantity unchanged.
+* **Linked**: "SO… line … now covered by PO … (qty)."
+
+If AutoCount refuses the unlink, nothing changes and the line keeps its old PO. If it unlinks but
+then refuses the link, the result says "It was unlinked from PO …, so the line is now uncovered":
+link it again with **Link to PO…**.
+
 ## What you cannot do (and why it is greyed)
 
 * **Already covered by PO …**: the line is fully covered by POs already. It cannot be ticked in
-  the popup, and **Link to PO…** is greyed when every ticked line is covered.
+  the popup, and **Link to PO…** is greyed when every ticked line is covered. Use **Change PO…**
+  instead.
+* **Each ticked line needs exactly one PO linked**: **Change PO…** swaps one PO for another, so
+  every ticked line must be covered by exactly one PO line.
+* **Nothing is left open on PO … to change**: everything on that PO line has been received;
+  received stock cannot move.
+* **PO … has only N free**: the PO line picked in **Change to** cannot take the whole open
+  quantity. Pick another one.
 * **In another AutoCount book from this sales order**: a PO from a different AutoCount company
   book cannot be linked to this sales order.
 * **Waiting for AutoCount**: AutoCount cannot do this yet. Today that is **Unlink from PO…**,
@@ -68,6 +109,8 @@ AutoCount.
 
 * In AutoCount: the PO line's quantity is reduced by **Qty**, and a new PO line of that quantity
   is added at the sales order line's location, linked to the sales order line.
+* **Change PO…**: the old PO line is unlinked (its quantity is not touched), then the new PO line
+  is linked for the open quantity, the same way as **Link to PO…**.
 * In the CRM: the PO lines are updated from what AutoCount read back, so the drill shows the link
   at once. The next AutoCount sync confirms it.
 
