@@ -27,6 +27,8 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/procurement-management/order-change-notices/new',
 }));
 vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
+// Round 20b: the form reads the signed-in salesperson's linked contact (UAC I8 prefill); none here.
+vi.mock('@/hooks/useAccountProfileForHeader', () => ({ useAccountProfileForHeader: () => ({ salesperson: null }) }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),

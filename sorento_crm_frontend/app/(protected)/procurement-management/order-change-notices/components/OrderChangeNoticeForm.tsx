@@ -33,6 +33,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { getUserLookup } from '@/services/userSelectService';
+import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
@@ -229,6 +230,18 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
     id: null,
     name: null,
   });
+  // UAC I8: a new notice starts as the signed-in salesperson's linked contact, shown by name
+  // before any save. Once only, so a cleared or picked value is never put back.
+  const { salesperson } = useAccountProfileForHeader();
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (ocnId || prefilled || !salesperson?.contactId) return;
+    setPrefilled(true);
+    setState((prev) =>
+      prev.requested_by_contact_id ? prev : { ...prev, requested_by_contact_id: salesperson.contactId ?? '' },
+    );
+    setSavedRequestor({ id: salesperson.contactId, name: salesperson.contactName ?? null });
+  }, [ocnId, prefilled, salesperson?.contactId, salesperson?.contactName]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 

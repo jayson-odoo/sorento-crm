@@ -143,6 +143,17 @@ def filter_form_referenced_ids(db: Session, ids: Optional[Iterable[str]]) -> lis
     return [i for i in wanted if i in allowed]
 
 
+def linked_contact_id(db: Optional[Session], user_id: Optional[str]) -> Optional[str]:
+    """The contact a CRM user is linked to (`users.respond_contact_id`), if any: the default
+    requestor of an order change notice they raise, and always selectable by them."""
+    from app.models.user import User
+
+    if db is None or not user_id:
+        return None
+    value = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
+    return str(value) if value else None
+
+
 def contact_display_name(contact: RespondContact) -> Optional[str]:
     """Freeform `name`, else first + last. Same precedence as the picker query's
     `name_expr` and portal_service._contact_display_name."""
@@ -199,9 +210,8 @@ def apply_requestor_contact(
             code="REQUESTOR_NOT_ELIGIBLE",
         )
     setattr(row, fk_field, contact.id)
-    display = contact_display_name(contact)
-    if display:
-        setattr(row, label_field, display)
+    # Always replaced: a contact with no name clears the label rather than keep the previous one's.
+    setattr(row, label_field, contact_display_name(contact))
 
 
 def is_eligible_requestor(

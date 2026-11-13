@@ -260,13 +260,9 @@ def is_mine(row: OrderChangeNotice, actor: Actor) -> bool:
 
 
 def _linked_contact_id(db: Optional[Session], user_id: Optional[str]) -> Optional[str]:
-    """The contact a CRM user is linked to (`users.respond_contact_id`), if any."""
-    from app.models.user import User
+    from app.services.requestor_options_service import linked_contact_id
 
-    if db is None or not user_id:
-        return None
-    value = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
-    return str(value) if value else None
+    return linked_contact_id(db, user_id)
 
 
 def can_view(actor: Actor) -> bool:
@@ -375,11 +371,12 @@ def _check_refs(db: Session, data: Dict[str, Any], *, current_project_id: Option
             raise _invalid("lines", f"Line {index}: that product is not in the catalogue.")
 
 
-def _apply_requestor(db: Session, row: OrderChangeNotice, data: Dict[str, Any], creator_id: Optional[str]) -> None:
+def apply_requestor(db: Session, row: OrderChangeNotice, data: Dict[str, Any], creator_id: Optional[str]) -> None:
     """"Requested by" (UAC I7/I8), saved only through the purchase request's shared
     `apply_requestor_contact` (eligibility, the label from the contact's current name). The
     notice has no submitter contact, so the creating user's linked contact stands in for it:
-    it is always eligible, and it is the default on create when the body leaves the key out.
+    it is always eligible, and it is the default on create when the body leaves the key out (the
+    sales order amendment's drafted notice takes the same default, project_so_delta_service).
     An explicit empty value clears both the contact and its label."""
     from app.services.requestor_options_service import apply_requestor_contact
 
@@ -409,7 +406,7 @@ def _apply(db: Session, row: OrderChangeNotice, data: Dict[str, Any]) -> None:
     _check_refs(db, data, current_project_id=row.project_id)
     with db.no_autoflush:
         # Checked (and the contact read) before any other assignment, so a 422 changes nothing.
-        _apply_requestor(db, row, data, row.created_by)
+        apply_requestor(db, row, data, row.created_by)
         for key in ("change_type_id", "customer_id", "project_id", "cs_in_charge_user_id"):
             if key in data:
                 setattr(row, key, str(data[key]) if data[key] else None)

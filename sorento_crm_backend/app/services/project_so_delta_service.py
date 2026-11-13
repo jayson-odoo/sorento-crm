@@ -807,6 +807,9 @@ class ProjectSODeltaService:
                 status=order_change_notice_service.DRAFT,
                 ocn_date=order_change_notice_service.today_malaysia(),
             )
+            # UAC I8: Requested by defaults to the amending user's linked contact, the notice's own
+            # create default (no key in the body).
+            order_change_notice_service.apply_requestor(self.db, ocn, {}, actor_user_id)
             self.db.add(ocn)
         self.db.flush()
         amendment.ocn_id = ocn.id
