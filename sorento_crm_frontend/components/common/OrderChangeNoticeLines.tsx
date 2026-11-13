@@ -124,22 +124,23 @@ export function OrderChangeNoticeLines({
 
   return (
     <div>
-      {/* Fits the form card at 1280 (about 880 px) and scrolls inside this wrapper below it, the
-          page itself never scrolling sideways (SampleRequestLines). A date column holds
-          "DD/MM/YYYY" beside its 34 px calendar button: 10.5rem with the cell's padding. */}
+      {/* The form card is about 853 px at 1280: the columns add up to 840 (Remark takes the rest,
+          at least 120), so nothing scrolls sideways on a desktop; a phone scrolls the table in this
+          wrapper, never the page (SampleRequestLines). A date cell holds "DD/MM/YYYY" beside the
+          34 px calendar button through the picker's own compact props (text-xs, gap-1). */}
       <div className="relative overflow-x-auto">
-        <table className="w-full min-w-[880px] table-fixed text-sm">
+        <table className="w-full min-w-[840px] table-fixed text-sm">
           <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="w-8 px-2 py-2 text-left">No.</th>
-              <th className="w-[18%] px-2 py-2 text-left">Item Code</th>
-              <th className="w-[4.5rem] px-2 py-2 text-left">Qty before</th>
-              <th className="w-[4.5rem] px-2 py-2 text-left">Qty after</th>
-              <th className="w-[10.5rem] px-2 py-2 text-left">Date before</th>
-              <th className="w-[10.5rem] px-2 py-2 text-left">Date after</th>
-              <th className="w-[4.5rem] px-2 py-2 text-left">Delivered</th>
-              <th className="px-2 py-2 text-left">Remark</th>
-              <th className="w-11 px-1 py-2">
+              <th className="w-8 px-1 py-2 text-left">No.</th>
+              <th className="w-[9.25rem] px-1 py-2 text-left">Item Code</th>
+              <th className="w-16 px-1 py-2 text-left">Qty before</th>
+              <th className="w-16 px-1 py-2 text-left">Qty after</th>
+              <th className="w-[9.25rem] px-1 py-2 text-left">Date before</th>
+              <th className="w-[9.25rem] px-1 py-2 text-left">Date after</th>
+              <th className="w-[4.75rem] px-1 py-2 text-left">Delivered</th>
+              <th className="min-w-[7.5rem] px-1 py-2 text-left">Remark</th>
+              <th className="w-10 px-0.5 py-2">
                 <span className="sr-only">Remove</span>
               </th>
             </tr>
@@ -147,8 +148,9 @@ export function OrderChangeNoticeLines({
           <tbody>
             {lines.map((line, index) => (
               <tr key={line.key} data-testid="order-change-notice-line" className="border-t align-top">
-                <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
-                <td className="px-2 py-2">
+                <td className="px-1 py-2 text-muted-foreground">{index + 1}</td>
+                {/* The input clips a long picked name; the cell's title shows it whole. */}
+                <td className="px-1 py-2" title={line.label || undefined}>
                   <ProductPickCell<OcnProductHit>
                     productId={line.product_id}
                     label={line.label}
@@ -164,7 +166,7 @@ export function OrderChangeNoticeLines({
                   )}
                 </td>
                 {QTY_FIELDS.map(([field, caption]) => (
-                  <td key={field} className="px-2 py-2">
+                  <td key={field} className="px-1 py-2">
                     <NumberInput
                       inputMode="decimal"
                       min={0}
@@ -176,23 +178,27 @@ export function OrderChangeNoticeLines({
                     />
                   </td>
                 ))}
-                <td className="px-2 py-2">
+                <td className="px-1 py-2">
                   <DatePickerField
                     ariaLabel="Date before"
+                    className="gap-1"
+                    inputClassName="px-2 text-xs"
                     disabled={disabled}
                     value={line.date_before}
                     onChange={(v) => patchLine(line.key, { date_before: v })}
                   />
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-1 py-2">
                   <DatePickerField
                     ariaLabel="Date after"
+                    className="gap-1"
+                    inputClassName="px-2 text-xs"
                     disabled={disabled}
                     value={line.date_after}
                     onChange={(v) => patchLine(line.key, { date_after: v })}
                   />
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-1 py-2">
                   <NumberInput
                     inputMode="decimal"
                     min={0}
@@ -203,7 +209,7 @@ export function OrderChangeNoticeLines({
                     onChange={(e) => patchLine(line.key, { delivered_qty: e.target.value })}
                   />
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-1 py-2">
                   <Input
                     aria-label="Remark"
                     disabled={disabled}
@@ -211,7 +217,7 @@ export function OrderChangeNoticeLines({
                     onChange={(e) => patchLine(line.key, { remark: e.target.value })}
                   />
                 </td>
-                <td className="px-1 py-2">
+                <td className="px-0.5 py-2">
                   {!disabled && (
                     <Button
                       type="button"

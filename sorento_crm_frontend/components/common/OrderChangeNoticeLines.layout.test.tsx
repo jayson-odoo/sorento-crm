@@ -1,16 +1,18 @@
 /**
- * OCN-ORDER-CHANGE-NOTICE round 15 (crew pass, 1280 px): the line table fits the form card at 1280
- * and scrolls inside its own wrapper on a phone (SampleRequestLines' pattern), and each date
- * column is wide enough for "DD/MM/YYYY" beside its calendar button. jsdom has no layout, so this
- * pins the classes that make it so; the browser pass checks the pixels.
+ * OCN-ORDER-CHANGE-NOTICE rounds 15-16 (crew pass, 1280 px): the line table fits the form card at
+ * 1280 (about 853 px of content, measured on browser pass 6) with no sideways scroll, and scrolls
+ * inside its own wrapper on a phone (SampleRequestLines' pattern). Each date cell holds
+ * "DD/MM/YYYY" beside its calendar button through the shared picker's compact props. jsdom has no
+ * layout, so this pins the classes that make it so; the browser pass checks the pixels. (Round 16
+ * is a width tweak on round 15's red test, so it was not re-run red first.)
  */
 import React from 'react';
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { OrderChangeNoticeLines, blankOcnLine } from './OrderChangeNoticeLines';
 
-/** The form card's content width at 1280 px with the sidebar open (measured on the browser pass). */
-const CARD_AT_1280 = 880;
+/** The form card's content width at 1280 px with the sidebar open (browser pass 6), less a margin. */
+const CARD_AT_1280 = 850;
 
 function minWidthPx(el: Element): number {
   const m = /min-w-\[(\d+)px\]/.exec(el.className);
@@ -35,13 +37,27 @@ describe('OrderChangeNoticeLines layout', () => {
     });
   }
 
-  it('gives each date column room for DD/MM/YYYY beside its calendar button', () => {
+  it('sizes the columns to add up to the min width, Remark taking the rest', () => {
     const { container } = render(<OrderChangeNoticeLines lines={[blankOcnLine()]} onChange={() => {}} />);
-    const heads = Array.from(container.querySelectorAll('th'));
+    const th = (name: string) =>
+      Array.from(container.querySelectorAll('th')).find((h) => h.textContent === name) as HTMLElement;
+    const table = container.querySelector('table') as HTMLTableElement;
+    expect(minWidthPx(table)).toBe(840);
+    expect(th('No.').className).toMatch(/\bw-8\b/);
+    expect(remOf(th('Item Code'))).toBe(9.25);
+    for (const name of ['Qty before', 'Qty after']) expect(th(name).className).toMatch(/\bw-16\b/);
+    expect(remOf(th('Delivered'))).toBe(4.75); // the header word DELIVERED fits
+    for (const name of ['Date before', 'Date after']) expect(remOf(th(name))).toBe(9.25);
+    expect(th('Remark').className).toMatch(/min-w-\[7\.5rem\]/);
+    expect(th('Remove').className).toMatch(/\bw-10\b/);
+  });
+
+  it('draws the date inputs compact, through the shared picker, so DD/MM/YYYY fits beside the button', () => {
+    const { getByLabelText } = render(<OrderChangeNoticeLines lines={[blankOcnLine()]} onChange={() => {}} />);
     for (const name of ['Date before', 'Date after']) {
-      const th = heads.find((h) => h.textContent === name) as HTMLElement;
-      // input (px-3, ~75 px of text) + 8 px gap + the 34 px button + the cell's 16 px padding
-      expect(remOf(th)).toBeGreaterThanOrEqual(10.5);
+      const input = getByLabelText(name);
+      expect(input.className).toMatch(/\btext-xs\b/);
+      expect((input.parentElement as HTMLElement).className).toMatch(/\bgap-1\b/);
     }
   });
 });
