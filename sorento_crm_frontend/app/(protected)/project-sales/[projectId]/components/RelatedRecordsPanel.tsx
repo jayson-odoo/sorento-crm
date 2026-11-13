@@ -31,7 +31,7 @@ import type {
   RelatedRecordsParams,
 } from '../../_shared/types/project.types';
 import { formatMyr } from './QuotationsPanel';
-import { RELATED_RECORD_TYPES } from './relatedRecordTypes';
+import { LEGACY_SPONSORSHIP_TAB, RELATED_RECORD_TYPES } from './relatedRecordTypes';
 
 const PAGE_SIZE = 25;
 const DEFAULT_SORTING: SortingState = [{ id: 'date', desc: true }];
@@ -160,12 +160,16 @@ export function RelatedRecordsPanel({
   const [statuses, setStatuses] = React.useState<string[]>(opening.statuses);
   const searchQuery = useDebouncedValue(search.trim(), 300);
 
-  // Mirror the grid's state into the address bar, keeping every other param (the tab, the
-  // projects list's own prev/next query).
+  // Mirror the grid's state into the address bar, keeping every other param (the projects list's
+  // own prev/next query), and ONLY while the Related tab is the one showing. The tab belongs to
+  // the project page: writing it here put every other tab click straight back on Related.
   React.useEffect(() => {
     const next = new URLSearchParams(urlKey);
+    const tab = next.get('tab');
+    if (tab !== 'related' && tab !== LEGACY_SPONSORSHIP_TAB) return;
     for (const key of Object.values(URL_KEYS)) next.delete(key);
-    next.set('tab', 'related');
+    // The retired Sponsorship Form link is the Related tab; name it so a reload keeps the filters.
+    if (tab === LEGACY_SPONSORSHIP_TAB) next.set('tab', 'related');
     if (pagination.pageIndex > 0) next.set(URL_KEYS.page, String(pagination.pageIndex + 1));
     if (pagination.pageSize !== PAGE_SIZE) next.set(URL_KEYS.limit, String(pagination.pageSize));
     const sort = sorting[0];

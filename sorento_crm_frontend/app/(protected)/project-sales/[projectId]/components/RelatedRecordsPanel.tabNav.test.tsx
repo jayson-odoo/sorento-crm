@@ -9,7 +9,7 @@ import { screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { project, renderWithClient, response, ROWS } from './relatedRecordsTestKit';
+import { project, renderWithClient, response } from './relatedRecordsTestKit';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
