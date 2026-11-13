@@ -6,9 +6,14 @@ A spare part request is not customer demand. It does not change committed stock 
 
 ## Raise a request (requester)
 
-The menu item shows when you have the spare part request permission, or project view access (approvers use it to find the requests waiting for them).
+Where you find it depends on your role, the same way as Purchase Requests:
 
-1. Open **Procurement > Supply Chain > Spare Part Requests**.
+* **Procurement > Supply Chain > Spare Part Requests** shows when your role has **View Spare Part Requests**. Give it to approvers and to staff who raise requests; they still see only their own requests and the ones they approve.
+* Salespeople who may raise requests (**Create Spare Part Requests**) find **Spare Part Requests** under **MY REQUESTS**.
+
+To raise a request you need **Create Spare Part Requests**.
+
+1. Open **Spare Part Requests** (under **Procurement > Supply Chain**, or under **MY REQUESTS**).
 2. Click **Create**. The page opens as **New Spare Part Request**.
 3. In the **Request** section, choose the **Currency** (required). Optionally set **Needed by**, a **Default location** and a **Reason**.
 4. In the **Products** section, search for a product by code or name (for example ZZX-100). Only products from the catalogue can be added.
@@ -35,7 +40,7 @@ Approval levels are set on **SLA Management > Form SLA Configuration**, using th
 
 ## Approve or reject (approver)
 
-The approver team of the current level is notified; the notification opens the request. You can also open it from **Procurement > Supply Chain > Spare Part Requests**, which lists the requests waiting for you. The request page has **Lines**, **General** and **History** tabs and the previous / next arrows. Go to the **Lines** tab.
+The approver team of the current level is notified; the notification opens the request. You can also open it from **Procurement > Supply Chain > Spare Part Requests**, which lists the requests waiting for you and the ones you have decided on. The request page has **Lines**, **General** and **History** tabs and the previous / next arrows. Go to the **Lines** tab.
 
 1. Where needed, change the **Qty** (0 drops the line), the **Unit price**, or add or remove photos. You cannot add or remove lines.
 2. A value you changed shows what the requester submitted, for example "was 10", under it.
