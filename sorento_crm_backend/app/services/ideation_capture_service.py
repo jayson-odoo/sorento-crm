@@ -242,17 +242,17 @@ def _linked_user(db: Session, contact_id: str) -> User | None:
 def _dealer_eligible(db: Session, contact: Any) -> bool:
     """May the assistant give this contact its own CRM user (D-3, D-4)? AI access on for its
     respond.io id (`chatbot_allowed_service.is_allowed`, the bot's own gate), exactly one contact
-    row for that id, and not a contact the one staff rule covers (`contact_grant._is_staff`: a staff
+    row for that id, and not a contact the one staff rule covers (`user_service.is_staff_phone`: a staff
     user's phone, a linked staff user, a sales agent's contact)."""
     from app.services import chatbot_allowed_service
-    from app.services.chatbot.agent.contact_grant import _is_staff
+    from app.services.user_service import is_staff_phone
 
     rid = str(getattr(contact, "respond_io_id", None) or "").strip()
     if not rid or not chatbot_allowed_service.is_allowed(db, rid):
         return False
     if db.query(RespondContact).filter(RespondContact.respond_io_id == rid).count() != 1:
         return False
-    return not _is_staff(db, str(contact.phone_number or ""), str(contact.id))
+    return not is_staff_phone(db, str(contact.phone_number or ""), str(contact.id))
 
 
 def _unlinked_dealer(db: Session, respond_io_id: str) -> RespondContact | None:
@@ -568,12 +568,13 @@ def handle_capture_turn(
     user = _access_user(db, respond_io_id)
     # An eligible dealer with no CRM user yet gets one, but only once this turn really files (D-4).
     dealer = _unlinked_dealer(db, respond_io_id) if user is None else None
-    if dealer is not None and is_test:
+    # An existing dealer-own user (no staff role) is held to the same rules as a new dealer (round 7, 8).
+    dealer_own = user is not None and not _signs_in(db, user)
+    if (dealer is not None or dealer_own) and is_test:
         return finish("test_turn", "test_turn", {}, language, persist=False)
     if dealer is not None and not _is_own_latest_message(db, respond_io_id, text_in):
         dealer = None
-    # An existing dealer-own user (no staff role) files only its own latest message too (round 7).
-    if user is not None and not _signs_in(db, user) and not _is_own_latest_message(db, respond_io_id, text_in):
+    if dealer_own and not _is_own_latest_message(db, respond_io_id, text_in):
         user = None
     if user is None and dealer is None:
         return finish("no_access", "no_access", {}, language)

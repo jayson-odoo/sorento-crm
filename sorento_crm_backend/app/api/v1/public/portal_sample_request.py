@@ -47,12 +47,14 @@ def _actor(token: PortalToken) -> svc.Actor:
     return svc.Actor(contact_id=str(token.contact_id))
 
 
-def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
+def _linked_user_id(db: Session, contact_id: str, *, staff_only: bool = True) -> Optional[str]:
     """The staff CRM user whose linked contact this is (`users.respond_contact_id`), or None. A
-    dealer's own user (roles all non-staff, `user_service.only_non_staff_roles`) is not one."""
+    dealer's own user (roles all non-staff, `user_service.only_non_staff_roles`) is not one, unless
+    `staff_only=False` (any linked user, as the own-project guard reads it)."""
     from app.services.user_service import only_non_staff_roles
 
-    return db.query(User.id).filter(User.respond_contact_id == str(contact_id), ~only_non_staff_roles()).scalar()
+    query = db.query(User.id).filter(User.respond_contact_id == str(contact_id))
+    return (query.filter(~only_non_staff_roles()) if staff_only else query).scalar()
 
 
 def _assert_own_quoted_project(db: Session, token: PortalToken, project_id: Optional[str]) -> None:
@@ -61,7 +63,7 @@ def _assert_own_quoted_project(db: Session, token: PortalToken, project_id: Opti
     pre-fill route applies, which the company-wide portal project rule alone does not."""
     from app.services import own_scope
 
-    user_id = _linked_user_id(db, token.contact_id)
+    user_id = _linked_user_id(db, token.contact_id, staff_only=False)
     if not (project_id and user_id):
         return
     if own_scope.user_is_limited(
