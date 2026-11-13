@@ -66,3 +66,51 @@ def test_a2_the_so_detail_after_the_save_gives_those_lines_supply_saved_empty(en
     for contribution in saved:
         line = by_id[contribution["line_id"]]
         assert line["supply_saved"] == [], (line["id"], line.get("supply_saved"))
+
+
+# --------------------------------------------------------------------------------------------
+# Crew pass ee74c892 (comment 6845735172), red: the board's Confirm on a deleted / header-
+# cancelled SO retires the saved cancel lines, but their drafts survived it, so the SO page read
+# Decision "Saved" on every confirmed line. A confirmation takes the drafts it promoted with it
+# (`project_supply_service.py` S4 rule); the cancel lines it retires are promoted too.
+def _drafts_on_lines(env, line_ids):
+    return env.db.execute(
+        text("SELECT count(*) FROM so_supply_decision_drafts WHERE core_line_id::text = ANY(:ids)"),
+        {"ids": list(line_ids)},
+    ).scalar()
+
+
+@pytest.mark.parametrize("how", ("delete", "push"))
+def test_b1_the_board_confirm_takes_the_saved_cancel_drafts_with_it(env, monkeypatch, how):
+    from .test_oi_whole_so_cancel_board import _confirm_through_the_board_route
+
+    w = _world(env, how)
+    saved = _save_every_cancelled_line(env, w)
+    line_ids = [c["line_id"] for c in saved]
+    assert _drafts_on_lines(env, line_ids) == len(line_ids), "precondition: drafts saved"
+
+    _confirm_through_the_board_route(env, monkeypatch, w)
+
+    assert _drafts_on_lines(env, line_ids) == 0, "the saved cancel drafts survived the Confirm"
+
+
+@pytest.mark.parametrize("how", ("delete", "push"))
+def test_b2_the_so_detail_after_the_confirm_reads_no_saved_decision(env, monkeypatch, how):
+    from .test_oi_whole_so_cancel_board import _confirm_through_the_board_route
+
+    w = _world(env, how)
+    saved = _save_every_cancelled_line(env, w)
+    _confirm_through_the_board_route(env, monkeypatch, w)
+    so_id = str(
+        env.db.execute(
+            text("SELECT id FROM sales_orders WHERE so_number = :n"), {"n": w["so_number"]}
+        ).scalar()
+    )
+
+    res = env.client.get(f"{SCM}/{so_id}")
+
+    assert res.status_code == 200, res.text
+    by_id = {ln["id"]: ln for ln in res.json()["lines"]}
+    for contribution in saved:
+        line = by_id[contribution["line_id"]]
+        assert line.get("supply_saved") is None, (line["id"], line.get("supply_saved"))
