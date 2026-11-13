@@ -332,3 +332,28 @@ def test_r4_4_a_malay_stock_ask_with_a_one_letter_typo_gets_the_same_offer(sessi
     assert R not in malay and MALAY_REFER not in malay, malay
     assert TICK not in malay, malay
     assert _option_codes(c) == english_options, (c.stored_question, english_options)
+
+
+# --------------------------------------------------------------------------- round 5 (AC-33, reviewer probe)
+#
+# Lead ruling: a typed word that holds every letter of the code part in order and is longer than it ("gold" -> GLD,
+# "grey" -> GRY) is the customer saying the code in words (AC-33, answered directly); otherwise the distance rule
+# applies (offered).
+
+GLD, GRY = "SRTWT8259-GLD", "SRTWT8259-GRY"
+
+
+@WHO
+@pytest.mark.parametrize(("raw", "code"), [("SRTWT8259 gold", GLD), ("SRTWT8259 grey", GRY)], ids=["gold", "grey"])
+def test_r5_1_a_word_spelling_out_the_code_part_is_answered_directly(session_factory, monkeypatch, stub_access, who, raw, code):  # noqa: F811
+    c = _who(session_factory, monkeypatch, stub_access, who, [GLD, GRY])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, code, 2))
+    _assert_answered(text, who, code, 2)
+
+
+@WHO
+def test_r5_2_letters_out_of_order_are_offered_not_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw = "SRTWT8259 GDL"
+    c = _who(session_factory, monkeypatch, stub_access, who, [GLD])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, GLD, 2))
+    _assert_offered_not_answered(c, text, who, raw, GLD)
