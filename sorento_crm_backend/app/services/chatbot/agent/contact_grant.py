@@ -312,20 +312,22 @@ def _find_contact(db, phone: str):
     return rows[0] if rows else None
 
 
-def _is_staff(db, phone: str, contact_id: str | None) -> bool:
+def _is_staff(db, phone: str, contact_id: str | None, *, roleless_is_staff: bool = True) -> bool:
     """Is this phone staff (UAC A9, A16)? A CRM user's contact number (by digits, with or without the leading 6), or,
     for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access. A dealer's
-    own CRM user (roles all non-staff, `user_service.only_non_staff_roles`) does not make it staff."""
+    own CRM user (roles all non-staff, `user_service.only_non_staff_roles`) does not make it staff. A user with no
+    role at all counts here; `roleless_is_staff=False` reads the strict rule (`user_service.holds_staff_role`)
+    instead, as the WhatsApp dealer check does (`ideation_capture_service._dealer_eligible`)."""
     from sqlalchemy import func
 
     from app.models.base import company_scope
     from app.models.sales_agent import SalesAgent
     from app.models.user import User
-    from app.services.user_service import only_non_staff_roles
+    from app.services.user_service import holds_staff_role, only_non_staff_roles
 
     full = phone.lstrip("+")
     digits = func.regexp_replace(User.contact_number, r"\D", "", "g")
-    staff_user = ~only_non_staff_roles()
+    staff_user = ~only_non_staff_roles() if roleless_is_staff else holds_staff_role()
     with company_scope(db, None):
         if db.query(User.id).filter(digits.in_({full, full[1:]}), staff_user).first() is not None:
             return True

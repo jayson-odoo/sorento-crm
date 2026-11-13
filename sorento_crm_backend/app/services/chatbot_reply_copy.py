@@ -399,11 +399,11 @@ IDEATION_CAPTURE_ACCOUNT_FAILED = {
     "ms": "Saya tidak dapat menyediakan akaun anda untuk menghantar ini. Sila tanya jurujual anda.",
     "zh": "我无法为您设置账户来提交这个内容。请联系您的销售人员。",
 }
-#: SS #235: ss refused the item (an unknown type, any 422 on create). Plain words, no retry.
+#: SS #235: ss refused the item's type (a 422 `unknown_type` on create only). Plain words, no retry.
 IDEATION_CAPTURE_TYPE_REFUSED = {
-    "en": "I couldn't file this as that type. Please send it again.",
-    "ms": "Saya tidak dapat menghantar ini sebagai jenis itu. Sila hantar sekali lagi.",
-    "zh": "我无法以该类型提交这个内容。请再发送一次。",
+    "en": "I couldn't file this: the Ideas workspace doesn't take this type yet.",
+    "ms": "Saya tidak dapat menghantar ini: ruang kerja Idea belum menerima jenis ini.",
+    "zh": "我无法提交这个：创意工作区暂时不接受此类型。",
 }
 IDEATION_CAPTURE_ERROR = {
     "en": "Sorry, I couldn't save that idea just now. Please try again in a moment.",

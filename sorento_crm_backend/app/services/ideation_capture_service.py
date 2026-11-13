@@ -241,14 +241,18 @@ def _linked_user(db: Session, contact_id: str) -> User | None:
 
 def _dealer_eligible(db: Session, contact: Any) -> bool:
     """May the assistant give this contact its own CRM user (D-3, D-4)? AI access on for its
-    respond.io id (`chatbot_allowed_service.is_allowed`, the bot's own gate) and exactly one contact
-    row for that id."""
+    respond.io id (`chatbot_allowed_service.is_allowed`, the bot's own gate), exactly one contact
+    row for that id, and not a contact the one staff rule covers (`contact_grant._is_staff`: a staff
+    user's phone, a linked staff user, a sales agent's contact)."""
     from app.services import chatbot_allowed_service
+    from app.services.chatbot.agent.contact_grant import _is_staff
 
     rid = str(getattr(contact, "respond_io_id", None) or "").strip()
     if not rid or not chatbot_allowed_service.is_allowed(db, rid):
         return False
-    return db.query(RespondContact).filter(RespondContact.respond_io_id == rid).count() == 1
+    if db.query(RespondContact).filter(RespondContact.respond_io_id == rid).count() != 1:
+        return False
+    return not _is_staff(db, str(contact.phone_number or ""), str(contact.id), roleless_is_staff=False)
 
 
 def _unlinked_dealer(db: Session, respond_io_id: str) -> RespondContact | None:
@@ -309,17 +313,21 @@ _OWN_MESSAGE_WINDOW = timedelta(minutes=10)
 def _is_own_latest_message(db: Session, respond_io_id: str, message_text: str) -> bool:
     """Is `message_text` this contact's own latest inbound WhatsApp message (a live chatbot turn of the
     contact in the last 10 minutes, its text the respond.io envelope `message.message.message.text`)?
-    A dealer user is created only then (round 6, should-fix 1): a call naming a contact, with a text
-    that contact never sent, creates nothing."""
+    A turn with no text (a photo sent after the words) is skipped. A dealer files only then (round 6,
+    should-fix 1; round 7): a call naming a contact, with a text that contact never sent, files nothing."""
+    from sqlalchemy import func
+
     from app.models.chatbot_turn import ChatbotTurn
 
+    text = ChatbotTurn.envelope["message"]["message"]["message"]["text"].astext
     latest = (
-        db.query(ChatbotTurn.envelope["message"]["message"]["message"]["text"].astext)
+        db.query(text)
         .filter(
             ChatbotTurn.contact_respond_id == respond_io_id,
             ChatbotTurn.is_test.is_(False),
             ChatbotTurn.ingress != "console",
             ChatbotTurn.created_at >= datetime.now(timezone.utc) - _OWN_MESSAGE_WINDOW,
+            func.coalesce(func.btrim(text), "") != "",
         )
         .order_by(ChatbotTurn.created_at.desc())
         .limit(1)
@@ -564,6 +572,9 @@ def handle_capture_turn(
         return finish("test_turn", "test_turn", {}, language, persist=False)
     if dealer is not None and not _is_own_latest_message(db, respond_io_id, text_in):
         dealer = None
+    # An existing dealer-own user (no staff role) files only its own latest message too (round 7).
+    if user is not None and not _signs_in(db, user) and not _is_own_latest_message(db, respond_io_id, text_in):
+        user = None
     if user is None and dealer is None:
         return finish("no_access", "no_access", {}, language)
 
