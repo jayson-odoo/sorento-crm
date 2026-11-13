@@ -121,19 +121,55 @@ def _set_code_tokens(db: Session, tokens: list[str]) -> dict[str, str]:
     }
 
 
-def _beside(words: list[str], folded_token: str) -> list[str]:
-    """The words of a line other than the run of words that spells `folded_token` ("qwc604",
-    "p", "rl" spell QWC604PRL), so what is left is what was said beside the code."""
+def _beside(words: list[str], folded_token: str) -> tuple[list[str], list[str]]:
+    """The words of a line before and after the run of words that spells `folded_token`
+    ("qwc604", "p", "rl" spell QWC604PRL), so what is left is what was said beside the code."""
     folds = [_fold(w) for w in words]
     for start in range(len(words)):
         spelt = ""
         for end in range(start, len(words)):
             spelt += folds[end]
             if spelt == folded_token:
-                return words[:start] + words[end + 1 :]
+                return words[:start], words[end + 1 :]
             if not folded_token.startswith(spelt):
                 break
-    return [w for w, f in zip(words, folds) if f not in folded_token]
+    return [w for w, f in zip(words, folds) if f not in folded_token], []
+
+
+def _completes_a_code(db: Session, token: str, after: list[str]) -> bool:
+    """CHATBOT-SET-CODES AC-2c (owner ruling 13 Nov): does the code token plus the words that
+    follow it on its line (longest first) equal, folded by case, dashes and spaces only, a
+    visible registered set code (`_set_code_tokens`) or a chat-visible product code (the
+    resolver's exact probe, `entity_resolver._probe_product`)? "QWC605-RL soft" is the set
+    QWC605-RL-SOFT; the code intersection the resolver runs over the code and its words then
+    places it, as it places "QWX7700 gm" on the product QWX7700-GM."""
+    from app.services.entity_resolver import _probe_product
+
+    candidates = [" ".join([token, *after[:k]]) for k in range(len(after), 0, -1)]
+    if not candidates:
+        return False
+    if _set_code_tokens(db, candidates):
+        return True
+    return any(_probe_product(db, candidates).values())
+
+
+def _set_members_carry(db: Session, set_code: str, family: list[tuple[str, str]], words: list[str]) -> bool:
+    """CHATBOT-SET-CODES AC-2f: do the set's own members carry every word of `words` that picks
+    among its family ("QWC604-P-RL p trap": its pan already says P trap)? Members in the set row's
+    own `display.members` (`entity_resolver._probe_product_set`)."""
+    from app.services.entity_resolver import _probe_product_set
+
+    terms = _terms(words, family)
+    if not terms:
+        return False
+    members = {
+        str(m.get("product_code"))
+        for entity in _probe_product_set(db, [set_code]).get(set_code) or []
+        for m in (entity.display or {}).get("members") or []
+        if isinstance(m, dict) and m.get("product_code")
+    }
+    own = [(code, text) for code, text in family if code in members]
+    return bool(own) and set(terms) <= set(_terms(words, own))
 
 
 def _family_rows(
@@ -409,16 +445,19 @@ def narrow_code_tokens(
         if token in set_codes:
             from app.services.product_family import family_code_for
 
-            beside = [
-                w
-                for words in lines
-                if folded in "".join(_fold(x) for x in words)
-                for raw in _beside(words, folded)
-                for w in _words(raw)
-                if not _CODE_WORD.match(w)
-            ]
+            own = [_beside(words, folded) for words in lines if folded in "".join(_fold(x) for x in words)]
+            if any(_completes_a_code(db, token, after) for _before, after in own):
+                # The code and its words are another exact code: the resolver places it.
+                continue
+            beside = [w for before, after in own for raw in [*before, *after] for w in _words(raw) if not _CODE_WORD.match(w)]
             family_code = family_code_for(set_codes[token])
-            picked = _pick(_family(db, code_word, family_code), beside) if beside and family_code and code_word else None
+            if not (beside and family_code and code_word):
+                continue
+            family = _family(db, code_word, family_code)
+            if _set_members_carry(db, set_codes[token], family, beside):
+                # The set's own parts already say what was said beside it: the set is the answer.
+                continue
+            picked = _pick(family, beside)
             if picked is not None:
                 replaced[i] = picked[0]
                 consumed.update(w for t in picked[1] for w in t.split())
