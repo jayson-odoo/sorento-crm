@@ -436,9 +436,21 @@ def seed_complaint_master(db):
     say("complaint root causes, resolutions, complaint types")
 
 
+def seed_modules(db):
+    """Switch every catalogue module on for the default tenant. A fresh schema has no
+    tenant_modules rows, and the frontend's route guard then sends every module page home."""
+    from app.models.app_modules import AppModuleCatalog
+    from app.modules.runtime.installer import DEFAULT_TENANT_ID, install_modules
+
+    keys = [r.module_key for r in db.query(AppModuleCatalog).all()]
+    install_modules(db, DEFAULT_TENANT_ID, keys, None, action="install")
+    say(f"modules: {len(keys)} enabled")
+
+
 def seed_p1(db) -> dict:
     print("p1:")
     seed_company(db)
+    seed_modules(db)
     ws = seed_workspace(db)
     sam_contact = contact(db, SALES["phone"], SALES["name"], ws)
     role_with_perms(db, "salesperson", "Salesperson", SALES_PERMS, tuple(SALES_PERMS_REMOVED))

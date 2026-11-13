@@ -68,11 +68,20 @@ const browser = await chromium.launch();
 const user = spec.user;
 const pre = await browser.newContext({ viewport: { width: W, height: H } });
 const lp = await pre.newPage();
-await lp.goto(`${BASE}/signin`, { waitUntil: 'domcontentloaded' });
-await lp.getByPlaceholder('Your email').fill(user.email);
-await lp.getByPlaceholder('Your password').fill(user.password);
-await lp.locator('button[type="submit"]').first().click();
-await lp.waitForURL((u) => !u.pathname.startsWith('/signin'), { timeout: 60000 });
+for (let attempt = 0; ; attempt++) {
+  await lp.goto(`${process.env.TV_BASE_URL || 'http://localhost:3000'}/signin`, { waitUntil: 'networkidle', timeout: 180000 });
+  await lp.waitForTimeout(1500);
+  await lp.getByPlaceholder('Your email').fill(user.email);
+  await lp.getByPlaceholder('Your password').fill(user.password);
+  await lp.locator('button[type="submit"]').first().click();
+  try {
+    await lp.waitForURL((u) => !u.pathname.startsWith('/signin'), { timeout: 60000 });
+    await lp.waitForLoadState('networkidle');
+    break;
+  } catch (e) {
+    if (attempt >= 2) throw e;
+  }
+}
 const storageState = await pre.storageState();
 // Warm the dev server's compile of every route the video visits, so the recording never
 // waits on Turbopack compiling a page.
@@ -134,6 +143,7 @@ const h = {
 
 const timeline = [];
 await page.goto(`${BASE}${spec.start || '/'}`, { waitUntil: 'networkidle' });
+await sleep(2500);
 for (let i = 0; i < steps.length; i++) {
   const s = steps[i];
   const at = (Date.now() - t0) / 1000;
