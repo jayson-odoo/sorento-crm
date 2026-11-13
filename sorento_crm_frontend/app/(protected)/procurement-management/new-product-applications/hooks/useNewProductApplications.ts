@@ -81,6 +81,8 @@ export function newProductApplicationsListQueryKey(
     params.searchQuery,
     params.status,
     params.applicantId,
+    params.lastActivityFrom,
+    params.lastActivityTo,
   ];
 }
 
@@ -94,6 +96,8 @@ function listParamsFromUrl(
     searchQuery: params.searchQuery,
     status: params.filters.status,
     applicantId: params.filters.applicant_id,
+    lastActivityFrom: params.filters.last_activity_from,
+    lastActivityTo: params.filters.last_activity_to,
   };
 }
 

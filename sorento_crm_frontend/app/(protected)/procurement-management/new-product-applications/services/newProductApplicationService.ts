@@ -24,6 +24,8 @@ export type NewProductApplicationListParams = DataGridApiFetchParams & {
   status?: string;
   applicantId?: string;
   stockInquiryId?: string;
+  lastActivityFrom?: string;
+  lastActivityTo?: string;
 };
 
 /** The list in the shape the DataGrid and the detail pager read. */
@@ -72,6 +74,8 @@ export async function getNewProductApplications(
       status: params.status,
       applicant_id: params.applicantId,
       stock_inquiry_id: params.stockInquiryId,
+      last_activity_from: params.lastActivityFrom,
+      last_activity_to: params.lastActivityTo,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
