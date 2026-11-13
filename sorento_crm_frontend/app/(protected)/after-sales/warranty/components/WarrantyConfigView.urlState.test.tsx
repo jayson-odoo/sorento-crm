@@ -34,6 +34,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
+vi.mock('@/hooks/useEffectiveIsSuperadmin', () => ({ useEffectiveIsSuperadmin: () => true }));
 vi.mock('@/hooks/useDeferredRowAction', () => ({
   useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false, countdown: null }),
   useRowPending: () => () => false,

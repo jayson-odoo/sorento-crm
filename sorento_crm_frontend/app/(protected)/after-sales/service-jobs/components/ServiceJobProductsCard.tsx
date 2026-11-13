@@ -71,7 +71,7 @@ export default function ServiceJobProductsCard({ jobId, canEdit }: { jobId: stri
       title="Products"
       toolbar={
         canEdit ? (
-          <Button size="sm" onClick={() => setDialog({ open: true, line: null })}>
+          <Button variant="outline" size="sm" onClick={() => setDialog({ open: true, line: null })}>
             <Plus />
             Add product
           </Button>

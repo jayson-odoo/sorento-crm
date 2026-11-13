@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import DetailActions from '@/components/common/DetailActions';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { useUrlTab } from '@/hooks/useUrlTab';
@@ -49,7 +51,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-const HEADS = ['Part', 'Cover', 'Defects', 'Installation'];
+const termCol = (
+  id: string,
+  title: string,
+  size: number,
+  value: (t: WarrantyTerm) => string,
+): ColumnDef<WarrantyTerm> => ({
+  id,
+  header: title,
+  size,
+  cell: ({ row }) => (
+    <span className="block truncate" title={value(row.original)}>
+      {value(row.original)}
+    </span>
+  ),
+  meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-20" /> },
+});
 
 export default function PolicyDetail({ policyId }: { policyId: string }) {
   const { data: policy, isLoading } = usePolicy(policyId);
@@ -90,6 +107,13 @@ export default function PolicyDetail({ policyId }: { policyId: string }) {
   for (const term of terms ?? []) groups.set(term.kind_id, [...(groups.get(term.kind_id) ?? []), term]);
   const ordered = [...groups.entries()].sort((a, b) => kindName(a[0]).localeCompare(kindName(b[0])));
 
+  const termColumns: ColumnDef<WarrantyTerm>[] = [
+    termCol('part', 'Part', 200, (t) => t.part_name),
+    termCol('cover', 'Cover', 110, (t) => cover(t)),
+    termCol('defects', 'Defects', 240, (t) => defectNames(t)),
+    termCol('installation', 'Installation', 130, (t) => (t.installation_included ? 'Included' : 'Excluded')),
+  ];
+
   const termGroups = (
     <>
         {termsLoading ? (
@@ -103,37 +127,17 @@ export default function PolicyDetail({ policyId }: { policyId: string }) {
           </Card>
         ) : (
           ordered.map(([kindId, rows]) => (
-            <Card key={kindId}>
-              <CardHeader>
-                <CardTitle>{kindName(kindId)}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[34rem] table-fixed text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-muted-foreground">
-                        {HEADS.map((h) => (
-                          <th key={h} className="px-2 py-2 font-medium">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...rows]
-                        .sort((a, b) => a.part_name.localeCompare(b.part_name))
-                        .map((t) => (
-                          // eslint-disable-next-line jsx-a11y/control-has-associated-label -- a table row, named by its cells
-                            <tr key={t.id} data-term-id={t.id} className="border-b last:border-0">
-                            <td className="px-2 py-2"><span className="block truncate" title={t.part_name}>{t.part_name}</span></td>
-                            <td className="px-2 py-2"><span className="block truncate">{cover(t)}</span></td>
-                            <td className="px-2 py-2"><span className="block truncate" title={defectNames(t)}>{defectNames(t)}</span></td>
-                            <td className="px-2 py-2"><span className="block truncate">{t.installation_included ? 'Included' : 'Excluded'}</span></td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
+            <PanelDataGrid<WarrantyTerm>
+              key={kindId}
+              title={kindName(kindId)}
+              columns={termColumns}
+              rows={[...rows].sort((x, y) => x.part_name.localeCompare(y.part_name))}
+              getRowId={(t) => t.id}
+              listingKey={null}
+              paginate={false}
+              rowAttributes={(t) => ({ 'data-term-id': t.id })}
+              emptyTitle="No terms"
+            />
           ))
         )}
     </>
@@ -182,7 +186,7 @@ export default function PolicyDetail({ policyId }: { policyId: string }) {
         <TabsContent value="terms" className="space-y-6">
           {isAdmin && (
             <div className="flex justify-end">
-              <Button onClick={() => setTermForm({ open: true, term: null })}>
+              <Button variant="outline" onClick={() => setTermForm({ open: true, term: null })}>
                 <Plus />
                 Create
               </Button>

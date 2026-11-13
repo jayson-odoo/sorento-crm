@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { splitMulti, joinMulti } from '@/lib/list-filters/multiValue';
 import { useKindOptions, useRules } from '../hooks/useWarrantyConfig';
 import { useInitialListState, useWriteListUrl } from '../hooks/useListUrlState';
@@ -22,6 +23,7 @@ import { RuleTesterDialog } from './RuleTesterDialog';
 import WarrantyGrid from './WarrantyGrid';
 
 export function RulesTab() {
+  const isAdmin = useEffectiveIsSuperadmin() === true;
   const initial = useInitialListState();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initial.pageIndex, pageSize: initial.pageSize });
   const [sorting, setSorting] = useState<SortingState>(initial.sorting.length ? initial.sorting : [{ id: 'kind', desc: false }]);
@@ -113,23 +115,32 @@ export function RulesTab() {
           </Button>
         }
         primaryAction={
-          <Button onClick={() => setForm({ open: true, rule: null })}>
-            <Plus />
-            Create
-          </Button>
+          isAdmin ? (
+            <Button onClick={() => setForm({ open: true, rule: null })}>
+              <Plus />
+              Create
+            </Button>
+          ) : undefined
         }
-        menu={(r) => (
-          <>
-            <ContextMenuItem onSelect={() => setForm({ open: true, rule: r })}>Edit</ContextMenuItem>
-            <ContextMenuItem
-              onSelect={() =>
-                remove.run({ id: r.id, subject: `${r.kind_name}: ${formatMatchTypeLabel(r.match_type)} ${r.match_value}` })
-              }
-            >
-              Delete
-            </ContextMenuItem>
-          </>
-        )}
+        menu={
+          isAdmin
+            ? (r) => (
+                <>
+                  <ContextMenuItem onSelect={() => setForm({ open: true, rule: r })}>Edit</ContextMenuItem>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      remove.run({
+                        id: r.id,
+                        subject: `${r.kind_name}: ${formatMatchTypeLabel(r.match_type)} ${r.match_value}`,
+                      })
+                    }
+                  >
+                    Delete
+                  </ContextMenuItem>
+                </>
+              )
+            : undefined
+        }
       />
       <RuleFormDialog open={form.open} onOpenChange={(open) => setForm((f) => ({ ...f, open }))} rule={form.rule} />
       <RuleTesterDialog open={testing} onOpenChange={setTesting} />

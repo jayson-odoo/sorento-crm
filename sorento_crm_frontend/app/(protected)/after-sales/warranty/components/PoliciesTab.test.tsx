@@ -37,6 +37,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
+vi.mock('@/hooks/useEffectiveIsSuperadmin', () => ({ useEffectiveIsSuperadmin: () => true }));
 /** One `run` per actionKey, so a test can tell Archive from Delete. */
 const runs: Record<string, ReturnType<typeof vi.fn>> = {};
 vi.mock('@/hooks/useDeferredRowAction', () => ({

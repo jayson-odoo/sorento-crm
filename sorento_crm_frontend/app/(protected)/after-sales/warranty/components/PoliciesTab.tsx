@@ -11,6 +11,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { usePolicies } from '../hooks/useWarrantyConfig';
 import { useInitialListState, useWriteListUrl } from '../hooks/useListUrlState';
 import { POLICY_LIFECYCLE_LABEL, formatCivilDate, policyLifecycle } from '../lib/warrantyLabels';
@@ -30,6 +31,7 @@ export function Text({ value, className }: { value: string | null | undefined; c
 }
 
 export function PoliciesTab() {
+  const isAdmin = useEffectiveIsSuperadmin() === true;
   const initial = useInitialListState();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initial.pageIndex, pageSize: initial.pageSize });
   const [sorting, setSorting] = useState<SortingState>(
@@ -126,20 +128,28 @@ export function PoliciesTab() {
         empty={{ title: 'No policies', hint: 'Create the first warranty policy version.' }}
         rowHref={(p) => `/after-sales/warranty/policies/${p.id}`}
         primaryAction={
-          <Button onClick={() => setForm({ open: true, policy: null })}>
-            <Plus />
-            Create
-          </Button>
+          isAdmin ? (
+            <Button onClick={() => setForm({ open: true, policy: null })}>
+              <Plus />
+              Create
+            </Button>
+          ) : undefined
         }
-        menu={(p) => (
-          <>
-            <ContextMenuItem onSelect={() => setForm({ open: true, policy: p })}>Edit</ContextMenuItem>
-            <ContextMenuItem onSelect={() => setSupersede(p)}>Supersede</ContextMenuItem>
-            <ContextMenuItem onSelect={() => remove.run({ id: p.id, subject: `Policy ${p.version}` })}>
-              Delete
-            </ContextMenuItem>
-          </>
-        )}
+        menu={
+          isAdmin
+            ? (p) => (
+                <>
+                  <ContextMenuItem onSelect={() => setForm({ open: true, policy: p })}>Edit</ContextMenuItem>
+                  {p.effective_to === null && (
+                    <ContextMenuItem onSelect={() => setSupersede(p)}>Supersede</ContextMenuItem>
+                  )}
+                  <ContextMenuItem onSelect={() => remove.run({ id: p.id, subject: `Policy ${p.version}` })}>
+                    Delete
+                  </ContextMenuItem>
+                </>
+              )
+            : undefined
+        }
       />
       <PolicyFormDialog
         open={form.open}

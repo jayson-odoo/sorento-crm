@@ -12,8 +12,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { splitMulti, joinMulti } from '@/lib/list-filters/multiValue';
-import { useKindRuleCounts, useKinds } from '../hooks/useWarrantyConfig';
+import { useKindRuleCounts, useKinds, useUpdateKind } from '../hooks/useWarrantyConfig';
 import { useInitialListState, useWriteListUrl } from '../hooks/useListUrlState';
 import type { WarrantyKind } from '../types/warranty.types';
 import { KindFormDialog } from './KindFormDialog';
@@ -26,6 +27,8 @@ const ACTIVE_OPTIONS = [
 ];
 
 export function KindsTab() {
+  const isAdmin = useEffectiveIsSuperadmin() === true;
+  const updateKind = useUpdateKind();
   const initial = useInitialListState();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initial.pageIndex, pageSize: initial.pageSize });
   const [sorting, setSorting] = useState<SortingState>(initial.sorting.length ? initial.sorting : [{ id: 'name', desc: false }]);
@@ -144,22 +147,38 @@ export function KindsTab() {
           ),
         }}
         primaryAction={
-          <Button onClick={() => setForm({ open: true, kind: null })}>
-            <Plus />
-            Create
-          </Button>
+          isAdmin ? (
+            <Button onClick={() => setForm({ open: true, kind: null })}>
+              <Plus />
+              Create
+            </Button>
+          ) : undefined
         }
-        menu={(k) => (
-          <>
-            <ContextMenuItem onSelect={() => setForm({ open: true, kind: k })}>Edit</ContextMenuItem>
-            {k.is_active && (
-              <ContextMenuItem onSelect={() => archive.run({ id: k.id, subject: k.name })}>Archive</ContextMenuItem>
-            )}
-            {k.rule_count === 0 && k.term_count === 0 && (
-              <ContextMenuItem onSelect={() => remove.run({ id: k.id, subject: k.name })}>Delete</ContextMenuItem>
-            )}
-          </>
-        )}
+        menu={
+          isAdmin
+            ? (k) => (
+                <>
+                  <ContextMenuItem onSelect={() => setForm({ open: true, kind: k })}>Edit</ContextMenuItem>
+                  {k.is_active ? (
+                    <ContextMenuItem onSelect={() => archive.run({ id: k.id, subject: k.name })}>
+                      Archive
+                    </ContextMenuItem>
+                  ) : (
+                    <ContextMenuItem
+                      onSelect={() => void updateKind.mutateAsync({ id: k.id, values: { is_active: true } })}
+                    >
+                      Restore
+                    </ContextMenuItem>
+                  )}
+                  {k.rule_count === 0 && k.term_count === 0 && (
+                    <ContextMenuItem onSelect={() => remove.run({ id: k.id, subject: k.name })}>
+                      Delete
+                    </ContextMenuItem>
+                  )}
+                </>
+              )
+            : undefined
+        }
       />
       <KindFormDialog
         open={form.open}
