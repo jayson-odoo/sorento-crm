@@ -175,8 +175,8 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
 
 On the **Chat History** list itself, open **Filters** and turn on **Failed turns only**. The list
 then narrows to contacts who had at least one failed turn in the selected date range, and the
-**Contact** column shows a badge naming the stage the *last* failure stopped at (e.g. "failed at
-understood") plus a count if there was more than one.
+**Contact** column shows a badge with the same words the turn itself shows for the *last* failure
+(e.g. "Failed at Understood", or "Not confirmed") plus a count if there was more than one.
 
 Inside a thread, the drawer header has its own **Failed turns only** toggle (with a count badge)
 that jumps you straight to the messages whose turn failed, without scrolling the whole
