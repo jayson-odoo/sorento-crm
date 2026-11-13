@@ -182,16 +182,6 @@ def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _words_typed_as_codes(parser: dict[str, Any]) -> set[str]:
-    """CHATBOT-CLOSE-CODES C1 (G3): the folded tokens the parser typed as a product code
-    (`answer.product_typed_tokens`, owner Q1 (b)) that take no code family
-    (`turn.task.code_or_number`, the availability filter's own test)."""
-    from app.services.chatbot.lanes.business.answer import product_typed_tokens
-    from app.services.chatbot.turn import task as turn_task
-
-    return {t for t in product_typed_tokens(parser) if not turn_task.code_or_number(t)}
-
-
 def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:
     """The numeric sizes the parser read apart from a code (grounded specification entities)."""
     return [
@@ -330,16 +320,14 @@ def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return offerable_product_rows(db, rows)
 
 
-def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any], words: set[str] | frozenset[str] = frozenset()) -> None:
+def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
     """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
     lone hit the typed code is not the prefix of: "C21120UW-2-MY" inside BRC21120UW-2-MY) is
-    offered as "Did you mean X?", never answered. A lone prefix hit stays answered; several
-    hits stay today's which-one picker. Read per token (OR mode) or on the one token's rows
-    (AND mode), folded as the resolver folds (`turn_state.token_key`).
-
-    `words` (CHATBOT-CLOSE-CODES C1, G3): the folded tokens typed as a product code that take no
-    code family (`_words_typed_as_codes`). A lone hit such a token is the prefix of is offered
-    too: the availability filter answers only an equal code for it (`engine._exact_codes_only`)."""
+    offered as "Did you mean X?", never answered. CHATBOT-CLOSE-CODES C2 / AC-6 (crew Q2 (a),
+    13 Nov 2026): a lone PREFIX hit is offered the same way ("SRTWC287-S" for SRTWC287-S-150);
+    only the equal code (case and separators folded) is answered. Several hits stay today's
+    which-one picker. Read per token (OR mode) or on the one token's rows (AND mode), folded as
+    the resolver folds (`turn_state.token_key`)."""
     from app.services.chatbot.turn.state import token_key
 
     def inside_only(token: Any, rows: list[Any]) -> dict[str, Any] | None:
@@ -347,9 +335,7 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any], words: set[
         if len(rows) != 1 or rows[0].get("entity_type") != "product":
             return None
         code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
-        if not typed or typed not in code or code == typed:
-            return None
-        return rows[0] if typed in words or not code.startswith(typed) else None
+        return rows[0] if typed and typed in code and code != typed else None
 
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
@@ -389,7 +375,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     # Several codes and a size: main's behaviour for the size rules (lead re-scope, 12 Nov 2026).
     sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
-        _single_substring_is_an_offer(db, resolved, _words_typed_as_codes(parser))
+        _single_substring_is_an_offer(db, resolved)
         if sized:
             _unheld_size_is_a_miss(db, parser, resolved)
         misses = [

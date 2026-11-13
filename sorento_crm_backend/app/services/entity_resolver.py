@@ -6093,7 +6093,12 @@ def resolve_references(
                 family = _drop_unofferable_products(db, family)
             family_ids = {h.uuid for h in family}
             alternatives = family + [h for h in alternatives if h.uuid not in family_ids]
-        tr.alternatives = alternatives[:_ALTERNATIVES_CAP]
+        # CHATBOT-CLOSE-CODES C5 (G6, crew Q5 (a)): the chat ranks the WHOLE close-code list
+        # (every trigram row, `TRGM_LIMIT` per kind) by the parts the customer typed and
+        # offers its first three (`answer.miss_token_candidates`, `_cap3`), so an all-parts
+        # code ranked below the fifth row by similarity alone is still offered. Only the
+        # chat sets `alternatives_offerable_only`; every other caller keeps the cap.
+        tr.alternatives = alternatives if alternatives_offerable_only else alternatives[:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)
     if regions is not None:

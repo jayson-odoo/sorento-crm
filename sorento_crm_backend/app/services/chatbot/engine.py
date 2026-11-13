@@ -10079,12 +10079,15 @@ def _stock_ask_reply(
     parts = _stock_answer_lines(envelopes, full=composers.enabled())
     # CHATBOT-CODE-MATCH R1/R7: a dealer's missed codes beside found ones get the pick a
     # single-code miss gets (`dealer_stock.did_you_mean_each`), over the same candidates,
-    # never one this reply already answered.
+    # never one this reply already answered. CHATBOT-CLOSE-CODES C3 (crew Q3 (a)): also
+    # beside a reply that asks (how many, a which-one list): the offer follows the question,
+    # its numbers running on after the list's, and one pick holds both.
     offer = None
-    if not pick and not text and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
+    if misses and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
         from app.services.chatbot import dealer_stock as dealer_mod
 
         suggested = turn_compose.unplaced_suggestions(envelopes)
+        print("DBGSUG", misses, {k: [r.get("code") for r in (v or {}).get("rows") or []] for k, v in suggested.items()}, turn_compose.answered_codes(envelopes))
         offer = dealer_mod.did_you_mean_each(
             [
                 (m, (suggested.get(m) or {}).get("rows") or [], dealer_mod.quantity_of(verdict.get("entities"), m))
@@ -10092,6 +10095,7 @@ def _stock_ask_reply(
             ],
             answered=turn_compose.answered_codes(envelopes),
             asked_at_turn=turn_no,
+            before=pick or None,
         )
     if offer is not None:
         misses = [m for m in misses if m not in offer[2]]
@@ -10099,14 +10103,16 @@ def _stock_ask_reply(
         miss_line = composers_stock.miss_line(misses)
         if miss_line:
             parts.append(miss_line)
-    if offer is not None:
-        parts.append(offer[0])
     if text:
         parts.append(text)
+    if offer is not None:
+        parts.append(offer[0])
     question = (
-        turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
+        offer[1]
+        if offer is not None
+        else turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
         if pick
-        else offer[1] if offer is not None else None
+        else None
     )
     return dataclasses_replace(answer, text="\n\n".join(parts), question=question, sections=[])
 

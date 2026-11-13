@@ -251,7 +251,7 @@ MAPPABLE: frozenset[str] = frozenset(
 )
 
 
-def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool) -> list:
+def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool, typed: Any = None) -> list:
     """`tokenCandidates`, parametrised exactly as the live body parametrises it.
 
     Dedupe key is the CODE for every domain except `product_attachment` on the D1 / picker
@@ -260,6 +260,10 @@ def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool) -> list
 
     Q1: the parser's corrected pick (`NEAR_PICK_KEY`) leads, ahead of any non-exact match, as
     in the composer's own `answer.miss_token_candidates`; its own row further down is deduped.
+
+    CHATBOT-CLOSE-CODES C5: the code rows take the composer's own ranking by the code as
+    `typed` (`answer.rank_by_typed_parts`), so the has-it probe reads the codes the offer
+    prints, not the first rows by similarity alone.
     """
     acc: list = []
     near_pick = jsc.get(res, NEAR_PICK_KEY)
@@ -290,7 +294,10 @@ def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool) -> list
             continue
         seen.append(dedupe_key)
         keep.append(match)  # API ranks variants-first / by similarity: keep the order
-    return keep
+    from app.services.chatbot.lanes.business.answer import rank_by_typed_parts
+
+    first = 1 if isinstance(near_pick, dict) and keep and keep[0] is near_pick else 0
+    return rank_by_typed_parts(keep, typed if jsc.truthy(typed) else jsc.get(res, "token"), first)
 
 
 def _uuid_census(res: Any, *, allowed_types: Any) -> dict[str, set]:
@@ -453,8 +460,17 @@ def _dym_plan(
         # on the number of missed tokens. The partial body still carries the five-token cap
         # and no cross-token dedupe, which is the pre-C1 shape it was promoted with.
         seen_key: list[str] = []
+        from app.services.chatbot.turn.state import token_key
+        from app.services.chatbot.turn_runtime import _typed_by_token
+
+        typed_by = _typed_by_token(jsc.array(jsc.get(q, "entities")))
         for res in misses:
-            cands = _token_candidates(res, allowed_types=allowed_types, uuid_keyed=uuid_keyed_domain)
+            cands = _token_candidates(
+                res,
+                allowed_types=allowed_types,
+                uuid_keyed=uuid_keyed_domain,
+                typed=typed_by.get(token_key(jsc.get(res, "token"))),
+            )
             if full:
                 kept = []
                 for match in cands:

@@ -203,6 +203,7 @@ def did_you_mean_each(
     *,
     answered: set[str] | frozenset[str] = frozenset(),
     asked_at_turn: int | None = None,
+    before: dict[str, Any] | None = None,
 ) -> tuple[str, Pending, list[str]] | None:
     """CHATBOT-CODE-MATCH R7: every missed code of one message gets its own did-you-mean,
     in one reply. `groups` is `(typed, candidates, quantity)` per missed code. A code this
@@ -210,7 +211,11 @@ def did_you_mean_each(
     offered again. One code with candidates left reads exactly as `did_you_mean`; several
     read one numbered list each, numbers running on, stored as one pick whose `groups`
     keep each code's quantity (`task.stock_pick`). Returns the text, the pick and the typed
-    codes it offered for; None when no candidate is left."""
+    codes it offered for; None when no candidate is left.
+
+    `before` (CHATBOT-CLOSE-CODES C3, crew Q3 (a)): a which-one pick the same reply already
+    asks (`task.stock_pick` shape). The offer's lists number on after its options and the
+    returned pick holds both, so a number answers either; the text is the offer's alone."""
     seen = set(answered)
     blocks: list[tuple[str, Any, Pending, str]] = []
     for typed, candidates, quantity in groups:
@@ -222,16 +227,34 @@ def did_you_mean_each(
         blocks.append((typed, quantity, one[1], one[0]))
     if not blocks:
         return None
-    if len(blocks) == 1:
+    if len(blocks) == 1 and before is None:
         typed, _quantity, pick, text = blocks[0]
         return text, pick, [typed]
-    options: list[dict[str, Any]] = []
-    pick_groups: list[dict[str, Any]] = []
+    asked = before or {}
+    options: list[dict[str, Any]] = [dict(o) for o in asked.get("options") or [] if isinstance(o, dict)]
+    asked_payload = asked.get("payload") or {}
+    pick_groups: list[dict[str, Any]] = [dict(g) for g in asked_payload.get("groups") or [] if isinstance(g, dict)]
+    if options and not pick_groups:
+        # A single which-one list stored before `groups` (`task.stock_pick` writes them now).
+        pick_groups = [
+            {
+                "typed": asked_payload.get("typed"),
+                "count": len(options),
+                "qty": asked_payload.get("stock_qty"),
+                "positions": [o.get("position") for o in options],
+            }
+        ]
+    asked_options, asked_groups = len(options), len(pick_groups)
     for _typed, quantity, one, _text in blocks:
         start = len(options) + 1
         options.extend({**o, "position": start + i} for i, o in enumerate(one.options))
         positions = list(range(start, len(options) + 1))
         pick_groups.append({"typed": one.payload["typed"], "count": len(positions), "qty": quantity, "positions": positions})
-    text, stored = did_you_mean_lists(options, pick_groups)
+    text, stored = did_you_mean_lists(options[asked_options:], pick_groups[asked_groups:])
+    if before is not None:
+        from app.services.chatbot.turn.task import OWED, stock_pick
+
+        merged = stock_pick(options, pick_groups, asked_payload.get(OWED))
+        stored = {"options": merged["options"], "payload": {**asked_payload, **merged["payload"]}}
     pick = ask("product_pick", stored["options"], asked_at_turn=asked_at_turn, payload=stored["payload"])
     return text, pick, [b[0] for b in blocks]
