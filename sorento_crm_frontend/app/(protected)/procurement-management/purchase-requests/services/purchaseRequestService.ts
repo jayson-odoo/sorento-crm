@@ -39,6 +39,8 @@ export type PurchaseRequestsListParams = DataGridApiFetchParams & {
   request_type?: string;
   approval_status?: string;
   assigned_to?: string;
+  last_activity_from?: string;
+  last_activity_to?: string;
 };
 
 
@@ -47,12 +49,15 @@ export async function getPurchaseRequests(
     requestType?: string;
     approvalStatus?: string;
     assignedTo?: string;
+    lastActivityFrom?: string;
+    lastActivityTo?: string;
   },
 ): Promise<DataGridApiResponse<PurchaseRequest>> {
-  const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus, assignedTo } =
+  const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus, assignedTo, lastActivityFrom, lastActivityTo } =
     params;
-  const sortField = sorting?.[0]?.id || 'request_date';
-  const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
+  const sortField = sorting?.[0]?.id || 'last_activity_at';
+  // No sort chosen means the list's default, newest activity first.
+  const sortDirection = sorting?.[0] ? (sorting[0].desc ? 'desc' : 'asc') : 'desc';
   const queryParams = new URLSearchParams({
     page: String(pageIndex + 1),
     limit: String(pageSize),
@@ -62,6 +67,8 @@ export async function getPurchaseRequests(
     ...(requestType ? { request_type: requestType } : {}),
     ...(approvalStatus ? { approval_status: approvalStatus } : {}),
     ...(assignedTo ? { assigned_to: assignedTo } : {}),
+    ...(lastActivityFrom ? { last_activity_from: lastActivityFrom } : {}),
+    ...(lastActivityTo ? { last_activity_to: lastActivityTo } : {}),
   });
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests?${queryParams.toString()}`,
@@ -463,15 +470,6 @@ export async function getPurchaseRequestConversation(
   }
   return response.json();
 }
-
-/**
- * Project options for the PR / sponsorship-form project picker (AC-L3).
- *
- * Re-exported from the complaint feature's implementation rather than copied: both forms
- * link to the same registered projects with the same label rule (code + title, never a UUID),
- * and two copies would drift the moment one of them starts showing the developer.
- */
-export { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
 
 /**
  * Queue a printable Purchase Request / Sponsorship Form PDF.

@@ -134,6 +134,9 @@ class SystemSettingUpdate(BaseModel):
     cost_price_verification_enabled: Optional[bool] = None
     # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
     sample_request_require_project: Optional[bool] = None
+    # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
+    # Here, in the GET dict, and in AppConfigResponse below.
+    project_autocount_write_enabled: Optional[bool] = None
     # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
     # dict, and in AppConfigResponse below.
     stock_debt_po_link_enabled: Optional[bool] = None
@@ -219,6 +222,9 @@ class SystemSettingUpdate(BaseModel):
     # appear HERE and in the GET dict, because both are manual.
     chatbot_direct_ingress_mode: Optional[Literal["off", "contacts", "all"]] = None
     chatbot_direct_ingress_contacts: Optional[str] = Field(None, max_length=20000)
+    # N8N-RETIRE-A: who sends bot replies. A Literal, so a bad mode answers 422.
+    chatbot_reply_sender_mode: Optional[Literal["n8n", "contacts", "all"]] = None
+    chatbot_reply_sender_contacts: Optional[str] = Field(None, max_length=20000)
     # CLOSED-LISTS-INDEX-MODE: a Literal, so a mode outside the two answers 422. Same rule as
     # every block above - it must appear HERE and in the GET dict, because both are manual.
     chatbot_closed_lists_mode: Optional[Literal["block", "index"]] = None
@@ -289,6 +295,9 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
+    #: salesperson who sends holds no `user_management.settings.view`.
+    project_autocount_write_enabled: bool = False
     #: AC-LINK-CRM-UI: the Stock Debt drill hides its PO actions while this is off, and the
     #: purchasing user who links holds no `user_management.settings.view`.
     stock_debt_po_link_enabled: bool = False
@@ -483,6 +492,9 @@ def get_settings(
                 "sample_request_require_project": (
                     bool(getattr(settings, "sample_request_require_project", False)) if settings else False
                 ),
+                "project_autocount_write_enabled": (
+                    bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
+                ),
                 "stock_debt_po_link_enabled": (
                     bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
                 ),
@@ -545,6 +557,8 @@ def get_settings(
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
                 "chatbot_direct_ingress_mode": getattr(settings, "chatbot_direct_ingress_mode", None) or "off" if settings else None,
                 "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
+                "chatbot_reply_sender_mode": getattr(settings, "chatbot_reply_sender_mode", None) or "n8n" if settings else None,
+                "chatbot_reply_sender_contacts": getattr(settings, "chatbot_reply_sender_contacts", None) if settings else None,
                 "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
                 "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
                 "chatbot_parser_max_output_tokens": getattr(settings, "chatbot_parser_max_output_tokens", None) or 8192 if settings else None,
@@ -624,6 +638,9 @@ def get_app_config(
             ),
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
+            ),
+            project_autocount_write_enabled=bool(
+                getattr(settings, "project_autocount_write_enabled", False)
             ),
             stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
             # Same value and fallback as the admin GET above.
@@ -1189,6 +1206,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
         "chatbot_direct_ingress_mode": "off",
+        "chatbot_reply_sender_mode": "n8n",
+        "chatbot_reply_sender_contacts": None,
         "chatbot_closed_lists_mode": "block",
         "chatbot_composer_enabled": False,
         # Repeats SystemSetting.chatbot_parser_max_output_tokens' own default (app/models/user.py).
@@ -1237,7 +1256,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     )
 
     # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
-    for column in ("sample_request_require_project", "stock_debt_po_link_enabled"):
+    for column in (
+        "sample_request_require_project",
+        "project_autocount_write_enabled",
+        "stock_debt_po_link_enabled",
+    ):
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 

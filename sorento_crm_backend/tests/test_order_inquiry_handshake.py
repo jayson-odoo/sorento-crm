@@ -574,6 +574,10 @@ def test_the_ack_filter_narrows_the_list_and_the_facet_counts_all_four_states(ap
         # states above, never a fifth state a row can be in. No default filter reads it
         # any more (S1, AC-1.5), but the facet still carries the key.
         "to_confirm",
+        # F1b (owner F1 rule: every filter option has a count): the Status column's other words.
+        "waiting_for_cs",
+        "so_cancelled",
+        "line_cancelled",
     }
     assert summary["ack"]["acknowledged"] >= 1
     assert summary["ack"]["rejected"] >= 1

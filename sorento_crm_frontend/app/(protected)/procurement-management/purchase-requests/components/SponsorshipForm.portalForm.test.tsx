@@ -73,7 +73,6 @@ vi.mock('../hooks/usePurchaseRequests', () => ({
 }));
 vi.mock('../services/purchaseRequestService', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  searchProjectsForLink: vi.fn().mockResolvedValue([]),
   getOrCreateViewLink: vi.fn(),
   getUsersForApproverSelect: vi.fn().mockResolvedValue([]),
   getPurchaseRequestRevisions: vi.fn().mockResolvedValue([]),
@@ -155,13 +154,16 @@ beforeEach(() => {
 });
 
 describe('limited user, New Sponsorship Form renders the portal form', () => {
-  it('is the portal form: no request-type selector, no CRM registered-project picker, Expected PO date is the portal date input', async () => {
+  it('is the portal form: no request-type selector, no CRM registered-project picker, Expected delivery date is the shared DD/MM/YYYY picker', async () => {
     mountForm(LIMITED);
     expect(await screen.findByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
     expect(screen.queryByText('Request type')).toBeNull();
     
     await waitFor(() => expect(document.getElementById('expected_delivery_date')).not.toBeNull());
-    expect((document.getElementById('expected_delivery_date') as HTMLInputElement).type).toBe('date');
+    // Never the browser's own date box (standing rule): the shared picker, typed as DD/MM/YYYY.
+    const date = document.getElementById('expected_delivery_date') as HTMLInputElement;
+    expect(date.type).not.toBe('date');
+    expect(date.placeholder).toBe('DD/MM/YYYY');
     
     await waitFor(() => expect(urls((c) => c.url === '/api/v1/my-requests/me').length).toBeGreaterThan(0));
   });
@@ -221,6 +223,21 @@ describe('limited user, New Sponsorship Form renders the portal form', () => {
   });
 });
 
+describe('limited user, a fresh Submit (no draft saved first)', () => {
+  it('creates once and submits without sending the same lines again (no "Line removed", no second Create)', async () => {
+    mountForm(LIMITED);
+    fireEvent.click(await screen.findByRole('button', { name: /^Submit/ }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+    const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
+    const confirm = dialog && Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
+    if (confirm) fireEvent.click(confirm);
+    const submits = () => urls((c) => c.method === 'POST' && /^\/api\/v1\/my-requests\/submissions\/sponsorship_form\/[^/]+\/submit$/.test(c.url));
+    await waitFor(() => expect(submits().length).toBe(1));
+    expect(urls((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/submissions/sponsorship_form')).toHaveLength(1);
+    expect(submits()[0].body ?? null).toBeNull();
+  });
+});
+
 describe('limited user, Sponsorship Form specifics', () => {
   it('has Delivery address, Total project value and Sponsor subject from /lookups/sets/procurement_sponsor_subject', async () => {
     mountForm(LIMITED);
@@ -267,6 +284,22 @@ describe('limited user, Sponsorship Form edit loads from my-requests', () => {
     mountForm(LIMITED, { requestId: String(SF_DETAIL().id) });
     await waitFor(() => expect(urls((c) => c.method === 'GET' && c.url === '/api/v1/my-requests/submissions/sponsorship_form/' + String(SF_DETAIL().id)).length).toBeGreaterThan(0));
     expect(await screen.findByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
+  });
+});
+
+describe('limited user, a saved form started from a project', () => {
+  it('still shows its Registered project to an unflagged contact (PROJECT-STAGE-ACTIONS)', async () => {
+    meNow = { requires_registered_project: false };
+    mountDetail(LIMITED, { project_id: '5b0c1d2e-aaaa-4bbb-8ccc-0123456789ab', project_code: 'PRJ-0001' });
+    expect(await screen.findByText('Registered project')).toBeInTheDocument();
+    await waitFor(() => expect((document.getElementById('project_id') as HTMLInputElement | null)?.value ?? '').toContain('PRJ-0001'));
+  });
+
+  it('a saved form with no project shows no Registered project to an unflagged contact', async () => {
+    meNow = { requires_registered_project: false };
+    mountDetail(LIMITED);
+    await waitFor(() => expect(document.getElementById('customer_name')).not.toBeNull());
+    expect(screen.queryByText('Registered project')).toBeNull();
   });
 });
 
@@ -355,11 +388,13 @@ const draftFields = () => {
 };
 
 describe('limited user, Sponsorship Form seeded from a project (?project_id=)', () => {
-  it('unflagged contact: picker hidden, the draft carries project_id and the project title, Project title input shows it', async () => {
+  it('unflagged contact: the project it started from is shown (as staff see it), the draft carries project_id and the project title', async () => {
     meNow = { requires_registered_project: false };
     mountSeeded(PROJECT_ID);
     await waitFor(() => expect((document.getElementById('project_title') as HTMLInputElement | null)?.value).toBe('Project One'));
-    expect(screen.queryByText('Registered project')).toBeNull();
+    // PROJECT-STAGE-ACTIONS (crew pass 11 Nov): one form from a project, the same fields for all.
+    expect(await screen.findByText('Registered project')).toBeInTheDocument();
+    await waitFor(() => expect((document.getElementById('project_id') as HTMLInputElement | null)?.value ?? '').toContain('PRJ-0001'));
     fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
     await waitFor(() => expect(draftFields().project_id).toBe(PROJECT_ID));
     expect(draftFields().project_title).toBe('Project One');
@@ -373,6 +408,21 @@ describe('limited user, Sponsorship Form seeded from a project (?project_id=)', 
     expect(document.body.textContent).not.toContain(PROJECT_ID);
     fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
     await waitFor(() => expect(draftFields().project_id).toBe(PROJECT_ID));
+  });
+
+  it('a submit refreshes the project Sponsorship Form tab at once, not after the 30 s cache (PROJECT-STAGE-ACTIONS)', async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    meNow = { requires_registered_project: false };
+    mountSeeded(PROJECT_ID);
+    await waitFor(() => expect((document.getElementById('project_title') as HTMLInputElement | null)?.value).toBe('Project One'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Submit/ }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+    const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
+    const confirm = dialog && Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
+    if (confirm) fireEvent.click(confirm);
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && /\/submit$/.test(c.url))).toBe(true));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['project-sponsorships'] }));
+    invalidate.mockRestore();
   });
 
   it('no defaultProjectId: nothing is seeded and the draft has no project_id', async () => {

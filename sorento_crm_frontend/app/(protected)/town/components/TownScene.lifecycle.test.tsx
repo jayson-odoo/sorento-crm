@@ -181,6 +181,24 @@ describe('TownScene draws the port (TOWN-V2)', () => {
   });
 });
 
+describe('TownScene state pills (owner rule: no dot joining two values, crew 12 Nov)', () => {
+  it('shows each of a state\'s counts as its own pill, and the deliver and projects signs likewise', () => {
+    const site = { key: 'p1', stage: 'quoted', final_negotiation: false, state: 'Selangor', launch_date: null, delivery_date: null };
+    const snap = {
+      ...SNAPSHOT,
+      shops: [{ ...SNAPSHOT.shops[0], state: 'Selangor' }],
+      deliveries: { to_deliver: 12, project_orders: 3 },
+      projects: { open_count: 40, more: 39, dormant: 2, sites: [site] },
+    };
+    const { container } = render(<TownScene snapshot={snap as never} onSelect={() => undefined} />);
+    const pill = Array.from(container.querySelectorAll('[data-town-label="state"]')).find((el) => el.textContent?.startsWith('Selangor')) as HTMLElement;
+    expect(Array.from(pill.querySelectorAll('span span')).map((el) => el.textContent)).toEqual(['1 dealer', '1 lit', '1 site']);
+    const texts = labelTexts(container);
+    expect(texts.some((t) => t?.includes('·'))).toBe(false);
+    expect(texts).toEqual(expect.arrayContaining(['12 to deliver3 project orders', '+39 more projects+2 dormant']));
+  });
+});
+
 describe('TownScene motion guard rails', () => {
   const sold = {
     ...SNAPSHOT,

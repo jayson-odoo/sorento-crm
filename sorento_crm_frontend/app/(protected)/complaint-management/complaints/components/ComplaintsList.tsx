@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useMemo, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -24,6 +24,7 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
+import { LastActivityFilter, lastActivityActive, lastActivityLabel } from '@/components/common/LastActivityFilter';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { APPEALED_LABEL } from '@/lib/submission-status';
@@ -43,6 +44,7 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useRequestScope } from '@/hooks/useRequestScope';
@@ -59,6 +61,25 @@ const STATUS_OPTIONS = [
   { value: 'settled_on_site', label: 'Settled on site' },
 ];
 
+/** The listing's shipped default, used until the user has left one behind. */
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
+ * LIST-FILTER-MEMORY-4). BUMP whenever `ComplaintsFilters` changes, so a blob written by the
+ * old shape is discarded rather than applied (AC-B4).
+ */
+const FILTERS_VERSION = 1;
+
+type ComplaintsFilters = {
+  assigned_to?: string;
+  status?: string;
+  root_cause_ids?: string[];
+  resolution_ids?: string[];
+  last_activity_from?: string;
+  last_activity_to?: string;
+};
+
 /**
  * A salesperson limited to their own complaints gets the portal's own list body, through My Requests
  * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
@@ -71,13 +92,11 @@ export default function ComplaintsList() {
 
 function StaffComplaintsList() {
   const router = useRouter();
+  const pathname = usePathname();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
   });
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
-  ]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -85,37 +104,70 @@ function StaffComplaintsList() {
     isSettling: searchSettling,
     reset: resetSearchQuery,
   } = useDebouncedSearch();
-  const [assignedToFilter, setAssignedToFilter] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [rootCauseFilter, setRootCauseFilter] = useState<string[]>([]);
-  const [resolutionFilter, setResolutionFilter] = useState<string[]>([]);
 
-  // Back hands the list its own query string back, and the pager keeps
-  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  // The sort and every filter are remembered per user, per listing, the same way Stock
+  // Inquiries and Sales Orders do. `pathname` is the key DataGrid uses for the column
+  // preferences, so both writers address one row. Page number and search text are
+  // deliberately NOT remembered (AC-D1/D2).
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<ComplaintsFilters>({
+    listingKey: pathname,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+  const assignedToFilter = viewFilters?.assigned_to ?? '';
+  const statusFilter = viewFilters?.status ?? '';
+  const rootCauseFilter = useMemo(() => viewFilters?.root_cause_ids ?? [], [viewFilters]);
+  const resolutionFilter = useMemo(() => viewFilters?.resolution_ids ?? [], [viewFilters]);
+  const lastActivity = useMemo(
+    () => ({ from: viewFilters?.last_activity_from, to: viewFilters?.last_activity_to }),
+    [viewFilters],
+  );
+
+  // Merges a change over the current filters, drops empties, resets to page 1. Every filter
+  // control goes through this ONE path, so the chip's Clear and "Clear filters" agree.
+  const applyFilters = useCallback(
+    (partial: Partial<ComplaintsFilters>) => {
+      const merged: ComplaintsFilters = { ...(viewFilters ?? {}), ...partial };
+      const cleaned: ComplaintsFilters = {};
+      if (merged.assigned_to) cleaned.assigned_to = merged.assigned_to;
+      if (merged.status) cleaned.status = merged.status;
+      if (merged.root_cause_ids?.length) cleaned.root_cause_ids = merged.root_cause_ids;
+      if (merged.resolution_ids?.length) cleaned.resolution_ids = merged.resolution_ids;
+      if (merged.last_activity_from) cleaned.last_activity_from = merged.last_activity_from;
+      if (merged.last_activity_to) cleaned.last_activity_to = merged.last_activity_to;
+      setViewFilters(Object.keys(cleaned).length ? cleaned : null);
+      setPagination((p) => ({ ...p, pageIndex: 0 }));
+    },
+    [viewFilters, setViewFilters],
+  );
+
+  const clearFilters = useCallback(() => {
+    setViewFilters(null);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [setViewFilters]);
+
+  // Back hands the list its own query string back, and the pager keeps rewriting it
+  // (S3-01). Only pagination and search are restored from it: sort and filters come from
+  // the remembered view, which already holds what was active when the row was clicked.
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setAssignedToFilter(state.filters.assigned_to ?? '');
-    setStatusFilter(state.filters.status ?? '');
-    setRootCauseFilter(state.filters.root_cause_ids ? state.filters.root_cause_ids.split(',') : []);
-    setResolutionFilter(state.filters.resolution_ids ? state.filters.resolution_ids.split(',') : []);
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Complaint | null>(null);
   const exportPdfMutation = useExportComplaintPdf();
 
-  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
-  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  // Joined, not the arrays: a new array identity each render would read as a change.
-  useResetPageOnFilterChange(setPagination, [
-    searchQuery,
-    assignedToFilter,
-    statusFilter,
-    rootCauseFilter.join(','),
-    resolutionFilter.join(','),
-  ]);
+  // Page one when the search CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL. Filter
+  // changes reset the page themselves (`applyFilters`/`clearFilters`).
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useComplaints({
     pageIndex: pagination.pageIndex,
@@ -126,18 +178,23 @@ function StaffComplaintsList() {
     status: statusFilter || undefined,
     root_cause_ids: rootCauseFilter.length ? rootCauseFilter : undefined,
     resolution_ids: resolutionFilter.length ? resolutionFilter : undefined,
+    last_activity_from: lastActivity.from,
+    last_activity_to: lastActivity.to,
+    // One fetch, with the remembered view already applied (AC-B3).
+    enabled: !isViewPrefsLoading,
   });
 
+  // Every staff member, keyed by CRM user id (ASSIGNED-FILTER-ALL-STAFF): the backend
+  // matches a complaint stored under that user's CRM id or Respond.io id.
   const {
-    data: respondSyncedUsers = [],
-    error: respondSyncedUsersError,
-    refetch: refetchRespondSyncedUsers,
+    data: assigneeOptions = [],
+    error: assigneeOptionsError,
+    refetch: refetchAssigneeOptions,
   } = useQuery({
-    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
-    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
+    queryKey: ['user-lookup', 'with-inactive'],
+    queryFn: () => getUserLookup({ include_inactive: true }),
     staleTime: 60_000,
   });
-  const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);
   // Active-only master data, the same source the complaint form's pickers use.
   const {
     data: rootCauseOptions = [],
@@ -154,7 +211,34 @@ function StaffComplaintsList() {
     (assignedToFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (rootCauseFilter.length ? 1 : 0) +
-    (resolutionFilter.length ? 1 : 0);
+    (resolutionFilter.length ? 1 : 0) +
+    lastActivityActive(lastActivity);
+
+  // The chip above the grid that states the remembered filter in plain words, with Clear.
+  const activeFilterLabel = (() => {
+    const parts: string[] = [];
+    const assignee = (v: string) =>
+      v === '__unassigned__'
+        ? 'Unassigned'
+        : assigneeOptions.find((u) => u.id === v)?.name || 'Selected';
+    const assignees = splitMulti(assignedToFilter).map(assignee);
+    if (assignees.length) parts.push(multiChipLabel('Assigned to', assignees));
+    const statuses = splitMulti(statusFilter).map(
+      (v) => STATUS_OPTIONS.find((o) => o.value === v)?.label ?? 'Selected',
+    );
+    if (statuses.length) parts.push(multiChipLabel('Status', statuses));
+    const rootCauses = rootCauseFilter.map(
+      (v) => rootCauseOptions.find((rc) => rc.id === v)?.name ?? 'Selected',
+    );
+    if (rootCauses.length) parts.push(multiChipLabel('Root cause', rootCauses));
+    const resolutions = resolutionFilter.map(
+      (v) => resolutionOptions.find((r) => r.id === v)?.name ?? 'Selected',
+    );
+    if (resolutions.length) parts.push(multiChipLabel('Resolution', resolutions));
+    const range = lastActivityLabel(lastActivity);
+    if (range) parts.push(range);
+    return parts.join(', ');
+  })();
 
   // The whole row opens the record, carrying the active list query so the
   // detail page's pager walks the same filtered+sorted page.
@@ -175,6 +259,8 @@ function StaffComplaintsList() {
         resolution_ids: resolutionFilter.length
           ? resolutionFilter.join(',')
           : undefined,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -229,6 +315,20 @@ function StaffComplaintsList() {
             : '-',
         size: 160,
         meta: { headerTitle: 'Created at', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        size: 190,
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'customer_name',
@@ -422,7 +522,7 @@ function StaffComplaintsList() {
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
-      isLoading={isLoading}
+      isLoading={isLoading || isViewPrefsLoading}
       isPlaceholderData={isPlaceholderData}
       error={error}
       onRetry={() => void refetch()}
@@ -447,19 +547,22 @@ function StaffComplaintsList() {
               kind: 'custom',
               active: filtersActiveCount > 0,
               activeCount: filtersActiveCount,
+              activeSummary: activeFilterLabel
+                ? { label: activeFilterLabel, onClear: clearFilters }
+                : undefined,
               content: (
                 <div className="space-y-4">
                   <div>
                     <Label>Assigned to</Label>
                     <SearchableMultiSelect
                       value={splitMulti(assignedToFilter)}
-                      onChange={(v) => setAssignedToFilter(joinMulti(v))}
-                      loadError={respondSyncedUsersError}
-                      onRetry={() => void refetchRespondSyncedUsers()}
+                      onChange={(v) => applyFilters({ assigned_to: joinMulti(v) })}
+                      loadError={assigneeOptionsError}
+                      onRetry={() => void refetchAssigneeOptions()}
                       options={[
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
-                          value: u.respond_user_id!,
+                          value: u.id,
                           label: u.name || 'Unnamed user',
                         })),
                       ]}
@@ -479,7 +582,7 @@ function StaffComplaintsList() {
                     <Label>Status</Label>
                     <SearchableMultiSelect
                       value={splitMulti(statusFilter)}
-                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      onChange={(v) => applyFilters({ status: joinMulti(v) })}
                       options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
@@ -490,7 +593,7 @@ function StaffComplaintsList() {
                     <Label>Root cause</Label>
                     <SearchableMultiSelect
                       value={rootCauseFilter}
-                      onChange={setRootCauseFilter}
+                      onChange={(v) => applyFilters({ root_cause_ids: v })}
                       loadError={rootCauseError}
                       onRetry={() => void refetchRootCauses()}
                       options={rootCauseOptions.map((rc) => ({
@@ -505,7 +608,7 @@ function StaffComplaintsList() {
                     <Label>Resolution</Label>
                     <SearchableMultiSelect
                       value={resolutionFilter}
-                      onChange={setResolutionFilter}
+                      onChange={(v) => applyFilters({ resolution_ids: v })}
                       loadError={resolutionError}
                       onRetry={() => void refetchResolutions()}
                       options={resolutionOptions.map((r) => ({
@@ -516,17 +619,17 @@ function StaffComplaintsList() {
                       triggerClassName="mt-1"
                     />
                   </div>
+                  <LastActivityFilter
+                    id="cmp-last-activity"
+                    value={lastActivity}
+                    onChange={(v) => applyFilters({ last_activity_from: v.from, last_activity_to: v.to })}
+                  />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          setAssignedToFilter('');
-                          setStatusFilter('');
-                          setRootCauseFilter([]);
-                          setResolutionFilter([]);
-                        }}
+                        onClick={clearFilters}
                       >
                         Clear filters
                       </Button>

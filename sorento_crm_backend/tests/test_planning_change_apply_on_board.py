@@ -231,10 +231,22 @@ def _rows_of(world, line):
     )
 
 
+def _save_cancels(client, batch_id):
+    """F2 12/13 Nov: a cancel is saved like any change before Confirm (the test client's own
+    session, so the route reads the saved decision)."""
+    from app.database import get_db
+    from ._cancel_decide import decide_cancelled_rows
+
+    db = client.app.dependency_overrides[get_db]()
+    decide_cancelled_rows(db, batch_id)
+    db.commit()
+
+
 def _confirm(client, order_id, lines, batch_id=None):
     body = {"lines": lines}
     if batch_id:
         body["batch_id"] = batch_id
+        _save_cancels(client, batch_id)
     return client.post(f"{BASE}/sales-orders/{order_id}/confirm", json=body)
 
 
@@ -770,6 +782,7 @@ def _apply_from_the_one_confirm(fixture, *, qty="25"):
     client = fixture["client"]
     order = fixture["order"]
     line_1 = fixture["lines"][0]
+    _save_cancels(client, fixture["batch"].id)
     return client.post(
         f"{BASE}/fulfilment-planning/confirm-all",
         json={

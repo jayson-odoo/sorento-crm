@@ -89,6 +89,7 @@ function StaffStockInquiryForm({
       item_description: null,
       project_customer: null,
       project_name: null,
+      project_id: null,
       quantity: null,
       delivery_date: null,
       remark: null,
@@ -112,6 +113,7 @@ function StaffStockInquiryForm({
         item_description: inquiry.item_description || null,
         project_customer: inquiry.project_customer || null,
         project_name: inquiry.project_name || null,
+        project_id: inquiry.project_id || null,
         quantity: inquiry.quantity ?? null,
         delivery_date: inquiry.delivery_date ?? null,
         remark: inquiry.remark ?? null,
@@ -156,6 +158,7 @@ function StaffStockInquiryForm({
       item_description: data.item_description || undefined,
       project_customer: data.project_customer || undefined,
       project_name: data.project_name || undefined,
+      project_id: data.project_id || null,
       quantity: data.quantity ?? undefined,
       delivery_date: data.delivery_date ?? undefined,
       remark: data.remark ?? undefined,
@@ -183,6 +186,7 @@ function StaffStockInquiryForm({
         item_description: data.item_description || undefined,
         project_customer: data.project_customer || undefined,
         project_name: data.project_name || undefined,
+        project_id: data.project_id || null,
         quantity: data.quantity ?? undefined,
         delivery_date: data.delivery_date ?? undefined,
         remark: data.remark ?? undefined,
@@ -251,6 +255,11 @@ function StaffStockInquiryForm({
 
           <StockInquiryFieldRows
             form={form}
+            savedProject={
+              inquiry
+                ? { id: inquiry.project_id, code: inquiry.project_code, title: inquiry.project_title }
+                : undefined
+            }
             salesperson={
               <FormField
                 control={form.control}

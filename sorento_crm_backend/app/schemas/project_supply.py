@@ -442,6 +442,9 @@ class CancelledLine(BaseModel):
 
     project_line_id: str
     reason: str = Field(default="", max_length=500)
+    #: NON-CANCELLABLE-ITEMS: an override holder's reason for cancelling a Non-cancellable
+    #: line; without it such a line is refused 409 `non_cancellable_line`.
+    non_cancellable_override_reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ConfirmSupplyBody(BaseModel):
@@ -498,6 +501,8 @@ class ConfirmedLine(BaseModel):
 
 
 class CancelledLineEcho(BaseModel):
+    #: The mirror line the entry is about, so the board can match it to the line it posted.
+    project_line_id: Optional[str] = None
     line_no: Optional[int] = None
     so_line_no: Optional[int] = None
     item_code: Optional[str] = None
@@ -512,6 +517,9 @@ class ConfirmResult(BaseModel):
     confirmed_at: Optional[datetime] = None
     review_state: str = "confirmed"
     inquiry_rows_created: int = 0
+    #: Purchasing handover lines this confirm queued (raised, changed, cancelled): what the
+    #: board's result sentence counts. `inquiry_rows_created` is 0 on a date move.
+    inquiry_rows_handed_over: int = 0
     exceptions: List[ConfirmException] = []
     #: What this revision covers, and what is still open on the order after it (13.4).
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
@@ -715,6 +723,9 @@ class ConfirmManyOrderResult(BaseModel):
     a slower reply."""
 
     pso_id: str
+    #: The core sales order's number, so a result line can name the order after the board
+    #: refetch has dropped it.
+    so_number: Optional[str] = None
     ok: bool
     #: True on a preview: nothing below was committed.
     preview: Optional[bool] = None
@@ -722,6 +733,7 @@ class ConfirmManyOrderResult(BaseModel):
     transfers: Optional[List[PreviewTransfer]] = None
     decision_revision: Optional[int] = None
     inquiry_rows_created: Optional[int] = None
+    inquiry_rows_handed_over: Optional[int] = None
     lines_decided: Optional[int] = None
     lines_undecided: Optional[int] = None
     lines_confirmed: Optional[List[ConfirmedLine]] = None
@@ -758,6 +770,10 @@ class ConfirmManyOrderResult(BaseModel):
     #: `was`), rendered by the same builder the real send uses. The guided Confirm prints them.
     email_lines: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
+    #: NON-CANCELLABLE-ITEMS: set only for a `non_cancellable_line` refusal, with its
+    #: details (`can_override`, `lines`), so the board can offer the override and retry.
+    error_code: Optional[str] = None
+    error_details: Optional[Dict[str, Any]] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.
     failing_lines: Optional[List[SupplyFailingLine]] = None

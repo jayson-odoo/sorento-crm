@@ -73,12 +73,12 @@ import {
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
-  type ProjectLookupItem,
   statusLabel,
   submitVerb,
 } from '../lib/portal-client';
 import {
   clientDeletes,
+  clientAiExtract,
   clientEmbedded,
   clientExtraTabs,
   clientPaths,
@@ -96,8 +96,10 @@ import { cleanLineItems } from '../lib/line-items';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
 import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
+import { PortalProjectCombobox } from './PortalProjectCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
@@ -117,10 +119,7 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
-import {
-  PROJECT_NAME_MAX_LENGTH,
-  projectDisplayName,
-} from '@/app/(protected)/project-sales/_shared/lib/projectName';
+import { PROJECT_NAME_MAX_LENGTH } from '@/app/(protected)/project-sales/_shared/lib/projectName';
 import { complaintStatusLabel } from '@/lib/complaint-status';
 import {
   InquiryApplicationsList,
@@ -214,6 +213,18 @@ interface FieldDef {
   showWhenDetail?: (detail: PortalSubmissionDetail | null) => boolean;
 }
 
+/**
+ * PROJECT-RELATED-RECORDS AC-C3: the sponsorship form's project picker (below), on the stock
+ * inquiry, complaint and purchase request too. Optional for everyone (D3): the typed project
+ * name stays for a project that is not registered. The server checks the pick is the contact's.
+ */
+const REGISTERED_PROJECT_FIELD: FieldDef = {
+  name: 'project_id',
+  label: 'Registered project (optional)',
+  widget: 'project-async',
+  displayFromDetail: 'project_code',
+};
+
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   stock_inquiry: [
     { name: 'product_code', label: 'Product code', widget: 'product-async' },
@@ -226,6 +237,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'debtor-async',
     },
     { name: 'project_name', label: 'Project name' },
+    REGISTERED_PROJECT_FIELD,
     {
       name: 'salesperson_contact_id',
       label: 'Salesperson',
@@ -352,12 +364,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       required: true,
     },
     { name: 'project_title', label: 'Project title' },
+    REGISTERED_PROJECT_FIELD,
   ],
   purchase_request: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
     { name: 'customer_id', label: 'Customer', widget: 'hidden' },
     { name: 'pic', label: 'PIC', placeholder: 'Name and contact number' },
     { name: 'project_title', label: 'Project title' },
+    REGISTERED_PROJECT_FIELD,
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     {
       name: 'sales_type',
@@ -528,6 +542,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   const paths = clientPaths(client);
   const deferredDeletes = clientDeletes(client);
   const embedded = clientEmbedded(client);
+  const aiExtractOffered = clientAiExtract(client);
   const homeHref = paths ? paths.home(kind) : portalHomePath({ type: kind });
   const detailHref = (id: string) =>
     paths ? paths.detail(kind, id) : portalDetailPath(kind, id, slug);
@@ -588,12 +603,34 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
 
   // One filtered list feeds seeding, validation, submit payload, AI extract and render,
   // so a contact-hidden field cannot survive in one of them (AC-F4).
+  // A field the form was started with is shown even when the contact rule hides it: a
+  // sponsorship form opened from a project shows that project to everyone (PROJECT-STAGE-ACTIONS).
+  // Keyed on the seeded NAMES, not the object, so a caller's new initialValues object never
+  // re-seeds the form and wipes what was typed.
+  const seededNames = Object.entries(initialValues?.fields ?? {})
+    .filter(([, value]) => Boolean(value))
+    .map(([name]) => name)
+    .join(',');
+  // The same for a saved form: a contact-gated field it holds a value for (the project a form was
+  // started from) stays shown when it is opened again. Names only, so the load runs at most once
+  // more, never in a loop.
+  const savedGatedNames = FIELDS[kind]
+    .filter((f) => f.showWhenContact && submissionId && detail && (detail as unknown as Record<string, unknown>)[f.name])
+    .map((f) => f.name)
+    .join(',');
   const fieldDefs = useMemo(
-    () =>
-      FIELDS[kind].filter((f) =>
-        f.showWhenContact ? f.showWhenContact(contact) : true,
-      ),
-    [kind, contact],
+    () => {
+      const seeded = new Set(seededNames ? seededNames.split(',') : []);
+      const saved = new Set(savedGatedNames ? savedGatedNames.split(',') : []);
+      return FIELDS[kind].filter((f) =>
+        f.showWhenContact
+          ? f.showWhenContact(contact) ||
+            (!submissionId && seeded.has(f.name)) ||
+            saved.has(f.name)
+          : true,
+      );
+    },
+    [kind, contact, submissionId, seededNames, savedGatedNames],
   );
   const showLines = HAS_LINES.includes(kind);
   // The id to save/flush against: the route param when one exists, else
@@ -1201,13 +1238,19 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
       // the attachment flush after it failed must update that row, not
       // create a second one (#482).
       let id = effectiveId;
+      let justCreated = false;
       if (!id) {
         const saved = await client.saveDraft(kind, cleanedFields, cleanedProducts);
         id = saved.id;
         setCreatedSubmissionId(saved.id);
+        justCreated = true;
       }
       await flushPendingFiles(id);
-      await client.submitDraft(kind, id, cleanedFields, cleanedProducts);
+      // A form created a moment ago in this same click already holds these values: sending them
+      // again replaced its lines with copies of themselves, which the history read as "Line X
+      // removed" and a second Create (PROJECT-STAGE-ACTIONS, crew pass).
+      if (justCreated) await client.submitDraft(kind, id);
+      else await client.submitDraft(kind, id, cleanedFields, cleanedProducts);
       toast.success(VERB_DONE[verb]);
       router.replace(homeHref);
     } catch (e) {
@@ -2415,7 +2458,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
         {/* flex-wrap: on a 375 px phone the Create button below takes its own row instead of
             pushing the "< 3/12 >" pager off-screen (crew 375 px pass, 8 Nov). */}
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-          {editing && (
+          {editing && aiExtractOffered && (
             <Button
               type="button"
               variant="outline"
@@ -3340,13 +3383,14 @@ function FieldControl({
         />
       );
     case 'date':
+      // The shared DD/MM/YYYY picker (typeable + calendar), never the browser's own date box.
+      // The stored value stays YYYY-MM-DD.
       return (
-        <Input
+        <DatePicker
           id={field.name}
-          type="date"
-          value={stringValue}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
+          ariaLabel={field.label}
+          value={parseDateInput(stringValue)}
+          onChange={(date) => onChange(date ? toIsoDate(date) : '')}
           disabled={disabled}
         />
       );
@@ -3409,23 +3453,12 @@ function FieldControl({
       );
     case 'project-async':
       return (
-        <AsyncCombobox<ProjectLookupItem>
+        <PortalProjectCombobox
           id={field.name}
           value={stringValue}
           onChange={(v) => onChange(v)}
-          fetchOptions={(q) => client.lookupProjects(q)}
-          optionValue={(o) => o.id}
-          optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
-          // A registered project is picked, never typed: the column is a UUID FK, so
-          // free text would reach the server as an id and fail there instead of here.
-          allowFreeText={false}
           displayValue={displayValue}
-          // The company on every row (AC-F4a): a contact mapped to two of them cannot
-          // otherwise tell two similarly-named phases apart.
-          optionMeta={(o) => o.company_name ?? ''}
-          placeholder={
-            field.placeholder ?? 'Search your registered projects...'
-          }
+          placeholder={field.placeholder}
           disabled={disabled}
         />
       );

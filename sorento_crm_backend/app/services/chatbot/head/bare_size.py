@@ -56,6 +56,27 @@ def _classes(db: "Session", entities: list[dict[str, Any]], held_ids: list[str] 
     return {str(c).casefold() for (c,) in rows if c}
 
 
+def _named_code_classes(db: Session, entities: list[dict[str, Any]]) -> set[str]:
+    """The class of each product code this message names, casefolded: its stored spec class,
+    else its category's class (`chatbot/lanes/business/code_sizes._product_facts`)."""
+    from sqlalchemy import func
+
+    from app.models.product import Product
+    from app.services.chatbot.lanes.business.code_sizes import _product_facts
+    from app.services.chatbot.turn.state import token_key
+
+    codes = {
+        token_key(e.get("canonical_code") or e.get("raw"))
+        for e in entities
+        if e.get("current_message") is not False and str(e.get("hint") or "").strip().lower() == "product"
+    } - {""}
+    if not codes:
+        return set()
+    folded = func.lower(func.regexp_replace(Product.product_code, "[^[:alnum:]]", "", "g"))
+    ids = [str(pid) for (pid,) in db.query(Product.id).filter(folded.in_(sorted(codes))).limit(20).all()]
+    return {cls for _values, cls in _product_facts(db, ids).values() if cls} if ids else set()
+
+
 def _holds(db: "Session", key: str, number: float, classes: set[str]) -> bool:
     """Does any product of the class carry `number` under `key` (an exact numeric match)?"""
     from sqlalchemy import Float, case, cast, func
@@ -79,6 +100,23 @@ def _holds(db: "Session", key: str, number: float, classes: set[str]) -> bool:
 def _scopes_class(row: Any, classes: set[str]) -> bool:
     scope = (getattr(row, "applies_when", None) or {}).get("class") or []
     return bool(classes) and any(str(c).casefold() in classes for c in scope)
+
+
+def size_key_applies(row: Any, classes: set[str]) -> bool:
+    """Is registry `row` a size key of a product of one of `classes`? A key a class scopes
+    (`applies_when.class`) is read for that class only; an unscoped key flagged
+    `matches_bare_size` for every class."""
+    if (getattr(row, "applies_when", None) or {}).get("class"):
+        return _scopes_class(row, classes)
+    return bool(getattr(row, "matches_bare_size", False))
+
+
+def size_key_rows(rows: list[Any], classes: set[str]) -> list[Any]:
+    """R6-1's size keys among the registry `rows` (numeric, with a unit) for `classes`
+    (`size_key_applies`): the keys a class scopes first, then the bare-size keys, registry order
+    kept within each. The one rule a size number is read against; never a key list."""
+    keys = [r for r in rows if size_key_applies(r, classes)]
+    return sorted(keys, key=lambda r: not _scopes_class(r, classes))
 
 
 def ground_bare(
@@ -115,6 +153,20 @@ def ground_bare(
     from app.services.chatbot.head.candidates import _unit_aliases
 
     aliases = {alias: factor for alias, (unit, factor) in _unit_aliases(db, hidden_keys).items() if unit == base}
+    if unit_said and unit_said != base:
+        # CHATBOT-CODE-MATCH AC-26 (lead ruling, 12 Nov 2026): a size said in the unit of the
+        # class's own size key ("30 cm", a key held in cm) is read against that key in its
+        # own unit, never converted into the dimension keys' unit. Only when such a key
+        # exists, so a millimetre key and every other unit read exactly as before.
+        # The class is the message's or the held products' (`_classes`), else the class of the
+        # product code the message names. No class known: today's reading, unchanged.
+        classes = _classes(db, entities, held_ids) or _named_code_classes(db, entities)
+        own = [r for r in size_key_rows(rows, classes) if classes and str(r.unit).casefold() == unit_said]
+        for row in own:
+            if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
+                return Grounded(row.spec_key, row.label, said, _plain(number), row.unit)
+        if own:
+            return Grounded(RESERVED_KEY, "Size", said, _plain(number), str(own[0].unit), any_keys=[r.spec_key for r in own])
     if dims and (not unit_said or unit_said == base or unit_said in aliases):
         if unit_said in aliases:
             number = round(number * aliases[unit_said], 3)
@@ -122,7 +174,7 @@ def ground_bare(
     # Another unit (litres, ounces): R6-1, over the keys of that unit.
     rows = [r for r in rows if length_factor(r.unit) is None]
     classes = _classes(db, entities, held_ids)
-    units = {str(r.unit).casefold() for r in rows if getattr(r, "matches_bare_size", False) or _scopes_class(r, classes)}
+    units = {str(r.unit).casefold() for r in size_key_rows(rows, classes)}
     # More than one unit in play: the size word's own unit only.
     unit = next(iter(units)) if len(units) == 1 else (unit_said if unit_said in units else None)
     if unit is None and units:
@@ -131,7 +183,7 @@ def ground_bare(
     for row in same_unit:
         if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
             return Grounded(row.spec_key, row.label, said, _plain(number), row.unit)
-    any_keys = [r.spec_key for r in same_unit if getattr(r, "matches_bare_size", False)]
+    any_keys = [r.spec_key for r in same_unit if getattr(r, "matches_bare_size", False) and size_key_applies(r, classes)]
     if any_keys:
         return Grounded(RESERVED_KEY, "Size", said, _plain(number), str(same_unit[0].unit), any_keys=any_keys)
     return None

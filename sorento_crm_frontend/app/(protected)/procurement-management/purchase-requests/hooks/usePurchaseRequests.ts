@@ -27,6 +27,8 @@ export type PurchaseRequestsListQueryParams = DataGridApiFetchParams & {
   requestType?: string;
   approvalStatus?: string;
   assignedTo?: string;
+  lastActivityFrom?: string;
+  lastActivityTo?: string;
 };
 
 /**
@@ -45,6 +47,8 @@ export function purchaseRequestsListQueryKey(
     params.requestType,
     params.approvalStatus,
     params.assignedTo,
+    params.lastActivityFrom,
+    params.lastActivityTo,
   ];
 }
 
@@ -60,6 +64,8 @@ export function purchaseRequestsListParamsFromUrl(
     requestType: params.filters.request_type,
     approvalStatus: params.filters.approval_status,
     assignedTo: params.filters.assigned_to,
+    lastActivityFrom: params.filters.last_activity_from,
+    lastActivityTo: params.filters.last_activity_to,
   };
 }
 
@@ -71,11 +77,14 @@ export const purchaseRequestsPagerQuery = {
     getPurchaseRequests(purchaseRequestsListParamsFromUrl(params)),
 };
 
-export function usePurchaseRequests(params: PurchaseRequestsListQueryParams) {
+/** `enabled` holds the fetch until the remembered view is applied; it stays OUT of the key. */
+export function usePurchaseRequests(params: PurchaseRequestsListQueryParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: purchaseRequestsListQueryKey(params),
-    queryFn: () => getPurchaseRequests(params),
+    queryKey: purchaseRequestsListQueryKey(listParams),
+    queryFn: () => getPurchaseRequests(listParams),
+    enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     retry: 1,
