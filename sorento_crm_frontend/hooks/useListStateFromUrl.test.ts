@@ -44,6 +44,7 @@ describe('useListStateFromUrl', () => {
       pageSize: 25,
       sorting: [{ id: 'name', desc: true }],
       searchQuery: 'ada',
+      searchQueries: ['ada'],
       filters: { roleId: 'r1', status: 'active' },
     });
   });
