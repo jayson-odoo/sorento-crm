@@ -29,9 +29,7 @@ import {
   emptyDraftLine,
   formatRM,
   MISSING_TAG_TEMPLATE,
-  newPartKey,
   comboOfLine,
-  insertComboRow,
   partsFromCombo,
   pickedProductIds,
   restoreGroupCandidates,
@@ -536,14 +534,6 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     [setLines],
   );
 
-  /** P2: put one missing combo row back (a group, the upgrade or a fixed part), at its combo position. */
-  const restorePart = useCallback(
-    (key: string, rowId: string) => {
-      setLines((prev) => prev.map((l) => (l.key === key ? { ...l, parts: insertComboRow(l, rowId) } : l)));
-    },
-    [setLines],
-  );
-
   /** An open row's candidate select (AC-S2-3): picking resolves the row, clearing
    *  reopens it, which is why `candidates` stays on the row either way. */
   const resolvePart = useCallback(
@@ -592,38 +582,6 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     [setLines],
   );
 
-  /** A part added by hand, on any line, combo or not (AC-S2-4). */
-  const addPart = useCallback(
-    (key: string, option: SearchableSelectOption | null) => {
-      if (!option) return;
-      const [kind, id] = option.value.split(':');
-      if (kind !== 'product') return;
-      const code = option.code ?? '';
-      const name = option.name ?? option.label;
-      setLines((prev) =>
-        prev.map((l) => {
-          if (l.key !== key) return l;
-          if (l.parts.some((part) => part.product_id === id)) return l;
-          return {
-            ...l,
-            parts: [
-              ...l.parts,
-              {
-                key: newPartKey(),
-                product_id: id,
-                code,
-                name,
-                role: null,
-                candidates: [],
-              },
-            ],
-          };
-        }),
-      );
-    },
-    [setLines],
-  );
-
   // ---- Item options: sets and products in ONE list (D47) ----
   // Owner, 4 Nov: one line per option with the code shown once, "CODE  RM <list
   // price>", and the name under it only when it adds something. A set keeps its
@@ -633,16 +591,6 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     async (query: string): Promise<TagItemSearchOption[]> => {
       const items = await lookups.lookupTagItems(query);
       return items.map(itemSearchOption);
-    },
-    [lookups],
-  );
-
-  /** The same catalogue lookup the Item picker uses, products only: a part is a
-   *  product, never a set. */
-  const fetchPartOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
-      const items = await lookups.lookupTagItems(query);
-      return items.filter((i) => i.kind === 'product').map(tagItemOption);
     },
     [lookups],
   );
@@ -716,12 +664,9 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     setManualSellPrice,
     removePart,
     restoreParts,
-    restorePart,
     resolvePart,
     resolvePicks,
-    addPart,
     fetchItemOptions,
-    fetchPartOptions,
   };
 }
 

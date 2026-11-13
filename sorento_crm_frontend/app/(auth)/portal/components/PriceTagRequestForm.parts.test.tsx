@@ -555,7 +555,7 @@ describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', (
     expect(screen.queryByLabelText('Add part')).toBeNull();
   });
 
-  it('AC-S2-2: shows "Add part" once the lookup returns one or more combos', async () => {
+  it('AC-S2-2 (superseded by PRICETAG-ALA-CARTE AC-18): no "Add part" even once the lookup returns combos', async () => {
     mockCombos.mockResolvedValue({
       host_guarded: true,
       combos: [COMBO_3_IN_1, COMBO_4_IN_1],
@@ -564,7 +564,7 @@ describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', (
     await pickTheCabinet();
     await screen.findByLabelText('Ala carte');
 
-    expect(screen.getByLabelText('Add part')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Add part')).toBeNull();
   });
 
   it('AC-S2-1: no "Add part" when the lookup returns empty - existing part rows still render with Remove', async () => {

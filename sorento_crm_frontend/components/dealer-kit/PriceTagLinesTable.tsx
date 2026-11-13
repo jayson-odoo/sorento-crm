@@ -3,14 +3,14 @@
 /**
  * The price tag request's lines table while it is being written: the Item picker, quantity, the
  * line's List price / Promotion / Selling price, remarks, and under each line its Package select,
- * part rows ("Not sure, any of N" for an open group), Add part and the package warning.
+ * part rows ("Not sure, any of N" for an open group) and the package warning.
  *
  * Shared by the portal's price tag form and the CRM request page (PORTAL-P4-REQUESTS S7b); the
  * behaviour lives in `usePriceTagLineEditor`, which the caller passes in as `editor`. Moved out of
  * `app/(auth)/portal/components/PriceTagRequestForm.tsx` unchanged.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, Eye, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -39,7 +39,6 @@ import {
   itemValue,
   linePriceType,
   lineTemplateState,
-  missingComboRows,
   type LineTemplateState,
   packageWarningFor,
   comboOfLine,
@@ -154,7 +153,6 @@ export function PriceTagLinesTable({
               pricing={editor.linePricing[line.key] ?? null}
               lines={lines}
               editor={editor}
-              fetchPartOptions={editor.fetchPartOptions}
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
@@ -162,8 +160,6 @@ export function PriceTagLinesTable({
               onResolvePart={editor.resolvePart}
               onResolvePicks={editor.resolvePicks}
               onRemovePart={editor.removePart}
-              onAddPart={editor.addPart}
-              onRestorePart={editor.restorePart}
               onRestoreParts={editor.restoreParts}
               onChoosePromotion={editor.choosePromotion}
               onManualSellPriceChange={editor.setManualSellPrice}
@@ -266,7 +262,6 @@ interface LineRowProps {
   /** Every line of the request, and the editor the Item picker adds them through. */
   lines: DraftLine[];
   editor: PriceTagLineEditor;
-  fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
@@ -275,8 +270,6 @@ interface LineRowProps {
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onResolvePicks: (key: string, partKey: string, productIds: string[]) => void;
   onRemovePart: (key: string, partKey: string) => void;
-  onAddPart: (key: string, option: SearchableSelectOption | null) => void;
-  onRestorePart: (key: string, rowId: string) => void;
   onRestoreParts: (key: string) => void;
   onChoosePromotion: (key: string, promotionId: string) => void;
   onManualSellPriceChange: (key: string, value: number | null) => void;
@@ -465,12 +458,6 @@ function PartRow({
   );
 }
 
-/**
- * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
- * a cell per field, a trash button, and horizontal scroll on a narrow screen.
- */
-const PACKAGE_ROW = 'package:';
-
 /** Tells the picker when its list opens and closes, from inside the trigger (the multi-select only
  *  hands `open` to `renderTrigger`). */
 function OpenWatcher({ open, onChange }: { open: boolean; onChange: (open: boolean) => void }) {
@@ -647,6 +634,10 @@ function ItemPicker({
   );
 }
 
+/**
+ * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
+ * a cell per field, a trash button, and horizontal scroll on a narrow screen.
+ */
 function LineRow({
   line,
   index,
@@ -655,7 +646,6 @@ function LineRow({
   pricing,
   lines,
   editor,
-  fetchPartOptions,
   onUpdate,
   onRemove,
   onChoosePackage,
@@ -663,8 +653,6 @@ function LineRow({
   onResolvePart,
   onResolvePicks,
   onRemovePart,
-  onAddPart,
-  onRestorePart,
   onRestoreParts,
   onChoosePromotion,
   onManualSellPriceChange,
@@ -674,21 +662,6 @@ function LineRow({
 }: LineRowProps) {
   const templateState = lineTemplateState(line, priceMode);
   const unfitted = unfittedPriceType(line, priceMode);
-  // P2: Add part lists the combo's own rows the line lacks first, then the catalogue search.
-  const missingRows = useMemo(() => missingComboRows(line), [line]);
-  const fetchAddPartOptions = useCallback(
-    async (query: string, page: number): Promise<SearchableSelectOption[]> => {
-      const needle = query.trim().toLowerCase();
-      const own: SearchableSelectOption[] =
-        page === 0
-          ? missingRows
-              .filter((row) => !needle || row.label.toLowerCase().includes(needle))
-              .map((row) => ({ value: `${PACKAGE_ROW}${row.id}`, label: row.label, group: 'This package' }))
-          : [];
-      return [...own, ...(await fetchPartOptions(query))];
-    },
-    [missingRows, fetchPartOptions],
-  );
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
   // What the chosen template reads from each group, once per part.
@@ -697,11 +670,6 @@ function LineRow({
   // leaves nothing to select.
   // PRICETAG-ALA-CARTE AC-1: any combo means a choice, the empty value being ala carte.
   const showPackage = !isSet && line.combos.length > 0;
-  // D4 (AC-S2-1..S2-3): "Add part" only once the combos lookup answered AND
-  // the product actually has at least one package - nothing to add a part
-  // TO otherwise. Existing part rows (a reopened draft) still render with
-  // their Remove regardless; this only gates the search below.
-  const showParts = !isSet && !!line.product_id && line.combos_loaded && line.combos.length > 0;
 
   // ---- S1/S2: price cells (product lines only - a set is priced whole,
   // no combo/promotion concept applies to it). ----
@@ -1095,37 +1063,6 @@ function LineRow({
           )}
         </Fragment>
       ))}
-      {showParts && (
-        <tr className="align-top">
-          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="border-l-2 border-border pl-3">
-              {/* The shared catalogue search, so a part missing from the package -
-                  or on a product that has none - can be named by hand (AC-S2-4).
-                  It holds no value of its own: picking adds a row and it returns
-                  to its placeholder, so there is nothing to clear. */}
-              <SearchableSelect
-                value=""
-                onChange={() => {
-                  /* the whole option carries the code; see onOptionChange */
-                }}
-                onOptionChange={(option) => {
-                  // The package's own rows come back by their id; anything else is a catalogue part.
-                  if (option?.value.startsWith(PACKAGE_ROW)) {
-                    onRestorePart(line.key, option.value.slice(PACKAGE_ROW.length));
-                  } else {
-                    onAddPart(line.key, option);
-                  }
-                }}
-                fetchOptions={fetchAddPartOptions}
-                wrapOptions
-                placeholder="Add part"
-                emptyMessage="No products match."
-                size="sm"
-              />
-            </div>
-          </td>
-        </tr>
-      )}
       {(reasons.length > 0 || warning) && (
         <tr>
           <td colSpan={subRowSpan} className="px-2 pb-2">

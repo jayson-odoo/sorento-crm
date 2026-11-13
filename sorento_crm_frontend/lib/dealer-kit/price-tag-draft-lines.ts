@@ -150,7 +150,7 @@ export interface DraftLineSource {
 }
 
 let partKeySeq = 0;
-export function newPartKey(): string {
+function newPartKey(): string {
   partKeySeq += 1;
   return `part-${Date.now()}-${partKeySeq}`;
 }
@@ -220,45 +220,6 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
     });
   }
   return out;
-}
-
-/** Whether a line row is the one the combo row `row` describes: a group or the upgrade by role, a fixed part by product. */
-function isSameComboRow(held: DraftPart, row: DraftPart): boolean {
-  return row.role ? held.role === row.role : !held.role && held.product_id === row.product_id;
-}
-
-/**
- * The combo's own rows the line does not hold (P2), each with a stable id and the label the Add
- * part select shows: a choice group or "Upgrade" by name, a fixed part by code. The rows are the
- * ones `partsFromCombo` builds, in combo order.
- */
-export function missingComboRows(line: DraftLine): { id: string; label: string; row: DraftPart }[] {
-  const combo = comboOfLine(line);
-  if (!combo) return [];
-  return partsFromCombo(combo)
-    .filter((row) => !line.parts.some((held) => isSameComboRow(held, row)))
-    .map((row) => ({
-      id: row.role ? `role:${row.role}` : `part:${row.product_id}`,
-      label: row.role ?? row.code,
-      row,
-    }));
-}
-
-/** The line's parts with the missing combo row `id` back at its combo position (an a la carte part stays after). */
-export function insertComboRow(line: DraftLine, id: string): DraftPart[] {
-  const combo = comboOfLine(line);
-  const missing = missingComboRows(line).find((m) => m.id === id);
-  if (!combo || !missing) return line.parts;
-  const order = partsFromCombo(combo);
-  const placeOf = (part: DraftPart) => {
-    const at = order.findIndex((row) => isSameComboRow(part, row));
-    return at < 0 ? Infinity : at;
-  };
-  const mine = order.findIndex((row) => isSameComboRow(missing.row, row));
-  const before = line.parts.findIndex((held) => placeOf(held) > mine);
-  const parts = [...line.parts];
-  parts.splice(before < 0 ? parts.length : before, 0, missing.row);
-  return parts;
 }
 
 /**

@@ -427,12 +427,6 @@ describe('AC-13 (g) one-line, code only Item results', () => {
     expect(opts.find((o) => o.value === 'product:p-old')!.badgeText).toBe('Discontinued');
   });
 
-  it('the part picker keeps the RM price label', async () => {
-    const { result } = hookSetup([row('A')]);
-    const parts = await result.current.editor.fetchPartOptions('');
-    expect(parts.find((o) => o.value === 'product:p-x')!.label).toMatch(/RM 100/);
-  });
-
   it('in the table the rows are code only with Set and Discontinued hints', async () => {
     render(<Harness initial={[row('A')]} />);
     openItemPicker();

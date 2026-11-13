@@ -355,18 +355,18 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     // this line would not otherwise have. Once a part is attached, the
     // combo's own product id joins the pricing resolve, so the line's total
     // is no longer the bare COVERED figure other cases in this file pin -
-    // this case only needs the part row (and the "Add part" search row) to
-    // exist, not a specific RM total.
+    // this case only needs the part row (and the Package row) to exist, not a
+    // specific RM total. "Add part" is gone (PRICETAG-ALA-CARTE AC-18).
     await waitFor(() => expect(screen.getByText(COMBO_PART.code)).toBeInTheDocument());
     // The native `<select>` stand-in has no real `placeholder` attribute -
     // this mock exposes it as the accessible name instead.
     await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Add part' })).toBeInTheDocument(),
+      expect(screen.getByRole('combobox', { name: 'Ala carte' })).toBeInTheDocument(),
     );
 
     const headerCount = screen.getAllByRole('columnheader').length;
     const colSpanCells = Array.from(document.querySelectorAll('td[colspan]'));
-    // At least the part row and the "Add part" search row.
+    // At least the part row and the Package row.
     expect(colSpanCells.length).toBeGreaterThan(0);
     for (const cell of colSpanCells) {
       expect(Number(cell.getAttribute('colspan'))).toBe(headerCount);
