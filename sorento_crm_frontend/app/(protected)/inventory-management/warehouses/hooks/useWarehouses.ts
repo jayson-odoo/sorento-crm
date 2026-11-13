@@ -111,3 +111,32 @@ export function useBulkDeleteWarehouses() {
     onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete warehouses'),
   });
 }
+
+/**
+ * One ACTIVE warehouse by its exact code, across every company the caller is granted
+ * (`company_scope=grants`), or null when no such warehouse exists. Resolves a free-text
+ * location code (an order inquiry line's `stock_location`) to its row.
+ *
+ * `getWarehouses` has no exact-code param, and a text search for a bare pool code (`BRW`)
+ * also matches its own sub-locations (`BRW-AA`..`BRW-EE`), so the page is wide enough to
+ * reach the exact row behind them.
+ */
+export function useWarehouseByCode(code: string | null) {
+  return useQuery({
+    queryKey: ['warehouse-by-code', code],
+    queryFn: async () => {
+      const response = await getWarehouses({
+        pageIndex: 0,
+        pageSize: 50,
+        sorting: [],
+        searchQuery: code ?? '',
+        is_active: true,
+        companyScope: 'grants',
+      });
+      return (response.data ?? []).find((warehouse) => warehouse.warehouse_code === code) ?? null;
+    },
+    enabled: Boolean(code),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}

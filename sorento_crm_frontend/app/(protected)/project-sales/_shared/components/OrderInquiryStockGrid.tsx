@@ -2,12 +2,11 @@
 
 import * as React from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
+import { useWarehouseByCode } from '@/app/(protected)/inventory-management/warehouses/hooks/useWarehouses';
 import { CellStockTable } from '../../fulfilment-planning/components/CellStockTable';
 import { useStockDetail } from '../hooks/useFulfilmentPlanning';
 import { useStockStatus } from '@/components/stock-status/useStockStatus';
 import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
-import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 
 /**
  * The board's own stock position, on the OI Lines tab and the reserve dialog/card
@@ -18,9 +17,10 @@ import type { Warehouse } from '@/app/(protected)/inventory-management/warehouse
  * `StockDocumentsPanel` internally) - what this component adds is turning a ROW's
  * location CODE into the `group` or `warehouse_id` `stock-detail` wants.
  *
- * The location is resolved to its own warehouse row first, via `getWarehouses` (the only
- * warehouse-list fetcher that carries `id`; `warehouseSelectService` keys by CODE, which
- * `stock-detail` cannot take). Then (MOCHA-STOCK-GRID, crew ruling on #2381):
+ * The location is resolved to its own warehouse row first, via `useWarehouseByCode` (over
+ * `getWarehouses`, the only warehouse-list fetcher that carries `id`; `warehouseSelectService`
+ * keys by CODE, which `stock-detail` cannot take), across every company the caller is
+ * granted. Then (MOCHA-STOCK-GRID, crew ruling on #2381):
  *
  * - `BRW-BB`, a bin IN fulfilment planning, is read as its ownership group `BB`
  *   (`groupOfWarehouseCode`). That is the backend's own membership rule: `group_netting`
@@ -28,7 +28,8 @@ import type { Warehouse } from '@/app/(protected)/inventory-management/warehouse
  *   bin is in fulfilment planning.
  * - Any other location - a bare pool code (`BRW`), or a hyphenated bin that belongs to no
  *   ownership group (`MOCHA-WH`, whose suffix is not a group) - is read as the LOCATION
- *   itself, by its own `warehouse_id`. Asking for group `WH` there answered "no stock".
+ *   itself, by its own `warehouse_id`, with `company_scope=grants` (the bin may be another
+ *   granted company's). Asking for group `WH` there answered "no stock".
  * - A code the warehouse list does not hold falls back to the suffix group, as before.
  *
  * `useStockDetail`'s own `enabled` gate stays off until that resolution lands, so no request
@@ -48,51 +49,20 @@ export function OrderInquiryStockGrid({
   location: string | null;
   lineIds?: string[];
 }) {
-  const [resolved, setResolved] = React.useState<{
-    location: string;
-    warehouse: Warehouse | null;
-  } | null>(null);
-
-  React.useEffect(() => {
-    if (!location) {
-      setResolved(null);
-      return;
-    }
-    let cancelled = false;
-    getWarehouses({
-      pageIndex: 0,
-      // Nit (review round): `getWarehouses` has no exact-code param, and a text
-      // search for a bare pool code (`BRW`) also matches every one of its own
-      // sub-locations (`BRW-AA`..`BRW-EE`) - a page of 5 can fill entirely with
-      // those and never reach the pool row itself. Wide enough to cover a real
-      // site's own sub-location count.
-      pageSize: 50,
-      sorting: [],
-      searchQuery: location,
-      is_active: true,
-    })
-      .then((response) => {
-        if (cancelled) return;
-        const match = (response.data ?? []).find(
-          (warehouse) => warehouse.warehouse_code === location,
-        );
-        setResolved({ location, warehouse: match ?? null });
-      })
-      .catch(() => {
-        if (!cancelled) setResolved({ location, warehouse: null });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [location]);
-
-  const resolving = Boolean(location) && resolved?.location !== location;
-  const warehouse = resolving ? null : (resolved?.warehouse ?? null);
+  // The location's own row, or null when the code names no warehouse the caller can see
+  // (a failed lookup reads the same). `isPending` only while a code is being resolved.
+  const lookup = useWarehouseByCode(location);
+  const resolving = Boolean(location) && lookup.isPending;
+  const warehouse = lookup.data ?? null;
   const suffixGroup = location ? groupOfWarehouseCode(location) : null;
   // A known bin is read by group only when it is a member of that group (in planning);
   // an unknown code keeps the suffix rule it had before.
   const group = warehouse ? (warehouse.fulfilment_planning ? suffixGroup : null) : suffixGroup;
   const warehouseId = group ? null : (warehouse?.id ?? null);
+  // The lookup reached every granted company, so the location read has to as well: a line
+  // filed in one company can name another granted company's location. Group reads stay as
+  // today.
+  const companyScope = warehouseId ? ('grants' as const) : undefined;
 
   // STOCK-STATUS round 6 (UAC AC-35): AutoCount's figures in the same table; a failed read
   // leaves today's.
@@ -103,6 +73,7 @@ export function OrderInquiryStockGrid({
     lineIds,
     group,
     !resolving && Boolean(group || warehouseId),
+    companyScope,
   );
 
   // S1 fix round (22 Sep 2026): a `group` read tags every member location `where: "group"`
@@ -157,6 +128,7 @@ export function OrderInquiryStockGrid({
       lineIds={lineIds}
       showGroupSubtotal
       autoCount={autoCount.data ?? null}
+      companyScope={companyScope}
     />
   );
 }
