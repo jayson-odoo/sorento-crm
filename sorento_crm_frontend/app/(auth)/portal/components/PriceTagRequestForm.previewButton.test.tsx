@@ -114,7 +114,7 @@ vi.mock('@/components/dealer-kit/PriceTagLivePreview', async () => {
       previews.calls.push(props);
       const popup = props.popup as { open: boolean } | undefined;
       React.useEffect(() => {
-        (props.onReadyChange as ((s: unknown) => void) | undefined)?.({ missing: [], drawn: true, failed: false });
+        (props.onReadyChange as ((s: unknown) => void) | undefined)?.({ missing: [], missingKeys: [], drawn: true, failed: false });
       }, [props.onReadyChange]);
       if (props.lineKey !== undefined) return <div data-testid="line-preview" />;
       return popup?.open ? <div data-testid="sheet-popup" /> : null;
