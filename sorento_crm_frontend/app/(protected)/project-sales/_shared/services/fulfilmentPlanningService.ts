@@ -531,10 +531,16 @@ export async function getStockDetail(
    * `MWH-IB` stock - so a running balance is only true when it is read over the group.
    */
   group?: string | null,
+  /**
+   * `grants` reads a location of any company the caller is granted, not only the active one
+   * (MOCHA-STOCK-GRID: an order inquiry line can name another granted company's location).
+   */
+  companyScope?: 'grants',
 ): Promise<StockDetail> {
   const search = new URLSearchParams({ product_id: productId });
   if (group) search.set('group', group);
   else if (warehouseId) search.set('warehouse_id', warehouseId);
+  if (companyScope) search.set('company_scope', companyScope);
   // The lines the drawer is planning. Their rows come back marked `is_this_line`; an absent
   // parameter reads the list on nobody's behalf.
   if (lineIds.length > 0) search.set('line_ids', lineIds.join(','));

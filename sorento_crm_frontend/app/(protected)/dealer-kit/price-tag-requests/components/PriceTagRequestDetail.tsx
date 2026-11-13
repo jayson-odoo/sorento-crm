@@ -36,6 +36,7 @@ import {
   Eye,
   FileText,
   HandCoins,
+  History,
   ListOrdered,
   Loader2,
   Package,
@@ -122,6 +123,8 @@ import {
 } from '@/lib/dealer-kit/product-data-changes';
 import { promotionOptionLabel, promotionOptionName } from '@/lib/dealer-kit/line-pricing-types';
 import RequestDesignSection from './RequestDesignSection';
+import PriceTagRequestHistory from '@/components/audit/PriceTagRequestHistory';
+import { priceTagRequestHistoryKey } from '@/hooks/usePriceTagRequestHistory';
 import {
   openComments,
   type ReviewComment,
@@ -133,7 +136,7 @@ import {
 } from './priceTagRequestActions';
 import { codeWithName, distinctName } from '@/lib/product-display';
 
-type DetailTab = 'request' | 'lines' | 'attachments';
+type DetailTab = 'request' | 'lines' | 'attachments' | 'history';
 
 const STATUS_PILL_BASE =
   'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold';
@@ -195,7 +198,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [tab, setTab] = useUrlTab<DetailTab>({
-    tabs: ['request', 'lines', 'attachments'],
+    tabs: ['request', 'lines', 'attachments', 'history'],
     defaultTab: 'request',
   });
   // Which lines already have a tag drawn, so the Lines tab can say so per row
@@ -301,6 +304,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     }
   }, [requestId, queryClient]);
 
+  // A header action changes what the History tab reads (status, assignee, printing, line
+  // prices): marked stale with the request's own refetch, read again if the tab is open.
+  const invalidateHistory = useCallback(
+    () => void queryClient.invalidateQueries({ queryKey: priceTagRequestHistoryKey(requestId) }),
+    [queryClient, requestId],
+  );
+
   const handleClaim = useCallback(async () => {
     setActionLoading(true);
     try {
@@ -308,12 +318,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       toast.success('Request claimed');
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
+      invalidateHistory();
     } catch {
       toast.error('Failed to claim request');
     } finally {
       setActionLoading(false);
     }
-  }, [requestId]);
+  }, [requestId, invalidateHistory]);
 
   const handleMarkProofReady = useCallback(async () => {
     setActionLoading(true);
@@ -325,12 +336,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       toast.success('Design marked as ready');
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
+      invalidateHistory();
     } catch {
       toast.error('Failed to mark the design ready');
     } finally {
       setActionLoading(false);
     }
-  }, [requestId]);
+  }, [requestId, invalidateHistory]);
 
   const handleExport = useCallback(async () => {
     setExportLoading(true);
@@ -342,12 +354,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       // Refetch to reflect the status change (approved -> ready on first export).
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
+      invalidateHistory();
     } catch {
       toast.error('Failed to export PDF');
     } finally {
       setExportLoading(false);
     }
-  }, [requestId]);
+  }, [requestId, invalidateHistory]);
 
   const handleMarkReadyForCollection = useCallback(async () => {
     setActionLoading(true);
@@ -356,12 +369,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       toast.success('Marked ready for collection');
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
+      invalidateHistory();
     } catch {
       toast.error('Failed to mark the request ready for collection');
     } finally {
       setActionLoading(false);
     }
-  }, [requestId]);
+  }, [requestId, invalidateHistory]);
 
   const handleMarkCollected = useCallback(async () => {
     setActionLoading(true);
@@ -370,12 +384,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       toast.success('Marked collected');
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
+      invalidateHistory();
     } catch {
       toast.error('Failed to mark the request collected');
     } finally {
       setActionLoading(false);
     }
-  }, [requestId]);
+  }, [requestId, invalidateHistory]);
 
   const handleSavePrintBy = useCallback(
     async (next: PrintBy | null) => {
@@ -384,6 +399,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         await updatePriceTagPrintBy(requestId, next);
         const data = await getPriceTagRequest(requestId);
         setRequest(data);
+        invalidateHistory();
         setEditOpen(false);
         toast.success('Request updated');
       } catch {
@@ -392,7 +408,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         setActionLoading(false);
       }
     },
-    [requestId],
+    [requestId, invalidateHistory],
   );
 
   /**
@@ -571,6 +587,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         const data = await getPriceTagRequest(request.id);
         setRequest(data);
         await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(request.id) });
+        invalidateHistory();
         toast.success('Price basis updated');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to update the price');
@@ -578,7 +595,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         setSavingLinePrice(null);
       }
     },
-    [request, queryClient],
+    [request, queryClient, invalidateHistory],
   );
 
   const choosePromotion = useCallback(
@@ -932,6 +949,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             <Paperclip />
             {/* Owner hand test 11 Nov: no "Sales Order" wording on the request's files. */}
             <span>Files</span>
+          </TabsTrigger>
+          <TabsTrigger value="history">
+            <History />
+            <span>History</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1533,6 +1554,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-0 space-y-4 focus-visible:outline-none">
+          {tab === 'history' && <PriceTagRequestHistory requestId={requestId} />}
         </TabsContent>
       </Tabs>
 

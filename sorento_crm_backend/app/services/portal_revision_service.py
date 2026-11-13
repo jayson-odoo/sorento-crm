@@ -40,7 +40,7 @@ from app.models.portal import (
 )
 from app.models.price_tag import PriceTagRequest
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, StockInquiry
-from app.services import portal_required_fields, submission_status
+from app.services import history_common, portal_required_fields, submission_status
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_conflict, handle_not_found, handle_unprocessable
 from app.services.submission_status import APPEALED_LABEL
@@ -1449,14 +1449,8 @@ class PortalRevisionService:
         return out
 
     def _contact_names(self, contact_ids: set) -> dict:
-        from app.models.access import RespondContact
-        from app.services.portal_service import PortalService
-
-        ids = {str(c) for c in contact_ids if c}
-        if not ids:
-            return {}
-        rows = self.db.query(RespondContact).filter(RespondContact.id.in_(ids)).all()
-        return {c.id: PortalService._contact_display_name(c) for c in rows}  # noqa: SLF001
+        # One contact-name lookup, shared with the History reads (STANDARD-HISTORY wave 5).
+        return history_common.contact_names(self.db, contact_ids)
 
     def _user_names(self, user_ids: set) -> dict:
         from app.models.user import User

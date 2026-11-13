@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "nc_0001_non_cancellable"
-down_revision = "acqs_0001_project_ac_write"
+down_revision = "pimp_0001_import_value_maps"
 branch_labels = None
 depends_on = None
 

@@ -21,7 +21,9 @@ from app.models.planning_change import PlanningChangeBatch
 from app.models.project_so import OrderInquiry, ProjectSalesOrder
 from app.services import order_inquiry_history_service as oi_history
 from app.services import planning_history_service as planning
-from app.services.history_common import audit_actor, iso
+from app.services.history_common import audit_actor
+from app.services.history_common import history_event as _event
+from app.services.history_common import history_line as _entry
 from app.services.project_service import resolve_user_names
 
 _CAUSE_LABEL = {
@@ -57,17 +59,6 @@ def _label(value: Optional[str]) -> str:
     return (value or "").replace("_", " ").capitalize()
 
 
-def _entry(index: int, event_id: str, so_line_no, item_code, qty, change: str) -> dict:
-    # No OI row stands behind these lines, so the key is the event's own, never a UUID.
-    return {
-        "row_id": f"{event_id}:{index}",
-        "so_line_no": so_line_no,
-        "item_code": item_code,
-        "qty": qty,
-        "change": change.replace(" -> ", " → "),
-    }
-
-
 def _history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
     ids = list(pso_ids)
     events: List[dict] = []
@@ -83,13 +74,6 @@ def _history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
             event["actor"] = names.get(actor_id) or oi_history.AUTOMATIC
     events.sort(key=lambda e: e["at"] or "", reverse=True)
     return events
-
-
-def _event(event_id, kind, at, actor_id, title, lines, actor=None) -> dict:
-    return {
-        "id": event_id, "kind": kind, "at": iso(at) if hasattr(at, "isoformat") else at,
-        "actor": actor, "_actor_id": actor_id, "title": title, "lines": list(lines),
-    }
 
 
 def _planning(db: Session, ids: List[str]) -> List[dict]:
