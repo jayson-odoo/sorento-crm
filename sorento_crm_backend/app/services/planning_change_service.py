@@ -5016,6 +5016,26 @@ def _apply_one_order(
         # saw them move.
         db.flush()
 
+    # The cancel CS saved on a line this apply retires is promoted by it, so the draft goes in
+    # this transaction, like `confirm()`'s own draft delete for the lines it names (S4,
+    # AC-4.4). A retired line never reaches that delete (it leaves the revision instead), and
+    # the draft left behind read "Saved" on the SO page after Confirm (OI-WHOLE-SO-CANCEL,
+    # crew pass ee74c892 on a deleted SO).
+    retired_set = set(retired_line_ids)
+    retired_core_line_ids = [
+        r.core_line_id
+        for r in live
+        if r.kind == "cancelled" and r.core_line_id and str(r.project_line_id) in retired_set
+    ]
+    if retired_core_line_ids:
+        from app.services import project_line_draft_service
+
+        project_line_draft_service.delete_drafts_for_lines(
+            db,
+            retired_core_line_ids,
+            company_id=str(order.company_id) if order.company_id else None,
+        )
+
     revised = False
     revision_no = current_revision
     confirm_result: Optional[dict] = None
