@@ -520,6 +520,27 @@ register(
 )
 
 
+
+def _remove_user_passkey(db: Session, payload: dict):
+    from app.services.passkey_service import remove_passkey
+
+    return remove_passkey(db, _entity_id(payload))
+
+
+# PASSKEY-LOGIN AC-24 / AC-31: one removal for both the Passkeys card and the admin's
+# Sign-in card. `permission` is what removing SOMEONE ELSE'S passkey needs; your own needs
+# nothing extra (the park route checks ownership first, `pending_actions.create_pending_action`).
+register(
+    FormAction(
+        key="user_passkey.delete",
+        entity_types=("user_passkey",),
+        execute=_remove_user_passkey,
+        window=WINDOW_DESTRUCTIVE,
+        permission="user_management.users.edit",
+        label="Remove passkey",
+    )
+)
+
 # --------------------------------------------------------------------------------------
 # S6b - the sweep of what still confirmed in a dialog.
 #
@@ -1140,6 +1161,12 @@ def _delete_message_snippet(db: Session, payload: dict):
     return MessageSnippetService(db).delete_snippet(_entity_id(payload))
 
 
+def _delete_technician(db: Session, payload: dict):
+    from app.services import technician_service
+
+    return technician_service.delete(db, _entity_id(payload))
+
+
 def _delete_automation(db: Session, payload: dict):
     from app.services.automation_service import AutomationService
 
@@ -1334,6 +1361,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="sla_management.message_snippets.delete",
         label="Delete snippet",
+    )
+)
+
+register(
+    FormAction(
+        key="technician.delete",
+        entity_types=("technician",),
+        execute=_delete_technician,
+        window=WINDOW_DESTRUCTIVE,
+        permission="after_sales.technicians.manage",
+        label="Delete technician",
     )
 )
 

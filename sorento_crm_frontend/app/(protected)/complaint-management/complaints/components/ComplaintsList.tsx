@@ -184,16 +184,17 @@ function StaffComplaintsList() {
     enabled: !isViewPrefsLoading,
   });
 
+  // Every staff member, keyed by CRM user id (ASSIGNED-FILTER-ALL-STAFF): the backend
+  // matches a complaint stored under that user's CRM id or Respond.io id.
   const {
-    data: respondSyncedUsers = [],
-    error: respondSyncedUsersError,
-    refetch: refetchRespondSyncedUsers,
+    data: assigneeOptions = [],
+    error: assigneeOptionsError,
+    refetch: refetchAssigneeOptions,
   } = useQuery({
-    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
-    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
+    queryKey: ['user-lookup', 'with-inactive'],
+    queryFn: () => getUserLookup({ include_inactive: true }),
     staleTime: 60_000,
   });
-  const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);
   // Active-only master data, the same source the complaint form's pickers use.
   const {
     data: rootCauseOptions = [],
@@ -219,7 +220,7 @@ function StaffComplaintsList() {
     const assignee = (v: string) =>
       v === '__unassigned__'
         ? 'Unassigned'
-        : assigneeOptions.find((u) => u.respond_user_id === v)?.name || 'Selected';
+        : assigneeOptions.find((u) => u.id === v)?.name || 'Selected';
     const assignees = splitMulti(assignedToFilter).map(assignee);
     if (assignees.length) parts.push(multiChipLabel('Assigned to', assignees));
     const statuses = splitMulti(statusFilter).map(
@@ -556,12 +557,12 @@ function StaffComplaintsList() {
                     <SearchableMultiSelect
                       value={splitMulti(assignedToFilter)}
                       onChange={(v) => applyFilters({ assigned_to: joinMulti(v) })}
-                      loadError={respondSyncedUsersError}
-                      onRetry={() => void refetchRespondSyncedUsers()}
+                      loadError={assigneeOptionsError}
+                      onRetry={() => void refetchAssigneeOptions()}
                       options={[
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
-                          value: u.respond_user_id!,
+                          value: u.id,
                           label: u.name || 'Unnamed user',
                         })),
                       ]}

@@ -102,17 +102,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: { value: string[]; disabled?: boolean }) => (
-    <select
-      multiple
-      aria-label="Alternatives"
-      disabled={props.disabled}
-      value={props.value}
-      onChange={() => {}}
-    />
-  ),
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 // The live preview is #2100's and tested there; here it only reports what it
 // would: whether a tag is drawn and which items have no template.

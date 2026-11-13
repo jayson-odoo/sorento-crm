@@ -1,6 +1,7 @@
 """Audit logs API routes."""
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -26,6 +27,8 @@ router = APIRouter()
 # `getAuditLogs({ entity_type, entity_id })` needs its entity type here.
 _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "complaint": "complaint_management.complaints.view",
+    # Service job page, History tab (after-sales P1): the permission that opens the job page.
+    "service_jobs": "after_sales.service_jobs.view",
     "stock_inquiry": "procurement.stock_inquiries.view",
     "purchase_request": "procurement.purchase_requests.view",
     "product": "master_data.products.view",
@@ -179,23 +182,75 @@ def _integration_names(db: Session, integration_ids: list[str]) -> dict[str, str
 
 # Human-readable one-liner for a status transition, e.g. "status: pending → approved".
 # Derived at serialize time from the JSONB diff - no schema/storage change.
-def _status_labels(db: Session, items) -> dict[str, str]:
-    """Labels for every status-engine `status_id` an UPDATE row moved between, in one query,
-    so the trail reads "Status: Draft -> Submitted" instead of two raw ids."""
+def _id_labels(db: Session, items) -> dict[str, str]:
+    """Labels for every id an UPDATE row moved between, one query per kind of id, so the trail
+    reads "Status: Draft -> Submitted" (a status-engine `status_id`) and "Project: PS26-0001
+    Fake Tower -> PS26-0007 Fake Gardens" (a record's `project_id`, PROJECT-RELATED-RECORDS
+    AC-C6) instead of raw ids. Ids are UUIDs, so one map holds both kinds."""
+    from app.models.projects import Project
+    from app.models.status import Status
+
+    out: dict[str, str] = {}
+    for key, read in (
+        ("status_id", lambda ids: db.query(Status.id, Status.label).filter(Status.id.in_(ids))),
+        (
+            "project_id",
+            lambda ids: db.query(
+                Project.id, func.concat_ws(" ", Project.project_code, Project.title)
+            ).filter(Project.id.in_(ids)),
+        ),
+    ):
+        ids = set()
+        for it in items:
+            for values in (it.old_values or {}, it.new_values or {}):
+                value = values.get(key)
+                # Only real ids reach the query: one legacy or hand-written value must not turn
+                # the whole trail into a 500.
+                if value and _is_uuid(str(value)):
+                    ids.add(str(value))
+        if ids:
+            out.update({str(r[0]): r[1] for r in read(list(ids)).all()})
+    return out
+
+
+#: The name the status-label tests import (SR-CORE review): the same resolver.
+_status_labels = _id_labels
+
+
+def _project_description(it, labels: dict[str, str]) -> Optional[str]:
+    """ "Project: A -> B" for an UPDATE that moved the record's project link (D2), "∅" for none;
+    an old project that no longer exists reads "Project changed to B", like a status."""
+    old = (it.old_values or {}).get("project_id")
+    new = (it.new_values or {}).get("project_id")
+    if it.action != "UPDATE" or "project_id" not in (it.new_values or {}) or str(old or "") == str(new or ""):
+        return None
+    frm = labels.get(str(old)) if old else None
+    to = labels.get(str(new)) if new else None
+    if new and not to:
+        return None
+    if not old:
+        return f"Project: ∅ → {to}"
+    if not frm:
+        return f"Project changed to {to}" if to else None
+    return f"Project: {frm} → {to or '∅'}"
+
+
+def _technician_names(db: Session, items) -> dict[str, str]:
+    """Names for every `technician_id` on a service job's rows, so History reads names, never ids."""
     ids = set()
     for it in items:
+        if it.entity_type != "service_jobs":
+            continue
         for values in (it.old_values or {}, it.new_values or {}):
-            value = values.get("status_id")
-            # Only real ids reach the query: one legacy or hand-written value must not turn
-            # the whole trail into a 500.
+            value = values.get("technician_id")
             if value and _is_uuid(str(value)):
                 ids.add(str(value))
     if not ids:
         return {}
-    from app.models.status import Status
+    from sqlalchemy import text
 
-    rows = db.query(Status.id, Status.label).filter(Status.id.in_(list(ids))).all()
-    return {str(r.id): r.label for r in rows}
+    rows = db.execute(text("select id::text, name from technicians where id::text = any(:ids)"), {"ids": list(ids)}).all()
+    return {r[0]: r[1] for r in rows}
 
 
 def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> Optional[str]:
@@ -211,6 +266,10 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
             frm = status_labels.get(str(old.get("status_id")))
             # An old status that no longer exists is not "no status".
             return f"Status: {frm} → {to}" if frm else f"Status changed to {to}"
+    if status_labels:
+        project = _project_description(it, status_labels)
+        if project:
+            return project
     # Attachment upload activity: surface the filename + what happened.
     if it.entity_type == "attachment":
         fname = new.get("original_filename") or old.get("original_filename")
@@ -355,7 +414,8 @@ def get_audit_logs(
     from app.services.activity_service import entity_labels
 
     record_labels = entity_labels(db, items)
-    status_labels = _status_labels(db, items)
+    status_labels = _id_labels(db, items)
+    technician_names = _technician_names(db, items)
     if include_children and entity_types and len(entity_types) == 1 and entity_id:
         record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
     # SUPPLIER-COST-ACCESS: a product's History shows THAT cost changed, who and when, with
@@ -388,6 +448,12 @@ def get_audit_logs(
             it, user_names, contact_names, integration_names, payload["user_display_name"],
             scheduled_names=scheduled_names,
         )
+        if technician_names:
+            for key in ("old_values", "new_values"):
+                values = payload.get(key)
+                tid = str((values or {}).get("technician_id") or "")
+                if tid:
+                    payload[key] = {**values, "technician_id": technician_names.get(tid, "Removed technician")}
         payload["description"] = _derive_description(it, status_labels)
         payload["entity_label"] = record_labels.get(str(it.id))
         if not is_audit_admin:

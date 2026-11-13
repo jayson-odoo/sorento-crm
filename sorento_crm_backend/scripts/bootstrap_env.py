@@ -931,6 +931,29 @@ def seed_reference_data() -> None:
             db.close()
 
 
+def seed_service_jobs() -> None:
+    """The service job status graph and numbering rule (after-sales P1).
+
+    Migration data is not replayed here (the schema comes from the models), so a fresh database
+    would have no graph and no `service_job` numbering rule, and the first raise would fail.
+    """
+    from app.database import SessionLocal
+    from app.services import numbering_defaults
+    from app.services.service_job_status_graph import seed_service_job_status_graph
+
+    db = SessionLocal()
+    try:
+        seed_service_job_status_graph(db)
+        numbering_defaults.seed_service_job_rule(db)
+        db.commit()
+        log.info("seeded service job graph and numbering rule")
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        log.warning("service job seed failed (continuing): %s", exc)
+    finally:
+        db.close()
+
+
 def seed_n8n_sales_reports_grant() -> None:
     """Replay `selfref_0001_n8n_sales_view`'s grant (CHATBOT-SELFREF-SCOPE B1).
 
@@ -1031,6 +1054,7 @@ def main() -> int:
     if not args.skip_seed:
         seed_reference_data()
         seed_n8n_sales_reports_grant()
+        seed_service_jobs()
         seed_scm_module_data()
         seed_fulfilment_planning_flags()
         seed_customer_import_aliases()

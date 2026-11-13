@@ -23,6 +23,10 @@ The list has a **Last activity** column: the date and time (for example 12/11/20
 
 After **Update & Reply** the inquiry moves to **Responded** and the requester is notified.
 
+## Set the inquiry's project
+
+The inquiry's **Registered project** (optional) links it to a project, and it then shows on that project's **Related** tab. Anyone who can edit the inquiry can set or change it at any time, even after it is **Responded** or **Rejected**. The status and any approval stay as they are, and **History** shows *Project: old -> new*. Older inquiries are not linked automatically, so pick the project here when it matters.
+
 ## Reject an inquiry
 
 If the request can't be fulfilled, click **[Reject](#guide_target=procurement.stock-inquiries.reject-button)** on the detail page.

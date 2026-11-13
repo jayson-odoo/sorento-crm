@@ -70,7 +70,9 @@ def test_the_models_carry_the_new_columns():
 # column to that same table.
 # NPA-FORM-SLA (#2261, migration npasla_0002_npa_revision_no) added revision_no to the header
 # table the same way.
-LATER_MIGRATIONS = ("npasi_0001_lineage", "npasla_0002_npa_revision_no", "fla_0001_last_activity_at")
+# PROJECT-RELATED-RECORDS (migration prr_0001_si_npa_project_link) added project_id to the header
+# table the same way.
+LATER_MIGRATIONS = ("npasi_0001_lineage", "npasla_0002_npa_revision_no", "prr_0001_si_npa_project_link", "fla_0001_last_activity_at")
 
 
 def _added_by_later_migrations(table: str) -> set[str]:

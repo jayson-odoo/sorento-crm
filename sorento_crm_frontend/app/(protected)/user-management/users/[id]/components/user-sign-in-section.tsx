@@ -24,6 +24,7 @@ import type { User } from '@/app/models/user';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useUserActions } from '../../actions';
+import UserPasskeysRows from './user-passkeys-rows';
 // Aliased: `useNewNumber` is the service's name for the S3 contract 2.5 call,
 // not a React hook - eslint's hook-name check goes by the imported binding.
 import { useNewNumber as applyContactPhoneToUser } from '../../services/userService';
@@ -44,6 +45,7 @@ const SIGN_IN_METHOD_WORDS: Record<string, string> = {
   password: 'email',
   phone_otp: 'phone',
   portal_link: 'portal link',
+  passkey: 'passkey',
 };
 
 function formatSignInMethod(method: string | null | undefined): string | null {
@@ -153,6 +155,8 @@ const UserSignInSection = ({ user }: { user: User }) => {
               <span className="text-muted-foreground">Never</span>
             )}
           </dd>
+
+          <UserPasskeysRows user={user} canEdit={canEdit} />
         </dl>
 
         {user.phoneDiffersFromContact && (

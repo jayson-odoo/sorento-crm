@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search chips mock v1</title>
+<!-- SEARCH-CHIPS mock v1. Fake data only (codes, names, agents are invented). Static: no scripts. -->
+<style>
+:root{--background:#fff;--foreground:#09090b;--primary:#3b82f6;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--radius:.375rem}
+*{box-sizing:border-box}
+body{margin:0;background:#e4e4e7;color:var(--foreground);font:13px/1.5 Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1312px;margin:0 auto;padding:16px}
+h2{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#52525b;margin:24px 0 6px}
+p.note{margin:0 0 8px;color:#52525b;font-size:12px}
+.frame{background:#fafafa;border:1px solid #d4d4d8;border-radius:8px;overflow:hidden}
+.frame.w1280{width:1280px;max-width:100%}
+.frame.w375{width:375px}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px;margin:16px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.frame.w375 .card{margin:16px 0}
+.toolbar{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);position:relative}
+.frame.w375 .toolbar{flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-weight:500;white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn .n{background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:0 6px;font-size:11px}
+.spacer{flex:1}
+
+/* ListSearchInput, with chips (components/common/ListSearchInput.tsx) */
+.search{position:relative;width:256px;flex:none}
+.frame.w375 .search{width:100%}
+.box{display:flex;align-items:center;gap:4px;height:34px;border:1px solid var(--input);border-radius:var(--radius);background:#fff;padding:0 30px 0 32px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.box.focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.box .ico{position:absolute;left:10px;top:9px;width:16px;height:16px;color:var(--muted-fg)}
+.box .clear{position:absolute;right:6px;top:6px;width:22px;height:22px;border-radius:5px;display:grid;place-items:center;color:var(--muted-fg)}
+.box .clear:hover{background:var(--muted)}
+.box input{border:0;outline:0;font:inherit;min-width:56px;flex:1;background:transparent;padding:0}
+.box input::placeholder{color:#a1a1aa}
+/* chip = the SearchableMultiSelect trigger chip (components/common/SearchableMultiSelect.tsx:404) */
+.chip{display:inline-flex;align-items:center;gap:4px;flex:none;max-width:140px;background:var(--muted);border-radius:4px;padding:1px 4px 1px 6px;font-size:12px;line-height:18px}
+.chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip .x{opacity:.6;font-size:11px;line-height:1}
+.chip.more{background:#e4e4e7;font-weight:500;padding:1px 6px}
+.chip.kb{outline:2px solid #93c5fd}
+/* focused: the box opens downward over the rows, the toolbar does not reflow */
+.open{position:absolute;left:0;right:0;top:0;z-index:5;background:#fff;border:1px solid #93c5fd;border-radius:var(--radius);box-shadow:0 0 0 3px rgba(59,130,246,.15),0 10px 24px rgba(0,0,0,.12);padding:6px 30px 6px 32px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.open .ico{position:absolute;left:10px;top:9px;width:16px;height:16px;color:var(--muted-fg)}
+.open .clear{position:absolute;right:6px;top:6px;width:22px;height:22px;display:grid;place-items:center;color:var(--muted-fg)}
+.open input{border:0;outline:0;font:inherit;min-width:90px;flex:1;padding:2px 0}
+.open .foot{flex-basis:100%;display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--muted-fg);font-size:12px}
+.open .foot a{color:var(--foreground);text-decoration:none;font-weight:500}
+
+table{border-collapse:collapse;width:100%;table-layout:fixed}
+th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.c{width:36px}th.c{width:36px}
+.pill{display:inline-block;border-radius:999px;padding:0 8px;font-size:11px;font-weight:500;background:#dcfce7;color:#166534}
+.pill.o{background:#fef9c3;color:#854d0e}
+.foot{padding:10px 16px;color:var(--muted-fg);font-size:12px}
+.map{background:#fff;border:1px solid #d4d4d8;border-radius:8px;padding:8px 16px}
+.map td{white-space:normal;font-size:12px}
+.map code{background:var(--muted);padding:0 4px;border-radius:3px}
+.grid2{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h2>A. Empty (unchanged from today)</h2>
+<p class="note">Typing without Enter still searches live, exactly as today.</p>
+<div class="frame w1280"><div class="card">
+  <div class="toolbar">
+    <div class="search"><div class="box">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input placeholder="Search SO, customer, product or agent...">
+    </div></div>
+    <span class="btn">Filters</span><span class="btn">Columns</span>
+    <span class="spacer"></span><span class="btn">Actions</span><span class="btn primary">Plan selected</span>
+  </div>
+</div></div>
+
+<h2>B. Three chips (typed SO371334 Enter, SO371402 Enter, then "Acme Trading" Enter)</h2>
+<p class="note">Rows = orders matching ANY chip (recommended rule, Q1). The box widens only to its toolbar slot; chips that do not fit collapse into "+N".</p>
+<div class="frame w1280"><div class="card">
+  <div class="toolbar">
+    <div class="search" style="width:420px"><div class="box">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span class="chip"><span>SO371334</span><span class="x" aria-label="Remove SO371334">&#x2715;</span></span>
+      <span class="chip"><span>SO371402</span><span class="x">&#x2715;</span></span>
+      <span class="chip" title="Acme Trading"><span>Acme Trading</span><span class="x">&#x2715;</span></span>
+      <input placeholder="">
+      <span class="clear" title="Clear search">&#x2715;</span>
+    </div></div>
+    <span class="btn">Filters</span><span class="btn">Columns</span>
+    <span class="spacer"></span><span class="btn">Actions</span><span class="btn primary">Plan selected</span>
+  </div>
+  <table>
+    <thead><tr><th class="c"><input type="checkbox"></th><th>SO number</th><th>Order date</th><th>Customer</th><th>Project</th><th>Agent</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td class="c"><input type="checkbox"></td><td>SO371334</td><td>03/11/2026</td><td>Bayu Hardware Sdn Bhd</td><td>Taman Contoh Phase 2</td><td>AGENT A</td><td><span class="pill o">Open</span></td></tr>
+      <tr><td class="c"><input type="checkbox"></td><td>SO371402</td><td>05/11/2026</td><td>Cempaka Build Sdn Bhd</td><td>-</td><td>AGENT B</td><td><span class="pill o">Open</span></td></tr>
+      <tr><td class="c"><input type="checkbox"></td><td>SO371388</td><td>04/11/2026</td><td>Acme Trading Sdn Bhd</td><td>Residensi Sampel</td><td>AGENT C</td><td><span class="pill">Delivered</span></td></tr>
+      <tr><td class="c"><input type="checkbox"></td><td>SO370951</td><td>21/10/2026</td><td>Acme Trading Sdn Bhd</td><td>-</td><td>AGENT C</td><td><span class="pill">Delivered</span></td></tr>
+    </tbody>
+  </table>
+  <div class="foot">1 - 4 of 4</div>
+</div></div>
+
+<h2>C. Overflow, not focused: one line with "+N" (12 pasted SO numbers)</h2>
+<div class="frame w1280"><div class="card">
+  <div class="toolbar">
+    <div class="search" style="width:420px"><div class="box">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span class="chip"><span>SO371334</span><span class="x">&#x2715;</span></span>
+      <span class="chip"><span>SO371335</span><span class="x">&#x2715;</span></span>
+      <span class="chip"><span>SO371340</span><span class="x">&#x2715;</span></span>
+      <span class="chip more" title="SO371341, SO371350, ...">+9</span>
+      <input placeholder="">
+      <span class="clear" title="Clear search">&#x2715;</span>
+    </div></div>
+    <span class="btn">Filters</span><span class="btn">Columns</span>
+    <span class="spacer"></span><span class="btn">Actions</span><span class="btn primary">Plan selected</span>
+  </div>
+  <div class="foot">Rows: the 12 orders (or fewer, if a number does not exist).</div>
+</div></div>
+
+<h2>D. Overflow, focused (click the box or "+9"): it opens downward over the rows and shows every chip</h2>
+<p class="note">Same box, not a new panel. Esc or a click outside folds it back to one line. Keyboard: Backspace in the empty text removes the last chip; Left/Right arrow walks the chips (outlined), Delete removes the outlined one.</p>
+<div class="frame w1280"><div class="card" style="min-height:190px">
+  <div class="toolbar">
+    <div class="search" style="width:420px;height:34px">
+      <div class="open">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span class="chip"><span>SO371334</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371335</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371340</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371341</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371350</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371352</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371360</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371361</span><span class="x">&#x2715;</span></span>
+        <span class="chip kb"><span>SO371377</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371380</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371391</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371402</span><span class="x">&#x2715;</span></span>
+        <input placeholder="Add another...">
+        <span class="clear" title="Clear search">&#x2715;</span>
+        <div class="foot"><span>12 values</span><a href="#">Clear</a></div>
+      </div>
+    </div>
+    <span class="btn">Filters</span><span class="btn">Columns</span>
+    <span class="spacer"></span><span class="btn">Actions</span><span class="btn primary">Plan selected</span>
+  </div>
+</div></div>
+
+<h2>E. 375 px</h2>
+<div class="grid2">
+<div class="frame w375"><div class="card">
+  <div class="toolbar">
+    <div class="search"><div class="box">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span class="chip"><span>SO371334</span><span class="x">&#x2715;</span></span>
+      <span class="chip" title="Acme Trading"><span>Acme Trading</span><span class="x">&#x2715;</span></span>
+      <span class="chip more">+1</span>
+      <input placeholder="">
+      <span class="clear">&#x2715;</span>
+    </div></div>
+    <span class="btn">Filters <span class="n">1</span></span><span class="btn">Columns</span><span class="spacer"></span><span class="btn primary">Plan</span>
+  </div>
+  <table>
+    <thead><tr><th>SO number</th><th>Customer</th></tr></thead>
+    <tbody>
+      <tr><td>SO371334</td><td>Bayu Hardware Sdn Bhd</td></tr>
+      <tr><td>SO371388</td><td>Acme Trading Sdn Bhd</td></tr>
+      <tr><td>SO370951</td><td>Acme Trading Sdn Bhd</td></tr>
+    </tbody>
+  </table>
+</div></div>
+<div class="frame w375"><div class="card" style="min-height:200px">
+  <div class="toolbar">
+    <div class="search" style="height:34px">
+      <div class="open">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span class="chip"><span>SO371334</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>Acme Trading</span><span class="x">&#x2715;</span></span>
+        <span class="chip"><span>SO371402</span><span class="x">&#x2715;</span></span>
+        <input placeholder="Add another...">
+        <span class="clear">&#x2715;</span>
+        <div class="foot"><span>3 values</span><a href="#">Clear</a></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot" style="margin-top:60px">Focused on a phone: same box, opened downward.</div>
+</div></div>
+</div>
+
+<h2>What each element reuses</h2>
+<div class="map"><table>
+<tr><td style="width:30%">Search box, magnifier / spinner, trailing clear x</td><td><code>sorento_crm_frontend/components/common/ListSearchInput.tsx</code> (extended, not replaced), <code>components/ui/input.tsx</code> md size</td></tr>
+<tr><td>Chip with its x</td><td>The trigger chip of <code>components/common/SearchableMultiSelect.tsx:404-426</code> (rounded, bg-muted, text-xs, X size-3); Enter-to-chip behaviour of <code>components/common/StringChipInput.tsx</code></td></tr>
+<tr><td>"+N" chip</td><td>Same chip style, darker muted; title lists the hidden values</td></tr>
+<tr><td>Toolbar row (Search, Filters, Columns, Actions, primary)</td><td><code>components/ui/data-grid-list-toolbar.tsx</code> <code>searchSlot</code>, unchanged</td></tr>
+<tr><td>Debounce + settling spinner</td><td><code>hooks/useDebouncedSearch.ts</code></td></tr>
+<tr><td>Rows, status pill</td><td>The Sales Orders grid as it is today (<code>app/(protected)/scm/sales-orders/components/SalesOrdersGrid.tsx</code>), <code>components/ui/badge.tsx</code></td></tr>
+</table></div>
+
+</div>
+</body>
+</html>

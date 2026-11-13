@@ -149,6 +149,23 @@ PERMISSION_REGISTRY.append({
     "description": "Void a complaint (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson).",
 })
 
+# After-sales P1: service jobs (a technician sent to a customer's site) and the technician roster.
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.service_jobs.view",
+    "name": "View Service Jobs",
+    "description": "See service jobs, the dispatch board and the technician list.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.service_jobs.dispatch",
+    "name": "Dispatch Service Jobs",
+    "description": "Create service jobs, confirm dates, assign technicians and move a job through its steps.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.technicians.manage",
+    "name": "Manage Technicians",
+    "description": "Create, edit, archive and delete technicians.",
+})
+
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
 PERMISSION_REGISTRY.extend(_crud("sla_management", "conversation_sla_tracking", "Conversation SLA Tracking"))
@@ -697,6 +714,14 @@ PERMISSION_REGISTRY.extend([
         "description": (
             "View the Stock Debt month-by-product balance and drill into a month's demand "
             "and supply."
+        ),
+    },
+    {
+        "slug": "projects.autocount.write",
+        "name": "Send quotations and sales orders to AutoCount",
+        "description": (
+            "Create, update or cancel a project quotation or sales order in AutoCount from "
+            "Project sales. Writes to AutoCount."
         ),
     },
     {

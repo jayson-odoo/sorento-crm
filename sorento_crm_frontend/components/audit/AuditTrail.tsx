@@ -28,6 +28,8 @@ const STATUS_SUMMARY_KEYS = ['status', 'approval_status', 'order_status'];
 function summaryCovers(change: AuditFieldChange, entry: AuditLogEntry, summary: string): boolean {
   // The status-engine summary names the labels: "Status: Draft → Submitted".
   if (change.key === 'status_id') return /^Status(:| changed to)/.test(summary);
+  // The backend names a project link move the same way: "Project: A → B" (PROJECT-RELATED-RECORDS).
+  if (change.key === 'project_id') return /^Project(:| changed to)/.test(summary);
   if (!STATUS_SUMMARY_KEYS.includes(change.key)) return false;
   const to = entry.new_values?.[change.key];
   // The backend prints a cleared value as "None".

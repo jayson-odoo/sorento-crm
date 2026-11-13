@@ -34,6 +34,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
+import { PortalProjectCombobox } from './PortalProjectCombobox';
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
 import { InquiryReadValue } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
@@ -543,6 +544,25 @@ export default function NewProductApplicationForm({
                 />
               ) : (
                 <span>{application.stock_inquiry_number || '-'}</span>
+              )
+            }
+            projectField={
+              readOnly ? (
+                <span>{state.project_label || '-'}</span>
+              ) : (
+                <PortalProjectCombobox
+                  ariaLabel="Registered project"
+                  value={state.project_id}
+                  displayValue={state.project_label}
+                  onChange={(v, label) =>
+                    setState((prev) => ({
+                      ...prev,
+                      project_id: v,
+                      project_label: v ? label : '',
+                      project_set: true,
+                    }))
+                  }
+                />
               )
             }
             productCodesField={

@@ -657,7 +657,9 @@ def test_every_company_id_table_is_registered():
     #   category rules by `.all()` and a party product is unlinked by its own id, so the
     #   mixin's filter is what picks this company's rows; `exchange_rates` has no company: a
     #   rate is the same for every company = 188.
-    expected_owned = 188
+    # + 2 (AFTER-SALES-P1: technicians, service_jobs): one company's technician roster and its
+    #   service jobs; complaints themselves stay company-global = 190.
+    expected_owned = 190
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

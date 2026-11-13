@@ -1028,6 +1028,9 @@ class StockInquiryBase(BaseModel):
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
     project_name: Optional[str] = None
+    # PROJECT-RELATED-RECORDS AC-C2: the registered project link (a UUID on the wire);
+    # `project_code` / `project_title` are its read-only display values on the response.
+    project_id: Optional[str] = None
     quantity: Optional[str] = None
     delivery_date: Optional[str] = None
     remark: Optional[str] = None
@@ -1087,6 +1090,7 @@ class StockInquiryUpdate(BaseModel):
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
     project_name: Optional[str] = None
+    project_id: Optional[str] = None
     quantity: Optional[str] = None
     delivery_date: Optional[str] = None
     remark: Optional[str] = None
@@ -1163,6 +1167,10 @@ class StockInquiryResponse(StockInquiryBase):
     # Requestor display name, resolved live from the FK so a contact rename
     # fixes every screen with no backfill. Read-only, response-only.
     salesperson_contact_name: Optional[str] = None
+    # PROJECT-RELATED-RECORDS: the linked project's code and title (read-only), so no screen
+    # renders the UUID.
+    project_code: Optional[str] = None
+    project_title: Optional[str] = None
     system_id: Optional[str] = None
     form_type: Optional[str] = None
     inquiry_number: Optional[str] = None
@@ -1480,6 +1488,9 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     # Resolved for display (AC-L3): the office-side detail page shows a project CODE, never a
     # UUID, matching what the portal already resolves for contacts.
     project_code: Optional[str] = None
+    # The linked project's title (PROJECT-RELATED-RECORDS D2: the detail page's Project field
+    # reads code + title). `project_title` is the typed text, so the complaint's name is used.
+    project_name: Optional[str] = None
     # Requestor display name, resolved live from the FK (read-only, response-only).
     requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None

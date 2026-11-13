@@ -22,7 +22,7 @@ export function buildDetailSearch(
     pageIndex: number;
     pageSize: number;
     sorting?: SortingState;
-    searchQuery?: string;
+    searchQuery?: string | string[];
   },
   extra?: Record<string, string | number | boolean | undefined | null>,
 ): string {
@@ -74,6 +74,8 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
   pageSize: number;
   sorting: SortingState;
   searchQuery: string;
+  /** Every `query` value (search chips), blanks dropped. */
+  searchQueries: string[];
   filters: Record<string, string>;
 } {
   const page = Number(searchParams.get('page') || '1');
@@ -81,6 +83,7 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
   const sort = searchParams.get('sort') || '';
   const dir = searchParams.get('dir') || 'asc';
   const searchQuery = searchParams.get('query') || '';
+  const searchQueries = searchParams.getAll('query').filter((value) => value.trim() !== '');
 
   const sorting: SortingState = sort ? [{ id: sort, desc: dir === 'desc' }] : [];
 
@@ -103,6 +106,7 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
         : 50,
     sorting,
     searchQuery,
+    searchQueries,
     filters,
   };
 }
