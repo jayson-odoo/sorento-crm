@@ -990,3 +990,68 @@ def test_worklist_rows_say_whether_a_po_link_is_tied_in_autocount(scm_app, fake_
     assert {k: by_id[w["rows"][k].id].get("in_autocount_link", "MISSING") for k in ("a", "c", "none")} == {
         "a": True, "c": False, "none": False,
     }
+
+
+# --------------------------------------------------------------------------- Change PO on a line with 2+ PO lines (owner, 13 Nov)
+
+
+def _two_covering_world(scm_app, route):
+    """The SO line is covered by two PO lines (20 and 15); a free 500 line is the target."""
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    ref = w["so_line"].source_ref
+    _p1, first = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=ref, doc_key=12100, dtl_key=12101)
+    _p2, second = _po_line(w["db"], w["product"], w["hq"], qty=15, so_ref=ref, doc_key=12300, dtl_key=12301)
+    w["first"], w["second"] = first, second
+    w["db"].flush()
+    return w
+
+
+def _post_change(w, route, item):
+    if route == "oi":
+        return w["c"].post(f"{OI}/po-link/change", json={"row_ids": _ids(w, "a", "b", "c"), "changes": [item]})
+    return w["c"].post(f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/change", json={"changes": [item]})
+
+
+def _change_item(w, **extra):
+    return {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, **extra}
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_on_a_line_with_two_po_lines_needs_from_po_line_id(scm_app, fake_ss, route):
+    w = _two_covering_world(scm_app, route)
+    resp = _post_change(w, route, _change_item(w))
+    assert resp.status_code == 422
+    assert "Pick which PO to change." in resp.text
+    assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_refuses_a_from_po_line_that_does_not_cover_the_line(scm_app, fake_ss, route):
+    w = _two_covering_world(scm_app, route)
+    resp = _post_change(w, route, _change_item(w, from_po_line_id=w["po_line"].id))  # the free target, not covering
+    assert resp.status_code == 422
+    assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_unlinks_the_named_po_line_first_and_leaves_the_other_one_alone(scm_app, fake_ss, route):
+    w = _two_covering_world(scm_app, route)
+    fake_ss.answers[UNLINK] = (200, {
+        "operationId": "op-u", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+        "warnings": [], "docKey": 12300, "docNo": "202609-S0031",
+        "document": {"DocKey": 12300, "Details": [{"DtlKey": 12301, "Location": "HQ", "Qty": 15, "FromSODtlKey": 0}]},
+    })
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _post_change(w, route, _change_item(w, from_po_line_id=w["second"].id))
+    assert resp.status_code == 200, resp.text
+    writes = [r.url.path for r in fake_ss.calls if r.url.path in (UNLINK, PO_LINKS, BATCH)]
+    assert writes[0] == UNLINK and len(writes) >= 2
+    (unlink_body,) = fake_ss.bodies(UNLINK)
+    assert (unlink_body["poDocKey"], unlink_body["poDtlKey"]) == (12300, 12301)
+    sent_qty = [b["qty"] for b in fake_ss.bodies(PO_LINKS)] + [
+        l["qty"] for b in fake_ss.bodies(BATCH) for l in b["links"]
+    ]
+    assert sent_qty == [15]  # the named line's open balance
+
+    w["db"].expire_all()
+    assert w["first"].from_so_line_ref == w["so_line"].source_ref  # untouched, no SS call for it

@@ -125,8 +125,12 @@ describe('poLinkMenu', () => {
     const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
     expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: CAPS, loading: false }).change)
       .toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
+    // Owner, 13 Nov: at least one PO on every ticked line (a line with two PO lines is changed
+    // one PO line at a time), so a line covered by two no longer greys the item.
     expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 1, capabilities: on, loading: false }).change)
-      .toEqual({ enabled: false, reason: 'Each ticked line needs exactly one PO linked' });
+      .toEqual({ enabled: true, reason: null });
+    expect(poLinkMenu({ ticked: 2, linked: 1, singleLinked: 1, capabilities: on, loading: false }).change)
+      .toEqual({ enabled: false, reason: 'Each ticked line needs a PO linked' });
     expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: on, loading: false }).change)
       .toEqual({ enabled: true, reason: null });
     // A covered line greys Link but not Change.
