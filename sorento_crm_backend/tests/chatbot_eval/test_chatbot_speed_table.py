@@ -30,19 +30,35 @@ def test_before_the_parser_is_the_understood_stage_minus_the_parser_call():
     assert row["before_parser_ms"] == 2100 and row["turn_ms"] == 7600
 
 
-def test_pairs_the_latest_old_and_new_turn_of_each_question():
+def test_takes_the_median_of_every_run_per_question_and_arm():
+    """Crew pass 13 Nov: one pair per question is noisier than the effect; the table reads the median of all runs."""
     turns = [
         _turn("zz stock SRTWC8517", "old", turn_ms=7600, und_ms=5500, par_ms=3400, at=1),
         _turn("zz stock SRTWC8517", "old", turn_ms=7000, und_ms=5300, par_ms=3300, at=2),
-        _turn("zz stock SRTWC8517", "new", turn_ms=6500, und_ms=4700, par_ms=3400, at=3),
-        _turn("zz basin promo", "new", turn_ms=6000, und_ms=4500, par_ms=3300, at=4),
+        _turn("zz stock SRTWC8517", "old", turn_ms=9000, und_ms=6000, par_ms=3500, at=3),
+        _turn("zz stock SRTWC8517", "new", turn_ms=6500, und_ms=4700, par_ms=3400, at=4),
+        _turn("zz stock SRTWC8517", "new", turn_ms=6100, und_ms=4300, par_ms=3200, at=5),
+        _turn("zz stock SRTWC8517", "new", turn_ms=8000, und_ms=5000, par_ms=3600, at=6),
+        _turn("zz basin promo", "new", turn_ms=6000, und_ms=4500, par_ms=3300, at=7),
     ]
     rows = speed_table.pair(turns)
     assert [r["question"] for r in rows] == ["zz stock SRTWC8517", "zz basin promo"]
     first = rows[0]
-    assert (first["old"]["turn_ms"], first["new"]["turn_ms"]) == (7000, 6500)
-    assert first["saved_before_parser_ms"] == (5300 - 3300) - (4700 - 3400)
+    assert (first["old"]["turn_ms"], first["new"]["turn_ms"]) == (7600, 6500)
+    assert (first["old"]["before_parser_ms"], first["new"]["before_parser_ms"]) == (2100, 1300)
+    assert first["saved_before_parser_ms"] == 800 and first["saved_turn_ms"] == 1100
+    assert first["old"]["runs"] == 3 and first["new"]["runs"] == 3
     assert rows[1]["old"] is None and rows[1]["saved_before_parser_ms"] is None
+
+
+def test_the_warm_up_turn_is_left_out():
+    turns = [
+        _turn("hi", "old", turn_ms=9000, und_ms=7000, par_ms=3000, at=1),
+        _turn("hi", "new", turn_ms=9000, und_ms=7000, par_ms=3000, at=2),
+        _turn("zz q1", "old", turn_ms=7600, und_ms=5500, par_ms=3400, at=3),
+    ]
+    assert [r["question"] for r in speed_table.pair(turns)] == ["zz q1"]
+    assert [r["question"] for r in speed_table.pair(turns, warmups=())] == ["hi", "zz q1"]
 
 
 def test_the_answer_check_compares_the_reply_text():
@@ -63,5 +79,5 @@ def test_the_table_is_markdown_in_seconds_with_a_median_line():
         _turn("zz q1", "new", turn_ms=6600, und_ms=4600, par_ms=3400, at=2),
     ])
     text = speed_table.render(rows)
-    assert "| zz q1 | 2.1 | 1.2 | 0.9 | 7.6 | 6.6 | yes |" in text
+    assert "| zz q1 | 2.1 | 1.2 | 0.9 | 7.6 | 6.6 | 1.0 | yes |" in text
     assert "Median" in text
