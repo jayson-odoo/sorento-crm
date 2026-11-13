@@ -310,7 +310,7 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     if source_entity_type == "new_product_application":
         return f"/procurement-management/new-product-applications/{source_entity_id}"
     if source_entity_type == "spare_part_request":
-        return f"/project-sales/order-inquiries/{source_entity_id}"
+        return f"/procurement-management/spare-part-requests/{source_entity_id}"
     if source_entity_type in ("product_drawing", "product_photo"):
         return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
@@ -1623,7 +1623,7 @@ class FormSLAOrchestrator:
         _FE_RECORD_ROUTES = {
             "stock_inquiry", "complaint", "purchase_request", "sponsorship_form",
             "product_drawing", "product_photo", "new_product_application",
-            # SPARE-PART-ORDER-REQUEST: the request opens on its order inquiry page.
+            # SPARE-PART-ORDER-REQUEST: the request opens on its own record page.
             "spare_part_request",
         }
         if s_type in _FE_RECORD_ROUTES:

@@ -175,6 +175,7 @@ _LINE_FIELD_LABEL = {"qty": "Qty", "unit_cost": "Unit price"}
 #: The fields a requester's edit can move on a line, in the order History reads them.
 _EDIT_FIELD_LABEL = (
     ("product", "Product"),
+    ("description", "Description"),
     ("stock_location", "Location"),
     ("qty", "Qty"),
     ("unit_cost", "Unit price"),

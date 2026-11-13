@@ -1,8 +1,11 @@
 """Spare part requests and their row photos (SPARE-PART-ORDER-REQUEST).
 
+    GET    /project-sales/spare-part-requests                      (own, decidable, admin: G3)
     POST   /project-sales/spare-part-requests                      (create grant)
     GET    /project-sales/spare-part-requests/{id}                 (whoever can see it)
-    PUT    /project-sales/spare-part-requests/{id}                 (requester, draft / rejected)
+    PUT    /project-sales/spare-part-requests/{id}                 (requester, draft / pending /
+                                                                    rejected; pending restarts
+                                                                    approval, G5)
     POST   /project-sales/spare-part-requests/{id}/submit          (requester)
     PATCH  /project-sales/spare-part-requests/{id}/lines/{row_id}  (current approver)
     POST   /project-sales/spare-part-requests/{id}/approve         (current approver)
@@ -20,20 +23,22 @@ implies (UAC A2).
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.models.project_so import OrderInquiry, OrderInquiryRow
+from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.spare_part_request import (
     OrderInquiryRowAttachmentLookupRequest,
     SparePartApproveIn,
     SparePartLineEditIn,
     SparePartRejectIn,
     SparePartRequestIn,
+    SparePartRequestListItem,
     SparePartRequestOut,
 )
 from app.services import so_line_attachments
@@ -73,6 +78,23 @@ def _to_decide(inquiry_id: str, db: Session) -> OrderInquiry:
 def _out(db: Session, inquiry: OrderInquiry, user: dict) -> dict:
     db.refresh(inquiry)
     return spr.detail(db, inquiry, str(user.get("id")))
+
+
+@router.get("/spare-part-requests", response_model=ListResponse[SparePartRequestListItem])
+def list_spare_part_requests(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    query: Optional[str] = Query(None, max_length=200),
+    state: Optional[List[str]] = Query(None, description="draft, pending_approval, rejected, raised"),
+    sort: Optional[str] = Query("submitted_at"),
+    dir: Optional[str] = Query("desc"),
+    current_user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    return spr.list_requests(
+        db, str(current_user["id"]), page=page, limit=limit, query=query, states=state,
+        sort=sort, direction=dir,
+    )
 
 
 @router.post("/spare-part-requests", response_model=SparePartRequestOut, status_code=201)

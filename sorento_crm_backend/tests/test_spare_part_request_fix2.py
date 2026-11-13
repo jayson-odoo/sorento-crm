@@ -97,7 +97,7 @@ def test_R1_two_stages_on_one_team_set_advance_one_then_two(world, second_insert
 # =============================================================================
 
 
-def test_R3_the_stage_assignment_link_opens_the_order_inquiry_page(staged, monkeypatch):
+def test_R3_the_stage_assignment_link_opens_the_spare_part_request_page(staged, monkeypatch):
     from app.services.notification_service import NotificationService
 
     seen: list = []
@@ -108,7 +108,8 @@ def test_R3_the_stage_assignment_link_opens_the_order_inquiry_page(staged, monke
     assigned = [kw for kw in seen if kw.get("type") == "form_sla" and kw.get("user_id") == staged.stage1.tier1]
     assert assigned, "the stage-1 assignee is told"
     form_url = assigned[0]["data"]["whatsapp_context_vars"]["form_url"]
-    assert form_url.endswith(f"/project-sales/order-inquiries/{inquiry.id}"), form_url
+    # Hand-test round G3 (owner 13 Nov): the request's own record page, not the OI page.
+    assert form_url.endswith(f"/procurement-management/spare-part-requests/{inquiry.id}"), form_url
     assert "?ticket=" not in form_url
     assert assigned[0]["data"]["whatsapp_context_vars"]["entity_number"] == inquiry.inquiry_no
 

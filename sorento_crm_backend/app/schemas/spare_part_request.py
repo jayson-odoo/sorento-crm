@@ -20,6 +20,8 @@ class SparePartLineIn(BaseModel):
     #: An existing line's id keeps that line (and its photos) when the form is saved again.
     id: Optional[str] = Field(None, max_length=64)
     product_id: Optional[str] = Field(None, max_length=64)
+    #: G1: what the requester calls this part; the product's name when omitted.
+    description: Optional[str] = Field(None, max_length=4000)
     stock_location: Optional[str] = Field(None, max_length=80)
     qty: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
@@ -88,6 +90,22 @@ class SparePartRequestOut(BaseModel):
     can_revise: bool = False
     total: Optional[str] = None
     lines: List[SparePartLineOut] = []
+
+
+class SparePartRequestListItem(BaseModel):
+    """G3: one row of the spare part requests list."""
+
+    id: str
+    inquiry_no: Optional[str] = None
+    state: str
+    currency: Optional[str] = None
+    requested_by: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    needed_by: Optional[date] = None
+    line_count: int = 0
+    #: Null for a reader who may not see the expected cost (as the detail's `total`).
+    total: Optional[str] = None
+    submitted_at: Optional[datetime] = None
 
 
 class OrderInquiryRowAttachmentLookupRequest(BaseModel):

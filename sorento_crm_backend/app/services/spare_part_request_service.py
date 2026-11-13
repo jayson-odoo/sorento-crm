@@ -51,6 +51,9 @@ AUDIT_ENTITY = "project_order_inquiries"
 CREATE_PERMISSION = "procurement.spare_part_requests.create"
 _ADMIN_ROLE_SLUGS = frozenset({"admin", "superadmin"})
 _EDITABLE = (INQUIRY_DRAFT, INQUIRY_REJECTED)
+#: G5 (hand-test round): the requester may also edit while it waits for approval; that edit
+#: restarts approval at the first level (`update`).
+_REQUESTER_EDITABLE = (*_EDITABLE, INQUIRY_PENDING_APPROVAL)
 _ZERO = Decimal("0")
 
 
@@ -176,11 +179,16 @@ def can_decide(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bo
 
 
 def can_edit(inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
+    """G5: the requester, while Draft, Pending approval or Rejected."""
     return (
         inquiry.inquiry_type == KIND
-        and inquiry.state in _EDITABLE
+        and inquiry.state in _REQUESTER_EDITABLE
         and is_requester(inquiry, user_id)
     )
+
+
+def _can_edit_draft(inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
+    return can_edit(inquiry, user_id) and inquiry.state in _EDITABLE
 
 
 def _taken_on(db: Session, inquiry: OrderInquiry) -> bool:
@@ -218,10 +226,12 @@ def can_revise(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bo
 
 
 def can_write_photos(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
-    """Row photos: the requester while it is theirs to edit, a decider while it is pending."""
+    """Row photos: the requester while it is a draft or rejected, a decider while it is
+    pending. A requester's photo change while pending would skip the approval restart a
+    pending edit makes (G5), so it waits for the edit form's save."""
     if inquiry.inquiry_type != KIND:
         return False
-    return can_edit(inquiry, user_id) or can_decide(db, inquiry, user_id)
+    return _can_edit_draft(inquiry, user_id) or can_decide(db, inquiry, user_id)
 
 
 def assert_can_write_row_photos(db: Session, row_id: str, user_id: Optional[str]) -> OrderInquiryRow:
@@ -405,6 +415,109 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
     }
 
 
+#: G3: the columns the request list sorts on server-side (the rest are not sortable).
+_LIST_SORTS = ("inquiry_no", "state", "needed_by", "submitted_at", "line_count")
+
+
+def list_requests(
+    db: Session,
+    user_id: str,
+    *,
+    page: int = 1,
+    limit: int = 50,
+    query: Optional[str] = None,
+    states: Optional[List[str]] = None,
+    sort: Optional[str] = None,
+    direction: Optional[str] = None,
+) -> Dict[str, Any]:
+    """G3: the spare part requests list. A requester sees their own (drafts included), a
+    stage approver the pending ones they can decide, an admin every submitted one; a draft
+    is never anyone's but its requester's."""
+    from sqlalchemy import func, select
+
+    from app.services.cost_access import cost_hidden
+    from app.services.project_service import resolve_user_names
+
+    uid = str(user_id)
+    deciding = decidable_ids(db, uid)
+    seen = [OrderInquiry.requested_by == uid]
+    if deciding:
+        seen.append(OrderInquiry.id.in_(sorted(deciding)))
+    admin = is_admin(db, uid)
+    if admin:
+        seen.append(OrderInquiry.state != INQUIRY_DRAFT)
+    line_count = (
+        select(func.count(OrderInquiryRow.id))
+        .where(
+            OrderInquiryRow.order_inquiry_id == OrderInquiry.id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .correlate(OrderInquiry)
+        .scalar_subquery()
+    )
+    q = db.query(OrderInquiry).filter(OrderInquiry.inquiry_type == KIND, or_(*seen))
+    wanted = [s for s in (states or []) if s]
+    if wanted:
+        q = q.filter(OrderInquiry.state.in_(wanted))
+    text = _text(query, 200)
+    if text:
+        like = f"%{text}%"
+        q = q.filter(or_(OrderInquiry.inquiry_no.ilike(like), OrderInquiry.reason.ilike(like)))
+    total = q.count()
+    key = sort if sort in _LIST_SORTS else "submitted_at"
+    column = line_count if key == "line_count" else getattr(OrderInquiry, key)
+    ordered = column.asc() if (direction or "desc").lower() == "asc" else column.desc()
+    page = max(int(page or 1), 1)
+    limit = max(int(limit or 50), 1)
+    inquiries = (
+        q.order_by(ordered.nulls_last(), OrderInquiry.raised_at.desc(), OrderInquiry.id)
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    ids = [str(i.id) for i in inquiries]
+    sums: Dict[str, tuple] = {}
+    if ids:
+        for inquiry_id, count, amount in (
+            db.query(
+                OrderInquiryRow.order_inquiry_id,
+                func.count(OrderInquiryRow.id),
+                func.sum(OrderInquiryRow.qty * func.coalesce(OrderInquiryRow.unit_price, 0)),
+            )
+            .filter(OrderInquiryRow.order_inquiry_id.in_(ids), OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .group_by(OrderInquiryRow.order_inquiry_id)
+            .all()
+        ):
+            sums[str(inquiry_id)] = (int(count or 0), Decimal(amount or 0))
+    names = resolve_user_names(db, {i.requested_by for i in inquiries if i.requested_by})
+    hidden = cost_hidden()
+    data = []
+    for inquiry in inquiries:
+        count, amount = sums.get(str(inquiry.id), (0, _ZERO))
+        # prices_visible, without a per-row stage read: the requester, a decider, or cost access.
+        shown = (
+            not hidden
+            or is_requester(inquiry, uid)
+            or str(inquiry.id) in deciding
+            or (admin and inquiry.state == INQUIRY_PENDING_APPROVAL)
+        )
+        data.append(
+            {
+                "id": str(inquiry.id),
+                "inquiry_no": inquiry.inquiry_no,
+                "state": inquiry.state,
+                "currency": inquiry.currency,
+                "requested_by": inquiry.requested_by,
+                "requested_by_name": names.get(str(inquiry.requested_by)) if inquiry.requested_by else None,
+                "needed_by": inquiry.needed_by,
+                "line_count": count,
+                "total": (_num(amount) or "0") if shown else None,
+                "submitted_at": inquiry.submitted_at,
+            }
+        )
+    return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}}
+
+
 # ------------------------------------------------------------------ writes
 
 
@@ -490,7 +603,8 @@ def _replace_lines(db: Session, inquiry: OrderInquiry, lines: Iterable[Dict[str,
             kept.add(str(row.id))
         row.product_id = str(product.id)
         row.item_code = product.product_code
-        row.description = product.product_name or product.description
+        # G1: the line's own description, the product's name when the form sends none.
+        row.description = _text(line.get("description"), 4000) or product.product_name or product.description
         row.stock_location = location
         row.qty = qty if qty is not None else _ZERO
         row.unit_price = unit_price
@@ -523,17 +637,29 @@ def create(db: Session, data: Dict[str, Any], actor: str) -> OrderInquiry:
 
 
 def update(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str) -> OrderInquiry:
-    """R6: the requester edits a draft or rejected request."""
+    """R6 / G5: the requester edits a draft, rejected or pending request. An edit while
+    pending restarts approval at the first level: the open levels are voided, the submitted
+    values become the edited ones and 'submitted' is emitted again."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can edit this request.")
-    if inquiry.state not in _EDITABLE:
-        raise _conflict("Only a draft or rejected request can be edited.")
+    if inquiry.state not in _REQUESTER_EDITABLE:
+        raise _conflict("Only a draft, pending or rejected request can be edited.")
+    restart = inquiry.state == INQUIRY_PENDING_APPROVAL
+    if restart:
+        inquiry = _lock(db, inquiry)
+        if inquiry.state != INQUIRY_PENDING_APPROVAL:
+            raise _conflict("This request was decided while you were editing it.")
     before = _snapshot(db, inquiry)
     _apply_header(inquiry, data)
     _replace_lines(db, inquiry, data.get("lines") or [])
     after = _snapshot(db, inquiry)
-    _audit_edit(db, inquiry, before, after, actor)
-    db.flush()
+    if not restart:
+        _audit_edit(db, inquiry, before, after, actor)
+        db.flush()
+        return inquiry
+    rows = _validate_submit(db, inquiry)
+    _audit_edit(db, inquiry, before, after, actor, restarted=True)
+    _start_approval(db, inquiry, rows, actor, "Edited by the requester")
     return inquiry
 
 
@@ -545,7 +671,7 @@ _HEADER_LABELS = (
 )
 #: A line's audited fields. The price goes under the COST key `unit_cost` (it is the expected
 #: supplier cost), so every History reader masks it like any cost.
-_LINE_AUDIT_FIELDS = ("product", "stock_location", "qty", "unit_cost")
+_LINE_AUDIT_FIELDS = ("product", "description", "stock_location", "qty", "unit_cost")
 
 
 def _snapshot(db: Session, inquiry: OrderInquiry) -> Dict[str, Any]:
@@ -562,6 +688,7 @@ def _snapshot(db: Session, inquiry: OrderInquiry) -> Dict[str, Any]:
                 "row_id": str(row.id),
                 "item_code": row.item_code,
                 "product": row.item_code,
+                "description": row.description,
                 "stock_location": row.stock_location,
                 "qty": _plain(row.qty),
                 "unit_cost": _plain(row.unit_price),
@@ -571,10 +698,13 @@ def _snapshot(db: Session, inquiry: OrderInquiry) -> Dict[str, Any]:
     }
 
 
-def _audit_edit(db: Session, inquiry, before: Dict[str, Any], after: Dict[str, Any], actor) -> None:
+def _audit_edit(
+    db: Session, inquiry, before: Dict[str, Any], after: Dict[str, Any], actor, *, restarted: bool = False
+) -> None:
     """R5: the requester's edit as History, old -> new per changed header field and line.
     Header changes are the entry's title; each changed line is one of its lines (the reader
-    renders them). An edit that changes nothing writes nothing."""
+    renders them). An edit that changes nothing writes nothing, unless it restarted
+    approval (G5): that is always written, as "Edited, approval restarted"."""
     parts = [
         f"{label} {before[key] or 'not set'} → {after[key] or 'not set'}"
         for key, label in _HEADER_LABELS
@@ -595,14 +725,18 @@ def _audit_edit(db: Session, inquiry, before: Dict[str, Any], after: Dict[str, A
     if removed:
         codes = ", ".join(str(line["item_code"] or "a line") for line in removed)
         parts.append(f"removed {codes}")
-    if not parts and not changed_new:
+    if not parts and not changed_new and not restarted:
         return
+    title = "Edited, approval restarted" if restarted else "Edited"
+    new = {**{k: after[k] for k, _ in _HEADER_LABELS}, "lines": changed_new}
+    if restarted:
+        new["approval_restarted"] = True
     _audit(
         db, inquiry, "SPR_EDITED",
-        "Edited" + (f": {'; '.join(parts)}" if parts else ""),
+        title + (f": {'; '.join(parts)}" if parts else ""),
         actor,
         old={**{k: before[k] for k, _ in _HEADER_LABELS}, "lines": changed_old},
-        new={**{k: after[k] for k, _ in _HEADER_LABELS}, "lines": changed_new},
+        new=new,
     )
 
 
@@ -633,6 +767,18 @@ def _has_stage(db: Session) -> bool:
     )
 
 
+def _assert_has_stage(db: Session) -> None:
+    if not _has_stage(db):
+        raise AppException(
+            status_code=422,
+            message=(
+                "No approval level is set up for spare part requests. Ask an admin to add one "
+                "in Form SLA configuration."
+            ),
+            code="spr_no_approval_stage",
+        )
+
+
 def _emit(db: Session, inquiry: OrderInquiry, event: str, actor: Optional[str]) -> None:
     from app.services.form_sla_service import FormSLAOrchestrator
 
@@ -656,29 +802,31 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     if inquiry.state not in _EDITABLE:
         raise _conflict("Only a draft or rejected request can be submitted.")
     rows = _validate_submit(db, inquiry)
-    if not _has_stage(db):
-        raise AppException(
-            status_code=422,
-            message=(
-                "No approval level is set up for spare part requests. Ask an admin to add one "
-                "in Form SLA configuration."
-            ),
-            code="spr_no_approval_stage",
-        )
-    for row in rows:
-        row.requested_qty = row.qty
-        row.requested_unit_price = row.unit_price
+    _assert_has_stage(db)
     was_rejected = inquiry.state == INQUIRY_REJECTED
-    inquiry.state = INQUIRY_PENDING_APPROVAL
-    inquiry.submitted_at = datetime.utcnow()
-    inquiry.reject_reason = None
     _audit(
         db, inquiry, "SPR_SUBMITTED", "Resubmitted for approval" if was_rejected else "Submitted for approval",
         actor,
     )
+    _start_approval(db, inquiry, rows, actor, "Submitted again")
+    return inquiry
+
+
+def _start_approval(
+    db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow], actor: str, void_reason: str
+) -> None:
+    """Pending approval at the first configured level, from the values as they stand now:
+    the submit (A1) and the requester's edit while pending (G5) both go through here."""
+    _assert_has_stage(db)
+    for row in rows:
+        row.requested_qty = row.qty
+        row.requested_unit_price = row.unit_price
+    inquiry.state = INQUIRY_PENDING_APPROVAL
+    inquiry.submitted_at = datetime.utcnow()
+    inquiry.reject_reason = None
     db.flush()
     # A stage left open by an earlier round never decides this one: approval starts again.
-    _void_stages(db, inquiry, "Submitted again")
+    _void_stages(db, inquiry, void_reason)
     _emit(db, inquiry, "submitted", actor)
     # Fail closed: a request no level is open on would wait for nobody.
     if not _open_stages(db, inquiry.id):
@@ -690,7 +838,6 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
             ),
             code="spr_first_stage_not_started",
         )
-    return inquiry
 
 
 def _row_or_404(db: Session, inquiry: OrderInquiry, row_id: Any) -> OrderInquiryRow:
@@ -1067,8 +1214,8 @@ def photo_changes(db: Session, inquiries: Iterable[Any]) -> Dict[str, Dict[str, 
     out: Dict[str, Dict[str, Dict[str, int]]] = {}
     for entity_id, event, old, new in audits:
         key = str(entity_id)
-        if event == "SPR_SUBMITTED":
-            out[key] = {}
+        if event == "SPR_SUBMITTED" or (event == "SPR_EDITED" and (new or {}).get("approval_restarted")):
+            out[key] = {}  # a restarted approval (G5) counts from the edit, like a submit
             continue
         if event == "SPR_REVISED":
             out.pop(key, None)
