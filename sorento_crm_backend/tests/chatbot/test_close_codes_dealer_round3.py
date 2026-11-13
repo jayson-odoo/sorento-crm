@@ -280,3 +280,55 @@ def test_r3_6_r5_a_code_typed_with_spaces_the_parser_folded_is_answered_directly
     c = _who(session_factory, monkeypatch, stub_access, who, CLOSE3[:1])
     text = c.say(f"{raw} x 3", _corrected(raw, CLOSE3[0], 3))
     _assert_answered(text, who, CLOSE3[0], 3)
+
+
+# --------------------------------------------------------------------------- round 4 (review pass 2)
+
+MALAY_REFER = "Sila rujuk jurujual anda."  # the refer line a Malay ask gets
+
+
+@WHO
+@pytest.mark.parametrize("raw", ["SRTUB668-BACK INELT", "SRTUB668-BACK INLTE", "SRTUB668-BACK INXXT"])
+def test_r4_1_a_mistyped_word_the_parser_corrected_is_offered_never_answered(session_factory, monkeypatch, stub_access, who, raw):  # noqa: F811
+    c = _who(session_factory, monkeypatch, stub_access, who, [INLET])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, INLET, 2))
+    _assert_offered_not_answered(c, text, who, raw, INLET)
+
+
+GR = "SRTWT8259-GR"
+
+
+@WHO
+@pytest.mark.parametrize(("raw", "code"), [("SRTWT8259 gun metal", GM), ("SRTWT8259 grey", GR)], ids=["gun_metal", "grey"])
+def test_r4_2_guard_colour_words_the_parser_mapped_are_answered_directly(session_factory, monkeypatch, stub_access, who, raw, code):  # noqa: F811
+    c = _who(session_factory, monkeypatch, stub_access, who, [GM, GR])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, code, 2))
+    _assert_answered(text, who, code, 2)
+
+
+TWO = ["SRTWC287-S-150", "SRTWC287-S-200"]  # SRTWC287-S-150 is the console's own seed
+
+
+@WHO
+@pytest.mark.parametrize("pick", TWO)
+def test_r4_3_a_prefix_of_two_codes_shows_both_never_only_the_parsers_pick(session_factory, monkeypatch, stub_access, who, pick):  # noqa: F811
+    c = _who(session_factory, monkeypatch, stub_access, who, TWO[1:])
+    text = c.say("SRTWC287-S x 3", _corrected("SRTWC287-S", pick, 3))
+    for code in TWO:
+        assert code in text, f"{code} not shown; only the parser's pick {pick}?: {text!r}"
+    if who == "dealer":
+        assert TICK not in text and "Got stock" not in text, f"answered the parser's pick: {text!r}"
+        assert set(TWO) <= set(_option_codes(c)), c.stored_question
+
+
+def test_r4_4_a_malay_stock_ask_with_a_one_letter_typo_gets_the_same_offer(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, CLOSE3[:1], **_facts(CLOSE3[0]))
+    english = c.say(f"{TYPO3} x 3 stock?", stock(product(TYPO3, 3)))
+    english_options = _option_codes(c)
+    assert english_options == [CLOSE3[0]], (english, c.stored_question)
+    c.state = None
+    malay = c.say(f"ada stok {TYPO3} 3 unit?", stock(product(TYPO3, 3)))
+    assert TYPO3 in malay.upper() and CLOSE3[0] in malay, malay
+    assert R not in malay and MALAY_REFER not in malay, malay
+    assert TICK not in malay, malay
+    assert _option_codes(c) == english_options, (c.stored_question, english_options)
