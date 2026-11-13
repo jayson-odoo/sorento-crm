@@ -14,6 +14,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from contextlib import contextmanager
+
+from app.models.base import set_company_scope
 from app.models.sla import SlaFormAction
 
 from ._warranty_p2_support import (
@@ -21,7 +24,7 @@ from ._warranty_p2_support import (
     VIEW,
     WARRANTY,
     WC,
-    api,
+    api as _api,
     defect,
     env,  # noqa: F401
     foreign_defect,
@@ -34,6 +37,15 @@ from ._warranty_p2_support import (
 )
 
 PENDING = "/api/v1/pending-actions"
+
+
+@contextmanager
+def api(env, *args, **kwargs):
+    """As P1's `api`, but the session reads every company: `/current` hides an outcome parked under another
+    scope, and this suite is about the actions, not company visibility (as test_pending_actions.py does)."""
+    with _api(env, *args, **kwargs) as client:
+        set_company_scope(env.db, None)
+        yield client
 MANAGE_TECH = "after_sales.technicians.manage"
 NON_ADMIN_FULL = {VIEW, DISPATCH, MANAGE_TECH}
 
