@@ -973,6 +973,10 @@ def serialize_projects(
                 "reject_reason": project.reject_reason,
                 "submitted_at": project.submitted_at,
                 "decided_at": project.decided_at,
+                # AC-PROJECT-REGISTER: the AutoCount project number, a stored fact shown as a
+                # header badge whatever the register switch is set to (R17).
+                "autocount_project_no": project.autocount_doc_no,
+                "autocount_registered_at": project.autocount_registered_at,
                 "registration": (
                     _registration_block(profile, agent_names)
                     if project.approval_state is not None

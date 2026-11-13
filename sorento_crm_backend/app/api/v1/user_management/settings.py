@@ -137,6 +137,9 @@ class SystemSettingUpdate(BaseModel):
     # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
     # Here, in the GET dict, and in AppConfigResponse below.
     project_autocount_write_enabled: Optional[bool] = None
+    # AC-PROJECT-REGISTER: "AutoCount project registration", OFF on deploy. Here, in the GET
+    # dict, and in AppConfigResponse below.
+    project_autocount_register_enabled: Optional[bool] = None
     # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
     # dict, and in AppConfigResponse below.
     stock_debt_po_link_enabled: Optional[bool] = None
@@ -295,6 +298,8 @@ class AppConfigResponse(BaseModel):
     #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
     #: salesperson who sends holds no `user_management.settings.view`.
     project_autocount_write_enabled: bool = False
+    #: AC-PROJECT-REGISTER: the project page hides "Register in AutoCount" while this is off.
+    project_autocount_register_enabled: bool = False
     #: AC-LINK-CRM-UI: the Stock Debt drill hides its PO actions while this is off, and the
     #: purchasing user who links holds no `user_management.settings.view`.
     stock_debt_po_link_enabled: bool = False
@@ -492,6 +497,9 @@ def get_settings(
                 "project_autocount_write_enabled": (
                     bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
                 ),
+                "project_autocount_register_enabled": (
+                    bool(getattr(settings, "project_autocount_register_enabled", False)) if settings else False
+                ),
                 "stock_debt_po_link_enabled": (
                     bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
                 ),
@@ -636,6 +644,9 @@ def get_app_config(
             ),
             project_autocount_write_enabled=bool(
                 getattr(settings, "project_autocount_write_enabled", False)
+            ),
+            project_autocount_register_enabled=bool(
+                getattr(settings, "project_autocount_register_enabled", False)
             ),
             stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
             # Same value and fallback as the admin GET above.
@@ -1252,6 +1263,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     for column in (
         "sample_request_require_project",
         "project_autocount_write_enabled",
+        "project_autocount_register_enabled",
         "stock_debt_po_link_enabled",
     ):
         if column in update_data and update_data[column] is None:
