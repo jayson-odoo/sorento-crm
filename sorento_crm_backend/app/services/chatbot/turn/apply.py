@@ -331,7 +331,8 @@ def _domain_of_kind(policy: Policy, kind: str | None) -> str | None:
 
 def _set_option_members(option: dict[str, Any]) -> list[dict[str, Any]]:
     """A picked set option as the options of its member products (`option["members"]`,
-    `answer.set_members_of`), each carrying the set's code; any other option as itself."""
+    `answer.set_members_of`), each carrying the set's code and its own quantity in that set
+    (`set_quantities`, as the gate's member rows do); any other option as itself."""
     members = option.get("members") if option.get("entity_type") == "product_set" else None
     if not isinstance(members, list) or not members:
         return [option]
@@ -344,6 +345,7 @@ def _set_option_members(option: dict[str, Any]) -> list[dict[str, Any]]:
             "uuid": m["uuid"],
             "uuids": [m["uuid"]],
             "set_code": option.get("code"),
+            **({"set_quantities": {option.get("code"): m["quantity"]}} if m.get("quantity") else {}),
         }
         for m in members
         if isinstance(m, dict) and m.get("uuid") and m.get("code")
@@ -978,6 +980,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                     "current_message": True,
                     "confident": True,
                     **({"set_code": option["set_code"]} if option.get("set_code") else {}),
+                    **({"set_quantities": dict(option["set_quantities"])} if option.get("set_quantities") else {}),
                 }
                 # Hand pass 12, Group F: `name` only when this option is ONE identity
                 # (a single uuid) - the resolver's own name for the one row it matched.

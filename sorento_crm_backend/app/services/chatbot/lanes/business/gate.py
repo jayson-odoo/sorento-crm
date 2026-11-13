@@ -451,6 +451,11 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 if jsc.truthy(member_uuid):
                     # A member of two typed sets is one entity (fetched once) listed under both.
                     held = by_uuid.get(member_uuid)
+                    if held and not held.get("set_codes"):
+                        # The part typed on its own before its set takes its place in the set's
+                        # order, so the reply reads the same whichever was typed first.
+                        del by_uuid[member_uuid]
+                        held = None
                     codes = [*(held.get("set_codes") or [])] if held else []
                     if jsc.get(m, "canonical_code") not in codes:
                         codes.append(jsc.get(m, "canonical_code"))
@@ -468,6 +473,11 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     }
             continue
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
+            if jsc.get(by_uuid.get(jsc.get(m, "uuid")), "set_codes"):
+                # CHATBOT-SET-CODES B: a part typed on its own beside its set stays the set's
+                # part (one entity, either typed order); its own quantity adds on at the
+                # fetch (`turn_runtime._spec_quantities`).
+                continue
             entity = {
                 "uuid": jsc.get(m, "uuid"),
                 "entity_type": jsc.get(m, "entity_type"),

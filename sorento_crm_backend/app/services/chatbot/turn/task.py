@@ -25,6 +25,7 @@
 # imports THIS one, for `Focus.tasks`).
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -1046,9 +1047,10 @@ def set_part_quantity(row: dict[str, Any], typed_for_set: Any) -> int | None:
     """CHATBOT-SET-CODES B (owner ruling 13 Nov): the quantity a part of a set is asked at, when
     a quantity was typed (or carried by a pick) for a set it belongs to: that quantity times the
     part's own quantity in the set (`set_quantities`, the membership table's, 1 when not
-    recorded). `typed_for_set(set_code)` is the caller's quantity for that set code, or None.
+    recorded), rounded UP so a fractional part is never asked at 0 (0.5 x 5 is 3).
+    `typed_for_set(set_code)` is the caller's quantity for that set code, or None.
     None when no set of the row has one. The one rule the typed ask
-    (`turn_runtime._spec_quantities`) and the pick (`turn/apply._spend_stock_pick`) share."""
+    (`turn_runtime._spec_quantities`) and the pick (`turn/apply._spend_stock_pick`) both use."""
     per_set = row.get("set_quantities")
     per_set = per_set if isinstance(per_set, dict) else {}
     for code in row.get("set_codes") or [row.get("set_code")]:
@@ -1059,7 +1061,7 @@ def set_part_quantity(row: dict[str, Any], typed_for_set: Any) -> int | None:
             continue
         per = per_set.get(code)
         per = per if isinstance(per, (int, float)) and not isinstance(per, bool) and per > 0 else 1
-        return round(typed * per)
+        return max(1, math.ceil(typed * per))
     return None
 
 

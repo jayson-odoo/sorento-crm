@@ -5125,10 +5125,16 @@ def _dym_type_label(pick: Any, asked: Any) -> str:
 
 def _set_members(product_set: Any) -> list[dict[str, Any]]:
     """A resolver set row's member products (`display.members`, the membership table's
-    order, `entity_resolver._product_set_entities`) as `{"uuid", "code"}`, each with both."""
+    order, `entity_resolver._product_set_entities`) as `{"uuid", "code"}`, each with both,
+    plus the part's `quantity` in the set when recorded (CHATBOT-SET-CODES B: a pick of the set
+    asks each part at it, as the typed set does)."""
     display = jsc.get(product_set, "display")
     return [
-        {"uuid": jsc.get(m, "uuid"), "code": jsc.get(m, "product_code")}
+        {
+            "uuid": jsc.get(m, "uuid"),
+            "code": jsc.get(m, "product_code"),
+            **({"quantity": jsc.get(m, "quantity")} if jsc.truthy(jsc.get(m, "quantity")) else {}),
+        }
         for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
         if isinstance(m, dict) and jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(jsc.get(m, "product_code"))
     ]

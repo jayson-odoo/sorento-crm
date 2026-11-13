@@ -3661,10 +3661,14 @@ def _spec_quantities(
             continue
         if e.get("set_code"):
             # CHATBOT-SET-CODES B: a part of a set typed with a quantity is asked at that
-            # quantity times its own quantity in the set.
+            # quantity times its own quantity in the set. The same part also typed on its
+            # own beside the set asks for the total (the gate keeps it as one entity).
             part = set_part_quantity(e, lambda code: by_code.get(_token_key(code)))
             if part is not None:
-                quantities[uuid] = part
+                own_code = _token_key(str(e.get("code") or ""))
+                set_keys = {_token_key(str(c)) for c in e.get("set_codes") or [e.get("set_code")] if c}
+                own = by_code.get(own_code, 0) if own_code and own_code not in set_keys else 0
+                quantities[uuid] = part + own
                 continue
         for name in ("code", "canonical_code", "raw"):
             code = e.get(name)
