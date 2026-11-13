@@ -1606,6 +1606,7 @@ def _earlier_keys(db, conv, turn_id: str) -> set:
     """Every phone an earlier table of this conversation held (ready, waiting, not changed, or a card's step): on a
     turn with a picture, such a person comes back only when the typed text names them (UAC F4, security review)."""
     from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent.contact_grant import GRANT
     from app.services.contact_setup_engine import normalise_phone
 
     keys: set = set()
@@ -1624,7 +1625,8 @@ def _earlier_keys(db, conv, turn_id: str) -> set:
     )
     for (rows,) in steps:
         keys |= {
-            k for step in rows or [] if isinstance(step, dict) and step.get("batch")
+            # Every grant step, a one-person card as well as a table row (security re-review).
+            k for step in rows or [] if isinstance(step, dict) and (step.get("batch") or step.get("tool") == GRANT)
             for k in [normalise_phone((step.get("args") or {}).get("phone"))] if k
         }
     return keys

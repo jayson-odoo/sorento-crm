@@ -198,3 +198,23 @@ def test_a_table_over_the_row_limit_says_so_plainly(db):
     rows = [{**row_(fake_phone(), role="employee", companies=("MCH",)), "row": i} for i in range(1, MAX_ROWS + 2)]
     result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
     assert result.reply_text.strip() == TOO_MANY_SAY, result.reply_text
+
+
+def test_a_single_grant_card_person_does_not_return_on_a_picture_turn(db):
+    """Security re-review: a one-person card (no table) counts as an earlier request too."""
+    w = make_world(db)
+    earlier = dealer(db, w, name="ZZT Single Earlier")
+    new = dealer(db, w, name="ZZT Shot New")
+    single = row_(local(earlier.phone_number), name=earlier.name, role="employee", companies=("MCH",))
+    first, _ = screenshot_turn(
+        db, w, [round_of(tc(GRANT, single, "g1")), answer_("Done.")],
+        text_=f"give {earlier.name} {local(earlier.phone_number)} Mocha access", images=False,
+    )
+    assert first.pending_action is not None, first.reply_text
+    rows = [
+        {**row_(local(new.phone_number), name=new.name, role="employee", companies=("MCH",)), "row": 1},
+        {**row_(local(earlier.phone_number), name=earlier.name, role="employee", companies=("MCH",)), "row": 2},
+    ]
+    result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them Mocha access")
+    assert result.pending_action is not None, result.reply_text
+    assert new.name in result.reply_text and earlier.name not in result.reply_text, result.reply_text
