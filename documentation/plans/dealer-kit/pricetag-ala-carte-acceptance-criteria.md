@@ -44,3 +44,8 @@ Terms: "package" of a product line = its combo_id; null = ala carte. Set lines u
   the same request already has an ala carte line of that product.
 - AC-16 (Q5) Price tag revision snapshot carries item_code (product or set code) and package (combo name or
   "Ala carte"); a package change shows in History as "Product line N package: <old> -> <new>".
+
+## Package warning (crew answer 13 Nov, from the owner's "empty Package = ala carte")
+- AC-17 "No package chosen" is dropped on both sides (FE packageWarningFor, BE package_warning): a guarded product
+  line with combos and an empty Package (ala carte) has no warning. "No package defined" (guarded product with no
+  combo) and "Missing: ..." (chosen combo with parts removed) stay.
