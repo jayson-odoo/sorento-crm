@@ -16,7 +16,7 @@ SPARE-PART-ORDER-REQUEST (plan documentation/plans/purchasing/PLAN-spare-part-or
 Idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
 
 Revision ID: spr_0001_spare_part_request
-Revises: nc_0001_non_cancellable
+Revises: n8nra_0001_reply_sender
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "spr_0001_spare_part_request"
-down_revision = "nc_0001_non_cancellable"
+down_revision = "n8nra_0001_reply_sender"
 branch_labels = None
 depends_on = None
 
