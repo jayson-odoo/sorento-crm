@@ -15,7 +15,7 @@ from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key
 from app.services.company_scope_resolver import widen_if_requested
 from app.services.field_access import CLEARANCE_PERMISSION
-from app.services.stock_read_scope import SPARE_PART_CREATE, quantities_only
+from app.services.stock_read_scope import SPARE_PART_READ, quantities_only
 from app.services.stock_status_service import stock_status
 from app.services.user_service import UserPermissionService, holds_permission
 
@@ -59,9 +59,9 @@ def get_stock_status(
         ),
     ),
     request: Request = None,
-    # SPARE-PART-ORDER-REQUEST (D2): a spare part requester reads a line's stock too, as
-    # quantities only (below).
-    _user: dict = Depends(require_any_permission_with_api_key([*READ_PERMISSIONS, SPARE_PART_CREATE])),
+    # SPARE-PART-ORDER-REQUEST (D2): a spare part requester or approver reads a line's stock
+    # too, as quantities only (below).
+    _user: dict = Depends(require_any_permission_with_api_key([*READ_PERMISSIONS, *SPARE_PART_READ])),
     db: Session = Depends(get_db),
 ):
     """Every location holding the item, its SO / PO / SPO documents and incoming packing lists."""

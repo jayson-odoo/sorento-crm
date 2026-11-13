@@ -1,17 +1,11 @@
 /**
  * SPARE-PART-ORDER-REQUEST review round 2 (review S5), red-first (Phase 2).
  *
- * R8 an approver who holds projects.projects.view but NOT the create grant can open the list
- *    (page.tsx RequireAccess anyPermission [view, create]; the list route's read dependency
- *    accepts either, tests/test_spare_part_request_review2.py R8), so the sidebar must let
- *    them find it: every "Spare Part Requests" leaf accepts either grant (permissionsAny
- *    [create, view]), through the same filter the sidebar renders from
- *    (lib/menu-access-filter.filterMenuByPermission). A requester with the create grant only
- *    still sees it; a user with neither does not.
- *
- * Note for the coder: config/menu.config.handtest.sparePart.test.ts (F6) asserts
- * `permission: 'procurement.spare_part_requests.create'` on the leaf; a leaf that keeps that
- * `permission` AND adds `permissionsAny` satisfies both (permissionsAny wins in the filter).
+ * R8 an approver reaches the Spare Part Requests list from the sidebar. Crew ruling (mirrors
+ *    Purchase Requests): the entry is gated by `procurement.spare_part_requests.view` alone, in
+ *    every menu that carries it, through the same filter the sidebar renders from
+ *    (lib/menu-access-filter.filterMenuByPermission). `projects.projects.view` alone no longer
+ *    shows it, and neither does an unrelated grant.
  */
 import { describe, expect, it } from 'vitest';
 import * as menus from './menu.config';
@@ -19,8 +13,8 @@ import type { MenuConfig, MenuItem } from './types';
 import { filterMenuByPermission } from '@/lib/menu-access-filter';
 
 const TITLE = 'Spare Part Requests';
-const CREATE = 'procurement.spare_part_requests.create';
-const VIEW = 'projects.projects.view';
+const VIEW = 'procurement.spare_part_requests.view';
+const PROJECTS_VIEW = 'projects.projects.view';
 
 function leaves(items: MenuConfig | undefined, out: MenuItem[] = []): MenuItem[] {
   for (const item of items ?? []) {
@@ -34,9 +28,9 @@ const visibleTo = (menu: MenuConfig, slugs: string[]) =>
   leaves(filterMenuByPermission(menu, new Set(slugs)));
 
 describe('R8 (S5): the Spare Part Requests entry is there for an approver', () => {
-  it('a view-only approver sees it in the sidebar', () => {
+  it('a spare_part_requests.view approver sees it in the sidebar', () => {
     expect(leaves(menus.MENU_SIDEBAR).length, 'precondition: the sidebar has the leaf').toBeGreaterThan(0);
-    expect(visibleTo(menus.MENU_SIDEBAR, [VIEW]).length, 'visible with projects.projects.view only').toBeGreaterThan(0);
+    expect(visibleTo(menus.MENU_SIDEBAR, [VIEW]).length, 'visible with the view grant only').toBeGreaterThan(0);
   });
 
   it('every menu that carries the entry shows it to a view-only approver', () => {
@@ -47,8 +41,8 @@ describe('R8 (S5): the Spare Part Requests entry is there for an approver', () =
     expect(hidden, `menus that hide it from a view-only approver: ${hidden.join(', ')}`).toEqual([]);
   });
 
-  it('a create-only requester still sees it; someone with neither grant does not (guard)', () => {
-    expect(visibleTo(menus.MENU_SIDEBAR, [CREATE]).length).toBeGreaterThan(0);
+  it('projects.projects.view alone does not show it; neither does an unrelated grant (guard)', () => {
+    expect(visibleTo(menus.MENU_SIDEBAR, [PROJECTS_VIEW]).length).toBe(0);
     expect(visibleTo(menus.MENU_SIDEBAR, ['zzt.unrelated.view']).length).toBe(0);
   });
 });

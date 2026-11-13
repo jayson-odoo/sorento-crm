@@ -469,7 +469,8 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
     ]);
     expect(findLeaf(supplyChain!.children!, 'Spare Part Requests')).toMatchObject({
       path: '/procurement-management/spare-part-requests',
-      permission: 'procurement.spare_part_requests.create',
+      // Crew ruling (mirrors Purchase Requests): the approver / purchasing read gates it.
+      permission: 'procurement.spare_part_requests.view',
     });
     expect(findLeaf(supplyChain!.children!, 'Reorder Planning')).toMatchObject({
       path: '/scm/reorder',

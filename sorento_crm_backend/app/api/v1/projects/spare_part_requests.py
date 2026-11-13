@@ -44,6 +44,7 @@ from app.schemas.spare_part_request import (
 from app.services import so_line_attachments
 from app.services import spare_part_request_service as spr
 from app.services.error_handler import AppException
+from app.services.stock_read_scope import SPARE_PART_READ
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -51,7 +52,7 @@ router = APIRouter()
 
 VIEW = "projects.projects.view"
 CREATE = spr.CREATE_PERMISSION
-_READ = require_any_permission([VIEW, CREATE])
+_READ = require_any_permission([VIEW, *SPARE_PART_READ])
 
 
 def _has_view(db: Session, user_id: str) -> bool:

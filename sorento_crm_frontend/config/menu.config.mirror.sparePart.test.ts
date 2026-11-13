@@ -12,7 +12,12 @@ import { describe, expect, it } from 'vitest';
 import * as menus from './menu.config';
 import { MENU_SIDEBAR } from './menu.config';
 import type { MenuConfig, MenuItem } from './types';
-import { applyMenuAccess, filterMenuByPermission, type MenuAccess } from '@/lib/menu-access-filter';
+import {
+  applyMenuAccess,
+  filterMenuByAudience,
+  filterMenuByPermission,
+  type MenuAccess,
+} from '@/lib/menu-access-filter';
 import { LANDING_KINDS } from '@/lib/portal-form-kinds';
 
 const TITLE = 'Spare Part Requests';
@@ -29,8 +34,10 @@ function leaves(items: MenuConfig | undefined, out: MenuItem[] = []): MenuItem[]
   return out;
 }
 
+// A staff user (not a salesperson): the salesperson-only MY REQUESTS items never reach them.
+const staffMenu = (menu: MenuConfig) => filterMenuByAudience(menu, null);
 const staffVisible = (menu: MenuConfig, slugs: string[]) =>
-  leaves(filterMenuByPermission(menu, new Set(slugs)));
+  leaves(filterMenuByPermission(staffMenu(menu), new Set(slugs)));
 
 function access(permissions: string[], salesperson: { portalKinds: string[] } | null): MenuAccess {
   return {
@@ -94,7 +101,7 @@ describe('b. a spare_part_requests.view approver sees the Procurement entry', ()
       .map(([n]) => n);
     expect(hidden, `menus hiding it from a view holder: ${hidden.join(', ')}`).toEqual([]);
     for (const [name, m] of carrying()) {
-      for (const leaf of leaves(m)) {
+      for (const leaf of leaves(staffMenu(m))) {
         const slugs = [leaf.permission, ...(leaf.permissionsAny ?? [])].filter(Boolean);
         expect(slugs, `${name} leaf gate`).toEqual([VIEW]);
       }

@@ -9,8 +9,9 @@ SPARE-PART-ORDER-REQUEST (plan documentation/plans/purchasing/PLAN-spare-part-or
   the ALTER takes only a brief lock and the scan runs under a weaker one.
 * `projects.order_inquiry_rows`: product, description, unit price and the submitted qty / unit
   price. All nullable.
-* Permission `procurement.spare_part_requests.create`, granted to the admin roles (a
-  permission granted to nobody reads as a broken feature).
+* Permissions `procurement.spare_part_requests.create` and `.view` (the approver / purchasing
+  read, as `procurement.purchase_requests.view`), granted to the admin roles (a permission
+  granted to nobody reads as a broken feature).
 
 Idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
 
@@ -27,11 +28,19 @@ down_revision = "pimp_0001_import_value_maps"
 branch_labels = None
 depends_on = None
 
-_SLUG = "procurement.spare_part_requests.create"
-_NAME = "Create Spare Part Requests"
-_DESC = (
-    "Raise, edit, submit and revise your own spare part requests, and open them on the Order "
-    "Inquiries page. Approval runs on the spare part request stages in Form SLA configuration."
+_PERMISSIONS = (
+    (
+        "procurement.spare_part_requests.create",
+        "Create Spare Part Requests",
+        "Raise, edit, submit and revise your own spare part requests, and open them on the Order "
+        "Inquiries page. Approval runs on the spare part request stages in Form SLA configuration.",
+    ),
+    (
+        "procurement.spare_part_requests.view",
+        "View Spare Part Requests",
+        "Open the Spare Part Requests list and the requests you can decide on as an approver of "
+        "their current stage in Form SLA configuration.",
+    ),
 )
 _ADMIN_ROLES = ("superadmin", "admin")
 
@@ -85,41 +94,43 @@ def upgrade() -> None:
         "ALTER TABLE projects.order_inquiries ALTER COLUMN project_sales_order_id DROP NOT NULL"
     )
 
-    bind.execute(
-        sa.text(
-            """
-            INSERT INTO user_permissions (id, slug, name, description, created_at)
-            VALUES (gen_random_uuid()::text, :slug, :name, :desc, now())
-            ON CONFLICT (slug) DO NOTHING
-            """
-        ),
-        {"slug": _SLUG, "name": _NAME, "desc": _DESC},
-    )
-    bind.execute(
-        sa.text(
-            """
-            INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-            SELECT gen_random_uuid()::text, r.id, p.id, now()
-              FROM user_roles r
-              JOIN user_permissions p ON p.slug = :slug
-             WHERE r.slug = ANY(:roles)
-            ON CONFLICT (role_id, permission_id) DO NOTHING
-            """
-        ),
-        {"slug": _SLUG, "roles": list(_ADMIN_ROLES)},
-    )
+    for slug, name, desc in _PERMISSIONS:
+        bind.execute(
+            sa.text(
+                """
+                INSERT INTO user_permissions (id, slug, name, description, created_at)
+                VALUES (gen_random_uuid()::text, :slug, :name, :desc, now())
+                ON CONFLICT (slug) DO NOTHING
+                """
+            ),
+            {"slug": slug, "name": name, "desc": desc},
+        )
+        bind.execute(
+            sa.text(
+                """
+                INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+                SELECT gen_random_uuid()::text, r.id, p.id, now()
+                  FROM user_roles r
+                  JOIN user_permissions p ON p.slug = :slug
+                 WHERE r.slug = ANY(:roles)
+                ON CONFLICT (role_id, permission_id) DO NOTHING
+                """
+            ),
+            {"slug": slug, "roles": list(_ADMIN_ROLES)},
+        )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
+    slugs = [slug for slug, _, _ in _PERMISSIONS]
     bind.execute(
         sa.text(
             "DELETE FROM user_role_permissions WHERE permission_id IN "
-            "(SELECT id FROM user_permissions WHERE slug = :slug)"
+            "(SELECT id FROM user_permissions WHERE slug = ANY(:slugs))"
         ),
-        {"slug": _SLUG},
+        {"slugs": slugs},
     )
-    bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": _SLUG})
+    bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = ANY(:slugs)"), {"slugs": slugs})
     # A spare part request has no sales order; it cannot survive NOT NULL coming back.
     op.execute("DELETE FROM projects.order_inquiries WHERE project_sales_order_id IS NULL")
     op.execute(

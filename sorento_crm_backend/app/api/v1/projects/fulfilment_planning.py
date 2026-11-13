@@ -32,7 +32,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
 from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
-from app.services.stock_read_scope import SPARE_PART_CREATE, quantities_only
+from app.services.stock_read_scope import SPARE_PART_READ, quantities_only
 from app.services.user_service import holds_permission
 from app.dependencies import (
     require_any_permission_with_api_key,
@@ -1062,10 +1062,10 @@ def get_stock_detail(
         ),
     ),
     request: Request = None,
-    # SPARE-PART-ORDER-REQUEST (B3): a spare part requester reads a line's stock too (the
+    # SPARE-PART-ORDER-REQUEST (B3): a spare part requester or approver reads a line's stock too (the
     # line's stock table, UAC R3). Quantities and document numbers only; no cost is on it.
     _user: dict = Depends(
-        require_any_permission_with_api_key([VIEW, SPARE_PART_CREATE])
+        require_any_permission_with_api_key([VIEW, *SPARE_PART_READ])
     ),
     db: Session = Depends(get_db),
 ):

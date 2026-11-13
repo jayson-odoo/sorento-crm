@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
+import { SPARE_PART_READ_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/lib/sparePartRequest';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { OrderInquiryDetail } from './components/OrderInquiryDetail';
@@ -18,7 +19,7 @@ export default async function OrderInquiryDetailPage({
   const { id } = await params;
 
   return (
-    <RequireAccess anyPermission={['projects.projects.view', 'procurement.spare_part_requests.create']}>
+    <RequireAccess anyPermission={['projects.projects.view', ...SPARE_PART_READ_PERMISSIONS]}>
       <Container>
         <PageHeader
           title="Order Inquiry"

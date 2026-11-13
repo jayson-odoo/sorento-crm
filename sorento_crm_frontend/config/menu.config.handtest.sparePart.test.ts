@@ -3,7 +3,8 @@
  *
  * F6 every "Spare Part Requests" menu entry opens the request's own list,
  * /procurement-management/spare-part-requests, no longer the Order Inquiries list filtered to
- * the type; the create grant still gates it.
+ * the type. Crew ruling (mirrors Purchase Requests): the Procurement entry is gated by the view
+ * grant, the salesperson's MY REQUESTS entry by the create grant.
  */
 import { describe, expect, it } from 'vitest';
 import * as menus from './menu.config';
@@ -24,7 +25,10 @@ describe('F6 (G3): Spare Part Requests opens its own list', () => {
     for (const item of found) {
       expect(item).toMatchObject({
         path: '/procurement-management/spare-part-requests',
-        permission: 'procurement.spare_part_requests.create',
+        permission:
+          item.audience === 'salesperson'
+            ? 'procurement.spare_part_requests.create'
+            : 'procurement.spare_part_requests.view',
       });
     }
   });

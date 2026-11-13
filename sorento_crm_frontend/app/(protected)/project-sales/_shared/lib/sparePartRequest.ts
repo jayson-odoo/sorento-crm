@@ -8,6 +8,11 @@ import type { OrderInquiryType } from '../types/orderInquiry.types';
 
 export const SPARE_PART_REQUEST_TYPE: OrderInquiryType = 'spare_part_request';
 export const SPARE_PART_CREATE_PERMISSION = 'procurement.spare_part_requests.create';
+/** The approver / purchasing read (crew ruling: mirrors `procurement.purchase_requests.view`). */
+export const SPARE_PART_VIEW_PERMISSION = 'procurement.spare_part_requests.view';
+/** Either spare part grant opens the list, the record and the OI page; the server scopes the
+ *  rows (own, decidable, or every submitted one for an admin). */
+export const SPARE_PART_READ_PERMISSIONS = [SPARE_PART_CREATE_PERMISSION, SPARE_PART_VIEW_PERMISSION];
 
 export const INQUIRY_TYPE_LABEL: Record<OrderInquiryType, string> = {
   sales_order: 'Sales order',

@@ -34,6 +34,7 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatMoneyExact } from '@/app/(protected)/project-sales/_shared/lib/money';
 import {
   SPARE_PART_CREATE_PERMISSION,
+  SPARE_PART_READ_PERMISSIONS,
   SPARE_PART_REQUESTS_PATH,
   SPARE_PART_STATUS_OPTIONS,
   sparePartFilterStates,
@@ -49,7 +50,7 @@ const day = (value: string | null | undefined) => (value ? formatDateInMalaysia(
 function useListingKey(): string | null {
   const { permissionSet, isLoading } = usePermissions();
   if (isLoading) return null;
-  const slug = [SPARE_PART_CREATE_PERMISSION, 'projects.projects.view'].find((s) =>
+  const slug = [...SPARE_PART_READ_PERMISSIONS, 'projects.projects.view'].find((s) =>
     permissionSet.has(s),
   );
   return slug ? `${slug}::spare_part_requests` : null;

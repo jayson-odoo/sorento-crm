@@ -27,6 +27,7 @@ from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_registry import get_adapter, require_adapter
 from app.services.list_query_search_service import ListQuerySearchService
 from app.services.saved_views_service import PUBLISH_PERMISSION, SavedViewsService
+from app.services.stock_read_scope import SPARE_PART_READ
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import validate_uuid_path
 from app.services.workflow_submission_dynamic_list_query import (
@@ -198,7 +199,7 @@ def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
 
 #: Listings opened by a grant other than their key's own slug (column-config only).
 _LISTING_ALSO_OPEN_TO = {
-    key: ("procurement.spare_part_requests.create",)
+    key: SPARE_PART_READ
     for key in (
         "projects.projects.view::order-inquiry-headers",
         "projects.projects.view::order-inquiry-lines",

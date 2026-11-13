@@ -23,6 +23,7 @@ from app.dependencies import (
     get_current_user_or_api_key,
     require_any_permission,
     require_permission,
+    require_any_permission_with_api_key,
     require_permission_with_api_key,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -88,6 +89,7 @@ from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
 from app.services import order_inquiry_history_service
 from app.services import spare_part_request_service
+from app.services.stock_read_scope import SPARE_PART_READ
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
@@ -114,23 +116,23 @@ ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
 #: whoever may commit stock against a request - separate from `ACKNOWLEDGE`, which is
 #: purchasing's own grant to raise the request in the first place.
 RESERVE = "projects.order_inquiries.reserve"
-#: SPARE-PART-ORDER-REQUEST: a requester holding only the create grant opens the OI list,
-#: page and lines for their OWN spare part requests (`_visibility` narrows every read).
-SPARE_PART_CREATE = spare_part_request_service.CREATE_PERMISSION
+#: SPARE-PART-ORDER-REQUEST: a holder of only a spare part grant (create or view) opens the
+#: OI list, page and lines for their own and decidable spare part requests (`_visibility`
+#: narrows every read).
 _VIEW_GATE = require_permission_with_api_key(VIEW)
-_CREATE_GATE = require_permission_with_api_key(SPARE_PART_CREATE)
+_SPARE_PART_GATE = require_any_permission_with_api_key(list(SPARE_PART_READ))
 
 
 def _OI_READ(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
-    """The projects view grant, or the spare part create grant: the same two gates every
-    other OI read uses, one after the other (module guard and admin shortcut included)."""
+    """The projects view grant, or a spare part grant: the same two gates every other OI
+    read uses, one after the other (module guard and admin shortcut included)."""
     try:
         return _VIEW_GATE(current_user=current_user, db=db)
     except HTTPException:
-        return _CREATE_GATE(current_user=current_user, db=db)
+        return _SPARE_PART_GATE(current_user=current_user, db=db)
 
 
 def _visibility(db: Session, user: dict):
@@ -1510,7 +1512,7 @@ def commit_order_inquiry_reserve(
 )
 def order_inquiry_reserve_status_summary(
     current_user: dict = Depends(
-        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, SPARE_PART_CREATE])
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, *SPARE_PART_READ])
     ),
     db: Session = Depends(get_db),
 ):
@@ -1713,7 +1715,7 @@ def sales_order_line_decision_trail(
 def list_order_inquiry_reserve_requests(
     inquiry_id: str,
     current_user: dict = Depends(
-        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, SPARE_PART_CREATE])
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, *SPARE_PART_READ])
     ),
     db: Session = Depends(get_db),
 ):
@@ -2158,7 +2160,7 @@ def get_order_inquiry_header(
 )
 def get_order_inquiry_history(
     inquiry_id: str,
-    _user: dict = Depends(require_any_permission([VIEW, SPARE_PART_CREATE])),
+    _user: dict = Depends(require_any_permission([VIEW, *SPARE_PART_READ])),
     db: Session = Depends(get_db),
 ):
     """The detail page's History tab (STANDARD-HISTORY wave 1, AC-SH-B1 to B6): every
