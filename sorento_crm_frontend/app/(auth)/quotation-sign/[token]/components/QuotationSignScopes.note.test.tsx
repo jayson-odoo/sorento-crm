@@ -150,3 +150,58 @@ describe('QuotationSignScopes matrix scope remark', () => {
     expect(topHeaders().length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Crew pass at 1280 (13 Nov): the plain table summed to 1274px of minimum widths inside the sign
+ * card's 1182px inner width, clipping GRAND TOTAL. jsdom has no layout, so the guard reads each
+ * header's `min-w-[Npx]` (and the feedback column's `w-10` = 40px) and sums them. Tailwind's
+ * preflight is border-box, so a min width already includes the cell padding.
+ */
+const SIGN_CARD_INNER_AT_1280 = 1182;
+
+function headerMinWidth(th: Element): number {
+  const classes = Array.from(th.classList);
+  const min = classes.map((c) => /^min-w-\[(\d+)px\]$/.exec(c)).find(Boolean);
+  if (min) return Number(min[1]);
+  if (classes.includes('w-10')) return 40;
+  return 0;
+}
+
+describe('QuotationSignScopes plain table width with REMARK', () => {
+  it('fits the sign card at 1280: header min widths sum to at most 1182px, REMARK at least 130px', () => {
+    const columns = [
+      { key: 'item', label: 'ITEM' },
+      { key: 'spec', label: 'TECHNICAL SPEC' },
+      { key: 'description', label: 'DESCRIPTION' },
+      { key: 'brand', label: 'BRAND' },
+      { key: 'product_code', label: 'PRODUCT CODE' },
+      { key: 'qty', label: 'QTY' },
+      { key: 'unit_rate', label: 'UNIT RATE (RM)' },
+      { key: 'complete_set', label: 'COMPLETE SET' },
+      { key: 'remark', label: 'REMARK' },
+      { key: 'amount', label: 'GRAND TOTAL' },
+    ];
+    render(
+      <QuotationSignScopes
+        scopes={[
+          {
+            scope_label: 'ZZT Bath',
+            scope_total: '100.00',
+            columns,
+            lines: [line('w1', '1', 'Non-cancellable\nLead time 6 weeks')],
+          },
+        ]}
+        grandTotal="100.00"
+        onFeedback={() => {}}
+      />,
+    );
+    const heads = Array.from(document.querySelectorAll('thead th'));
+    // Every server column plus the feedback column: a missing header would shrink the sum falsely.
+    expect(heads).toHaveLength(columns.length + 1);
+    const remark = heads.find((th) => th.textContent?.trim() === 'REMARK');
+    expect(remark).toBeDefined();
+    expect(headerMinWidth(remark!)).toBeGreaterThanOrEqual(130);
+    const total = heads.reduce((sum, th) => sum + headerMinWidth(th), 0);
+    expect(total).toBeLessThanOrEqual(SIGN_CARD_INNER_AT_1280);
+  });
+});
