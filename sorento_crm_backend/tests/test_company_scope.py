@@ -657,9 +657,11 @@ def test_every_company_id_table_is_registered():
     #   category rules by `.all()` and a party product is unlinked by its own id, so the
     #   mixin's filter is what picks this company's rows; `exchange_rates` has no company: a
     #   rate is the same for every company = 188.
+    # + 2 (AFTER-SALES-P1: technicians, service_jobs): one company's technician roster and its
+    #   service jobs; complaints themselves stay company-global = 190.
     # + 1 (NON-CANCELLABLE-ITEMS, #2339): `non_cancellable_rules`, one company's default list of
-    #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 189.
-    expected_owned = 189
+    #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 191.
+    expected_owned = 191
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
