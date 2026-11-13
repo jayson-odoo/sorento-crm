@@ -306,6 +306,10 @@ def visibility_clause(db: Session, user_id: Optional[str], *, has_view: bool):
     deciding = decidable_ids(db, user_id)
     if deciding:
         related.append(OrderInquiry.id.in_(sorted(deciding)))
+    # An approver of record keeps the requests they decided on (browser re-check M4).
+    decided = decided_ids(db, user_id)
+    if decided:
+        related.append(OrderInquiry.id.in_(sorted(decided)))
     mine = or_(*related) if related else false()
     if has_view:
         return or_(OrderInquiry.state.notin_(INQUIRY_PRE_APPROVAL_STATES), mine)
@@ -316,6 +320,8 @@ def can_view(db: Session, inquiry: OrderInquiry, user_id: Optional[str], *, has_
     if is_admin(db, user_id) or is_requester(inquiry, user_id):
         return True
     if inquiry.inquiry_type == KIND and can_decide(db, inquiry, user_id):
+        return True
+    if inquiry.inquiry_type == KIND and decided_ids(db, user_id, among={str(inquiry.id)}):
         return True
     return has_view and inquiry.state not in INQUIRY_PRE_APPROVAL_STATES
 
@@ -455,6 +461,9 @@ def list_requests(
     seen = [OrderInquiry.requested_by == uid]
     if deciding:
         seen.append(OrderInquiry.id.in_(sorted(deciding)))
+    decided = decided_ids(db, uid)
+    if decided:
+        seen.append(OrderInquiry.id.in_(sorted(decided)))
     admin = is_admin(db, uid)
     if admin:
         seen.append(OrderInquiry.state != INQUIRY_DRAFT)
@@ -1322,7 +1331,6 @@ def price_visible_ids(db: Session, inquiries, user_id: Optional[str]) -> Set[str
     who approved, rejected or changed a line keeps seeing prices after their level closed)
     always see them; anyone else only with `products.cost.view` (`cost_access`, read off this
     request's own stamp). A fixed number of reads whatever the page size."""
-    from app.models.audit import AuditLog
     from app.services.cost_access import cost_hidden
 
     wanted = [i for i in inquiries if i is not None]
@@ -1346,19 +1354,26 @@ def price_visible_ids(db: Session, inquiries, user_id: Optional[str]) -> Set[str
         shown |= pending
     left = {str(i.id) for i in rest} - shown
     if left:
-        shown |= {
-            str(entity_id)
-            for (entity_id,) in db.query(AuditLog.entity_id)
-            .filter(
-                AuditLog.entity_type == AUDIT_ENTITY,
-                AuditLog.entity_id.in_(sorted(left)),
-                AuditLog.event.in_(_DECISION_EVENTS),
-                AuditLog.user_id == uid,
-            )
-            .distinct()
-            .all()
-        }
+        shown |= decided_ids(db, uid, among=left)
     return shown
+
+
+def decided_ids(db: Session, user_id: Optional[str], among: Optional[Set[str]] = None) -> Set[str]:
+    """The requests `user_id` is an approver of record on: they approved, rejected or changed a
+    line of it (its History). Such an approver keeps seeing the request and its prices after
+    their level has closed (browser passes R12 and M4), as a Purchase Request approver does."""
+    from app.models.audit import AuditLog
+
+    if not user_id or (among is not None and not among):
+        return set()
+    q = db.query(AuditLog.entity_id).filter(
+        AuditLog.entity_type == AUDIT_ENTITY,
+        AuditLog.event.in_(_DECISION_EVENTS),
+        AuditLog.user_id == str(user_id),
+    )
+    if among is not None:
+        q = q.filter(AuditLog.entity_id.in_(sorted(among)))
+    return {str(entity_id) for (entity_id,) in q.distinct().all()}
 
 
 def prices_visible(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
