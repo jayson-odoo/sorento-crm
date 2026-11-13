@@ -6,14 +6,14 @@ on several lines, whatever the packages. The request + product unique is dropped
 replacement; lines are told apart by their own id. Idempotent (`IF EXISTS`).
 
 Revision ID: ptag_0023_line_package
-Revises: prr_0001_si_npa_project
+Revises: n8nra_0001_reply_sender
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "ptag_0023_line_package"
-down_revision = "prr_0001_si_npa_project"
+down_revision = "n8nra_0001_reply_sender"
 branch_labels = None
 depends_on = None
 
