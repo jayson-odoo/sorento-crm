@@ -1425,17 +1425,18 @@ export function SalesOrderDetail({
         // promotes), so this is never a choice between two real compositions.
         cell: ({ row }) => {
           const line = row.original;
-          const parts = line.supply_decided ?? line.supply_saved ?? null;
-          // OI-WHOLE-SO-CANCEL F2: a line the book cancelled (a pending cancelled change) whose
-          // cancel CS has saved - an approval with an empty composition - reads "Cancel line",
-          // the word the board's Suggested and Decided columns use.
-          const savedCancel =
+          // OI-WHOLE-SO-CANCEL F2: a line the book cancelled (a pending cancelled change) is decided
+          // afresh: the revision that used to cover it says nothing about the cancel, so only the
+          // saved draft counts. An approval with an empty composition is CS's saved cancel and
+          // reads "Cancel line", the word the board's Suggested and Decided columns use.
+          const pendingCancel =
             line.line_status === 'cancelled' &&
             line.planning_change?.kind === 'cancelled' &&
-            line.planning_change?.applied_state === 'pending' &&
-            line.supply_decided == null &&
-            line.supply_saved != null &&
-            line.supply_saved.length === 0;
+            line.planning_change?.applied_state === 'pending';
+          const decidedParts = pendingCancel ? null : line.supply_decided;
+          const parts = decidedParts ?? line.supply_saved ?? null;
+          const savedCancel =
+            pendingCancel && line.supply_saved != null && line.supply_saved.length === 0;
           const text = savedCancel ? (
             <span className="block truncate" title="Cancel line">
               Cancel line
@@ -1444,7 +1445,7 @@ export function SalesOrderDetail({
             <SupplyText parts={parts} ownLocation={line.warehouse_code} absent="-" />
           );
           const savedBadge =
-            line.supply_decided != null || line.supply_saved == null ? null : (
+            decidedParts != null || line.supply_saved == null ? null : (
               <Badge
                 data-testid={`saved-decision-badge-${line.id}`}
                 variant={line.saved_stale ? 'warning' : 'success'}
@@ -1464,7 +1465,7 @@ export function SalesOrderDetail({
             return (
               <div className="flex min-w-0 items-center gap-1.5">
                 <span className="min-w-0 flex-1">{text}</span>
-                {savedCancel ? savedBadge : null}
+                {pendingCancel ? savedBadge : null}
                 <BoardChangeTable annotation={annotation} compact className="shrink-0" />
               </div>
             );

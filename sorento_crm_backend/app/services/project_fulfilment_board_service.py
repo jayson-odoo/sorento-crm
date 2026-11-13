@@ -929,8 +929,19 @@ class FulfilmentBoardService:
         # build is proposing, and before `_allocate` there is no proposal to compare with.
         # CANCEL-STOP-AT-SO: a line an AutoCount Cancel SO cancelled carries the Transfer to
         # Cancel SO the sync proposed (or CS saved) for CS to confirm or dismiss.
+        # OI-WHOLE-SO-CANCEL F2: and a book-cancelled line (cancelled, not transferred, a pending
+        # change names it) carries the cancel CS saved, even when its OI rows were already handed
+        # over (`cancel_open_oi_rows` 0).
         self._attach_drafts(
-            [*rows, *(row for row in cancelled_rows if row.cancel_open_oi_rows)]
+            [
+                *rows,
+                *(
+                    row
+                    for row in cancelled_rows
+                    if row.cancel_open_oi_rows
+                    or (row.cancelled and not row.cancelled_at and row.pending_change_batch_id)
+                ),
+            ]
         )
         self._attach_saved_remarks([*rows, *cancelled_rows])
 

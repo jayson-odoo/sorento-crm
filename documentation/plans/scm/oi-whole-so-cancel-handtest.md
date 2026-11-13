@@ -68,12 +68,12 @@ COMMIT;
 5. Look at the filter panel of that Lines view for a "State" filter.
 6. At phone width (375 px), repeat steps 1 and 2.
 7. Click Fulfilment Planning in the sidebar, tick SO-A's row and click "Plan <SO-A number>" (or open SO-A's order page and click its "Plan" link). Keep Buy for the moved line ("Change
-   decision" > "Buy the whole 2" > Save decision; do NOT click "Save all suggested"), then the board's Confirm.
+   decision" > switch on "Buy the whole line" > Save decision; do NOT click "Save all suggested"), then the board's Confirm.
 8. Open SO-B from Sales Orders (sidebar) and click its "Plan" button on the order page. On the board (list
    view), read SO-B's three lines, then:
    a. Tick the header checkbox (select all), read the strip, then click Clear.
    b. Click the tick (Save as suggested) on line 1 only.
-   c. Tick line 2's checkbox only, open Decide and read its items, pick "Cancel", save in the popup.
+   c. Tick line 2's checkbox only, open Decide and read its items, pick "Cancel", type a reason in the popup's Reason box (required) and save.
    d. Click "Save all suggested".
    e. Click "Confirm (3)" and confirm in the popup.
 9. Open OI-B, Lines tab.
