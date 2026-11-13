@@ -48,7 +48,7 @@ vi.mock('@/hooks/useDeferredRowAction', () => ({
 }));
 
 const useKinds = vi.fn();
-const mut = () => ({ mutateAsync: vi.fn(), isPending: false });
+const { mut } = vi.hoisted(() => ({ mut: () => ({ mutateAsync: vi.fn(), isPending: false }) }));
 vi.mock('../hooks/useWarrantyConfig', () => ({
   useKinds: (...a: unknown[]) => useKinds(...a),
   useKindRuleCounts: () => ({ data: { without: 29, total: 31 } }),

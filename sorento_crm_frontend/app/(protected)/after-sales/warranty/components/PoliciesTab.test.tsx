@@ -48,7 +48,7 @@ vi.mock('@/hooks/useDeferredRowAction', () => ({
 }));
 
 const usePolicies = vi.fn();
-const mut = () => ({ mutateAsync: vi.fn(), isPending: false });
+const { mut } = vi.hoisted(() => ({ mut: () => ({ mutateAsync: vi.fn(), isPending: false }) }));
 vi.mock('../hooks/useWarrantyConfig', () => ({
   usePolicies: (...a: unknown[]) => usePolicies(...a),
   useCreatePolicy: mut,

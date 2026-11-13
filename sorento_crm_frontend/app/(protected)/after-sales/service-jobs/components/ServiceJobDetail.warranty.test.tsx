@@ -59,7 +59,7 @@ const JOB = {
   warranty: [{
     id: 'l-1', product_code: 'DEMO-WC-02', product_name: 'Demo water closet', kind_name: 'Water Closet',
     purchase_date: '2020-03-15', defect_label: null,
-    verdicts: [{ part_name: 'Ceramic Body', verdict: 'covered', expiry: '2030-03-15', reason: 'Covered', is_lifetime: false, installation_included: false, policy_version: 'v15' }],
+    verdicts: [{ part_name: 'Ceramic Body', verdict: 'covered', expiry: '2030-03-15', reason: 'Lifetime cover', is_lifetime: false, installation_included: false, policy_version: 'v15' }],
   }],
 };
 

@@ -47,7 +47,7 @@ vi.mock('@/hooks/useDeferredRowAction', () => ({
 }));
 
 const useRules = vi.fn();
-const mut = () => ({ mutateAsync: vi.fn(), isPending: false });
+const { mut } = vi.hoisted(() => ({ mut: () => ({ mutateAsync: vi.fn(), isPending: false }) }));
 vi.mock('../hooks/useWarrantyConfig', () => ({
   useRules: (...a: unknown[]) => useRules(...a),
   useKindOptions: () => ({ data: [{ id: 'k-1', name: 'Bathroom Furniture' }, { id: 'k-2', name: 'Mirror Cabinet' }] }),
