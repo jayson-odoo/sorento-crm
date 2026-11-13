@@ -55,6 +55,7 @@ vi.mock('./QuotationLineFlags', () => ({
   LineFlags: () => null,
   MinimumPriceBadge: () => null,
   MinimumPriceFlag: () => null,
+  NonCancellableFlag: () => null,
 }));
 // The hard-delete window from System Settings (deferred_delete_seconds), per test.
 const settings = { deleteSeconds: 10 };

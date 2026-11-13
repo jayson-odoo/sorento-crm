@@ -1391,6 +1391,30 @@ def run_cancel_hooks(db: Session, service: Any, *, actor: Optional[str]) -> None
       `planning_change_service.build_batch` keeps its own gate: held or inquired lines only).
     """
     derived = getattr(service, "derived", None) or Derived()
+    if derived.newly_cancelled:
+        # NON-CANCELLABLE-ITEMS: a line a Cancel SO cancelled in full is alerted here; a
+        # partial cancel reaches the alert through `_raise_planning_change` -> `build_batch`.
+        try:
+            from app.services import non_cancellable_service as non_cancellable
+
+            ids = [line_id for line_id, _doc in derived.newly_cancelled]
+            # "Before" is what was still to deliver: a line half delivered reads 33 -> 0.
+            ordered = {
+                str(lid): max(Decimal(ordered or 0) - Decimal(delivered or 0), _ZERO)
+                for lid, ordered, delivered in db.query(
+                    SalesOrderLine.id, SalesOrderLine.qty_ordered, SalesOrderLine.qty_delivered
+                ).filter(SalesOrderLine.id.in_(ids))
+            }
+            docs = sorted({doc for _id, doc in derived.newly_cancelled if doc})
+            non_cancellable.alert_autocount_reductions(
+                db,
+                [(line_id, ordered.get(line_id) or 0, 0) for line_id in ids],
+                source="Cancel SO " + ", ".join(docs) if docs else "Cancel SO",
+            )
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 - the ingest itself already committed
+            db.rollback()
+            logger.warning("ingest.non_cancellable_alert_failed error=%s", _safe_error(exc))
     if derived.newly_cancelled or derived.reopened:
         try:
             from app.services import project_line_draft_service as drafts
