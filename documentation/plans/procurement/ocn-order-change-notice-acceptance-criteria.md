@@ -141,10 +141,14 @@ forms work right?" (mirror the purchase request's Requested by).
   from the form, detail, list and API; "Requested by" replaces them: `requested_by_contact_id` + `requested_by`
   text, picked with the shared `RequestorContactSelect`, saved through the shared
   `requestor_options_service.apply_requestor_contact` (422 REQUESTOR_NOT_ELIGIBLE for an ineligible contact; the
-  label is the contact's current name), shown in the sign-off "Requested by" column like the purchase request.
+  label is the contact's current name), shown in the notice's header fields in the same place on create, edit and view (view = edit layout,
+  where the purchase request's create form shows it; review round 20 B2: the notice's sign-off keeps its
+  decision layout, which has no Requested by column).
   List column "Requested by" (sortable).
 - **I8** Default: the submitter's contact (portal: the token's contact; CRM: the creating user's linked contact;
-  empty when the user has no linked contact); anyone who may edit the notice may change it.
+  empty when the user has no linked contact); anyone who may edit the notice may change it. On a NEW notice the
+  form already shows it (prefilled from the signed-in salesperson's linked contact, by name) before the first
+  save; a notice drafted by a sales order amendment gets the amending user's linked contact the same way.
 - **I9** Own-records (`view_own`): a notice is the user's when they created it, are its C.S. in charge, or are the
   user linked to its Requested-by contact (replaces "Sales in charge user").
 - **I10** History reads "Requested by: old -> new" with names.
