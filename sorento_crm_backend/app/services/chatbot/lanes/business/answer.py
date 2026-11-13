@@ -2688,7 +2688,29 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
-def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | None = None) -> bool:
+def product_typed_tokens(parser: Any) -> set[str]:
+    """The folded tokens the parser typed as a product code (hint `product`, the resolver's
+    token: canonical code first, raw second). CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov
+    2026): such a token is a code for the did-you-mean whatever its shape, letters only
+    included; the parser's own hint decides, no word is read."""
+    return {
+        token_key(jsc.nullish_str(jsc.get(e, "canonical_code")).strip() or jsc.get(e, "raw"))
+        for e in jsc.array(jsc.get(parser, "entities"))
+        if isinstance(e, dict) and jsc.js_string(jsc.get(e, "hint") or "").lower() == "product"
+        and jsc.get(e, "current_message") is not False
+    } - {""}
+
+
+def _code_like(token: str, product_typed: set[str] | frozenset[str]) -> bool:
+    """A code-shaped token (the resolver's `_CODE_RE`), or one the parser typed as a product."""
+    from app.services.entity_resolver import _CODE_RE
+
+    return bool(_CODE_RE.fullmatch(token)) or token_key(token) in product_typed
+
+
+def _unplaced_token_has_neighbours(
+    resolved: Any, gate: Any, only_token: str | None = None, product_typed: set[str] | frozenset[str] = frozenset()
+) -> bool:
     """True when a token the customer typed missed AND has real did-you-mean neighbours.
 
     AC-1703. The described-set branches below all assert something about the SET the
@@ -2713,15 +2735,14 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | N
     and treating its matches as neighbours silenced AC-1319's zero-qualifying answer
     ("Couldn't find a bidet with a certificate") under an unrelated did-you-mean.
     """
-    from app.services.entity_resolver import _CODE_RE
-
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
     allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
     for res in _ms_miss_resolutions(r, gate=g):
         token = jsc.nullish_str(jsc.get(res, "token")).strip()
-        if len(token) < 3 or not _CODE_RE.fullmatch(token):
+        # AC-19 (owner Q1 (b)): a token the parser typed as a product counts as code-shaped.
+        if len(token) < 3 or not _code_like(token, product_typed):
             continue
         if only_token is not None and token.lower() != only_token.strip().lower():
             continue
@@ -4147,7 +4168,7 @@ def not_found_error_message(
             # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
             # mistyped code, so it takes the did-you-mean below, not the vague clarify.
             # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
-            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
+            if all(_unplaced_token_has_neighbours(r, g, t, product_typed_tokens(q)) for t in vague_unresolved):
                 vague_unresolved = []
 
         if len(vague_unresolved) > 0:
@@ -4195,7 +4216,9 @@ def not_found_error_message(
             # production's did-you-mean, and it has to be reachable: `build_suggest_offer`
             # skips its own D1 candidates entirely whenever a clarify fired here, so the
             # set answer does not merely come FIRST, it silences the other one.
-            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(r, g)
+            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(
+                r, g, product_typed=product_typed_tokens(q)
+            )
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
             elif described_set_answers and "schemes_on_file" in predicate:
@@ -4656,9 +4679,20 @@ def not_found_error_message(
                     # dead-ends on the no-compatible-entity branch and the fetch never runs.
                     # Saying we searched sends the customer off correcting the wrong thing.
                     esc = _esc_offer()
-                    escalate_message = (
-                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
-                    ) + (f" {esc}" if esc else "")
+                    # CHATBOT-CODE-MATCH R4: a code that exists but stores no asked size, with
+                    # nothing to offer, names the size as what is missing (`code_sizes`).
+                    sized = {
+                        _type_norm(jsc.get(x, "token")): f"{jsc.js_string(jsc.get(x, 'size_code'))} {jsc.js_string(jsc.get(x, 'size_asked'))}"
+                        for x in jsc.array(jsc.get(r, "resolutions"))
+                        if jsc.truthy(jsc.get(x, "size_asked")) and jsc.truthy(jsc.get(x, "size_code"))
+                    }
+                    if all(_type_norm(t) in sized for t in not_found_raw):
+                        missing = ", ".join(sized[_type_norm(t)] for t in not_found_raw)
+                        escalate_message = f"Couldn't find {missing}." + (f" {esc}" if esc else "")
+                    else:
+                        escalate_message = (
+                            f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
+                        ) + (f" {esc}" if esc else "")
                 else:
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
                     esc = _esc_offer()
@@ -4905,7 +4939,7 @@ def _numbered_quick_reply(count: int) -> str:
     return _quick_reply(numbers)
 
 
-def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
+def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = None) -> list:
     """D1's own candidate set: PER TOKEN, GENUINE-MISS ONLY.
 
     Never aggregate across tokens - a dead code once borrowed a sibling token's candidate
@@ -4917,6 +4951,9 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
     Q1 (owner ruling (a), 23 Oct 2026): a typed code the parser corrected leads with the
     parser's pick (`NEAR_PICK_KEY`, set by `resolve_gate.pick_near_code_first`), ahead of
     any non-exact match; the pick's own row further down is then deduped.
+
+    `typed` (CHATBOT-CODE-MATCH R2): the code as the customer typed it, whose parts rank the
+    code rows (`holds_every_typed_part`); the resolver's token when the caller has none.
     """
     acc: list = []
     near_pick = jsc.get(res, NEAR_PICK_KEY)
@@ -4926,8 +4963,8 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
     if isinstance(matches, list):
         acc.extend(matches)
     alternatives = jsc.get(res, "alternatives")
-    if isinstance(alternatives, list):
-        acc.extend(alternatives)
+    close = alternatives if isinstance(alternatives, list) else []
+    acc.extend(close)
 
     def cust_key(match: Any) -> str:
         display = jsc.get(match, "display")
@@ -4949,7 +4986,12 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
         if _ms_is_exact(match):
             continue  # exact would have resolved
         entity_type = jsc.get(match, "entity_type")
-        if allowed_types is not None and jsc.truthy(entity_type) and entity_type not in allowed_types:
+        # CHATBOT-CODE-MATCH R3: a set answers a product ask (CHATBOT-SET-STOCK), so a set
+        # code CLOSE to the token (its trigram alternatives) is a product ask's candidate
+        # wherever products are. A set the token's own probe matched keeps today's rule.
+        close_set = entity_type == "product_set" and any(match is a for a in close)
+        allowed_as = "product" if close_set else entity_type
+        if allowed_types is not None and jsc.truthy(entity_type) and allowed_as not in allowed_types:
             continue
         key = (
             cust_key(match)
@@ -4960,7 +5002,154 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
             continue
         seen.append(key)
         keep.append(match)
-    return keep
+    # CHATBOT-CODE-MATCH R2: among the code rows (products, sets), one holding every typed
+    # part ranks before one missing a part, in the slots those rows already hold; ties keep
+    # the resolver's order, other kinds keep their places. The parser's own pick (Q1) leads.
+    token = typed if jsc.truthy(typed) else jsc.get(res, "token")
+    first = 1 if isinstance(near_pick, dict) and keep and keep[0] is near_pick else 0
+    slots = [
+        i
+        for i in range(first, len(keep))
+        if jsc.js_string(jsc.get(keep[i], "entity_type") or "").lower() in _CODE_KINDS
+    ]
+    ranked = sorted(
+        (keep[i] for i in slots),
+        key=lambda m: not holds_every_typed_part(token, jsc.get(m, "canonical_code")),
+    )
+    for i, match in zip(slots, ranked):
+        keep[i] = match
+    return _set_then_its_members(keep, first, close)
+
+
+def _set_then_its_members(keep: list, first: int, close: list) -> list:
+    """CHATBOT-CODE-MATCH R3: a close registered set leads the offer, then its member products
+    in the membership table's order (the resolver's set row carries them,
+    `entity_resolver._product_set_entities`), then the other candidates, a code never twice.
+    Only a close set (the token's trigram `alternatives`, never one its own probe matched)
+    and only one the contact may be told about (`visible_set_clauses`)."""
+    at = next(
+        (
+            i
+            for i in range(first, len(keep))
+            if jsc.js_string(jsc.get(keep[i], "entity_type") or "").lower() == "product_set"
+            and any(keep[i] is a for a in close)
+        ),
+        None,
+    )
+    if at is None:
+        return keep
+    product_set = keep[at]
+    members = [
+        {
+            "entity_type": "product",
+            "canonical_code": m["code"],
+            "uuid": m["uuid"],
+            "match_tier": "set_member",
+            "similarity": jsc.get(product_set, "similarity"),
+        }
+        for m in _offerable_members(product_set)
+    ]
+    group = [product_set, *members]
+    codes = {jsc.get(g, "canonical_code") for g in group}
+    rest = [m for i, m in enumerate(keep[first:], first) if i != at and jsc.get(m, "canonical_code") not in codes]
+    return keep[:first] + group + rest
+
+
+def offer_extras(match: Any) -> dict[str, Any]:
+    """What an offered code's row carries beside its code: a set's members (`set_members_of`)
+    and, in a size-relevant offer, its one size line (`size_line_of`)."""
+    return {**set_members_of(match), **size_line_of(match)}
+
+
+def size_line_of(match: Any) -> dict[str, Any]:
+    """CHATBOT-CODE-MATCH R4: the candidate's size line ("Size: 300 mm", "Size: not recorded"),
+    written by `code_sizes.annotate` from stored values only; empty when it wrote none."""
+    display = jsc.get(match, "display")
+    line = jsc.get(display, "size_line") if isinstance(display, dict) else None
+    return {"size_line": jsc.js_string(line)} if jsc.truthy(line) else {}
+
+
+def with_size_lines(lines: list[str], size_lines: list[str]) -> list[str]:
+    """Each offered code's line, then its own size line under it when it has one."""
+    out: list[str] = []
+    for line, size in zip(lines, size_lines):
+        out.append(line)
+        if size:
+            out.append(size)
+    return out
+
+
+def set_members_of(match: Any) -> dict[str, Any]:
+    """CHATBOT-CODE-MATCH R3: what an exact ask of an offered set resolves to, carried on its
+    offer row so a pick of it answers the same way: its member products, each with its own
+    code and uuid, in the membership table's order (the gate's own set expansion,
+    `gate.run_gate`, reads the same `display.members`). Empty for any other row."""
+    if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product_set":
+        return {}
+    members = _set_members(match)
+    return {"members": members} if members else {}
+
+
+def _dym_type_label(pick: Any, asked: Any) -> str:
+    """A did-you-mean's entity-type label: the resolver's kind for its first candidate, the
+    parser's hint when the resolver has none, bare when neither is known. CHATBOT-CODE-MATCH
+    AC-1e: a product code asked reads "product" even when a close set leads the candidates."""
+    kind = jsc.get(pick, "entity_type")
+    hint = jsc.get(asked, "hint") if asked is not None else None
+    if jsc.js_string(kind or "").lower() == "product_set" and jsc.js_string(hint or "").lower() == "product":
+        kind = hint
+    return _prettify_type(kind) or (_prettify_type(hint) if jsc.truthy(hint) else "")
+
+
+def _set_members(product_set: Any) -> list[dict[str, Any]]:
+    """A resolver set row's member products (`display.members`, the membership table's
+    order, `entity_resolver._product_set_entities`) as `{"uuid", "code"}`, each with both."""
+    display = jsc.get(product_set, "display")
+    return [
+        {"uuid": jsc.get(m, "uuid"), "code": jsc.get(m, "product_code")}
+        for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
+        if isinstance(m, dict) and jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(jsc.get(m, "product_code"))
+    ]
+
+
+def _offerable_members(product_set: Any) -> list[dict[str, Any]]:
+    """`_set_members` a did-you-mean may offer on their own (owner Q3: a discontinued member,
+    `display.members[].is_discontinued`, is never offered)."""
+    display = jsc.get(product_set, "display")
+    stopped = {
+        jsc.js_string(jsc.get(m, "uuid"))
+        for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
+        if isinstance(m, dict) and jsc.get(m, "is_discontinued") is True
+    }
+    return [m for m in _set_members(product_set) if jsc.js_string(m["uuid"]) not in stopped]
+
+
+#: The entity kinds whose did-you-mean is a code, ranked by the typed parts it holds.
+_CODE_KINDS = frozenset({"product", "product_set"})
+#: A typed code's parts: each run of letters, each run of digits (any script).
+_CODE_PART = re.compile(r"[^\W\d_]+|\d+")
+
+
+def typed_code_parts(typed: Any) -> list[str]:
+    """CHATBOT-CODE-MATCH R2: a typed code's parts, case folded: each run of letters and each
+    run of digits, in typed order (separators and letter/digit boundaries split them)."""
+    return [p.casefold() for p in _CODE_PART.findall(jsc.nullish_str(typed))]
+
+
+def holds_every_typed_part(typed: Any, code: Any) -> bool:
+    """CHATBOT-CODE-MATCH R2: does `code` hold every part of the `typed` code, in order? The
+    parts are `typed` split at separators and letter/digit boundaries; a part is held when
+    `code`, case and separators folded (`token_key`), contains it after the part before it.
+    Generic: reads no company's letters, sizes or code shape. False when `typed` has no part."""
+    parts = typed_code_parts(typed)
+    folded = token_key(jsc.nullish_str(code))
+    at = 0
+    for part in parts:
+        at = folded.find(part, at)
+        if at < 0:
+            return False
+        at += len(part)
+    return bool(parts)
 
 
 def did_you_mean_head(typed: str) -> str:
@@ -4970,7 +5159,9 @@ def did_you_mean_head(typed: str) -> str:
     return f'Couldn\'t find "{typed}" (product). Did you mean:'
 
 
-def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, Any]]]:
+def did_you_mean_by_token(
+    resolved: Any, gate: Any, typed_by_key: dict[str, str] | None = None
+) -> dict[str, list[dict[str, Any]]]:
     """MULTI-CODE-DYM: each missed product token's did-you-mean, keyed by the token as the
     resolver echoed it (`turn.state.token_key` folds it for a join).
 
@@ -4978,8 +5169,10 @@ def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, 
     its own (owner, 4 Oct 2026: "treat each product code individually"): the genuine-miss
     resolutions (`miss_resolutions`), each token's own non-exact matches plus the
     resolver's trigram `alternatives` (`miss_token_candidates`), the first three
-    (`_cap3`), a row with no human label dropped. Product rows only: a partial answer
-    offers a code to fetch in place of the one that missed, and only a product is that.
+    (`_cap3`), a row with no human label dropped. Code rows only (a product, or a close set
+    with its members): a partial answer offers a code to fetch in place of the one that
+    missed. `typed_by_key` (the turn's unplaced words, `token_key` fold to the word as typed) ranks
+    each token's candidates by the code as typed (`miss_token_candidates`).
     """
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
@@ -4990,14 +5183,20 @@ def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, 
         if not token or token in out:
             continue
         rows: list[dict[str, Any]] = []
-        for match in _cap3(miss_token_candidates(res, allowed_types)):
-            if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product":
+        typed = (typed_by_key or {}).get(token_key(token))
+        for match in _cap3(miss_token_candidates(res, allowed_types, typed=typed)):
+            kind = jsc.js_string(jsc.get(match, "entity_type") or "").lower()
+            if kind not in _CODE_KINDS:
                 continue
             label = _ms_human_label(match)
             uuid = jsc.get(match, "uuid")
             if not jsc.truthy(label) or not jsc.truthy(uuid):
                 continue
-            rows.append({"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": "product"})
+            # CHATBOT-CODE-MATCH AC-1d: a close set leads as it does asked alone, carrying
+            # what its exact ask resolves to (`set_members_of`).
+            rows.append(
+                {"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": kind, **offer_extras(match)}
+            )
         if rows:
             out[token] = rows
     return out
@@ -5214,10 +5413,29 @@ def build_suggest_offer(
     # codes it checked, the scheme or document type not on file of AC-1321 / R6). Its
     # class word ("tap") forward-matched a few product codes, which is the set's own
     # word and not a typo, so it offers no did-you-mean over the top of that sentence -
-    # the same code-shape rule `_unplaced_token_has_neighbours` applies.
-    from app.services.entity_resolver import _CODE_RE
-
+    # the same code-shape rule `_unplaced_token_has_neighbours` applies (`_code_like`).
     zero_set = jsc.get(jsc.get(g, "predicate"), "qualifying_total") == 0
+
+    # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
+    # so a canonical-coded customer miss printed the debtor code and a dashed product token
+    # printed mangled. Each entity is keyed under BOTH its `raw` and its `canonical_code`
+    # (mirroring what the resolver is SENT), raw before canonical, FIRST-wins on a collision.
+    ent_by_tok: dict[str, Any] = {}
+    for entity in (q["entities"] if isinstance(jsc.get(q, "entities"), list) else []):
+        key = _type_norm(jsc.get(entity, "raw"))
+        if key and key not in ent_by_tok:
+            ent_by_tok[key] = entity
+        code_key = _type_norm(jsc.get(entity, "canonical_code"))
+        if code_key and code_key not in ent_by_tok:
+            ent_by_tok[code_key] = entity
+
+    def ent_of_tok(token: Any) -> Any:
+        return ent_by_tok.get(_type_norm(token))
+
+    def raw_of_tok(token: Any) -> Any:
+        entity = ent_of_tok(token)
+        raw = jsc.get(entity, "raw") if entity is not None else None
+        return raw if jsc.truthy(raw) else token
 
     d1s: list[dict[str, Any]] = []
     if not is_clar and not require_spec:
@@ -5225,9 +5443,9 @@ def build_suggest_offer(
         # number of missed tokens shown at 5, which with cap3 per token keeps the numbered
         # list at or under 15.
         for res in misses:
-            if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
+            if zero_set and not _code_like(jsc.nullish_str(jsc.get(res, "token")).strip(), product_typed_tokens(q)):
                 continue
-            cands = miss_token_candidates(res, allowed_types)
+            cands = miss_token_candidates(res, allowed_types, typed=raw_of_tok(jsc.get(res, "token")))
             if cands:
                 token = jsc.get(res, "token")
                 if not jsc.truthy(token):
@@ -5238,7 +5456,17 @@ def build_suggest_offer(
                     token = jsc.get(first, "raw")
                 if not jsc.truthy(token):
                     token = "that item"
-                d1s.append({"token": token, "cands": cands})
+                # CHATBOT-CODE-MATCH R4: a size nothing holds is what was not found
+                # (`code_sizes.SIZE_ASKED`, "with size 400 mm"), said after the code.
+                asked = jsc.get(res, "size_asked")
+                d1s.append(
+                    {
+                        "token": token,
+                        "cands": cands,
+                        "asked": f" {asked}" if jsc.truthy(asked) else "",
+                        "code": jsc.get(res, "size_code") if jsc.truthy(asked) else None,
+                    }
+                )
         d1s = d1s[:5]
 
     # D2's alternatives scan, HOISTED above D1 so the window-exculpation block can read the
@@ -5427,27 +5655,6 @@ def build_suggest_offer(
             lines.append(line + _stamp(key))
         out["escalate_message"] = "\n".join(lines)
 
-    # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
-    # so a canonical-coded customer miss printed the debtor code and a dashed product token
-    # printed mangled. Each entity is keyed under BOTH its `raw` and its `canonical_code`
-    # (mirroring what the resolver is SENT), raw before canonical, FIRST-wins on a collision.
-    ent_by_tok: dict[str, Any] = {}
-    for entity in (q["entities"] if isinstance(jsc.get(q, "entities"), list) else []):
-        key = _type_norm(jsc.get(entity, "raw"))
-        if key and key not in ent_by_tok:
-            ent_by_tok[key] = entity
-        code_key = _type_norm(jsc.get(entity, "canonical_code"))
-        if code_key and code_key not in ent_by_tok:
-            ent_by_tok[code_key] = entity
-
-    def ent_of_tok(token: Any) -> Any:
-        return ent_by_tok.get(_type_norm(token))
-
-    def raw_of_tok(token: Any) -> Any:
-        entity = ent_of_tok(token)
-        raw = jsc.get(entity, "raw") if entity is not None else None
-        return raw if jsc.truthy(raw) else token
-
     # Renderable survivors: a token whose candidates ALL drop via `humanLabel` (a bare uuid
     # with no display name) is skipped entirely - not shown, and its idx range never consumed.
     survivors: list[dict[str, Any]] = []
@@ -5460,6 +5667,9 @@ def build_suggest_offer(
     # Route on the SURVIVING-token count: 0 falls through to D2; 1 takes the existing
     # single-token block; more than 1 takes the numbered multi-block.
     d1 = survivors[0]["block"] if len(survivors) == 1 else None
+    if d1 and d1.get("asked"):
+        out["size_asked"] = d1["asked"].strip()  # the dealer's pick says it the same way
+        out["size_code"] = d1.get("code")
 
     # MULTI-CODE-DYM Q5 (owner, 4 Oct 2026): beside a did-you-mean, a missed PRODUCT code
     # with nothing to suggest is still named, never dropped.
@@ -5488,9 +5698,7 @@ def build_suggest_offer(
             # entity-type-label: resolver PRIMARY (this token's own best non-exact candidate),
             # parser hint FALLBACK, bare when neither is known.
             first_pick = s["picks"][0] if s["picks"] else None
-            type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
-            )
+            type_label = _dym_type_label(jsc.get(first_pick, "m"), src_ent)
             type_sfx = f" ({jsc.js_string(type_label)})" if jsc.truthy(type_label) else ""
             cand_lines: list[str] = []
             for pick in s["picks"]:
@@ -5506,6 +5714,8 @@ def build_suggest_offer(
                 if key is not None:
                     sfx = _stamp(key)
                 cand_lines.append(f"{idx}. {jsc.js_string(pick['label'])}{sfx}")
+                if size_line_of(match):
+                    cand_lines.append(size_line_of(match)["size_line"])
                 out["suggest_last_result_set"].append(
                     {
                         "idx": idx,
@@ -5516,6 +5726,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(match, "entity_type")
                         if jsc.truthy(jsc.get(match, "entity_type"))
                         else None,
+                        **offer_extras(match),
                     }
                 )
                 out["dym_candidates"].append(
@@ -5539,7 +5750,7 @@ def build_suggest_offer(
             # MULTI-CODE-DYM Q5 (owner, 4 Oct 2026): each token reads as it would asked
             # alone (the single-token arm's own sentence), numbers running on across them.
             blocks.append(
-                f'Couldn\'t find "{jsc.js_string(raw_of_tok(token))}"{type_sfx}. Did you mean:\n'
+                f'Couldn\'t find "{jsc.js_string(s["block"].get("code") or raw_of_tok(token))}"{type_sfx}{s["block"]["asked"]}. Did you mean:\n'
                 + "\n".join(cand_lines)
             )
         out["suggest_offer"] = True
@@ -5561,9 +5772,7 @@ def build_suggest_offer(
             any_uuid = any(_ms_is_uuid(jsc.get(p["m"], "canonical_code")) for p in picks)
             src_ent = ent_of_tok(d1["token"])
             first_pick = picks[0] if picks else None
-            d1_type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
-            )
+            d1_type_label = _dym_type_label(jsc.get(first_pick, "m"), src_ent)
             d1_type_sfx = f" ({jsc.js_string(d1_type_label)})" if jsc.truthy(d1_type_label) else ""
             out["suggest_offer"] = True
             out["suggest_selection_context"] = "suggest_offer"
@@ -5593,6 +5802,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(p["m"], "entity_type")
                         if jsc.truthy(jsc.get(p["m"], "entity_type"))
                         else None,
+                        **offer_extras(p["m"]),
                     }
                     for i, p in enumerate(picks)
                 ]
@@ -5627,24 +5837,31 @@ def build_suggest_offer(
                 if dym_annotate_on:
                     # STABLE PARTITION, no tiebreak: a comparator tiebreak here would
                     # alphabetise and destroy the resolver's similarity ranking.
+                    # CHATBOT-CODE-MATCH R3: a set holds what its members hold, so a set
+                    # whose members have stock keeps its lead (`_set_then_its_members`).
                     picks.sort(
                         key=lambda p: 0
-                        if _dym_lookup(jsc.get(p["m"], "canonical_code"), dym_has) is not None
+                        if any(
+                            _dym_lookup(code, dym_has) is not None
+                            for code in [jsc.get(p["m"], "canonical_code"), *(m["code"] for m in _set_members(p["m"]))]
+                        )
                         else 1
                     )
                 codes = [jsc.get(p["m"], "canonical_code") for p in picks]
-                if dym_annotate_on:
+                # CHATBOT-CODE-MATCH R4: a size-relevant offer lists each code with its size line.
+                size_lines = [size_line_of(p["m"]).get("size_line", "") for p in picks]
+                if dym_annotate_on or any(size_lines):
                     dym_lines = []
                     for i, p in enumerate(picks):
                         code = jsc.js_string(jsc.get(p["m"], "canonical_code"))
-                        key = _dym_lookup(code, dym_probed)
+                        key = _dym_lookup(code, dym_probed) if dym_annotate_on else None
                         sfx = ""
                         if key is not None:
                             sfx = _stamp(key)
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (
-                        f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
-                        f"Did you mean:\n" + "\n".join(dym_lines) + "\n"
+                        f'Couldn\'t find "{jsc.js_string(d1.get("code") or raw_of_tok(d1["token"]))}"{d1_type_sfx}{d1["asked"]}. '
+                        f"Did you mean:\n" + "\n".join(with_size_lines(dym_lines, size_lines)) + "\n"
                         + _cont(
                             "Reply with a code to continue",
                             f", or would you like me to escalate to {team} team?",
@@ -5652,7 +5869,7 @@ def build_suggest_offer(
                     )
                 else:
                     out["suggest_response"] = (
-                        f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
+                        f'Couldn\'t find "{jsc.js_string(d1.get("code") or raw_of_tok(d1["token"]))}"{d1_type_sfx}{d1["asked"]}. '
                         f"Did you mean {_bso_human_list(codes)}? "
                         + _cont(
                             "Reply with a code to continue",
@@ -5674,6 +5891,7 @@ def build_suggest_offer(
                         "entity_type": jsc.get(p["m"], "entity_type")
                         if jsc.truthy(jsc.get(p["m"], "entity_type"))
                         else None,
+                        **offer_extras(p["m"]),
                     }
                     for i, p in enumerate(picks)
                 ]
