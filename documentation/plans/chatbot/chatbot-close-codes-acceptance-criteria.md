@@ -1,7 +1,7 @@
 # UAC: CHATBOT-CLOSE-CODES (dealer gets up to 3 close codes)
 
-Status: DRAFT, written for the card's recommended answers; pending owner answers to Q1-Q5
-(`CARD-chatbot-close-codes-13nov.md`). Any answer that differs rewrites the AC it names.
+Status: FINAL. Crew answered card v1 13 Nov: Q1-Q5 all (a), as recommended; discontinued codes never offered
+(owner 13 Nov ~11:13). New gap from crew data added as AC-24..AC-30 (crew calls it G6; the card calls it G0).
 
 "Dealer" = an availability-only contact. "Offer" = "Couldn't find X." followed by "Did you mean Y?" (one code) or a
 numbered list of up to 3 codes, stored as a pick that carries the typed quantity. Every AC runs on seeded catalogue
@@ -64,3 +64,20 @@ rows in two companies; no real names, phones or prices.
 - AC-23 Exact codes, the `ZZZ999` no-candidate refer line, staff escalation offers and the set reply are
   byte-identical to main; the #2370 suites (`test_code_match_dealer_offers.py`, `test_avail_mode_scenarios.py` except
   S08 per Q2, `test_attribute_asks_round7.py`, `test_narrow_code_own_line.py`) stay green.
+
+## No offer at all, and the data shapes (crew data 13 Nov; replayed on current main first)
+
+Codes below are the shapes from crew's masked dev rows (codes are business data); tests seed same-shaped codes.
+
+- AC-24 Dealer `SRTWT6855-GY got stock?` with a same-company code at trigram > 0.4 (e.g. SRTWT6855-GR) and no
+  match: an offer, never "Couldn't find X (product). Please refer to your salesman." with no offer. Company-scoped:
+  the same close code in another company only gives the refer line.
+- AC-25 Dealer `SRT6537-BL X10 / SRT6532-BL X10 / SRT6534 X10` (third code opens a which-one list): every missed
+  code is named, with its offer when a close code exists; none vanishes.
+- AC-26 Dealer `MBF97513 X 2 STOCK / MWC7627-S10 X 3 STOCK` (first answered, second missing a part; MWC7627-SH-S10
+  exists): "Couldn't find MWC7627-S10. Did you mean MWC7627-SH-S10?", quantity 3 carried.
+- AC-27 Dealer `SRTK39SS / SRTKT1631SS / SRTKT38SS / 5 UNITS` (SRTKT39SS exists): the miss gets its offer.
+- AC-28 Dealer `Cb86BL and Cb86gm stock` (CB86-BL found, needs "how many"; CB83-GM close): the how-many question and
+  the offer for Cb86gm in one reply, numbered on (AC-9).
+- AC-29 Dealer `CB2515SS check ETA`: offer of up to 3 close codes, no refer line, a number answers incoming (AC-12).
+- AC-30 Guard: `Srtwt1866ss x ss3 / Have stock` still gives today's numbered list of 3.
