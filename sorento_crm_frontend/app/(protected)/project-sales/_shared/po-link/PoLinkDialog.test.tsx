@@ -365,7 +365,7 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     fireEvent.change(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement, { target: { value: 'po-3' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Change 1 line' }));
     await waitFor(() => expect(changePoLines).toHaveBeenCalledWith('snap', 'row', [
-      { sales_order_line_id: 'sol-1', po_line_id: 'po-3' },
+      { sales_order_line_id: 'sol-1', po_line_id: 'po-3', from_po_line_id: 'po-7' },
     ]));
     const cards = await within(dialog).findAllByTestId('po-link-result');
     expect(cards.map((card) => card.textContent)).toEqual([
@@ -385,25 +385,41 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
   });
 });
 
-describe('Change PO: a line covered by two PO lines (D2)', () => {
+describe('Change PO: a line covered by two PO lines is one row per PO line (owner, 13 Nov)', () => {
   const twoPos = soLine({
     status: 'pinned', short_qty: 0, assigned_qty: 120,
     now: {
       so_status: 'open', open_qty: 120,
       po_links: [
         { po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 60, open_qty: 60, location_code: 'MWH-BB' },
-        { po_line_id: 'po-3', po_number: '202609-S0029', po_line_no: 3, qty: 60, open_qty: 60, location_code: 'HQ' },
+        { po_line_id: 'po-live', po_number: '202609-S0064', po_line_no: 2, qty: 40, open_qty: 35, location_code: 'HQ' },
       ],
     },
   });
 
-  it('reads "Covered by more than one PO line", not "No PO linked", and cannot be sent', () => {
+  it('shows each PO with its Open qty and its own Change to picker, and never "Covered by more than one PO line"', () => {
     const { dialog } = renderDialog([twoPos], 'change');
-    expect(dialog).toHaveTextContent('Covered by more than one PO line');
+    expect(dialog).not.toHaveTextContent('Covered by more than one PO line');
     expect(dialog).not.toHaveTextContent('No PO linked');
-    const send = within(dialog).queryByRole('button', { name: /^Change \d+ lines?$/ });
-    expect(send === null || (send as HTMLButtonElement).disabled).toBe(true);
-    expect(changePoLines).not.toHaveBeenCalled();
+    expect(dialog).toHaveTextContent('202610-S0007 · line 1');
+    expect(dialog).toHaveTextContent('202609-S0064 · line 2');
+    expect(dialog.querySelector('[id="po-link-change-sol-1:po-7"]')).not.toBeNull();
+    expect(dialog.querySelector('[id="po-link-change-sol-1:po-live"]')).not.toBeNull();
+    expect(dialog).toHaveTextContent('35');
+  });
+
+  it('sends only the ticked row, carrying its from_po_line_id', async () => {
+    changePoLines.mockResolvedValue({ results: [result({ action: 'unlink' }), result({ action: 'link' })] });
+    const { dialog } = renderDialog([twoPos], 'change');
+    fireEvent.change(dialog.querySelector('[id="po-link-change-sol-1:po-live"]') as HTMLSelectElement, {
+      target: { value: 'po-3' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Change 1 line' }));
+    await waitFor(() =>
+      expect(changePoLines).toHaveBeenCalledWith('snap', 'row', [
+        { sales_order_line_id: 'sol-1', po_line_id: 'po-3', from_po_line_id: 'po-live' },
+      ]),
+    );
   });
 });
 
