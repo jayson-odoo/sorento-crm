@@ -3617,7 +3617,8 @@ def resolve_reference_post(
             code_reader=code_reader,
             hint_locked_tokens=payload.hint_locked_tokens,
             brand_tokens=payload.brand_tokens,
-            alternatives_offerable_only=alternatives_offerable_only,
+            # `is True`: a direct Python call that omits it holds the `Depends` marker, never True.
+            alternatives_offerable_only=alternatives_offerable_only is True,
         )
     except EntityPinMismatch as exc:
         raise AppException(
