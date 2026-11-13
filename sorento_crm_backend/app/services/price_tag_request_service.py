@@ -2474,6 +2474,19 @@ Marketing's own work is not part of the form's payload, so it is captured
         )
 
     @staticmethod
+    def list_page_versions(db: Session, page_id: str) -> list:
+        """Every saved version of a request's design page, newest first (D19). One read, shared
+        by the Versions sheet and the History tab."""
+        from app.models.dealer_kit import PageVersion
+
+        return (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page_id)
+            .order_by(PageVersion.version.desc())
+            .all()
+        )
+
+    @staticmethod
     def resolved_labels(
         db: Session, request_ids: list[str]
     ) -> dict[str, dict]:
