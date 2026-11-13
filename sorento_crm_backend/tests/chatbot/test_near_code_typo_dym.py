@@ -752,7 +752,8 @@ def test_q1w_a_typo_word_that_resolves_by_narrowing_is_offered_not_answered(
     text = c.say(f"{raw} stock", _ask(raw, pick, gate))
     assert "Did you mean" in text and pick in text, text  # staff offer shape: "Did you mean:" then "1. <pick> ..."
     assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's correction: {text!r}"
-    assert _stocked(c, 0) == [], _stocked(c, 0)
+    # The only stock call is the did-you-mean's own has-it probe, over the offered code (as the Q1 test above pins).
+    assert _stocked(c, 0) == [pick], _stocked(c, 0)
 
 
 @PATHS
