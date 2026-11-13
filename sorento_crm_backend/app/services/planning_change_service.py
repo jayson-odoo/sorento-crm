@@ -59,7 +59,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session, object_session
@@ -940,6 +940,19 @@ def _nets_to_nothing(row: PlanningChangeRow) -> bool:
     return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
 
 
+def _nets_back_to_older(row: PlanningChangeRow) -> bool:
+    """A date / qty replacement whose carried "was" equals its "now": the line is back at
+    what CS last confirmed."""
+    if row.kind not in ("advanced", "delayed", "qty_up", "qty_down"):
+        return False
+    before, after = row.from_json or {}, row.to_json or {}
+    # Location and item code too (`_entry_differs_from_older_row`): a date put back while the
+    # product or the location also changed is still a change for CS to decide.
+    if after.get("location") or after.get("item_code"):
+        return False
+    return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
+
+
 def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
     """Whether a gate-failed change actually alters what an older pending row already
     describes (S1, `PLAN-esb-change-row-refresh.md`) - qty, required_date, status or the
@@ -966,6 +979,30 @@ def _board_link(so_number: str, item_code: str, when: Optional[date]) -> str:
 # ============================================================================
 # Building a batch
 # ============================================================================
+
+
+def non_cancellable_cut_moves(entries: Sequence[dict], flagged_lines: Set[str]) -> List[tuple]:
+    """NON-CANCELLABLE-ITEMS: ``(core line id, before, after)`` for every entry that lowers or
+    removes a flagged line, marking those entries ``non_cancellable``.
+
+    The diff's quantities are OUTSTANDING (`qty_ordered - fulfilled` as stored, and the
+    importer writes `ordered = fulfilled + after`), so with the stored fulfilled on both
+    sides a drop here is a drop in the ordered quantity, never a delivery the CRM already
+    booked. A line the book states settled (`CLOSED`) is delivered or closed out, not cut.
+    """
+    cuts: List[tuple] = []
+    for e in entries:
+        pl = e.get("project_line")
+        if pl is None or str(pl.id) not in flagged_lines:
+            continue
+        c = e["change"]
+        if c.before is None or c.kind == CLOSED:
+            continue
+        after_qty = c.after.qty if c.after is not None else 0.0
+        if after_qty < c.before.qty:
+            e["non_cancellable"] = True
+            cuts.append((e["core_line_id"], c.before.qty, after_qty))
+    return cuts
 
 
 def build_batch(
@@ -1090,6 +1127,20 @@ def build_batch(
 
     for e in entries:
         e["product_id"] = product_by_core.get(e["core_line_id"])
+
+    # NON-CANCELLABLE-ITEMS (owner "4 yes"): a cut or cancel of a Non-cancellable line is
+    # flagged on its change row and alerted to the override holders, whether or not the
+    # held-or-inquiry gate below raises a row for it.
+    from app.services import non_cancellable_service as non_cancellable
+
+    flagged_lines = non_cancellable.so_lines_non_cancellable(
+        db, [e["project_line"] for e in entries if e.get("project_line") is not None]
+    )
+    cuts = non_cancellable_cut_moves(entries, flagged_lines)
+    if cuts:
+        non_cancellable.alert_autocount_reductions(
+            db, cuts, source=file_name or "AutoCount order update"
+        )
 
     product_ids = {e["product_id"] for e in entries if e["product_id"]}
     moved_transfers = _moved_transfers(db, core_line_ids_all)
@@ -1317,6 +1368,11 @@ def build_batch(
                         # Moved back where it was planned, nothing else changed: the
                         # older row retires and no replacement is raised.
                         older.applied_reason = "Line moved back to its planned location"
+                        continue
+                    if _nets_back_to_older(row):
+                        # OI-WHOLE-SO-CANCEL v2 (AC-V2-2): a date or qty changed back to what
+                        # CS last confirmed leaves nothing to decide; the older row retires.
+                        older.applied_reason = "Line changed back to what was confirmed"
                         continue
                 row.batch_id = open_batch_id
                 kept_rows_by_existing_batch[open_batch_id].append(row)
@@ -2433,6 +2489,9 @@ def _build_row(
     # rather than a column of its own - it is a fact the row states, exactly like the
     # others here, and it needs no migration to say it. `row_out` lifts it to the wire,
     # where a phrase reads better than a fact object nobody compares against anything.
+    if entry.get("non_cancellable"):
+        # NON-CANCELLABLE-ITEMS: the line was cut or cancelled although it is Non-cancellable.
+        facts["non_cancellable"] = True
     moved = (moved_transfers or {}).get(str(entry["core_line_id"]))
     if moved:
         facts["moved_transfer"] = (
@@ -4684,6 +4743,11 @@ def _settle_answered_rows(
     db.flush()
 
 
+#: `Session.info` key holding the project line ids an apply is deciding right now, so the OI
+#: "waiting for CS" check (`oi_waiting_for_cs.waiting_row_ids`) ignores them while it runs.
+APPLYING_LINE_IDS_KEY = "oi_applying_change_line_ids"
+
+
 def _apply_one_order(
     db: Session,
     supply,
@@ -4724,12 +4788,13 @@ def _apply_one_order(
     link_rows_to_mirror_lines(db, order_rows)
     _settle_answered_rows(db, order_rows, {str(line_id) for line_id in frozen})
 
-    # Confirm or Amend, and a line the book CANCELLED - nothing else is applied (AC-C7).
-    # A row still undecided is simply left pending: the batch waits for CS.
+    # Confirm or Amend - nothing else is applied (AC-C7). A book-cancelled line takes the same
+    # path (OI-WHOLE-SO-CANCEL F2): CS saves the cancel, then Confirm retires it. A row still
+    # undecided is simply left pending: the batch waits for CS.
     accepted = [
         r
         for r in order_rows
-        if (r.decision in ("confirm", "amend") or r.kind == "cancelled")
+        if r.decision in ("confirm", "amend")
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     ]
     empty_result = {
@@ -4863,6 +4928,14 @@ def _apply_one_order(
         and r.kind not in _UNDECIDED_KINDS_EXCLUDED
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     } | other_batch_undecided_line_ids
+    # While this apply runs, the lines it is deciding are not "waiting for CS": the OI rows it
+    # restates would otherwise be skipped by auto-confirm on this very change and a covered Done
+    # row left stamped `changed` by its own date move. Held on the session (read by
+    # `oi_waiting_for_cs.waiting_row_ids`), cleared by `apply` once this order is done. The rows
+    # themselves stay pending until the end, as the line splits read them.
+    db.info[APPLYING_LINE_IDS_KEY] = {
+        str(r.project_line_id) for r in live if r.project_line_id
+    }
     confirm_lines: List[dict] = []
     replanned = 0
     retired = 0
@@ -4983,6 +5056,26 @@ def _apply_one_order(
         # closed rows kept their links while the test suite, on an autoflushing session,
         # saw them move.
         db.flush()
+
+    # The cancel CS saved on a line this apply retires is promoted by it, so the draft goes in
+    # this transaction, like `confirm()`'s own draft delete for the lines it names (S4,
+    # AC-4.4). A retired line never reaches that delete (it leaves the revision instead), and
+    # the draft left behind read "Saved" on the SO page after Confirm (OI-WHOLE-SO-CANCEL,
+    # crew pass ee74c892 on a deleted SO).
+    retired_set = set(retired_line_ids)
+    retired_core_line_ids = [
+        r.core_line_id
+        for r in live
+        if r.kind == "cancelled" and r.core_line_id and str(r.project_line_id) in retired_set
+    ]
+    if retired_core_line_ids:
+        from app.services import project_line_draft_service
+
+        project_line_draft_service.delete_drafts_for_lines(
+            db,
+            retired_core_line_ids,
+            company_id=str(order.company_id) if order.company_id else None,
+        )
 
     revised = False
     revision_no = current_revision
@@ -5212,6 +5305,21 @@ def _apply_one_order(
             # retired by this apply is as much its work as a confirmed one.
             r.result_json["supply_decision_revision_no"] = revision_no
 
+    # OI-WHOLE-SO-CANCEL v2 (B2): rows are no longer waiting for CS now that this batch's rows
+    # are marked applied, so the system's own auto-confirm may settle the rows of these lines
+    # (it skipped them while they waited). One batched call.
+    applied_line_ids = [str(r.project_line_id) for r in live if r.project_line_id]
+    if applied_line_ids:
+        db.flush()
+        oi_row_ids = [
+            str(row_id)
+            for (row_id,) in db.query(OrderInquiryRow.id).filter(
+                OrderInquiryRow.so_line_id.in_(applied_line_ids)
+            )
+        ]
+        if oi_row_ids:
+            ProjectOrderInquiryService(db).auto_confirm(oi_row_ids)
+
     # B1 (review round 3, S5b, issue #1245): a leftover row of THIS SAME order, still
     # pending because nothing named it in this press (a `Change proposed` line nobody
     # saved), was held against the revision this press just replaced. Left alone,
@@ -5373,7 +5481,7 @@ def apply(
             reason = "This sales order no longer exists."
             for r in order_rows:
                 if (
-                    (r.decision in ("confirm", "amend") or r.kind == "cancelled")
+                    r.decision in ("confirm", "amend")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
@@ -5399,7 +5507,7 @@ def apply(
             logger.exception("planning change apply failed for order %s", so_number)
             for r in order_rows:
                 if (
-                    (r.decision in ("confirm", "amend") or r.kind == "cancelled")
+                    r.decision in ("confirm", "amend")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
@@ -5416,6 +5524,8 @@ def apply(
                 }
             )
             continue
+        finally:
+            db.info.pop(APPLYING_LINE_IDS_KEY, None)
 
         # Queued AFTER `savepoint.commit()` has returned, under the order's parent
         # transaction: a later rollback of the whole write drops it, a sibling order's

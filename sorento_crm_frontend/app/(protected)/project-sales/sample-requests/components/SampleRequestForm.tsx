@@ -16,6 +16,8 @@ import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import type { SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
+import { myRequestsPaths } from '@/services/myRequestsSubmissionClient';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -147,6 +149,18 @@ function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
         : undefined,
     [project],
   );
+  // From a project its Cancel goes back to the project's Samples Request tab, as the staff form's
+  // does (PROJECT-STAGE-ACTIONS); a saved request still opens on its own page.
+  const paths = useMemo<SubmissionPaths | undefined>(
+    () =>
+      project
+        ? {
+            ...myRequestsPaths,
+            home: () => `/project-sales/${encodeURIComponent(project.id)}?tab=sample-requests`,
+          }
+        : undefined,
+    [project],
+  );
   if (projectId && isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -155,12 +169,11 @@ function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
     );
   }
   return (
-    <MyRequestClientProvider>
+    <MyRequestClientProvider paths={paths}>
       <PortalSampleRequestForm initialValues={initialValues} />
     </MyRequestClientProvider>
   );
 }
-
 
 function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps) {
   const router = useRouter();

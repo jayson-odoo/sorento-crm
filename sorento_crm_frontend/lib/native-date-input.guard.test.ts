@@ -14,8 +14,6 @@ const root = path.resolve(__dirname, '..');
 
 const PENDING = [
   'app/(auth)/portal/components/LandingToolbar.tsx',
-  'app/(auth)/portal/components/SampleRequestForm.tsx',
-  'app/(auth)/portal/components/SubmissionForm.tsx',
   'app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail.tsx',
   'app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm.tsx',
   'app/(protected)/account/notifications/components/coverage-manager.tsx',

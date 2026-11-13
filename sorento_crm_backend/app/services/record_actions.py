@@ -1161,6 +1161,12 @@ def _delete_message_snippet(db: Session, payload: dict):
     return MessageSnippetService(db).delete_snippet(_entity_id(payload))
 
 
+def _delete_technician(db: Session, payload: dict):
+    from app.services import technician_service
+
+    return technician_service.delete(db, _entity_id(payload))
+
+
 def _delete_automation(db: Session, payload: dict):
     from app.services.automation_service import AutomationService
 
@@ -1355,6 +1361,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="sla_management.message_snippets.delete",
         label="Delete snippet",
+    )
+)
+
+register(
+    FormAction(
+        key="technician.delete",
+        entity_types=("technician",),
+        execute=_delete_technician,
+        window=WINDOW_DESTRUCTIVE,
+        permission="after_sales.technicians.manage",
+        label="Delete technician",
     )
 )
 
@@ -3155,6 +3172,32 @@ register(
 )
 
 
+def _delete_non_cancellable_rule(db: Session, payload: dict):
+    """NON-CANCELLABLE-ITEMS: the hard delete `DELETE /config/non-cancellable-rules/{id}` runs,
+    behind the countdown (D7). Lines already priced keep their stored flag."""
+    from app.models.projects import NonCancellableRule
+    from app.services.error_handler import handle_not_found
+
+    row = db.query(NonCancellableRule).filter(NonCancellableRule.id == _entity_id(payload)).first()
+    if row is None:
+        raise handle_not_found("Non-cancellable rule", _entity_id(payload))
+    db.delete(row)
+    db.flush()
+    return {"deleted": True}
+
+
+register(
+    FormAction(
+        key="non_cancellable_rule.delete",
+        entity_types=("non_cancellable_rule",),
+        execute=_delete_non_cancellable_rule,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.types.edit",
+        label="Delete non-cancellable rule",
+    )
+)
+
+
 def _delete_exchange_rate(db: Session, payload: dict):
     from app.services.costing import rates
 
@@ -3190,5 +3233,47 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="products.party_costing.manage",
         label="Remove from party",
+    )
+)
+
+
+# ----- Project import (PLAN-project-import-12nov.md, AC-PI-37/38) ------------------------
+#
+# Revert a run: it removes what the run created and keeps anything changed since. Destructive
+# (records are removed), so it takes the long window. Parked from the run page's gear menu.
+
+
+def _revert_project_import_run(db: Session, payload: dict):
+    from app.services.project_import import service as project_import
+
+    return project_import.revert_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
+
+
+def _delete_project_import_run(db: Session, payload: dict):
+    from app.services.project_import import service as project_import
+
+    return project_import.delete_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
+
+
+register(
+    FormAction(
+        key="project_import_run.delete",
+        entity_types=("project_import_run",),
+        execute=_delete_project_import_run,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.import.run",
+        label="Delete import",
+    )
+)
+
+
+register(
+    FormAction(
+        key="project_import_run.revert",
+        entity_types=("project_import_run",),
+        execute=_revert_project_import_run,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.import.run",
+        label="Revert import",
     )
 )

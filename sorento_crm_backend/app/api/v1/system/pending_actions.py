@@ -56,6 +56,7 @@ from app.models.dealer_kit import (
     TileTemplate,
 )
 from app.models.inventory import Warehouse
+from app.models.service_jobs import Technician
 from app.models.marketing import MarketingCampaign, PromotionGroup, PromotionProduct, PromotionType
 from app.models.onboarding import OnboardingRequest
 from app.models.order import Order, SalesOrder
@@ -65,7 +66,7 @@ from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitO
 from app.models.product_companion import ProductCompanionRule
 from app.models.product_set import ProductSet
 from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
-from app.models.projects import ProjectPartyContact
+from app.models.projects import NonCancellableRule, ProjectPartyContact
 from app.models.resources import Attachment, AttachmentDirectory
 from app.models.sales import SalesOpportunity, SalesPointRatio, SalesTarget, SalesTeam, SetApartCustomer
 from app.models.saved_view import SavedView
@@ -305,6 +306,17 @@ def _assert_entity_visible(
         from app.services.customer_group_service import CustomerGroupService
 
         CustomerGroupService(db).get_group(entity_id)
+    elif action_key == "project_import_run.revert":
+        # The run is an `import_jobs` row (no company mixin): read in scope by the service,
+        # 404 for another company's run and 409 for a run that is not imported.
+        from app.services.project_import.service import assert_revertable
+
+        assert_revertable(db, entity_id)
+    elif action_key == "project_import_run.delete":
+        # Same reading as revert: in scope (404 otherwise), and 422 for an imported run.
+        from app.services.project_import.service import assert_deletable
+
+        assert_deletable(db, entity_id)
     elif action_key == "quotation_document.delete":
         from app.services.record_actions import assert_quotation_deletable
 
@@ -425,6 +437,8 @@ _PARK_SCOPED_MODELS: dict = {
     "item_class.delete": ItemClass,
     "loading_plan.cancel": LoadingPlan,
     "loading_plan.delete": LoadingPlan,
+    # NON-CANCELLABLE-ITEMS: a company default rule is company scoped (uuid id).
+    "non_cancellable_rule.delete": NonCancellableRule,
     "onboarding_request.delete": OnboardingRequest,
     "order.delete": Order,
     "order.set_status": Order,
@@ -462,6 +476,7 @@ _PARK_SCOPED_MODELS: dict = {
     # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the product; the template ids ride in the payload.
     "product.unlink_tag_templates": Product,
     "team.delete": Team,
+    "technician.delete": Technician,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,
 }
@@ -469,6 +484,8 @@ _PARK_SCOPED_MODELS: dict = {
 # Record actions NOT read through `_PARK_SCOPED_MODELS`, each for a reason.
 _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
+    "project_import_run.revert",
+    "project_import_run.delete",
     "accessory_image.delete",
     "certificate_link.remove",
     "combo.unlink_tag_templates",
@@ -884,6 +901,11 @@ def create_pending_action(
             db, body.action_key, body.entity_id, actor_id, body.entity_type, body.payload
         )
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
+        if body.action_key == "technician.delete":
+            # Refused at the click, not ten seconds later: a technician on any job is archived.
+            from app.services import technician_service
+
+            technician_service.assert_not_in_use(db, body.entity_id)
 
         try:
             service = FormActionService(db)

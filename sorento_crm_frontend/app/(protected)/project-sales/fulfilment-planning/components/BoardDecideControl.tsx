@@ -36,6 +36,7 @@ import { toast } from '@/lib/toast';
 import {
   borrowCandidatesOf,
   canQuickSave,
+  isBookCancelled,
   decideComposition,
   suggestedDecisionFor,
   type DecideComposition,
@@ -72,11 +73,30 @@ const MENU_ORDER: { way: DecideWay; separatorAfter?: boolean }[] = [
 const AS_SUGGESTED_LABEL = 'As suggested';
 
 /** Not a supply kind either: the whole line goes to the Cancel SO document (SO-CANCEL-LINE). */
-const CANCEL_SO_LABEL = 'Transfer to Cancel SO';
+const CANCEL_LABEL = 'Cancel';
+
+/**
+ * Why a ticked book-cancelled row is skipped by this pick, or null when the pick saves it:
+ * only "Cancel" applies to a removed line, and "As suggested" is that same Cancel because
+ * Cancel IS the suggestion (owner hand test, 13 Nov); one already decided that way has
+ * nothing new.
+ */
+function bookCancelledSkip(
+  row: BoardContribution,
+  way: DecideWay,
+  draft: BoardDraft,
+): string | null {
+  if (way !== 'cancel_so' && way !== 'suggested') return 'cancelled in AutoCount, pick Cancel';
+  const existing = draft[row.key];
+  if (existing && !existing.preMarked && existing.verdict === 'approved') {
+    return 'already decided that way';
+  }
+  return null;
+}
 
 function labelOf(way: DecideWay): string {
   if (way === 'suggested') return AS_SUGGESTED_LABEL;
-  if (way === 'cancel_so') return CANCEL_SO_LABEL;
+  if (way === 'cancel_so') return CANCEL_LABEL;
   return LABELS[way];
 }
 
@@ -288,6 +308,12 @@ export function BoardDecideControl({
     const skippedBy = new Map<string, number>();
     const shortBy = new Map<string, number>();
     for (const row of tickedRows) {
+      if (isBookCancelled(row)) {
+        const skip = bookCancelledSkip(row, way, draft);
+        if (skip) skippedBy.set(skip, (skippedBy.get(skip) ?? 0) + 1);
+        else coverable += 1;
+        continue;
+      }
       const result = decideComposition(row, way, pick || undefined, claimed);
       if (!result.skip) coverable += 1;
       else skippedBy.set(result.skip, (skippedBy.get(result.skip) ?? 0) + 1);
@@ -299,7 +325,7 @@ export function BoardDecideControl({
       skipped: [...skippedBy.entries()],
       short: [...shortBy.entries()],
     };
-  }, [way, pick, tickedRows]);
+  }, [way, pick, tickedRows, draft]);
 
   // Should fix 5 (review round 1): only `dialogOpen` closes the dialog now - `way`, `pick`,
   // `reason` and `authorisation` are left as they were rather than nulled out here, because
@@ -326,6 +352,17 @@ export function BoardDecideControl({
           `${row.item_code} line ${soLineNoText(row)}`;
 
         for (const row of tickedRows) {
+          // A cancel the book proposed (OI-WHOLE-SO-CANCEL): "Cancel" saves the SAME decision the
+          // row tick does; any other pick has nothing to compose for a removed line.
+          if (isBookCancelled(row)) {
+            const skip = bookCancelledSkip(row, chosenWay, draft);
+            if (skip) {
+              skipped.push({ label: labelFor(row), why: skip });
+            } else {
+              saves.push({ key: row.key, decision: suggestedDecisionFor(row) });
+            }
+            continue;
+          }
           if (chosenWay === 'suggested') {
             if (!canQuickSave(row, draft)) {
               skipped.push({

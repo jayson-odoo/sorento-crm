@@ -122,6 +122,7 @@ class NewProductApplication(Base, CompanyScopedMixin):
     new_code_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     new_code_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )

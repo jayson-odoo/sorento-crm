@@ -43,15 +43,26 @@ export function SampleRequestPageHeader({
   title,
   mode,
   fallbackHref,
+  projectId: startProjectId,
 }: {
   title: string;
   /** `back` on the detail page; `cancel` on new / edit. */
   mode: 'back' | 'cancel';
   /** Where Cancel goes without an origin (the list, or the request being edited). */
   fallbackHref?: string;
+  /**
+   * New mode opened with `?project_id=` and no `?from=` (a project's stage button): the project's
+   * Samples Request tab stands in as the origin (PROJECT-STAGE-ACTIONS).
+   */
+  projectId?: string;
 }) {
-  const origin = useReviewOriginHref();
-  const projectId = projectFromOrigin(origin);
+  const fromHref = useReviewOriginHref();
+  const origin =
+    fromHref ??
+    (startProjectId
+      ? `/project-sales/${encodeURIComponent(startProjectId)}?tab=sample-requests`
+      : null);
+  const projectId = fromHref ? projectFromOrigin(fromHref) : (startProjectId ?? null);
   const project = useProject(projectId ?? undefined);
   const crumbs = projectId
     ? [

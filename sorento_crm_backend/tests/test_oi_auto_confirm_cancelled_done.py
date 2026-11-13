@@ -158,9 +158,12 @@ def test_ac_ac_10e_so_edit_cancel_makes_an_awaiting_or_changed_row_done(
 
 
 @pytest.mark.parametrize("row_ack,pre_changed_at", _TO_ORDER)
-def test_ac_ac_10e_autocount_cancel_makes_an_awaiting_or_changed_row_done(
+def test_ac_ac_10e_autocount_cancel_leaves_an_awaiting_or_changed_row_for_cs(
     env, row_ack, pre_changed_at
 ):
+    """Owner rule 12 Nov (OI-WHOLE-SO-CANCEL v2, AC-V2-1; supersedes 30 Oct): a push that
+    cancels the whole header no longer marks the row done at sync. It keeps its ack and
+    changed_at, waiting for CS's board Confirm."""
     from app.models.project_so import OrderInquiryRow
     from .test_ingest_documents import INGEST_SO
 
@@ -175,6 +178,6 @@ def test_ac_ac_10e_autocount_cancel_makes_an_awaiting_or_changed_row_done(
     env.db.expire_all()
     assert env.so_lines(header["id"])[0]["line_status"] == "cancelled"
     row = env.db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == ACK_ACKNOWLEDGED, row.ack_state
+    assert row.ack_state == row_ack, row.ack_state
     assert row.acknowledged_by is None
     assert row.changed_at == pre_changed_at, "the cancel stamps no changed_at"

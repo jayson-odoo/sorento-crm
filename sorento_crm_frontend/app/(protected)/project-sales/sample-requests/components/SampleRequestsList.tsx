@@ -35,7 +35,8 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { LastActivityFilter, lastActivityActive } from '@/components/common/LastActivityFilter';
 import { STAGE_LABELS, shownDeliveryDate } from '@/lib/sample-request-tracking';
 import { getUserLookup } from '@/services/userSelectService';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -103,7 +104,9 @@ function StaffSampleRequestsList() {
   const router = useRouter();
   const canCreate = useHasPermission('projects.sample_requests.create');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: 'last_activity_at', desc: true },
+  ]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -114,6 +117,7 @@ function StaffSampleRequestsList() {
   const [statusFilter, setStatusFilter] = useState('');
   const [stageFilter, setStageFilter] = useState('');
   const [salespersonFilter, setSalespersonFilter] = useState('');
+  const [lastActivity, setLastActivity] = useState<{ from?: string; to?: string }>({});
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useListStateFromUrl((state) => {
@@ -123,6 +127,7 @@ function StaffSampleRequestsList() {
     setStatusFilter(joinMulti(splitMulti(state.filters.status)));
     setStageFilter(joinMulti(splitMulti(state.filters.stage)));
     setSalespersonFilter(joinMulti(splitMulti(state.filters.salesperson_id)));
+    setLastActivity({ from: state.filters.last_activity_from, to: state.filters.last_activity_to });
   });
 
   const { data: salespeople = [] } = useQuery({
@@ -143,6 +148,8 @@ function StaffSampleRequestsList() {
       status,
       stage,
       salespersonId,
+      lastActivityFrom: lastActivity.from,
+      lastActivityTo: lastActivity.to,
     });
 
   useResetPageOnFilterChange(setPagination, [
@@ -150,6 +157,8 @@ function StaffSampleRequestsList() {
     stageFilter,
     salespersonFilter,
     searchQuery,
+    lastActivity.from,
+    lastActivity.to,
   ]);
 
   const rowHref = (row: SampleRequestRow) => {
@@ -160,7 +169,13 @@ function StaffSampleRequestsList() {
         sorting,
         searchQuery,
       },
-      { status, stage, salesperson_id: salespersonId },
+      {
+        status,
+        stage,
+        salesperson_id: salespersonId,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
+      },
     );
     return `${BASE_PATH}/${row.id}${search ? `?${search}` : ''}`;
   };
@@ -187,6 +202,18 @@ function StaffSampleRequestsList() {
         cell: ({ row }) =>
           row.original.submitted_at ? formatDateInMalaysia(row.original.submitted_at) : '-',
         meta: { headerTitle: 'Submitted', skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => <DataGridColumnHeader title="Last activity" column={column} />,
+        size: 190,
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'status',
@@ -278,7 +305,7 @@ function StaffSampleRequestsList() {
   });
 
   const filtersActiveCount =
-    (statusFilter ? 1 : 0) + (stageFilter ? 1 : 0) + (salespersonFilter ? 1 : 0);
+    (statusFilter ? 1 : 0) + (stageFilter ? 1 : 0) + (salespersonFilter ? 1 : 0) + lastActivityActive(lastActivity);
 
   return (
     <DataGrid
@@ -357,6 +384,7 @@ function StaffSampleRequestsList() {
                       }
                     />
                   </div>
+                  <LastActivityFilter id="sr-last-activity" value={lastActivity} onChange={setLastActivity} />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
@@ -366,6 +394,7 @@ function StaffSampleRequestsList() {
                           setStatusFilter('');
                           setStageFilter('');
                           setSalespersonFilter('');
+                          setLastActivity({});
                         }}
                       >
                         Clear filters

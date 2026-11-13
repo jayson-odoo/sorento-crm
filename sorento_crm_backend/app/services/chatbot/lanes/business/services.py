@@ -116,6 +116,8 @@ class ResolveGateServices:
     probe: ProbeFn
     #: CHAT-CODE-LOOKUP R2: which product set ids the contact may be told about (None: unread).
     visible_sets: Callable[[list[str]], set[str]] | None = None
+    #: CHATBOT-CODE-MATCH R4: a missed code's sizes from stored values (`code_sizes.annotate`).
+    code_sizes: Callable[[dict[str, Any], dict[str, Any]], None] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -623,6 +625,15 @@ def _visible_sets(db: Session) -> Callable[[list[str]], set[str]]:
     return call
 
 
+def _code_sizes(db: Session) -> Callable[[dict[str, Any], dict[str, Any]], None]:
+    def call(parser: dict[str, Any], resolved: dict[str, Any]) -> None:
+        from app.services.chatbot.lanes.business.code_sizes import annotate
+
+        annotate(db, parser, resolved)
+
+    return call
+
+
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:
     """The bundle the engine uses. One session, bound at the call site.
 
@@ -636,6 +647,7 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
         resolve_entity=_resolve_entity(db),
         probe=_probe(db),
         visible_sets=_visible_sets(db),
+        code_sizes=_code_sizes(db),
     )
 
 

@@ -13,7 +13,7 @@ Permission gates:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, status
@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.v1._request_own_scope import empty_page, module_limited_me
 from app.dependencies import (
+    require_any_permission,
     require_any_permission_with_api_key,
     require_permission,
     require_permission_with_api_key,
@@ -35,6 +36,7 @@ from app.models.price_tag import (
     PriceTagRequestTag,
 )
 from app.models.user import User
+from app.schemas.order_inquiry_history import OrderInquiryHistoryResponse
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
     LineDataChange,
@@ -62,7 +64,7 @@ from app.schemas.price_tag import (
     TransitionPayload,
     VariantMembersOut,
 )
-from app.services import price_tag_review_service
+from app.services import price_tag_request_history_service, price_tag_review_service
 from app.services.uuid_path_param import validate_uuid_path
 from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
@@ -175,8 +177,10 @@ def list_price_tag_requests(
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    sort: Optional[str] = Query(None),
-    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    sort: Optional[str] = Query("last_activity_at"),
+    dir: str = Query("desc", pattern="^(asc|desc)$"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW_OR_OWN),
 ):
@@ -206,6 +210,8 @@ def list_price_tag_requests(
         limit=limit,
         sort=sort,
         direction=dir,
+        last_activity_from=last_activity_from,
+        last_activity_to=last_activity_to,
     )
     # AC-D4 (PLAN price-tag-currency-token-extract-prompt.md section D):
     # refresh the stored product-data-change count for the touched rows on
@@ -277,6 +283,33 @@ def get_price_tag_request(
             code="NOT_FOUND",
         )
     return _with_resolved_lines(db, req)
+
+
+@router.get("/{request_id}/history", response_model=OrderInquiryHistoryResponse)
+def price_tag_request_history(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(
+        require_any_permission(
+            ["dealer_kit.price_tag_requests.view", "dealer_kit.price_tag_requests.view_own"]
+        )
+    ),
+):
+    """The request page's History tab (STANDARD-HISTORY wave 5). Read-only; a staff session
+    only (no `_with_api_key`, the audit-read ruling of the OI history). The request is read
+    first, exactly as `GET /{request_id}`, so an unknown id, another company's request or one
+    outside a `view_own` user's scope is the same 404."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404,
+            message="Price tag request not found.",
+            code="NOT_FOUND",
+        )
+    return {
+        "events": price_tag_request_history_service.history_for_price_tag_request(db, req.id)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -835,12 +868,7 @@ def list_request_versions(
     req = PriceTagRequestService.get_request(db, request_id)
     if not req or not req.page_id:
         return []
-    rows = (
-        db.query(PageVersion)
-        .filter(PageVersion.page_id == req.page_id)
-        .order_by(PageVersion.version.desc())
-        .all()
-    )
+    rows = PriceTagRequestService.list_page_versions(db, req.page_id)
     authors = {
         user.id: (user.name or user.email)
         for user in db.query(User)

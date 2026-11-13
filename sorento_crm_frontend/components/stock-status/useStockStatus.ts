@@ -8,10 +8,18 @@ export const STOCK_STATUS_KEY = 'stock-status';
  * shows in Fulfilment Planning, the OI line expand, the project quotation and the stand-alone
  * page. Off until a product is known.
  */
-export function useStockStatus(productId: string | null | undefined, enabled = true) {
+export function useStockStatus(
+  productId: string | null | undefined,
+  enabled = true,
+  /** `grants`: the OI grid reading a location that may be another granted company's. */
+  companyScope?: 'grants',
+) {
   return useQuery({
-    queryKey: [STOCK_STATUS_KEY, productId],
-    queryFn: () => getStockStatus(productId as string, null),
+    queryKey: [STOCK_STATUS_KEY, productId, ...(companyScope ? [companyScope] : [])],
+    queryFn: () =>
+      companyScope
+        ? getStockStatus(productId as string, null, companyScope)
+        : getStockStatus(productId as string, null),
     enabled: enabled && Boolean(productId),
     staleTime: 60_000,
     retry: 1,

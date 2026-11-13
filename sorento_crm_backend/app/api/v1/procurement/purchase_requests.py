@@ -1,4 +1,5 @@
 """Purchase requests / sponsorship forms API routes."""
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -61,8 +62,10 @@ def get_purchase_requests(
     request_type: Optional[list[str]] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[list[str]] = Query(None, description="draft, pending, approved, rejected"),
     assigned_to: Optional[list[str]] = Query(None, description="users.id of the latest unresolved SLA assignee, or __unassigned__"),
-    sort: Optional[str] = Query("submitted_at"),
+    sort: Optional[str] = Query("last_activity_at"),
     dir: Optional[str] = Query("desc"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
     own: Optional[RequestScope] = Depends(purchase_request_own_scope),
@@ -89,8 +92,10 @@ def get_purchase_requests(
             request_type=request_type,
             approval_status=approval_status,
             assigned_to=assigned_to,
-            sort_field=sort or "submitted_at",
+            sort_field=sort or "last_activity_at",
             sort_dir=dir or "desc",
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
         return result
     except HTTPException:
@@ -316,6 +321,42 @@ def create_purchase_request(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+# No revision fence: the form saves its latest values a moment before this call, and only a staff
+# draft (never a revisable, submitted form) gets here. The fenced set is mirrored by the frontend
+# (lib/revision-fence.ts), so a route joins it only with a reason.
+@router.post(
+    "/{request_id}/submit",
+    response_model=PurchaseRequestHeaderResponse,
+)
+def submit_purchase_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Submit a draft written in the salesperson's form by staff (PROJECT-STAGE-ACTIONS).
+
+    The portal's submit rules and side effects (``PortalService.submit_staff_request``). Needs the
+    kind's ``.add``, as the create does; a salesperson limited to their own rows is refused by
+    the router's own-scope guard and submits through /api/v1/my-requests.
+    """
+    from app.services.portal_service import PortalService
+    from app.services.user_service import UserPermissionService
+
+    validate_uuid_path(request_id, resource="Request")
+    service = PurchaseRequestService(db)
+    header = service.get_request(request_id)
+    slug = (
+        "procurement.sponsorship_forms.add"
+        if header.request_type == "sponsorship_form"
+        else "procurement.purchase_requests.add"
+    )
+    if not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {slug}")
+    assert_can_act_on_form(db, request_id, current_user)
+    PortalService(db).submit_staff_request(header, actor_user_id=current_user.get("id"))
+    return service.get_request(request_id)
 
 
 @router.put(

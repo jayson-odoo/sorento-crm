@@ -335,7 +335,14 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // segment with its own `loading.tsx` (ListPageSkeleton). Total: 176.
     // PRODUCT-COSTING: `master-data-management/costing` is a new DataGrid list segment with its own
     // `loading.tsx` (ListPageSkeleton). Total: 177.
-    expect(requiredSegmentNames.length).toBe(177);
+    // AFTER-SALES-P1: `after-sales/service-jobs` and `after-sales/technicians` are two new
+    // DataGrid list segments with their own `loading.tsx` (ListPageSkeleton); `after-sales/dispatch-board` renders
+    // no DataGrid, so it is not a list segment. Total: 179.
+    // PROJECT-MIGRATION-TOOL (#2385): `project-sales/import` is a new DataGrid list segment with its own
+    // `loading.tsx` (ListPageSkeleton). Total: 180.
+    // NON-CANCELLABLE-ITEMS (#2339): `project-sales/non-cancellable` is a new DataGrid list segment
+    // with its own `loading.tsx` (ListPageSkeleton). Total: 181.
+    expect(requiredSegmentNames.length).toBe(181);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

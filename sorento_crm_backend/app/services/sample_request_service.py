@@ -31,6 +31,7 @@ from app.models.status import Status, StatusTransition
 from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException, handle_not_found
 from app.services.scm.so_party import so_parties, with_party
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
 from app.services.project_quotation_service import line_text
@@ -1522,6 +1523,8 @@ def list_for(
     limit: int = 25,
     sort: Optional[str] = None,
     direction: str = "asc",
+    last_activity_from: Optional[Any] = None,
+    last_activity_to: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """One page of list rows. `contact_id` is the portal's own-rows filter; staff without
     `.view` see only the rows they own."""
@@ -1566,6 +1569,10 @@ def list_for(
             )
         )
 
+    in_range = last_activity_range(SampleRequest.last_activity_at, last_activity_from, last_activity_to)
+    if in_range is not None:
+        query = query.filter(in_range)
+
     total = query.with_entities(func.count(SampleRequest.id)).scalar() or 0
 
     column = LIST_SORTS.get(sort or "")
@@ -1575,11 +1582,11 @@ def list_for(
         ordered = column.desc() if direction == "desc" else column.asc()
         query = query.order_by(ordered.nulls_last(), SampleRequest.request_no.asc())
     else:
-        # The needed date, soonest first.
-        query = query.order_by(
-            LIST_SORTS["delivery_date"].asc().nulls_last(),
-            SampleRequest.request_no.asc(),
-        )
+        # Newest activity first (an unknown key, or none, lands here); ties by created_at, id.
+        query = query.order_by(*last_activity_order(
+            SampleRequest.last_activity_at, SampleRequest.created_at, SampleRequest.id,
+            direction if sort == "last_activity_at" else "desc",
+        ))
     rows = query.offset((page - 1) * limit).limit(limit).all()
     return {
         "data": serialize_rows(db, rows),
@@ -1636,6 +1643,7 @@ def _row_common(req: SampleRequest, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "date_feasible": req.date_feasible,
         "proposed_delivery_date": req.proposed_delivery_date,
         "delivered_at": req.delivered_at,
+        "last_activity_at": req.last_activity_at,
     }
 
 

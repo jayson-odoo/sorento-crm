@@ -16,7 +16,7 @@ export default async function NewSampleRequestPage({
   const { project_id } = await searchParams;
   return (
     <Container>
-      <SampleRequestPageHeader title="New Sample Request" mode="cancel" />
+      <SampleRequestPageHeader title="New Sample Request" mode="cancel" projectId={project_id} />
       <div className="mt-6">
         <SampleRequestForm projectId={project_id} />
       </div>

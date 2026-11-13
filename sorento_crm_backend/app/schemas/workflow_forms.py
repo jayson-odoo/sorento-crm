@@ -111,6 +111,7 @@ class WorkflowSubmissionOut(BaseModel):
     transition_logs: List[WorkflowTransitionLogOut] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
     created_by_user_id: Optional[str] = None
     # Display + rendering (no separate definitions.view permission needed)
     definition_name: Optional[str] = None

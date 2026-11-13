@@ -129,6 +129,8 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
       projectTabOriginHref(id, 'sample-requests'),
     ),
   sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
+  // The PO tab with its existing "Upload a customer PO" dialog already open.
+  po_received: (id) => `/project-sales/${id}?tab=orders&upload=po`,
 };
 
 /** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
