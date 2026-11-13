@@ -73,7 +73,7 @@ export function approverChanges(
  *  detail on its record page (`SparePartRequestRecord`). */
 export type SparePartActionsHeader = Pick<
   OrderInquiryHeaderDetail,
-  'id' | 'state' | 'currency' | 'can_decide' | 'can_edit' | 'can_revise'
+  'id' | 'state' | 'currency' | 'can_decide' | 'can_edit' | 'can_revise' | 'submitted_at'
 > & { inquiry_no?: string | null };
 
 /**
