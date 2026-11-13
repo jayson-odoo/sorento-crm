@@ -5,7 +5,6 @@ import { toast } from '@/lib/toast';
 import { PoLinkDialog } from '../../_shared/po-link/PoLinkDialog';
 import { usePoLinkOptions } from '../../_shared/po-link/usePoLink';
 import type { OiPoLinkOptions, PoLinkTarget } from '../../_shared/po-link/poLink.types';
-import { poLinkMenu, type PoLinkKind } from '../../_shared/po-link/poLinkWording';
 import {
   changeOrderInquiryPoLines,
   getOrderInquiryPoLinkOptions,
@@ -14,13 +13,6 @@ import {
   resumeOrderInquiryPoLink,
   unlinkOrderInquiryPoLines,
 } from '../../_shared/services/orderInquiryService';
-
-const MENU_KEY: Record<PoLinkKind, 'link' | 'unlink' | 'relink' | 'change'> = {
-  link: 'link',
-  unlink: 'unlink',
-  relink: 'relink',
-  change: 'change',
-};
 
 /** The PO link calls for ticked Order Inquiry rows. */
 export function oiPoLinkTarget(rowIds: string[]): PoLinkTarget {
@@ -37,34 +29,12 @@ export function oiPoLinkTarget(rowIds: string[]): PoLinkTarget {
   };
 }
 
-/** Reads AutoCount's unlink capability for the ticked tied rows; reports the reason when it is off. */
-export function UnlinkCapability({
-  rowIds,
-  onReason,
-}: {
-  rowIds: string[];
-  onReason: (reason: string | null) => void;
-}) {
-  const ids = React.useMemo(() => rowIds, [rowIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const target = React.useMemo(() => oiPoLinkTarget(ids), [ids]);
-  const options = usePoLinkOptions(target, true);
-  const cap = options.data?.capabilities?.unlink_row;
-  const reason = cap && !cap.enabled ? (cap.reason ?? 'Waiting for AutoCount') : null;
-  React.useEffect(() => {
-    onReason(reason);
-    return () => onReason(null);
-  }, [reason, onReason]);
-  return null;
-}
-
-/** The shared PO link popup for the ticked Order Inquiry rows. Mounted only while it is open,
+/** The shared Link PO popup (link, change or unlink) for the ticked Order Inquiry rows. Mounted only while it is open,
  *  so the AutoCount capabilities are read fresh each time. */
 export function OiPoLinkHost({
-  kind,
   rowIds: rowIdsProp,
   onClose,
 }: {
-  kind: PoLinkKind;
   rowIds: string[];
   onClose: () => void;
 }) {
@@ -83,22 +53,6 @@ export function OiPoLinkHost({
       })),
     [data],
   );
-  const blocked = React.useMemo(() => {
-    if (!data) return null;
-    const lines = data.lines ?? [];
-    const menu = poLinkMenu({
-      ticked: lines.length || 1,
-      linked: lines.filter((line) => (line.now?.po_links ?? []).length > 0).length,
-      capabilities: data.capabilities,
-      loading: false,
-    });
-    const item = menu[MENU_KEY[kind]];
-    // Nothing to act on is the popup's own empty state; only AutoCount's refusal blocks.
-    return item.enabled || item.reason?.startsWith('No PO linked') || item.reason?.startsWith('Each ticked')
-      ? null
-      : item.reason;
-  }, [data, kind]);
-
   // The first read decides whether the popup opens at all. Once it is up (and after a write
   // re-reads the options) it stays: the result cards must not vanish because the re-read
   // failed or AutoCount's capabilities changed.
@@ -108,18 +62,15 @@ export function OiPoLinkHost({
     if (options.error) {
       toast.error((options.error as Error).message);
       onClose();
-    } else if (blocked) {
-      toast.error(blocked);
-      onClose();
     } else if (data) {
       setShown(true);
     }
-  }, [shown, options.error, blocked, data, onClose]);
+  }, [shown, options.error, data, onClose]);
 
-  if (!data || (blocked && !shown)) return null;
+  if (!data) return null;
   return (
     <PoLinkDialog
-      mode={kind}
+      mode="manage"
       target={target}
       lines={dialogLines}
       allLines={dialogLines}

@@ -621,7 +621,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(item).not.toHaveAttribute('title');
   });
 
-  it('AC-T5: Link to PO... (1) is enabled ONLY with exactly one row ticked', async () => {
+  it('AC-T5: Link PO... (1) is enabled ONLY with exactly one row ticked', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -629,14 +629,14 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
       screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
     );
     openActionsMenu();
-    let item = screen.getByRole('menuitem', { name: 'Link to PO... (1)' });
+    let item = screen.getByRole('menuitem', { name: 'Link PO... (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
     await closeMenu();
 
     // A second tick drops it back to disabled - the manual dialog is a ONE-row override.
     fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
     openActionsMenu();
-    item = screen.getByRole('menuitem', { name: 'Link to PO... (2)' });
+    item = screen.getByRole('menuitem', { name: 'Link PO... (2)' });
     expect(item).toHaveAttribute('aria-disabled', 'true');
     expect(item).toHaveAttribute(
       'title',
@@ -653,7 +653,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     );
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Link to PO... (1)' }),
+      screen.getByRole('menuitem', { name: 'Link PO... (1)' }),
     );
 
     expect(await screen.findByText('Link to a document')).toBeInTheDocument();

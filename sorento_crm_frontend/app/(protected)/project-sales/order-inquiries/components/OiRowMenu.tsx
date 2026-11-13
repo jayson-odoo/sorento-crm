@@ -7,7 +7,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
-import type { PoLinkKind } from '../../_shared/po-link/poLinkWording';
 
 /** Right-click a worklist row for the PO link items on that one row. Rows carry
  *  `data-oi-row-id`; with `enabled` off the grid renders untouched. */
@@ -19,7 +18,7 @@ export function OiRowMenu({
 }: {
   enabled: boolean;
   onRow: (rowId: string) => void;
-  onPick: (kind: PoLinkKind) => void;
+  onPick: () => void;
   children: React.ReactNode;
 }) {
   if (!enabled) return <>{children}</>;
@@ -43,9 +42,7 @@ export function OiRowMenu({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
-        <ContextMenuItem onSelect={() => onPick('link')}>Link to PO...</ContextMenuItem>
-        <ContextMenuItem onSelect={() => onPick('change')}>Change PO...</ContextMenuItem>
-        <ContextMenuItem onSelect={() => onPick('unlink')}>Unlink from PO...</ContextMenuItem>
+        <ContextMenuItem onSelect={() => onPick()}>Link PO...</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );

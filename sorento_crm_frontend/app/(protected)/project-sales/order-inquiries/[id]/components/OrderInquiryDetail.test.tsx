@@ -621,7 +621,7 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
       },
     );
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: /^unlink\.\.\./i }),
+      await screen.findByRole('menuitem', { name: /^remove link in crm/i }),
     );
 
     // Target behaviour: no confirmation dialog at all, a deferred countdown instead.
@@ -646,7 +646,7 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
       },
     );
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: /^unlink\.\.\./i }),
+      await screen.findByRole('menuitem', { name: /^remove link in crm/i }),
     );
     await waitFor(() =>
       expect(createPendingActionSpy).toHaveBeenCalledTimes(1),

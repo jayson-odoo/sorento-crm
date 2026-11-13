@@ -41,8 +41,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
 import { usePoLinkSwitch } from '../../../_shared/po-link/usePoLink';
-import type { PoLinkKind } from '../../../_shared/po-link/poLinkWording';
-import { OiPoLinkHost, UnlinkCapability } from '../../components/OiPoLinkHost';
+import { OiPoLinkHost } from '../../components/OiPoLinkHost';
 import { OrderInquiryHistory } from './OrderInquiryHistory';
 import { OrderSplitsDialog } from '../../../_shared/components/LineSplitInfo';
 import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRejectOrderInquiryDialog';
@@ -132,10 +131,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const holdsLinkPo = useHasPermission('projects.stock_debt.link_po');
   const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
   const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
-  const [poDialog, setPoDialog] = useState<{ kind: PoLinkKind; rowIds: string[] } | null>(null);
-  // AutoCount's reason when it cannot unlink now (read while AutoCount-tied lines are ticked).
-  const [unlinkOffReason, setUnlinkOffReason] = useState<string | null>(null);
-  const [gearOpen, setGearOpen] = useState(false);
+  const [poDialog, setPoDialog] = useState<{ rowIds: string[] } | null>(null);
   // #1312 (Q6): the Lines tab's own paperclip upload/remove - the same grant that
   // confirms the board and writes OI lines.
   const canEditAttachments = useHasPermission('projects.projects.edit');
@@ -331,18 +327,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         : !poViaAutocount && selectedLines.length !== 1
           ? 'Tick one line to link it by hand.'
           : undefined;
-  // Change PO needs a PO tied in AutoCount on every ticked line (the shared rule).
-  const changeWhyNot =
-    poWhyNot ??
-    (!poViaAutocount
-      ? 'Not in AutoCount yet'
-      : selectedLines.every((l) => l.in_autocount_link)
-        ? undefined
-        : 'Each ticked line needs a PO linked');
-  const autocountLinked = selectedLinked.filter((l) => canLinkPo && l.in_autocount_link);
   const crmOnlyLinked = selectedLinked.filter((l) => !(canLinkPo && l.in_autocount_link));
-  // Only AutoCount-tied lines are ticked and AutoCount cannot unlink now: the item is greyed.
-  const unlinkTiedOnlyOff = Boolean(unlinkOffReason) && autocountLinked.length > 0 && crmOnlyLinked.length === 0;
 
   // AC-RS-23: enabled only when EVERY selected row is requestable; disabled otherwise,
   // with a tooltip naming the FIRST reason (not a tally of every one).
@@ -740,13 +725,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    * renders in the header card. No dialog, no immediate commit.
    */
   function unlinkSelected() {
-    if (selectedLinked.length === 0) return;
-    // Lines AutoCount ties to a PO unlink through the shared dialog; the rest (CRM-only links)
-    // keep the deferred countdown.
-    if (autocountLinked.length > 0 && !unlinkOffReason) {
-      setPoDialog({ kind: 'unlink', rowIds: autocountLinked.map((l) => l.id) });
-    }
-    if (crmOnlyLinked.length > 0) unlinkSelectedAction.run(crmOnlyLinked.map((line) => ({ id: line.id })));
+    // CRM-only links: the deferred countdown. A link AutoCount ties to the line is managed in the
+    // Link PO popup, not here.
+    if (crmOnlyLinked.length === 0) return;
+    unlinkSelectedAction.run(crmOnlyLinked.map((line) => ({ id: line.id })));
   }
 
   // S1 (reviewer, fix round 22 Sep 2026): `page.tsx`'s own `PageHeader` already renders
@@ -844,7 +826,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 ariaLabel: 'order inquiry',
               }}
               gear={
-                <DetailActionsMenu ariaLabel="Order inquiry options" triggerRef={gearRef} open={gearOpen} onOpenChange={setGearOpen}>
+                <DetailActionsMenu ariaLabel="Order inquiry options" triggerRef={gearRef}>
                   {canAct ? (
                     <>
                       <DropdownMenuItem onSelect={runAutoLink}>
@@ -858,38 +840,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                             ? undefined
                             : (e) => {
                                 e.preventDefault();
-                                if (poViaAutocount) setPoDialog({ kind: 'link', rowIds: selectedIds });
+                                if (poViaAutocount) setPoDialog({ rowIds: selectedIds });
                                 else setChooseDocumentOpen(true);
                               }
                         }
                       >
                         <Link2 className="size-4" aria-hidden />
-                        {`Link to PO... (${selectedLines.length})`}
+                        {`Link PO... (${selectedLines.length})`}
                       </DropdownMenuItem>
-                      {canLinkPo ? (
-                        <DropdownMenuItem
-                          disabled={Boolean(changeWhyNot)}
-                          title={changeWhyNot}
-                          onSelect={
-                            changeWhyNot
-                              ? undefined
-                              : (e) => {
-                                  e.preventDefault();
-                                  setPoDialog({ kind: 'change', rowIds: selectedIds });
-                                }
-                          }
-                        >
-                          <Wand2 className="size-4" aria-hidden />
-                          {`Change PO... (${selectedLines.length})`}
-                        </DropdownMenuItem>
-                      ) : null}
                       <DropdownMenuItem
-                        disabled={selectedLinked.length === 0 || unlinkTiedOnlyOff}
-                        title={unlinkTiedOnlyOff ? (unlinkOffReason ?? undefined) : undefined}
-                        onSelect={selectedLinked.length && !unlinkTiedOnlyOff ? unlinkSelected : undefined}
+                        disabled={crmOnlyLinked.length === 0}
+                        onSelect={crmOnlyLinked.length ? unlinkSelected : undefined}
                       >
                         <Unlink className="size-4" aria-hidden />
-                        {`Unlink... (${selectedLinked.length})`}
+                        {`Remove link in CRM (${crmOnlyLinked.length})`}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={selectedRejectable.length === 0}
@@ -1139,12 +1103,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         />
       ) : null}
 
-      {gearOpen && autocountLinked.length > 0 ? (
-        <UnlinkCapability rowIds={autocountLinked.map((l) => l.id)} onReason={setUnlinkOffReason} />
-      ) : null}
       {poDialog ? (
         <OiPoLinkHost
-          kind={poDialog.kind}
           rowIds={poDialog.rowIds}
           onClose={() => {
             setPoDialog(null);
