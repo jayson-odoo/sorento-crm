@@ -1499,6 +1499,13 @@ DEALER_NUDGE = (
     "crm_contacts_find then crm_contact_access_update for a change to someone who has access. Your own text is not "
     "shown to the user."
 )
+#: Owner hand test 13 Nov (#2256 F1): the person was found and the model answered without proposing the change.
+FOUND_NUDGE = (
+    "You found the person. Call crm_contact_access_update now, once per found contact, with the change the user "
+    "asked for. To remove a person's access, unlink every account crm_contacts_find listed for them (their AI "
+    "replies go off with the last link); a removal needs no role, company or dealer. Your own text is not shown "
+    "to the user."
+)
 _FIND_WORDS = {
     "not_found": "not in the CRM", "ambiguous": "more than one contact has this number",
     "invalid_phone": "not a Malaysian mobile number", "not_yours": "not one of your contacts",
@@ -1509,6 +1516,20 @@ def _dealer_tools() -> tuple[str, ...]:
     from app.services.chatbot.agent.contact_grant import GRANT
 
     return (batch.BATCH, GRANT, writes.FIND_CONTACTS, writes.UPDATE_CONTACT)
+
+
+def _found_without_change(ledger: dict[str, dict]) -> bool:
+    """A contact search found someone this turn and no change was proposed or decided yet (#2256 F1)."""
+    from app.services.chatbot.agent.contact_grant import GRANT
+
+    proposed = {GRANT, writes.UPDATE_CONTACT, batch.BATCH, CONFIRM_ACTION, CANCEL_ACTION}
+    if any(e.get("name") in proposed for e in ledger.values()):
+        return False
+    return any(
+        e.get("name") == writes.FIND_CONTACTS and e.get("status") == "ok" and isinstance(e.get("data"), list)
+        and any(isinstance(r, dict) and r.get("status") == "found" for r in e["data"])
+        for e in ledger.values()
+    )
 
 
 def dealer_access_prompt(
@@ -1983,6 +2004,7 @@ def _run(
         # required; its reply is built from the tool results alone.
         dealer_flow = False
         forced_again = False
+        held_to_change = False
         if ctx.principal != "contact" and writes.holds_ctx(db, ctx, writes.CONTACT_SLUGS) and remaining() >= SIDE_CALL_MIN:
             from app.services.chatbot.agent.contact_grant import GRANT
 
@@ -2235,6 +2257,14 @@ def _run(
                 if dealer_flow and not dealer_ran and not forced_again and remaining() >= SIDE_CALL_MIN:
                     forced_again = True  # once: the answer is refused until a dealer-access tool has run
                     replies[answer_idx] = ToolResult("invalid", message=DEALER_NUDGE).to_json(
+                        assistant_calls[answer_idx]["id"]
+                    )
+                elif (
+                    dealer_flow and not held_to_change and _found_without_change(ledger)
+                    and remaining() >= SIDE_CALL_MIN
+                ):
+                    held_to_change = True  # once: a found person's change is proposed, not answered (#2256 F1)
+                    replies[answer_idx] = ToolResult("invalid", message=FOUND_NUDGE).to_json(
                         assistant_calls[answer_idx]["id"]
                     )
                 elif not (bad_numbers or bad_nf or empty_text):

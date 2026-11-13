@@ -1483,8 +1483,9 @@ WRITES[UPDATE_CONTACT] = WriteDef(
             "name": UPDATE_CONTACT,
             "description": (
                 "Propose a change to one dealer contact's access: role (owner = Business owner, employee), "
-                "chatbot_allowed (AI replies), and customer links. To resign a contact, set chatbot_allowed "
-                "false and unlink its accounts. Route EVERY change the user asks for on a dealer contact through "
+                "chatbot_allowed (AI replies), and customer links. To remove a person's access (no access, "
+                "resign), unlink every account crm_contacts_find lists for them: their AI replies go off with "
+                "the last link, and a removal needs no role, company or dealer. Route EVERY change the user asks for on a dealer contact through "
                 "this tool, including the settings below it cannot make: it answers what to do instead. Nothing "
                 "changes until the user confirms. contact_id and customer ids must come from crm_contacts_find. "
                 "Call once per contact."
