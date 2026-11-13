@@ -1,6 +1,6 @@
 # PLAN: Chatbot speed (CHATBOT-SPEED, work-order lane 2)
 
-Status: Merge-ready pending crew (small fix track, size S, cloud lane). Five no-answer-change fixes built and reviewed; span replay cancelled (owner 12 Nov, span step stays).
+Status: Parked (crew 13 Nov, option c). Head 356c2378: measured 0.3 s whole-turn median gain in the Console, answers unchanged; below the owner's 1 s bar. The speed goal moves to the chatbot plan as a model-work decision (parser output/model, span model); see the final crew-note on PR 2368.
 
 ## Goal
 WhatsApp chatbot replies faster with no new wrong answers. Target median / slowest-5% reply
