@@ -28,6 +28,23 @@ Below the switches, a card explains that the list of domains the bot refuses to 
 it is no longer typed here, it lives on each domain's own **Supported** switch on
 **[Chatbot Domains](../system-management/chatbot-domains.md)**.
 
+## Bot replies sent by
+
+Chooses who delivers the bot's replies to the customer on WhatsApp:
+
+* **n8n** (the default) - replies go out through the n8n automation, as before.
+* **CRM for listed contacts** - the CRM sends the replies itself, for the contacts typed in the
+  **Reply sender contacts** box (one respond.io contact per line). Everyone else stays on n8n. Use
+  this to try the change on your own number first.
+* **CRM for all** - the CRM sends every bot reply itself.
+
+The change applies to the next reply, with no restart. To undo it, choose **n8n** again and save.
+A reply that is already going out finishes the way it started.
+
+When the CRM sends a reply and WhatsApp does not accept it, the turn shows as failed with the
+reason, and **Retry turn** on that turn sends the parts the customer has not received yet (see
+[Read a chatbot turn trace, and retry a failed one](../system-management/troubleshoot-chatbot-turn-failures.md)).
+
 ## Memory
 
 * **Episode recall** - the default, for every contact, for whether the bot is allowed to pull
