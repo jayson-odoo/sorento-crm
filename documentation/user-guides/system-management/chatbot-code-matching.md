@@ -40,13 +40,25 @@ your salesman."
 
 ## Product sets
 
-When the typed code is close to a registered product set (Products > Product Sets), the set is offered first, then
-its member products. Picking the set gives the same answer as typing the set code. A set with a member the dealer may
-not see is never offered.
+A registered product set (Products > Product Sets) is answered as the set when its code is typed with only spaces,
+dashes or capital letters different: `cwc604prl`, `cwc604-p-rl` and `cwc604 p rl` all give the set CWC604-P-RL, with
+its member products' stock. Only that set is answered, never the longer set codes that start with it (typing
+CWC605-RL does not also answer CWC605-RL-SOFT). Other punctuation does not count: `cwc604/p/rl` is not the set.
 
-A product also counts as part of a code's family when its **family code** was set by hand to that family, or when it
-is a member of a registered set headed by that code. Setting the family code on a product is how you link a product
-whose code does not start with its model code.
+When the typed code is close to a set but not the same:
+
+- If only one set holds every part that was typed, that set is offered first, then its member products.
+- If several sets hold every part that was typed (`cwc604-rl` is close to CWC604-P-RL, CWC604-S-RL and their -NEW
+  versions), the bot offers those sets, up to three, so the person picks which one they meant.
+
+Picking a set gives the same answer as typing the set code. A set with a member the dealer may not see is never
+offered or answered.
+
+A product counts as part of a code's family only through the catalogue: its code starts with that code, its **family
+code** was set to that family, or it is a member of a registered set headed by that code. The bot does not guess a
+family from letters inside a code. If a product whose code does not start with its model code (for example a pan coded
+with an extra letter) does not come up when someone names the model code, set its family code or register a set that
+holds it.
 
 ## Sizes
 
@@ -67,4 +79,5 @@ the read-only report `scripts/chatbot_products_without_size.sql` (ask the system
 ## Checking what the bot considered
 
 In the Chatbot Console, open a turn's trace: the `code_candidates` entry lists every close code the bot considered for
-a code it could not find, in the order offered, and whether each was offered or answered.
+a code it could not find, in the order offered, and whether each was offered or answered. A set answered from a typed
+code also gets an entry, listing the set and its member products.
