@@ -531,6 +531,27 @@ def test_I5_a_test_turn_uploads_no_photos(env, photos):
     assert not any(line.startswith("Photos") for line in _lines(out["reply_text"]))
 
 
+def test_P1_an_idea_whose_photos_landed_does_not_ask_for_photos(env, photos):  # noqa: F811
+    env.ready()
+    env.created()
+    _seed(env, minutes_ago=2)
+    out = env.turn(env.idea_message(language="en"))
+    assert out["status"] == "complete"
+    assert len(photos.uploads) == 1
+    assert "- Photos or files" not in _lines(out["reply_text"])
+    assert "- Desired outcome" in _lines(out["reply_text"])
+
+
+def test_P2_an_idea_whose_photos_all_failed_still_asks_for_photos(env, photos):  # noqa: F811
+    env.ready()
+    env.created()
+    _seed(env, minutes_ago=2)
+    photos.fail_first = True
+    out = env.turn(env.idea_message(language="en"))
+    assert out["status"] == "complete"
+    assert "- Photos or files" in _lines(out["reply_text"])
+
+
 class RespondContactFactory:
     @staticmethod
     def make(db):

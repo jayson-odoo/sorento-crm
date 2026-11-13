@@ -57,6 +57,7 @@ import { IdeaSimilarTab } from './IdeaSimilarTab';
 import { IdeaStatusBadge } from './IdeaStatusBadge';
 import { VoteBox } from './VoteBox';
 import { useCanManageIdeas } from './ideasAccess';
+import { IDEA_TYPE_LABEL, ideaType } from './ideaType';
 
 type IdeaTab = 'details' | 'similar' | 'attachments';
 
@@ -467,6 +468,7 @@ export function IdeaDetail({ id }: { id: string }) {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>Type: {IDEA_TYPE_LABEL[ideaType(idea)]}</span>
                   <span>Submitted by {idea.submitterName}</span>
                   <span>{SOURCE_LABEL[idea.source] ?? idea.source}</span>
                   <span>{idea.productName}</span>

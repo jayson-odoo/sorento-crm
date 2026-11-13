@@ -2359,16 +2359,15 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
         )
     link = _idea_link(result.get("idea_id"))
     number = idea_number(result.get("idea_number"))
-    missing = ", ".join(_missing_list(payload))
+    # The user's recent chat photos go onto the new item; a test item gets none (I-5).
+    photos = 0 if is_test else attach_chat_photos(db, user_id=user["linked_user_id"], idea_id=result["idea_id"])
+    missing = ", ".join(_missing_list(payload, photos))
     number = number or None  # ss may send none: the note then names no number
     note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
     if is_test:
         note += " This is a test idea, so it is not on the board."
-    else:
-        # The user's recent chat photos go onto the new item; a test item gets none (I-5).
-        photos = attach_chat_photos(db, user_id=user["linked_user_id"], idea_id=result["idea_id"])
-        if photos:
-            note += f" Photos: {photos}."
+    elif photos:
+        note += f" Photos: {photos}."
     return {
         "id": str(result["idea_id"]),
         "after": {"idea_number": number, "title": result.get("title") or given.get("title")},

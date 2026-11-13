@@ -208,10 +208,11 @@ def _access_user(db: Session, respond_io_id: str) -> User | None:
     return user
 
 
-def _missing_list(sent: dict[str, Any]) -> list[str]:
-    """What the CRM did not send, in the reply's order (ss returns no `captured`)."""
+def _missing_list(sent: dict[str, Any], photos: int = 0) -> list[str]:
+    """What the CRM did not send, in the reply's order (ss returns no `captured`). Photos are
+    missing unless chat photos landed on the item."""
     missing = [label for key, label in _OPTIONAL_FIELDS if not sent.get(key)]
-    return [*missing, _PHOTOS]
+    return missing if photos else [*missing, _PHOTOS]
 
 
 def build_create_payload(
@@ -552,13 +553,14 @@ def handle_capture_turn(
 
     # The CRM link is built here from the id; ss's public `link` is never relayed.
     link = _idea_link(result.get("idea_id"))
+    # A test item gets no photos (I-5).
+    photos = 0 if is_test else attach_chat_photos(db, user_id=user.id, idea_id=result.get("idea_id"))
     facts = {
         "idea_number": result.get("idea_number"),
         "title": result.get("title") or title,
         "link": link,
-        "missing": _missing_list(payload),
+        "missing": _missing_list(payload, photos),
         "type": submission_type,
-        # A test item gets no photos (I-5).
-        "photos": 0 if is_test else attach_chat_photos(db, user_id=user.id, idea_id=result.get("idea_id")),
+        "photos": photos,
     }
     return finish("complete", "complete", facts, language, link=link)

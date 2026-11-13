@@ -543,13 +543,13 @@ describe('AC-K-03 toolbar right cluster', () => {
 });
 
 describe('AC-K-04 columns, chips and sorting', () => {
-  it('columns in order: select, Votes, Idea, Submitter, Channel, Product, Status, Submitted; no "No." column', async () => {
+  it('columns in order: select, Votes, Idea, Type, Submitter, Channel, Product, Status, Submitted; no "No." column', async () => {
     renderList();
     await screen.findByText('Faster quotes');
     const ths = Array.from(document.querySelectorAll('table th'));
     expect(within(ths[0] as HTMLElement).getByRole('checkbox')).toBeInTheDocument();
     const titles = ths.map((th) => th.textContent?.trim() ?? '').filter(Boolean);
-    expect(titles).toEqual(['Votes', 'Idea', 'Submitter', 'Channel', 'Product', 'Status', 'Submitted']);
+    expect(titles).toEqual(['Votes', 'Idea', 'Type', 'Submitter', 'Channel', 'Product', 'Status', 'Submitted']);
     expect(screen.queryByText('IDEA-0042')).toBeNull();
   });
 

@@ -1,8 +1,9 @@
 import type { Idea } from '@/types/ideas';
+import { IDEA_TYPE_LABEL, ideaType } from './ideaType';
 
 /**
  * Everything the Ideas list does to the loaded ideas, in one pure function: the Active | Archived
- * view, search, the Status picker, the Filters (submitter, channel, submitted range) and the sort.
+ * view, search, the Status picker, the Filters (submitter, channel, type, submitted range) and the sort.
  * Mirrors ss `select-idea-rows.ts` (ss main), which is also why the default order is votes
  * descending, then newest first.
  */
@@ -13,6 +14,8 @@ export interface IdeaRowQuery {
   status: string | string[];
   submitter: string | string[];
   channel: string | string[];
+  /** Type keys (`idea`, `issue`), OR-ed; empty for every type. */
+  type: string | string[];
   /** `yyyy-MM-dd` bounds on the submitted date, inclusive; empty for open. */
   from: string;
   to: string;
@@ -38,6 +41,8 @@ function compareBy(id: string, a: Idea, b: Idea): number {
       return a.submitterName.localeCompare(b.submitterName);
     case 'channel':
       return String(a.source).localeCompare(String(b.source));
+    case 'type':
+      return IDEA_TYPE_LABEL[ideaType(a)].localeCompare(IDEA_TYPE_LABEL[ideaType(b)]);
     case 'product':
       return a.productName.localeCompare(b.productName);
     case 'status':
@@ -77,9 +82,11 @@ export function selectIdeaRows(ideas: Idea[], q: IdeaRowQuery): Idea[] {
   const statuses = picked(q.status);
   const submitters = picked(q.submitter);
   const channels = picked(q.channel);
+  const types = picked(q.type);
   if (statuses.length) rows = rows.filter((r) => statuses.includes(r.statusLabel));
   if (submitters.length) rows = rows.filter((r) => submitters.includes(r.submitterName));
   if (channels.length) rows = rows.filter((r) => channels.includes(String(r.source)));
+  if (types.length) rows = rows.filter((r) => types.includes(ideaType(r)));
   if (q.from) rows = rows.filter((r) => localDay(r.createdAt) >= q.from);
   if (q.to) rows = rows.filter((r) => localDay(r.createdAt) <= q.to);
   if (q.sort) {

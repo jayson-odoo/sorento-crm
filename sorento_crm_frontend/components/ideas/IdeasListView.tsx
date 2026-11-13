@@ -79,6 +79,7 @@ import {
   type IdeaActionHandlers,
 } from './ideaBulkActions';
 import { IDEA_SOURCE_LABEL } from './ideaLabels';
+import { IDEA_TYPE_LABEL, ideaType } from './ideaType';
 import { IDEAS_MANAGE_PERMISSION, IDEAS_VIEW_PERMISSION } from './ideasAccess';
 import { selectIdeaRows } from './selectIdeaRows';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -88,6 +89,10 @@ const PAGE_SIZES = [10, 25, 50, 100];
 const CHANNEL_OPTIONS = Object.entries(IDEA_SOURCE_LABEL).map(
   ([value, label]) => ({ value, label }),
 );
+const TYPE_OPTIONS = Object.entries(IDEA_TYPE_LABEL).map(([value, label]) => ({
+  value,
+  label,
+}));
 const uniqueOptions = (values: string[]) =>
   [...new Set(values)]
     .sort((a, b) => a.localeCompare(b))
@@ -106,6 +111,7 @@ export function IdeasListView({
   const [status, setStatus] = useState<string[]>([]);
   const [submitter, setSubmitter] = useState<string[]>([]);
   const [channel, setChannel] = useState<string[]>([]);
+  const [type, setType] = useState<string[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -147,6 +153,7 @@ export function IdeasListView({
         status,
         submitter,
         channel,
+        type,
         from,
         to,
         sort: sorting[0] ? { id: sorting[0].id, desc: sorting[0].desc } : null,
@@ -158,6 +165,7 @@ export function IdeasListView({
       status,
       submitter,
       channel,
+      type,
       from,
       to,
       sorting,
@@ -167,7 +175,7 @@ export function IdeasListView({
   // A new result set starts on its first page.
   useEffect(() => {
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [debouncedSearch, view, status, submitter, channel, from, to, sorting]);
+  }, [debouncedSearch, view, status, submitter, channel, type, from, to, sorting]);
 
   const clearSelection = useCallback(() => setRowSelection({}), []);
   const changeView = (next: string) => {
@@ -306,6 +314,13 @@ export function IdeasListView({
         164,
       ),
       col(
+        'type',
+        'Type',
+        (i) => IDEA_TYPE_LABEL[ideaType(i)],
+        ({ row }) => text(IDEA_TYPE_LABEL[ideaType(row.original)]),
+        120,
+      ),
+      col(
         'submitter',
         'Submitter',
         (i) => i.submitterName,
@@ -393,11 +408,14 @@ export function IdeasListView({
     enableColumnResizing: true,
   });
 
-  const filtersActive = [submitter.length, channel.length, from || to].filter(Boolean).length;
+  const filtersActive = [submitter.length, channel.length, type.length, from || to].filter(
+    Boolean,
+  ).length;
   const anyFilter = Boolean(debouncedSearch || status.length || filtersActive);
   const clearFilters = () => {
     setSubmitter([]);
     setChannel([]);
+    setType([]);
     setFrom('');
     setTo('');
   };
@@ -518,6 +536,18 @@ export function IdeasListView({
           options={CHANNEL_OPTIONS}
           placeholder="Any channel"
           emptyMessage="No channels."
+          clearable
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">Type</Label>
+        <SearchableMultiSelect
+          aria-label="Type"
+          value={type}
+          onChange={setType}
+          options={TYPE_OPTIONS}
+          placeholder="Any type"
+          emptyMessage="No types."
           clearable
         />
       </div>

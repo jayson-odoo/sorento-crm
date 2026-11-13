@@ -71,7 +71,12 @@ export interface Idea {
   mergedCount: number;
   /** ss decides whether the viewer submitted this idea (sent after SS-IDEATION-OWN); the CRM never guesses. */
   isMine?: boolean;
+  /** The submission type; read it through `ideaType` (no type data is an idea). */
+  type?: IdeaType;
 }
+
+/** A submission on the ideation path: a feature request (`idea`) or a problem with the system (`issue`). */
+export type IdeaType = 'idea' | 'issue';
 
 export interface IdeaListParams {
   query?: string;
