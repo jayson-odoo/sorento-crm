@@ -125,22 +125,43 @@ function ResultCard({
   kind,
   target,
   retryItem,
+  onRetryChange,
 }: {
   result: PoLinkResult;
   kind: PoLinkKind;
   target: PoLinkTarget;
   /** The one link this card was for: Try again sends exactly it through the target's link api. */
   retryItem?: { sales_order_line_id: string; po_line_id: string; qty: number } | null;
+  /** Change PO, unlink half refused: Try again re-sends the whole change for that SO line. */
+  onRetryChange?: (() => Promise<void>) | null;
 }) {
   const { relocate, resume, link } = usePoLinkMutations(target);
   const [current, setCurrent] = React.useState(result);
   const text = poLinkResultText(current, kind);
   const busy = relocate.isPending || resume.isPending || link.isPending;
+  const canRetryChange = Boolean(onRetryChange) && (current.outcome === 'refused' || current.outcome === 'vendor_error');
   const canRetry = Boolean(retryItem) && (current.outcome === 'refused' || current.outcome === 'vendor_error' || current.outcome === 'skipped');
   return (
     <div className={cn('space-y-1 rounded-md p-3 text-sm', TONE[text.tone])} data-testid="po-link-result">
       <p className="font-semibold">{text.title}</p>
       <p className="tabular-nums">{text.text}</p>
+      {canRetryChange ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={async () => {
+            try {
+              await (onRetryChange as () => Promise<void>)();
+            } catch {
+              // The mutation hook already toasted the error; the card stays for another try.
+            }
+          }}
+        >
+          Try again
+        </Button>
+      ) : null}
       {canRetry ? (
         <Button
           type="button"
@@ -280,6 +301,8 @@ export function PoLinkDialog({
   );
   const [showErrors, setShowErrors] = React.useState(false);
   const [results, setResults] = React.useState<PoLinkResult[] | null>(null);
+  const [sentChanges, setSentChanges] = React.useState<Array<{ sales_order_line_id: string; po_line_id: string; from_po_line_id: string }>>([]);
+  const [resultsVersion, setResultsVersion] = React.useState(0);
   const [sentLinks, setSentLinks] = React.useState<Record<string, { sales_order_line_id: string; po_line_id: string; qty: number }>>({});
 
   function rowError(row: DialogRow): string | undefined {
@@ -570,6 +593,16 @@ export function PoLinkDialog({
   const ticked = rows.filter((row) => rowSelection[row.id]);
   const sending = link.isPending || unlink.isPending || relink.isPending || change.isPending;
 
+  /** Change PO Try again: the same change for exactly that SO line, its cards replaced by the new answer. */
+  async function retryChange(item: { sales_order_line_id: string; po_line_id: string; from_po_line_id: string }) {
+    const out = await change.mutateAsync([item]);
+    setResults((prev) => {
+      const kept = (prev ?? []).filter((r) => r.sales_order_line_id !== item.sales_order_line_id);
+      return [...kept, ...out.results];
+    });
+    setResultsVersion((v) => v + 1);
+  }
+
   async function handleSend() {
     if (ticked.some((row) => rowError(row))) {
       setShowErrors(true);
@@ -589,13 +622,13 @@ export function PoLinkDialog({
         setSentLinks(Object.fromEntries(items.map((item) => [item.sales_order_line_id, item])));
         out = await link.mutateAsync(items);
       } else if (mode === 'change') {
-        out = await change.mutateAsync(
-          ticked.map((row) => ({
-            sales_order_line_id: row.line.sales_order_line_id,
-            po_line_id: picked[row.id],
-            from_po_line_id: row.poLineId as string,
-          })),
-        );
+        const items = ticked.map((row) => ({
+          sales_order_line_id: row.line.sales_order_line_id,
+          po_line_id: picked[row.id],
+          from_po_line_id: row.poLineId as string,
+        }));
+        setSentChanges(items);
+        out = await change.mutateAsync(items);
       } else if (mode === 'unlink') {
         out = await unlink.mutateAsync(ticked.map((row) => row.poLineId as string));
       } else {
@@ -626,10 +659,17 @@ export function PoLinkDialog({
             results.length ? (
               results.map((result, index) => (
                 <ResultCard
-                  key={`${result.sales_order_line_id}-${index}`}
+                  key={`${result.sales_order_line_id}-${index}-${resultsVersion}`}
                   result={result}
                   kind={result.action ?? mode}
                   target={poTarget}
+                  onRetryChange={(() => {
+                    if (mode !== 'change' || result.action !== 'unlink') return null;
+                    const item = sentChanges.find(
+                      (c) => c.sales_order_line_id === result.sales_order_line_id && c.from_po_line_id === result.po_line_id,
+                    );
+                    return item ? () => retryChange(item) : null;
+                  })()}
                   retryItem={
                     sentLinks[result.sales_order_line_id ?? ''] ??
                     (result.action === 'link' && result.sales_order_line_id && result.po_line_id && result.qty != null
