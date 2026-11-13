@@ -265,7 +265,7 @@ def propose_rows(
     previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
     previous_card: list[str] | None = None, previous_ready: list[str] | None = None, attached: bool = False,
-    earlier_keys: set | None = None,
+    earlier_keys: set | None = None, asked: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -371,6 +371,14 @@ def propose_rows(
         mark = {"typed": typed} if typed is not None else {}
         out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
         if step is None:
+            needs = (out.data or {}).get("needs") if isinstance(out.data, dict) else None
+            if needs and asked is not None:
+                # Only the company and/or role are missing: asked in one question (`question_reply`), never listed
+                # as not changed (crew decision 14 Nov).
+                asked.append({"row": n, "key": key, "needs": list(needs), "label": out.data.get("label"), **mark})
+                if key is not None:
+                    keys[key] = n
+                continue
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
                 waiting += [
@@ -502,6 +510,7 @@ def propose(
     previous: dict | None = None,
     attached: bool = False,
     earlier_keys: set | None = None,
+    asked_out: list[dict] | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -527,12 +536,23 @@ def propose(
     if any(not s.get("batch") for s in steps):
         return ToolResult("invalid", message="Propose the table on its own, not with other changes in the same turn.")
     left: list[dict] = []
+    asked: list[dict] = []
     new_steps, skipped, waiting = propose_rows(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
         previous_skipped=(previous or {}).get("skipped"), left_out=left, previous_card=(previous or {}).get("card"),
-        previous_ready=(previous or {}).get("ready"), attached=attached, earlier_keys=earlier_keys,
+        previous_ready=(previous or {}).get("ready"), attached=attached, earlier_keys=earlier_keys, asked=asked,
     )
+    if asked:
+        # A row lacks what the user did not say: no card yet. The ready rows wait with them, so the answer gives ONE
+        # card for every row; they are kept (key and what was typed) for that follow-up.
+        asked += [
+            {"row": s["row"], "key": definition.batch_key(s.get("args") or {}) if definition.batch_key else None,
+             "held": True,
+             **({"typed": s["typed"]} if s.get("typed") else {})}
+            for s in new_steps
+        ]
+        new_steps = []
     if left and not (new_steps or skipped or waiting):
         # Every row was left out: the user still sees who and why, never an empty turn (owner hand test 14 Nov).
         # Display only: no key, so the next turn never counts them as this card's people (security review, F4).
@@ -547,6 +567,8 @@ def propose(
     carried = carried_skips(write, sent, new_steps, skipped, waiting, previous, definition.pick_changes_key)
     skipped += carried
     steps[:] = new_steps
+    if asked_out is not None:
+        asked_out[:] = asked
     if skipped_out is not None:
         skipped_out[:] = skipped
     if waiting_out is not None:
@@ -564,6 +586,12 @@ def propose(
     }
     if left:
         data["left_out"] = left
+    if asked:
+        data["asked"] = [{"row": a["row"], "needs": a["needs"]} for a in asked if not a.get("held")]
+        return ToolResult(
+            "invalid", data=data,
+            message="Nothing is proposed yet. The user is asked the missing company or role; do not ask it again.",
+        )
     if not new_steps:
         if waiting:
             return ToolResult(
@@ -584,6 +612,21 @@ def propose(
             "table. When needs_choice is not empty, ask which account(s), tag(s) or agent to use for each waiting row (codes or tag names, or all)."
         ),
     )
+
+
+def question_reply(asked: list[dict], skipped: list[dict], waiting: list[dict] | tuple = ()) -> str:
+    """The turn's reply when a row lacks the company or role the user did not say: ONE plain question naming those
+    people ('Owner or employee for X, Y?'), then any row that needs a pick or cannot change, as tables."""
+    from app.services.chatbot.agent.contact_grant import question
+
+    groups: dict[tuple, list[str]] = {}
+    for a in asked:
+        if not a.get("held"):
+            groups.setdefault(tuple(sorted(set(a["needs"]))), []).append(str(a.get("label") or a.get("key") or ""))
+    parts = [" ".join(question(list(needs), labels) for needs, labels in groups.items())]
+    if skipped or waiting:
+        parts.append(preview_block([], skipped, waiting))
+    return "\n\n".join(parts)
 
 
 MAX_CELL_CHARS = 200

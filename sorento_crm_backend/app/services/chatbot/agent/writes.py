@@ -252,6 +252,9 @@ def _route_failure(exc: Exception) -> ToolResult:
         if 400 <= exc.status_code < 500:
             # A refusal that is a pick (`contact_grant.NeedsChoice`) carries its choices for the batch tool.
             choices = getattr(exc, "choices", None)
+            if getattr(exc, "needs", None):
+                # `contact_grant.NeedsFacts`: the company or role the user did not say, asked by the batch tool.
+                return ToolResult("invalid", data={"needs": exc.needs, "label": exc.label}, message=error_text(exc))
             return ToolResult("invalid", data={"choices": choices} if choices else None, message=error_text(exc))
     logger.warning("agent: in-process route call failed", exc_info=True)
     return ToolResult("error", message="The tool failed.")

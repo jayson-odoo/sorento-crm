@@ -1618,7 +1618,7 @@ def _earlier_keys(db, conv, turn_id: str) -> set:
         ChatbotTurn.response.has_key("batch_waiting"),
     )
     for (got,) in turns:
-        for name in ("batch_typed", "batch_waiting", "batch_skipped"):
+        for name in ("batch_typed", "batch_waiting", "batch_skipped", "batch_asked"):
             keys |= {r["key"] for r in (got or {}).get(name) or [] if isinstance(r, dict) and r.get("key")}
     steps = db.query(AgentAction.steps).filter(
         AgentAction.contact_respond_id == str(conv.contact_respond_id), AgentAction.conversation_id == str(conv.id)
@@ -1687,7 +1687,7 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
     # The phones of the immediately preceding card, decided or waiting: a follow-up naming nobody is about it (F4).
     got = (last.response or {}) if last is not None else {}
     card = list(dict.fromkeys(
-        r.get("key") for k in ("batch_typed", "batch_waiting", "batch_skipped") for r in got.get(k) or []
+        r.get("key") for k in ("batch_typed", "batch_waiting", "batch_skipped", "batch_asked") for r in got.get(k) or []
         if isinstance(r, dict) and r.get("key")
     ))
     # The ready rows of that card while it is still undecided: the user may extend it (UAC F4).
@@ -1710,7 +1710,8 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
     # vouches for nothing on the next turn (UAC M1).
     typed = (
         current["typed"] if current is not None
-        else list(got.get("batch_typed") or []) if action is not None else []
+        # ... or while it asked for a company or role: that table is still open (crew decision 14 Nov).
+        else list(got.get("batch_typed") or []) if action is not None or got.get("batch_asked") else []
     )
     # The immediately preceding turn's table, whatever its write and whether or not rows wait (the side call's context).
     last_table = (got.get("batch_write"), got.get("reply_text") or "") if "batch_waiting" in got else (None, "")
@@ -1763,6 +1764,7 @@ def _run(
     # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
     batch_skipped: list[dict] = []
     batch_waiting: list[dict] = []
+    batch_asked: list[dict] = []  # rows lacking the company or role the user did not say, plus the ready rows held
     single_waiting: list[dict] = []  # a single grant row's pick (UAC F3, review round S7)
     batch_called = False
     previous_waiting: list[dict] | None = None
@@ -2187,6 +2189,7 @@ def _run(
                         waiting_out=batch_waiting, user_text=text, previous_waiting=table["waiting"],
                         closed=closed_rows, previous=table, attached=bool(images or file_text),
                         earlier_keys=_earlier_keys(db, conv, turn_id) if images or file_text else None,
+                        asked_out=batch_asked,
                     )
                     if isinstance(args, dict) and isinstance(args.get("write"), str):
                         batch_write = args["write"]
@@ -2433,10 +2436,14 @@ def _run(
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
-    if status != "failed" and not steps and (batch_skipped or batch_waiting or single_waiting):
+    if status != "failed" and not steps and (batch_skipped or batch_waiting or single_waiting or batch_asked):
         # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
         # A single grant row's pick shows the same account list (crew live x3 round 5): whichever tool raised it.
-        reply = _batch_reply([], batch_skipped, batch_waiting or single_waiting, confirm_notes)
+        # A row lacking the company or role the user did not say: one question first (crew decision 14 Nov).
+        reply = (
+            batch.question_reply(batch_asked, batch_skipped, batch_waiting) if batch_asked
+            else _batch_reply([], batch_skipped, batch_waiting or single_waiting, confirm_notes)
+        )
         try:
             # The old confirm card no longer matches what the user was just shown.
             actions.expire_previous(db, ctx, [], test=is_test)
@@ -2494,10 +2501,12 @@ def _run(
             for s in batch_skipped
         ]
         turn.response["batch_write"] = batch_write
+        # The rows of a table that asked for the company or role, ready rows held alike: the answer's card (F4).
+        turn.response["batch_asked"] = [{"row": a.get("row"), "key": a.get("key")} for a in batch_asked]
         # What each row of this table verified as typed, ready, not changed or waiting alike (UAC A17, A18).
         turn.response["batch_typed"] = [
             {"row": e.get("row"), "key": e.get("key"), **e["typed"]}
-            for e in [*steps, *batch_skipped, *batch_waiting] if isinstance(e.get("typed"), dict)
+            for e in [*steps, *batch_skipped, *batch_waiting, *batch_asked] if isinstance(e.get("typed"), dict)
         ]
     elif single_waiting:
         # A single row that waits for a pick is the table the next turn may answer (UAC F3, review round S7).
