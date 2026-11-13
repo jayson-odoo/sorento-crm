@@ -704,7 +704,7 @@ describe('Link PO popup (mode manage)', () => {
   const bare = () => soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047', open_qty: 40, short_qty: 40 });
 
   it.each([
-    ['above what the line still needs', 'po-3', '100'],
+    ['above what the line still needs', 'po-3', '200'],
     ['above what the PO line has free', 'po-7', '130'],
   ])('a new row with a qty %s shows its error next to the field and Save sends nothing', async (_n, poId, typed) => {
     const dialog = renderManage([soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047', open_qty: 300, short_qty: 300 })]);
@@ -761,10 +761,10 @@ describe('Link PO popup (mode manage)', () => {
     const select = picker(row);
     expect(select.dataset.clearable).toBe('true');
     choose(select, /^Unlink$/);
-    const box = within(row).getAllByRole('checkbox')[0] as HTMLInputElement;
-    expect(box.checked).toBe(true);
+    const box = within(row).getAllByRole('checkbox')[0];
+    expect(box).toHaveAttribute('aria-checked', 'true');
     fireEvent.change(select, { target: { value: '' } });
-    expect(box.checked).toBe(true);
+    expect(box).toHaveAttribute('aria-checked', 'true');
     expect(within(dialog).getByRole('button', { name: /^Save/ })).toBeDisabled();
   });
 });
