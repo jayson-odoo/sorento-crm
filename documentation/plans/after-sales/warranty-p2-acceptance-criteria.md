@@ -2,7 +2,7 @@
 
 Plan: `PLAN-warranty-p2-12nov.md`. Card: `CARD-warranty-p2-13nov.md`. Mock v2 (approved 13 Nov 16:29 MYT):
 `documentation/mockups/after-sales-p2/index.html`.
-Status: build. Section P waits for the owner's Q1/Q2 answers; Section S3 waits for Q3.
+Status: build. Owner answers 13 Nov ~17:05: Q1 (a) admins only, Q2 (a) every service-job viewer, Q3 (b) no guessed rules, nothing automatic.
 Dates in examples are dd/mm/yyyy. "Today" is MYT (`warranty_today()`).
 
 Decided (crew, 13 Nov 16:30, from rulings): Q0 = the warranty lines live on the service job; nothing on the
@@ -24,7 +24,7 @@ Complaints module changes. Q4 = `products.warranty_months` is left alone; the po
   the list -> judged by date; line defect not in the list -> `defect_not_covered`; no defect on the line ->
   `unknown`, reason "Defect not stated".
 - **E6.** Missing inputs give `unknown` naming the missing one, never `expired` or `defect_not_covered`:
-  no purchase date -> "Purchase date not entered"; no kind -> "Kind not set".
+  no purchase date -> "Purchase date not entered"; no kind (none picked by CS and no configured rule matches) -> "No warranty rule for this product yet" (owner Q3: say it plainly, never guess).
 - **E7.** Each verdict carries: part name, verdict, expiry (or null), reason text (e.g. "5 years from
   15/03/2020", "Lifetime cover"), is_lifetime, installation_included, policy version.
 - **E8.** Clause 17 (residential only) and registration bonus months are not applied.
@@ -85,7 +85,7 @@ Complaints module changes. Q4 = `products.warranty_months` is left alone; the po
 - **S2.** Idempotent seed: the `after_sales_defect_type` lookup set (Crack line, Leakage, Rust, Broken holder,
   plus #163's v15 list), and Policy v15 from #163 `seed_warranty_policy_v15.py`: 31 kinds, 41 terms, 2 kind
   rules, `effective_from` 01/01/2000, open-ended. Running it twice changes nothing.
-- **S3.** (waits for Q3) No guessed kind rules beyond #163's 2.
+- **S3.** No guessed kind rules: the seed carries only #163's 2 rules; nothing derives a kind from a category on its own. Ops maps the other 29 kinds on the Rules tab.
 
 ## G. Guards
 
@@ -93,11 +93,14 @@ Complaints module changes. Q4 = `products.warranty_months` is left alone; the po
 - **G2.** `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_limit.py` stay green with
   the new tables and lists.
 
-## P. Permissions (WAITS for owner Q1 / Q2; do not build until relayed)
+## P. Permissions (owner Q1 = a, Q2 = a)
 
-- **P1.** Who may write configuration (C): Q1 (a) admins only / (b) + `after_sales.warranty.manage`.
-- **P2.** Who sees the Warranty card, the job `warranty` field and the list column: Q2 (a) every
-  `after_sales.service_jobs.view` holder / (b) `after_sales.warranty.view` only.
+- **P1.** Only admins (role `admin` or `superadmin`) create, edit, delete, archive or supersede policies,
+  terms, kinds and rules, and use nothing else: no warranty-manager permission exists. A non-admin gets 403
+  on every configuration write. Configuration reads (lists, policy page, rule tester) need
+  `after_sales.service_jobs.view` (or admin). The Warranty Configuration menu item shows for admins only.
+- **P2.** Every `after_sales.service_jobs.view` holder sees the Warranty card, the job `warranty` field and
+  the list column; no extra permission.
 - **P3.** Writing job lines needs `after_sales.service_jobs.dispatch` (same as editing the job, P1 N5).
 
 ## F. Frontend (mock v2)

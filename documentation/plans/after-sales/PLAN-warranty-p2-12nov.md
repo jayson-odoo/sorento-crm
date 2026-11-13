@@ -1,6 +1,6 @@
 # PLAN: After-sales P2, warranty (is this covered?)
 
-Status: build (mock v2 approved 13 Nov 16:29; Q0 service job, Q4 leave warranty_months; Q1-Q3 open). Red tests first. UAC: warranty-p2-acceptance-criteria.md.
+Status: build, owner answers in (Q0 a, Q1 a, Q2 a, Q3 b, Q4 a). Backend green-up in progress; frontend next.
 Track: L (new tables, migration, new screens, new permissions). Lane AFTER-SALES-REVIVE, slice P2, branch
 `claude/after-sales-p2-warranty-engine` from main fc9c5a2977 (P1 merged as #2365), new PR titled
 "AFTER-SALES-P2: warranty". Supersedes the earlier P2 draft PR #2374, which was based on pre-P1 main.
@@ -156,7 +156,7 @@ These are the same lessons the P1 plan lists:
 - No complaint table is touched. The P1 guard test `test_after_sales_does_not_touch_complaints.py` keeps
   pinning that.
 - Seeds, all idempotent:
-  - permissions `after_sales.warranty.view` and `after_sales.warranty.manage`, granted to the roles that hold
+  - no new permission (owner Q1 = admins only, Q2 = service-job viewers); was: `after_sales.warranty.view` / `.manage`, granted to the roles that hold
     `after_sales.service_jobs.view` / admin;
   - the defect-type lookup set (crack, leak, rust, broken holder);
   - the v15 policy.
@@ -169,7 +169,7 @@ These are the same lessons the P1 plan lists:
 - The job GET carries `warranty`, the computed verdicts per line.
 - The jobs list carries the summary.
 
-## Questions (crew-ask with the mock)
+## Questions (answered 13 Nov ~17:05: Q0 a, Q1 a admins only, Q2 a, Q3 b no guessing, Q4 a)
 
 0. Where the check lives:
    - (a) on the service job (this plan, mock v2);
