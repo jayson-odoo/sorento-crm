@@ -20,8 +20,11 @@ from typing import Any
 import httpx
 
 KEEPALIVE_EXPIRY_SECONDS = 30.0
-#: The real class, read once: a patched `httpx.Client` is a stand-in, not a shared client.
+#: The real class and entry points, read once: a patched `httpx.Client` / `httpx.request` / `httpx.post` is a test's
+#: stand-in, never a shared client.
 _REAL_CLIENT = httpx.Client
+_REAL_REQUEST = httpx.request
+_REAL_POST = httpx.post
 
 #: name -> (pid, the `httpx.Client` constructor it was built with, the client)
 _clients: dict[str, tuple[int, Any, Any]] = {}
@@ -53,6 +56,21 @@ def shared_client(name: str, **kwargs: Any) -> httpx.Client:
         client = ctor(**kwargs)
         _clients[name] = (pid, ctor, client)
         return client
+
+
+def request(name: str, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """`httpx.request(method, url, **kwargs)` over the process's shared client for `name`. When `httpx.request` itself
+    was replaced (a test's seam), the replacement answers, exactly as the per-call code it replaces would have."""
+    if httpx.request is not _REAL_REQUEST:
+        return httpx.request(method, url, **kwargs)
+    return shared_client(name).request(method, url, **kwargs)
+
+
+def post(name: str, url: str, **kwargs: Any) -> httpx.Response:
+    """`httpx.post(url, **kwargs)` over the process's shared client for `name`; a replaced `httpx.post` answers."""
+    if httpx.post is not _REAL_POST:
+        return httpx.post(url, **kwargs)
+    return shared_client(name).post(url, **kwargs)
 
 
 def reset() -> None:
