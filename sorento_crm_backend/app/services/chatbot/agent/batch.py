@@ -263,6 +263,7 @@ def propose_rows(
     previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
     previous_card: list[str] | None = None, previous_ready: list[str] | None = None, attached: bool = False,
+    earlier_keys: set | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -275,7 +276,9 @@ def propose_rows(
     is a follow-up about the immediately preceding card (`previous_card`), whose rows may come back. The ready rows of
     that card while it is undecided (`previous_ready`) may always come back: the user is extending it. Any other row
     is left out (`left_out`). `attached`: the message carries a picture or file; the rows the model read from it are
-    the people this message names (owner hand test 14 Nov: a screenshot of the Contacts list), so none is left out."""
+    the people this message names (owner hand test 14 Nov: a screenshot of the Contacts list), so a row is left out
+    only when its phone was on an earlier table of this conversation (`earlier_keys`) and the typed text does not name
+    it: a picture never brings back a person of an older request (security review)."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -322,7 +325,8 @@ def propose_rows(
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
         if (
-            this_message and not attached and key is not None and key not in table_keys
+            this_message and key is not None and key not in table_keys
+            and (not attached or key in (earlier_keys or set()))
             and not (_said(key, user_text) or _asked_again(args, key, user_text))
             # A row of the last pick re-sent with codes answers that pick; `_not_listed` judges its codes. Codes of an
             # expired pick get their own refusal below, so the user is told why (review round B1).
@@ -495,6 +499,7 @@ def propose(
     closed: dict | None = None,
     previous: dict | None = None,
     attached: bool = False,
+    earlier_keys: set | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -523,12 +528,13 @@ def propose(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
         previous_skipped=(previous or {}).get("skipped"), left_out=left, previous_card=(previous or {}).get("card"),
-        previous_ready=(previous or {}).get("ready"), attached=attached,
+        previous_ready=(previous or {}).get("ready"), attached=attached, earlier_keys=earlier_keys,
     )
     if left and not (new_steps or skipped or waiting):
         # Every row was left out: the user still sees who and why, never an empty turn (owner hand test 14 Nov).
+        # Display only: no key, so the next turn never counts them as this card's people (security review, F4).
         skipped = [
-            {"row": x["row"], "key": x["phone"], "reason": x["reason"], "cells": {"Phone": x["phone"]}} for x in left
+            {"row": x["row"], "key": None, "reason": x["reason"], "cells": {"Phone": x["phone"]}} for x in left
         ]
         left = []
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting). A left-out row

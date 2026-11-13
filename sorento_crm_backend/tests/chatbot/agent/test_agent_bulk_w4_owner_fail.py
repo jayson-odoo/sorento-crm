@@ -122,3 +122,39 @@ def test_a_malformed_batch_call_never_shows_its_refusal_to_the_user(db):
     result, _ = screenshot_turn(db, w, script)
     assert_plain(result.reply_text)
     assert result.reply_text.strip()
+
+
+# ------------------------------------------------------------------ security review round (F4 kept)
+
+
+def test_rows_left_out_on_one_turn_do_not_become_ready_on_the_next(db):
+    """Left-out rows shown as not changed are display only: a follow-up naming nobody does not revive them."""
+    w = make_world(db)
+    other = dealer(db, w, name="ZZT Left Out")
+    rows = [{**row_(local(other.phone_number), name=other.name, role="employee", companies=("MCH",)), "row": 1}]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="grant mocha access please", images=False)
+    assert first.pending_action is None
+    second, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="ok do it for Mocha", images=False)
+    assert second.pending_action is None, second.reply_text
+    assert "ready to confirm" not in second.reply_text
+
+
+def test_an_attachment_does_not_bring_back_a_person_of_an_older_request(db):
+    """A picture names the people read from it, not someone the model re-sends from an earlier table."""
+    w = make_world(db)
+    old = dealer(db, w, name="ZZT Old Ask")
+    new = dealer(db, w, name="ZZT New Shot")
+    old_row = {**row_(local(old.phone_number), name=old.name, role="unknown", companies=("MCH",)), "row": 1}
+    screenshot_turn(db, w, [_batch([old_row]), answer_("Done.")], text_=f"grant {local(old.phone_number)}", images=False)
+    from tests.chatbot.agent.test_agent_writes import run_turn
+
+    between, _ = run_turn(db, w, [answer_("Hello.")], text_="hi")  # a plain turn: the old table is not the last one
+    assert between.reply_text.startswith("Hello"), between.reply_text
+    rows = [
+        {**row_(local(new.phone_number), name=new.name, role="employee", companies=("MCH",)), "row": 1},
+        {**row_(local(old.phone_number), name=old.name, role="employee", companies=("MCH",)), "row": 2},
+    ]
+    result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them Mocha employee access")
+    assert result.pending_action is not None, result.reply_text
+    assert new.name in result.reply_text
+    assert old.name not in result.reply_text, result.reply_text
