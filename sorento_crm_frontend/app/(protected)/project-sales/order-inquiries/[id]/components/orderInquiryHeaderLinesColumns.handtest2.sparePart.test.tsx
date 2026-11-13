@@ -208,3 +208,15 @@ describe('F3: R11 and R13 still hold with the extra column', () => {
     expect(Number(location!.split('=')[1])).toBeGreaterThanOrEqual(90);
   });
 });
+
+describe('crew pass 0f6da244: the "Product code" header is not clipped at 1280', () => {
+  it.each([
+    ['a reader, raised', READER],
+    ['the approver, pending', PENDING_DECIDER],
+  ])('%s: Product code is at least 124 px wide (the header text measured 124 px)', (_who, options) => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
+    const code = result.current.find((c) => titleOf(c) === 'Product code') as { size?: number } | undefined;
+    expect(code, 'precondition: a Product code column').toBeDefined();
+    expect(code!.size ?? 0).toBeGreaterThanOrEqual(124);
+  });
+});

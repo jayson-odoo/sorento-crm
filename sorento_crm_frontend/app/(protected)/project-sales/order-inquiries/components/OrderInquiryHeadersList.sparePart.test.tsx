@@ -135,3 +135,12 @@ describe('F1 / UAC P3: Type column and the S/O no of a spare part request', () =
     expect(cellUnder(rowOf('OI-2611-0001'), 'S/O no')).toHaveTextContent('SO000123');
   });
 });
+
+describe('crew pass 0f6da244: the number column header fits OR- and OI- rows', () => {
+  it('reads "Doc no", not "OI no"', () => {
+    renderList();
+    const headers = screen.getAllByRole('columnheader').map((c) => (c.textContent ?? '').trim());
+    expect(headers).toContain('Doc no');
+    expect(headers).not.toContain('OI no');
+  });
+});

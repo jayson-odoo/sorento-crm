@@ -164,3 +164,28 @@ describe('SLA KPI Dashboard (TCK-32 UX1)', () => {
     expect((getKpiTasks as any).mock.calls[0][5]).toBeUndefined();
   });
 });
+
+describe('crew pass 0f6da244: one name everywhere', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hasPermission.mockReturnValue(true);
+  });
+
+  it('labels an order request task "Order Request", never the raw "spare part request" key', async () => {
+    (getKpiSummary as any).mockResolvedValue(SUMMARY);
+    (getKpiTrend as any).mockResolvedValue([]);
+    (getKpiTasks as any).mockResolvedValue({
+      total: 1,
+      data: [{
+        tracking_id: 't9', source_entity_type: 'spare_part_request', source_entity_id: 'r1', current_tier: 1,
+        current_tier_started_at: '2026-11-14T01:00:00', response_due: '2026-11-19T00:00:00', resolution_due: null,
+        assignee_id: 'u2', assignee_name: 'Approver B', response_time_hours: null, resolution_time_hours: null,
+        is_resolved: false, response_met: null, resolution_met: null, escalations_auto: 0, escalations_manual: 0,
+      }],
+    });
+    renderContent();
+    await waitFor(() => expect(screen.getAllByText('Approver B').length).toBeGreaterThanOrEqual(1));
+    expect(screen.getAllByText('Order Request').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/spare part request/i)).toBeNull();
+  });
+});
