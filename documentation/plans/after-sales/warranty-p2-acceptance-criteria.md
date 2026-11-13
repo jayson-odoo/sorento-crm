@@ -11,7 +11,7 @@ Complaints module changes. Q4 = `products.warranty_months` is left alone; the po
 ## E. Engine (pure; ported from #163 `app/services/warranty_service.py` and `tests/test_warranty_engine.py`)
 
 - **E1.** A line gets one verdict per term of its kind in the policy in force. A kind with 3 terms gives 3
-  verdicts, in the terms' order (sort order, then part name).
+  verdicts, ordered by part name (terms have no sort-order column; #163 had none either).
 - **E2.** The policy is the company's one whose window holds the **purchase date** (`effective_from <=
   purchase_date <= effective_to`, open-ended `effective_to` = no end). Not today's. None holds it: one
   Unknown verdict, reason "No policy in force on dd/mm/yyyy".
@@ -85,6 +85,8 @@ Complaints module changes. Q4 = `products.warranty_months` is left alone; the po
 - **S2.** Idempotent seed: the `after_sales_defect_type` lookup set (Crack line, Leakage, Rust, Broken holder,
   plus #163's v15 list), and Policy v15 from #163 `seed_warranty_policy_v15.py`: 31 kinds, 41 terms, 2 kind
   rules, `effective_from` 01/01/2000, open-ended. Running it twice changes nothing.
+- **S2b.** The migration seeds v15 for every company that exists when it runs; a company added later
+  starts with no policy until an admin creates one (Warranty Configuration > Policies > Create).
 - **S3.** No guessed kind rules: the seed carries only #163's 2 rules; nothing derives a kind from a category on its own. Ops maps the other 29 kinds on the Rules tab.
 
 ## G. Guards
