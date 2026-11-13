@@ -993,8 +993,8 @@ class PriceTagRequestService:
         print somebody else's package on this one.
 
         A combo that fails any of those is stored as None rather than refused:
-        the S2 guard then says "No package chosen" on the row, which is the
-        warn-and-allow rule the whole slice is built on (AC-S2-5).
+        the line is then ala carte (PRICETAG-ALA-CARTE), the same warn-and-allow
+        rule the whole slice is built on (AC-S2-5).
         """
         from app.models.product import Product
         from app.models.product_combo import ProductCombo
@@ -2430,13 +2430,15 @@ class PriceTagRequestService:
             return None
 
         if not line.combo_id:
+            # PRICETAG-ALA-CARTE AC-17: no combo on a host that has some is the
+            # salesperson's ala carte choice, not a warning.
             has_combos = (
                 db.query(ProductCombo)
                 .filter(ProductCombo.host_product_id == line.product_id)
                 .first()
                 is not None
             )
-            return "No package chosen" if has_combos else "No package defined"
+            return None if has_combos else "No package defined"
 
         combo_parts = (
             db.query(ProductComboPart)
