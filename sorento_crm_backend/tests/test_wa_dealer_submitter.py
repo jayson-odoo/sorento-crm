@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import importlib.util
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,7 @@ from sqlalchemy.exc import IntegrityError
 from app.main import app  # noqa: E402
 
 from app.models.access import RespondContact
+from app.models.chatbot_turn import ChatbotTurn
 from app.models.respond_workspace import RespondWorkspace
 from app.models.user import User, UserPermission, UserRole, UserRoleAssignment, UserRolePermission
 from app.rbac.permission_registry import PERMISSION_REGISTRY
@@ -122,6 +124,36 @@ def _svc():
     return svc
 
 
+def seed_inbound(db, respond_id: str, text_: str, *, minutes_ago: float = 0.0, is_test: bool = False) -> None:
+    """The contact's own inbound WhatsApp message, as the chatbot stores it (a `turns` row with the
+    respond.io envelope `message.message.message.text`)."""
+    db.add(
+        ChatbotTurn(
+            id=str(uuid.uuid4()),
+            contact_respond_id=respond_id,
+            message_id=f"zzt-msg-{uuid.uuid4().hex[:10]}",
+            ingress="webhook",
+            envelope={"message": {"message": {"message": {"type": "text", "text": text_}}}},
+            is_test=is_test,
+            status="processing",
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
+        )
+    )
+    db.flush()
+
+
+def _genuine(e: Env) -> None:
+    """Round 6 (should-fix 1): every turn of this env arrives as the contact's own inbound message, as
+    a real bot-lane turn does. A forged call (another contact, a text never sent) stays unseeded."""
+    real_turn = e.turn
+
+    def turn(message, **kw):
+        seed_inbound(e.db, e.rio, message)
+        return real_turn(message, **kw)
+
+    e.turn = turn
+
+
 def _dealer(e: Env, *, allowed: bool = True, session_vars: dict | None = None) -> RespondContact:
     """Workspace + an eligible WhatsApp contact (AI access on, agent switch on, one row) with NO user,
     and the `portal_user` role holding the submit slug (as D-1 leaves it)."""
@@ -131,6 +163,7 @@ def _dealer(e: Env, *, allowed: bool = True, session_vars: dict | None = None) -
     contact.chatbot_agent_enabled = True
     e.db.flush()
     _role(e.db, "portal_user", SUBMIT)
+    _genuine(e)
     return contact
 
 
@@ -458,6 +491,7 @@ def test_D4_no_user_on_an_unconfigured_workspace(env):
     contact.chatbot_agent_enabled = True
     _role(env.db, "portal_user", SUBMIT)
     env.db.flush()
+    _genuine(env)
     out = env.turn(env.idea_message())
     assert out["status"] == "unconfigured"
     assert _linked_users(env.db, contact.id) == []
@@ -653,3 +687,149 @@ def test_D7_the_dealer_user_the_bot_created_cannot_sign_in(env):
     user = env.svc.ensure_dealer_user(env.db, contact)
     assert user is not None
     assert eligible_user_for_contact(env.db, contact.id) is None
+
+
+# --------------------------------------------------------------------------- #
+# Round 6 (lead): the turn must be the contact's own message; reply details   #
+# --------------------------------------------------------------------------- #
+NO_ACCESS_EN = (
+    "You need a CRM login with Ideas access to submit ideas here. Please ask your Sorento contact for one."
+)
+ACCOUNT_FAILED_EN = "I couldn't set up your account to file this. Please ask your salesperson."
+
+
+def _dealer_unseeded(e: Env) -> RespondContact:
+    """An eligible dealer whose turns are NOT seeded as its own inbound messages (a forged call)."""
+    e.seed_workspace()
+    contact = e.seed_contact()
+    contact.chatbot_allowed = True
+    contact.chatbot_agent_enabled = True
+    e.db.flush()
+    _role(e.db, "portal_user", SUBMIT)
+    return contact
+
+
+def test_S1_a_call_with_a_text_the_contact_never_sent_creates_no_user(env):
+    contact = _dealer_unseeded(env)
+    env.created()
+    out = env.turn(env.idea_message())
+    assert out["status"] == "no_access"
+    assert out["reply_text"] == NO_ACCESS_EN
+    assert env.create_calls == [] and env.similar_calls == []
+    assert _linked_users(env.db, contact.id) == []
+
+
+def test_S1_another_contacts_message_does_not_count(env):
+    contact = _dealer_unseeded(env)
+    other = Env(env.db, env.svc, env.mp)
+    other.seed_contact()
+    seed_inbound(env.db, other.rio, MSG)
+    env.created()
+    out = env.turn(env.idea_message())
+    assert out["status"] == "no_access"
+    assert _linked_users(env.db, contact.id) == []
+
+
+@pytest.mark.parametrize("minutes_ago, is_test", [(11, False), (1, True)])
+def test_S1_a_stale_or_test_inbound_message_does_not_count(env, minutes_ago, is_test):
+    contact = _dealer_unseeded(env)
+    seed_inbound(env.db, env.rio, MSG, minutes_ago=minutes_ago, is_test=is_test)
+    env.created()
+    out = env.turn(env.idea_message())
+    assert out["status"] == "no_access"
+    assert _linked_users(env.db, contact.id) == []
+
+
+def test_S1_an_older_message_is_not_the_latest(env):
+    contact = _dealer_unseeded(env)
+    seed_inbound(env.db, env.rio, MSG, minutes_ago=3)
+    seed_inbound(env.db, env.rio, "thanks", minutes_ago=1)
+    env.created()
+    out = env.turn(env.idea_message())
+    assert out["status"] == "no_access"
+    assert _linked_users(env.db, contact.id) == []
+
+
+def test_S1_the_genuine_latest_message_still_creates_the_user(env):
+    contact = _dealer_unseeded(env)
+    seed_inbound(env.db, env.rio, MSG, minutes_ago=1)
+    env.created()
+    out = env.turn(env.idea_message())
+    assert out["status"] == "complete"
+    assert len(_linked_users(env.db, contact.id)) == 1
+
+
+def test_R4_an_unlinked_dealer_skips_the_similar_lookup(env):
+    contact = _dealer(env)
+    env.sim(2)  # whatever ss would say, a user created this turn owns nothing
+    env.created()
+    out = env.turn(env.idea_message())
+    assert out["status"] == "complete"
+    assert env.similar_calls == []
+    assert len(_linked_users(env.db, contact.id)) == 1
+
+
+def test_R5_a_phone_already_on_another_user_says_the_account_could_not_be_set_up(env):
+    contact = _dealer(env)
+    env.db.add(
+        User(
+            id=str(uuid.uuid4()),
+            email=f"zzt-{uuid.uuid4().hex[:8]}@test.com",
+            name="Someone Else",
+            status="ACTIVE",
+            contact_number=normalize_msisdn(contact.phone_number),
+        )
+    )
+    env.db.flush()
+    env.created()
+    out = env.turn(env.idea_message(language="en"))
+    assert out["reply_text"] == ACCOUNT_FAILED_EN
+    assert env.create_calls == []
+    assert _linked_users(env.db, contact.id) == []
+
+
+@pytest.mark.parametrize("language", ["ms", "zh"])
+def test_R5_the_account_failure_reply_exists_in_malay_and_chinese(env, language):
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+
+    assert CHATBOT_REPLY_COPY[f"ideation_capture_account_failed.{language}"][1].strip()
+    assert CHATBOT_REPLY_COPY[f"ideation_capture_account_failed.{language}"][1] != ACCOUNT_FAILED_EN
+
+
+def test_R5_a_missing_portal_role_says_the_account_could_not_be_set_up(env):
+    env.seed_workspace()
+    contact = env.seed_contact()
+    contact.chatbot_allowed = True
+    contact.chatbot_agent_enabled = True
+    env.db.flush()
+    _genuine(env)
+    env.created()
+    out = env.turn(env.idea_message(language="en"))
+    assert out["reply_text"] == ACCOUNT_FAILED_EN
+    assert env.create_calls == []
+
+
+def test_R6_a_dealers_reply_carries_no_crm_link(env):
+    from tests.test_ideation_capture_turn import CRM
+
+    _dealer(env)
+    env.created()
+    out = env.turn(_issue(env))
+    assert out["status"] == "complete"
+    assert CRM not in out["reply_text"] and "link" not in out
+    second_text = "the order page should show the promised delivery week"
+    env.idea_message(second_text, language="en")
+    env.created()
+    second = env.turn(second_text)
+    assert second["status"] == "complete"
+    assert CRM not in second["reply_text"] and "link" not in second
+    assert IDEA_NUMBER in second["reply_text"]
+
+
+def test_R6_a_staff_reply_keeps_its_link(env):
+    from tests.test_ideation_capture_turn import CRM
+
+    env.ready()
+    idea_id = env.created()
+    out = env.turn(env.idea_message())
+    assert out["link"] == f"{CRM}/ideas/{idea_id}"
