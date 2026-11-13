@@ -417,6 +417,11 @@ def _assert_entity_visible(
         validate_uuid_path(entity_id, resource="Picture")
         if AccessoryService(db).picture_in_scope(entity_id) is None:
             raise handle_not_found("Picture", entity_id)
+    elif action_key == "warranty_term.delete":
+        # A term has no company column: it is scoped through its policy.
+        from app.services.warranty_config_service import _term_row
+
+        _term_row(db, entity_id)
     model = _PARK_SCOPED_MODELS.get(action_key)
     if model is not None:
         # Every other key on a company-owned record: read it under the caller's scope, so
@@ -500,6 +505,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
     "project_import_run.revert",
     "project_import_run.delete",
+    # A term has no company column: its own branch reads it through its (scoped) policy.
+    "warranty_term.delete",
     "accessory_image.delete",
     "certificate_link.remove",
     "combo.unlink_tag_templates",
@@ -572,7 +579,6 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "shipment_line_photo.delete",
     "sla_tracking.delete",
     # Shared reference rows (no company column); admin-only like the whole configuration.
-    "warranty_term.delete",
     "warranty_kind.delete",
     "warranty_kind.archive",
     "warranty_kind_rule.delete",

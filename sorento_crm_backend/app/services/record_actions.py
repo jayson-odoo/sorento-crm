@@ -1167,6 +1167,19 @@ def _delete_technician(db: Session, payload: dict):
     return technician_service.delete(db, _entity_id(payload))
 
 
+def _require_warranty_admin(db: Session, payload: dict) -> None:
+    """Admin is re-checked when the window lapses, not only when the action was parked."""
+    from app.services.error_handler import AppException
+    from app.services.warranty_config_service import user_is_admin
+
+    if not user_is_admin(db, payload.get("requested_by_id")):
+        raise AppException(
+            status_code=403,
+            message="Admin access is required to change warranty configuration.",
+            code="FORBIDDEN",
+        )
+
+
 def _delete_service_job_product(db: Session, payload: dict):
     from app.models.service_jobs import ServiceJobProduct
     from app.services import service_job_product_service
@@ -1179,24 +1192,28 @@ def _delete_service_job_product(db: Session, payload: dict):
 
 
 def _delete_warranty_policy(db: Session, payload: dict):
+    _require_warranty_admin(db, payload)
     from app.services import warranty_config_service
 
     return warranty_config_service.delete_policy(db, _entity_id(payload))
 
 
 def _delete_warranty_term(db: Session, payload: dict):
+    _require_warranty_admin(db, payload)
     from app.services import warranty_config_service
 
     return warranty_config_service.delete_term(db, _entity_id(payload))
 
 
 def _delete_warranty_kind(db: Session, payload: dict):
+    _require_warranty_admin(db, payload)
     from app.services import warranty_config_service
 
     return warranty_config_service.delete_kind(db, _entity_id(payload))
 
 
 def _archive_warranty_kind(db: Session, payload: dict):
+    _require_warranty_admin(db, payload)
     from app.schemas.warranty_config import KindUpdate
     from app.services import warranty_config_service
 
@@ -1204,6 +1221,7 @@ def _archive_warranty_kind(db: Session, payload: dict):
 
 
 def _delete_warranty_kind_rule(db: Session, payload: dict):
+    _require_warranty_admin(db, payload)
     from app.services import warranty_config_service
 
     return warranty_config_service.delete_rule(db, _entity_id(payload))

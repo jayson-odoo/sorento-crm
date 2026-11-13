@@ -10,7 +10,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import asc, desc, func, or_, text
+from sqlalchemy import and_, asc, case, desc, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -29,7 +29,7 @@ from app.schemas.warranty_config import (
     TermUpdate,
 )
 from app.services.error_handler import AppException, handle_conflict, handle_not_found, handle_unprocessable
-from app.services.warranty_service import KIND_RULE_MATCH_TYPES, dmy, rank_kind_matches
+from app.services.warranty_service import KIND_RULE_MATCH_TYPES, dmy, rank_kind_matches, warranty_today
 from app.services.warranty_seed import DEFECT_TYPE_SET_KEY
 
 
@@ -66,10 +66,24 @@ def _direction(column, direction: Optional[str]):
     return desc(column) if (direction or "asc").lower() == "desc" else asc(column)
 
 
-def _company_id(db: Session) -> Optional[str]:
+def _company_id(db: Session) -> str:
+    """The one company a write belongs to; a scope naming none or several is refused."""
     from app.services.company_scope import resolve_write_company_id
 
-    return resolve_write_company_id(get_company_scope(db), ambiguous=None)
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
+    if not company_id:
+        raise handle_unprocessable("Choose a single company before changing warranty policies.")
+    return company_id
+
+
+def user_is_admin(db: Session, user_id: Optional[str]) -> bool:
+    """Role admin or superadmin. The one check behind every warranty configuration write."""
+    from app.services.user_service import UserPermissionService
+
+    if not user_id:
+        return False
+    roles = UserPermissionService(db).get_user_role_slugs(str(user_id))
+    return bool(roles & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
 
 
 # ------------------------------------------------------------------ policies
@@ -117,10 +131,18 @@ def list_policies(db: Session, *, page: int, limit: int, query: Optional[str], s
     q = db.query(WarrantyPolicy, func.coalesce(counts.c.n, 0)).outerjoin(counts, counts.c.pid == WarrantyPolicy.id)
     if query and query.strip():
         q = q.filter(WarrantyPolicy.version.ilike(f"%{query.strip()}%"))
+    today = warranty_today()
+    status_rank = case(
+        (WarrantyPolicy.effective_from > today, 1),
+        (and_(WarrantyPolicy.effective_to.isnot(None), WarrantyPolicy.effective_to < today), 2),
+        else_=0,
+    )  # in force, scheduled, superseded: the pill order
     sorts = {
         "version": WarrantyPolicy.version,
         "effective_from": WarrantyPolicy.effective_from,
         "effective_to": WarrantyPolicy.effective_to,
+        "term_count": func.coalesce(counts.c.n, 0),
+        "status": status_rank,
     }
     column = sorts.get(sort or "", WarrantyPolicy.effective_from)
     order = _direction(column, direction if sort else "desc")
@@ -170,7 +192,7 @@ def create_policy(db: Session, payload: PolicyCreate) -> Dict[str, Any]:
         effective_from=payload.effective_from,
         effective_to=payload.effective_to,
         policy_text=payload.policy_text,
-        **({"company_id": company_id} if company_id else {}),
+        company_id=company_id,
     )
     db.add(row)
     db.commit()

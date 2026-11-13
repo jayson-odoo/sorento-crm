@@ -16,12 +16,12 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import asc, desc, false, func, or_, text
+from sqlalchemy import asc, desc, exists, false, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
 from app.models.complaints import Complaint
-from app.models.service_jobs import ServiceJob, Technician
+from app.models.service_jobs import ServiceJob, ServiceJobProduct, Technician
 from app.models.status import Status
 from app.services.error_handler import AppException, handle_not_found
 from app.services.project_party_contact_service import clean_phone, display_phone
@@ -208,18 +208,24 @@ def list_jobs(
     if date_to:
         q = q.filter(ServiceJob.scheduled_from < myt_day_bounds(date_to)[1])
 
-    if sort == "warranty_summary" or warranty_summaries:
-        # The summary is computed, so filter and order happen on the server over every matching job
-        # (one batched resolution), then the page is cut.
-        ids = [str(i) for (i,) in q.with_entities(ServiceJob.id).order_by(ServiceJob.id).all()]
+    if warranty_summaries or sort == "warranty_summary":
+        # The summary is computed, not stored: resolve it for the jobs that have product lines only
+        # (a job without lines has no summary), in one batch.
+        with_lines = exists().where(ServiceJobProduct.service_job_id == ServiceJob.id)
+        ids = [str(i) for (i,) in q.with_entities(ServiceJob.id).filter(with_lines).order_by(ServiceJob.id).all()]
         summaries = summaries_for_jobs(db, ids)
         if warranty_summaries:
-            ids = [i for i in ids if summaries.get(i) in warranty_summaries]
+            keep = [i for i in ids if summaries.get(i) in warranty_summaries]
+            q = q.filter(ServiceJob.id.in_(keep)) if keep else q.filter(false())
+    else:
+        summaries = {}
+    if sort == "warranty_summary":
+        all_ids = [str(i) for (i,) in q.with_entities(ServiceJob.id).order_by(ServiceJob.id).all()]
         rank = {key: n for n, key in enumerate(SUMMARY_ORDER)}
         sign = 1 if (direction or "desc").lower() == "asc" else -1
-        ids.sort(key=lambda i: sign * rank.get(summaries.get(i), len(rank)))  # stable: ties stay by id
-        total = len(ids)
-        page_ids = ids[(page - 1) * limit : page * limit]
+        all_ids.sort(key=lambda i: sign * rank.get(summaries.get(i), len(rank)))  # stable: ties stay by id
+        total = len(all_ids)
+        page_ids = all_ids[(page - 1) * limit : page * limit]
         found = {str(r[0].id): r for r in _base_query(db).filter(ServiceJob.id.in_(page_ids)).all()}
         rows = [found[i] for i in page_ids if i in found]
     else:
@@ -229,7 +235,7 @@ def list_jobs(
         if not sort:
             order = desc(ServiceJob.created_at)
         rows = q.order_by(order.nulls_last(), ServiceJob.id).offset((page - 1) * limit).limit(limit).all()
-        summaries = summaries_for_jobs(db, [str(r[0].id) for r in rows])
+    summaries = {**summaries, **summaries_for_jobs(db, [str(r[0].id) for r in rows if str(r[0].id) not in summaries])}
     data = []
     for r in rows:
         item = serialize(r)
