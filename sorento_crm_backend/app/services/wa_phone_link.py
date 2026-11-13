@@ -223,6 +223,7 @@ def send_verified(
     WA-MERGE-WELCOME: a 404 means `identifier` was merged away (nothing was delivered), so with
     `phone` the contact holding it is looked up and the line goes there once; never a third try."""
     business_id = turn_id or identifier
+    payload = {"message": {"type": "text", "text": line}}
     target: Optional[str] = identifier
     for attempt in (1, 2):
         try:
@@ -234,7 +235,7 @@ def send_verified(
                 identifier=target,
                 business_id=business_id,
                 status="failed",
-                request_payload={"message": {"type": "text", "text": line}},
+                request_payload=payload,
                 error=e,
             )
             if attempt == 2 or not phone or not _is_not_found(e):
@@ -248,7 +249,7 @@ def send_verified(
             identifier=target,
             business_id=business_id,
             status="success",
-            request_payload={"message": {"type": "text", "text": line}},
+            request_payload=payload,
             response=response,
         )
         return True

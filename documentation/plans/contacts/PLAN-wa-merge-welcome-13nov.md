@@ -1,6 +1,6 @@
 # PLAN: WA-MERGE-WELCOME (tell the user they can use the AI after the contact merge)
 
-Status: Plan (size M; behaviour card + data request filed as crew asks, no code until answered)
+Status: Review (re-sized S by crew after the owner's Integration Logs evidence; small fix track: no migration, no RBAC change, no new ingest surface)
 
 ## Owner ask (13 Nov ~18:05)
 After the share-contact merge, nothing tells the WhatsApp user they are verified and can start
@@ -32,6 +32,30 @@ A number typed as text is not a contact card (`engine.py:4286-4287`, refusal `no
 contact gets the share template again, at most `PHONE_ASK_CAP` times per 24 h, then one staff
 hand-off. That is the "asked twice" the owner saw; it is capped, not an endless loop. Not changed here.
 
-## Open (crew asks)
-1. Wording (2 options) for the verified line.
-2. Prod outbox row(s) for the verified send on the owner's case.
+## Crew asks (resolved)
+1. Wording: unchanged, the owner saw no issue with it.
+2. Prod outbox row: read by the owner in Integration Logs (below).
+
+## Root cause (owner evidence, prod Integration Logs 13 Nov ~17:58)
+The verified line WAS sent, to the contact Respond.io had merged away: `404 Not Found` on
+`/v2/contact/id:<merged-away>/message`. Respond.io keeps the OLDER contact; `link_phone` trusted the id
+the merge response (or the lookup right after it) named (`wa_phone_link.py`, `_merge_survivor`), so the
+line, and the CRM row's `respond_io_id`, pointed at a deleted contact. Wording unchanged (owner).
+
+## Fix
+- `wa_phone_link._still_there`: after the merge, GET the named survivor; a 404 means the other merged id
+  survived (that one gets the phone written, as before); neither found = failure, no CRM write; any other
+  error propagates to the existing Respond.io-failure hand-off.
+- `wa_phone_link.send_verified(..., phone=)`: a 404 (nothing delivered) resends ONCE to the contact
+  holding the phone (`_holder_of`); never a third try, never to the same id; one outbox row per attempt.
+- Engine passes the shared phone to both the verified and the no-access line.
+
+## Tests
+`tests/test_wa_phone_link.py` test_mw1..mw9, mw12; `tests/chatbot/test_wa_phone_link_gate.py` test_mw10
+(owner case) and test_mw11 (late 404).
+
+## Known, not fixed here
+- Prod CRM rows linked before this fix may hold the merged-away `respond_io_id`; a contact whose row
+  does is not recognised by the AI gate until the row points at the survivor.
+- After a resend to a different holder, the AI-off staff comment still targets the first survivor
+  (best effort, logged on failure).

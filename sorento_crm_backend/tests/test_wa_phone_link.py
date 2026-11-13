@@ -830,3 +830,20 @@ def test_mw9_verified_line_retry_failing_too_is_logged_and_not_tried_a_third_tim
         assert ok is False
         assert [c[0] for c in client.calls].count("send") == 2
         assert [r.status for r in _logs(db)] == ["failed", "failed"]
+
+
+def test_mw12_a_non_404_error_checking_the_survivor_is_a_respond_failure_with_no_crm_write():
+    m = _mod()
+
+    class _Down(FakeClient):
+        def get_contact_by_identifier(self, identifier):
+            self.calls.append(("get", str(identifier)))
+            raise _http_error(500)
+
+    with blank_session() as db:
+        ws = _workspace(db)
+        _row(db, f"+{E164}", respond_io_id="900000077", workspace_id=str(ws.id))
+        out = m.link_phone(db, _Down(merge_result="phone"), contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "failed"
+        assert out.survivor_respond_id == str(PHONE_ID)
+        assert [r.respond_io_id for r in _rows(db)] == ["900000077"]
