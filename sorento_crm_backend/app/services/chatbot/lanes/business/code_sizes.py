@@ -182,6 +182,14 @@ def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _named_codes(parser: dict[str, Any]) -> set[str]:
+    """The codes the message's product entities name whole: each one's raw and the parser's
+    `canonical_code`, folded by `turn_state.token_key`."""
+    from app.services.chatbot.turn.state import token_key
+
+    return {token_key(e.get(k)) for e in _product_codes(parser) for k in ("raw", "canonical_code") if e.get(k)} - {""}
+
+
 def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:
     """The numeric sizes the parser read apart from a code (grounded specification entities)."""
     return [
@@ -320,14 +328,16 @@ def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return offerable_product_rows(db, rows)
 
 
-def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
+def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any], named_codes: set[str] | frozenset[str] = frozenset()) -> None:
     """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
     lone hit the typed code is not the prefix of: "C21120UW-2-MY" inside BRC21120UW-2-MY) is
     offered as "Did you mean X?", never answered. CHATBOT-CLOSE-CODES C2 / AC-6 (crew Q2 (a),
     13 Nov 2026): a lone PREFIX hit is offered the same way ("SRTWC287-S" for SRTWC287-S-150);
     only the equal code (case and separators folded) is answered. Several hits stay today's
     which-one picker. Read per token (OR mode) or on the one token's rows (AND mode), folded as
-    the resolver folds (`turn_state.token_key`)."""
+    the resolver folds (`turn_state.token_key`). A code the message's own product entity names
+    whole (`named_codes`: its raw or the parser's code, folded the same way, as in "TWC015SS
+    CR" or "SRTWT8259 gun metal" read as SRTWT8259-GM) is that equal code, answered as today."""
     from app.services.chatbot.turn.state import token_key
 
     def inside_only(token: Any, rows: list[Any]) -> dict[str, Any] | None:
@@ -335,7 +345,7 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
         if len(rows) != 1 or rows[0].get("entity_type") != "product":
             return None
         code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
-        return rows[0] if typed and typed in code and code != typed else None
+        return rows[0] if typed and typed in code and code != typed and code not in named_codes else None
 
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
@@ -375,7 +385,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     # Several codes and a size: main's behaviour for the size rules (lead re-scope, 12 Nov 2026).
     sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
-        _single_substring_is_an_offer(db, resolved)
+        _single_substring_is_an_offer(db, resolved, _named_codes(parser))
         if sized:
             _unheld_size_is_a_miss(db, parser, resolved)
         misses = [
