@@ -76,6 +76,10 @@ ALLOWED = {
     # `head.parser` and the engine's access check and wraps `trace.TurnTrace.record`, none of
     # which `/chat/turn` exposes. A developer tool, not core, not on any request path.
     "scripts/chat_latency_probe.py",
+    # CHATBOT-SPEED (#2368): the owner's hand-test timing table, read back from stored Console turns. Reads
+    # `turn.memory._turn_message_text` and `analytics.labeller._reply_text` (reused, not copied). Read-only, no model
+    # call; a developer tool, not core, not on any request path.
+    "scripts/chatbot_eval/speed_table.py",
     # SUPPLIER-ASK (#2066): measures the supplier span meaning floor offline over `head.lookup_lists` /
     # `head.list_resolver` on a dev copy. A developer tool, not core, not on any request path.
     "scripts/measure_supplier_span_floor.py",
