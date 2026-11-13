@@ -45,6 +45,7 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
   resetUserListColumnConfig: vi.fn(async () => undefined),
 }));
 
+const poCandidatesSpy = vi.hoisted(() => vi.fn());
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
 vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
@@ -53,6 +54,7 @@ vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => 
     ...actual,
     listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
     getOrderInquiryWorklistSummary: (...args: unknown[]) => getOrderInquiryWorklistSummary(...args),
+    getOrderInquiryPoCandidates: (...args: unknown[]) => poCandidatesSpy(...args),
     getUnplaceAllPreview: vi.fn(async () => ({ count: 0, product_code: null, product_name: null })),
   };
 });
@@ -373,5 +375,40 @@ describe('AC-12 the count says how many ticked rows are in AutoCount', () => {
     openActionsMenu();
     const item = await screen.findByRole('menuitem', { name: 'Link to PO... (0 of 1)' });
     expect(item).toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+
+describe('Link to PO... without AutoCount falls back to the CRM placement dialog (owner, 13 Nov)', () => {
+  const PO_CANDIDATE = {
+    kind: 'po', po_line_id: 'pol-1', tier: 1, location: 'BRW', issue_date: '2026-08-01', cited: false,
+    po_number: 'ZZT-PO-0001', supplier_name: 'Dafuyuan', expected_date: '2026-09-01', qty_ordered: '15',
+    qty_received: '0', already_tagged: '0', remaining: '15', covers: true, recommended: false,
+    default_take: '10', claims: [],
+  };
+  const SPO_CANDIDATE = {
+    ...PO_CANDIDATE, kind: 'spo', po_line_id: null, spo_allocation_id: 'spo-1', po_number: 'ZZT-SPO-0009',
+  };
+
+  it('with the switch off, Link to PO... is shown, opens the CRM dialog with PO lines only, and Choose document is gone', async () => {
+    poLinkSwitchOn = false;
+    poCandidatesSpy.mockResolvedValue({ candidates: [PO_CANDIDATE, SPO_CANDIDATE], still_to_link: '10' });
+    await ready();
+    tick('SO-P1');
+    openActionsMenu();
+    await screen.findByRole('menuitem', { name: /Auto link all/ });
+    expect(screen.queryByRole('menuitem', { name: /^Choose document/ })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Link to PO\.\.\./ }));
+    expect(await screen.findByText('Link to a document')).toBeInTheDocument();
+    expect(await screen.findByText('ZZT-PO-0001')).toBeInTheDocument();
+    expect(screen.queryByText('ZZT-SPO-0009')).toBeNull();
+  });
+
+  it('with the switch ON, Choose document is gone too', async () => {
+    await ready();
+    tick('SO-P1');
+    openActionsMenu();
+    await screen.findByRole('menuitem', { name: /Auto link all/ });
+    expect(screen.queryByRole('menuitem', { name: /^Choose document/ })).toBeNull();
   });
 });
