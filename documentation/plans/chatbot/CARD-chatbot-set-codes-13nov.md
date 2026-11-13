@@ -26,8 +26,7 @@ the set first, then its members, up to 3, numbered; nothing is answered. Picking
 S3. A part's role is never read from a letter in the code. The family of a code (the products a "code + words" ask
 narrows among) is what the catalogue links: the product's Family code (derived or set by hand) and the members of a
 registered set of that family. The rule that inserts an "X" after the code's letters is removed. A variant the
-catalogue does not link is no longer in the family; it is still found by the generic close-code offer (offered, not
-answered).
+catalogue does not link is no longer in the family (see Q2 for what that costs until the data is filled).
 
 S4. Trace: every turn that answers or offers a set writes one `code_candidates` entry: the typed code, the set, its
 member codes in membership order, the other candidates in offered order, and `answered` or `offered`.
@@ -39,7 +38,7 @@ member codes in membership order, the other candidates in offered order, and `an
 | 1 | dealer | `cwc604-rl x 2` | registered set CWC604-P-RL; product CWC609-RL | "Did you mean CWC609-RL?" | "Couldn't find CWC604-RL. Did you mean:" 1. CWC604-P-RL (the set), 2-3. its members; quantity 2 kept |
 | 2 | staff | `CWC604PRL stock` | same set | set answered | set answered (members' stock, complete sets), unchanged |
 | 3 | staff | `Srtwc7604 p trap price` | SRTWC7604-SC, SRTWCX7604-P, a registered set holding both | narrowed to SRTWCX7604-P by the X rule | narrowed to SRTWCX7604-P through the set link (same answer) |
-| 4 | staff | `Srtwc7604 p trap price` | same, but NO set and no Family code links SRTWCX7604-P | narrowed to SRTWCX7604-P by the X rule | the family is SRTWC7604-* only; SRTWCX7604-P is offered by the close-code offer, never answered |
+| 4 | staff | `Srtwc7604 p trap price` | same, but NO set and no Family code links SRTWCX7604-P | narrowed to SRTWCX7604-P by the X rule | inferred: the family is SRTWC7604-* only, "p trap" picks nothing in it, so the reply covers SRTWC7604-* and SRTWCX7604-P is NOT reached (the token is a prefix hit, not a miss, so no close-code offer runs) until the catalogue links it |
 | 5 | dealer | `cwc604prl` | set with one member the dealer may not see | n/a | not answered and not offered (existing `visible_set_clauses`, `entity_resolver.py:3276`) |
 
 Edge cases: an inactive set, or one with no members, is neither answered nor offered (existing `visible_set_clauses`); a discontinued member is listed in the set
@@ -55,8 +54,10 @@ lane becomes size L). Recommendation: (a), nothing reads a role today and a colu
 Q2. The X insert goes now. Crew data (12 Nov): 54 active X-coded products in 29 families have neither a set nor a
 Family code link, so example 4 changes for them (narrowed answer becomes an offer). (a) remove now; the 54 are listed
 for data fill (set Family code or register a set), and the #833 owner tests are re-seeded with a set link so their
-answers stay; (b) keep the X insert as a fallback until those 54 are linked. Recommendation: (a), the brief's rule
-("family = products the catalogue links") and an offer is never a wrong answer.
+answers stay; (b) keep the X insert as a fallback until those 54 are linked. Cost of (a): for those 29 families a
+"code + words" ask ("Srtwc7604 p trap") no longer reaches the X-coded variant (example 4), it is not answered wrongly,
+it is just not found until linked. Recommendation: (a), the brief's rule ("family = products the catalogue links"),
+with the 54-code fill list posted at crew-done so data entry closes the gap.
 
 Q3. "Make card v3 R1 generic". Card v3's R1 is dealer close-code offers, owned by lane CHATBOT-CLOSE-CODES. (a) read
 it as "the family/set rule is generic" (S3 here); (b) it means dealer offers, out of this lane. Recommendation: (a).
