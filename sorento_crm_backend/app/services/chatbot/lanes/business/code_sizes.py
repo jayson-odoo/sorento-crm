@@ -182,6 +182,16 @@ def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _words_typed_as_codes(parser: dict[str, Any]) -> set[str]:
+    """CHATBOT-CLOSE-CODES C1 (G3): the folded tokens the parser typed as a product code
+    (`answer.product_typed_tokens`, owner Q1 (b)) that take no code family
+    (`turn.task.code_or_number`, the availability filter's own test)."""
+    from app.services.chatbot.lanes.business.answer import product_typed_tokens
+    from app.services.chatbot.turn import task as turn_task
+
+    return {t for t in product_typed_tokens(parser) if not turn_task.code_or_number(t)}
+
+
 def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:
     """The numeric sizes the parser read apart from a code (grounded specification entities)."""
     return [
@@ -261,7 +271,7 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         if not family:
             # The code alone, when the chat may offer it (owner Q3); else the miss offers nothing
             # (R4: a code is never answered for a size it does not store).
-            alone = _offerable_rows(db, [exact[0]])
+            alone = offerable_rows(db, [exact[0]])
             family = [_row(str(r["canonical_code"]), str(r["uuid"]), "family") for r in alone]
         miss = {
             "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
@@ -313,8 +323,9 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
     return [_row(code, str(pid), "all_parts") for pid, code in found]
 
 
-def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query."""
+def offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query.
+    Also the close codes `references._drop_word_code_fragments` keeps for a typed product word."""
     from app.models.product import Product, offerable_products
 
     ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
@@ -325,12 +336,16 @@ def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
 
 
-def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
+def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any], words: set[str] | frozenset[str] = frozenset()) -> None:
     """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
     lone hit the typed code is not the prefix of: "C21120UW-2-MY" inside BRC21120UW-2-MY) is
     offered as "Did you mean X?", never answered. A lone prefix hit stays answered; several
     hits stay today's which-one picker. Read per token (OR mode) or on the one token's rows
-    (AND mode), folded as the resolver folds (`turn_state.token_key`)."""
+    (AND mode), folded as the resolver folds (`turn_state.token_key`).
+
+    `words` (CHATBOT-CLOSE-CODES C1, G3): the folded tokens typed as a product code that take no
+    code family (`_words_typed_as_codes`). A lone hit such a token is the prefix of is offered
+    too: the availability filter answers only an equal code for it (`engine._exact_codes_only`)."""
     from app.services.chatbot.turn.state import token_key
 
     def inside_only(token: Any, rows: list[Any]) -> dict[str, Any] | None:
@@ -338,7 +353,9 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
         if len(rows) != 1 or rows[0].get("entity_type") != "product":
             return None
         code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
-        return rows[0] if typed and typed in code and not code.startswith(typed) else None
+        if not typed or typed not in code or code == typed:
+            return None
+        return rows[0] if typed in words or not code.startswith(typed) else None
 
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
@@ -353,7 +370,7 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
         if hit is None:
             continue
         # A code the chat may not offer (owner Q3) leaves today's no-candidate miss.
-        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": _offerable_rows(db, [hit])}
+        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": offerable_rows(db, [hit])}
         if res is not None:
             res.update(miss)
         else:
@@ -378,7 +395,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     # Several codes and a size: main's behaviour for the size rules (lead re-scope, 12 Nov 2026).
     sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
-        _single_substring_is_an_offer(db, resolved)
+        _single_substring_is_an_offer(db, resolved, _words_typed_as_codes(parser))
         if sized:
             _unheld_size_is_a_miss(db, parser, resolved)
         misses = [

@@ -1789,7 +1789,13 @@ def _restate_resolution(result: dict[str, Any], tr: dict[str, Any], kept: list[A
     ]
 
 
-def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
+def _drop_word_code_fragments(
+    result: dict[str, Any],
+    vocabulary: Any,
+    *,
+    offer_for: set[str] | frozenset[str] = frozenset(),
+    offerable: Any = None,
+) -> None:
     """CODE-SUBSTRING (crew a59517206 (a)): a WORD token (no ASCII digit) gets no product from a
     code fragment read. A registry word is never a code hit, as a substring or as whole code
     segments. Kept: exact / head_code rows, a row whose code IS the token (separators aside,
@@ -1802,7 +1808,12 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
     when ANY of its tokens is a registry word. Each word is checked in the form the probe matched it
     by (as typed when the code holds it, else its `_word_variants` forms). Runs once, early, so every
-    reader of the result sees the same rows."""
+    reader of the result sees the same rows.
+
+    `offer_for` (CHATBOT-CLOSE-CODES C1, G3, owner Q1 (b)): the folded word tokens the caller typed
+    as a PRODUCT code. A dropped row of such a word that is no registry word is still never a
+    match, but it stays a close code: it moves to the token's did-you-mean `alternatives`, the
+    rows `offerable` (a callable over row dicts) leaves, after the alternatives already there."""
     words: list[frozenset[str]] = []
 
     def known(tokens: list[str], code: str) -> bool:
@@ -1840,6 +1851,17 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         # a code that STARTS with the word: a family sibling unless it is a registry word
         return not known(tokens, code)
 
+    def close_codes(owner: dict[str, Any], tokens: list[str], dropped: list[Any]) -> None:
+        if len(tokens) != 1 or _fold_code(tokens[0]) not in offer_for:
+            return
+        rows = [m for m in dropped if isinstance(m, dict) and m.get("entity_type") == "product"]
+        rows = [m for m in rows if not known(tokens, _fold_code(m.get("canonical_code")))]
+        rows = list(offerable(rows)) if callable(offerable) and rows else rows
+        have = {str(a.get("uuid")) for a in owner.get("alternatives") or [] if isinstance(a, dict)}
+        added = [m for m in rows if str(m.get("uuid")) not in have]
+        if added:
+            owner["alternatives"] = [*(owner.get("alternatives") or []), *added]
+
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
             continue
@@ -1847,6 +1869,7 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         keep = [m for m in rows if kept(m, [resolution.get("token")])]
         if len(keep) != len(rows):
             _restate_resolution(result, resolution, keep)
+            close_codes(resolution, [resolution.get("token")], [m for m in rows if m not in keep])
     tokens = [t for t in result.get("tokens") or []]
     if isinstance(result.get("intersection"), list) and not any(_has_digit(t) for t in tokens):
         rows = result["intersection"]
@@ -1854,6 +1877,8 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         if len(keep) != len(rows):
             result["intersection"] = keep
             _rebuild_intersection_fields(result)
+            if not keep:
+                close_codes(result, tokens, [m for m in rows if m not in keep])
 
 
 def _drop_word_neighbours(result: dict[str, Any], *, offer_for: set[str] | frozenset[str] = frozenset()) -> None:
@@ -3599,20 +3624,29 @@ def resolve_reference_post(
     if spec_none and isinstance(result, dict):
         # A size or named spec no variant of the typed code's family holds; the reply says so.
         result["spec_none"] = spec_none
+    # CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov 2026): a word token the caller typed
+    # as a PRODUCT (its own type, positionally parallel) keeps its did-you-mean.
+    typed_products = (
+        {_fold_code(t) for t, kind in zip(payload.tokens, payload.allowed_entity_types) if kind == "product"}
+        if payload.exact_match and payload.tokens and payload.allowed_entity_types
+        and len(payload.tokens) == len(payload.allowed_entity_types)
+        else set()
+    )
+    print("DBG REF", payload.exact_match, payload.require, payload.spec_fallback, payload.tokens, payload.allowed_entity_types, typed_products, [(m.get("canonical_code"), m.get("match_tier")) for m in result.get("intersection") or []])
     if payload.exact_match:
-        # CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov 2026): a word token the caller typed
-        # as a PRODUCT (its own type, positionally parallel) keeps its trigram did-you-mean.
-        typed_products = (
-            {_fold_code(t) for t, kind in zip(payload.tokens, payload.allowed_entity_types) if kind == "product"}
-            if payload.tokens and payload.allowed_entity_types and len(payload.tokens) == len(payload.allowed_entity_types)
-            else set()
-        )
         _drop_word_neighbours(result, offer_for=typed_products)
     if payload.require or payload.spec_fallback:
         # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
+        from app.services.chatbot.lanes.business.code_sizes import offerable_rows
         from app.services.product_spec_search import _search_vocabulary
 
-        _drop_word_code_fragments(result, lambda: _search_vocabulary(db, brands=[]))
+        _drop_word_code_fragments(
+            result,
+            lambda: _search_vocabulary(db, brands=[]),
+            offer_for=typed_products,
+            offerable=lambda rows: offerable_rows(db, rows),
+        )
+        print("DBG AFTER", [(m.get("canonical_code"), m.get("match_tier"), m.get("uuid")) for m in result.get("alternatives") or []], result.get("unresolved_tokens"), result.get("intersection"))
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",

@@ -1037,6 +1037,12 @@ def _exact_codes_only(
     candidates = [c for c in resolved_candidates.get("product") or [] if isinstance(c, dict)]
     if not tokens or not candidates:
         return None
+    # CHATBOT-CLOSE-CODES C1 (G1): a token the parser typed as a product code is a code whatever
+    # its shape (`answer.product_typed_tokens`, owner Q1 (b)), so with no exact code it is a
+    # miss the reply names and offers close codes for, never dropped as a word.
+    from app.services.chatbot.lanes.business.answer import product_typed_tokens
+
+    typed_products = product_typed_tokens(parse_output)
     keep: set[str] = set()
     per_token: dict[str, int] = {}
     misses: dict[str, str] = {}
@@ -1061,7 +1067,7 @@ def _exact_codes_only(
         if chosen:
             keep.update(str(c.get("uuid")) for c in chosen)
             per_token[fold] = len(chosen)
-        elif turn_task.code_or_number(code):
+        elif turn_task.code_or_number(code) or fold in typed_products:
             misses[fold] = typed
         else:
             ignored.add(fold)

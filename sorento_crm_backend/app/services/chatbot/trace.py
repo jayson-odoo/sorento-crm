@@ -492,18 +492,22 @@ def code_candidates_events(
     resolver's token), `question` the pending question the reply stored, `shown_codes` the
     codes the reply listed (`Answer.shown_codes`), `answered` the codes it answered (folded
     by `token_key`). Per miss: the typed word, the candidates (code, the resolver's match
-    tier and similarity, and each one's own outcome: `offered` when the question's options
-    or the shown codes hold it (the AC-1691 yes/no offer of one code included), else
-    `answered` when the reply answered it, else `not_shown`), the offered ones first in
-    offered order, and the miss's `offered` when any candidate was, else `answered`.
+    tier and similarity, `all_parts` when it holds every typed part in order
+    (`answer.holds_every_typed_part`, the ranking's own test), and each one's own outcome:
+    `offered` when the question's options or the shown codes hold it (the AC-1691 yes/no
+    offer of one code included), else `answered` when the reply answered it, else
+    `not_shown`), the offered ones first in offered order, and the miss's `offered` when any
+    candidate was, `no_candidate` when it had none (CHATBOT-CLOSE-CODES C7), else `answered`.
     Codes only, never a row id.
     """
+    from app.services.chatbot.lanes.business.answer import holds_every_typed_part
     from app.services.chatbot.turn.state import token_key
 
     resolved = (payload or {}).get("resolved") if isinstance(payload, dict) else None
     resolved = resolved if isinstance(resolved, dict) else {}
     how: dict[str, tuple[Any, Any]] = {}
-    for resolution in resolved.get("resolutions") or []:
+    # The single-token shape keeps its did-you-mean on the result itself.
+    for resolution in [*(resolved.get("resolutions") or []), resolved]:
         if not isinstance(resolution, dict):
             continue
         for match in [*(resolution.get("matches") or []), *(resolution.get("alternatives") or [])]:
@@ -535,15 +539,14 @@ def code_candidates_events(
                 "code": str(r["code"]),
                 "tier": how.get(str(r.get("uuid")), (None, None))[0],
                 "similarity": how.get(str(r.get("uuid")), (None, None))[1],
+                "all_parts": holds_every_typed_part(typed, r["code"]),
                 "outcome": outcome_of(str(r["code"])),
             }
             for r in rows
         ]
-        events.append(
-            {
-                "typed": typed,
-                "candidates": candidates,
-                "outcome": "offered" if any(c["outcome"] == "offered" for c in candidates) else "answered",
-            }
-        )
+        if any(c["outcome"] == "offered" for c in candidates):
+            outcome = "offered"
+        else:
+            outcome = "answered" if candidates else "no_candidate"
+        events.append({"typed": typed, "candidates": candidates, "outcome": outcome})
     return events
