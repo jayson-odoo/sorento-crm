@@ -502,11 +502,12 @@ def test_f1_a_members_alternative_is_an_alternative_line_inside_the_set_block_on
 A_SETS = {"QWC7405-RL-P-PJ": ["QWCX7405-RL-P-PJ", "QWCY7405"], "QWC7405-RL-S-PJ": ["QWCX7405-RL-S-PJ", "QWCY7405"]}
 
 
+@pytest.mark.parametrize("typed", ["QWC7405-RL", "qwc7405rl", "QWC7405 RL"], ids=["dashed", "folded", "spaced"])
 @pytest.mark.parametrize("who", ["dealer", "staff"])
-def test_f2_a_word_that_is_a_prefix_of_two_set_codes_offers_both_and_answers_none(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+def test_f2_a_word_that_is_a_prefix_of_two_set_codes_offers_both_and_answers_none(session_factory, monkeypatch, stub_access, who, typed):  # noqa: F811
     c = _world(session_factory, monkeypatch, stub_access, A_SETS)
     _who(c, who)
-    text = c.say("QWC7405-RL stock", stock(product("QWC7405-RL")))
+    text = c.say(f"{typed} stock", stock(product(typed)))
     assert not _stocked_ids(c), ("a set's members were read for a code that equals neither", c.stock_calls, text)
     assert "*Set " not in text, text
     offered = _option_codes(c) if c.stored_question else []
@@ -543,11 +544,12 @@ def test_r1_an_alternative_the_customer_also_asked_for_is_answered_as_its_own_it
     assert f"*Set {P_RL}*" in text, text
 
 
+@pytest.mark.parametrize("typed", ["QWC7405-RL", "qwc7405rl", "QWC7405 RL"], ids=["dashed", "folded", "spaced"])
 @pytest.mark.parametrize("who", ["dealer", "staff"])
-def test_r2_two_prefix_sets_beside_a_product_are_offered_not_dropped_and_not_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+def test_r2_two_prefix_sets_beside_a_product_are_offered_not_dropped_and_not_answered(session_factory, monkeypatch, stub_access, who, typed):  # noqa: F811
     c = _world(session_factory, monkeypatch, stub_access, A_SETS, extra=["QWC7405-RL-SC"])
     _who(c, who)
-    text = c.say("QWC7405-RL stock", stock(product("QWC7405-RL")))
+    text = c.say(f"{typed} stock", stock(product(typed)))
     offered = _option_codes(c) if c.stored_question else []
     listed = set(offered) | {code for code in A_SETS if _word(code, text)}
     assert set(A_SETS) <= listed, ("a set was dropped from the offer", offered, text)
