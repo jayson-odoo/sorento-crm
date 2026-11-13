@@ -146,6 +146,12 @@ def _ss_code(exc: IdeationServiceError) -> Any:
     return err.get("code") if isinstance(err, dict) else None
 
 
+def is_unknown_type(exc: IdeationServiceError) -> bool:
+    """SS #235: a 422 whose body says `unknown_type` is ss refusing the item's type. Any other 422
+    (a validation error, another code, no body) is not."""
+    return exc.status_code == 422 and _ss_code(exc) == "unknown_type"
+
+
 def _ss_failure(exc: IdeationServiceError, step: str, respond_io_id: Any) -> str:
     """Log an ss failure and return its reply kind. A 4xx other than 408/429 will not heal on
     a retry (a scope, key or payload fault), so it is `config_error` at ERROR; everything else
@@ -692,12 +698,12 @@ def handle_capture_turn(
     try:
         result = call_create_idea(config.base_url, config.api_key, payload)
     except IdeationServiceError as exc:
-        if exc.status_code == 422:
-            # SS #235: ss refuses the item itself (`unknown_type`, or any other 422). Plain words, no
-            # retry; never the "set up wrong" reply.
+        if is_unknown_type(exc):
+            # SS #235: ss refuses the item's type (422 `unknown_type`). Plain words, no retry; never
+            # the "set up wrong" reply. Any other 422 is a permanent fault and goes through _ss_failure.
             logger.warning(
-                "ideation capture create refused by ss: status=422 code=%s respond_io_id=%s",
-                _ss_code(exc), respond_io_id,
+                "ideation capture create refused by ss: status=422 code=unknown_type respond_io_id=%s",
+                respond_io_id,
             )
             kind = "type_refused"
         else:
