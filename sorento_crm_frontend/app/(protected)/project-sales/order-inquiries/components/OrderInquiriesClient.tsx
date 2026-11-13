@@ -72,7 +72,6 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
 import { LinkDocumentDialog } from '../../_shared/components/LinkDocumentDialog';
-import { STATE_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 import {
@@ -1194,8 +1193,14 @@ export function OrderInquiriesClient({
   // do not tick at all, but a row can be ticked before it is cancelled elsewhere).
   const selectedConfirmable = selectedRows.filter((row) => {
     const state = ackStateOf(row);
-    return (state === 'awaiting' || state === 'changed') && row.state !== 'cancelled';
+    return (
+      (state === 'awaiting' || state === 'changed') &&
+      row.state !== 'cancelled' &&
+      !row.waiting_for_cs
+    );
   });
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-3): a ticked row waiting for CS is skipped by Confirm.
+  const skippedWaiting = selectedRows.filter((row) => row.waiting_for_cs).length;
   // Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026): ticked rows
   // purchasing HAS signed off - `acknowledged` or `changed` - the reverse of Confirm's
   // own set above. Excludes a cancelled row even if ticked (review round 1, S1): its
@@ -1367,6 +1372,7 @@ export function OrderInquiriesClient({
    * `filter` once "Select all N matching" is taken - the endpoint accepts exactly one. */
   function runConfirm() {
     setConfirmingOpen(false);
+    const skipped = selectAllMatchingActive ? 0 : skippedWaiting;
     acknowledge.mutate(
       selectAllMatchingActive
         ? { filter: listFilters, horizon: horizonRequest }
@@ -1375,6 +1381,13 @@ export function OrderInquiriesClient({
         onSuccess: () => {
           setRowSelection({});
           setSelectAllMatchingActive(false);
+          if (skipped > 0) {
+            toast.warning(
+              skipped === 1
+                ? '1 row is waiting for CS and was skipped'
+                : `${skipped} rows are waiting for CS and were skipped`,
+            );
+          }
         },
       },
     );
@@ -1641,25 +1654,6 @@ export function OrderInquiriesClient({
             };
           })}
           placeholder="Any"
-        />
-      </div>
-      <div className="space-y-1.5">
-        {/* AC-OH-61: the row's OWN state - Raised / Partly linked / Actioned /
-            Cancelled / Linked, off `summary.by_state` (`total` is a count, not an
-            option). The one field that can ask for `state=cancelled`, since the list
-            hides cancelled by default otherwise (S5). */}
-        <Label className="text-xs text-muted-foreground">State</Label>
-        <SearchableMultiSelect
-          value={splitMulti(stateFilter)}
-          onChange={(value) => setStateFilter(joinMulti(value))}
-          clearable
-          options={Object.entries(summary.data?.by_state ?? {})
-            .filter(([key]) => key !== 'total')
-            .map(([key, count]) => ({
-              value: key,
-              label: `${STATE_LABEL[key] ?? key} (${count})`,
-            }))}
-          placeholder="Every state"
         />
       </div>
       <div className="space-y-1.5">

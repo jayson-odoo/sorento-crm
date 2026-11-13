@@ -169,7 +169,12 @@ describe('RelatedRecordsPanel', () => {
     ['SI-ZZT-0001', '/procurement-management/stock-inquiries/si-1'],
     ['CX-ZZT-0001', '/complaint-management/complaints/cx-1'],
     ['PR-ZZT-0001', '/procurement-management/purchase-requests/pr-1'],
-    ['SF-ZZT-0001', '/procurement-management/sponsorship-forms/sf-1'],
+    // A sponsorship form's page names this project as its origin, so its Back returns here
+    // (PROJECT-STAGE-ACTIONS, `BackToList originLabel`).
+    [
+      'SF-ZZT-0001',
+      `/procurement-management/sponsorship-forms/sf-1?back=${encodeURIComponent('/project-sales/p1?tab=sponsorships')}`,
+    ],
     ['NPA-990001', '/procurement-management/new-product-applications/npa-1'],
   ])('AC-A7 clicking %s opens its own page', (number, href) => {
     renderWithClient(<RelatedRecordsPanel project={project()} />);
