@@ -20,8 +20,9 @@ class SubmissionType:
     label: str
     #: The one field the item cannot be filed without.
     required_field: str
-    #: The value of the ss `type` field; None sends no `type` (an idea's payload stays as it was).
-    ss_type: str | None
+    #: The value of the ss `type` field. A create of the default type sends none (its payload stays as it
+    #: was); an edit sends it explicitly, so an issue can be turned back into an idea.
+    ss_type: str
     #: `ideation_capture_*` copy names (`chatbot_reply_copy`) of the ask-back and the filed reply.
     ask_copy: str
     complete_copy: str
@@ -29,7 +30,7 @@ class SubmissionType:
 
 SUBMISSION_TYPES: dict[str, SubmissionType] = {
     "idea": SubmissionType(
-        label="Feature request", required_field="problem", ss_type=None,
+        label="Feature request", required_field="problem", ss_type="idea",
         ask_copy="ask_idea", complete_copy="complete",
     ),
     "issue": SubmissionType(
@@ -40,16 +41,24 @@ SUBMISSION_TYPES: dict[str, SubmissionType] = {
 DEFAULT_TYPE = "idea"
 
 
+def known_type(value: Any) -> str | None:
+    """The type key `value` names (case and spaces ignored), else None."""
+    key = value.strip().lower() if isinstance(value, str) else ""
+    return key if key in SUBMISSION_TYPES else None
+
+
 def normalise_type(value: Any) -> str:
     """A known type key; anything else (missing, unknown, not text) is the default, `idea`."""
-    key = value.strip().lower() if isinstance(value, str) else ""
-    return key if key in SUBMISSION_TYPES else DEFAULT_TYPE
+    return known_type(value) or DEFAULT_TYPE
 
 
-def ss_fields_for_type(submission_type: Any) -> dict[str, str]:
-    """The ss create fields that carry the type: `{"type": "issue"}` for an issue, nothing for an idea."""
-    ss_type = SUBMISSION_TYPES[normalise_type(submission_type)].ss_type
-    return {"type": ss_type} if ss_type else {}
+def ss_fields_for_type(submission_type: Any, *, explicit: bool = False) -> dict[str, str]:
+    """The ss fields that carry the type: `{"type": "issue"}` for an issue. A create of an idea sends
+    nothing; `explicit` (an edit) sends the default type too."""
+    key = normalise_type(submission_type)
+    if key == DEFAULT_TYPE and not explicit:
+        return {}
+    return {"type": SUBMISSION_TYPES[key].ss_type}
 
 
 def type_of_idea(idea: dict[str, Any]) -> str:
@@ -57,6 +66,6 @@ def type_of_idea(idea: dict[str, Any]) -> str:
     value = idea.get("type") if isinstance(idea, dict) else None
     key = value.strip().lower() if isinstance(value, str) else ""
     for name, row in SUBMISSION_TYPES.items():
-        if row.ss_type is not None and row.ss_type == key:
+        if row.ss_type == key:
             return name
     return DEFAULT_TYPE

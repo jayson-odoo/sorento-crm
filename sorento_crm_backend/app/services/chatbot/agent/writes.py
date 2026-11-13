@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from app.services.chatbot import principal as staff_principal
-from app.services.submission_types import SUBMISSION_TYPES, normalise_type
+from app.services.submission_types import SUBMISSION_TYPES, normalise_type, type_of_idea
 from app.services.chatbot.agent.tools import (
     ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail, panel_closed,
 )
@@ -2222,9 +2222,17 @@ def _check_use_cases(args: dict) -> None:
         )
 
 
+def _idea_photos_go(args: dict) -> bool:
+    """Do the user's chat photos go onto this create? Only on a live turn of the contact: never a test
+    (console) item and never the staff web panel, whose user sent no chat photos."""
+    return not _idea_is_test(args) and staff_principal.current() is None
+
+
 def _idea_create_read_before(db, user: dict, args: dict) -> dict:
     from app.services.error_handler import AppException
-    from app.services.ideation_capture_service import IdeationServiceError, _valid_uuid, call_similar_own
+    from app.services.ideation_capture_service import (
+        IdeationServiceError, _valid_uuid, call_similar_own, count_chat_photos,
+    )
     from app.services.ideation_turn_service import _resolve_ideation_config
 
     _check_use_cases(args)
@@ -2260,7 +2268,9 @@ def _idea_create_read_before(db, user: dict, args: dict) -> dict:
             ][:MAX_SIMILAR_IDEAS]
     except (IdeationServiceError, HTTPException):
         logger.warning("agent: the similar-ideas lookup failed", exc_info=True)
-    return {"_show": {"similar": similar}}
+    # The proposal states the photos the create will attach (the same selection, nothing uploaded).
+    photos = count_chat_photos(db, user_id=user["linked_user_id"]) if _idea_photos_go(args) else 0
+    return {"_show": {"similar": similar, "photos": photos}}
 
 
 #: The backslash and every double quote or look-alike (ASCII, curly, low and reversed, double prime, guillemets,
@@ -2289,6 +2299,9 @@ def _idea_create_summary(args: dict, before: dict) -> str:
     given = _idea_given(args)
     head = f"Log {normalise_type(args.get('type'))}"
     line = f"{head} {_q(given['title'])}" if given.get("title") else head
+    photos = before.get("photos") or 0
+    if photos:
+        line += f" with {photos} photo{'' if photos == 1 else 's'}"
     line += ": " + ", ".join(_idea_values(given, ("problem", "desired_outcome", "use_cases", "current_workaround"), " "))
     similar = before.get("similar") or []
     if similar:
@@ -2359,11 +2372,13 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
         )
     link = _idea_link(result.get("idea_id"))
     number = idea_number(result.get("idea_number"))
-    # The user's recent chat photos go onto the new item; a test item gets none (I-5).
-    photos = 0 if is_test else attach_chat_photos(db, user_id=user["linked_user_id"], idea_id=result["idea_id"])
+    # The user's recent chat photos go onto the new item: a live turn of the contact only (I-5).
+    photos = attach_chat_photos(db, user_id=user["linked_user_id"], idea_id=result["idea_id"]) if _idea_photos_go(args) else 0
     missing = ", ".join(_missing_list(payload, photos))
     number = number or None  # ss may send none: the note then names no number
-    note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
+    note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + "."
+    if missing:
+        note += f" Not given: {missing}."
     if is_test:
         note += " This is a test idea, so it is not on the board."
     elif photos:
@@ -2428,6 +2443,7 @@ def _idea_row(idea: dict) -> dict:
     return {
         "id": idea["id"], "idea_number": idea.get("ideaNumber"), "title": idea.get("title"),
         "status": idea.get("status"), "is_test": bool(idea.get("isTest")),
+        "type": SUBMISSION_TYPES[type_of_idea(idea)].label,
         "problem": _line(idea.get("problem"))[:IDEA_PROBLEM_CHARS],
         "use_cases": [_line(c) for c in (idea.get("useCases") if isinstance(idea.get("useCases"), list) else []) if isinstance(c, str)][:MAX_USE_CASES],
     }

@@ -27,6 +27,7 @@ from tests.chatbot.agent.test_agent_writes_ideas import (  # noqa: F401  (fixtur
     _fresh_token_cache,
     _listeners,
     confirm,
+    ctx_of,
     db,
     make_world,
     posts,
@@ -175,3 +176,73 @@ def test_I5_a_test_execute_attaches_no_photos(db, ss, monkeypatch):  # noqa: F81
     assert call["json"]["is_test"] is True
     assert call["json"]["type"] == "issue"
     assert seam.uploads == []
+
+
+# --------------------------------------------------------------------------- #
+# Round 4 (lead): panel, list type, summary photo count, empty "Not given"     #
+# --------------------------------------------------------------------------- #
+def test_P1_the_staff_web_panel_never_attaches_chat_photos(db, ss, monkeypatch):  # noqa: F811
+    from app.services.chatbot import principal as principal_mod
+    from app.services.chatbot.agent import writes
+
+    seam = _photo_seam(monkeypatch)
+    w = make_world(db)
+    seed_chat_photo(db, contact_pk=w.contact["pk"], respond_id=w.respond_id, minutes_ago=2)
+    db.commit()
+    _fixed_create(ss)
+    panel = principal_mod.StaffPrincipal(user_id=w.user_id, conversation_id=str(uuid.uuid4()))
+    with principal_mod.acting_as(panel):
+        writes._idea_create_execute(
+            db, {"id": w.user_id, "linked_user_id": w.user_id}, {**ISSUE, "type": "issue", "_is_test": False}
+        )
+    assert len(posts(ss, CREATE_PATH)) == 1
+    assert seam.uploads == []
+
+
+@pytest.mark.parametrize("ss_type, label", [("issue", "Issue"), ("idea", "Feature request"), (None, "Feature request")])
+def test_T2_the_ideas_list_rows_carry_the_type_label(db, ss, ss_type, label):  # noqa: F811
+    from app.services.chatbot.agent import writes
+
+    w = make_world(db)
+    row = {"id": str(uuid.uuid4()), "ideaNumber": "IDEA-0901", "title": "Typed zzt", "isMine": True}
+    if ss_type is not None:
+        row["type"] = ss_type
+    ss.route("GET", "/embed/ideas", json_body=[row])
+    out = writes.run_user_read(db, ctx_of(db, w), "crm_ideas_list", {}, set())
+    assert out.status == "ok"
+    (listed,) = out.data["ideas"]
+    assert listed["type"] == label
+
+
+def test_I4_a_live_issue_proposal_states_the_photos_it_will_attach(db, ss, monkeypatch):  # noqa: F811
+    seam = _photo_seam(monkeypatch)
+    w = make_world(db)
+    seed_chat_photo(db, contact_pk=w.contact["pk"], respond_id=w.respond_id, minutes_ago=2)
+    seed_chat_photo(db, contact_pk=w.contact["pk"], respond_id=w.respond_id, minutes_ago=5)
+    seed_chat_photo(db, contact_pk=w.contact["pk"], respond_id=w.respond_id, minutes_ago=50)
+    db.commit()
+    res, step = propose(db, w, CREATE, {**ISSUE, "type": "issue"}, live=True)
+    assert res.status == "proposed", res.message
+    assert "with 2 photos" in step["summary"]
+    assert seam.uploads == [], "a proposal uploads nothing"
+
+
+def test_I4_a_proposal_with_no_photos_names_none(db, ss, monkeypatch):  # noqa: F811
+    _photo_seam(monkeypatch)
+    w = make_world(db)
+    res, step = propose(db, w, CREATE, {**ISSUE, "type": "issue"}, live=True)
+    assert res.status == "proposed", res.message
+    assert "photo" not in step["summary"].lower()
+
+
+def test_I3_a_note_with_nothing_missing_has_no_empty_not_given(db, ss, monkeypatch):  # noqa: F811
+    _photo_seam(monkeypatch)
+    w = make_world(db)
+    seed_chat_photo(db, contact_pk=w.contact["pk"], respond_id=w.respond_id, minutes_ago=2)
+    db.commit()
+    _fixed_create(ss)
+    _, row = store(db, w, [(CREATE, dict(FIELDS))], live=True)
+    outcome = confirm(db, w, row)
+    assert [s["status"] for s in outcome.steps] == ["done"], outcome.steps
+    assert "Not given" not in outcome.reply_text
+    assert "IDEA-0300" in outcome.reply_text

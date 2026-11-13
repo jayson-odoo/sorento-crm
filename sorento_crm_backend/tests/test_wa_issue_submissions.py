@@ -574,6 +574,26 @@ def test_P2_an_idea_whose_photos_all_failed_still_asks_for_photos(env, photos): 
     assert "- Photos or files" in _lines(out["reply_text"])
 
 
+def test_P2_any_error_in_the_photo_step_never_fails_the_filing(env, photos, monkeypatch):  # noqa: F811
+    """Round 4: an error outside the upload loop (the photo lookup itself) is logged, never raised."""
+    import app.models.entity_attachment as ea
+
+    class _Boom:
+        def __getattr__(self, name):
+            raise RuntimeError("zzt photo lookup failed")
+
+    env.ready()
+    env.created()
+    _seed(env, minutes_ago=2)
+    monkeypatch.setattr(ea, "EntityAttachmentLink", _Boom())
+    out = env.turn(_issue(env))
+    assert out["status"] == "complete"
+    lines = _lines(out["reply_text"])
+    assert f"Logged as issue {IDEA_NUMBER}" in lines
+    assert not any(line.startswith("Photos") for line in lines)
+    assert photos.uploads == []
+
+
 class RespondContactFactory:
     @staticmethod
     def make(db):
@@ -679,6 +699,30 @@ def test_B_the_staff_create_forwards_type(gw):
     gw.fake.route("POST", "/embed/ideas", status=201, json_body={"id": IDEA})
     gw.client.post(f"{BASE}/ideas", json={"problem": "p", "type": "issue", "productId": "other"})
     assert gw.fake.calls[0]["json"] == {"problem": "p", "type": "issue"}
+
+
+@pytest.mark.parametrize("sent, forwarded", [("Issue", {"type": "issue"}), ("idea", {}), ("complaint", {}), (7, {})])
+def test_B_the_staff_create_forwards_type_only_through_the_mapping(gw, sent, forwarded):
+    gw.fake.route("POST", "/embed/ideas", status=201, json_body={"id": IDEA})
+    gw.client.post(f"{BASE}/ideas", json={"problem": "p", "type": sent})
+    assert gw.fake.calls[0]["json"] == {"problem": "p", **forwarded}
+
+
+@pytest.mark.parametrize("sent, forwarded", [("issue", "issue"), ("idea", "idea"), (" ISSUE ", "issue")])
+def test_B_the_staff_edit_forwards_a_valid_type(gw, sent, forwarded):
+    gw.fake.route("PATCH", f"/embed/ideas/{IDEA}", json_body={"id": IDEA})
+    resp = gw.client.patch(f"{BASE}/ideas/{IDEA}", json={"type": sent})
+    assert resp.status_code == 200, resp.text
+    (call,) = [c for c in gw.fake.calls if c["method"] == "PATCH"]
+    assert call["json"] == {"type": forwarded}
+
+
+@pytest.mark.parametrize("sent", ["complaint", "", None, 7])
+def test_B_the_staff_edit_refuses_an_unknown_type(gw, sent):
+    gw.fake.route("PATCH", f"/embed/ideas/{IDEA}", json_body={"id": IDEA})
+    resp = gw.client.patch(f"{BASE}/ideas/{IDEA}", json={"title": "t", "type": sent})
+    assert resp.status_code == 422, resp.text
+    assert gw.fake.calls == []
 
 
 def test_B_the_staff_create_still_forwards_department_unchanged(gw):

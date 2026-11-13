@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.error_handler import AppException
+from app.services.submission_types import known_type, ss_fields_for_type
 from app.services.user_service import UserPermissionService
 from app.services.ideation_gateway_service import (
     UNREACHABLE,
@@ -36,8 +37,8 @@ MANAGE = "ideation.ideas.manage"
 #: ss's own upload ceiling (ss `routers/embed.py`); read at most one byte past it.
 ATTACHMENT_CAP_BYTES = 25 * 1024 * 1024
 #: The idea fields a create or an edit may carry to ss. `proposedSolution`, `impact` and `department`
-#: are legacy (retired from the CRM UI, still forwardable for old clients and the chatbot); `type` is
-#: the submission type (`app.services.submission_types`).
+#: are legacy (retired from the CRM UI, still forwardable for old clients and the chatbot). The
+#: submission `type` is not here: it crosses only through `ss_fields_for_type`.
 IDEA_FIELDS = (
     "title",
     "problem",
@@ -48,7 +49,6 @@ IDEA_FIELDS = (
     "proposedSolution",
     "impact",
     "department",
-    "type",
 )
 #: The idea fields a merge may take from a chosen idea (ss `POST /embed/ideas/merge` `fields`).
 MERGE_FIELD_KEYS = ("title", "problem", "desiredOutcome", "useCases", "currentWorkaround", "rawText")
@@ -145,7 +145,8 @@ def list_comments(idea_id: UUID, user: dict = _read, db: Session = Depends(get_d
 
 @router.post("/ideas", status_code=201)
 def create_idea(payload: dict = Body(...), user: dict = _write, db: Session = Depends(get_db)):
-    body = _pick(payload, IDEA_FIELDS)
+    # An unknown type creates an idea (nothing sent), as every other caller of the mapping.
+    body = {**_pick(payload, IDEA_FIELDS), **ss_fields_for_type(payload.get("type"))}
     return _forward(db, user, "POST", ss_path("embed", "ideas"), json=body)
 
 
@@ -201,6 +202,10 @@ def edit_comment(
 def update_idea(idea_id: UUID, payload: dict = Body(...), user: dict = _write, db: Session = Depends(get_db)):
     # The product is the workspace's, never edited from here, so `productId` is not forwarded.
     body = _pick(payload, IDEA_FIELDS)
+    if "type" in payload:
+        if known_type(payload["type"]) is None:
+            raise AppException(422, "Type must be Feature request or Issue.", code="VALIDATION_ERROR")
+        body.update(ss_fields_for_type(payload["type"], explicit=True))
     path = ss_path("embed", "ideas", str(idea_id))
     # A manager edits any idea. Anyone else (view only) edits only their own, and ss alone says
     # whose it is (`isMine`); a non-2xx on the lookup is relayed by `call_ss` (404 stays 404).

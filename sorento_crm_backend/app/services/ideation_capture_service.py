@@ -74,8 +74,9 @@ _REQUIRED_FIELDS: tuple[str, ...] = tuple(sorted({t.required_field for t in SUBM
 #: Chat photos taken onto a new item (UAC P-1): sent in this window before filing, at most this many.
 _PHOTO_WINDOW = timedelta(minutes=30)
 _MAX_PHOTOS = 10
-#: `session_vars` key holding when this contact last filed live; photos before it went with that one (P-3).
-_FILED_AT_KEY = "ideation_filed_at"
+#: `entity_attachment_links.entity_type` of a chat photo that landed on an ss item (entity_id = the ss
+#: idea id): such a photo is never sent again (P-3).
+_SENT_LINK = "ss_idea"
 _EDGE = " \t\r\n.,!?;:'\"()[]"
 
 
@@ -260,57 +261,61 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def attach_chat_photos(db: Session, *, user_id: Any, idea_id: Any) -> int:
-    """Upload the images the user's linked contact sent in chat onto the new item, as that user
-    (UAC P-1..P-3), and return how many landed. The one function the bot lane and the agent tool call
-    after a LIVE create (a test item gets none).
+def _chat_photos(db: Session, user_id: Any) -> list[Any]:
+    """The images the user's linked contact sent in chat that would go onto a new item now: the media
+    lane's (`media_tasks._store_media_bytes`: attachments linked to a `chatbot_turn`, uploaded by the
+    contact), sent in the last 30 minutes, not already on an item (`_SENT_LINK` link), newest first, at
+    most 10. One selection for the proposal's count and the attach."""
+    from sqlalchemy import exists
+    from sqlalchemy.orm import aliased
 
-    The images are the media lane's (`media_tasks._store_media_bytes`: attachments linked to a
-    `chatbot_turn`, uploaded by the contact), sent in the 30 minutes before now and after this
-    contact's previous live filing, newest first, at most 10. Each goes through
-    `ideation_gateway_service.upload_idea_attachment`, the staff upload route's own function. A failed
-    read or upload is logged and skipped, never failing the filing."""
     from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment
-    from app.services.resources_service import AttachmentService
 
-    now = datetime.now(timezone.utc)
-    user_row = db.query(User).filter(User.id == str(user_id)).first()
-    contact = (
-        db.query(RespondContact).filter(RespondContact.id == user_row.respond_contact_id).first()
-        if user_row is not None and user_row.respond_contact_id
-        else None
-    )
-    if contact is None:
-        return 0
-    session_vars = dict(contact.session_vars) if isinstance(contact.session_vars, dict) else {}
-    since = now - _PHOTO_WINDOW
-    filed_at = _parse_iso(session_vars.get(_FILED_AT_KEY))
-    if filed_at is not None and filed_at > since:
-        since = filed_at
-    photos = (
+    contact_id = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
+    if not contact_id:
+        return []
+    sent = aliased(EntityAttachmentLink)
+    return (
         db.query(Attachment)
         .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
         .filter(
             EntityAttachmentLink.entity_type == "chatbot_turn",
-            Attachment.uploaded_by_contact_id == contact.id,
+            Attachment.uploaded_by_contact_id == contact_id,
             Attachment.mime_type.like("image/%"),
             Attachment.is_deleted.is_(False),
-            Attachment.uploaded_at > _naive_utc(since),
+            Attachment.uploaded_at > _naive_utc(datetime.now(timezone.utc) - _PHOTO_WINDOW),
+            ~exists().where(sent.attachment_id == Attachment.id, sent.entity_type == _SENT_LINK),
         )
         .order_by(Attachment.uploaded_at.desc())
         .limit(_MAX_PHOTOS)
         .all()
     )
-    # Written before the uploads: whatever happens to them, these photos went with this filing.
-    session_vars[_FILED_AT_KEY] = now.isoformat()
-    contact.session_vars = session_vars
-    db.flush()
 
-    if not photos:
-        return 0
+
+def count_chat_photos(db: Session, *, user_id: Any) -> int:
+    """How many chat photos `attach_chat_photos` would send now (a proposal states it); 0 on any error."""
     try:
-        as_user = user_for_requester(db, str(user_row.id))
+        with db.begin_nested():
+            return len(_chat_photos(db, user_id))
+    except Exception:  # noqa: BLE001 - a count never fails a proposal
+        logger.warning("ideation: chat photos could not be counted", exc_info=True)
+        return 0
+
+
+def attach_chat_photos(db: Session, *, user_id: Any, idea_id: Any) -> int:
+    """Upload the user's chat photos (`_chat_photos`) onto the new item, as that user (UAC P-1..P-3), and
+    return how many landed. The one function the bot lane and the agent tool call after a LIVE create
+    (a test item gets none). Each goes through `ideation_gateway_service.upload_idea_attachment`, the
+    staff upload route's own function; a photo that landed is linked to the item (`_SENT_LINK`), so it
+    is never sent again. Any error is logged and ends the step: the item is already filed (P-2)."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from app.services.resources_service import AttachmentService
+
+    try:
+        with db.begin_nested():
+            photos = _chat_photos(db, user_id)
+            as_user = user_for_requester(db, str(user_id)) if photos else None
     except Exception:  # noqa: BLE001 - a photo never fails the filing (P-2)
         logger.warning("ideation: chat photos not sent to item %s", idea_id, exc_info=True)
         return 0
@@ -325,9 +330,17 @@ def attach_chat_photos(db: Session, *, user_id: Any, idea_id: Any) -> int:
                 AttachmentService(db).get_file_content_for(photo),
                 photo.mime_type,
             )
-            landed += 1
         except Exception:  # noqa: BLE001 - a photo never fails the filing (P-2)
             logger.warning("ideation: chat photo %s did not reach item %s", photo.id, idea_id, exc_info=True)
+            continue
+        landed += 1
+        try:
+            with db.begin_nested():
+                EntityAttachmentService(db).link_existing_attachment(
+                    _SENT_LINK, str(idea_id), str(photo.id), created_by=str(user_id)
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("ideation: chat photo %s landed but was not marked sent", photo.id, exc_info=True)
     return landed
 
 
