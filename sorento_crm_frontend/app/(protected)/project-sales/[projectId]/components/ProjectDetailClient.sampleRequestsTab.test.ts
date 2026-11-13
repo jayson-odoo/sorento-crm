@@ -1,6 +1,6 @@
 /**
  * AC-SR-50 (amended by PS-REGISTER-CHECK-FIRST AC-T1..T3): the project detail tabs read, in order,
- * Overview, Documents, Quotation, Samples Request, Sponsorship Form, PO, SO, Stakeholders, Tasks,
+ * Overview, Documents, Quotation, Samples Request, Related (was Sponsorship Form, PROJECT-RELATED-RECORDS AC-A1), PO, SO, Stakeholders, Tasks,
  * Activity. There is no Samples tab; its old link opens Samples Request, and the retired order
  * links open PO. Tab ids stay as today (`sample-requests`, `orders` for PO); SO is `sales-orders`.
  */
@@ -24,7 +24,7 @@ describe('project detail tabs', () => {
       'Documents',
       'Proposals',
       'Samples Request',
-      'Sponsorship Form',
+      'Related',
       'PO',
       'SO',
       'Stakeholders',

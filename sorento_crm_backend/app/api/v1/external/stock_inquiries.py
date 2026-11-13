@@ -28,6 +28,20 @@ def create_stock_inquiry_external(
     db: Session = Depends(get_db),
 ):
     """Create stock inquiry via external API and notify Project Sales team (in-app + email to all)."""
+    if inquiry_data.project_id:
+        # PROJECT-RELATED-RECORDS (security 4): an integration names the project for a contact,
+        # so it gets the portal's own check: one of that contact's companies' approved projects.
+        from app.models.access import RespondContact
+        from app.services import sponsorship_link_service
+
+        contact = (
+            db.query(RespondContact).filter(RespondContact.id == str(inquiry_data.contact_id)).first()
+            if inquiry_data.contact_id
+            else None
+        )
+        sponsorship_link_service.assert_contact_may_link(
+            db, contact=contact, project_id=inquiry_data.project_id, code="stock_inquiry_project_not_approved"
+        )
     try:
         service = StockInquiryService(db)
         inquiry, outcome = service.create_inquiry(

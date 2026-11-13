@@ -32,8 +32,11 @@ import { useComplaintResolutionsSelect } from "@/app/(protected)/complaint-manag
 import {
   getOrCreateComplaintViewLink,
   displayComplaintTechnicalResponse,
-  searchProjectsForLink,
 } from "../services/complaintService";
+import {
+  RegisteredProjectSelect,
+  registeredProjectOption,
+} from "@/components/common/RegisteredProjectSelect";
 import { toast } from '@/lib/toast';
 import {
   ComplaintSchema,
@@ -910,26 +913,18 @@ function StaffComplaintForm({
                       child, while SearchableSelect renders a trigger plus its popover. Found in
                       the browser -- "React.Children.only expected to receive a single React
                       element child" took the whole card down, so the field never appeared. */}
-                  <SearchableSelect
-                    value={field.value || ""}
-                    onChange={(next) => field.onChange(next || null)}
-                    fetchOptions={(query, pageIndex) =>
-                      searchProjectsForLink(query, pageIndex + 1)
-                    }
-                    paginated
-                    pageSize={25}
-                    clearable
-                    truncateTriggerLabel
+                  <RegisteredProjectSelect
+                    value={field.value}
+                    onChange={field.onChange}
                     selectedOption={
                       field.value && complaint?.project_code
-                        ? {
-                            value: field.value,
-                            label: `${complaint.project_code} - ${complaint.project_name ?? ""}`,
-                          }
+                        ? registeredProjectOption(
+                            field.value,
+                            complaint.project_code,
+                            complaint.project_name,
+                          )
                         : undefined
                     }
-                    placeholder="Search a project by code or title"
-                    emptyMessage="No project matches that. Leave it empty if it was never registered."
                   />
                   <FormMessage />
                 </FormItem>
