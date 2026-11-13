@@ -398,6 +398,9 @@ class ProjectResponse(BaseModel):
 
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
+    # The owner's linked contact: Requested by on a sponsorship form written from the project.
+    owner_contact_id: Optional[str] = None
+    owner_contact_name: Optional[str] = None
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None
@@ -1921,6 +1924,8 @@ class ProjectSponsorshipResponse(BaseModel):
     sponsor_subject: Optional[str] = None
     sponsor_subject_other: Optional[str] = None
     total_project_value: Optional[Decimal] = None
+    # What the form sponsors (its lines' Grand total); `total_project_value` is the project's.
+    sponsored_total: Optional[Decimal] = None
     purpose: Optional[str] = None
 
 

@@ -126,6 +126,24 @@ def _complaint_select(me: Me, access: str):
     )
 
 
+def _request_value(kind: str, M):
+    """A sponsorship form's value is what it SPONSORS, its lines' Grand total (a line with no total
+    counts quantity x unit price), the same rule as `sponsorship_link_service._sponsored_totals`;
+    its `total_project_value` is the PROJECT's value (PROJECT-STAGE-ACTIONS, crew pass round 2).
+    A purchase request keeps its own value."""
+    if kind != "sponsorship_form":
+        return M.total_project_value
+    from app.models.procurement import PurchaseRequestLine as L
+
+    amount = func.coalesce(L.total, L.quantity * L.unit_price, 0)
+    return (
+        select(func.coalesce(func.sum(amount), 0))
+        .where(L.purchase_request_id == M.id)
+        .correlate(M)
+        .scalar_subquery()
+    )
+
+
 def _request_select(kind: str, subject_column: str):
     def build(me: Me, access: str):
         from app.models.procurement import PurchaseRequestHeader as M
@@ -140,7 +158,7 @@ def _request_select(kind: str, subject_column: str):
                 request_record_date().label("date"),
                 M.requested_by.label("raised_by"),
                 getattr(M, subject_column).label("subject"),
-                M.total_project_value.label("value"),
+                _request_value(kind, M).label("value"),
             ).where(M.request_type == kind),
             access,
             own_scope.request_clause(M, me),

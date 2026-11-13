@@ -11,7 +11,6 @@ import type {
   BoardContribution,
 } from '../types/fulfilmentPlanning.types';
 import {
-  autocountChangeNotes,
   aheadFactorLabel,
   amendNeedsReason,
   boardAxis,
@@ -1945,34 +1944,38 @@ describe('confirmSummaryFor: changed (C4)', () => {
  * ordinary undecided line does, so it is silently left out of `toConfirm`.
  */
 describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)', () => {
-  // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15) reverses R3 for the COUNT: the
-  // line is retired by the press and admits its order, but it is not a decision, so it is not
-  // counted; it is the AutoCount change note instead.
-  it('does not count a cancelled line toward toConfirm; it admits its order and is the AutoCount note', () => {
+  // F2 12/13 Nov (owner: follow the path of Decide Confirm): a cancel is saved like any change
+  // before Confirm. Unsaved, it is not counted, does not admit its order and raises no note;
+  // saved, it counts in Confirm (N).
+  const cancelledLine = () => {
     const board = buildBoard(
       [line({ sales_order_id: 'so-s5', so_number: 'SO400884', line_no: 1, qty: '72' })],
       { today: TODAY },
     );
-    const base = board.cells[0].contributions[0];
-    const cancelled = {
-      ...base,
+    return {
+      ...board.cells[0].contributions[0],
       qty: '0',
       qty_outstanding: '0',
       covered: false,
       decision: null,
-      // Not yet on `BoardContribution` (grepped `fulfilmentPlanning.types.ts` - absent) -
-      // the field the board-side fix is expected to add; rename if the coder picks a
-      // different key.
       cancelled: true,
     } as BoardContribution & { cancelled: boolean };
+  };
 
-    // No draft at all - a cancelled line's own retire is not something a planner "saves" the
-    // way an amend or an approval is; it is inherent to the row itself.
+  it('does not count an unsaved cancelled line, admit its order or raise a note', () => {
+    const cancelled = cancelledLine();
     const summary = confirmSummaryFor([cancelled], {});
 
     expect(summary.toConfirm).toBe(0);
+    expect(summary.orderCount).toBe(0);
+  });
+
+  it('counts a saved cancelled line in toConfirm and admits its order', () => {
+    const cancelled = cancelledLine();
+    const summary = confirmSummaryFor([cancelled], { [cancelled.key]: { verdict: 'approved' } as never });
+
+    expect(summary.toConfirm).toBe(1);
     expect(summary.orderCount).toBe(1);
-    expect(autocountChangeNotes([cancelled], {})).toHaveLength(1);
   });
 });
 
@@ -3049,8 +3052,9 @@ describe('confirm scope: one population for dialog, count and body', () => {
     { name: 'stale draft', contribution: { draft: { decision: { verdict: 'approved' }, saved_by: 'x', saved_at: '2026-09-29T00:00:00Z', stale: true } }, decision: { verdict: 'approved' }, listed: false, counted: 0 },
     { name: 'no_mirror on an adopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, listed: false, counted: 0 },
     { name: 'no_mirror on an unadopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, unadopted: true, listed: true, counted: 1 },
-    // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026): retired by the press, not a counted decision.
+    // F2 12/13 Nov: a cancel is saved like any change before Confirm; unsaved it is not counted.
     { name: 'cancelled', contribution: { cancelled: true }, decision: null, listed: false, counted: 0 },
+    { name: 'cancelled + saved', contribution: { cancelled: true }, decision: { verdict: 'approved' }, listed: true, counted: 1 },
   ];
 
   it.each(cases)('$name', (entry) => {
@@ -3078,8 +3082,10 @@ describe('confirm scope: one population for dialog, count and body', () => {
       plannedLineCount([contribution], 'so-a', draft, blocked, { unadoptedSalesOrderIds: unadopted }),
     );
     expect(dialog.rows.length).toBe(entry.counted);
+    // F2 12/13 Nov: no AutoCount note any more; an UNSAVED book-cancelled line is the dialog's
+    // `cancelled` bucket (pending, not posted), a saved one is an ordinary row.
     expect(dialog.cancelled.length).toBe(
-      autocountChangeNotes([contribution], draft).reduce((total, note) => total + note.count, 0),
+      contribution.cancelled && !entry.decision ? 1 : 0,
     );
     // A line the press leaves out is named, never silent.
     if (!entry.listed && !entry.counted && dialog.cancelled.length === 0) {

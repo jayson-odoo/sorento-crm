@@ -236,6 +236,10 @@ def test_the_owners_board_confirm_is_the_one_email(built):
         .scalar()
     )
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     planning_change_service.apply(env.db, str(batch_id), None)
     env.db.commit()
