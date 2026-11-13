@@ -15,6 +15,8 @@ It fails closed. For a limited user:
   routes already loads it under its parent (``get_task_or_404(db, project_id, task_id)``,
   ``_line_or_404(db, po_id, line_id)``, ...), so a foreign child under their own parent is a
   404 from the route itself;
+- a route with an ``autocount`` path segment (a write to AutoCount) is refused (403), own
+  project included;
 - a route with no id is refused unless it is in ``_ID_LESS`` (the project list filters in
   the query) or is reference data (``_REFERENCE_PREFIXES`` / ``_REFERENCE_PATHS``);
 - the cross-project screens (``_OWN_PERMISSION_PREFIXES``) are left to their own permission
@@ -235,6 +237,9 @@ def classify(method: str, path_format: str):
         return "open"
     if path.startswith(_OWN_PERMISSION_PREFIXES):
         return "open"
+    if "autocount" in path.split("/"):
+        # An ERP write (AC-QTSO-CRM) is an admin's job: refused outright, own project included.
+        return None
     names = _PARAM.findall(path)
     if not names:
         return "open" if (method, path) in _ID_LESS else None
