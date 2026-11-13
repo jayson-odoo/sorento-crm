@@ -528,6 +528,62 @@ def test_G7_the_service_link_guard_refuses_a_draft_row(staged):
 _DOC_TOP = ("sales_orders", "purchase_orders", "spos", "incoming_pl", "incoming", "holds")
 
 
+def _seed_documents(db, product, warehouse) -> None:
+    """One open SO line, PO line, SPO row and one incoming packing list for `product` at
+    `warehouse` (call inside that warehouse's company scope)."""
+    from datetime import date
+
+    from app.models.order import Customer, SalesOrder, SalesOrderLine
+    from app.models.procurement import (
+        InboundShipment,
+        InboundShipmentLine,
+        PurchaseOrder,
+        PurchaseOrderLine,
+        SPOAllocation,
+    )
+
+    customer = Customer(id=uid(), customer_code=f"ZZT-{uid()[:8]}", customer_name="ZZT S1 customer")
+    db.add(customer)
+    db.flush()
+    order = SalesOrder(
+        id=uid(), so_number=f"ZZT-SO-{uid()[:8]}", customer_id=customer.id,
+        order_date=date(2026, 1, 1), demand_class="project", status="open",
+    )
+    db.add(order)
+    db.flush()
+    db.add(SalesOrderLine(
+        id=uid(), sales_order_id=order.id, product_id=product.id, warehouse_id=warehouse.id,
+        qty_ordered=Decimal("3"), qty_delivered=Decimal("0"), required_date=date(2026, 9, 3),
+        line_status="open", purchasing_status="not_reviewed",
+    ))
+    po = PurchaseOrder(
+        id=uid(), po_number=f"ZZT-PO-{uid()[:8]}", issue_date=date(2026, 7, 1), status="active",
+        source_system="autocount",
+    )
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=uid(), purchase_order_id=po.id, product_id=product.id, warehouse_id=warehouse.id,
+        qty_ordered=Decimal("5"), qty_received=Decimal("0"), line_status="open",
+        expected_date=date(2026, 8, 25), source_system="autocount",
+    ))
+    db.add(SPOAllocation(
+        id=uid(), spo_number=f"ZZT-SPO-{uid()[:8]}", product_id=product.id,
+        warehouse_id=warehouse.id, allocated_quantity=4,
+    ))
+    shipment = InboundShipment(
+        id=uid(), shipment_number=f"ZZT-SH-{uid()[:8]}", shipment_date=date(2026, 1, 1),
+        estimated_arrival_date=date(2026, 12, 1), shipment_status="in_transit",
+    )
+    db.add(shipment)
+    db.flush()
+    db.add(InboundShipmentLine(
+        id=uid(), shipment_id=shipment.id, product_id=product.id, quantity_shipped=6,
+        quantity_received=0, line_status="in_transit",
+    ))
+    db.flush()
+
+
 @pytest.fixture
 def create_only_grants():
     """A requester holding ONLY the spare part create grant, granted companies A and B; a third
@@ -551,10 +607,14 @@ def create_only_grants():
             )
             sd._grant(db, requester, sd.COMPANY_A)
             sd._grant(db, requester, company_b)
+            reader = seed_user(db, contact_pk=None, slugs=("projects.projects.view",))
+            sd._grant(db, reader, sd.COMPANY_A)
+            sd._grant(db, reader, company_b)
             product = sd._product(db)
             with company_scope(db, frozenset({company_b})):
                 bin_b = sd._warehouse(db, company_b)
                 sd._stock(db, product, bin_b, on_hand=7)
+                _seed_documents(db, product, bin_b)
             with company_scope(db, frozenset({company_c})):
                 bin_c = sd._warehouse(db, company_c)
                 sd._stock(db, product, bin_c, on_hand=9)
@@ -569,7 +629,10 @@ def create_only_grants():
             app.dependency_overrides[apply_company_scope] = lambda: frozenset({sd.COMPANY_A})
             try:
                 with TestClient(app) as c:
-                    yield SimpleNamespace(c=c, product=product, bin_b=bin_b, bin_c=bin_c)
+                    yield SimpleNamespace(
+                        c=c, product=product, bin_b=bin_b, bin_c=bin_c, who=who, reader=reader,
+                        requester=requester,
+                    )
             finally:
                 app.dependency_overrides.clear()
 
@@ -582,12 +645,21 @@ def _assert_no_documents(body: dict) -> None:
             assert not loc.get(key), f"locations[].{key} must be empty: {loc.get(key)!r}"
 
 
+def _as(g, user_id):
+    g.who["user"] = {"id": user_id, "email": "x@zzt.test", "auth_method": "password"}
+
+
 def test_S1_guard_stock_status_grants_gives_a_create_only_requester_no_documents(create_only_grants):
     g = create_only_grants
-    res = g.c.get(
-        "/api/v1/inventory/stock-status",
-        params={"product_id": str(g.product.id), "company_scope": "grants"},
-    )
+    url = "/api/v1/inventory/stock-status"
+    params = {"product_id": str(g.product.id), "company_scope": "grants"}
+    _as(g, g.reader)  # positive control: the read permission DOES get the documents
+    control = g.c.get(url, params=params)
+    assert control.status_code == 200, control.text
+    for key in ("sales_orders", "purchase_orders", "spos", "incoming_pl"):
+        assert control.json()[key], f"control: {key} must carry the seeded document"
+    _as(g, g.requester)
+    res = g.c.get(url, params=params)
     assert res.status_code == 200, res.text
     body = res.json()
     _assert_no_documents(body)
@@ -599,10 +671,14 @@ def test_S1_guard_stock_status_grants_gives_a_create_only_requester_no_documents
 def test_S1_guard_stock_detail_grants_gives_a_create_only_requester_no_documents(create_only_grants):
     g = create_only_grants
     url = "/api/v1/project-sales/fulfilment-planning/stock-detail"
-    ok = g.c.get(
-        url,
-        params={"product_id": str(g.product.id), "warehouse_id": str(g.bin_b.id), "company_scope": "grants"},
-    )
+    good = {"product_id": str(g.product.id), "warehouse_id": str(g.bin_b.id), "company_scope": "grants"}
+    _as(g, g.reader)  # positive control: the read permission DOES get the documents
+    control = g.c.get(url, params=good)
+    assert control.status_code == 200, control.text
+    for key in ("sales_orders", "incoming"):
+        assert control.json()[key], f"control: {key} must carry the seeded document"
+    _as(g, g.requester)
+    ok = g.c.get(url, params=good)
     assert ok.status_code == 200, ok.text
     _assert_no_documents(ok.json())
     denied = g.c.get(
