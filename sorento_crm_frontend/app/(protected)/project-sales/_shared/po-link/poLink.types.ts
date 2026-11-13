@@ -18,6 +18,9 @@ export interface PoLinkLine {
   now?: { so_status?: string | null; open_qty: number; po_links?: SnapshotPoLink[] };
 }
 
+/** Change PO: the SO line, the new PO line, and which covering PO line is replaced. */
+export type ChangeItem = { sales_order_line_id: string; po_line_id: string; from_po_line_id?: string };
+
 export type PoLinkAnswer = { results: PoLinkResult[] };
 
 /** Where a screen's PO link calls go. Stock Debt and Order Inquiries each build one. */
@@ -28,7 +31,7 @@ export interface PoLinkTarget {
     options: () => Promise<PoLinkOptions>;
     link: (lines: Array<{ sales_order_line_id: string; po_line_id: string; qty: number }>) => Promise<PoLinkAnswer>;
     unlink: (poLineIds: string[]) => Promise<PoLinkAnswer>;
-    change: (changes: Array<{ sales_order_line_id: string; po_line_id: string }>) => Promise<PoLinkAnswer>;
+    change: (changes: ChangeItem[]) => Promise<PoLinkAnswer>;
     relocate: (poLineId: string) => Promise<PoLinkResult>;
     resume: (input: ResumePoLinkInput) => Promise<PoLinkResult>;
     relink?: (moves: Array<{ po_line_id: string; to_sales_order_line_id: string }>) => Promise<PoLinkAnswer>;

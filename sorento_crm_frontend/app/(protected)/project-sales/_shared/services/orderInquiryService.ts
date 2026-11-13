@@ -1031,7 +1031,7 @@ export function unlinkOrderInquiryPoLines(rowIds: string[], poLineIds: string[])
 
 export function changeOrderInquiryPoLines(
   rowIds: string[],
-  changes: Array<{ sales_order_line_id: string; po_line_id: string }>,
+  changes: Array<{ sales_order_line_id: string; po_line_id: string; from_po_line_id?: string }>,
 ): Promise<PoLinkAnswer> {
   return postPoLink('change', { row_ids: rowIds, changes }, 'Failed to change the PO');
 }

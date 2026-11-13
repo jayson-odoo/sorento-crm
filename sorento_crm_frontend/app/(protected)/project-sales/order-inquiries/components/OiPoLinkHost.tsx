@@ -67,7 +67,6 @@ export function OiPoLinkHost({
     const menu = poLinkMenu({
       ticked: lines.length || 1,
       linked: lines.filter((line) => (line.now?.po_links ?? []).length > 0).length,
-      singleLinked: lines.filter((line) => (line.now?.po_links ?? []).length === 1).length,
       capabilities: data.capabilities,
       loading: false,
     });

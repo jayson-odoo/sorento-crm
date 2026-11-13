@@ -228,8 +228,6 @@ export function PoLinkDialog({
     }
     return lines.flatMap((line) =>
       (line.now?.po_links ?? [])
-        // Change PO (owner, 11 Nov, card 1a): only a line covered by exactly one PO line.
-        .filter(() => mode !== 'change' || (line.now?.po_links ?? []).length === 1)
         .map((po) => ({
         id: `${line.sales_order_line_id}:${po.po_line_id}`,
         line,
@@ -262,7 +260,10 @@ export function PoLinkDialog({
     [mode],
   );
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>(() =>
-    Object.fromEntries(rows.filter(selectable).map((row) => [row.id, true])),
+    // Change PO on a line covered twice: only the PO line you pick a replacement for is sent.
+    Object.fromEntries(
+      rows.filter((row) => selectable(row) && (mode !== 'change' || rows.length === 1)).map((row) => [row.id, true]),
+    ),
   );
   /** The PO choices for one SO line: a PO of another AutoCount book is greyed with why. */
   const optionsFor = React.useCallback(
@@ -493,11 +494,13 @@ export function PoLinkDialog({
               <SearchableSelect
                 id={`po-link-change-${row.original.id}`}
                 value={stateRef.current.picked[row.original.id] ?? ''}
-                disabled={!row.getIsSelected()}
                 placeholder="Pick a PO line"
                 clearable
                 truncateTriggerLabel
-                onChange={(value) => setPicked((prev) => ({ ...prev, [row.original.id]: value }))}
+                onChange={(value) => {
+                  setPicked((prev) => ({ ...prev, [row.original.id]: value }));
+                  setRowSelection((prev) => ({ ...prev, [row.original.id]: Boolean(value) }));
+                }}
                 options={optionsFor(row.original.line).filter(
                   (option) => option.value !== row.original.poLineId,
                 )}
@@ -564,7 +567,6 @@ export function PoLinkDialog({
     enableColumnResizing: true,
   });
 
-  const coveredTwice = mode === 'change' && lines.some((line) => (line.now?.po_links ?? []).length > 1);
   const ticked = rows.filter((row) => rowSelection[row.id]);
   const sending = link.isPending || unlink.isPending || relink.isPending || change.isPending;
 
@@ -591,6 +593,7 @@ export function PoLinkDialog({
           ticked.map((row) => ({
             sales_order_line_id: row.line.sales_order_line_id,
             po_line_id: picked[row.id],
+            from_po_line_id: row.poLineId as string,
           })),
         );
       } else if (mode === 'unlink') {
@@ -640,9 +643,9 @@ export function PoLinkDialog({
             )
           ) : rows.length === 0 ? (
             <div className="px-6 py-10 text-center">
-              <p className="text-sm font-semibold">{coveredTwice ? 'Covered by more than one PO line' : 'No PO linked'}</p>
+              <p className="text-sm font-semibold">No PO linked</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {coveredTwice ? 'Change PO needs a line covered by exactly one PO line.' : 'The ticked lines have no PO line linked.'}
+                The ticked lines have no PO line linked.
               </p>
             </div>
           ) : (

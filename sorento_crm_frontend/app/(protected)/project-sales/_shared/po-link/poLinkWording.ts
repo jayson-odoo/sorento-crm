@@ -109,7 +109,7 @@ export function poLinkMenu(input: {
   loading: boolean;
   /** When every ticked line is already fully covered by POs: those PO numbers. */
   coveredBy?: string[] | null;
-  /** Ticked lines covered by exactly one PO line (Change PO needs every ticked line so). */
+  /** Retired (13 Nov): Change PO now needs only a PO on every ticked line. */
   singleLinked?: number;
   /** A ticked line's one PO with nothing left to arrive: Change PO has nothing to move. */
   nothingOpenOn?: string | null;
@@ -138,8 +138,8 @@ export function poLinkMenu(input: {
     ? off(caps.split_link.reason ?? 'Waiting for AutoCount')
     : !caps.unlink_row.enabled
       ? off(caps.unlink_row.reason ?? 'Waiting for AutoCount')
-      : (input.singleLinked ?? 0) !== input.ticked
-        ? off('Each ticked line needs exactly one PO linked')
+      : input.linked < input.ticked
+        ? off('Each ticked line needs a PO linked')
         : input.nothingOpenOn
           ? off(`Nothing is left open on PO ${input.nothingOpenOn} to change`)
           : { enabled: true, reason: null };

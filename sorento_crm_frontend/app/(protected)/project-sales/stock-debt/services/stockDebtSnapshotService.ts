@@ -180,7 +180,7 @@ export async function relinkPoLines(
 export async function changePoLines(
   id: string,
   rowId: string,
-  changes: Array<{ sales_order_line_id: string; po_line_id: string }>,
+  changes: Array<{ sales_order_line_id: string; po_line_id: string; from_po_line_id?: string }>,
 ): Promise<{ results: PoLinkResult[] }> {
   return postJson(poLinkUrl(id, rowId, '/change'), { changes }, 'Failed to change the PO');
 }

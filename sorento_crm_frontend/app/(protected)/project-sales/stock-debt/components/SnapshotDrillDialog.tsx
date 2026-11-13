@@ -292,7 +292,6 @@ function OiGroupGrid({
   const menu = poLinkMenu({
     ticked: tickedLines.length,
     linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
-    singleLinked: tickedLines.filter((line) => (line.now.po_links ?? []).length === 1).length,
     nothingOpenOn:
       tickedLines
         .map((line) => line.now.po_links ?? [])
