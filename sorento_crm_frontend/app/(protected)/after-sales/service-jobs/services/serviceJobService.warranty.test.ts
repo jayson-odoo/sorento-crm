@@ -68,7 +68,7 @@ describe('serviceJobService product lines', () => {
 
   it('a failed add throws the server message', async () => {
     apiFetch.mockResolvedValue({
-      ok: false, status: 422, json: async () => ({ detail: 'Purchase date cannot be in the future' }),
+      ok: false, status: 422, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ detail: 'Purchase date cannot be in the future' }),
     } as Response);
     await expect(
       addServiceJobProduct('j-1', { product_id: 'p-1', kind_id: null, purchase_date: null, defect_type_id: null }),

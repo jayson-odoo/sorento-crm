@@ -104,7 +104,7 @@ describe('warrantyConfigService', () => {
 
   it('a 403 surfaces the server message', async () => {
     apiFetch.mockResolvedValue({
-      ok: false, status: 403, json: async () => ({ detail: 'Admin access is required to change warranty configuration.' }),
+      ok: false, status: 403, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ detail: 'Admin access is required to change warranty configuration.' }),
     } as Response);
     await expect(deletePolicy('pol-1')).rejects.toThrow(/Admin access is required/);
   });
