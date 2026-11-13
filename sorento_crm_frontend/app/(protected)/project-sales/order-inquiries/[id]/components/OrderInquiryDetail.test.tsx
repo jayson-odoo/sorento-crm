@@ -1059,3 +1059,40 @@ describe('Document view gear: Unlink... when AutoCount cannot unlink (capability
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
+
+
+describe('Document view gear: Change PO... needs an AutoCount-tied PO on every ticked line (browser pass O2)', () => {
+  const line = (id: string, code: string, tied: boolean) =>
+    ({
+      ...LINKED_LINE, id, item_code: code, product_id: 'prod-1', core_line_id: `cl-${id}`, line_no: 1,
+      verb: 'ORDER', state: tied ? 'placed' : 'raised', in_autocount: true, in_autocount_link: tied,
+      links: tied ? [{ id: `l-${id}`, kind: 'po', document: 'X-1', qty: '10' }] : [],
+    }) as unknown as OrderInquiryWorklistRow;
+  afterEach(() => vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([LINKED_LINE]));
+
+  async function open(rows: OrderInquiryWorklistRow[], ticks: string[]) {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue(rows);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    for (const code of ticks) fireEvent.click(await screen.findByLabelText(`Select ${code}`));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), { button: 0 });
+    await screen.findByRole('menuitem', { name: /auto link/i });
+  }
+
+  it('an AutoCount line with no PO linked: Change PO is disabled with the reason', async () => {
+    await open([line('row-n', 'ZZT-NNN', false)], ['ZZT-NNN']);
+    const item = screen.getByRole('menuitem', { name: /^Change PO\.\.\. \(1\)$/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item.getAttribute('title')).toBe('Each ticked line needs a PO linked');
+  });
+
+  it('one line without a PO among tied ones still disables it; all tied enables it', async () => {
+    await open([line('row-a', 'ZZT-AAA', true), line('row-n', 'ZZT-NNN', false)], ['ZZT-AAA', 'ZZT-NNN']);
+    expect(screen.getByRole('menuitem', { name: /^Change PO\.\.\. \(2\)$/ })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('every ticked line tied to a PO: Change PO is enabled', async () => {
+    await open([line('row-a', 'ZZT-AAA', true)], ['ZZT-AAA']);
+    expect(screen.getByRole('menuitem', { name: /^Change PO\.\.\. \(1\)$/ })).not.toHaveAttribute('aria-disabled', 'true');
+  });
+});
