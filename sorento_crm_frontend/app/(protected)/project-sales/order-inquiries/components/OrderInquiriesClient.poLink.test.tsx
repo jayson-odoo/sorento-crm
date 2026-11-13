@@ -413,3 +413,24 @@ describe('Link to PO... without AutoCount falls back to the CRM placement dialog
     expect(screen.queryByRole('menuitem', { name: /^Choose document/ })).toBeNull();
   });
 });
+
+
+describe('Link to PO... for a user without the OI action grant (review finding)', () => {
+  it('holding link_po and the reserve grant but not acknowledge, on a row not in AutoCount, Link to PO... is greyed or absent and never opens the CRM dialog', async () => {
+    granted = new Set([ACTION, 'projects.order_inquiries.reserve', LINK_PO]); // CS: ticks rows to reserve, no acknowledge grant
+    poLinkSwitchOn = true;
+    poCandidatesSpy.mockResolvedValue({ candidates: [], still_to_link: '1' });
+    listOrderInquiryWorklist.mockResolvedValue(envelope([{ ...ROW_1, in_autocount: false } as OrderInquiryWorklistRow]));
+    await ready();
+    tick('SO-P1');
+    openActionsMenu();
+    const item = await screen.findByRole('menuitem', { name: /^Link to PO\.\.\./ }).catch(() => null);
+    if (item) {
+      expect(item).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(item);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText('Link to a document')).toBeNull();
+    expect(poCandidatesSpy).not.toHaveBeenCalled();
+  });
+});

@@ -57,7 +57,7 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 // OI-PO-LINK (document view gear): the shared dialog's hooks, mocked by module path as
 // `OrderInquiriesClient.poLink.test.tsx` does.
-const poLinkState = vi.hoisted(() => ({ switchOn: true }));
+const poLinkState = vi.hoisted(() => ({ switchOn: true, unlinkEnabled: true }));
 const poOptionsSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../../_shared/po-link/usePoLink', () => ({
   usePoLinkSwitch: () => ({ data: poLinkState.switchOn, isLoading: false }),
@@ -68,7 +68,10 @@ vi.mock('../../../_shared/po-link/usePoLink', () => ({
         capabilities: {
           split_link: { enabled: true, reason: null },
           link_row: { enabled: false, reason: null },
-          unlink_row: { enabled: false, reason: null },
+          unlink_row: {
+            enabled: poLinkState.unlinkEnabled,
+            reason: poLinkState.unlinkEnabled ? null : 'Waiting for AutoCount',
+          },
           relink_row: { enabled: false, reason: null },
         },
         po_lines: [], so_books: {}, lines: [], skipped: [],
@@ -311,6 +314,7 @@ function renderDetail(id: string) {
 beforeEach(() => {
   permState.denied.clear();
   poLinkState.switchOn = true;
+  poLinkState.unlinkEnabled = true;
   poOptionsSpy.mockClear();
   searchState.query = '';
   getOrderInquiryHistorySpy.mockClear();
@@ -1014,5 +1018,44 @@ describe('Document view gear: Link to PO... without AutoCount falls back to the 
     expect(await screen.findByText('Link to a document')).toBeInTheDocument();
     expect(await screen.findByText('ZZT-PO-0001')).toBeInTheDocument();
     expect(screen.queryByText('ZZT-SPO-0009')).toBeNull();
+  });
+});
+
+
+describe('Document view gear: Unlink... when AutoCount cannot unlink (capability off)', () => {
+  const tied = (id: string, code: string, inLink: boolean) =>
+    ({
+      ...LINKED_LINE, id, item_code: code, product_id: 'prod-1', core_line_id: `cl-${id}`, line_no: 1,
+      verb: 'ORDER', state: 'placed', in_autocount: true, in_autocount_link: inLink,
+      links: [{ id: `l-${id}`, kind: inLink ? 'po' : 'spo', document: 'X-1', qty: '10' }],
+    }) as unknown as OrderInquiryWorklistRow;
+  afterEach(() => vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([LINKED_LINE]));
+
+  async function open(rows: OrderInquiryWorklistRow[], ticks: string[]) {
+    poLinkState.unlinkEnabled = false;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue(rows);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    for (const code of ticks) fireEvent.click(await screen.findByLabelText(`Select ${code}`));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), { button: 0 });
+    await screen.findByRole('menuitem', { name: /auto link/i });
+  }
+
+  it('only AutoCount-tied lines ticked: Unlink... is greyed with AutoCount\'s reason and opens no popup', async () => {
+    await open([tied('row-a', 'ZZT-AAA', true)], ['ZZT-AAA']);
+    const item = screen.getByRole('menuitem', { name: /^Unlink\.\.\./ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item.getAttribute('title') ?? item.textContent).toContain('Waiting for AutoCount');
+    fireEvent.click(item);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(createPendingActionSpy).not.toHaveBeenCalled();
+  });
+
+  it('a mixed tick still runs the countdown for the CRM-only line, and opens no popup for the tied one', async () => {
+    await open([tied('row-a', 'ZZT-AAA', true), tied('row-c', 'ZZT-CCC', false)], ['ZZT-AAA', 'ZZT-CCC']);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Unlink\.\.\./ }));
+    await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
+    expect(createPendingActionSpy.mock.calls[0][0].entityId).toBe('row-c');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.models.scm import OrderLinkClaim
+from app.services.scm import po_link_history
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from .test_oi_follow_book_chain import (  # noqa: F401  (ctx is a fixture)
@@ -24,7 +25,7 @@ from .test_oi_follow_book_chain import (  # noqa: F401  (ctx is a fixture)
 )
 
 
-def _case(ctx, *, source, line_keeps_so_ref):
+def _case(ctx, *, source, line_keeps_so_ref, freed_event=False, tied_elsewhere=False):
     db = ctx.db
     product = _seed_product(db, company_id=ctx.company_a)
     ref = _ref("SOL")
@@ -36,8 +37,13 @@ def _case(ctx, *, source, line_keeps_so_ref):
     )
     po, po_line = _seed_po_line(
         db, company_id=ctx.company_a, product_id=product.id,
-        from_so_line_ref=ref if line_keeps_so_ref else None, qty_ordered="4",
+        from_so_line_ref=ref if line_keeps_so_ref else (f"{ref}:other" if tied_elsewhere else None),
+        qty_ordered="4",
     )
+    if freed_event:
+        # AutoCount tied this line to the row's SO line and then cleared it: the EVENT ingest logs.
+        po_link_history.record_changes(db, [(po_line, ref, None)], purchase_order_id=po.id)
+        db.flush()
     db.add(OrderLinkClaim(
         company_id=ctx.company_a, so_number=so.so_number, po_number=po.po_number,
         item_code=product.product_code, source=source, so_line_id=core_line.id, po_line_id=po_line.id,
@@ -53,7 +59,8 @@ def _case(ctx, *, source, line_keeps_so_ref):
 
 
 def test_an_autocount_claim_on_a_freed_po_line_places_nothing(ctx):
-    po_line, links, line_b = _case(ctx, source="autocount", line_keeps_so_ref=False)
+    """Freed = tied to this row's SO ref, then cleared by AutoCount (the audit EVENT proves it)."""
+    po_line, links, line_b = _case(ctx, source="autocount", line_keeps_so_ref=False, freed_event=True)
     assert [l.po_line_id for l in links] == [line_b.id]  # PO B's 4 units; nothing on the freed line
 
 
@@ -65,3 +72,14 @@ def test_control_a_po_upload_claim_on_a_null_ref_line_still_places(ctx):
 def test_control_an_autocount_claim_whose_line_still_carries_the_so_ref_still_places(ctx):
     po_line, links, line_b = _case(ctx, source="autocount", line_keeps_so_ref=True)
     assert po_line.id in {l.po_line_id for l in links}
+
+
+def test_an_autocount_claim_on_a_line_whose_ref_was_never_known_still_places(ctx):
+    """An older push carried no ref; the claim pins the pair by SO number only. No freed EVENT exists."""
+    po_line, links, _line_b = _case(ctx, source="autocount", line_keeps_so_ref=False, freed_event=False)
+    assert {l.po_line_id: Decimal(str(l.qty)) for l in links}.get(po_line.id) == Decimal("1")
+
+
+def test_an_autocount_claim_on_a_line_now_tied_to_another_so_line_is_skipped(ctx):
+    po_line, links, line_b = _case(ctx, source="autocount", line_keeps_so_ref=False, tied_elsewhere=True)
+    assert po_line.id not in {l.po_line_id for l in links}

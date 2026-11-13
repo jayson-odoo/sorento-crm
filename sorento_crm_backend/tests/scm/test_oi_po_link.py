@@ -1055,3 +1055,14 @@ def test_change_unlinks_the_named_po_line_first_and_leaves_the_other_one_alone(s
 
     w["db"].expire_all()
     assert w["first"].from_so_line_ref == w["so_line"].source_ref  # untouched, no SS call for it
+
+
+def test_change_naming_the_same_so_line_twice_is_refused_even_when_one_names_from_po_line_id(scm_app, fake_ss):
+    w = _two_covering_world(scm_app, "oi")
+    resp = w["c"].post(f"{OI}/po-link/change", json={"row_ids": _ids(w, "a", "b", "c"), "changes": [
+        _change_item(w),
+        _change_item(w, from_po_line_id=w["second"].id),
+    ]})
+    assert resp.status_code == 422
+    assert "Name each sales order line once." in resp.text
+    assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
