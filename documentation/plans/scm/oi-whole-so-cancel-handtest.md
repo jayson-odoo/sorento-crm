@@ -69,8 +69,13 @@ COMMIT;
 6. At phone width (375 px), repeat steps 1 and 2.
 7. Click Fulfilment Planning in the sidebar, tick SO-A's row and click "Plan <SO-A number>" (or open SO-A's order page and click its "Plan" link). Keep Buy for the moved line ("Change
    decision" > "Buy the whole 2" > Save decision; do NOT click "Save all suggested"), then the board's Confirm.
-8. Open SO-B from Sales Orders (sidebar) and click its "Plan" button on the order page. On the board, read
-   SO-B's lines, click "Save all suggested", then "Confirm (3)" and confirm in the popup.
+8. Open SO-B from Sales Orders (sidebar) and click its "Plan" button on the order page. On the board (list
+   view), read SO-B's three lines, then:
+   a. Tick the header checkbox (select all), read the strip, then click Clear.
+   b. Click the tick (Save as suggested) on line 1 only.
+   c. Tick line 2's checkbox only, open Decide and read its items, pick "Cancel", save in the popup.
+   d. Click "Save all suggested".
+   e. Click "Confirm (3)" and confirm in the popup.
 9. Open OI-B, Lines tab.
 10. System > Messaging > Outgoing Mails, search the fixture SO numbers.
 
@@ -92,8 +97,14 @@ COMMIT;
 7. Step 7: the result reads "SO-A: confirmed as revision 2 (1 purchase row handed over)"; OI-A goes back to
    Outstanding, line 1 "To order".
 8. Step 8: the SO-B order page shows a "Plan" button (owner F1) and it opens the board. Each SO-B line reads
-   "Change proposed" with Now "Cancel line"; before saving, the button reads "Confirm (0)"; after "Save all
-   suggested" it reads "Confirm (3)". Nowhere on the board, the popup or the result is "Apply AutoCount
+   "Change proposed" with Suggested "Cancel line" and Decided "Not decided" (nothing decided yet), and the
+   button reads "Confirm (0)".
+   a. Every line has a checkbox and select all ticks all three ("3 selected").
+   b. Line 1's Decided reads "Cancel line", lines 2 and 3 still "Not decided"; "Confirm (1)".
+   c. The Decide menu shows "Cancel" (not "Transfer to Cancel SO"); after saving, line 2's Decided reads
+      "Cancel line"; "Confirm (2)".
+   d. Line 3's Decided reads "Cancel line"; "Confirm (3)".
+   e. Nowhere on the board, the popup or the result is "Apply AutoCount
    change" (owner F2: one Decide -> Confirm path). The result reads "SO-B: confirmed as revision 1 (3
    purchase rows handed over)", with no "Posted ..., server confirmed ..." warning under it; SO-B leaves the planning list.
 9. Step 9: the Lines tab reads "Every line on this order inquiry is cancelled." (not "Nothing was raised on
