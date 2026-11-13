@@ -229,4 +229,23 @@ describe('useMoveFiles', () => {
     fireEvent.click(button('Keep both'));
     expect(await pending).toEqual({ kind: 'keep', forAll: false });
   });
+
+  it('the five buttons sit on one row from tablet width up (owner hand test, 13 Nov)', async () => {
+    preflight(bulkMoveAttachments, [conflict(1), conflict(2)], { updated: 2, not_moved: [] });
+    const pending = mount().moveFiles(['f-1', 'f-2'], 'dir-b');
+    await screen.findByText('1 of 2');
+    for (const ticked of [false, true]) {
+      if (ticked) fireEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 1 remaining conflict' }));
+      const main = button(ticked ? 'Keep all' : 'Keep both');
+      const footer = main.parentElement!;
+      // Never wraps onto a second row; on a phone the shared footer stacks (flex-col-reverse).
+      expect(footer.className).not.toContain('flex-wrap');
+      expect(footer.className).toContain('sm:flex-nowrap');
+      // Wide enough for all five: the window is sm:max-w-xl, not max-w-lg.
+      expect(screen.getByRole('dialog').className).toContain('sm:max-w-xl');
+      expect(Array.from(footer.querySelectorAll('button'))).toHaveLength(5);
+    }
+    fireEvent.click(button('Cancel'));
+    await pending;
+  });
 });
