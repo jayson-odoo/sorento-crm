@@ -1,6 +1,6 @@
 # PLAN: After-sales P2, warranty (is this covered?)
 
-Status: behaviour card filed (CARD-warranty-p2-13nov.md), mock v2 carried over; waiting for owner answers. No code.
+Status: build (mock v2 approved 13 Nov 16:29; Q0 service job, Q4 leave warranty_months; Q1-Q3 open). Red tests first. UAC: warranty-p2-acceptance-criteria.md.
 Track: L (new tables, migration, new screens, new permissions). Lane AFTER-SALES-REVIVE, slice P2, branch
 `claude/after-sales-p2-warranty-engine` from main fc9c5a2977 (P1 merged as #2365), new PR titled
 "AFTER-SALES-P2: warranty". Supersedes the earlier P2 draft PR #2374, which was based on pre-P1 main.
