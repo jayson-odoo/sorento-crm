@@ -214,7 +214,12 @@ function AuditTrailEntries({
                       {/* One value per element, no joining dots (owner standing rule). */}
                       <p className="mt-0.5 flex flex-wrap items-baseline gap-x-3 text-sm text-muted-foreground">
                         <span>{when}</span>
-                        {who ? <span>{who}</span> : null}
+                        {who ? (
+                          <>
+                            {' '}
+                            <span>{who}</span>
+                          </>
+                        ) : null}
                         {many ? (
                           <Button
                             type="button"

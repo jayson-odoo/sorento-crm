@@ -253,17 +253,22 @@ def assert_can_write_row_photos(db: Session, row_id: str, user_id: Optional[str]
     return row
 
 
-def decidable_ids(db: Session, user_id: Optional[str]) -> Set[str]:
+def decidable_ids(
+    db: Session, user_id: Optional[str], among: Optional[Set[str]] = None
+) -> Set[str]:
     """The pending requests `user_id` may decide on now (their stage team holds the open
-    stage), never their own."""
+    stage), never their own. `among` narrows the read to those request ids."""
     from app.models.sla import ConversationSLATracking
     from app.services.sla_scope import open_tracker_scope
 
-    if not user_id:
+    if not user_id or among == set():
         return set()
+    narrow = (
+        [ConversationSLATracking.source_entity_id.in_(sorted(among))] if among is not None else []
+    )
     trackers = (
         db.query(ConversationSLATracking)
-        .filter(ConversationSLATracking.source_entity_type == KIND, *open_tracker_scope())
+        .filter(ConversationSLATracking.source_entity_type == KIND, *open_tracker_scope(), *narrow)
         .all()
     )
     if not trackers:
@@ -443,7 +448,6 @@ def list_requests(
     is never anyone's but its requester's."""
     from sqlalchemy import func, select
 
-    from app.services.cost_access import cost_hidden
     from app.services.project_service import resolve_user_names
 
     uid = str(user_id)
@@ -469,7 +473,7 @@ def list_requests(
         OrderInquiryRow.order_inquiry_id == OrderInquiry.id,
         OrderInquiryRow.state != INQUIRY_CANCELLED,
     )
-    # Sort keys only: the payload's total is still masked per row below.
+    # Sort keys only: the payload's total is still masked below (`price_visible_ids`).
     sort_columns = {
         "line_count": line_count,
         "total": (
@@ -522,17 +526,11 @@ def list_requests(
         ):
             sums[str(inquiry_id)] = (int(count or 0), Decimal(amount or 0))
     names = resolve_user_names(db, {i.requested_by for i in inquiries if i.requested_by})
-    hidden = cost_hidden()
+    visible = price_visible_ids(db, inquiries, uid)
     data = []
     for inquiry in inquiries:
         count, amount = sums.get(str(inquiry.id), (0, _ZERO))
-        # prices_visible, without a per-row stage read: the requester, a decider, or cost access.
-        shown = (
-            not hidden
-            or is_requester(inquiry, uid)
-            or str(inquiry.id) in deciding
-            or (admin and inquiry.state == INQUIRY_PENDING_APPROVAL)
-        )
+        shown = str(inquiry.id) in visible
         data.append(
             {
                 "id": str(inquiry.id),
@@ -914,7 +912,7 @@ def _actor_stage(db: Session, inquiry: OrderInquiry, user_id: Optional[str]):
     return None
 
 
-_STALE_DECISION = "This request was changed; reload to see the latest"
+_STALE_DECISION = "This request was changed; reload to see the latest."
 
 
 def _naive_utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -1316,43 +1314,60 @@ def photo_changes(db: Session, inquiries: Iterable[Any]) -> Dict[str, Dict[str, 
 # ------------------------------------------------------------------ price visibility (G8)
 
 
-def prices_visible(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
-    """A spare part request's unit price is the expected supplier COST (crew ruling (b)): its
-    requester and anyone who can decide on it always see it, anyone else only with
-    `products.cost.view` (`cost_access`, read off this request's own stamp)."""
+def price_visible_ids(db: Session, inquiries, user_id: Optional[str]) -> Set[str]:
+    """THE price rule (G8), for one request or a page of them: the ids of `inquiries` whose
+    unit price (the expected supplier COST, crew ruling (b)) `user_id` may see. Its requester,
+    anyone who can decide on it now (`can_decide`: a current stage team member, or an admin,
+    while pending, never the requester), and an approver of record (browser pass R12: someone
+    who approved, rejected or changed a line keeps seeing prices after their level closed)
+    always see them; anyone else only with `products.cost.view` (`cost_access`, read off this
+    request's own stamp). A fixed number of reads whatever the page size."""
+    from app.models.audit import AuditLog
     from app.services.cost_access import cost_hidden
 
+    wanted = [i for i in inquiries if i is not None]
+    ids = {str(i.id) for i in wanted}
     if not cost_hidden():
-        return True
-    return (
-        is_requester(inquiry, user_id)
-        or can_decide(db, inquiry, user_id)
-        or decided_on(db, inquiry, user_id)
-    )
+        return ids
+    if not user_id or not ids:
+        return set()
+    uid = str(user_id)
+    shown = {str(i.id) for i in wanted if is_requester(i, uid)}
+    rest = [i for i in wanted if str(i.id) not in shown]
+    if not rest:
+        return shown
+    shown |= decidable_ids(db, uid, among={str(i.id) for i in rest})
+    pending = {
+        str(i.id)
+        for i in rest
+        if i.inquiry_type == KIND and i.state == INQUIRY_PENDING_APPROVAL
+    }
+    if pending - shown and is_admin(db, uid):
+        shown |= pending
+    left = {str(i.id) for i in rest} - shown
+    if left:
+        shown |= {
+            str(entity_id)
+            for (entity_id,) in db.query(AuditLog.entity_id)
+            .filter(
+                AuditLog.entity_type == AUDIT_ENTITY,
+                AuditLog.entity_id.in_(sorted(left)),
+                AuditLog.event.in_(_DECISION_EVENTS),
+                AuditLog.user_id == uid,
+            )
+            .distinct()
+            .all()
+        }
+    return shown
+
+
+def prices_visible(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
+    """`price_visible_ids` for one request."""
+    return str(inquiry.id) in price_visible_ids(db, [inquiry], user_id)
 
 
 #: The approver's own moves on a request, as History records them.
 _DECISION_EVENTS = ("SPR_APPROVED", "SPR_REJECTED", "SPR_LINE_CHANGED")
-
-
-def decided_on(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
-    """An approver of record (browser pass R12): someone who approved, rejected or changed a
-    line of this request keeps seeing its prices after their level has closed."""
-    from app.models.audit import AuditLog
-
-    if not user_id:
-        return False
-    return (
-        db.query(AuditLog.id)
-        .filter(
-            AuditLog.entity_type == AUDIT_ENTITY,
-            AuditLog.entity_id == str(inquiry.id),
-            AuditLog.event.in_(_DECISION_EVENTS),
-            AuditLog.user_id == str(user_id),
-        )
-        .first()
-        is not None
-    )
 
 
 #: The worklist (Lines tab) row keys that carry a spare part request's price.
@@ -1360,8 +1375,8 @@ _ROW_PRICE_KEYS = ("unit_price", "line_total", "submitted_unit_price")
 
 
 def mask_row_prices(db: Session, items: List[Dict[str, Any]], user_id: Optional[str]) -> None:
-    """Null a spare part row's prices for a reader who may not see them (`prices_visible`),
-    in place. One check per request on the page, never per row."""
+    """Null a spare part row's prices for a reader who may not see them (`price_visible_ids`),
+    in place. One check for the whole page, never per row."""
     from app.services.cost_access import cost_hidden
 
     if not cost_hidden():
@@ -1370,7 +1385,7 @@ def mask_row_prices(db: Session, items: List[Dict[str, Any]], user_id: Optional[
     if not ids:
         return
     inquiries = db.query(OrderInquiry).filter(OrderInquiry.id.in_(sorted(ids))).all()
-    shown = {str(i.id) for i in inquiries if prices_visible(db, i, user_id)}
+    shown = price_visible_ids(db, inquiries, user_id)
     for item in items:
         if item.get("inquiry_type") == KIND and str(item.get("order_inquiry_id")) not in shown:
             for key in _ROW_PRICE_KEYS:
