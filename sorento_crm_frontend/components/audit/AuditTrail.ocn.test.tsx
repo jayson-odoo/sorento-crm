@@ -164,3 +164,19 @@ describe('AuditTrail values (round 11, review R3)', () => {
     expect(document.body.textContent).not.toMatch(/pending|crm|processed_by_cs/);
   });
 });
+
+describe('AuditTrail user fields on an order change notice (round 15)', () => {
+  it('reads the approver by the name the History API sends, old to new', () => {
+    mockEntries([
+      entry({
+        old_values: { approver_id: null, requested_approval_by_user_id: null },
+        new_values: { approver_id: 'Manager A', requested_approval_by_user_id: 'Admin A' },
+      }),
+    ]);
+    render(<AuditTrail entityType="order_change_notice" entityId={OCN_ID} />);
+    expect(screen.getAllByTestId('audit-change-line').map((li) => li.textContent)).toEqual([
+      'Approver: (empty) → Manager A',
+      'Approval requester: (empty) → Admin A',
+    ]);
+  });
+});
