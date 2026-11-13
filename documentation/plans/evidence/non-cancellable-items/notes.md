@@ -54,3 +54,13 @@ to Cancel SO dialogs (same shared dialog component as the one walked above).
 - Create rule dialog, Category dropdown (crew UNVERIFIED item): not reproducible with real mouse clicks at 1280 and
   375, on a short list and an 80-item list, on a two-line option, on an option hanging below the dialog's edge, and
   after dragging the list's scrollbar: each click selected the option and the dialog stayed open.
+
+## Pass 5 (12 Nov, owner hand test F1: badge live on the open quote form), sandbox at alembic head
+Fixture reset first. ZZT-NC-Q1 > Edit proposal, nothing saved (DB line and series unchanged after):
+- (c) scope tab right-click > Rename, Series cleared, Save changes: Non-cancellable badges 1 -> 0.
+- (a) line ZZT-NC-TUB-A added with no series: 0; Series ZZT NC Fixture Series picked: 0 -> 2
+  (pass5-f1-series-picked.png).
+- (b) another ZZT-NC-TUB-A added with the series set: 2 -> 3 at once.
+- (c) that line changed to ZZT-NC-TAP-B: 3 -> 2; one TUB-A line's item cleared: 2 -> 1 (pass5-f1-item-cleared.png).
+Mechanism: the line verdict (`_judge_line`, also used for Non-standard / Below minimum price) answers
+`is_non_cancellable`; the badge reads `lineFacts` / `useLineFacts` in QuotationLineFlags.tsx.

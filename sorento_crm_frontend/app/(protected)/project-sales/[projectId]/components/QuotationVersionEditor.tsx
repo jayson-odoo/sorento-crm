@@ -64,7 +64,6 @@ import {
  */
 export const LINE_FLAG_FILTERS: { value: string; label: string; test: (facts: LineFacts) => boolean }[] = [
   { value: 'non_standard', label: 'Non-standard', test: (facts) => facts.nonStandard },
-  { value: 'below_default', label: 'Below default price', test: (facts) => facts.belowDefault },
   { value: 'below_floor', label: 'Below minimum price', test: (facts) => facts.belowFloor },
 ];
 
@@ -699,7 +698,11 @@ export function QuotationVersionEditor({
   const setChosenFlags = flagFilter?.onChange ?? setOwnFlags;
   const verdictSeriesId = (seriesId !== undefined ? seriesId : quotation?.series_id) ?? null;
   const facts = useLinesFacts(
-    { quotationId: quotation?.id ?? null, seriesId: verdictSeriesId },
+    {
+      quotationId: quotation?.id ?? null,
+      seriesId: verdictSeriesId,
+      savedSeriesId: quotation ? (quotation.series_id ?? null) : undefined,
+    },
     gridLines,
   );
   /**
@@ -885,6 +888,7 @@ export function QuotationVersionEditor({
           editing={gridEditing}
           quotationId={quotation?.id ?? null}
           seriesId={verdictSeriesId}
+          savedSeriesId={quotation ? (quotation.series_id ?? null) : undefined}
           rowFilter={rowFilter}
           emptyHint={
             gridEditing

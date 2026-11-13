@@ -28,7 +28,10 @@ vi.mock('../../_shared/hooks/useProjects', async (importOriginal) => {
   };
 });
 vi.mock('./QuotationStockChip', () => ({ QuotationStockChip: () => null, SetStockChip: () => null }));
-vi.mock('./QuotationLineFlags', () => ({
+// The real NonCancellableFlag (F1: the badge goes through the live-verdict path); the other
+// flags are not what this file pins.
+vi.mock('./QuotationLineFlags', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./QuotationLineFlags')>()),
   LineFlags: () => null,
   MinimumPriceBadge: () => null,
   MinimumPriceFlag: () => null,

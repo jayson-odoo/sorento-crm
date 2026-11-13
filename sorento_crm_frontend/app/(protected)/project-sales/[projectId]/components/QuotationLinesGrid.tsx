@@ -116,7 +116,7 @@ import {
 } from './QuotationLineFileCell';
 import { QuotationStockChip, SetStockChip } from './QuotationStockChip';
 import { SET_OPTION_PREFIX, isSetOption } from '@/app/(protected)/scm/components/productOrSetPicker';
-import { LineFlags, MinimumPriceFlag } from './QuotationLineFlags';
+import { LineFlags, MinimumPriceFlag, NonCancellableFlag } from './QuotationLineFlags';
 
 /** One line of the grid: the staged (or stored) line, and its true position in the scope. */
 interface GridRow {
@@ -209,6 +209,7 @@ interface GridContextValue {
   editing: boolean;
   quotationId: string | null;
   seriesId?: string | null;
+  savedSeriesId?: string | null;
   fetchProducts: (query: string) => Promise<SearchableSelectOption[]>;
   resolveProduct: (
     line: QuotationLine | null,
@@ -509,6 +510,7 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
       <LineFlags
         quotationId={grid.quotationId}
         seriesId={grid.seriesId}
+        savedSeriesId={grid.savedSeriesId}
         line={staged.line}
         draft={staged.draft}
       />
@@ -538,19 +540,20 @@ export function descriptionFromEditor(html: string): string {
  * at the character clicked; Tab into the cell, Enter or Space opens it with the caret at the end.
  */
 function DescriptionCell(context: CellContext<GridRow, unknown>) {
+  const grid = useGrid();
   const { staged } = context.row.original;
   return (
     <>
       <DescriptionBody {...context} />
       {/* On screen the flag sits under the description, not in a column of its own (the PDF,
-          sign page and Excel keep their REMARK column). */}
-      {staged.line?.is_non_cancellable && !isSectionDraft(staged.draft) ? (
-        <div className="mt-1">
-          <Badge variant="warning" appearance="light" size="sm" className="whitespace-nowrap">
-            Non-cancellable
-          </Badge>
-        </div>
-      ) : null}
+          sign page and Excel keep their REMARK column). Live like Non-standard (F1). */}
+      <NonCancellableFlag
+        quotationId={grid.quotationId}
+        seriesId={grid.seriesId}
+        savedSeriesId={grid.savedSeriesId}
+        line={staged.line}
+        draft={staged.draft}
+      />
     </>
   );
 }
@@ -831,6 +834,7 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
     <MinimumPriceFlag
       quotationId={grid.quotationId}
       seriesId={grid.seriesId}
+      savedSeriesId={grid.savedSeriesId}
       line={staged.line}
       draft={staged.draft}
     />
@@ -1380,6 +1384,11 @@ export interface QuotationLinesGridProps {
   quotationId: string | null;
   /** The series the scope is quoted from: what a draft line is judged against before a save. */
   seriesId?: string | null;
+  /**
+   * The series the saved rows were judged against (the saved scope's). When the editor's series
+   * differs, saved rows are judged afresh so their flags follow the pick (NON-CANCELLABLE F1).
+   */
+  savedSeriesId?: string | null;
   /** Live search: rows that fail it are hidden, never renumbered or left out of the total. */
   rowFilter?: (line: StagedQuotationLine) => boolean;
   emptyHint: string;
@@ -1423,6 +1432,7 @@ export function QuotationLinesGrid({
   editing,
   quotationId,
   seriesId,
+  savedSeriesId,
   rowFilter,
   emptyHint,
   filterEmptyHint,
@@ -1957,6 +1967,7 @@ export function QuotationLinesGrid({
       editing,
       quotationId,
       seriesId,
+      savedSeriesId,
       fetchProducts,
       resolveProduct,
       uomOptions,
@@ -1991,6 +2002,7 @@ export function QuotationLinesGrid({
       openPreview,
       quotationId,
       resolveProduct,
+      savedSeriesId,
       seriesId,
       selectProduct,
       total,
