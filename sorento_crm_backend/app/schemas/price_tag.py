@@ -52,6 +52,10 @@ _VariantId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=
 
 
 class PriceTagRequestLineCreate(BaseModel):
+    # PRICETAG-ALA-CARTE AC-12: a line loaded from the server sends its own id back, so a
+    # re-save carries marketing's tags and the template pick by line, not by product (the same
+    # product may sit on several lines). None for a new line; an unknown id is ignored.
+    id: Optional[str] = Field(default=None, max_length=36)
     line_type: str = Field(..., pattern=r"^(product|product_set)$")
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
@@ -101,17 +105,22 @@ class PriceTagReviseLineIn(BaseModel):
     (create, update, the CRM line PATCH) uses.
 
     ``extra="ignore"``, not ``"forbid"``: the composer's payload carries
-    ``combo_id`` / ``parts`` / ``included_accessories`` / ``product_class`` /
-    ``line_type`` too - ``_convert_ptag_revise_line`` already reads only the
-    fields declared here and drops the rest by design (they are carried over
-    from the OLD line instead, Gap D), so this model is not the composer's
-    full contract, only the two fields that never had one.
+    ``included_accessories`` / ``product_class`` / ``line_type`` too -
+    ``_convert_ptag_revise_line`` already reads only the fields declared here
+    and drops the rest by design (they are carried over from the OLD line
+    instead, Gap D), so this model is not the composer's full contract.
     """
 
     model_config = ConfigDict(extra="ignore")
 
+    #: PRICETAG-ALA-CARTE AC-12: the saved line this entry edits, so its package, parts and
+    #: tags carry by line rather than by product. None or unknown = a new line.
+    id: Optional[str] = Field(default=None, max_length=36)
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
+    #: The line's package (None = ala carte) and its parts; absent = the old line's are kept.
+    combo_id: Optional[str] = None
+    parts: Optional[list[LinePartIn]] = None
     quantity: int = Field(default=1, ge=1)
     remarks: Optional[str] = None
     promotion_id: Optional[str] = None

@@ -326,14 +326,39 @@ def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
     with a clear + re-add, so `row.lines` is stale until refreshed)."""
     from app.models.price_tag import PriceTagRequestLine
 
+    from app.models.product import Product
+    from app.models.product_combo import ProductCombo
+    from app.models.product_set import ProductSet
+
     lines = (
         db.query(PriceTagRequestLine)
         .filter(PriceTagRequestLine.request_id == row.id)
         .order_by(PriceTagRequestLine.sort_order.asc().nulls_last(), PriceTagRequestLine.id.asc())
         .all()
     )
+
+    def _names(model, column, ids) -> dict:
+        ids = {i for i in ids if i}
+        if not ids:
+            return {}
+        return dict(db.query(model.id, column).filter(model.id.in_(ids)).all())
+
+    product_codes = _names(Product, Product.product_code, (ln.product_id for ln in lines))
+    set_codes = _names(ProductSet, ProductSet.set_code, (ln.product_set_id for ln in lines))
+    combo_names = _names(ProductCombo, ProductCombo.name, (ln.combo_id for ln in lines))
+
+    def _package(ln) -> Optional[str]:
+        # PRICETAG-ALA-CARTE AC-16 (Q5): a product line's package by name; no combo = ala carte.
+        if not ln.product_id:
+            return None
+        if not ln.combo_id:
+            return "Ala carte"
+        return combo_names.get(ln.combo_id)
+
     return [
         {
+            "item_code": product_codes.get(ln.product_id) or set_codes.get(ln.product_set_id),
+            "package": _package(ln),
             "product_id": ln.product_id,
             "product_set_id": ln.product_set_id,
             "quantity": _jsonable(ln.quantity),
@@ -434,6 +459,15 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
     # PRICETAG-UPGRADE-VARIANTS S3: same rule, absent carries the old line's unticked members.
     if "excluded_variant_ids" in raw:
         converted["excluded_variant_ids"] = clean.get("excluded_variant_ids") or []
+    # PRICETAG-ALA-CARTE AC-12: the saved line this entry edits, and its package; same "sent vs
+    # not sent" rule. Re-validated by `_add_lines` (`_resolve_combo_id` / `_add_line_parts`),
+    # the same gate create and update take.
+    if clean.get("id"):
+        converted["id"] = clean.get("id")
+    if "combo_id" in raw and converted["line_type"] == "product":
+        converted["combo_id"] = clean.get("combo_id")
+    if raw.get("parts") is not None and converted["line_type"] == "product":
+        converted["parts"] = clean.get("parts") or []
     return converted
 
 
@@ -532,8 +566,16 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
         # carry the same way - a revision that only touches a remark must
         # not silently drop a promotion or a hand-typed price the
         # salesperson had already set on this line.
-        old_by_key = {
-            (old.product_id, old.product_set_id): (
+        #
+        # PRICETAG-ALA-CARTE AC-12: one product may sit on several lines, so an
+        # entry claims the old line its own `id` names, else the first unclaimed
+        # old line with the same product and set (and package, when it sends
+        # one); each old line is claimed once, and the claim's id is passed on so
+        # `replace_lines` carries the tags from the same line.
+        old_by_id = {
+            str(old.id): (
+                old.product_id,
+                old.product_set_id,
                 old.included_accessories,
                 old.combo_id,
                 [
@@ -554,10 +596,34 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
             )
             for old in row.lines
         }
-        for line in converted:
-            key = (line.get("product_id"), line.get("product_set_id"))
-            if key in old_by_key:
+        claimed: set[str] = set()
+        by_id: dict[int, str] = {}
+        for idx, line in enumerate(converted):
+            line_id = str(line.get("id") or "")
+            if line_id in old_by_id and line_id not in claimed:
+                claimed.add(line_id)
+                by_id[idx] = line_id
+        for idx, line in enumerate(converted):
+            line_id = by_id.get(idx, "")
+            if not line_id:
+                line.pop("id", None)
+                line_id = next(
+                    (
+                        old_id
+                        for old_id, old in old_by_id.items()
+                        if old_id not in claimed
+                        and (old[0], old[1]) == (line.get("product_id"), line.get("product_set_id"))
+                        and ("combo_id" not in line or old[3] == line.get("combo_id"))
+                    ),
+                    "",
+                )
+                if line_id:
+                    claimed.add(line_id)
+                    line["id"] = line_id
+            if line_id:
                 (
+                    _product_id,
+                    _product_set_id,
                     included_accessories,
                     combo_id,
                     parts,
@@ -566,7 +632,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                     tag_template_id,
                     price_type,
                     excluded_variant_ids,
-                ) = old_by_key[key]
+                ) = old_by_id[line_id]
                 line["included_accessories"] = included_accessories
                 # Same carry-over reason as `included_accessories` above, now
                 # for the package: the revise composer has no field for it, so
@@ -575,9 +641,11 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 #
                 # These ids are re-validated by `_add_lines` on the way back in
                 # (`_resolve_combo_id` / `_add_line_parts`, security review B1),
-                # the same gate the create path takes - `_convert_ptag_revise_line`
-                # never lets a revise payload supply them directly, so the only
-                # source is this carry-over, and it is checked anyway.
+                # the same gate the create path takes, whether carried here or
+                # sent by the composer (PRICETAG-ALA-CARTE). A package the entry
+                # changed never inherits the old package's parts.
+                if "combo_id" in line and line["combo_id"] != combo_id:
+                    parts = []
                 line.setdefault("combo_id", combo_id)
                 line.setdefault("parts", parts)
                 # `_convert_ptag_revise_line` only sets these keys when the raw
@@ -2279,7 +2347,11 @@ def _diff_lines(previous: Any, current: Any) -> list[dict]:
                 }
             )
             continue
-        for key in ("item_code", "quantity", "unit_price", "total", "remark"):
+        for key in ("item_code", "quantity", "unit_price", "total", "remark", "package"):
+            # PRICETAG-ALA-CARTE AC-16: a price tag snapshot written before it carried
+            # `item_code` / `package` is not a change to either.
+            if key in ("item_code", "package") and (key not in old or key not in new):
+                continue
             if old.get(key) != new.get(key):
                 changes.append(
                     {
