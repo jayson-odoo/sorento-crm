@@ -1511,19 +1511,31 @@ def _dealer_tools() -> tuple[str, ...]:
     return (batch.BATCH, GRANT, writes.FIND_CONTACTS, writes.UPDATE_CONTACT)
 
 
-def dealer_access_prompt(text: str, earlier_table: str, waiting: bool) -> str:
-    """The recognition side call's one message: the question, then the conversation as data."""
+def dealer_access_prompt(
+    text: str, earlier_table: str, waiting: bool, other_table: tuple[str, str] | None = None,
+) -> str:
+    """The recognition side call's one message: the question, then the conversation as data.
+
+    `other_table` (AGENT-BULK-W4-CONTACTS crew pass 13 Nov): the immediately preceding reply when it was a table of
+    another write, as (what that table changes, its text). Without it an answer to that table's rows read as
+    "answering for rows of a table" and went to the grant."""
     parts = [
         "Decide whether the user's message below asks to give, change, remove or pick dealer contact access: a "
         "person's access to a dealer's customer account through the AI agent (granting people, Business owner or "
         "Employee, AI replies on or off, removing someone from an account, or picking accounts or answering for rows "
-        "of a table the assistant showed). Answer false for anything else, and for a message that only says yes or "
-        "no to a change waiting for the user's decision.",
+        "of a dealer access table the assistant showed). Answer false for anything else, and for a message that only "
+        "says yes or no to a change waiting for the user's decision. Changing other things about contacts or "
+        "customers is not dealer access, even with a table of phone numbers: a contact's own details (its name, "
+        "whether its sponsorships must name a registered project, its Respond.io workspace), contact tags, or the "
+        "sales agents of customers; nor is answering or correcting the rows of a table about one of those.",
     ]
     if waiting:
         parts.append("A change is waiting for the user's decision.")
     if earlier_table:
         parts.append(f"The assistant's previous reply (a dealer access table):\n{earlier_table}")
+    elif other_table:
+        label, reply = other_table
+        parts.append(f"The assistant's previous reply (a table to {label}, not dealer access):\n{reply}")
     parts.append(f"The user's message:\n{text}")
     return "\n\n".join(parts)
 
@@ -1644,7 +1656,11 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
         current["typed"] if current is not None
         else list(got.get("batch_typed") or []) if action is not None else []
     )
-    return {**(current or empty), "typed": typed, "expired": older, "card": card, "ready": ready}
+    # The immediately preceding turn's table, whatever its write and whether or not rows wait (the side call's context).
+    last_table = (got.get("batch_write"), got.get("reply_text") or "") if "batch_waiting" in got else (None, "")
+    return {
+        **(current or empty), "typed": typed, "expired": older, "card": card, "ready": ready, "last_table": last_table,
+    }
 
 
 def _run(
@@ -1973,9 +1989,15 @@ def _run(
             previous_table = _previous_waiting(db, conv, turn_id)
             previous_waiting = previous_table["waiting"]
             earlier = previous_table["reply"] if previous_table["write"] == GRANT else ""
+            last_write, last_reply = previous_table.get("last_table") or (None, "")
+            other = (
+                (TOOL_LABELS.get(last_write) or "change many records", last_reply)
+                if last_write and last_write != GRANT and last_reply else None
+            )
             try:
                 res = chat(
-                    [{"role": "user", "content": dealer_access_prompt(text, earlier, waiting is not None)}], None,
+                    [{"role": "user", "content": dealer_access_prompt(text, earlier, waiting is not None, other)}],
+                    None,
                     kind=DEALER_ACCESS_KIND, cap=SIDE_CALL_CAP, json_schema=DEALER_ACCESS_SCHEMA,
                 )
                 dealer_flow = json.loads(res.content or "{}").get("dealer_access") is True
