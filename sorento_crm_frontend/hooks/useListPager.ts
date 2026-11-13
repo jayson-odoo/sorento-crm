@@ -61,6 +61,8 @@ export interface ListPagerParams {
   pageSize: number;
   sorting: SortingState;
   searchQuery: string;
+  /** Every `query` value, for a list searching with chips. */
+  searchQueries?: string[];
   /** Extra list filters carried in the URL (order_status_id, roleId, ...). */
   filters: Record<string, string>;
 }
@@ -136,7 +138,7 @@ function stepHref(
       pageIndex: params.pageIndex,
       pageSize: params.pageSize,
       sorting: params.sorting,
-      searchQuery: params.searchQuery,
+      searchQuery: params.searchQueries?.length ? params.searchQueries : params.searchQuery,
     },
     { ...params.filters, from: id, tab, ...view },
   );
