@@ -161,13 +161,22 @@ def test_r3_4_how_many_beside_a_miss_with_several_close_codes_numbered_list_and_
     assert offered[1] in after and "Couldn't find" not in after, after
 
 
+#: A which-one family that shares no code part with the miss, so neither token narrows the other (the coder
+#: reproduced on 3380eb82 that SWTWC8354-SH-UF's words narrowed srtwc286 to SRTWC286-SH-UF). Ten members, so the
+#: offer numbers on from 11. ELP3753 has three close codes: ELP3754 (console seed), ELP3755, ELP3758 (trigram 0.60 each).
+QKL_FAMILY = [f"QKL410-{s}" for s in ("AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AJ", "AK")]
+ELP_CLOSE = [CLOSE, "ELP3755", "ELP3758"]
+
+
 def test_r3_4_which_one_beside_a_miss_with_several_close_codes_numbers_on_from_11(session_factory, monkeypatch, stub_access):  # noqa: F811
-    c = _console(session_factory, monkeypatch, stub_access, CLOSE3, **_facts("SRTWC286-SH-150", *CLOSE3))
-    text = c.say("srtwc286 x 10, SWTWC8354-SH-UF x 2", stock(product("srtwc286", 10), product(TYPO3, 2)))
-    assert PICK10 in text, text
-    at = text.find(f"Couldn't find {TYPO3}. Did you mean:")
-    assert at > text.find(PICK10) >= 0, text
-    offered = [code for code in _option_codes(c) if code in CLOSE3]
+    c = _console(session_factory, monkeypatch, stub_access, [*QKL_FAMILY, *ELP_CLOSE[1:]], **_facts(*QKL_FAMILY, *ELP_CLOSE))
+    text = c.say("qkl410 x 10, ELP3753 x 2", stock(product("qkl410", 10), product(TYPO, 2)))
+    assert "which one?" in text.lower(), f"no which-one list for the family: {text!r}"
+    family_positions = sorted(_position_of(c, code) for code in QKL_FAMILY)
+    assert family_positions == list(range(1, 11)), c.stored_question
+    at = text.find(f"Couldn't find {TYPO}. Did you mean:")
+    assert at > text.lower().find("which one?") >= 0, f"no offer after the which-one options: {text!r}"
+    offered = [code for code in _option_codes(c) if code in ELP_CLOSE]
     assert 2 <= len(offered) <= 3, c.stored_question
     for i, code in enumerate(offered, 11):
         assert f"{i}. {code}" in text[at:], text
