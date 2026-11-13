@@ -63,3 +63,47 @@ as PO-60013 (4) plus PO-60014 (2) on SO-24101 line 10.
 | R3 | SS refuses one link, OI dialog | Reason plus "Try again"; pressing it turns the card to done without reopening | Card "Not linked: SO-24102 line 10: PurchaseAgent is required." with "Try again"; pressing it sent a second `po-links` call and the same card became "Linked ... PO-60011 (10)" | PASS | 31-recheck-refused-try-again-1280.png, 32-recheck-try-again-done-1280.png |
 | R4 | Same from the Stock Debt drill | Same behaviour | Refused card with "Try again", pressing it gave "Linked ... PO-60011 (6)" in place | PASS | 35-recheck-stockdebt-refused-1280.png, 36-recheck-stockdebt-try-again-done-1280.png |
 | R5 | Dialog at 375px | No horizontal page scroll | `scrollWidth == clientWidth == 375`, dialog fits, grid scrolls inside itself | PASS | 34-recheck-link-dialog-375.png |
+
+## Owner round 13 Nov
+
+Stack: private Postgres DB `sorento_browser` (re-created, `scripts.bootstrap_env`), backend :8055, `next dev` :3055, scratch fake Shared Service :8056
+answering `write-capabilities` (split_link, link_row, unlink_row, relink_row enabled), `po-links`, `po-links/batch`, `po-links/unlink`
+(stateful per PO doc; the link and Change PO writes in this round went to `po-links/batch` and `po-links`/`po-links/unlink`).
+Agent-browser sessions `oipo13` (desk user, 1280x800 then 375x812) and `oipo13adm` (superadmin, switch only). All data fake.
+Data: one OI with 6 rows. SO-24101 L10 qty 12 covered by TWO PO lines tied in AutoCount (4 + 2); SO-24102 qty 10 AutoCount, unlinked;
+SO-24103 product B qty 6; SO-24104 qty 8 AutoCount, CRM-only link to PO-60016 (not tied); SO-24105 qty 5 AutoCount, tied to PO-60015;
+one row qty 3 whose SO line is not in AutoCount. No SPO allocation row was seeded (CRM-only case covered by a PO line not tied).
+Navigation by sidebar clicks from `/` (Procurement > Supply Chain > Order Inquiries), row click for the document view.
+
+| # | Step | Expected | Actual | Result | Screenshot |
+|---|------|----------|--------|--------|------------|
+| D1 | Document view gear, nothing ticked | Auto link, Link to PO... (n), Change PO... (n), Unlink... (n); no Choose document / Link selected / Unlink selected | Exactly those four, counts (0) greyed; none of the retired items | PASS | r13-01-doc-gear-nothing-ticked-1280.png |
+| D2 | Link to PO on the AutoCount unlinked line (qty 10) | Shared dialog, no "Line" column, link done | Columns Sales order, Location, Delivery date, Outstanding, PO, PO qty, Free, Qty; no Line column; Link gave "Linked ... (10)"; SS got one `po-links/batch` with `X-Acting-User-Name: Aisha%20Rahman` | PASS | r13-02, r13-03, r13-04, r13-05 |
+| D3 | Change PO on the twice-covered line | One row per PO, pick one, only that PO replaced | Two rows "PO-60013 . line 1 (4)" and "PO-60014 . line 1 (2)"; picked a target only on the PO-60014 row, "Change 1 line"; SS log: `po-links/unlink` for doc 12310 only (PO-60013 untouched), then `po-links` doc 12008 qty 2 | PASS | r13-06, r13-07, r13-08, r13-09, r13-10 |
+| D4 | Unlink... on the CRM-only line | Countdown, no dialog | "Unlinking in 4s" bar with Cancel in the header, no dialog; after the window the CRM link was gone, no SS call made | PASS | r13-11, r13-12 |
+| D5 | Unlink... on an AutoCount-tied line | Shared dialog | "Unlink from PO" dialog, row SO-24105 PO-60015; Unlink 1 line gave "Unlinked", SS `po-links/unlink` doc 12320 | PASS | r13-13, r13-14 |
+| D6 | Unlink... on a mix (one CRM-only, one tied) | Both | Dialog for the tied line AND countdown for the CRM-only line at once; countdown removed the CRM link, dialog cancelled, no SS call | PASS | r13-15 |
+| D7 | Link to PO... on the line not in AutoCount | CRM dialog, PO lines only | "Link to a document" listing PO-60011, 60012, 60015, 60016 (all tagged PO, no SPO), issue date 01/09/2026 | PASS | r13-16 |
+| D8 | Switch OFF (saved in Settings as superadmin, POST general 200, DB flag false), document view | Link to PO... opens CRM dialog, Change PO absent | Gear: Auto link, Link to PO... (1), Unlink... (0); no Change PO; Link to PO opened "Link to a document"; no SS call | PASS | r13-36, r13-37, r13-38 |
+| L1 | Lines view Actions | No Choose document; Link to PO (n), Change PO (n), Unlink from PO (n), Recheck in AutoCount, Remove link in CRM | All present, plus Auto link all / Reject / Unconfirm etc.; none of the retired items | PASS | r13-17, r13-18 |
+| L2 | Lines: Link to PO | Works as before | Row SO-24105 to PO-60012 (5): "Linked", `po-links/batch` sent | PASS | r13-19, r13-20 |
+| L3 | Lines: Change PO on the twice-covered line | One row per PO, one replaced | Rows PO-60011 and PO-60013; changed only PO-60013 to PO-60016: `po-links/unlink` doc 12300 then `po-links` doc 12330 qty 4 | PASS | r13-21, r13-22 |
+| S1 | Stock Debt drill Dec 26, tick the twice-covered line, Decide | Change PO... enabled, popup lists both, works | Menu lists Request CS, Link, Change PO..., Unlink, Move PO (none greyed); popup shows PO-60011 (2) and PO-60016 (4); changed PO-60011 to PO-60014: unlink doc 12008 then link doc 12310 qty 2, both done | PASS | r13-23 to r13-28 |
+| M1 | 375px: document gear, Change PO, picker, Link, Unlink dialogs; Lines Actions + Change PO | Fit, no horizontal page scroll | `scrollWidth == clientWidth == 375` in every state; dialogs 375 wide at left 0; grids scroll inside themselves | PASS | r13-29 to r13-35 |
+| R1 | Standing rules | one line per row, no ids, dd/mm/yyyy, nothing hangs | One line per grid row in the shared dialogs, no ids or UUIDs, all dates dd/mm/yyyy (15/12/2026, 01/09/2026, 13/11/2026), every write answered within 6 s | PASS | all |
+
+Not walked: Stock Debt Decide menu and its Change PO popup at 375 (same shared dialog as M1, not opened at 375 in this round).
+
+### Observations (not failed steps)
+- O1: after an AutoCount unlink (Change PO or Unlink), the OI row keeps its `order_inquiry_links` row to the PO line that was just unlinked in
+  AutoCount. DB after D3: SO-24101 still held links to PO-60014 (2, no longer tied) next to the new PO-60011 link, and the Lines PO column read
+  "PO-60014 +2"; after D5 the SO-24105 row kept its PO-60015 link and then counted as CRM-only (the next Unlink went through the countdown).
+  `PoLinkService._send_unlink` (`sorento_crm_backend/app/services/scm/po_link_service.py:831-843`) and `change` (`:941-951`) never touch the
+  OI link. Same family as the 11 Nov note on the PO column after Unlink; needs an owner call whether the CRM link should go with it.
+- O2: Change PO... (n) in the document gear is enabled for a ticked AutoCount line that has no PO linked at all
+  (`OrderInquiryDetail.tsx:863`, gate is switch + grant + in AutoCount only). Not opened to see the dialog message in this round.
+- O3: at 1280 the shared Link dialog grid scrolls sideways inside itself (Qty column partly cut); at 375 the Change PO grid shows two stacked
+  scrollbars and the PO picker column needs a sideways swipe (pre-existing from the 11 Nov pass).
+- O4: the PO numbers in this fixture start with "PO-", so the wording reads "PO PO-60011"; a fixture artifact, not a defect.
+- O5: the document header read "Completed" on first open of the seeded OI (unlinked rows present) and "Outstanding" after the first write; seed shape, not traced.
+- Settings: the first Save click did nothing because the button was off screen (scrollintoview needed); a fresh DB also needs support email and timezone.
