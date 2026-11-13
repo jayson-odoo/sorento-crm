@@ -73,7 +73,6 @@ vi.mock('../hooks/usePurchaseRequests', () => ({
 }));
 vi.mock('../services/purchaseRequestService', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  searchProjectsForLink: vi.fn().mockResolvedValue([]),
   getOrCreateViewLink: vi.fn(),
   getUsersForApproverSelect: vi.fn().mockResolvedValue([]),
   getPurchaseRequestRevisions: vi.fn().mockResolvedValue([]),

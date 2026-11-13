@@ -96,6 +96,14 @@ INTEGRATION_LOG_SEARCH_INDEXES: Tuple[Tuple[str, str, str], ...] = (
     ),
 )
 
+#: SEARCH-CHIPS: the Sales orders list search runs one `ILIKE ANY` per column
+#: (`SalesOrderService._search_match`). Built online by so_search_trgm_0001 and retried by
+#: scripts/ensure_goods_chain_indexes.py.
+SALES_ORDER_SEARCH_INDEXES: Tuple[Tuple[str, str, str], ...] = tuple(
+    ("sales_orders", f"ix_search_trgm_sales_orders_{column}", f"USING gin ({column} gin_trgm_ops)")
+    for column in ("so_number", "debtor_name", "project_label", "po_ref", "po_ref_key")
+)
+
 #: pg_try_advisory_lock key `ensure_indexes_online` takes, so two builders (the migration, the
 #: retry, blue and green starting together) never build the same index at once.
 ADVISORY_LOCK_KEY = 0x6763_6964_7830  # "gcidx0"

@@ -1397,19 +1397,43 @@ export interface StagedPurchaseOrderLine {
   removed: boolean;
 }
 
-/** A sponsorship form linked to this project (AC-F3). Read-only here: procurement owns it. */
-export interface ProjectSponsorship {
+/**
+ * PROJECT-RELATED-RECORDS: one record linked to the project, one line in its Related grid.
+ * `kind` keys the frontend registry (`relatedRecordTypes.ts`); `raised_by` is a name.
+ */
+export interface RelatedRecordRow {
+  kind: string;
   id: string;
-  request_number?: string | null;
-  request_date?: string | null;
-  status?: string | null;
-  approval_status?: string | null;
-  customer_name?: string | null;
-  project_title?: string | null;
-  sponsor_subject?: string | null;
-  sponsor_subject_other?: string | null;
-  total_project_value?: string | null;
-  purpose?: string | null;
+  number: string | null;
+  status: string | null;
+  /** Purchase requests and sponsorship forms only. */
+  approval_status: string | null;
+  /** ISO date (yyyy-mm-dd). */
+  date: string | null;
+  raised_by: string | null;
+  subject: string | null;
+  value: string | number | null;
+}
+
+export interface RelatedRecordsResponse {
+  data: RelatedRecordRow[];
+  pagination: { total: number; page: number; limit: number };
+  empty: boolean;
+  /** Rows per type with no filter: the tab badge is their sum. */
+  type_counts: Record<string, number>;
+  /** The types this viewer may see, in registry order: the Type filter. */
+  types: { kind: string; label: string }[];
+  /** The raw statuses of those rows with no filter: the Status filter. */
+  statuses?: string[];
+}
+
+export interface RelatedRecordsParams {
+  pageIndex: number;
+  pageSize: number;
+  sorting?: { id: string; desc: boolean }[];
+  searchQuery?: string;
+  types?: string[];
+  statuses?: string[];
 }
 
 export interface SponsorshipYearTotal {
