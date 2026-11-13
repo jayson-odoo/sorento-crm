@@ -303,29 +303,47 @@ def test_ac8b_an_answered_set_event_exists_only_when_the_set_was_answered(sessio
             assert {c.uuid_of[m] for m in SOFT_MEMBERS} <= _stocked_ids(c), (entry, c.stock_calls)
 
 
-@pytest.mark.parametrize(
-    "who",
-    [
-        pytest.param(
-            "dealer",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="lead sign-off 13 Nov: same on main; a dealer gets exact codes only (owner 3 Oct, engine._exact_codes_only), crew-ask on #2395",
-            ),
-        ),
-        "staff",
-    ],
-)
-def test_ac2c_a_code_plus_a_descriptor_word_never_answers_the_plain_set_as_if_the_word_was_not_said(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2c_a_code_plus_the_completing_word_is_that_exact_set(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """`QWC605-RL` + `soft` folds to QWC605RLSOFT = the registered set QWC605-RL-SOFT: a direct answer."""
     from tests.chatbot._turn_helpers import entity
 
     c = _exact_world(session_factory, monkeypatch, stub_access)
     _who(c, who)
     text = c.say("QWC605-RL soft x 1", stock(product("QWC605-RL", 1), entity("soft", hint="category")))
-    stocked = _stocked_ids(c)
-    assert c.uuid_of["QWCX605-RL-SOFT"] in stocked, (c.stock_calls, text)
-    assert c.uuid_of[PLAIN_PAN] not in stocked, ("answered the plain set / pan", c.stock_calls, text)
+    assert "Did you mean" not in text and "Couldn't find" not in text, text
+    assert _stocked_ids(c) == {c.uuid_of[m] for m in SOFT_MEMBERS}, (c.stock_calls, text)
+    assert c.uuid_of[PLAIN_PAN] not in _stocked_ids(c), "answered the plain set's pan"
     assert not _word(PLAIN_PAN, text), text
+    for member in SOFT_MEMBERS:
+        assert _word(member, text), (member, text)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2d_a_code_plus_the_completing_word_is_that_exact_product(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+
+    base, variant = "QWX7700", "QWX7700-GM"
+    c = _console(session_factory, monkeypatch, stub_access, [base, variant], **_full([base, variant]))
+    _who(c, who)
+    text = c.say("QWX7700 gm x 1", stock(product(base, 1), entity("gm", hint="category")))
+    assert "Did you mean" not in text and "Couldn't find" not in text, text
+    assert _stocked_ids(c) == {c.uuid_of[variant]}, (c.stock_calls, text)
+    assert _word(variant, text), text
+    assert not _word(base, text), text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2e_a_word_that_completes_no_real_code_changes_nothing(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    _who(c, who)
+    text = c.say("QWC605-RL blue x 1", stock(product("QWC605-RL", 1), entity("blue", hint="category")))
+    pans = {c.uuid_of[EXACT_SETS[s][0]] for s in SIBLINGS}
+    assert not _stocked_ids(c) & pans, ("a sibling set was read", c.stock_calls)
+    for code in [*SIBLINGS, *(EXACT_SETS[s][0] for s in SIBLINGS)]:
+        assert not _word(code, text), (code, text)
 
 
 @pytest.mark.xfail(strict=True, reason="owner ruling 13 Nov: slice 2 (new PR) answers each part at the typed quantity")
@@ -333,3 +351,24 @@ def test_ac3_dealer_exact_set_does_not_ask_how_many_units_for_each(session_facto
     c = _exact_world(session_factory, monkeypatch, stub_access)
     text = c.say("QWC605RL x 1", stock(product("QWC605RL", 1)))
     assert "How many units for each?" not in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2f_a_set_whose_own_members_carry_the_words_stays_the_answer(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """`QWC604-P-RL p trap`: the set's pan already says P trap, so the words do not pick among the wider family."""
+    from tests.chatbot._turn_helpers import entity
+
+    new_set, new_pan = "QWC604-P-RL-NEW", "QWCX604-P-RL-NEW"
+    c = _world(session_factory, monkeypatch, stub_access, {P_RL: P_RL_MEMBERS, new_set: [new_pan, CISTERN]})
+    db = session_factory()
+    try:
+        for code, name in {"QWCX604-P-RL": "ZZT pedestal P-TRAP", new_pan: "ZZT pedestal P-TRAP new"}.items():
+            db.execute(sql_text("UPDATE products SET product_name = :n WHERE product_code = :c"), {"n": name, "c": code})
+        db.commit()
+    finally:
+        db.close()
+    _who(c, who)
+    text = c.say("QWC604-P-RL p trap stock", stock(product(P_RL), entity("p trap", hint="category")))
+    assert "Couldn't find" not in text, text
+    assert _stocked_ids(c) == {c.uuid_of[m] for m in P_RL_MEMBERS}, (c.stock_calls, text)
+    assert not _word(new_pan, text), text
