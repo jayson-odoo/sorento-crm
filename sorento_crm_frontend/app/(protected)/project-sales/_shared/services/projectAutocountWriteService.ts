@@ -16,21 +16,22 @@ const BASE = '/api/v1/project-sales';
  * it comes back as data for the dialog; only a CRM refusal (switch off, not eligible) throws.
  */
 
-/** The admin switch, off the narrow app-config projection every signed-in user may read. */
-export async function getAutocountWriteSwitch(): Promise<boolean> {
+/** One admin switch, off the narrow app-config projection every signed-in user may read. */
+async function getAppConfigSwitch(
+  field: 'project_autocount_write_enabled' | 'project_autocount_register_enabled',
+): Promise<boolean> {
   const response = await apiFetch('/api/user-management/settings/app-config');
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
   const data = await response.json();
-  return Boolean(data?.project_autocount_write_enabled);
+  return Boolean(data?.[field]);
 }
 
-/** AC-PROJECT-REGISTER: the "AutoCount project registration" switch, off the same projection. */
-export async function getAutocountRegisterSwitch(): Promise<boolean> {
-  const response = await apiFetch('/api/user-management/settings/app-config');
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
-  const data = await response.json();
-  return Boolean(data?.project_autocount_register_enabled);
-}
+/** "AutoCount quotations and sales orders from Project sales". */
+export const getAutocountWriteSwitch = () => getAppConfigSwitch('project_autocount_write_enabled');
+
+/** AC-PROJECT-REGISTER: "AutoCount project registration". */
+export const getAutocountRegisterSwitch = () =>
+  getAppConfigSwitch('project_autocount_register_enabled');
 
 export async function getAutocountWriteCapabilities(): Promise<AutocountWriteCapabilities> {
   const response = await apiFetch(`${BASE}/autocount-write/capabilities`);
