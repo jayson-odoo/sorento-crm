@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -28,11 +29,19 @@ export function RuleTesterDialog({ open, onOpenChange }: Props) {
   const [product, setProduct] = useState<SearchableSelectOption | null>(null);
   const [result, setResult] = useState<KindRuleTestResult | null>(null);
 
-  const fetchProducts = async (query: string): Promise<SearchableSelectOption[]> =>
-    (await searchCatalogueProducts(query)).map((p) => ({
-      value: p.id,
-      label: `${p.product_code} ${p.product_name}`.trim(),
-    }));
+  // Static options widened by the server search: the pattern every other select in a dialog uses.
+  const [query, setQuery] = useState('');
+  const { data: found = [] } = useQuery({
+    queryKey: ['rule-tester-product-search', query],
+    queryFn: () => searchCatalogueProducts(query),
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const options = useMemo(() => {
+    const list = found.map((p) => ({ value: p.id, label: `${p.product_code} ${p.product_name}`.trim() }));
+    if (product && !list.some((o) => o.value === product.value)) list.unshift(product);
+    return list;
+  }, [found, product]);
 
   const pick = async (option: SearchableSelectOption | null) => {
     setProduct(option);
@@ -59,8 +68,8 @@ export function RuleTesterDialog({ open, onOpenChange }: Props) {
               value={product?.value ?? ''}
               onChange={() => undefined}
               onOptionChange={(o) => void pick(o)}
-              fetchOptions={fetchProducts}
-              selectedOption={product ?? undefined}
+              options={options}
+              onSearchChange={setQuery}
               placeholder="Search product code or description"
               aria-label="Product"
               truncateTriggerLabel

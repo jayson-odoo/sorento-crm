@@ -86,8 +86,19 @@ export default function ServiceJobProductDialog({ open, onOpenChange, jobId, lin
     return options;
   }, [defects, line]);
 
-  const fetchProducts = async (query: string): Promise<SearchableSelectOption[]> =>
-    (await searchCatalogueProducts(query)).map((p) => ({ value: p.id, label: productLabel(p) }));
+  // Static options widened by the server search: the pattern every other select in a dialog uses.
+  const [productQuery, setProductQuery] = useState('');
+  const { data: found = [] } = useQuery({
+    queryKey: ['service-job-product-search', productQuery],
+    queryFn: () => searchCatalogueProducts(productQuery),
+    enabled: open && !line,
+    staleTime: 30_000,
+  });
+  const productOptions = useMemo(() => {
+    const options = found.map((p) => ({ value: p.id, label: productLabel(p) }));
+    if (product && !options.some((o) => o.value === product.value)) options.unshift(product);
+    return options;
+  }, [found, product]);
 
   // Picking a product prefills the Kind the rules suggest; CS can change or clear it.
   const onProductPicked = async (option: SearchableSelectOption | null) => {
@@ -139,8 +150,8 @@ export default function ServiceJobProductDialog({ open, onOpenChange, jobId, lin
                   value={product?.value ?? ''}
                   onChange={() => undefined}
                   onOptionChange={(o) => void onProductPicked(o)}
-                  fetchOptions={fetchProducts}
-                  selectedOption={product ?? undefined}
+                  options={productOptions}
+                  onSearchChange={setProductQuery}
                   placeholder="Search product code or description"
                   aria-label="Product"
                 truncateTriggerLabel

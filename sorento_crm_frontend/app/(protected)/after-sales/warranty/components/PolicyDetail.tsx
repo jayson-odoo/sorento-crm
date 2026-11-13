@@ -154,7 +154,7 @@ export default function PolicyDetail({ policyId }: { policyId: string }) {
         </div>
         <DetailActions
           pager={{ ...pagerQuery, detailPath: '/after-sales/warranty/policies', currentId: policyId, ariaLabel: 'policy' }}
-          primary={state === 'in_force' ? <Button onClick={() => setSuperseding(true)}>Supersede</Button> : undefined}
+          primary={isAdmin && state === 'in_force' ? <Button onClick={() => setSuperseding(true)}>Supersede</Button> : undefined}
           dialogs={
             superseding ? <SupersedeDialog open onOpenChange={(open) => !open && setSuperseding(false)} policy={policy} /> : undefined
           }
