@@ -23,6 +23,7 @@ DELETE /sales-orders/{pso_id}
 DELETE /samples/{sample_id}
 GET /allocation-claims
 GET /config/loss-reasons
+GET /config/non-cancellable-rules
 GET /config/price-floors
 GET /config/price-floors/effective
 GET /config/quotation-templates
@@ -165,6 +166,7 @@ PATCH /projects/{project_id}/quotation-documents/{document_id}/certificates/{cer
 PATCH /projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
+POST /config/non-cancellable-rules
 POST /config/price-floors
 POST /config/quotation-templates
 POST /config/quotation-templates/cover-preview
@@ -287,8 +289,11 @@ POST /stock-debt/snapshots/{snapshot_id}/export
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/link
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/relink
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/unlink
+PUT /config/non-cancellable-rules/{rule_id}
 PUT /config/quotation-templates/{template_id}
 PUT /config/series/{series_id}
+PUT /config/series/{series_id}/products/{product_id}/non-cancellable
+PUT /config/series/{series_id}/sets/{product_set_id}/non-cancellable
 PUT /config/templates/{template_id}
 PUT /config/templates/{template_id}/tasks/{template_task_id}
 PUT /config/types/{type_id}

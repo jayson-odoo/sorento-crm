@@ -22,6 +22,7 @@ import {
   useProjectSalesOrder,
   useScheduleVersions,
 } from '../../../../../_shared/hooks/useProjectSalesOrders';
+import { useNonCancellableOverride } from '../../../../../_shared/hooks/useNonCancellableOverride';
 import { useProject, usePurchaseOrders } from '../../../../../_shared/hooks/useProjects';
 import type { AmendmentPreview } from '../../../../../_shared/types/projectSalesOrder.types';
 import {
@@ -81,6 +82,10 @@ export function AmendmentReviewClient({
   const { preview, create, publish, updateRowDecisions } = useAmendmentMutations(
     projectId,
     psoId,
+  );
+
+  const publishAttempt = useNonCancellableOverride<string>((amendmentId, overrideReason) =>
+    publish.mutateAsync({ amendmentId, overrideReason }),
   );
 
   const [selection, setSelection] = React.useState('');
@@ -216,6 +221,7 @@ export function AmendmentReviewClient({
 
   return (
     <div className="space-y-4">
+      {publishAttempt.dialog}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
@@ -250,7 +256,7 @@ export function AmendmentReviewClient({
               type="button"
               size="sm"
               disabled={publish.isPending}
-              onClick={() => publish.mutate(amendmentId)}
+              onClick={() => void publishAttempt.attempt(amendmentId)}
             >
               {publish.isPending ? 'Publishing…' : 'Publish the amendment'}
             </Button>
