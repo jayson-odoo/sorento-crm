@@ -227,3 +227,18 @@ def test_suggestions_survive_the_route_response_model():
     assert dumped["products"][0]["suggestions"] == [
         {"product_id": "p1", "product_code": "SRTKT1632SS", "product_name": "ZZT"}
     ]
+
+
+# AC-20i (owner Q3, 13 Nov): the staff AI document read keeps the manual Item picker's own filter (active only), so an
+# ACTIVE but DISCONTINUED code is still suggested, as on main; an inactive one stays excluded.
+def test_a_discontinued_but_active_product_is_still_suggested(db):
+    discontinued = _product(db, "SRTKT1632SS")
+    discontinued.is_discontinued = True
+    inactive = _product(db, "SRTKT1632SS-BL", is_active=False)
+    db.flush()
+
+    out = _extract(db, "SRTK1632SS")
+
+    codes = [s.product_code for s in out[0].suggestions]
+    assert "SRTKT1632SS" in codes, codes
+    assert inactive.product_code not in codes, codes

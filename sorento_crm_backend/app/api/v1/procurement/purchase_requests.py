@@ -1,4 +1,5 @@
 """Purchase requests / sponsorship forms API routes."""
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -30,7 +31,7 @@ from app.schemas.procurement import (
     ViewLinkResponse,
     BulkDeletePurchaseRequestsRequest,
 )
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest, RecordProjectUpdate
 from app.schemas.download import PdfExportOptions
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
@@ -61,8 +62,10 @@ def get_purchase_requests(
     request_type: Optional[list[str]] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[list[str]] = Query(None, description="draft, pending, approved, rejected"),
     assigned_to: Optional[list[str]] = Query(None, description="users.id of the latest unresolved SLA assignee, or __unassigned__"),
-    sort: Optional[str] = Query("submitted_at"),
+    sort: Optional[str] = Query("last_activity_at"),
     dir: Optional[str] = Query("desc"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
     own: Optional[RequestScope] = Depends(purchase_request_own_scope),
@@ -89,8 +92,10 @@ def get_purchase_requests(
             request_type=request_type,
             approval_status=approval_status,
             assigned_to=assigned_to,
-            sort_field=sort or "submitted_at",
+            sort_field=sort or "last_activity_at",
             sort_dir=dir or "desc",
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
         return result
     except HTTPException:
@@ -341,6 +346,29 @@ def update_purchase_request(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.patch("/{request_id}/project", response_model=PurchaseRequestHeaderResponse)
+def set_purchase_request_project(
+    request_id: str,
+    body: RecordProjectUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or clear the purchase request's or sponsorship form's registered project at any
+    status, approval untouched (PROJECT-RELATED-RECORDS D2)."""
+    from app.services import project_related_records as related
+
+    validate_uuid_path(request_id, resource="Request")
+    # Either edit right first, before the row is read: a refusal never says the id exists.
+    related.assert_can_set_project(db, ("purchase_request", "sponsorship_form"), current_user["id"])
+    kind = PurchaseRequestService(db).get_request(request_id).request_type
+    related.assert_can_set_project(db, kind, current_user["id"])
+    related.set_record_project(
+        db, kind=kind, record_id=request_id, project_id=body.project_id, actor=current_user["id"]
+    )
+    db.commit()
+    return get_purchase_request(request_id, current_user=current_user, db=db)
 
 
 @router.post(

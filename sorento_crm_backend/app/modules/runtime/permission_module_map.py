@@ -34,5 +34,6 @@ def module_for_permission(permission_slug: str) -> Optional[str]:
         "dealer_kit": "dealer_kit",
         "sales": "sales",
         "finance": "finance",
+        "after_sales": "after_sales",
     }
     return mapping.get(prefix)

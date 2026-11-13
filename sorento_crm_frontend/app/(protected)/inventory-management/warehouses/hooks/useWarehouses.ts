@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/
 import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, bulkDeleteWarehouses } from '../services/warehouseService';
-import type { WarehouseFormData } from '../types/warehouse.types';
+import type { Warehouse, WarehouseFormData } from '../types/warehouse.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
@@ -109,5 +109,46 @@ export function useBulkDeleteWarehouses() {
       }
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete warehouses'),
+  });
+}
+
+/**
+ * One ACTIVE warehouse by its exact code, resolving a free-text location code (an order
+ * inquiry line's `stock_location`) to its row.
+ *
+ * The ACTIVE company is asked first, so a code there reads exactly as it always did. Only
+ * when it holds no such code is the read widened to every company the caller is granted
+ * (`company_scope=grants`), and `widened` says so: a line filed in one company can name a
+ * location another granted company holds. Codes are unique within a company only, so the
+ * active company's own row always wins over a same-code row elsewhere. `warehouse` is null
+ * when no granted company holds the code.
+ *
+ * `getWarehouses` has no exact-code param, and a text search for a bare pool code (`BRW`)
+ * also matches its own sub-locations (`BRW-AA`..`BRW-EE`), so the page is wide enough to
+ * reach the exact row behind them. Under `['warehouses']`, so a warehouse edit refreshes it.
+ */
+export function useWarehouseByCode(code: string | null) {
+  return useQuery({
+    queryKey: ['warehouses', 'by-code', code],
+    queryFn: async (): Promise<{ warehouse: Warehouse | null; widened: boolean }> => {
+      const find = async (companyScope?: 'grants') => {
+        const response = await getWarehouses({
+          pageIndex: 0,
+          pageSize: 50,
+          sorting: [],
+          searchQuery: code ?? '',
+          is_active: true,
+          ...(companyScope ? { companyScope } : {}),
+        });
+        return (response.data ?? []).find((warehouse) => warehouse.warehouse_code === code) ?? null;
+      };
+      const own = await find();
+      if (own) return { warehouse: own, widened: false };
+      const granted = await find('grants');
+      return { warehouse: granted, widened: Boolean(granted) };
+    },
+    enabled: Boolean(code),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 }

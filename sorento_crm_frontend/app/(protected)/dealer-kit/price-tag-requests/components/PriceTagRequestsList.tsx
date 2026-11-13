@@ -44,6 +44,7 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
+import { LastActivityFilter, lastActivityActive, lastActivityLabel } from '@/components/common/LastActivityFilter';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -63,7 +64,7 @@ const STATUS_OPTIONS = [
 ];
 
 /** The listing's shipped default, used until the user has left one behind. */
-const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
 
 /**
  * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
@@ -72,7 +73,11 @@ const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
  */
 const FILTERS_VERSION = 1;
 
-type PriceTagRequestsFilters = { status?: string };
+type PriceTagRequestsFilters = {
+  status?: string;
+  last_activity_from?: string;
+  last_activity_to?: string;
+};
 
 /** A saved, unsent request keeps status `new`; `portal_draft_at` is what makes it a draft. */
 const displayStatus = (row: PriceTagRequestSummary) => (row.portal_draft_at ? 'draft' : row.status);
@@ -110,8 +115,21 @@ function StaffPriceTagRequestsList() {
     filtersVersion: FILTERS_VERSION,
   });
   const statusFilter = viewFilters?.status ?? '';
-  // An empty selection is stored as no filter at all (AC-C2).
-  const setStatusFilter = (next: string) => setViewFilters(next ? { status: next } : null);
+  const lastActivity = useMemo(
+    () => ({ from: viewFilters?.last_activity_from, to: viewFilters?.last_activity_to }),
+    [viewFilters],
+  );
+  // Merges a change over the current filters; an empty selection is stored as no filter at all (AC-C2).
+  const applyFilters = (partial: Partial<PriceTagRequestsFilters>) => {
+    const merged: PriceTagRequestsFilters = { ...(viewFilters ?? {}), ...partial };
+    const cleaned: PriceTagRequestsFilters = {};
+    if (merged.status) cleaned.status = merged.status;
+    if (merged.last_activity_from) cleaned.last_activity_from = merged.last_activity_from;
+    if (merged.last_activity_to) cleaned.last_activity_to = merged.last_activity_to;
+    setViewFilters(Object.keys(cleaned).length ? cleaned : null);
+  };
+  const setStatusFilter = (next: string) => applyFilters({ status: next });
+  const clearFilters = () => setViewFilters(null);
   const [data, setData] = useState<{
     data: PriceTagRequestSummary[];
     pagination: { total: number };
@@ -123,7 +141,7 @@ function StaffPriceTagRequestsList() {
   // Reset page on filter change
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, lastActivity.from, lastActivity.to]);
 
   // Fetch data
   const fetchData = async () => {
@@ -135,6 +153,8 @@ function StaffPriceTagRequestsList() {
       dir: sort?.desc ? 'desc' : 'asc',
       query: searchQuery || undefined,
       status: statusFilter || undefined,
+      last_activity_from: lastActivity.from,
+      last_activity_to: lastActivity.to,
     });
     setData(result);
     setLoadError(null);
@@ -158,7 +178,7 @@ function StaffPriceTagRequestsList() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter, isViewPrefsLoading]);
+  }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter, lastActivity.from, lastActivity.to, isViewPrefsLoading]);
 
   const handleRetry = () => {
     setIsLoading(true);
@@ -193,7 +213,11 @@ function StaffPriceTagRequestsList() {
       sorting,
       searchQuery,
     },
-    { status: statusFilter || undefined },
+    {
+      status: statusFilter || undefined,
+      last_activity_from: lastActivity.from,
+      last_activity_to: lastActivity.to,
+    },
   );
 
   const detailHref = (row: PriceTagRequestSummary) =>
@@ -213,13 +237,18 @@ function StaffPriceTagRequestsList() {
     }
   };
 
-  const filtersActiveCount = statusFilter ? 1 : 0;
+  const filtersActiveCount = (statusFilter ? 1 : 0) + lastActivityActive(lastActivity);
 
   // The chip above the grid that states the remembered filter in plain words, with Clear.
   const statusLabels = splitMulti(statusFilter).map(
     (v) => STATUS_OPTIONS.find((o) => o.value === v)?.label ?? 'Selected',
   );
-  const activeFilterLabel = statusLabels.length ? multiChipLabel('Status', statusLabels) : '';
+  const activeFilterLabel = [
+    statusLabels.length ? multiChipLabel('Status', statusLabels) : '',
+    lastActivityLabel(lastActivity),
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   const columns = useMemo<ColumnDef<PriceTagRequestSummary>[]>(
     () => [
@@ -340,6 +369,23 @@ function StaffPriceTagRequestsList() {
             : '-',
         meta: {
           headerTitle: 'Created',
+          skeleton: <Skeleton className="h-4 w-28" />,
+        },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        size: 190,
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        meta: {
+          headerTitle: 'Last activity',
           skeleton: <Skeleton className="h-4 w-28" />,
         },
       },
@@ -479,7 +525,7 @@ function StaffPriceTagRequestsList() {
               active: filtersActiveCount > 0,
               activeCount: filtersActiveCount,
               activeSummary: activeFilterLabel
-                ? { label: activeFilterLabel, onClear: () => setStatusFilter('') }
+                ? { label: activeFilterLabel, onClear: clearFilters }
                 : undefined,
               content: (
                 <div className="space-y-4">
@@ -494,12 +540,17 @@ function StaffPriceTagRequestsList() {
                       clearable
                     />
                   </div>
+                  <LastActivityFilter
+                    id="ptr-last-activity"
+                    value={lastActivity}
+                    onChange={(v) => applyFilters({ last_activity_from: v.from, last_activity_to: v.to })}
+                  />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setStatusFilter('')}
+                        onClick={clearFilters}
                       >
                         Clear filters
                       </Button>

@@ -8,6 +8,8 @@ Open **[Procurement → Stock Inquiries](/procurement-management/stock-inquiries
 
 Filter the list by **Status = Pending purchasing** to see only inquiries waiting on your team. The full set of statuses is: **New**, **Pending project sales**, **Pending purchasing**, **Responded**, **Rejected**.
 
+The list has a **Last activity** column: the date and time (for example 12/11/2026, 3:05 pm) of the newest thing a person did on the inquiry. That counts creating it, editing it, changing its status, approving or rejecting it, changing a line, attaching or removing a file, and posting a comment (staff, or the customer through the portal). Background jobs, SLA timers, ERP sync and automations do not count. The list opens sorted by **Last activity**, newest first; click the column header to change the sort, and your choice is kept. To narrow by date, open **Filters** and set the **Last activity** date range. This column no longer shows "Revised".
+
 ## Reply to an inquiry
 
 
@@ -20,6 +22,10 @@ Filter the list by **Status = Pending purchasing** to see only inquiries waiting
    * **[Update & Reply](#guide_target=procurement.stock-inquiries.update-and-reply-button)** - saves your response **and** sends it back to the requester via Respond.io. Use this when the reply is complete.
 
 After **Update & Reply** the inquiry moves to **Responded** and the requester is notified.
+
+## Set the inquiry's project
+
+The inquiry's **Registered project** (optional) links it to a project, and it then shows on that project's **Related** tab. Anyone who can edit the inquiry can set or change it at any time, even after it is **Responded** or **Rejected**. The status and any approval stay as they are, and **History** shows *Project: old -> new*. Older inquiries are not linked automatically, so pick the project here when it matters.
 
 ## Reject an inquiry
 

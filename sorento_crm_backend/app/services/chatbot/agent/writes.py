@@ -1632,7 +1632,7 @@ def _pr_list(db, ctx, args: dict) -> ToolResult:
         payload = get_purchase_requests(
             page=1, limit=limit, query=query or None, request_type=[kind] if kind else None,
             approval_status=None if state == "all" else [state], assigned_to=None, sort="submitted_at",
-            dir="desc", current_user=user, db=db, own=_pr_scope(db, user, "GET", ""),
+            dir="desc", last_activity_from=None, last_activity_to=None, current_user=user, db=db, own=_pr_scope(db, user, "GET", ""),
         )
         return [_pr_row(db, h) for h in payload["data"]]
 
@@ -1875,8 +1875,8 @@ def _complaints_find(db, ctx, args: dict) -> ToolResult:
         _module_open(user, db, "complaints")
         payload = get_complaints(
             page=1, limit=MAX_LIST, query=query, assigned_to=None, status=None, root_cause_ids=None,
-            resolution_ids=None, sort="complaint_date", dir="desc", contact_id=None, space_id=None,
-            current_user=user, db=db, own=check(db, str(user["id"]), "complaint", "GET", COMPLAINTS_PATH, {}),
+            resolution_ids=None, sort="complaint_date", dir="desc", last_activity_from=None, last_activity_to=None,
+            contact_id=None, space_id=None, current_user=user, db=db, own=check(db, str(user["id"]), "complaint", "GET", COMPLAINTS_PATH, {}),
         )
         return [
             {

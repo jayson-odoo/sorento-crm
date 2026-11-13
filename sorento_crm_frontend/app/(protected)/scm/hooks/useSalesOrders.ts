@@ -20,7 +20,8 @@ export interface UseSalesOrdersParams {
   pageIndex: number;
   pageSize: number;
   sorting: SortingState;
-  searchQuery: string;
+  /** An array is the Sales Orders list's search chips, one `query` each. */
+  searchQuery: string | string[];
   status: string | null;
   priority: string | null;
   /** Where the order came from: 'inquiry' | 'upload' | 'manual'. Null for all. */
@@ -45,7 +46,11 @@ export interface UseSalesOrdersParams {
  * the URL, so it reads the page the list already fetched.
  */
 export function salesOrdersListQueryKey(params: UseSalesOrdersParams): QueryKey {
-  return ['scm', 'sales-orders', params];
+  // One search value keys as a string, however it was held: chips `['SO1']` and typed `SO1`
+  // are the same request, so they share one cache entry.
+  const q = params.searchQuery;
+  const searchQuery = Array.isArray(q) ? (q.length > 1 ? q : (q[0] ?? '')) : q;
+  return ['scm', 'sales-orders', { ...params, searchQuery }];
 }
 
 /** The list query a detail URL describes, in the shape the list passes. */
@@ -72,19 +77,26 @@ export function salesOrdersListParamsFromUrl(
   };
 }
 
+/** The Sales Orders list searches with chips: every `query` on the URL, as an array. */
+function salesOrdersChipParamsFromUrl(params: ListPagerParams): UseSalesOrdersParams {
+  return {
+    ...salesOrdersListParamsFromUrl(params),
+    searchQuery: params.searchQueries ?? (params.searchQuery ? [params.searchQuery] : []),
+  };
+}
+
 /** The pager's two hooks into the sales orders list. */
 export const salesOrdersPagerQuery = {
   listQueryKey: (params: ListPagerParams): QueryKey =>
-    salesOrdersListQueryKey(salesOrdersListParamsFromUrl(params)),
+    salesOrdersListQueryKey(salesOrdersChipParamsFromUrl(params)),
   fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
-    fetchSalesOrdersPage(params, null),
+    fetchSalesOrdersPage(salesOrdersChipParamsFromUrl(params), null),
 };
 
 function fetchSalesOrdersPage(
-  params: ListPagerParams,
+  p: UseSalesOrdersParams,
   docType: 'consignment' | null,
 ): Promise<ListPagerPage> {
-  const p = salesOrdersListParamsFromUrl(params);
   return getSalesOrders({
     pageIndex: p.pageIndex,
     pageSize: p.pageSize,
@@ -110,7 +122,7 @@ export const consignmentsPagerQuery = {
   listQueryKey: (params: ListPagerParams): QueryKey =>
     salesOrdersListQueryKey({ ...salesOrdersListParamsFromUrl(params), docType: 'consignment' }),
   fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
-    fetchSalesOrdersPage(params, 'consignment'),
+    fetchSalesOrdersPage(salesOrdersListParamsFromUrl(params), 'consignment'),
 };
 
 /**

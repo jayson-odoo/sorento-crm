@@ -428,3 +428,19 @@ def test_review_split_names_the_old_location_and_the_new_one_on_a_moved_line(api
     moved, still = by_id[str(line_a.id)], by_id[str(line_b.id)]
     assert (moved["was_location"], moved["location"]) == (old, new_wh.warehouse_code)
     assert (still["was_location"], still["location"]) == (None, old)
+
+
+def test_first_confirm_held_rows_read_in_a_stable_order_whatever_order_they_were_written(api, emails):
+    """The held rows of one line are read in a fixed order (verb, location, date, then the
+    largest quantity first, then id), never in whatever order Postgres hands them back. The
+    rows are written smallest first here, the reverse of how the remark reads."""
+    _client, world = api
+    order, line, old, new_wh = _imported(api, ["3", "10"], line_qty="8")
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, buy_qty="8")])
+
+    assert len(emails) == 1, emails
+    assert [(l["location"], l["remark"]) for l in emails[0]["lines"]] == [
+        (new_wh.warehouse_code, f"CHANGED: ORDER 10 & ORDER 3 -> ORDER 8, NEW LOCATION (was {old})"),
+    ]

@@ -73,6 +73,37 @@ another party, pick them and click **Open WhatsApp** again.
 On the project's **Access** card, secondary leads are listed as a table: **Salesperson**,
 **Date**, **How they found it**, **Status**. Managers can **Reassign** or **Dismiss** each one.
 
+## See everything linked to a project (Related tab)
+
+The project page's **Related** tab (it used to be called **Sponsorship Form**) lists every stock
+inquiry, complaint, purchase request, sponsorship form and new product application linked to the
+project, in one grid. Columns: **Type**, **Number**, **Status**, **Approval**, **Date**,
+**Raised by**, **Subject**, **Value**.
+
+* Use **Search**, and the **Type** and **Status** filters, to narrow the list. Click a column
+  heading to sort. Use **Columns** to hide or reorder columns.
+* Click a row to open that record.
+* If the project has sponsorship forms, the sponsorship spend line stays above the grid.
+* You only see the types you are allowed to view. A rep who can only view their own requests sees
+  only their own.
+
+A record shows here only once it is linked to the project. Older records are not linked
+automatically: open the record and pick the project in its **Registered project** field (the
+Sorento team may also link some older ones from a reviewed list). A project name typed on a record
+that is not picked from the list does not link it.
+
+## Link a record to a project
+
+* **Stock inquiry** and **new product application** forms (in the CRM and in the portal or
+  WhatsApp link), and the portal **complaint** and **purchase request** forms, have an optional
+  **Registered project** field. Search by project code or title and pick the project. Leave it
+  empty for a project that is not registered; the typed project name stays for that.
+* A new product application raised from a stock inquiry starts with that inquiry's project. You
+  can change it.
+* On a record's own page, anyone who can edit the record can set or change its **Registered
+  project** at any time, even when the record is closed or approved. An approval stays as it is.
+  The record's **History** shows the change as *Project: old -> new*.
+
 ## See also
 
 * [Quote a project, send it, and handle the customer's suggestions](work-a-project-quotation.md)

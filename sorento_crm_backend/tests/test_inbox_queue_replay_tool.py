@@ -1256,7 +1256,8 @@ def test_scenario_4_with_no_restart_runs_no_command(copy_world, monkeypatch):
 # Round 7 (reviewer should-fix):
 #
 # * An env value the file leaves OUT falls back to its Settings default; a real default is
-#   not neutral (`RESPOND_BASE_URL` defaults to https://api.respond.io, `app/config.py`).
+#   not neutral (unset, `RESPOND_BASE_URL` resolves to the real host,
+#   `integration_service.RESPOND_DEFAULT_BASE_URL`).
 #   `N8N_WEBHOOK_URL` and `SMTP_HOST` default to empty, so leaving them out is fine.
 # * The shared dev DB keeps ONE exact-name refusal: `current_database()` ==
 #   `sorento_cagent_stack` (other lanes' stacks run on it). Every other name is judged by
@@ -1413,9 +1414,9 @@ def test_a_restart_command_that_never_returns_is_killed_and_reaped(tool, copy_wo
 # Round 8 (reviewer confirm):
 #
 # * The respond.io URL is judged as the app RESOLVES it: an empty or bare `RESPOND_BASE_URL`
-#   becomes the real host (`base_url or settings.respond_base_url or
-#   "https://api.respond.io"`, `app/services/integration_service.py`), so it is not neutral;
-#   an empty workspace `base_url` resolves to the (neutral) env value and passes. N8N / SMTP
+#   becomes the real host (`integration_service.resolve_respond_base_url`: env, then the
+#   workspace `base_url`, then the default), so it is not neutral; a set env value beats
+#   every workspace `base_url`. N8N / SMTP
 #   stay neutral when empty or bare: their defaults are empty.
 # * The LOWERCASE proxy keys must be in the file: `https_proxy` (it wins over `HTTPS_PROXY`)
 #   and `no_proxy` (the worker is launched with `no_proxy='*'`, which only a lowercase key in

@@ -2,6 +2,11 @@
 
 Plan: `PLAN-project-quote-line-tools-11nov.md`.
 
+> Superseded in part (12 Nov 2026): the "Below default price" pill and its Flags filter option
+> (AC-5, AC-6, the default-price parts of AC-8/9/10) were removed at the owner's request by lane
+> QUOTE-BELOW-DEFAULT-OFF (`PLAN-quote-below-default-off-12nov.md`). Duplicate line and the
+> Non-standard / Below minimum price filter stand.
+
 - AC-1 In edit mode, the row ⋯ menu and the right-click menu of a priced line offer "Duplicate line".
   It is absent in view mode and on a section heading row, and disabled on a line staged for removal.
 - AC-2 Duplicate line inserts one new line directly below the source with the same product or set,

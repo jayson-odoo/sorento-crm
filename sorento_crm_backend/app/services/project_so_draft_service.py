@@ -48,7 +48,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.inventory import Warehouse
-from app.models.order import Customer
+from app.models.order import Customer, SalesOrder
 from app.models.product import Product
 from app.models.project_so import (
     AMENDMENT_PUBLISHED,
@@ -3359,6 +3359,34 @@ class ProjectSODraftService:
         customer = self._customer_for(order)
         if customer is None:
             return None, "The purchase order names no customer."
+        return self.derived_location_for_customer(customer)
+
+    def autocount_key_info(self, order: ProjectSalesOrder) -> Tuple[Optional[str], Optional[str], bool]:
+        """(DocKey, book, adopted) of this order in AutoCount; (None, None, False) when it is not.
+
+        Its own stored key means the CRM created it (not adopted, book unknown here). Otherwise
+        an order keyed by hand from the import file and adopted by ingest: the key and the book
+        are the two segments of the linked core order's `source_ref`, `{book}:{DocKey}` (digits
+        only for the key). Update and Cancel on an adopted order wait until SS names its book.
+        """
+        if order.autocount_doc_key:
+            return order.autocount_doc_key, None, False
+        if not order.so_id:
+            return None, None, False
+        ref = self.db.query(SalesOrder.source_ref).filter(SalesOrder.id == order.so_id).scalar()
+        parts = (ref or "").strip().split(":")
+        if len(parts) >= 2 and parts[1].strip().isdigit():
+            return parts[1].strip(), parts[0].strip(), True
+        return None, None, False
+
+    def autocount_doc_key(self, order: ProjectSalesOrder) -> Optional[str]:
+        return self.autocount_key_info(order)[0]
+
+    def derived_location_for_customer(
+        self, customer: Customer
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """The agent-group chain of `derived_stock_location`, for a customer already known
+        (a quotation has no order to read it from)."""
         agent = customer.sales_agent
         if agent is None:
             return None, f"{customer.customer_name} has no sales agent."
@@ -3550,6 +3578,10 @@ class ProjectSODraftService:
             "id": order.id,
             "provisional_ref": order.provisional_ref,
             "autocount_doc_no": order.autocount_doc_no,
+            # AC-QTSO-CRM: presence only; the AutoCount key never leaves the server.
+            "in_autocount": bool(self.autocount_doc_key(order)),
+            "autocount_adopted": self.autocount_key_info(order)[2],
+            "autocount_cancelled": order.autocount_cancelled_at is not None,
             "area_group": order.area_group,
             "status": order.status,
             "grouping_origin": order.grouping_origin,

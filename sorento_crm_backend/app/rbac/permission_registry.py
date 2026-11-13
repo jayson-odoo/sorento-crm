@@ -149,6 +149,23 @@ PERMISSION_REGISTRY.append({
     "description": "Void a complaint (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson).",
 })
 
+# After-sales P1: service jobs (a technician sent to a customer's site) and the technician roster.
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.service_jobs.view",
+    "name": "View Service Jobs",
+    "description": "See service jobs, the dispatch board and the technician list.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.service_jobs.dispatch",
+    "name": "Dispatch Service Jobs",
+    "description": "Create service jobs, confirm dates, assign technicians and move a job through its steps.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.technicians.manage",
+    "name": "Manage Technicians",
+    "description": "Create, edit, archive and delete technicians.",
+})
+
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
 PERMISSION_REGISTRY.extend(_crud("sla_management", "conversation_sla_tracking", "Conversation SLA Tracking"))
@@ -607,6 +624,21 @@ PERMISSION_REGISTRY.extend([
             "and edit any project regardless of ownership."
         ),
     },
+    # PROJECT-MIGRATION-TOOL (PLAN-project-import-12nov.md): the in-app import of the PO
+    # register workbook. Migration pimp_0001 grants both to the superadmin and admin roles
+    # (who also pass by bypass); any other role gets them only when someone grants them.
+    {
+        "slug": "projects.import.view",
+        "name": "View Project Imports",
+        "description": "See project import runs, their value links and their results.",
+    },
+    {
+        "slug": "projects.import.run",
+        "name": "Run Project Imports",
+        "description": (
+            "Upload a PO register workbook, link its values, preview, import and revert a run."
+        ),
+    },
     {
         "slug": "projects.quotations.approve",
         "name": "Approve Quotation Discounts and Off-Series Lines",
@@ -616,6 +648,14 @@ PERMISSION_REGISTRY.extend([
             "customer. A request is routed to one approver (off-series approver, project "
             "override, or the owner's superior); only that approver, someone above them, or "
             "an admin may decide it."
+        ),
+    },
+    {
+        "slug": "projects.non_cancellable.override",
+        "name": "Override a non-cancellable item",
+        "description": (
+            "Cancel or reduce a Non-cancellable line after its sales order is confirmed, with a "
+            "reason. Also receives the alert when AutoCount cancels or reduces one."
         ),
     },
     {
@@ -697,6 +737,14 @@ PERMISSION_REGISTRY.extend([
         "description": (
             "View the Stock Debt month-by-product balance and drill into a month's demand "
             "and supply."
+        ),
+    },
+    {
+        "slug": "projects.autocount.write",
+        "name": "Send quotations and sales orders to AutoCount",
+        "description": (
+            "Create, update or cancel a project quotation or sales order in AutoCount from "
+            "Project sales. Writes to AutoCount."
         ),
     },
     {

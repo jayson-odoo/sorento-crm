@@ -103,6 +103,7 @@ class WorkflowSubmission(Base):
     current_state_code = Column(String(64), nullable=False, index=True)
     header_data = Column(JSONB, nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by_user_id = Column(String(64), nullable=True)
     updated_by_user_id = Column(String(64), nullable=True)

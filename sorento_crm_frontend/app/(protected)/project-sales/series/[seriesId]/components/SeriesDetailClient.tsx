@@ -61,6 +61,7 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
   const [description, setDescription] = React.useState('');
   const [isActive, setIsActive] = React.useState(true);
   const [categoryIds, setCategoryIds] = React.useState<string[]>([]);
+  const [nonCancellableIds, setNonCancellableIds] = React.useState<string[]>([]);
   const [seeded, setSeeded] = React.useState(false);
   // The series the last save resolved with. The cached list refetches after the mutation,
   // so until it lands `row` is stale; this is the baseline "unsaved changes" is measured from.
@@ -76,6 +77,7 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
     setDescription(source.description ?? '');
     setIsActive(source.is_active);
     setCategoryIds(source.category_ids ?? []);
+    setNonCancellableIds(source.non_cancellable_category_ids ?? []);
   }, []);
 
   React.useEffect(() => {
@@ -94,7 +96,9 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
             [...brandIds].sort().join(',') !== [...(base.brand_ids ?? [])].sort().join(',') ||
             description !== (base.description ?? '') ||
             isActive !== base.is_active ||
-            categoryIds.join(',') !== (base.category_ids ?? []).join(',')),
+            categoryIds.join(',') !== (base.category_ids ?? []).join(',') ||
+            [...nonCancellableIds].sort().join(',') !==
+              [...(base.non_cancellable_category_ids ?? [])].sort().join(',')),
       );
 
   const save = async () => {
@@ -108,6 +112,7 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
       description: description.trim() || null,
       is_active: isActive,
       category_ids: categoryIds,
+      non_cancellable_category_ids: nonCancellableIds,
     };
     if (isNew) {
       const created = await create.mutateAsync(body);
@@ -254,11 +259,27 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
                   <SearchableMultiSelect
                     value={categoryIds}
                     clearable
-                    onChange={setCategoryIds}
+                    onChange={(next) => {
+                      setCategoryIds(next);
+                      // Non-cancellable categories are a subset of the series' categories.
+                      setNonCancellableIds((current) => current.filter((id) => next.includes(id)));
+                    }}
                     loadError={categories.error}
                     onRetry={() => void categories.refetch()}
                     options={categoryOptions}
                     placeholder="All categories"
+                    emptyMessage="No categories found"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Non-cancellable categories</Label>
+                  <SearchableMultiSelect
+                    value={nonCancellableIds}
+                    clearable
+                    onChange={setNonCancellableIds}
+                    options={categoryOptions.filter((option) => categoryIds.includes(option.value))}
+                    placeholder="None"
                     emptyMessage="No categories found"
                   />
                 </div>

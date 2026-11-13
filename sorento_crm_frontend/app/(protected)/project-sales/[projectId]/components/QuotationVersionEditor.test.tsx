@@ -3093,8 +3093,8 @@ describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the 
 });
 
 // ---------------------------------------------------------------------------------------------
-// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026): Duplicate line, the Below default price pill and
-// the lines Flags filter. UAC: documentation/plans/project-sales/project-quote-line-tools-acceptance-criteria.md
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026): Duplicate line and the lines Flags filter (its
+// Below default price pill was removed by QUOTE-BELOW-DEFAULT-OFF, owner 12 Nov 2026). UAC: documentation/plans/project-sales/project-quote-line-tools-acceptance-criteria.md
 
 /** The Flags filter's trigger (it shows chips once chosen, so it is found by its slot). */
 function flagsTrigger(): HTMLElement {
@@ -3137,28 +3137,33 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     expect(parseFloat(th.style.width || '0')).toBeGreaterThanOrEqual(148);
   });
 
-  it('AC-5: a saved line below its default price shows the pill under the product code, in view mode', async () => {
+  // QUOTE-BELOW-DEFAULT-OFF (owner 12 Nov 2026): the Below default price pill is gone; the Below
+  // minimum price pill in the Rate cell is the one price indicator.
+  it('QUOTE-BELOW-DEFAULT-OFF: a saved line below its default price shows no pill', async () => {
     listQuotationLines.mockResolvedValue([line({ is_discounted: true })]);
-    renderEditor();
-    const pill = await screen.findByText('Below default price');
-    expect(pill.closest('td')).toBe(screen.getByText('SRT-WC-01').closest('td'));
-  });
-
-  it('AC-5: a line below the minimum price shows no second pill (the banner counts it once, there)', async () => {
-    listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_below_floor: true })]);
     renderEditor();
     await screen.findByText('SRT-WC-01');
     expect(screen.queryByText('Below default price')).toBeNull();
+    expect(screen.queryByText('Below minimum price')).toBeNull();
   });
 
-  it('AC-5: Non-standard and Below default price sit side by side when both are true', async () => {
+  it('QUOTE-BELOW-DEFAULT-OFF: a line below the minimum price keeps the Below minimum price pill in the Rate cell', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_below_floor: true })]);
+    renderEditor();
+    const pill = await screen.findByText('Below minimum price');
+    const rateHeader = screen.getByRole('columnheader', { name: 'Rate (RM)' }) as HTMLTableCellElement;
+    expect((pill.closest('td') as HTMLTableCellElement).cellIndex).toBe(rateHeader.cellIndex);
+    expect(screen.queryByText('Below default price')).toBeNull();
+  });
+
+  it('QUOTE-BELOW-DEFAULT-OFF: a discounted non-standard line shows Non-standard only', async () => {
     listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_non_standard: true })]);
     renderEditor();
-    expect(await screen.findByText('Below default price')).toBeInTheDocument();
-    expect(screen.getByText('Non-standard')).toBeInTheDocument();
+    expect(await screen.findByText('Non-standard')).toBeInTheDocument();
+    expect(screen.queryByText('Below default price')).toBeNull();
   });
 
-  it('AC-6: a rate typed below the default price shows the pill live, before any save', async () => {
+  it('QUOTE-BELOW-DEFAULT-OFF: a rate typed below the default price shows no pill', async () => {
     listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
     judgeQuotationLine.mockResolvedValue({
       is_non_standard: false,
@@ -3168,11 +3173,15 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
       floor_level: null,
     });
     await renderEditing();
-    expect(screen.queryByText('Below default price')).toBeNull();
     fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
       target: { value: '850.00' },
     });
-    expect(await screen.findByText('Below default price', {}, { timeout: 5000 })).toBeInTheDocument();
+    await waitFor(() => expect(judgeQuotationLine).toHaveBeenCalled(), { timeout: 5000 });
+    // Let the verdict land before asserting the pill stays away.
+    await act(async () => {
+      await judgeQuotationLine.mock.results[0]?.value;
+    });
+    expect(screen.queryByText('Below default price')).toBeNull();
     expectNothingWritten();
   });
 
@@ -3332,26 +3341,38 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
 
   it('AC-8: a filtered row stays on screen while its rate is typed, even past the flag', async () => {
     listQuotationLines.mockResolvedValue([
-      line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
+      line({
+        id: 'l1',
+        product_code: 'A-1',
+        description: 'Under the floor',
+        is_discounted: true,
+        is_below_floor: true,
+      }),
       line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
     ]);
-    // The typed rate turns out to be below the MINIMUM price, so the line no longer matches
-    // "Below default price". It must stay on screen all the same: it is being typed into.
+    // The typed rate turns out to be back above the MINIMUM price, so the line no longer matches
+    // "Below minimum price". It must stay on screen all the same: it is being typed into.
     judgeQuotationLine.mockResolvedValue({
       is_non_standard: false,
-      is_below_floor: true,
+      is_below_floor: false,
       is_discounted: true,
-      floor_value: '800.00',
-      floor_level: 'series',
+      floor_value: null,
+      floor_level: null,
     });
     await renderEditing();
-    await chooseFlag('Below default price');
+    await chooseFlag('Below minimum price');
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull());
     fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on A-1' }), {
-      target: { value: '850.00' },
+      target: { value: '950.00' },
     });
-    expect(await screen.findByText('Below minimum price', {}, { timeout: 5000 })).toBeInTheDocument();
+    // The line no longer counts as below the minimum price once the verdict lands...
+    fireEvent.click(flagsTrigger());
+    expect(
+      await screen.findByRole('option', { name: /Below minimum price.*0/ }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    // ...and is still on screen, being typed into.
     expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
     // Changing the filter lets it go: it no longer matches.
     await chooseFlag('Non-standard');
@@ -3384,7 +3405,7 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
 
   it('AC-8: opening an edit session (drafts rebuilt, same values) pins nothing', async () => {
     listQuotationLines.mockResolvedValue([
-      line({ id: 'l1', product_code: 'A-1', description: 'Discounted', is_discounted: true }),
+      line({ id: 'l1', product_code: 'A-1', description: 'Off series', is_non_standard: true }),
       line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
     ]);
     const client = new QueryClient({
@@ -3397,7 +3418,7 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     );
     const { rerender } = render(tree(false));
     await screen.findByText('A-2');
-    await chooseFlag('Below default price');
+    await chooseFlag('Non-standard');
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByText('A-2')).toBeNull());
     // Edit: the session seeds every row afresh from the saved lines.
@@ -3412,17 +3433,20 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     renderEditor();
     await screen.findByText('A-4');
     fireEvent.click(flagsTrigger());
-    // One line each: A-1 below default, A-2 off series, A-3 below minimum.
-    for (const name of ['Non-standard', 'Below default price', 'Below minimum price']) {
+    // One line each: A-2 off series, A-3 below minimum. A-1 (below default only) has no option
+    // since QUOTE-BELOW-DEFAULT-OFF (owner 12 Nov 2026).
+    for (const name of ['Non-standard', 'Below minimum price']) {
       expect(await screen.findByRole('option', { name: new RegExp(`${name}.*1`) })).toBeInTheDocument();
     }
-    fireEvent.click(screen.getByRole('option', { name: /Below default price/ }));
-    await waitFor(() => expect(shownCodes()).toEqual(['A-1']));
-    expect(itemNumbers()).toEqual(['1']);
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect(screen.queryByRole('option', { name: /Below default price/ })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: /Below minimum price/ }));
+    await waitFor(() => expect(shownCodes()).toEqual(['A-3']));
+    expect(itemNumbers()).toEqual(['3']);
 
     fireEvent.click(screen.getByRole('option', { name: /Non-standard/ }));
-    await waitFor(() => expect(shownCodes()).toEqual(['A-1', 'A-2']));
-    expect(itemNumbers()).toEqual(['1', '2']);
+    await waitFor(() => expect(shownCodes()).toEqual(['A-2', 'A-3']));
+    expect(itemNumbers()).toEqual(['2', '3']);
   });
 
   it('AC-8: Below minimum price finds the lines under the floor', async () => {
@@ -3443,7 +3467,7 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
       { target: { value: 'off series' } },
     );
     await chooseFlag('Non-standard');
-    await chooseFlag('Below default price');
+    await chooseFlag('Below minimum price');
     await waitFor(() => expect(shownCodes()).toEqual(['A-2']));
   });
 });

@@ -102,6 +102,8 @@ export default function UserLayout({
           data.phone_differs_from_contact ?? data.phoneDiffersFromContact ?? false,
         lastSignInMethod: data.last_sign_in_method ?? data.lastSignInMethod ?? null,
         needsInvitation: data.needs_invitation ?? data.needsInvitation ?? false,
+        passkeyEnabled: data.passkey_enabled ?? data.passkeyEnabled ?? false,
+        passkeyCount: data.passkey_count ?? data.passkeyCount ?? 0,
         roles,
         roleId: roles[0]?.id ?? data.role_id ?? data.roleId,
         respondUserId: data.respond_user_id || data.respondUserId,
