@@ -1532,15 +1532,6 @@ class ResolveReferenceRequest(BaseModel):
             "for SRTWC8088's seat cover, never SRTWC8088-SC)."
         ),
     )
-    alternatives_offerable_only: bool = Field(
-        default=False,
-        description=(
-            "CHATBOT-CODE-MATCH AC-20 / owner Q3: the resolver's `alternatives_offerable_only` - "
-            "a token's did-you-mean `alternatives` (trigram and same-family) hold only products "
-            "the chat may offer (active and not discontinued). Set by the chatbot's resolve only; "
-            "off keeps every other caller's alternatives unchanged."
-        ),
-    )
     understand_phrase: bool = Field(
         default=False,
         description=(
@@ -3542,13 +3533,26 @@ def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
         ]
 
 
+def _not_from_a_request() -> bool:
+    """A route argument no request can set: FastAPI always resolves it to False."""
+    return False
+
+
 @router.post("/resolve")
 def resolve_reference_post(
     payload: ResolveReferenceRequest,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
+    alternatives_offerable_only: bool = Depends(_not_from_a_request),
 ):
-    """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
+    """POST variant for external callers that send JSON body (e.g. n8n HTTP node).
+
+    `alternatives_offerable_only` (CHATBOT-CODE-MATCH AC-20 / owner Q3; CHATBOT-CLOSE-CODES
+    review): the resolver's own flag, a token's did-you-mean `alternatives` (trigram and
+    same-family) hold only products the chat may offer, and the chat ranks the whole list. No
+    request body or query sets it (`_not_from_a_request`); the chatbot passes it in process
+    (`lanes/business/services._resolve_entity`), so every API caller keeps the capped,
+    unfiltered alternatives."""
     typed_tokens = list(payload.tokens or [])
     exact_kept: list[str] = []
     spec_none: list[dict[str, Any]] = []
@@ -3613,7 +3617,7 @@ def resolve_reference_post(
             code_reader=code_reader,
             hint_locked_tokens=payload.hint_locked_tokens,
             brand_tokens=payload.brand_tokens,
-            alternatives_offerable_only=payload.alternatives_offerable_only,
+            alternatives_offerable_only=alternatives_offerable_only,
         )
     except EntityPinMismatch as exc:
         raise AppException(

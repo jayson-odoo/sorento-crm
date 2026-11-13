@@ -461,9 +461,9 @@ def _dym_plan(
         # and no cross-token dedupe, which is the pre-C1 shape it was promoted with.
         seen_key: list[str] = []
         from app.services.chatbot.turn.state import token_key
-        from app.services.chatbot.turn_runtime import _typed_by_token
+        from app.services.chatbot.turn_runtime import typed_by_token
 
-        typed_by = _typed_by_token(jsc.array(jsc.get(q, "entities")))
+        typed_by = typed_by_token(jsc.array(jsc.get(q, "entities")))
         for res in misses:
             cands = _token_candidates(
                 res,

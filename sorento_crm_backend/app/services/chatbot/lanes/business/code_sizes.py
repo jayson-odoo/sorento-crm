@@ -53,12 +53,12 @@ def _size_rows(db: Any) -> list[Any]:
 
 
 def _typed_of(parser: dict[str, Any], token: Any) -> str | None:
-    """The word typed for the resolver's `token` (`turn_runtime._typed_by_token`, the one
+    """The word typed for the resolver's `token` (`turn_runtime.typed_by_token`, the one
     lookup), or None when the message typed none."""
     from app.services.chatbot.turn.state import token_key
-    from app.services.chatbot.turn_runtime import _typed_by_token
+    from app.services.chatbot.turn_runtime import typed_by_token
 
-    return _typed_by_token(jsc.array(jsc.get(parser, "entities"))).get(token_key(token)) or None
+    return typed_by_token(jsc.array(jsc.get(parser, "entities"))).get(token_key(token)) or None
 
 
 def _stored_matches(db: Any, rows: list[Any], typed: str) -> list[dict[str, Any]]:
