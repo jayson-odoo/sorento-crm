@@ -26,6 +26,12 @@ function realDate(y: number, m: number, d: number): Date | undefined {
     : undefined;
 }
 
+/** A picked day as YYYY-MM-DD in local time, the form value the API takes (toISOString would
+ *  shift it a day in UTC+8). */
+export function toIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 /** Parse YYYY-MM-DD or DD/MM/YYYY to local Date; return undefined if invalid or empty.
  *  ISO needs both digits of month and day, so a half-typed `2026-07-0` is not a date yet. */
 export function parseDateInput(value: string): Date | undefined {

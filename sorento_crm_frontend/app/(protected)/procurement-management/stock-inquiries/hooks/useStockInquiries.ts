@@ -32,6 +32,8 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
+  lastActivityFrom?: string;
+  lastActivityTo?: string;
 };
 
 
@@ -54,6 +56,8 @@ export function stockInquiriesListQueryKey(
     params.sorting,
     params.searchQuery,
     params.statuses,
+    params.lastActivityFrom,
+    params.lastActivityTo,
   ];
 }
 
@@ -68,6 +72,8 @@ export function stockInquiriesListParamsFromUrl(
     sorting: params.sorting,
     searchQuery: params.searchQuery,
     statuses: statuses ? statuses.split(',') : undefined,
+    lastActivityFrom: params.filters.last_activity_from || undefined,
+    lastActivityTo: params.filters.last_activity_to || undefined,
   };
 }
 

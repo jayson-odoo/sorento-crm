@@ -500,12 +500,19 @@ class RespondClient:
         payload = {"message": {"type": "text", "text": text}}
         return self._post_contact_message(identifier, payload, timeout=15)
 
+    def send_quick_reply(self, identifier: str, text: str, replies: list[str]) -> dict:
+        """Send a text with tap-to-answer buttons. Payload shape UNVERIFIED against
+        Respond's live API (N8N-RETIRE-A Q4); proven at the stage-2 own-number test."""
+        payload = {"message": {"type": "quick_reply", "title": text, "replies": replies}}
+        return self._post_contact_message(identifier, payload, timeout=15)
+
     def send_attachment(
         self,
         identifier: str,
         attachment_type: str,
         url: str,
         caption: Optional[str] = None,
+        filename: Optional[str] = None,
     ) -> dict:
         """Send a media attachment to a contact. message type ``attachment``
         (R1, resolved 2026-08-12): subtypes are ``image`` / ``video`` / ``audio`` /
@@ -520,6 +527,8 @@ class RespondClient:
         attachment_payload: dict = {"type": attachment_type, "url": url}
         if caption:
             attachment_payload["caption"] = caption
+        if filename:
+            attachment_payload["fileName"] = filename
         payload = {"message": {"type": "attachment", "attachment": attachment_payload}}
         # Larger timeout than a text send: Respond fetches the media itself
         # before it can hand back a response.

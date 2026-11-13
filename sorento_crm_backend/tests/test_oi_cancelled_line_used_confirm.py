@@ -632,17 +632,19 @@ def test_autocount_cancel_push_leaves_an_acknowledged_row_done(env, row_state):
 
 
 @pytest.mark.parametrize(
-    "row_ack,pre_changed_at,expected",
+    "row_ack,pre_changed_at",
     [
-        (ACK_AWAITING, None, ACK_ACKNOWLEDGED),
-        (ACK_CHANGED, datetime(2026, 1, 1), ACK_ACKNOWLEDGED),
-        (ACK_REJECTED, None, ACK_REJECTED),
+        (ACK_AWAITING, None),
+        (ACK_CHANGED, datetime(2026, 1, 1)),
+        (ACK_REJECTED, None),
     ],
 )
-def test_autocount_cancel_push_makes_awaiting_and_changed_rows_done_and_leaves_rejected(
-    env, row_ack, pre_changed_at, expected
+def test_autocount_cancel_push_leaves_awaiting_and_changed_rows_for_cs_and_rejected_rejected(
+    env, row_ack, pre_changed_at
 ):
-    """AC-CL-6 / AC-AC-10e (owner 30 Oct), write site 2: same as the sales order edit."""
+    """AC-CL-6 / AC-AC-10e, write site 2. Owner rule 12 Nov (OI-WHOLE-SO-CANCEL v2, AC-V2-1;
+    supersedes the 30 Oct auto-done at sync): the cancel push leaves every row's ack unchanged,
+    awaiting and changed rows wait for CS, a rejected row stays rejected."""
     record, header, line, product_id = _create_then_prep_push(env)
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line["id"], product_id, row_ack=row_ack, changed_at=pre_changed_at,
@@ -652,7 +654,7 @@ def test_autocount_cancel_push_makes_awaiting_and_changed_rows_done_and_leaves_r
 
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == expected
+    assert row.ack_state == row_ack
     assert row.changed_at == pre_changed_at
 
 
@@ -758,17 +760,16 @@ def test_autocount_leftover_referenced_line_flags_an_acknowledged_row_changed(en
     assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
-def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(env):
-    """AC-CL-7 (write site 2, plan 3.2a): only the TRANSITION flags a row through the
-    leftover-cancel path too - a row purchasing re-confirms after the first reduced
-    push does not come back on a second one, even though the loop that cancels a
-    leftover line walks `already_cancelled` every time (`_sync_lines` docstring)."""
+def test_autocount_repeated_leftover_cancel_changes_nothing_on_a_confirmed_row(env):
+    """AC-CL-7 (write site 2, plan 3.2a). Owner rule 12 Nov (OI v2 AC-V2-1; supersedes 30 Oct):
+    the reduced push and its repeat leave a confirmed row exactly as it was - the removal waits
+    for CS on the board, and the loop that cancels a leftover line (`already_cancelled` every
+    time, `_sync_lines` docstring) flags nothing either time."""
     record, header, lines = _push_two_line_order(env)
     ref_b = record["lines"][1]["source_ref"]
     line_b = next(l for l in lines if l["source_ref"] == ref_b)
 
-    # AC-RL-20 / owner ruling 26 Oct 2026: a raised row would now be retired, so the
-    # re-flag intent is kept with an actioned row (actioned rows keep the C1 flag).
+    # An actioned, acknowledged row (a raised one is left for the board anyway).
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line_b["id"], line_b["product_id"],
         row_state=INQUIRY_ACTIONED, row_ack=ACK_ACKNOWLEDGED,
@@ -777,13 +778,10 @@ def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(en
     reduced = dict(record, lines=[record["lines"][0]])
     env.post(INGEST_SO, [reduced])
     env.db.commit()
-
-    # purchasing re-confirms, whatever state the first reduced push left the row in.
-    resp = env.client.post(ACK_URL, json={"row_ids": [str(row.id)]})
-    assert resp.status_code == 200, resp.text
-    env.db.commit()
-    env.db.refresh(row)
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
     assert row.ack_state == ACK_ACKNOWLEDGED
+    first_changed_at = row.changed_at
 
     # the same reduced document again - line B is already cancelled this time.
     env.post(INGEST_SO, [reduced])
@@ -791,6 +789,7 @@ def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(en
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
     assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.changed_at == first_changed_at
 
 
 # ---------------------------------------------------------------------------
@@ -835,15 +834,10 @@ def test_autocount_deletion_flags_an_acknowledged_row_changed(env, row_state):
     assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
-def test_autocount_repeated_deletion_does_not_reflag_a_reconfirmed_row(env):
-    """AC-CL-7 (plan 3.2b, write site 4): only the TRANSITION flags a row through
-    the deletion path too - once purchasing re-confirms, deleting the SAME
-    already-cancelled order a second time (the ESB re-draining its queue,
-    `_deactivate`'s own idempotence, `test_a_second_deletion_of_a_dependent_row_
-    still_reports_deactivated`) does not bring the row back. Expected to pass
-    today as much as the sibling write-site tests do once wired - it is written
-    alongside the red test above rather than deferred, so the transition guard is
-    pinned the moment 3.2b lands."""
+def test_autocount_repeated_deletion_changes_nothing_on_a_confirmed_row(env):
+    """AC-CL-7 (plan 3.2b, write site 4). Owner rule 12 Nov (OI v2 AC-V2-1; supersedes 30 Oct):
+    deleting the order, and the ESB re-draining the same deletion (`_deactivate`'s own
+    idempotence), leave a confirmed row exactly as it was - it waits for CS on the board."""
     record, header, line, product_id = _create_then_prep_push(env)
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line["id"], product_id, row_ack=ACK_ACKNOWLEDGED,
@@ -851,15 +845,10 @@ def test_autocount_repeated_deletion_does_not_reflag_a_reconfirmed_row(env):
 
     first = _delete_so(env, record["source_ref"])
     assert first.status_code == 200, first.text
-
-    # purchasing re-confirms, whatever state the first deletion left the row in.
-    env.db.expire_all()
-    row = env.db.get(OrderInquiryRow, row.id)
-    ack_resp = env.client.post(ACK_URL, json={"row_ids": [str(row.id)]})
-    assert ack_resp.status_code == 200, ack_resp.text
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
     assert row.ack_state == ACK_ACKNOWLEDGED
+    first_changed_at = row.changed_at
 
     second = _delete_so(env, record["source_ref"])
     assert second.status_code == 200, second.text
@@ -873,6 +862,7 @@ def test_autocount_repeated_deletion_does_not_reflag_a_reconfirmed_row(env):
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
     assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.changed_at == first_changed_at
 
 
 def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():

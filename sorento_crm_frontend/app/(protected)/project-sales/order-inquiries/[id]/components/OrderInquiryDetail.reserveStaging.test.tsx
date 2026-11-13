@@ -555,7 +555,7 @@ describe('AC-RS-87: header Reserve CTA, disabled while nothing staged, commits t
 });
 
 describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= preselecting it without opening a dialog', () => {
-  it('offers the seven State options; selecting Request to reserve hides other lines', async () => {
+  it('offers the ten State options (owner F1 12 Nov: the State column\'s words); selecting Request to reserve hides other lines', async () => {
     renderDetail();
     await screen.findByText('ZZT-REQUESTED');
     await screen.findByText('ZZT-PLAIN');
@@ -566,9 +566,13 @@ describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= presel
     fireEvent.click(trigger as Element);
 
     // Scoped to the listbox, not the whole screen: a row's own State pill (e.g. "To
-    // buy") carries the same text as its matching filter option.
+    // order") carries the same text as its matching filter option.
     const listbox = await screen.findByRole('listbox');
-    const options = ['To buy', 'Partly on PO/SPO', 'On PO/SPO', 'Done', 'Request to reserve', 'Reserved', 'Not reserved'];
+    // Owner F1 12 Nov: the filter offers exactly the words the State column prints.
+    const options = [
+      'To order', 'Waiting for CS', 'Done', 'Rejected', 'SO cancelled', 'Line cancelled',
+      'Nothing to buy', 'Request to reserve', 'Reserved', 'Not reserved',
+    ];
     for (const label of options) {
       expect(within(listbox).getByRole('option', { name: label })).toBeInTheDocument();
     }
@@ -840,11 +844,12 @@ describe('6e.4 review round: declined lines, the action column gate, amend prefi
     fireEvent.click(trigger as Element);
     const listbox = await screen.findByRole('listbox');
     // The request id no longer preselects State (OI-RESERVE-ROUND): it ticks the Request filter.
-    fireEvent.click(within(listbox).getByRole('option', { name: 'Done' }));
+    // Owner F1 12 Nov: the options are the State column's words; no fixture line reads Rejected.
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Rejected' }));
 
-    // OI-UX-FILTER-SNAPSHOT: the State pick itself rides the URL as `view_state` ("Done" = actioned).
+    // OI-UX-FILTER-SNAPSHOT: the State pick itself rides the URL as `view_state` (the word).
     await waitFor(() =>
-      expect(replaceSpy).toHaveBeenCalledWith('/project-sales/order-inquiries/oi-1?view_state=actioned', {
+      expect(replaceSpy).toHaveBeenCalledWith('/project-sales/order-inquiries/oi-1?view_state=Rejected', {
         scroll: false,
       }),
     );

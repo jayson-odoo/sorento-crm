@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Dict, Literal, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -60,6 +60,7 @@ from app.schemas.project_supply import (
 )
 from app.services import project_service as projects
 from app.services.audit_service import log_audit
+from app.services.company_scope_resolver import widen_if_requested
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_classification_evidence import classification_evidence
 from app.services.field_access import staff_may_see_clearance
@@ -555,6 +556,7 @@ def _run_confirm_many(
         return _with_split_edits(db, supply, order, entry)
 
     def write_one(order, entry):
+        handover_mark = _handover_mark(db)
         resolved_batch_id = batch_of_entry(entry)
         # `_confirm_with_possible_rejects` opens its OWN `UndoJournal` per branch (S1,
         # #978: `confirm_many` commits or rolls back each entry on its own, so a journal
@@ -588,6 +590,8 @@ def _run_confirm_many(
         ProjectOrderInquiryService(db).stamp_so_remark(
             str(order.id), getattr(entry, "so_remark", None)
         )
+        if isinstance(result, dict):
+            result["inquiry_rows_handed_over"] = _handed_over_since(db, handover_mark, order)
         return result
 
     results = supply.confirm_many(
@@ -626,6 +630,22 @@ def _run_confirm_many(
             actor_id,
             preview,
         )
+    # The SO number per result, one lookup for all of them: the board refetch drops an
+    # applied order, so the result line can only name it from here.
+    pso_ids = [str(r["pso_id"]) for r in results if r.get("pso_id") and _is_uuid(str(r["pso_id"]))]
+    if pso_ids:
+        from app.models.order import SalesOrder
+        from app.models.project_so import ProjectSalesOrder
+
+        numbers = {
+            str(pso_id): number
+            for pso_id, number in db.query(ProjectSalesOrder.id, SalesOrder.so_number)
+            .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            .filter(ProjectSalesOrder.id.in_(pso_ids))
+            .all()
+        }
+        for result in results:
+            result["so_number"] = numbers.get(str(result.get("pso_id")))
     return results
 
 
@@ -1047,6 +1067,14 @@ def get_stock_detail(
             "behalf, which is what the pile looks like to somebody not in it."
         ),
     ),
+    company_scope: Optional[Literal["grants"]] = Query(
+        None,
+        description=(
+            "`grants` reads under every company the caller is granted (staff sessions "
+            "only): an order inquiry's line can sit at another granted company's bin."
+        ),
+    ),
+    request: Request = None,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -1066,17 +1094,25 @@ def get_stock_detail(
                 message="Ask for one location or for one group.",
                 code="stock_detail_target_required",
             )
+        if group and company_scope:
+            # One bin only: a whole group or the pools is never read across companies.
+            raise AppException(
+                status_code=422,
+                message="Company scope applies to one location only.",
+                code="stock_detail_scope_group",
+            )
         if warehouse_id and not group:
             validate_uuid_path(warehouse_id, resource="Warehouse")
         # The SAME reader every other `*_ids` filter uses: it takes CSV, a JSON array or
         # repeated params, deduplicates, and refuses a value that is not an id by naming the
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
-        return FulfilmentBoardService(
-            db, reveal_eta_delay=staff_may_see_clearance(db, _user)
-        ).stock_detail(
-            product_id, warehouse_id, line_ids=wanted, group=group
-        )
+        with widen_if_requested(db, request, _user, company_scope):
+            return FulfilmentBoardService(
+                db, reveal_eta_delay=staff_may_see_clearance(db, _user)
+            ).stock_detail(
+                product_id, warehouse_id, line_ids=wanted, group=group
+            )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -1287,6 +1323,27 @@ def _reasons_for_rejected_lines(
             f"rejected: {reason}"
         )
     return reasons, "; ".join(sentences)
+
+
+def _handover_mark(db: Session) -> int:
+    """How many purchasing handover lines are queued on this session right now."""
+    from app.services.project_order_inquiry_service import _HANDOVER_PENDING_KEY
+
+    return len(db.info.get(_HANDOVER_PENDING_KEY) or [])
+
+
+def _handed_over_since(db: Session, mark: int, order) -> int:
+    """The purchasing handover lines (raised, changed, cancelled) this order's confirm queued
+    since `mark`: what the result sentence calls rows handed over. A count of the queue the
+    write already filled, no query."""
+    from app.services.project_order_inquiry_service import _HANDOVER_PENDING_KEY
+
+    pso_id = str(order.id)
+    return sum(
+        1
+        for item in (db.info.get(_HANDOVER_PENDING_KEY) or [])[mark:]
+        if str(item.get("pso_id") or "") == pso_id
+    )
 
 
 def _restamp_superseded_reason(db: Session, before_id, reason: str) -> None:
@@ -1572,7 +1629,12 @@ def _confirm_with_possible_rejects(
         ]
         body["planning_change_applied"] = bool(applied_now)
         body["lines_retired"] = [
-            {"line_no": row.line_no, "item_code": row.item_code}
+            {
+                "line_no": row.line_no,
+                "item_code": row.item_code,
+                # The board matches each posted line to the result by this id.
+                "project_line_id": str(row.project_line_id) if row.project_line_id else None,
+            }
             for row in sorted(applied_now, key=lambda r: r.line_no or 0)
             if row.kind == "cancelled"
         ]
@@ -1678,6 +1740,7 @@ def confirm_supply(
         # named or not, added once before the hold-back so a refused one is held back like
         # any line; beside a pending AutoCount batch too, as a line the batch does not carry.
         posted = _with_split_edits(db, service, order, payload)
+        handover_mark = _handover_mark(db)
         body, _entry, held = service._write_holding_back(
             order,
             posted,
@@ -1696,6 +1759,8 @@ def confirm_supply(
         )
         if held:
             body["lines_held_back"] = held
+        if isinstance(body, dict):
+            body["inquiry_rows_handed_over"] = _handed_over_since(db, handover_mark, order)
         db.commit()
         return body
     except Exception as exc:
@@ -1817,8 +1882,9 @@ def _confirm_a_planning_change(
             # the book did" - it is not an amendment of the line's supply, and there is no
             # line left to compose one for. Posting it as an `amend` sent it down the
             # confirm branch instead, so the retire-and-shift never fired from the board at
-            # all. Apply dispatches on the kind (Slice C contract D), so nothing has to be
-            # recorded here; the row is still marked applied with the rest of them.
+            # all. F2: the saved cancel is the row's Confirm decision (no composition), which
+            # is what lets Apply retire it; an unsaved cancelled row is left pending.
+            planning_change_service.set_row_decision(db, batch_id, str(row.id), "confirm")
             continue
         planning_change_service.set_row_decision(
             db, batch_id, str(row.id), "amend", composition

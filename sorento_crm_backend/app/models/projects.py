@@ -1011,6 +1011,9 @@ class ProjectSeriesCategory(Base):
         ForeignKey("product_categories.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    #: NON-CANCELLABLE-ITEMS: every product under this category (children included) is
+    #: non-cancellable on this series, unless its own product row says otherwise.
+    non_cancellable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
 
 class ProjectSeriesProduct(Base):
@@ -1059,6 +1062,9 @@ class ProjectSeriesProduct(Base):
     #: category scope would list it, the admin removed it. Not listed, not standard, not
     #: priced, until it is added back (which clears the flag).
     excluded = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    #: NON-CANCELLABLE-ITEMS: the model's own answer. NULL follows the series' category
+    #: setting; true / false overrides it (model beats category, owner 11 Nov 2026).
+    non_cancellable = Column(Boolean, nullable=True)
 
     #: A price with no max discount means NO discount (owner ruling Q2, 1 Nov 2026): the floor
     #: is the selling price itself. See ``series_floor``.
@@ -1102,6 +1108,8 @@ class ProjectSeriesSet(Base):
     selling_price = Column(Numeric(12, 2), nullable=True)
     #: A PERCENT, ``6`` means 6%. NULL with a selling price means no discount (owner ruling Q2).
     max_discount_pct = Column(Numeric(5, 2), nullable=True)
+    #: NON-CANCELLABLE-ITEMS: the set as quoted is non-cancellable on this series.
+    non_cancellable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
 
 class PriceFloorRule(Base, CompanyScopedMixin):
@@ -1153,6 +1161,54 @@ class PriceFloorRule(Base, CompanyScopedMixin):
             "category_id",
             unique=True,
             postgresql_nulls_not_distinct=True,
+        ),
+        {"schema": "projects"},
+    )
+
+
+class NonCancellableRule(Base, CompanyScopedMixin):
+    """The company-wide Non-cancellable default for one product or one category
+    (NON-CANCELLABLE-ITEMS, owner answer (a), 11 Nov 2026).
+
+    Covers lines outside any series, and lines whose series says nothing about the item. A
+    series' own setting wins over this; within each level a product beats a category, and a
+    category covers its children. ``non_cancellable = false`` on a product is the way to
+    exempt one model from a category marked here.
+
+    Exactly one target per row (CHECK below), one row per target per company.
+    """
+
+    __tablename__ = "non_cancellable_rules"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
+    )
+    category_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_categories.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    non_cancellable = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_non_cancellable_rules_company_target",
+            "company_id",
+            "product_id",
+            "category_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "(product_id IS NULL) <> (category_id IS NULL)",
+            name="ck_non_cancellable_rules_one_target",
         ),
         {"schema": "projects"},
     )
@@ -2135,6 +2191,12 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     # Priced below its default price (series selling price, else list price) when saved
     # (PS-QUOTE-RULES R1). Any discount needs approval, so this, not the floor, gates Issue.
     is_discounted = Column(Boolean, nullable=False, server_default="false", default=False)
+    # NON-CANCELLABLE-ITEMS: the series (or set) said this item cannot be cancelled once the
+    # order is confirmed. Computed on save and STORED like the flags above, so a later change
+    # of the setting never rewrites a quotation the customer already holds. Printed under the
+    # description; read by every CRM cancel / reduce path through the SO line's
+    # `quotation_line_id`.
+    is_non_cancellable = Column(Boolean, nullable=False, server_default="false", default=False)
 
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
     notes = Column(Text, nullable=True)

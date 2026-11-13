@@ -190,7 +190,17 @@ def assert_linkable_project(
     is not a change, so an older link keeps saving."""
     if not project_id or str(project_id) == str(current or ""):
         return
-    if approved_projects(db.query(Project.id).filter(Project.id == str(project_id))).first() is None:
+    from uuid import UUID
+
+    try:
+        UUID(str(project_id))
+        is_uuid = True
+    except (TypeError, ValueError):
+        # Typed text never reaches the uuid column: the cast error would be a 500.
+        is_uuid = False
+    if not is_uuid or approved_projects(
+        db.query(Project.id).filter(Project.id == str(project_id))
+    ).first() is None:
         raise AppException(
             status_code=422,
             message="That project is not approved yet. Pick a project from the list.",
@@ -700,6 +710,27 @@ def _name_map(db: Session, user_ids) -> Dict[str, str]:
     }
 
 
+def _contact_map(db: Session, user_ids) -> Dict[str, tuple]:
+    """Each user's linked contact (``users.respond_contact_id``) as ``(id, name)``, for a form
+    written on their behalf: a project's Sponsorship stage opens the salesperson's form with them
+    as Requested by (PROJECT-STAGE-ACTIONS). The name is the CONTACT's, as the saved form prints
+    it (``requestor_options_service.contact_display_name``), never the user's."""
+    ids = [uid for uid in set(user_ids) if uid]
+    if not ids:
+        return {}
+    from app.models.access import RespondContact
+    from app.models.user import User
+    from app.services.requestor_options_service import contact_display_name
+
+    rows = (
+        db.query(User.id, RespondContact)
+        .join(RespondContact, RespondContact.id == User.respond_contact_id)
+        .filter(User.id.in_(ids))
+        .all()
+    )
+    return {user_id: (contact.id, contact_display_name(contact)) for user_id, contact in rows}
+
+
 def _party_name_map(db: Session, party_ids) -> Dict[str, str]:
     ids = [pid for pid in set(party_ids) if pid]
     if not ids:
@@ -746,6 +777,7 @@ def serialize_projects(
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
+    owner_contacts = _contact_map(db, [p.owner_user_id for p in projects])
 
     profiles = {
         row.project_id: row
@@ -901,6 +933,8 @@ def serialize_projects(
                 "status_label": status.label if status else None,
                 "owner_user_id": project.owner_user_id,
                 "owner_name": owner_names.get(project.owner_user_id),
+                "owner_contact_id": (owner_contacts.get(project.owner_user_id) or (None, None))[0],
+                "owner_contact_name": (owner_contacts.get(project.owner_user_id) or (None, None))[1],
                 "is_critical": project.is_critical,
                 "critical_at": project.critical_at,
                 "management_support": project.management_support,

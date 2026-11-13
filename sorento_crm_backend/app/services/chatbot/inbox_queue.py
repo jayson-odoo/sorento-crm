@@ -237,7 +237,7 @@ def accepts(db: Any, envelope: Any) -> bool:
         return False
     if not queue_mode_for(db, contact):
         return False
-    if not direct_ingress.sender_configured(db):
+    if not direct_ingress.sender_configured(db, contact):
         return False
     return direct_ingress._on_default_workspace(db, contact)
 
@@ -741,6 +741,7 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
 
     outcome: str | None = None
     actions = engine.split_send_actions(list(result.actions or []))
+    actions = _live_failure_wording(factory, run, result, actions)
     send_ms = 0
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
         if not _stamp_sending(factory, run.turn_id, run.claimed_at):
@@ -764,8 +765,45 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
         if attempt >= MAX_SEND_ATTEMPTS or not should_resend(outcome):
             break
         time.sleep(RESEND_BACKOFF_SECONDS * attempt)
+    if outcome == direct_ingress.SEND_REFUSED and _crm_refusal_is_final(factory, run):
+        return "failed"
     _flag_for_staff(factory, run.turn_id, outcome, run.claimed_at)
     return "flagged"
+
+
+def _live_failure_wording(factory: Callable[[], Any], run: _RowRun, result: Any, actions: list) -> list:
+    """CRM path only: the engine's generic apology for a failed turn goes out as the sentence n8n
+    sends for an engine failure. The n8n path is untouched."""
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
+
+    if str(getattr(result, "status", "")) != "failed":
+        return actions
+    if not any(a.get("text") == CHATBOT_REPLY_TURN_FAILED for a in actions if isinstance(a, dict)):
+        return actions
+    if not direct_ingress._on_crm_path(factory, run.turn_id, run.contact):
+        return actions
+    return [
+        {**a, "text": FAILURE_REPLY_TEXT} if isinstance(a, dict) and a.get("text") == CHATBOT_REPLY_TURN_FAILED else a
+        for a in actions
+    ]
+
+
+def _crm_refusal_is_final(factory: Callable[[], Any], run: _RowRun) -> bool:
+    """On the CRM path, a reply refused on every attempt is nothing left to wait for: the row
+    ends failed at `sent` with the sender's plain reason. The n8n path keeps `_flag_for_staff`."""
+    from app.services.chatbot import crm_sender
+
+    db = factory()
+    try:
+        if not crm_sender.has_crm_rows(db, run.turn_id):
+            return False
+        reason = crm_sender.last_failure_reason(db, run.turn_id) or "The reply was not sent."
+    finally:
+        db.close()
+    _set_row(factory, run.turn_id, run.claimed_at, error=reason)
+    _finish(factory, run.turn_id, "failed", "sent", run.claimed_at)
+    return True
 
 
 def _close_owned(
@@ -1039,6 +1077,8 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         return "lost"
     except Exception as exc:  # noqa: BLE001 - the engine records its own failures; this is past it
         logger.exception("chatbot inbox: turn %s raised", turn_id)
+        # On the CRM path the customer still gets the failure reply, as a failed engine turn does.
+        _send_failure_reply(factory, turn_id, contact)
         _set_row(factory, turn_id, claimed_at, status="failed", error=f"{type(exc).__name__}: {exc}")
         return "failed"
     finally:
@@ -1048,6 +1088,23 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         _finish(factory, turn_id, status, stage, claimed_at, timing={**run.timing, "send_ms": 0, "send_attempts": 0})
         return "done"
     return _post(factory, run, result, status, stage)
+
+
+def _send_failure_reply(factory: Callable[[], Any], turn_id: str, contact: str) -> None:
+    """CRM path only: send the generic failure reply for an engine that raised. Never raises."""
+    from app.services.chatbot.crm_sender import FAILURE_REPLY_TEXT
+
+    try:
+        if not direct_ingress._on_crm_path(factory, turn_id, contact):
+            return
+        action = {"kind": "send_message", "text": FAILURE_REPLY_TEXT, "quick_replies": None}
+        direct_ingress.send_outcome(
+            factory, turn_id=turn_id, contact_id=contact, actions=[action],
+            reply={"text": FAILURE_REPLY_TEXT, "quick_replies": None}, branch_kind=None,
+            step_prefix="f.",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("chatbot inbox: could not send the failure reply for %s", turn_id, exc_info=True)
 
 
 def _last_send_outcome(db: Any, turn_id: str, stamped_at: Any) -> str | None:
@@ -1075,10 +1132,12 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
     """Under the contact's mutex, every open row this module owns is dead (its drain let go
     of the mutex, or its process died). Nothing posted: back to `queued`. Stamped
     `sending`: a logged `ok` is done (IQ-34), otherwise `should_resend` decides (rule 6)."""
+    from app.services.chatbot import crm_sender, engine
+
     db = factory()
     try:
         dead = (
-            db.query(ChatbotTurn.id, ChatbotTurn.stage, ChatbotTurn.finished_at, ChatbotTurn.error, ChatbotTurn.started_at)
+            db.query(ChatbotTurn.id, ChatbotTurn.stage, ChatbotTurn.finished_at, ChatbotTurn.error, ChatbotTurn.started_at, ChatbotTurn.response)
             .filter(
                 ChatbotTurn.contact_respond_id == contact,
                 ChatbotTurn.status.in_(OPEN_STATUSES),
@@ -1088,11 +1147,20 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
             .all()
         )
         outcomes = {
-            str(rid): _last_send_outcome(db, str(rid), at) for rid, stage, at, _e, _s in dead if stage == SENDING_STAGE
+            str(rid): _last_send_outcome(db, str(rid), at) for rid, stage, at, _e, _s, _r in dead if stage == SENDING_STAGE
+        }
+        # N8N-RETIRE-A: a row the CRM sender started is judged by its steps, never re-run (a new
+        # answer could differ); done only when every step is confirmed.
+        crm_done = {
+            str(rid): crm_sender.all_confirmed(
+                db, str(rid), engine.split_send_actions(list((resp or {}).get("actions") or []))
+            )
+            for rid, stage, _a, _e, _s, resp in dead
+            if stage == SENDING_STAGE and crm_sender.has_crm_rows(db, str(rid))
         }
     finally:
         db.close()
-    for rid, stage, finished_at, error, started_at in dead:
+    for rid, stage, finished_at, error, started_at, _resp in dead:
         turn_id = str(rid)
         outcome = outcomes.get(turn_id)
         if stage != SENDING_STAGE:
@@ -1100,6 +1168,12 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
             # A compare-and-set on what was read (IQ-41): an old drain that stamped
             # `sending` meanwhile keeps its row.
             _requeue(factory, turn_id, read=(stage, started_at, finished_at))
+        elif turn_id in crm_done:
+            if crm_done[turn_id]:
+                _finish(factory, turn_id, "failed" if error else "done", "sent")
+            else:
+                logger.warning("chatbot inbox: turn %s of %s is half sent by the CRM; flagged", turn_id, contact)
+                _flag_for_staff(factory, turn_id, None)
         elif outcome == direct_ingress.SEND_OK:
             logger.warning("chatbot inbox: turn %s of %s was sent before its process died", turn_id, contact)
             _finish(factory, turn_id, "failed" if error else "done", "sent")

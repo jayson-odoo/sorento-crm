@@ -51,17 +51,22 @@ describe('ACK_ANY / ACK_FILTER_OPTIONS (PLAN-oi-confirm-per-so, AC-CF-13: G4/G5 
     expect(ACK_ANY).toBe('all');
   });
 
-  it('offers To order, Done, Rejected, All and no Changed (review round 1)', () => {
+  it('offers the Status column words and All, and no Changed (review round 1; owner F1 12 Nov)', () => {
     expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
       'to_confirm',
       'acknowledged',
       'rejected',
+      'waiting_for_cs',
+      'so_cancelled',
+      'line_cancelled',
       'all',
     ]);
     const labels = ACK_FILTER_OPTIONS.map((option) => option.label);
     expect(labels[0]).toBe('To order');
     expect(labels[1]).toBe('Done');
-    expect(labels.slice(2)).toEqual(['Rejected', 'All']);
+    expect(labels.slice(2)).toEqual([
+      'Rejected', 'Waiting for CS', 'SO cancelled', 'Line cancelled', 'All',
+    ]);
     expect(labels).not.toContain('Changed');
     expect(labels).not.toContain('To confirm');
     expect(labels).not.toContain('Confirmed');

@@ -25,7 +25,7 @@ export type TurnStage = (typeof TURN_STAGES)[number];
  * wait, `casual_llm` is the small-talk clarifier, and `delegated` is a turn an n8n lane
  * took over and never finished (the server's sweep fails it after the TTL).
  */
-export type TurnFailureStage = TurnStage | 'intake' | 'queued' | 'casual_llm' | 'delegated';
+export type TurnFailureStage = TurnStage | 'intake' | 'queued' | 'casual_llm' | 'delegated' | 'send_unconfirmed';
 
 export type TurnStatus = 'queued' | 'processing' | 'delegated' | 'done' | 'failed';
 

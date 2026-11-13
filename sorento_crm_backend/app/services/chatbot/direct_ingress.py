@@ -194,7 +194,7 @@ def skip_reason(
         # Media stays on the n8n path for now: its intake waits up to the media budget on
         # an extraction job, which would hold one of the few direct-turn threads that long.
         return "not_text"
-    if not sender_configured(db):
+    if not sender_configured(db, contact_id):
         # Review S2 / IQ-37: a queued row could only be answered through the sender, and the
         # n8n copy comes back a duplicate. Without a sender, the sync path keeps the message.
         return "no_sender"
@@ -213,12 +213,21 @@ _RATE_SCRIPT = (
 )
 
 
-def sender_configured(db: Any) -> bool:
-    """IQ-37: the default workspace has a chatbot sender, URL AND a key that decrypts. The one check both
+def sender_configured(db: Any, contact_id: str | None = None) -> bool:
+    """N8N-RETIRE-A: the CRM sender covering the contact (mode `all` when none is given) is a
+    sender too, with no n8n URL needed. Otherwise, IQ-37: the default workspace has a chatbot sender, URL AND a key that decrypts. The one check both
     injectors ask before queueing (the webhook here, `/chat/turn` via `inbox_queue.accepts`):
     without it a covered contact keeps the synchronous path, so nothing queued is stranded."""
+    from app.models.user import SystemSetting
+    from app.services.chatbot import crm_sender
     from app.services.respond_workspace_service import RespondWorkspaceService
 
+    row = db.query(SystemSetting).first()
+    if contact_id is None:
+        if getattr(row, "chatbot_reply_sender_mode", None) == "all":
+            return True
+    elif crm_sender.covers(row, contact_id):
+        return True
     workspace = _default_workspace(db)
     if workspace is None:
         return False
@@ -361,12 +370,20 @@ def send_outcome(
     reply: Any,
     branch_kind: str | None,
     ctx: dict[str, Any] | None = None,
+    step_prefix: str = "",
 ) -> str:
-    """`send`, naming what the attempt came to (`SEND_*`). Never raises."""
+    """`send`, naming what the attempt came to (`SEND_*`). Never raises.
+    `step_prefix` only matters on the CRM path (it names a side message's step keys)."""
     import httpx
 
+    from app.services.chatbot import crm_sender
     from app.services.respond_workspace_service import RespondWorkspaceService
 
+    if _on_crm_path(session_factory, turn_id, contact_id):
+        return crm_sender.send(
+            session_factory, turn_id=turn_id, contact_id=contact_id, actions=actions, ctx=ctx,
+            step_prefix=step_prefix,
+        )
     db = session_factory()
     try:
         workspace = _default_workspace(db)
@@ -445,6 +462,24 @@ def send_outcome(
     except Exception:  # noqa: BLE001 - the turn is answered; describing the send must not raise
         logger.exception("chatbot sender: unexpected failure for turn %s", turn_id)
         return SEND_HTTP_ERROR
+    finally:
+        db.close()
+
+
+def _on_crm_path(session_factory: Callable[[], Any], turn_id: str, contact_id: str) -> bool:
+    """The switch covers this contact, or the CRM sender already started this turn (so a
+    turn mid-send stays on the path it began on when the switch moves)."""
+    from app.models.user import SystemSetting
+    from app.services.chatbot import crm_sender
+
+    db = session_factory()
+    try:
+        return crm_sender.has_crm_rows(db, turn_id) or crm_sender.covers(
+            db.query(SystemSetting).first(), contact_id
+        )
+    except Exception:  # noqa: BLE001 - unreadable switch reads as n8n, today's path
+        logger.warning("chatbot sender: could not read the reply sender switch", exc_info=True)
+        return False
     finally:
         db.close()
 

@@ -13,6 +13,7 @@ from app.api.v1 import (
     projects,
     forms,
     complaints,
+    after_sales,
     sla,
     resources,
     user_management,
@@ -47,6 +48,7 @@ from app.api.v1.system import (
 )
 from app.api.v1.assistant import record_context as assistant_record_context
 from app.api.v1.projects._own_scope import project_own_scope_guard
+from app.api.v1.projects import project_import as project_import_routes
 from app.modules.runtime.guards import (
     require_any_module_enabled,
     require_module_enabled,
@@ -109,6 +111,15 @@ api_router.include_router(
     tags=["marketing"],
     dependencies=[Depends(require_module_enabled_with_api_key("marketing"))],
 )
+# Project import (PLAN-project-import-12nov.md): the PO register workbook into projects and
+# POs. Its own prefix, as the plan's route table names it; every route checks
+# projects.import.view or projects.import.run.
+api_router.include_router(
+    project_import_routes.router,
+    prefix="/projects/import",
+    tags=["project-import"],
+    dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
+)
 api_router.include_router(
     projects.router,
     prefix="/project-sales",
@@ -148,6 +159,12 @@ api_router.include_router(
     prefix="/complaints-management",
     tags=["complaints"],
     dependencies=[Depends(require_module_enabled_with_api_key("complaints"))],
+)
+api_router.include_router(
+    after_sales.router,
+    prefix="/after-sales",
+    tags=["after-sales"],
+    dependencies=[Depends(require_module_enabled_with_api_key("after_sales"))],
 )
 api_router.include_router(
     sla.router,

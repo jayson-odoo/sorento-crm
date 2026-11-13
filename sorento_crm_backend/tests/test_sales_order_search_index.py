@@ -220,7 +220,9 @@ def test_m1_revision_id_fits_alembic_version_column():
     assert len(mig.revision) <= 32, mig.revision
 
 
-def test_m1_is_the_single_head_and_chains_onto_the_previous_head():
+def test_m1_is_an_ancestor_of_the_single_head_and_chains_onto_the_previous_head():
+    """The head moves with every migration PR, so this never names it: it only asserts the
+    chain has exactly ONE head and that this migration is on the path to it."""
     mig = _load_migration()
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -229,7 +231,10 @@ def test_m1_is_the_single_head_and_chains_onto_the_previous_head():
     cfg.set_main_option("script_location", str(BACKEND / "alembic"))
     script = ScriptDirectory.from_config(cfg)
 
-    assert script.get_heads() == [mig.revision]
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    ancestors = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert mig.revision in ancestors, (mig.revision, heads[0])
     assert isinstance(mig.down_revision, str), "a single parent, not a merge"
     assert script.get_revision(mig.down_revision) is not None
     # The parent was a head before this migration: nothing else builds on it.

@@ -38,6 +38,7 @@ from app.models.workflow_forms import (
 )
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment, ComplaintFulfilmentOrder
 from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
+from app.models.service_jobs import ServiceJob, Technician
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
@@ -183,6 +184,7 @@ from app.models.scm import (
     MarketResearchRun,
     PriorityPolicy,
 )
+from app.models.project_import import ProjectImportValueMap  # noqa: F401
 from app.models.project_so import (  # noqa: F401
     ProjectPOVersion,
     ProjectPOLine,
