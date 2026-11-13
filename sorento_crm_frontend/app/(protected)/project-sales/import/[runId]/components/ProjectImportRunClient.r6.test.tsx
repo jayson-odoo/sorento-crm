@@ -97,7 +97,23 @@ vi.mock('@/hooks/useDeferredAction', () => ({
     return { pending: null, start: vi.fn(), cancel: vi.fn(), isBlocked: false };
   },
 }));
-vi.mock('@/components/audit/AuditTrail', () => ({ default: () => <div data-testid="audit-trail" /> }));
+// The History reads through react-query under the key `hooks/useAuditLogs.ts` uses, so a test
+// can see whether the page refreshes it (round 10).
+const history = vi.hoisted(() => ({ fetch: vi.fn(async () => [] as string[]) }));
+vi.mock('@/components/audit/AuditTrail', async () => {
+  const { useQuery } = await vi.importActual<typeof import('@tanstack/react-query')>(
+    '@tanstack/react-query'
+  );
+  const Trail = ({ entityType, entityId }: { entityType: string; entityId: string }) => {
+    const { data } = useQuery({
+      queryKey: ['audit-logs', entityType, entityId, 1, 50],
+      queryFn: () => history.fetch(),
+      staleTime: 60 * 1000,
+    });
+    return <div data-testid="audit-trail">{(data ?? []).join(' | ')}</div>;
+  };
+  return { default: Trail };
+});
 
 import { ProjectImportRunClient } from './ProjectImportRunClient';
 
@@ -149,8 +165,11 @@ function run(status: string, extra: Record<string, unknown> = {}) {
   };
 }
 
+let lastClient: QueryClient;
+
 function renderRun() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  lastClient = client;
   return render(
     <QueryClientProvider client={client}>
       <ProjectImportRunClient runId={RUN_ID} />
@@ -283,5 +302,32 @@ describe('ProjectImportRunClient, round 9', () => {
     expect(seen.deferred.some((o) => o.actionKey === 'project_import_run.delete' && o.entityId))
       .toBe(false);
     expect(screen.queryByText(/^Delete$/)).toBeNull();
+  });
+});
+
+describe('ProjectImportRunClient, round 10', () => {
+  it('r10: History refreshes when the import finishes', async () => {
+    const user = userEvent.setup();
+    history.fetch.mockResolvedValueOnce(['Previewed']);
+    history.fetch.mockResolvedValue(['Previewed', 'Imported']);
+    service.getRun.mockResolvedValue(run('importing'));
+    renderRun();
+    await screen.findAllByText('PIM-0006');
+    await user.click(await screen.findByRole('tab', { name: /^History$/ }));
+    const trail = await screen.findByTestId('audit-trail');
+    await waitFor(() => expect(trail.textContent).toBe('Previewed'));
+    const before = history.fetch.mock.calls.length;
+
+    // The run poll comes back imported (what the 2 s refetchInterval does while importing).
+    service.getRun.mockResolvedValue(run('imported', {
+      result_counts: { created: 1 }, imported_at: '2026-11-12T10:00:00' }));
+    await lastClient.refetchQueries({
+      predicate: (q) => !String(q.queryKey[0]).startsWith('audit-logs') &&
+        JSON.stringify(q.queryKey).includes(RUN_ID),
+    });
+
+    await waitFor(() => expect(history.fetch.mock.calls.length).toBeGreaterThan(before));
+    await waitFor(() =>
+      expect(screen.getByTestId('audit-trail').textContent).toContain('Imported'));
   });
 });
