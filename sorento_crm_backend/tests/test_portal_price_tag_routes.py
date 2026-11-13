@@ -2339,3 +2339,33 @@ class TestItemLookupCarriesTheListPrice:
         (hit,) = [r for r in res.json() if r["id"] == row.id]
         assert hit["kind"] == "product_set"
         assert hit["list_price"] == 2400
+
+
+class TestALineWithNoItemIsRefusedPlainly:
+    """D1: a line with neither product_id nor product_set_id used to reach the
+    ``ck_price_tag_request_lines_one_ref`` constraint and answer 500. It is a plain 422."""
+
+    _MESSAGE = "Pick a set or a product for every line."
+
+    def test_create_answers_422_not_500(self, client):
+        c, _db, _ = client
+
+        res = c.post(_BASE, json={"notes": "ZZT", "lines": [{"line_type": "product", "quantity": 2}]})
+
+        assert res.status_code == 422, res.text
+        assert self._MESSAGE in res.text
+
+    def test_update_answers_422_not_500(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={"lines": [{"line_type": "product", "quantity": 3}]},
+        )
+
+        assert res.status_code == 422, res.text
+        assert self._MESSAGE in res.text

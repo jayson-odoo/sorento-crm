@@ -53,6 +53,7 @@ def sign_in_summary(db: Session, user) -> dict:
     from app.models.access import RespondContact
     from app.models.auth import VerificationToken
     from app.models.user_session import UserSession
+    from app.services.passkey_service import count_passkeys
     from app.services.phone_utils import normalize_msisdn
 
     linked_contact: Optional[dict] = None
@@ -97,6 +98,9 @@ def sign_in_summary(db: Session, user) -> dict:
         "phone_differs_from_contact": phone_differs,
         "last_sign_in_method": last_sign_in_method,
         "needs_invitation": needs_invitation,
+        # PASSKEY-LOGIN AC-06 / AC-45: the per-user switch and how many passkeys are stored.
+        "passkey_enabled": bool(getattr(user, "passkey_enabled", False)),
+        "passkey_count": count_passkeys(db, str(user.id)),
     }
 
 

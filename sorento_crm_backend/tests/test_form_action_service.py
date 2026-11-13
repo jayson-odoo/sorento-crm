@@ -793,7 +793,9 @@ def test_audit_rows_are_actually_written(db, monkeypatch):
         .all()
     )
     descriptions = [r.description or "" for r in rows]
-    assert any("Action applied" in d for d in descriptions), descriptions
+    # PROJECT-MIGRATION-TOOL D7: the line names the action by its registered plain label
+    # ("Approval applied"), not the generic "Action". Lead sign-off; the check is otherwise the same.
+    assert any("Approval applied" in d for d in descriptions), descriptions
     undo_line = [d for d in descriptions if d.startswith("Undo:")]
     assert undo_line, f"no undo audit row written: {descriptions}"
     assert "wrong request" in undo_line[0], "the undo reason must reach the audit trail"

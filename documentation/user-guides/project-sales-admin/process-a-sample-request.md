@@ -5,7 +5,7 @@ For whoever holds **Process sample requests**. A request goes through two stages
 
 ## 1. Start processing and answer the delivery date
 
-1. Open the request (**Project Sales > Sample Requests**).
+1. Open the request (**Project Sales > Sample Requests**). The **Sample Requests** list has a **Last activity** column (date and time of the newest thing a person did on the request: created, edited, status change, approval, line change, file attached or removed, or a comment from staff or the customer; background jobs, SLA timers, ERP sync and automations do not count). It opens sorted by **Last activity**, newest first; click the header to change the sort (your choice is kept), or use **Filters** and the **Last activity** date range.
 2. Click **Change to processing**.
 3. Answer **Can we deliver by <requested date>?**:
    * **Yes, we can meet it**, or

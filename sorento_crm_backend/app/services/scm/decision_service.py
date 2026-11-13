@@ -42,6 +42,7 @@ unchanged and unaffected either way.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -61,6 +62,8 @@ from app.services.error_handler import AppException
 from app.services.scm import plan_grain
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.numbering_service import NumberingService
+
+logger = logging.getLogger(__name__)
 
 DRAFT_STATUS = "draft_recommendation"
 _SRC = "scm_recommendation"
@@ -1663,7 +1666,7 @@ def carry_replan_decisions(db: Session, old_run_id: str, new_run_id: str) -> dic
         except Exception:  # noqa: BLE001 - a colliding pair must not lose the rest
             sp.rollback()
             skipped += 1
-            log.exception(
+            logger.exception(
                 "carry_replan_decisions: could not carry a decision onto rec %s (product %s)",
                 new_rec.id, product_id,
             )

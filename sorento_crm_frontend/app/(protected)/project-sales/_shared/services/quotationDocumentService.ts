@@ -9,6 +9,7 @@ import type {
   StagedQuotationLine,
 } from '../types/project.types';
 import type { MatrixHeader } from '../lib/quotationMatrix';
+import { refusalAwareError } from '../lib/nonCancellable';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -173,7 +174,7 @@ export type QuotationDocument = {
   below_floor_line_count?: number;
   /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
   discounted_line_count?: number;
-  /** Discounted and not below the floor, per line: the "Below default price" pill's count. */
+  /** Discounted and not below the floor, per line: the banner's "priced below the default price" count. */
   below_default_line_count?: number;
   /** Lines outside the project's series. */
   off_series_line_count?: number;
@@ -223,6 +224,12 @@ export type QuotationDocument = {
    * the list ends up disagreeing with the document about a quotation that is already won.
    */
   customer_decision?: 'accepted' | 'changes_requested' | null;
+  /** AC-QTSO-CRM: where the document stands in AutoCount. */
+  in_autocount?: boolean;
+  autocount_cancelled?: boolean;
+  autocount_doc_no?: string | null;
+  latest_issue_accepted?: boolean;
+  autocount_needs_update?: boolean;
   /** PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link. */
   view_count?: number;
   last_viewed_at?: string | null;
@@ -280,6 +287,8 @@ export type QuotationIssue = {
 };
 
 export type QuotationDocumentBody = Partial<{
+  /** The retry after a 409 `non_cancellable_line`, by a holder of the override permission. */
+  non_cancellable_override_reason: string;
   your_ref: string | null;
   doc_date: string | null;
   attn_name: string | null;
@@ -460,8 +469,8 @@ export async function updateQuotationDocument(
     `${BASE}/projects/${projectId}/quotation-documents/${documentId}`,
     { method: 'PATCH', body: JSON.stringify(body) },
   );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the quotation'));
+  // A 409 `non_cancellable_line` is a `NonCancellableRefusalError` (the override dialog).
+  if (!response.ok) throw await refusalAwareError(response, 'Failed to save the quotation');
   return response.json();
 }
 

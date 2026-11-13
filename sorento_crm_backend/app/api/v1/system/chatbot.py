@@ -36,6 +36,7 @@ import binascii
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -91,6 +92,9 @@ from app.services.chatbot.dispatch import (
     reinject_envelope,
     retry_available,
 )
+
+if TYPE_CHECKING:  # annotations only; the functions import it lazily
+    from app.models.resources import Attachment
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chatbot")

@@ -17,6 +17,15 @@ import pytest
 from app.services.integration_service import RespondClient
 
 
+@pytest.fixture(autouse=True)
+def _no_env_base_url(monkeypatch):
+    # RESPOND_BASE_URL beats a client's own base_url (RESPOND-BASE-URL-LEAK); a crew copy sets
+    # it, and these tests pin the workspace URL.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "respond_base_url", None)
+
+
 def _client() -> RespondClient:
     return RespondClient(api_key="test-key", base_url="https://api.respond.io", space_id="364817")
 

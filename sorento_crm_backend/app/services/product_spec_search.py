@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import Float, and_, case, cast, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB

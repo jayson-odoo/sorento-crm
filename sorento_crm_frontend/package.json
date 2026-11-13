@@ -26,6 +26,7 @@
     "@hookform/resolvers": "^5.1.1",
     "@ianvs/prettier-plugin-sort-imports": "^4.4.2",
     "@remixicon/react": "^4.6.0",
+    "@simplewebauthn/browser": "^14.0.0",
     "@tanstack/react-query": "^5.81.5",
     "@tanstack/react-query-devtools": "^5.81.5",
     "@tanstack/react-table": "^8.21.3",

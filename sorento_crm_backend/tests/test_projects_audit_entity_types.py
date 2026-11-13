@@ -70,6 +70,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-set-quote-line-14oct.md, migration sql_0001_set_quote_line (#1682): one product
     # set priced into a series, born straight into `projects` beside `series_products`.
     "series_sets",
+    # PLAN-non-cancellable-items-11nov.md, migration nc_0001_non_cancellable: the company-wide
+    # Non-cancellable default per product or category, born straight into `projects`.
+    "non_cancellable_rules",
     # PLAN-series-filters-15oct.md, migration sf_0001_series_brands (#1697): the brands a
     # series picks, born straight into `projects` beside `series_categories`.
     "series_brands",
@@ -119,6 +122,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # autosaved state and its insert-only History, born straight into `projects`.
     "quotation_document_drafts",
     "quotation_document_snapshots",
+    # PROJECT-MIGRATION-TOOL (#2385, migration pimp_0001_import_value_maps): the project import's
+    # saved value links, born straight into `projects`.
+    "import_value_maps",
 })
 
 
@@ -192,6 +198,10 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     from app.models.sample_request import SampleRequest
 
     assert _audit_entity_type(SampleRequest) == "project_sample_requests"
+    # PROJECT-MIGRATION-TOOL (#2385): the same convention, pinned at birth.
+    from app.models.project_import import ProjectImportValueMap
+
+    assert _audit_entity_type(ProjectImportValueMap) == "project_import_value_maps"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():

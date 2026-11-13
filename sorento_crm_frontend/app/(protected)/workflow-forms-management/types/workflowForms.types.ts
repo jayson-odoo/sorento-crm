@@ -111,6 +111,7 @@ export interface WorkflowSubmission {
   transition_logs: WorkflowTransitionLog[];
   created_at?: string;
   updated_at?: string;
+  last_activity_at?: string | null;
   created_by_user_id?: string | null;
   /** From API when loaded with submission (no definitions.view needed). */
   definition_name?: string | null;

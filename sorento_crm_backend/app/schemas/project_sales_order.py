@@ -90,6 +90,11 @@ class ProjectSalesOrderRow(BaseModel):
     id: str
     provisional_ref: str
     autocount_doc_no: Optional[str] = None
+    # AC-QTSO-CRM: the order lives in AutoCount (its key is set); the key itself is never sent.
+    in_autocount: bool = False
+    autocount_cancelled: bool = False
+    # Adopted from the AutoCount book (not created by the CRM): Update / Cancel wait for SS's book.
+    autocount_adopted: bool = False
     area_group: Optional[str] = None
     status: str
     grouping_origin: Optional[str] = None
@@ -542,6 +547,13 @@ class AmendmentDetail(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class AmendmentPublishRequest(BaseModel):
+    """Optional body of Publish (NON-CANCELLABLE-ITEMS): the reason an override holder gives
+    for cutting a Non-cancellable line. Absent for every other publish."""
+
+    non_cancellable_override_reason: Optional[str] = Field(None, max_length=2000)
+
+
 class AmendmentPublishResponse(BaseModel):
     status: str
     sales_order_status: str
@@ -581,6 +593,8 @@ class AutocountChangeListRow(BaseModel):
     new_so_number: Optional[str] = Field(
         None, description="Set only for a CHANGE SO NO row."
     )
+    # AC-QTSO-CRM: whether Update in AutoCount sends this row (decided server-side).
+    autocount_sendable: bool = False
 
 
 class AutocountChangeListResponse(BaseModel):

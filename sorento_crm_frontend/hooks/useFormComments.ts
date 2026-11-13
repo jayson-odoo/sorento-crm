@@ -11,6 +11,15 @@ import type { FormCommentKind } from '@/types/formComments';
 
 export const FORM_COMMENTS_KEY = 'form-comments';
 
+/** Each kind's cached list and detail query-key prefixes (the same ones its own list hooks use). */
+const FORM_QUERY_KEYS: Record<FormCommentKind, [string, string]> = {
+  complaint: ['complaints', 'complaint'],
+  stock_inquiry: ['stock-inquiries', 'stock-inquiry'],
+  purchase_request: ['purchase-requests', 'purchase-request'],
+  sponsorship_form: ['purchase-requests', 'purchase-request'],
+  sample_request: ['sample-requests', 'sample-request'],
+};
+
 export function useFormCommentsQuery(kind: FormCommentKind, id: string) {
   return useQuery({
     queryKey: [FORM_COMMENTS_KEY, kind, id],
@@ -39,6 +48,10 @@ export function useAddFormComment(kind: FormCommentKind, id: string) {
       queryClient.invalidateQueries({
         queryKey: [FORM_COMMENTS_KEY, kind, id],
       });
+      // A posted comment is activity: the list's order and the record's Last activity move.
+      for (const key of FORM_QUERY_KEYS[kind]) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
       if (delivery === 'no_whatsapp') {
         toast.warning(
           'Comment posted. The submitter has no WhatsApp contact, so they were not notified.',
