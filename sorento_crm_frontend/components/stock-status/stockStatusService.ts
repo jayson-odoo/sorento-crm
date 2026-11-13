@@ -5,9 +5,15 @@ import type { StockStatus } from './stockStatus.types';
 const BASE = '/api/v1/inventory/stock-status';
 
 /** One item, every location, with its documents. `soDueBy` (YYYY-MM-DD) cuts SO only. */
-export async function getStockStatus(productId: string, soDueBy: string | null): Promise<StockStatus> {
+export async function getStockStatus(
+  productId: string,
+  soDueBy: string | null,
+  /** `grants`: every company the caller is granted, not only the active one. */
+  companyScope?: 'grants',
+): Promise<StockStatus> {
   const search = new URLSearchParams({ product_id: productId });
   if (soDueBy) search.set('so_due_by', soDueBy);
+  if (companyScope) search.set('company_scope', companyScope);
   const response = await apiFetch(`${BASE}?${search.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the stock status'));
   return response.json();
