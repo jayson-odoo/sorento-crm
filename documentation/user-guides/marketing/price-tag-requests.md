@@ -254,8 +254,8 @@ The request's last tab, **History**, lists everything that happened to the reque
 Each entry is one sentence, then the date, time and who did it (the salesperson by name for what
 they did on the portal):
 
-* **Submitted**, **Revised, revision 2: <reason>** or **Resubmitted**: each version the salesperson
-  sent. A revision lists what changed, for example *Needed by: 05/11/2026 → 12/11/2026* or
+* **Submitted**, **Edit 2: <reason>** or **Appealed**: each version the salesperson sent, named as
+  on the portal's History tab. An edit lists what changed, for example *Needed by: 05/11/2026 → 12/11/2026* or
   *Product line 2 quantity: 4 → 6*.
 * **Status: Designing → Design Ready**, and every other status move.
 * **Assigned to <name>** or **Unassigned**, and **Printing: Office prints**.

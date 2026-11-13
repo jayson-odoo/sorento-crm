@@ -22,13 +22,17 @@ One read: `GET /api/v1/dealer-kit/price-tag-requests/{request_id}/history`, one 
   or a request outside a `view_own` user's scope: 404, the same as `GET /{request_id}`.
   Read-only: the read writes no row anywhere (including no `data_changed_tag_count` refresh).
 - AC-W5-3 (Q1): Events, each from data already recorded:
-  - `submitted` "Submitted", `revised` "Revised, revision N" (+ ": <reason>" when one was
-    given), `resubmitted` "Resubmitted": one per `portal_form_revisions` row of this request
-    (kinds original / revision / resubmission), actor = the submitting contact's name; lines =
-    that version's `changes` from `PortalRevisionService.list_revisions` (one line per change,
-    "<label>: <from> → <to>"; an added line reads "<label>: <to>", a removed one "<label>:
-    <from>"). An original has no lines. `list_revisions` and `_diff_lines` are reused, not
-    copied or changed.
+  - `submitted` "Submitted", `revised` "Edit N", `resubmitted` "Appealed" (each + ": <reason>"
+    when one was given): one per `portal_form_revisions` row of this request (kinds original /
+    revision / resubmission), actor = the submitting contact's name. "Edit N" and "Appealed" are
+    `list_revisions`' own `label` (`_revision_label`, owner hand test 11 Nov: a salesperson's
+    edit of their own request "is not a revision"), reused so the portal and CRM tabs name the
+    event the same; this supersedes the card's "Revised, revision N" wording (review round 1).
+    Lines = that version's `changes` from `PortalRevisionService.list_revisions`, one line per
+    change, "<label>: <from> → <to>"; an added line reads "<label>: <to>", a removed one
+    "<label>: <from>"; a field set from empty or cleared reads "-" on the empty side. A date
+    value reads dd/mm/yyyy through the existing `_format_display_date`. An original has no
+    lines. `list_revisions` and `_diff_lines` are reused, not copied or changed.
   - `status_changed` "Status: <old> → <new>" with the screen's labels (`lib/price-tag-status.ts`:
     New, Designing, Design Ready, Changes Requested, Approved, Ready for collection, Collected,
     Rejected, Void): `audit_logs` UPDATE rows on `price_tag_requests` of this request whose
@@ -42,8 +46,11 @@ One read: `GET /api/v1/dealer-kit/price-tag-requests/{request_id}/history`, one 
     `promotion_id`, `manual_sell_price` or `price_type`. A promotion reads by its name.
   - `design_saved` "Design saved, version N" (+ ": <message>"): `page_version` rows of the
     request's page, actor = `created_by`.
-  - `changes_requested` "Changes requested: N comments": `price_tag_review_comments` of this
-    request grouped per `round`, at = the earliest comment of the round, actor = its author.
+  - `changes_requested` "Changes requested: N comments": the salesperson's
+    `price_tag_review_comments` of this request (`author_contact_id` set) grouped per `round`,
+    at = the earliest comment of the round, actor = its author. A staff note written by a
+    transition (D14, `author_user_id`) is not counted there; the status change it rode on is
+    already its own event.
   - Any other column change (`updated_at`, counters, `data_checked_at`, draft timestamps) and
     line / tag / part INSERT or DELETE rows are NOT events.
 - AC-W5-4 (Q2): Actor is a name. A portal write (`actor_type = contact`) reads the contact's
