@@ -49,3 +49,10 @@ Terms: "package" of a product line = its combo_id; null = ala carte. Set lines u
 - AC-17 "No package chosen" is dropped on both sides (FE packageWarningFor, BE package_warning): a guarded product
   line with combos and an empty Package (ala carte) has no warning. "No package defined" (guarded product with no
   combo) and "Missing: ..." (chosen combo with parts removed) stay.
+
+## Add part removed (owner 13 Nov 13:50 "remove this permanently", crew answer (a))
+- AC-18 The request line editor has no "Add part" select on any line (ala carte or combo) on any path (single pick,
+  multi-add, Upload a file, reopen, Duplicate, revise/edit). Deleted package rows come back only through the Package
+  warning's Restore (unchanged) or by choosing the Package again. The add-part code path is removed (no orphan code).
+- AC-19 A saved line with extra catalogue parts still opens, shows its part rows with their trash icon, sends them
+  unchanged on save, and renders / prints as before (no data change).
