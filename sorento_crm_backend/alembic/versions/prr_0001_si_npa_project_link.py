@@ -20,39 +20,65 @@ down_revision = "so_search_trgm_0001"
 branch_labels = None
 depends_on = None
 
-_TABLES = ("stock_inquiries", "new_product_applications")
+# Written out per table, not built in a loop: tests/test_migration_npa_0001_new_product_apps.py
+# and test_migration_npa_0002_paper_layout.py read this source for
+# `ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS <column>`. The model declares the
+# same FK and index names, so create_all and this migration build identical objects.
 
 
 def upgrade() -> None:
-    for table in _TABLES:
-        op.execute(
-            f"""
-            ALTER TABLE {table}
-                ADD COLUMN IF NOT EXISTS project_id UUID;
+    op.execute(
+        """
+        ALTER TABLE stock_inquiries ADD COLUMN IF NOT EXISTS project_id UUID;
 
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint WHERE conname = 'fk_{table}_project_id'
-                ) THEN
-                    ALTER TABLE {table}
-                        ADD CONSTRAINT fk_{table}_project_id
-                        FOREIGN KEY (project_id) REFERENCES projects.projects (id) ON DELETE SET NULL;
-                END IF;
-            END $$;
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'fk_stock_inquiries_project_id'
+            ) THEN
+                ALTER TABLE stock_inquiries
+                    ADD CONSTRAINT fk_stock_inquiries_project_id
+                    FOREIGN KEY (project_id) REFERENCES projects.projects (id) ON DELETE SET NULL;
+            END IF;
+        END $$;
 
-            CREATE INDEX IF NOT EXISTS ix_{table}_project
-                ON {table} (project_id) WHERE project_id IS NOT NULL;
-            """
-        )
+        CREATE INDEX IF NOT EXISTS ix_stock_inquiries_project
+            ON stock_inquiries (project_id) WHERE project_id IS NOT NULL;
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS project_id UUID;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'fk_new_product_applications_project_id'
+            ) THEN
+                ALTER TABLE new_product_applications
+                    ADD CONSTRAINT fk_new_product_applications_project_id
+                    FOREIGN KEY (project_id) REFERENCES projects.projects (id) ON DELETE SET NULL;
+            END IF;
+        END $$;
+
+        CREATE INDEX IF NOT EXISTS ix_new_product_applications_project
+            ON new_product_applications (project_id) WHERE project_id IS NOT NULL;
+        """
+    )
 
 
 def downgrade() -> None:
-    for table in _TABLES:
-        op.execute(
-            f"""
-            DROP INDEX IF EXISTS ix_{table}_project;
-            ALTER TABLE {table} DROP CONSTRAINT IF EXISTS fk_{table}_project_id;
-            ALTER TABLE {table} DROP COLUMN IF EXISTS project_id;
-            """
-        )
+    op.execute(
+        """
+        DROP INDEX IF EXISTS ix_stock_inquiries_project;
+        ALTER TABLE stock_inquiries DROP CONSTRAINT IF EXISTS fk_stock_inquiries_project_id;
+        ALTER TABLE stock_inquiries DROP COLUMN IF EXISTS project_id;
+        """
+    )
+    op.execute(
+        """
+        DROP INDEX IF EXISTS ix_new_product_applications_project;
+        ALTER TABLE new_product_applications DROP CONSTRAINT IF EXISTS fk_new_product_applications_project_id;
+        ALTER TABLE new_product_applications DROP COLUMN IF EXISTS project_id;
+        """
+    )
