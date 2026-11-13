@@ -651,6 +651,13 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
+    if entry["status"] in ("denied", "invalid") and "not found" in _fold_text(str(entry.get("message") or "")):
+        # A write's own refusal ("Delivery order X not found.") backs a not-found that names what it named: a
+        # token with a digit when there is one (the number), else a long word (crew pass, 3 Nov).
+        said = _fold_text(str(entry.get("message") or ""))
+        tokens = re.findall(r"[a-z0-9][a-z0-9/_.-]*[a-z0-9]", low)
+        key = [t for t in tokens if re.search(r"\d", t)] or [t for t in tokens if len(t) >= 5]
+        return any(t in said for t in key)
     return False
 
 
@@ -680,7 +687,11 @@ def _searched_names(args: dict) -> list | None:
 
 
 def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
-    """(numbers in the text no tool result backs, not-found claims no tool call backs)."""
+    """(numbers in the text no tool result backs, not-found claims no tool call backs).
+
+    `user_text` is what the user said: this turn, or for a dealer their verbatim messages of the thread plus this
+    turn (`portal_writes.dealer_words`, never the model-written summary), so a DO the dealer gave one message back
+    may be repeated (crew queue after 05562ce7)."""
     text, _figures_unused, not_found, _ = _answer_parts(args)
     # A number is backed when any ok result of this turn holds it, or it is the total of a column
     # of returned rows. The figures' citations are informational.
@@ -689,6 +700,14 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
         # A batch result is built by code from the pasted rows (its row numbers and counts), whatever its status.
         if entry["status"] == "ok" or (entry.get("name") == batch.BATCH and isinstance(entry.get("data"), dict)):
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
+        elif entry["status"] == "proposed" and isinstance(entry["data"], dict):
+            # A proposal's summary is built by code from checked values (a DO number, a quantity), so the
+            # answer may repeat them (crew console pass, 2 Nov: "(not verified)" on a claim's DO).
+            backed |= _number_leaves({"summary": entry["data"].get("summary")})
+        elif entry["status"] in ("denied", "invalid") and entry.get("message"):
+            # A tool's own refusal ("Delivery order 88123-4471 not found.") states what it refused, so the answer
+            # may repeat it (crew re-check, 3 Nov: a DO given turns earlier was redacted in the not-found reply).
+            backed |= _number_leaves({"message": entry["message"]})
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
     for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
@@ -863,14 +882,43 @@ def waiting_reference(action) -> str:
     return "Waiting change, for reference only: " + "; ".join(lines)
 
 
+PROPOSAL_HEAD = "I will make these changes when you confirm:"
+PROPOSAL_TAIL = "Reply yes to go ahead, or tell me what to change."
+
+
+def _drop_copies(reply: str, *, cut_at: list[str] = (), line_starts: list[str] = ()) -> str:
+    """`reply` without the model's own copy of text code appends after it (crew pass, 3 Nov: a confirm block or a
+    "with the team" line copied from history showed twice). A line starting with one of `line_starts` (after a
+    list number) goes; a line holding one of `cut_at` is cut there (the copy runs to the end of its line)."""
+    out: list[str] = []
+    for line in reply.split("\n"):
+        body = re.sub(r"^\s*\d+[.)]\s*", "", line)
+        if any(body.startswith(s) for s in line_starts if s):
+            continue
+        for key in cut_at:
+            at = line.find(key) if key else -1
+            if at >= 0:
+                line = line[:at].rstrip()
+        if not line.strip() and (not out or not out[-1].strip()):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def _first_sentence(note: str) -> str:
+    head = note.split(". ", 1)[0]
+    return head if len(head) >= 12 else note
+
+
 def proposal_block(lines: list[str]) -> str:
     numbered = "\n".join(f"{n}. {line}" for n, line in enumerate(lines, 1))
-    return f"I will make these changes when you confirm:\n{numbered}\nReply yes to go ahead, or tell me what to change."
+    return f"{PROPOSAL_HEAD}\n{numbered}\n{PROPOSAL_TAIL}"
 
 
 def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
     is_test: bool = True, previous: dict | None = None, single_waiting: list[dict] | None = None,
+    dealer_words: str = "",
 ) -> ToolResult:
     # `loop`: the loop's own refusal, never shown to the user as the tool's words (UAC F2, review round S6).
     if any(s.get("batch") for s in steps):
@@ -902,6 +950,10 @@ def _propose(
     if portal_writes.is_portal_tool(name):
         # A console turn is a test: its confirm writes nothing (owner W2-Q3 (a)). Set here, never by the model.
         loop_args = {"_is_test": is_test}
+        if name == portal_writes.CP_CREATE:
+            # What the customer said in this conversation, so a claim's dropdowns hold only values they gave
+            # (crew console pass, 2 Nov). Never the model's words or the running summary.
+            loop_args["_dealer_words"] = dealer_words
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
@@ -1182,8 +1234,13 @@ DEALER_REQUESTS_PROTOCOL = (
     "CUSTOMER REQUESTS: you can send a stock inquiry for this customer, add or remove a note on one of their own "
     "requests, and withdraw a stock inquiry they sent in the last 10 minutes. Propose with the tool, using only "
     "what the customer said; nothing is sent until the customer replies yes in their next message. To find the "
-    "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a complaint, a "
-    "change to their details) is not something you can do here: say so and suggest their salesman."
+    "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a change to their "
+    "details) is not something you can do here: say so and suggest their salesman.\n"
+    "WARRANTY CLAIMS / COMPLAINTS (when those tools are offered): file one with crm_complaint_create. It needs "
+    "the DO number, the product code(s) on that DO, what is wrong in the customer's words, and whether it is "
+    "within warranty as the customer says it: ask for whatever is missing, never guess. Read crm_my_chat_photos "
+    "and attach only the photos the customer sent for this claim. Photos sent after a claim is in go on it with "
+    "crm_complaint_photos_add. A claim sent in the last 10 minutes can be withdrawn with crm_complaint_withdraw."
 )
 
 
@@ -1871,6 +1928,7 @@ def _run(
             messages.append({"role": "user", "content": context_before})
         history = memory.history_messages(db, conv)
         messages.extend(history)
+        dealer_words = portal_writes.dealer_words(history, text) if dealer else ""
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         if context_after and waiting is None:
@@ -1952,7 +2010,7 @@ def _run(
                 return f"I could not finish the answer because {reason}. What I read: {labels}.", True
             nonlocal forced_args
             args = forced_args = answer_of(res)
-            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, text)
+            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, dealer_words or text)
             return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger, user_text=text)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
@@ -2118,7 +2176,7 @@ def _run(
                         previous_waiting = previous_table["waiting"]
                     out = _propose(
                         db, ctx, name, args, steps, seen_ids, action_id, text, is_test,
-                        previous=previous_table, single_waiting=single_waiting,
+                        previous=previous_table, single_waiting=single_waiting, dealer_words=dealer_words,
                     )
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
@@ -2201,7 +2259,9 @@ def _run(
             if answer_idx is not None:
                 args = calls[answer_idx].get("arguments")
                 args = scrub(args if isinstance(args, dict) else {})
-                bad_numbers, bad_nf = ([], []) if batch_shown() or dealer_flow else verify_answer(args, ledger, text)
+                bad_numbers, bad_nf = (
+                    ([], []) if batch_shown() or dealer_flow else verify_answer(args, ledger, dealer_words or text)
+                )
                 empty_text = not _answer_parts(args)[0] and not batch_shown() and not dealer_flow
                 dealer_ran = any(
                     e.get("name") in (*_dealer_tools(), CONFIRM_ACTION, CANCEL_ACTION) for e in ledger.values()
@@ -2247,7 +2307,7 @@ def _run(
                 break
 
         if final_args is not None:
-            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(final_args, ledger, text)
+            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(final_args, ledger, dealer_words or text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger, user_text=text)
         if dealer_flow:
             # Never the model's text; the tables and the confirm card replace this below, from the stored steps.
@@ -2343,6 +2403,7 @@ def _run(
     if confirm_notes:
         # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
+        reply = _drop_copies(reply, cut_at=[_first_sentence(n) for n in confirm_notes])
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
     if status != "failed" and not steps and (batch_skipped or batch_waiting or single_waiting):
@@ -2369,7 +2430,12 @@ def _run(
             elif dealer_flow:
                 reply = proposal_block(lines)  # the card alone (review round S6)
             else:
-                reply = f"{reply}\n\n{proposal_block(lines)}"
+                # The model's own copy of the block is cut, so the block shows exactly once (crew round 3).
+                reply = _drop_copies(
+                    reply, cut_at=[PROPOSAL_HEAD, PROPOSAL_TAIL],
+                    line_starts=[line[:30] for line in lines if len(line) >= 30],
+                )
+                reply = f"{reply}\n\n{proposal_block(lines)}".strip()
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)
             db.rollback()

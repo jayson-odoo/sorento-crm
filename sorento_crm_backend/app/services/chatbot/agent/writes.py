@@ -250,9 +250,13 @@ def _route_failure(exc: Exception) -> ToolResult:
         if exc.status_code in (403, 404):
             return ToolResult("denied", message=error_text(exc))
         if 400 <= exc.status_code < 500:
-            # A refusal that is a pick (`contact_grant.NeedsChoice`) carries its choices for the batch tool.
-            choices = getattr(exc, "choices", None)
-            return ToolResult("invalid", data={"choices": choices} if choices else None, message=error_text(exc))
+            # A refusal may carry structured help for the model: the real options to ask for (`agent_data`), which
+            # the 200-character message would cut, or a pick's choices for the batch tool (`contact_grant.NeedsChoice`).
+            data = getattr(exc, "agent_data", None)
+            if data is None:
+                choices = getattr(exc, "choices", None)
+                data = {"choices": choices} if choices else None
+            return ToolResult("invalid", data=data, message=error_text(exc))
     logger.warning("agent: in-process route call failed", exc_info=True)
     return ToolResult("error", message="The tool failed.")
 
@@ -543,6 +547,11 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
             return f"`{key}` must be a number."
         if kind == "array" and not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
             return f"`{key}` must be a list of text values."
+        if kind == "array" and "maxItems" in spec and len(value) > spec["maxItems"]:
+            return f"`{key}` has too many values (at most {spec['maxItems']})."
+        item_max = (spec.get("items") or {}).get("maxLength") if kind == "array" else None
+        if item_max is not None and any(len(v) > item_max for v in value):
+            return f"A value in `{key}` is too long."
         if "enum" in spec and value not in spec["enum"]:
             return f"`{key}` must be one of: {', '.join(spec['enum'])}."
         if "maxLength" in spec and isinstance(value, str) and len(value) > spec["maxLength"]:
