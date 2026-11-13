@@ -38,6 +38,8 @@ export interface NewProductApplicationWrite {
   customer_id?: string | null;
   customer_name?: string | null;
   project_name?: string | null;
+  /** The registered project (PROJECT-RELATED-RECORDS); null clears it. */
+  project_id?: string | null;
   needed_by?: string | null;
   remark?: string | null;
   /** The PRODUCT CODES this application is based on (header): left out keeps, [] clears. */
@@ -56,6 +58,9 @@ export interface NewProductApplicationCurrentProduct {
 /** GET /prefill: a Write-shaped body copied as text, plus the inquiry's number. */
 export interface NewProductApplicationPrefill extends NewProductApplicationWrite {
   stock_inquiry_number: string | null;
+  /** The inquiry's registered project, which the application starts with (AC-C4). */
+  project_code?: string | null;
+  project_title?: string | null;
   /** The product codes the inquiry's code text matched exactly (none when it did not). */
   current_products?: NewProductApplicationCurrentProduct[];
 }
@@ -157,6 +162,10 @@ export interface NewProductApplicationStockInquiry {
 
 export interface NewProductApplicationDetail extends NewProductApplicationSummary {
   stock_inquiry_product_code: string | null;
+  /** The registered project, shown as code + title (PROJECT-RELATED-RECORDS AC-C7). */
+  project_id?: string | null;
+  project_code?: string | null;
+  project_title?: string | null;
   customer_id: string | null;
   customer_code: string | null;
   remark: string | null;

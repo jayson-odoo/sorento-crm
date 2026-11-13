@@ -16,6 +16,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
+import { RegisteredProjectSelect } from '@/components/common/RegisteredProjectSelect';
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
@@ -230,6 +231,35 @@ function StaffNewProductApplicationForm({
                     ...prev,
                     stock_inquiry_id: opt.value,
                     stock_inquiry_label: opt.label,
+                  }))
+                }
+              />
+            }
+            projectField={
+              <RegisteredProjectSelect
+                aria-label="Registered project"
+                value={state.project_id}
+                selectedOption={
+                  state.project_id
+                    ? { value: state.project_id, label: state.project_label }
+                    : undefined
+                }
+                onChange={(v) => {
+                  if (!v)
+                    setState((prev) => ({
+                      ...prev,
+                      project_id: '',
+                      project_label: '',
+                      project_set: true,
+                    }));
+                }}
+                onOptionChange={(opt) =>
+                  opt &&
+                  setState((prev) => ({
+                    ...prev,
+                    project_id: opt.value,
+                    project_label: opt.label,
+                    project_set: true,
                   }))
                 }
               />
