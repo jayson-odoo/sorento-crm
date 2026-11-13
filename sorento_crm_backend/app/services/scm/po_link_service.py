@@ -877,7 +877,13 @@ class PoLinkService:
         user knows the line is uncovered. The old PO line keeps its qty and stays open."""
         # One change per covering PO line: a line covered twice may be changed twice.
         named = [(str(item["sales_order_line_id"]), str(item.get("from_po_line_id") or "")) for item in changes]
-        if len(set(named)) != len(named):
+        per_line: Dict[str, List[str]] = {}
+        for sol, from_id in named:
+            per_line.setdefault(sol, []).append(from_id)
+        # A line named twice needs every entry to say which covering PO line it changes, once each.
+        if len(set(named)) != len(named) or any(
+            len(ids) > 1 and "" in ids for ids in per_line.values()
+        ):
             raise AppException(status_code=422, message="Name each sales order line once.")
         plan = []
         asked: Dict[str, Decimal] = {}
