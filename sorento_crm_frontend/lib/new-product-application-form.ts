@@ -41,6 +41,16 @@ export interface FormState {
   /** The debtor's name when picked, otherwise the typed text. */
   customer_name: string;
   project_name: string;
+  /** The registered project (PROJECT-RELATED-RECORDS), beside the typed name; '' = none. */
+  project_id: string;
+  /** "code - title" of `project_id`, so the picker names it before any search. */
+  project_label: string;
+  /**
+   * Whether the project was decided (picked, cleared, or read from the record or the inquiry's
+   * prefill). Until then the write leaves it out, so an application raised from a stock inquiry
+   * starts with that inquiry's project on the server (AC-C4); an explicit clear sends null.
+   */
+  project_set: boolean;
   needed_by: string;
   remark: string;
   /** Purchasing feedback, one per application; not part of the write body. */
@@ -65,6 +75,9 @@ export const EMPTY_FORM: FormState = {
   customer_id: '',
   customer_name: '',
   project_name: '',
+  project_id: '',
+  project_label: '',
+  project_set: false,
   needed_by: '',
   remark: '',
   lead_time: '',
@@ -108,6 +121,9 @@ export const stockInquiryLabel = (
 ) => [number, productCode].filter(Boolean).join(' - ');
 
 const text = (v: string | null | undefined) => v ?? '';
+/** "code - title" for a linked project, as every project picker names it. */
+const projectLabel = (code?: string | null, title?: string | null) =>
+  [code, title].filter(Boolean).join(' - ');
 const clean = (v: string): string | null => (v.trim() ? v.trim() : null);
 const figure = (v: string | number | null | undefined) =>
   v === null || v === undefined ? '' : String(v);
@@ -143,6 +159,9 @@ export function stateFromDetail(d: NewProductApplicationDetail): FormState {
     customer_id: text(d.customer_id),
     customer_name: text(d.customer_name),
     project_name: text(d.project_name),
+    project_id: text(d.project_id),
+    project_label: projectLabel(d.project_code, d.project_title),
+    project_set: true,
     needed_by: text(d.needed_by),
     remark: text(d.remark),
     lead_time: text(d.lead_time),
@@ -170,6 +189,9 @@ export function stateFromPrefill(p: NewProductApplicationPrefill): FormState {
     ),
     customer_name: text(p.customer_name),
     project_name: text(p.project_name),
+    project_id: text(p.project_id),
+    project_label: projectLabel(p.project_code, p.project_title),
+    project_set: true,
     needed_by: text(p.needed_by),
     remark: text(p.remark),
     current_products: (p.current_products ?? []).map((c) => ({
@@ -190,6 +212,7 @@ export function payloadFromState(s: FormState): NewProductApplicationWrite {
     customer_id: s.customer_id || null,
     customer_name: clean(s.customer_name),
     project_name: clean(s.project_name),
+    ...(s.project_set ? { project_id: s.project_id || null } : {}),
     needed_by: s.needed_by || null,
     remark: clean(s.remark),
     current_product_ids: s.current_products.map((p) => p.id),

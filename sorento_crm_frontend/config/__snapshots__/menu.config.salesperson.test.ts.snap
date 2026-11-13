@@ -123,6 +123,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Series",
           },
           {
+            "path": "/project-sales/import",
+            "title": "Project import",
+          },
+          {
             "path": "/project-sales/price-floors",
             "title": "Price Floors",
           },
@@ -528,6 +532,23 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
       },
     ],
     "title": "Complaints",
+  },
+  {
+    "children": [
+      {
+        "path": "/after-sales/service-jobs",
+        "title": "Service Jobs",
+      },
+      {
+        "path": "/after-sales/dispatch-board",
+        "title": "Dispatch Board",
+      },
+      {
+        "path": "/after-sales/technicians",
+        "title": "Technicians",
+      },
+    ],
+    "title": "After-Sales Service",
   },
   {
     "children": [

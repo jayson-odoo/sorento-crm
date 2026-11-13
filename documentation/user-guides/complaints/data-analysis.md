@@ -191,6 +191,7 @@ When asked a record-level question you can't run, say so plainly and hand off to
 
 ## See also
 
+* [Service jobs (send a technician to the site)](./service-jobs.md)
 * [Complaint lifecycle and next actions](../technical-team/complaint-lifecycle-and-next-actions.md)
 * [Set root cause and resolution](../technical-team/set-root-cause-and-resolution.md)
 * [Respond to a complaint](../technical-team/respond-to-complaint.md)

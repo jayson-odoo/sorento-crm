@@ -20,6 +20,8 @@ below apply unchanged.
 If the salesperson edits a request you designed after it was approved, it goes back to him and
 leaves your queue.
 
+The list has a **Last activity** column: the date and time (for example 12/11/2026, 3:05 pm) of the newest thing a person did on the request. That counts creating it, editing it, changing its status, approving or rejecting it, changing a line, attaching or removing a file, and posting a comment (staff, or the customer through the portal). Background jobs, SLA timers, ERP sync and automations do not count. The list opens sorted by **Last activity**, newest first; click the column header to change the sort, and your choice is kept. To narrow by date, open **Filters** and set the **Last activity** date range.
+
 ## Steps
 
 1. On the list, use the status filter (**All statuses**, **New**, **Designing**, **Design Ready**,

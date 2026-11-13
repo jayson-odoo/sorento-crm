@@ -1062,6 +1062,15 @@ class StockInquiry(Base):
     item_description = Column(Text, nullable=True)
     project_customer = Column(Text, nullable=True)
     project_name = Column(Text, nullable=True)
+    # PROJECT-RELATED-RECORDS AC-C1: the link to a registered project, beside the typed
+    # `project_name` (never filled from it). SET NULL: deleting a project unlinks, never erases.
+    # FK and index (in __table_args__) carry migration prr_0001's names, so create_all builds
+    # the same objects as the migration.
+    project_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.projects.id", ondelete="SET NULL", name="fk_stock_inquiries_project_id"),
+        nullable=True,
+    )
     quantity = Column(Text, nullable=True)
     delivery_date = Column(Text, nullable=True)
     remark = Column(Text, nullable=True)
@@ -1099,6 +1108,7 @@ class StockInquiry(Base):
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
     last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
 
     @property
@@ -1118,6 +1128,11 @@ class StockInquiry(Base):
         Index("ix_stock_inquiries_delivery_date", "delivery_date"),
         Index("ix_stock_inquiries_created_at", "created_at"),
         Index("ix_stock_inquiries_inquiry_number", "inquiry_number"),
+        Index(
+            "ix_stock_inquiries_project",
+            "project_id",
+            postgresql_where=text("project_id IS NOT NULL"),
+        ),
     )
 
 
@@ -1209,6 +1224,7 @@ class PurchaseRequestHeader(Base):
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
     last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     lines = relationship(
