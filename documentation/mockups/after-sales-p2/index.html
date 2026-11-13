@@ -1,0 +1,489 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>After-sales P2 warranty mock</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--fg:#09090b;--muted:#f4f4f5;--mfg:#71717a;--border:#ececee;--input:#e4e4e7;--primary:#1B84FF;--psoft:#eff6ff;--pline:#bfdbfe;--ok:#15803d;--oksoft:#f0fdf4;--okline:#bbf7d0;--bad:#b91c1c;--badsoft:#fef2f2;--badline:#fecaca;--warn:#a16207;--warnsoft:#fefce8;--warnline:#fde68a;--page:#f7f7f8}
+*{box-sizing:border-box}html,body{overflow-x:hidden}body{margin:0;background:var(--page);color:var(--fg);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.doc{max-width:1280px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 2px}.ver{display:inline-block;font-size:12px;background:var(--fg);color:#fff;border-radius:999px;padding:2px 10px;margin-bottom:8px}
+.nav{position:sticky;top:0;z-index:60;background:var(--page);padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px}
+.nav button{font:inherit;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--mfg);cursor:pointer}
+.nav button.on{background:var(--psoft);color:#1d4ed8;border-color:var(--pline)}
+.gcap{font-size:12px;color:var(--mfg);margin:0 0 8px}
+.state{display:none}.state.on{display:block}
+/* app frame */
+.frame{border:1px solid var(--border);border-radius:12px;background:#fff;overflow:hidden;position:relative;max-width:100%}
+.screen{display:flex;position:relative;min-height:640px}
+.frame.fix .screen{height:760px;overflow:hidden}
+.side{width:230px;flex:none;background:#fff;border-right:1px solid var(--border);font-size:13.5px;padding:16px 12px;color:#27272a}
+.side .logo{font-weight:600;font-size:17px;margin-bottom:14px;padding:0 8px}
+.side div{padding:7px 8px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side .sec{font-size:11px;letter-spacing:.04em;color:#a1a1aa;padding:12px 8px 4px}
+.side .grp{display:flex;justify-content:space-between;align-items:center;font-weight:500}.side .grp .gi{display:flex;align-items:center;gap:10px;min-width:0}
+.side .sub{padding-left:34px;color:#3f3f46;font-size:13px}.side .sub.on{background:var(--muted);color:var(--primary);font-weight:500}
+.main{flex:1;min-width:0;padding:22px 24px 24px;position:relative}
+.topbar{display:flex;justify-content:flex-end;gap:8px;padding:10px 24px;border-bottom:1px solid var(--border)}
+.srch{width:220px;height:32px;border:1px solid var(--input);border-radius:6px;display:flex;align-items:center;gap:6px;padding:0 10px;color:var(--mfg);font-size:13px}
+/* page title block (layout toolbar) */
+.pt{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:22px;flex-wrap:wrap}
+.pt .h{font-size:19px;font-weight:600}.crumb{font-size:13px;color:var(--mfg);margin-top:2px}.crumb b{color:var(--fg);font-weight:400}
+/* record header (DetailActions) */
+.ph{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.ph .tl{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}.ph .t{font-size:23px;font-weight:700;white-space:nowrap}
+.ph .st{font-size:13.5px;color:var(--mfg);margin-top:2px}
+.acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pager{display:inline-flex;align-items:center;gap:10px;font-size:13px;color:var(--mfg)}
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;white-space:nowrap;color:var(--fg);cursor:pointer}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}.btn.ico{width:32px;padding:0;justify-content:center}.btn.sm{height:28px;font-size:12.5px;padding:0 10px}
+.btn[disabled]{color:#a1a1aa;cursor:default}
+svg.i{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+/* line tabs */
+.tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);margin:0 0 18px;font-size:14px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--mfg);cursor:pointer;border-bottom:2px solid transparent}.tabs span.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:500}
+.tabs em{font-style:normal;font-size:11.5px;color:var(--mfg);margin-left:4px}
+/* toolbar */
+.tb{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:16px 20px}.tb .sp{flex:1}
+.inp,.sel{height:32px;border:1px solid var(--input);border-radius:6px;padding:0 10px;font-size:13px;display:flex;align-items:center;gap:8px;background:#fff;min-width:0}
+.inp .ph0,.sel .ph0,.ph0{color:var(--mfg)}.sel .v{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel.open{border-color:var(--primary);box-shadow:0 0 0 2px var(--pline)}
+.cntb{background:var(--primary);color:#fff;border-radius:999px;font-size:11px;padding:0 6px;line-height:16px}
+/* list card */
+.lcard{border:1px solid var(--border);border-radius:12px;background:#fff}
+.lcard .dgw{border:0;border-top:1px solid var(--border);border-radius:0}
+/* DataGrid */
+.dgw{border:1px solid var(--border);border-radius:8px;overflow-x:auto;background:#fff}
+table{border-collapse:collapse;width:100%;font-size:13px}
+.dg{table-layout:fixed}th,td{padding:0 14px;height:42px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{background:#fafafa;font-weight:500;color:#3f3f46;font-size:12.5px;height:40px}
+tbody tr:last-child td{border-bottom:0}tr.hl td{background:#f8fafc}tr.rowl{cursor:pointer}tr.rowl:hover td{background:#fafafa}
+tr.grp td{background:#fafafa;font-size:12px;font-weight:500;color:#52525b;height:30px}
+.num{font-variant-numeric:tabular-nums}.r{text-align:right}.mut{color:var(--mfg)}
+.lnk{color:var(--fg);font-weight:500;cursor:pointer}.lnk:hover{color:var(--primary)}a.bl{color:var(--primary);text-decoration:none}
+.pg{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mfg);padding:12px 20px;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border)}
+.pg .pgb{display:flex;gap:4px}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#eab308;margin-right:6px;vertical-align:1px}
+/* badge */
+.pill{display:inline-block;font-size:11.5px;font-weight:500;border-radius:999px;padding:1px 9px;border:1px solid;white-space:nowrap;line-height:18px}
+.grn{background:var(--oksoft);color:var(--ok);border-color:var(--okline)}.red{background:var(--badsoft);color:var(--bad);border-color:var(--badline)}
+.amb{background:var(--warnsoft);color:var(--warn);border-color:var(--warnline)}.gry{background:var(--muted);color:#52525b;border-color:var(--border)}
+.blu{background:var(--psoft);color:#1d4ed8;border-color:var(--pline)}
+button.pill{font:inherit;font-size:12px;cursor:pointer}button.pill.act{box-shadow:0 0 0 2px var(--warnline)}
+/* card */
+.card{border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:22px;min-width:0}
+.card>.hd{padding:0 20px;height:54px;border-bottom:1px solid var(--border);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card>.bd{padding:16px 20px}.card>.bd.np{padding:0}
+.card .dgw{border:0;border-radius:0 0 12px 12px}
+.fl{display:grid;grid-template-columns:9rem minmax(0,1fr);gap:8px;padding:6px 0;font-size:14px}.fl .k{color:var(--mfg)}.fl .v{min-width:0;overflow-wrap:anywhere}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 24px}.kv .k{font-size:12.5px;color:var(--mfg)}.kv .v{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fld label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
+.pre{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#fafafa;border:1px solid var(--border);border-radius:6px;padding:10px 12px;white-space:pre-wrap;color:#3f3f46}
+.empty{padding:4px 0}.empty b{display:block;font-weight:500;margin-bottom:2px}.empty span{font-size:13px;color:var(--mfg)}
+/* menus and popovers */
+.menu{position:absolute;background:#fff;border:1px solid var(--input);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:30;padding:4px;min-width:180px;font-size:13.5px}
+.menu .mi{padding:7px 10px;border-radius:5px;display:flex;align-items:center;gap:8px;white-space:nowrap;cursor:pointer;overflow:hidden;text-overflow:ellipsis}.menu .mi:hover,.menu .mi.f{background:var(--muted)}.menu .mi.del{color:#dc2626}
+.menu .sep{height:1px;background:var(--border);margin:4px 0}
+.menu .ms{border-bottom:1px solid var(--border);padding:6px 8px 8px;margin:-4px -4px 4px;display:flex;align-items:center;gap:6px;color:var(--fg)}
+.menu .mi .sub2{color:var(--mfg);overflow:hidden;text-overflow:ellipsis}
+.cbx{width:15px;height:15px;border:1px solid var(--input);border-radius:4px;flex:none;font-size:10px;text-align:center;line-height:13px}.cbx.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.pop{position:relative}
+.fpop{position:absolute;z-index:30;background:#fff;border:1px solid var(--input);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:12px;width:290px;display:grid;gap:14px}
+/* dialog */
+.scrim{position:absolute;inset:0;background:rgba(9,9,11,.45);z-index:40;display:flex;align-items:center;justify-content:center;padding:16px}
+.dlg{background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.3);width:100%;max-width:520px;max-height:100%;display:flex;flex-direction:column}
+.dh{padding:20px 24px 4px;font-weight:600;font-size:18px;display:flex;justify-content:space-between;align-items:center}
+.db{padding:14px 24px 18px;display:grid;gap:16px}.df{padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.live{font-size:13px;background:var(--muted);border-radius:6px;padding:8px 10px}
+.res{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:8px;padding:10px 12px}.res .k{color:var(--mfg)}
+.dp{display:flex;gap:8px}.dp .inp{flex:1}
+/* audit trail */
+.au{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--border)}.au:last-child{border-bottom:0}
+.av{width:28px;height:28px;border-radius:50%;background:var(--muted);color:#52525b;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none}
+.au .who{font-size:13px}.au .who span{color:var(--mfg);margin-left:6px;font-size:12.5px}
+.chg{font-size:12.5px;margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}.chg .fn{color:var(--mfg);min-width:110px}.chg s{color:var(--mfg)}
+.xs{color:var(--mfg);font-size:12px;cursor:pointer}
+/* removing row */
+tr.rm td{color:#a1a1aa;text-decoration:line-through}tr.rm td.cd{text-decoration:none;color:var(--fg)}
+/* phone */
+.phone{width:375px;max-width:100%;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#fff;margin:0 auto}
+.phone .main{padding:16px}.phone .ph .t{font-size:21px}.phone .fl{grid-template-columns:8.5rem minmax(0,1fr)}
+.phone .mbar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600}
+.phone .card>.hd{padding:0 16px}.phone .card>.bd{padding:12px 16px}.phone .card>.bd.np{padding:0}
+.phone .acts{width:100%;justify-content:flex-end}.phone .pt{flex-direction:column}
+/* side panel only (state 1) */
+.sidewrap{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}.sidewrap .frame{width:260px}
+.sidewrap .side{width:100%;border-right:0}
+/* mapping */
+details.map{margin-top:28px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+details.map summary{font-weight:600;cursor:pointer}details.map .dgw{margin-top:10px}details.map table{table-layout:fixed;min-width:560px}details.map td,details.map th{white-space:normal;height:auto;padding:6px 10px;font-size:12.5px;overflow-wrap:anywhere}
+details.map code{font-size:12px}
+.legend{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px;font-size:12px;color:var(--mfg);align-items:center}
+@media (max-width:900px){.screen>.side{display:none}.doc{padding:10px}.main{padding:14px}.topbar{display:none}}
+</style></head><body><div class="doc">
+<span class="ver">Mock v2, 13/11/2026</span>
+<h1>AFTER-SALES P2: warranty</h1>
+<p class="gcap">Lane AFTER-SALES-REVIVE, slice P2. Plan: documentation/plans/after-sales/PLAN-warranty-p2-12nov.md. v2: the warranty check lives on the service job; the Complaints module is unchanged. Click a state below, or click inside a screen (rows, tabs, buttons, menus). Fake data only.</p>
+<div class="nav" id="nav">
+ <button data-go="s1">1 Sidebar</button>
+ <button data-go="s2">2 Service job</button>
+ <button data-go="s3">3 Add product</button>
+ <button data-go="s4">4 No products</button>
+ <button data-go="s5">5 Service Jobs list</button>
+ <button data-go="s6">6 Policies tab</button>
+ <button data-go="s7">7 Policy v15</button>
+ <button data-go="s8">8 Supersede dialog</button>
+ <button data-go="s9">9 Kinds tab</button>
+ <button data-go="s10">10 Rules tab</button>
+ <button data-go="s10t">10b Test a product</button>
+ <button data-go="s11">11 Service job 375 px</button>
+</div>
+
+<template id="side"><aside class="side"><div class="logo">Sorento</div>
+ <div class="sec">OVERVIEW</div><div class="grp"><span class="gi"><i data-ic="grid"></i>Dashboards</span></div>
+ <div class="sec">CATALOGUE</div><div class="grp"><span class="gi"><i data-ic="box"></i>Products</span><i data-ic="down"></i></div><div class="grp"><span class="gi"><i data-ic="book"></i>Dealer Kit</span><i data-ic="down"></i></div>
+ <div class="sec">OPERATIONS</div>
+ <div class="grp"><span class="gi"><i data-ic="alert"></i>Complaints</span><i data-ic="up"></i></div>
+ <div class="sub" data-k="cmp">Complaints</div><div class="sub">Root Causes</div><div class="sub">Resolutions</div>
+ <div class="grp"><span class="gi"><i data-ic="wrench"></i>After-Sales Service</span><i data-ic="up"></i></div>
+ <div class="sub" data-k="sj" data-go="s5" style="cursor:pointer">Service Jobs</div><div class="sub">Dispatch Board</div><div class="sub">Technicians</div><div class="sub" data-k="wc" data-go="s6" style="cursor:pointer">Warranty Configuration</div>
+ <div class="grp"><span class="gi"><i data-ic="clock"></i>SLA</span><i data-ic="down"></i></div>
+ <div class="grp"><span class="gi"><i data-ic="file"></i>Forms</span><i data-ic="down"></i></div>
+</aside></template>
+
+<!-- ================= 1 SIDEBAR ================= -->
+<section class="state" id="s1">
+<p class="gcap">State 1: Sidebar. After-Sales Service gains Warranty Configuration; the Complaints section is unchanged. Click Service Jobs or Warranty Configuration.</p>
+<div class="sidewrap"><div class="frame"><div data-side="wc"></div></div></div>
+</section>
+
+<!-- ================= 2 SERVICE JOB ================= -->
+<section class="state" id="s2">
+<p class="gcap">State 2: Service job SV26/11-0001, Details tab. Products and Warranty cards added below Customer, Site and Visit. Right-click menu shown open on the first product line (right-click any line to move it). Remove starts the countdown.</p>
+<div class="legend">Answer pills:<span class="pill grn">Covered</span><span class="pill red">Expired</span><span class="pill red">Defect not covered</span><span class="pill amb">No term</span><span class="pill gry">Unknown</span></div>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="sj"><div class="main" data-job="full" data-menu="1"></div></div></div>
+</section>
+
+<!-- ================= 3 ADD PRODUCT ================= -->
+<section class="state" id="s3">
+<p class="gcap">State 3: Add product dialog over the job page. Product picker shown open (the list overlays the fields below it in the app); pick a result to fill Kind from the rules. Click Defect to open its list.</p>
+<div class="frame fix"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="sj"><div class="main" data-job="full"></div>
+<div class="scrim"><div class="dlg" role="dialog"><div class="dh"><span id="apt">Add product</span><span class="xs" data-go="s2">&#10005;</span></div>
+ <div class="db">
+  <div class="fld pop"><label>Product</label><div class="sel open" id="ppick" style="cursor:pointer"><i data-ic="search"></i><span class="v" id="ppv"><span class="ph0">Search code or name</span></span><i data-ic="down"></i></div>
+   <div class="menu" id="pmenu" style="position:relative;margin-top:4px;box-shadow:0 4px 12px rgba(0,0,0,.08)"><div class="ms"><i data-ic="search"></i>demo<span style="flex:1"></span><span class="mut" style="font-size:12px">3 results</span></div>
+    <div class="mi" data-pp="wc2">DEMO-WC-02<span class="sub2">Demo one piece water closet</span></div>
+    <div class="mi" data-pp="wc7">DEMO-WC-07<span class="sub2">Demo wall hung water closet</span></div>
+    <div class="mi" data-pp="pmp">DEMO-PMP-05<span class="sub2">Demo booster pump</span></div></div></div>
+  <div class="fld"><label>Kind</label><div class="sel"><span class="v" id="pkind">Water Closet</span><span class="xs">&#10005;</span><i data-ic="down"></i></div></div>
+  <div class="fld"><label>Purchase date</label><div class="dp"><div class="inp"><span id="pdate">15/03/2020</span></div><button class="btn ico" title="Pick a date"><i data-ic="cal"></i></button></div></div>
+  <div class="fld pop"><label>Defect</label><div class="sel" id="dpick" style="cursor:pointer"><span class="v" id="dv">Leakage</span><span class="xs" id="dclr">&#10005;</span><i data-ic="down"></i></div>
+   <div class="menu" id="dmenu" style="left:0;right:0;bottom:38px;display:none"><div class="ms"><i data-ic="search"></i><span class="ph0">Search defects</span></div><div class="mi" data-dd>Crack line</div><div class="mi f" data-dd>Leakage</div><div class="mi" data-dd>Rust</div><div class="mi" data-dd>Broken holder</div></div></div>
+ </div>
+ <div class="df"><button class="btn" data-go="s2">Cancel</button><button class="btn pri" data-go="s2" id="apb">Add product</button></div></div></div>
+</div></div>
+</section>
+
+<!-- ================= 4 EMPTY PRODUCTS ================= -->
+<section class="state" id="s4">
+<p class="gcap">State 4: A job with no products yet (SV26/11-0002). Add product stays in the Products card header.</p>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="sj"><div class="main" data-job="empty"></div></div></div>
+</section>
+
+<!-- ================= 5 LIST ================= -->
+<section class="state" id="s5">
+<p class="gcap">State 5: Service Jobs list with the new Warranty column. Filters open with the Warranty multi-select open; tick values to filter the rows. Click a job number to open it.</p>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="sj" style="min-height:720px"><div class="main">
+ <div class="pt"><div><div class="h">Service Jobs</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; <b>Service Jobs</b></div></div></div>
+ <div class="lcard">
+  <div class="tb"><div class="inp" style="width:250px"><i data-ic="search"></i><span class="ph0">Search service jobs...</span></div>
+   <div class="pop"><button class="btn" id="fbtn" style="background:var(--muted)"><i data-ic="filter"></i>Filters<span class="cntb" id="fcnt" hidden>1</span></button>
+    <div class="fpop" id="fpop" style="left:0;top:38px">
+     <div class="fld"><label>Status</label><div class="sel"><span class="v ph0">All statuses</span><i data-ic="down"></i></div></div>
+     <div class="fld"><label>Technician</label><div class="sel"><span class="v ph0">All technicians</span><i data-ic="down"></i></div></div>
+     <div class="fld pop"><label>Warranty</label><div class="sel open"><span class="v" id="wfv"><span class="ph0">All warranty answers</span></span><span class="xs" id="wclr">&#10005;</span><i data-ic="down"></i></div>
+      <div class="menu" id="wmenu" style="left:0;right:0;top:66px"><div class="ms"><i data-ic="search"></i><span class="ph0">Search</span></div>
+       <div class="mi" data-wf="Covered"><span class="cbx"></span>Covered</div><div class="mi" data-wf="Partly covered"><span class="cbx"></span>Partly covered</div><div class="mi" data-wf="Not covered"><span class="cbx"></span>Not covered</div><div class="mi" data-wf="Unknown"><span class="cbx"></span>Unknown</div><div class="mi" data-wf="-"><span class="cbx"></span>No products</div></div></div>
+     <div class="fld"><label>Scheduled from</label><div class="dp"><div class="inp"><span class="ph0">DD/MM/YYYY</span></div><button class="btn ico"><i data-ic="cal"></i></button></div></div>
+    </div></div>
+   <button class="btn"><i data-ic="cols"></i>Columns</button><button class="btn"><i data-ic="dl"></i>Export</button><button class="btn ico"><i data-ic="refresh"></i></button><span class="sp"></span><button class="btn pri"><i data-ic="plus"></i>Create</button></div>
+  <div class="dgw"><table class="dg" style="min-width:960px"><colgroup><col style="width:120px"><col style="width:140px"><col style="width:90px"><col style="width:105px"><col style="width:145px"><col style="width:130px"><col style="width:120px"><col style="width:110px"></colgroup>
+   <thead><tr><th>Job no.</th><th>Customer</th><th>City</th><th>Status</th><th>Scheduled</th><th>Technician</th><th>Related complaint</th><th>Warranty</th></tr></thead>
+   <tbody id="jobs"></tbody></table></div>
+  <div class="pg"><span>Rows per page <span class="btn sm" style="margin-left:6px">50</span></span><span id="jpg">1 - 6 of 6</span></div>
+ </div>
+</div></div></div>
+</section>
+
+<!-- ================= 6 POLICIES ================= -->
+<section class="state" id="s6">
+<p class="gcap">State 6: Warranty Configuration, Policies tab. Right-click menu shown open on the v15 row.</p>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="wc"><div class="main">
+ <div class="pt"><div><div class="h">Warranty Configuration</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; <b>Warranty Configuration</b></div></div></div>
+ <div class="tabs"><span class="on" data-go="s6">Policies</span><span data-go="s9">Kinds</span><span data-go="s10">Rules</span></div>
+ <div class="lcard" style="position:relative">
+ <div class="tb"><div class="inp" style="width:250px"><i data-ic="search"></i><span class="ph0">Search policies...</span></div><button class="btn"><i data-ic="filter"></i>Filters</button><button class="btn"><i data-ic="cols"></i>Columns</button><span class="sp"></span><button class="btn pri"><i data-ic="plus"></i>Create</button></div>
+ <div class="dgw"><table class="dg" style="min-width:620px"><colgroup><col style="width:140px"><col style="width:160px"><col style="width:160px"><col style="width:140px"><col style="width:100px"></colgroup>
+  <thead><tr><th>Version</th><th>In force from</th><th>In force to</th><th>Status</th><th class="r">Terms</th></tr></thead>
+  <tbody><tr class="hl rowl" data-go="s7"><td><span class="lnk">v15</span></td><td class="num">01/01/2000</td><td>-</td><td><span class="pill grn">In force</span></td><td class="r num">41</td></tr></tbody></table></div>
+ <div class="menu" style="left:110px;top:118px"><div class="mi">Edit</div><div class="mi f" data-go="s8">Supersede</div><div class="sep"></div><div class="mi del">Delete</div></div>
+ <div class="pg"><span>Rows per page <span class="btn sm" style="margin-left:6px">50</span></span><span>1 - 1 of 1</span></div>
+ </div>
+</div></div></div>
+</section>
+
+<!-- ================= 7 POLICY PAGE ================= -->
+<section class="state" id="s7">
+<p class="gcap">State 7: Policy page v15. Terms tab by default; Details and History are clickable.</p>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="wc"><div class="main">
+ <div class="pt"><div><div class="h">Warranty Policy</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; Warranty Configuration &gt; <b>v15</b></div></div><button class="btn" data-go="s6"><i data-ic="left"></i>Back to warranty configuration</button></div>
+ <div class="ph"><div><div class="tl"><span class="t">v15</span><span class="pill grn">In force</span></div><div class="st">From 01/01/2000, no end date</div></div>
+  <div class="acts"><span class="pager"><button class="btn ico" disabled><i data-ic="left"></i></button>1 / 1<button class="btn ico" disabled><i data-ic="right"></i></button></span><button class="btn ico" title="More"><i data-ic="gear"></i></button><button class="btn pri" data-go="s8">Supersede</button></div></div>
+ <div class="tabs" data-tabs="pt"><span data-t="pd">Details</span><span data-t="pt" class="on">Terms<em>41</em></span><span data-t="ph">History</span></div>
+ <div data-p="pd" hidden>
+  <div class="card"><div class="hd">Period</div><div class="bd"><div class="kv"><div><div class="k">In force from</div><div class="v">01/01/2000</div></div><div><div class="k">In force to</div><div class="v">-</div></div><div><div class="k">Kinds</div><div class="v">31</div></div><div><div class="k">Terms</div><div class="v">41</div></div></div></div></div>
+  <div class="card"><div class="hd">Policy text</div><div class="bd"><div class="pre">Version 15. Warranty policy.
+1. These terms apply to the limited warranty given on products bought from the company or an authorised dealer.
+2. A valid proof of purchase is needed for every claim.
+3. ...</div></div></div>
+ </div>
+ <div data-p="pt">
+  <div class="lcard">
+  <div class="tb"><div class="inp" style="width:250px"><i data-ic="search"></i><span class="ph0">Search terms...</span></div><button class="btn"><i data-ic="filter"></i>Filters</button><button class="btn"><i data-ic="cols"></i>Columns</button></div>
+  <div class="dgw"><table class="dg" style="min-width:620px"><colgroup><col style="width:30%"><col style="width:16%"><col style="width:30%"><col style="width:24%"></colgroup>
+  <thead><tr><th>Part</th><th>Cover</th><th>Defects</th><th>Installation</th></tr></thead>
+  <tbody>
+   <tr class="grp"><td colspan="4">Water Closet</td></tr>
+   <tr><td>Ceramic Body</td><td><span class="pill grn">Lifetime</span></td><td title="Crack line, Leakage">Crack line, Leakage</td><td><span class="pill gry">Included</span></td></tr>
+   <tr><td>Flushing Fittings</td><td>5 years</td><td>All defects</td><td><span class="pill gry">Excluded</span></td></tr>
+   <tr><td>Seat Cover Soft Close</td><td>2 years</td><td>All defects</td><td><span class="pill gry">Excluded</span></td></tr>
+   <tr class="grp"><td colspan="4">Urinal Bowl</td></tr>
+   <tr><td>Ceramic Body</td><td><span class="pill grn">Lifetime</span></td><td>Crack line, Leakage</td><td><span class="pill gry">Included</span></td></tr>
+   <tr class="grp"><td colspan="4">Wash Basin</td></tr>
+   <tr><td>Ceramic Body</td><td><span class="pill grn">Lifetime</span></td><td>Crack line, Leakage</td><td><span class="pill gry">Included</span></td></tr>
+   <tr class="grp"><td colspan="4">Bathroom Furniture</td></tr>
+   <tr><td>External Surface Coating</td><td>10 years</td><td>All defects</td><td><span class="pill gry">Excluded</span></td></tr>
+   <tr class="grp"><td colspan="4">Mirror Cabinet</td></tr>
+   <tr><td>Aluminium Frame</td><td>10 years</td><td>All defects</td><td><span class="pill gry">Included</span></td></tr>
+   <tr><td>Hinges</td><td>25 years</td><td>All defects</td><td><span class="pill gry">Included</span></td></tr>
+   <tr><td>Mirror Glass</td><td>2 years</td><td>All defects</td><td><span class="pill gry">Included</span></td></tr>
+   <tr class="grp"><td colspan="4">Automatic Water Booster Pump</td></tr>
+   <tr><td>Manufacturing Defects</td><td>2 years</td><td>All defects</td><td><span class="pill gry">Excluded</span></td></tr>
+   <tr><td>PC Auto Controller</td><td>1 year</td><td>All defects</td><td><span class="pill gry">Excluded</span></td></tr>
+   <tr class="grp"><td colspan="4">Stainless Steel 304 Kitchen Sink</td></tr>
+   <tr><td>Rust Resistant</td><td>25 years</td><td>Rust</td><td><span class="pill gry">Excluded</span></td></tr>
+  </tbody></table></div>
+  <div class="pg"><span>Rows per page <span class="btn sm" style="margin-left:6px">50</span></span><span>1 - 41 of 41</span></div>
+  </div>
+ </div>
+ <div data-p="ph" hidden>
+  <div class="card"><div class="hd">History</div><div class="bd" style="padding-top:2px;padding-bottom:2px">
+   <div class="au"><div class="av">DA</div><div><div class="who">Demo Admin<span>Updated term Mirror Cabinet: Mirror Glass</span><span>05/11/2026, 3:12 pm</span></div><div class="chg"><span class="fn">Cover</span><s>1 year</s>-&gt;<b>2 years</b></div></div></div>
+   <div class="au"><div class="av">DA</div><div><div class="who">Demo Admin<span>Updated policy</span><span>02/08/2026, 10:40 am</span></div><div class="chg"><span class="fn">In force from</span><s>01/03/2026</s>-&gt;<b>01/01/2000</b></div></div></div>
+   <div class="au"><div class="av">DI</div><div><div class="who">Demo Integration<span>Created policy</span><span>01/08/2026, 9:05 am</span></div><div class="chg"><span class="fn">Version</span><s>-</s>-&gt;<b>v15</b></div></div></div>
+  </div></div>
+ </div>
+</div></div></div>
+</section>
+
+<!-- ================= 8 SUPERSEDE ================= -->
+<section class="state" id="s8">
+<p class="gcap">State 8: Supersede dialog over the policy page. Click the date field to change it; the line under it updates.</p>
+<div class="frame fix"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="wc"><div class="main">
+ <div class="pt"><div><div class="h">Warranty Policy</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; Warranty Configuration &gt; <b>v15</b></div></div><button class="btn"><i data-ic="left"></i>Back to warranty configuration</button></div>
+ <div class="ph"><div><div class="tl"><span class="t">v15</span><span class="pill grn">In force</span></div><div class="st">From 01/01/2000, no end date</div></div><div class="acts"><span class="pager"><button class="btn ico" disabled><i data-ic="left"></i></button>1 / 1<button class="btn ico" disabled><i data-ic="right"></i></button></span><button class="btn ico"><i data-ic="gear"></i></button><button class="btn pri">Supersede</button></div></div>
+ <div class="tabs"><span>Details</span><span class="on">Terms<em>41</em></span><span>History</span></div>
+</div>
+<div class="scrim"><div class="dlg" role="dialog"><div class="dh">Supersede v15<span class="xs" data-go="s7">&#10005;</span></div>
+ <div class="db">
+  <div class="fld"><label>New version</label><div class="inp">v16</div></div>
+  <div class="fld"><label>Starts on</label><div class="dp" id="sdate" style="cursor:pointer"><div class="inp"><span id="sdv">01/01/2027</span></div><button class="btn ico"><i data-ic="cal"></i></button></div></div>
+  <div class="live" id="slive">v15 closes 31/12/2026; v16 runs from 01/01/2027</div>
+ </div>
+ <div class="df"><button class="btn" data-go="s7">Cancel</button><button class="btn pri" data-go="s7">Supersede</button></div></div></div>
+</div></div>
+</section>
+
+<!-- ================= 9 KINDS ================= -->
+<section class="state" id="s9">
+<p class="gcap">State 9: Kinds tab. Click the amber count pill to filter to kinds with no rule.</p>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="wc"><div class="main">
+ <div class="pt"><div><div class="h">Warranty Configuration</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; <b>Warranty Configuration</b></div></div></div>
+ <div class="tabs"><span data-go="s6">Policies</span><span class="on" data-go="s9">Kinds</span><span data-go="s10">Rules</span></div>
+ <div style="margin-bottom:12px"><button class="pill amb" id="norule">29 of 31 kinds have no rule</button></div>
+ <div class="lcard">
+ <div class="tb"><div class="inp" style="width:250px"><i data-ic="search"></i><span class="ph0">Search kinds...</span></div><button class="btn"><i data-ic="filter"></i>Filters</button><button class="btn"><i data-ic="cols"></i>Columns</button><span class="sp"></span><button class="btn pri"><i data-ic="plus"></i>Create</button></div>
+ <div class="dgw"><table class="dg" id="kinds" style="min-width:640px"><colgroup><col style="width:34%"><col style="width:28%"><col style="width:12%"><col style="width:12%"><col style="width:14%"></colgroup>
+  <thead><tr><th>Kind</th><th>Code</th><th class="r">Rules</th><th class="r">Terms</th><th>Active</th></tr></thead>
+  <tbody>
+   <tr data-r="0"><td>Water Closet</td><td class="mut">WATER_CLOSET</td><td class="r num"><span class="dot"></span>0</td><td class="r num">3</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td>Urinal Bowl</td><td class="mut">URINAL_BOWL</td><td class="r num"><span class="dot"></span>0</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td>Wash Basin</td><td class="mut">WASH_BASIN</td><td class="r num"><span class="dot"></span>0</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td>LED Mirror</td><td class="mut">LED_MIRROR</td><td class="r num"><span class="dot"></span>0</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="1"><td>Bathroom Furniture</td><td class="mut">BATHROOM_FURNITURE</td><td class="r num">1</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="1"><td>Mirror Cabinet</td><td class="mut">MIRROR_CABINET</td><td class="r num">1</td><td class="r num">3</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td>Kitchen Mixer Tap</td><td class="mut">KITCHEN_MIXER_TAP</td><td class="r num"><span class="dot"></span>0</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td title="Automatic Water Booster Pump">Automatic Water Booster Pump</td><td class="mut" title="AUTOMATIC_WATER_BOOSTER_PUMP">AUTOMATIC_WATER_BOOSTER_PUMP</td><td class="r num"><span class="dot"></span>0</td><td class="r num">2</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td>Stop Valve</td><td class="mut">STOP_VALVE</td><td class="r num"><span class="dot"></span>0</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+   <tr data-r="0"><td>Ceramic Kitchen Sink</td><td class="mut">CERAMIC_KITCHEN_SINK</td><td class="r num"><span class="dot"></span>0</td><td class="r num">1</td><td><span class="pill grn">Active</span></td></tr>
+  </tbody></table></div>
+ <div class="pg"><span>Rows per page <span class="btn sm" style="margin-left:6px">10</span></span><span id="kpg">1 - 10 of 31</span></div>
+ </div>
+</div></div></div>
+</section>
+
+<!-- ================= 10 RULES ================= -->
+<section class="state" id="s10">
+<p class="gcap">State 10: Rules tab. Click Filters for the Kind multi-select; "Test a product" opens the tester (10b).</p>
+<div class="frame"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="wc"><div class="main">
+ <div class="pt"><div><div class="h">Warranty Configuration</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; <b>Warranty Configuration</b></div></div></div>
+ <div class="tabs"><span data-go="s6">Policies</span><span data-go="s9">Kinds</span><span class="on" data-go="s10">Rules</span></div>
+ <div class="lcard">
+ <div class="tb"><div class="inp" style="width:240px"><i data-ic="search"></i><span class="ph0">Search rules...</span></div>
+  <div class="pop"><button class="btn" id="kchip"><i data-ic="filter"></i>Filters<span class="cntb" id="kcnt" hidden>1</span></button>
+   <div class="fpop" id="kmenu" style="left:0;top:38px;display:none"><div class="fld pop"><label>Kind</label><div class="sel open"><span class="v">Bathroom Furniture, Mirror Cabinet</span><span class="xs">&#10005;</span><i data-ic="down"></i></div>
+    <div class="menu" style="left:0;right:0;top:66px;position:relative;top:4px;box-shadow:none"><div class="ms"><i data-ic="search"></i><span class="ph0">Search kinds</span></div><div class="mi"><span class="cbx on">&#10003;</span>Bathroom Furniture</div><div class="mi"><span class="cbx on">&#10003;</span>Mirror Cabinet</div><div class="mi"><span class="cbx"></span>Water Closet</div><div class="mi"><span class="cbx"></span>Wash Basin</div><div class="mi"><span class="cbx"></span>Urinal Bowl</div></div></div></div></div>
+  <button class="btn"><i data-ic="cols"></i>Columns</button><span class="sp"></span>
+  <button class="btn" data-go="s10t"><i data-ic="flask"></i>Test a product</button><button class="btn pri"><i data-ic="plus"></i>Create</button></div>
+ <div class="dgw"><table class="dg" style="min-width:620px"><colgroup><col style="width:24%"><col style="width:16%"><col style="width:46%"><col style="width:14%"></colgroup>
+  <thead><tr><th>Kind</th><th>Match</th><th>Value</th><th class="r">Priority</th></tr></thead>
+  <tbody>
+   <tr><td>Bathroom Furniture</td><td>Series</td><td>Demo Series A</td><td class="r num">0</td></tr>
+   <tr><td>Mirror Cabinet</td><td>Model list</td><td title="DEMO-MCB-80, DEMO-MCB-60, DEMO-MCB-81, DEMO-MCB-61, DEMO-MCB-50">DEMO-MCB-80, DEMO-MCB-60, DEMO-MCB-81, DEMO-MCB-61, DEMO-MCB-50</td><td class="r num">0</td></tr>
+  </tbody></table></div>
+ <div class="pg"><span>Rows per page <span class="btn sm" style="margin-left:6px">50</span></span><span>1 - 2 of 2</span></div>
+ </div>
+ <div style="height:240px"></div>
+</div></div></div>
+</section>
+
+<section class="state" id="s10t">
+<p class="gcap">State 10b: Test a product dialog. Pick by code or name; the answer shows below the picker.</p>
+<div class="frame fix"><div class="topbar"><div class="srch"><i data-ic="search"></i>Search menu...</div></div><div class="screen" data-side="wc"><div class="main">
+ <div class="pt"><div><div class="h">Warranty Configuration</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; <b>Warranty Configuration</b></div></div></div>
+ <div class="tabs"><span>Policies</span><span>Kinds</span><span class="on">Rules</span></div>
+</div>
+<div class="scrim"><div class="dlg" role="dialog"><div class="dh">Test a product<span class="xs" data-go="s10">&#10005;</span></div>
+ <div class="db">
+  <div class="fld pop"><label>Product</label><div class="sel" id="tpick" style="cursor:pointer"><i data-ic="search"></i><span class="v">DEMO-MCB-80 Demo mirror cabinet 80</span><span class="xs">&#10005;</span></div>
+   <div class="menu" id="tmenu" style="left:0;right:0;top:66px;display:none"><div class="ms"><i data-ic="search"></i>80</div><div class="mi f" data-pick="mc">DEMO-MCB-80<span class="sub2">Demo mirror cabinet 80</span></div><div class="mi" data-pick="wc">DEMO-WC-80<span class="sub2">Demo water closet 80</span></div></div></div>
+  <div class="res" id="tres"><span class="k">Lands in</span><span id="tk">Mirror Cabinet</span><span class="k">Deciding rule</span><span id="tr">Model list (priority 0)</span></div>
+ </div>
+ <div class="df"><button class="btn" data-go="s10">Close</button></div></div></div>
+</div></div>
+</section>
+
+<!-- ================= 11 MOBILE ================= -->
+<section class="state" id="s11">
+<p class="gcap">State 11: Service job SV26/11-0001 at 375 px. Cards stack; the Products and Warranty tables scroll inside their card; the page does not scroll sideways.</p>
+<div class="phone"><div class="mbar"><span>Sorento</span><span style="display:flex;gap:14px"><i data-ic="menu"></i><i data-ic="bell"></i></span></div><div class="main" data-job="full" data-phone="1"></div></div>
+</section>
+
+<details class="map"><summary>Element -&gt; reused component (paths under sorento_crm_frontend/, each checked to exist)</summary>
+<div class="dgw"><table><colgroup><col style="width:34%"><col style="width:66%"></colgroup><thead><tr><th>Element</th><th>Reuses</th></tr></thead><tbody>
+<tr><td>Job page: header, cards Customer, Site, Visit, tabs; new Products + Warranty cards sit here</td><td><code>app/(protected)/after-sales/service-jobs/components/ServiceJobDetail.tsx</code></td></tr>
+<tr><td>Job status pill (Confirmed, Proposed, ...)</td><td><code>app/(protected)/after-sales/service-jobs/components/ServiceJobStatusPill.tsx</code></td></tr>
+<tr><td>Service Jobs list; new Warranty column + Warranty filter</td><td><code>app/(protected)/after-sales/service-jobs/components/ServiceJobsList.tsx</code></td></tr>
+<tr><td>Add product / Edit dialog (same dialog pattern as the job form)</td><td><code>app/(protected)/after-sales/service-jobs/components/ServiceJobFormDialog.tsx</code> (pattern), <code>components/ui/dialog.tsx</code> (incl. <code>DialogBody</code>)</td></tr>
+<tr><td>Record header: pager, gear, one main button</td><td><code>components/common/DetailActions.tsx</code>, <code>components/common/RecordNavigation.tsx</code>, <code>components/common/DetailActionsMenu.tsx</code></td></tr>
+<tr><td>Policy page header</td><td><code>components/common/PageHeader.tsx</code></td></tr>
+<tr><td>Line tabs (Details | History; Policies | Kinds | Rules; Details | Terms | History)</td><td><code>components/ui/tabs.tsx</code></td></tr>
+<tr><td>Cards (Products, Warranty, Period, Policy text)</td><td><code>components/ui/card.tsx</code></td></tr>
+<tr><td>DataGrid (list, Products, Warranty, Policies, Terms, Kinds, Rules)</td><td><code>components/ui/data-grid.tsx</code>, <code>components/ui/data-grid-table.tsx</code></td></tr>
+<tr><td>Toolbar (Search, Filters, Columns, Create)</td><td><code>components/ui/data-grid-list-toolbar.tsx</code>, <code>components/common/ListSearchInput.tsx</code>, <code>components/ui/data-grid-column-visibility.tsx</code></td></tr>
+<tr><td>Grid pager "1 - 6 of 6"</td><td><code>components/ui/data-grid-pagination.tsx</code></td></tr>
+<tr><td>Product picker, Kind, Defect selects (clearable)</td><td><code>components/common/SearchableSelect.tsx</code></td></tr>
+<tr><td>Warranty filter (list), Kind filter (Rules)</td><td><code>components/common/SearchableMultiSelect.tsx</code> + <code>lib/list-filters/multiValue.ts</code> (as the list's Status filter)</td></tr>
+<tr><td>Answer, summary, status and count pills</td><td><code>components/ui/badge.tsx</code></td></tr>
+<tr><td>Right-click menus (product line Edit/Remove; Policies; Kinds)</td><td><code>components/ui/context-menu.tsx</code></td></tr>
+<tr><td>Remove / Delete countdown, no confirm</td><td><code>components/common/DeferredActionButton.tsx</code></td></tr>
+<tr><td>Purchase date, Starts on</td><td><code>components/ui/date-picker.tsx</code></td></tr>
+<tr><td>History tabs</td><td><code>components/audit/AuditTrail.tsx</code></td></tr>
+</tbody></table></div></details>
+</div>
+
+<script>
+(function(){
+var IC={search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',filter:'<path d="M3 5h18l-7 8v6l-4-2v-4z"/>',cols:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',plus:'<path d="M12 5v14M5 12h14"/>',gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',down:'<path d="m6 9 6 6 6-6"/>',up:'<path d="m6 15 6-6 6 6"/>',left:'<path d="m15 18-6-6 6-6"/>',right:'<path d="m9 18 6-6-6-6"/>',flask:'<path d="M9 3h6M10 3v6L4 20h16L14 9V3"/>',grid:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',box:'<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',book:'<path d="M2 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H2zM22 4h-7a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h8z"/>',alert:'<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',wrench:'<path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L3 11l8-8z"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',file:'<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',dl:'<path d="M12 4v11M7 10l5 5 5-5M4 20h16"/>',refresh:'<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/>',menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',bell:'<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4"/>'};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+function td(v,cls){return '<td'+(cls?' class="'+cls+'"':'')+' title="'+esc(v)+'">'+esc(v)+'</td>';}
+function fl(k,v,html){return '<div class="fl"><span class="k">'+k+'</span><span class="v">'+(html||esc(v))+'</span></div>';}
+var PILL={'Covered':'grn','Expired':'red','Defect not covered':'red','No term':'amb','Unknown':'gry','Partly covered':'amb','Not covered':'red'};
+function pill(a){return a==='-'?'-':'<span class="pill '+PILL[a]+'">'+a+'</span>';}
+var PRODUCTS=[['DEMO-WC-02','Demo one piece water closet','Water Closet','15/03/2020','Leakage'],['DEMO-PMP-05','Demo booster pump','Automatic Water Booster Pump','-','-']];
+var WTY=[['DEMO-WC-02','Ceramic body','Covered','-','Lifetime cover on crack line and leakage'],['DEMO-WC-02','Flushing fittings','Expired','15/03/2025','5 years from 15/03/2020'],['DEMO-WC-02','Seat cover','Expired','15/03/2022','2 years from 15/03/2020'],['DEMO-PMP-05','Manufacturing defects','Unknown','-','Purchase date not entered'],['DEMO-PMP-05','PC auto controller','Unknown','-','Purchase date not entered']];
+function jobPage(empty,menu){
+ var J=empty?{no:'SV26/11-0002',st:'Proposed',stc:'gry',cust:'Demo Customer Two',contact:'Demo Contact Two',phone:'017-000 0512',cmp:'-',prob:'Basin tap dripping',a1:'No 12, Jalan Contoh 5',pc:'40000',city:'Shah Alam',sched:'-',tech:'-',agreed:'-',pos:'2 / 6',step:'Confirm date'}:{no:'SV26/11-0001',st:'Confirmed',stc:'blu',cust:'Demo Customer One',contact:'Demo Contact One',phone:'012-345 6789',cmp:'CMP2026-0101',prob:'Water closet leaking at the base',a1:'No 8, Jalan Contoh 3',pc:'43000',city:'Kajang',sched:'14/11/2026, 10:00 am',tech:'Demo Technician A',agreed:'Customer on WhatsApp',pos:'1 / 6',step:'On the way'};
+ var h='<div class="pt"><div><div class="h">Service Job</div><div class="crumb">Dashboards &gt; After-Sales Service &gt; Service Jobs &gt; <b>Service Job</b></div></div><button class="btn" data-go="s5"><i data-ic="left"></i>Back to service jobs</button></div>';
+ h+='<div class="ph"><div><div class="tl"><span class="t">'+J.no+'</span><span class="pill '+J.stc+'">'+J.st+'</span></div><div class="st">'+J.cust+'</div></div><div class="acts"><span class="pager"><button class="btn ico" disabled><i data-ic="left"></i></button>'+J.pos+'<button class="btn ico"><i data-ic="right"></i></button></span><button class="btn ico" title="Service job actions"><i data-ic="gear"></i></button><button class="btn pri">'+J.step+'</button></div></div>';
+ h+='<div class="tabs" data-tabs="j"><span data-t="d" class="on">Details</span><span data-t="h">History</span></div><div data-p="d">';
+ h+='<div class="card"><div class="hd">Customer</div><div class="bd">'+fl('Customer',J.cust)+fl('Contact on site',J.contact)+fl('Contact phone',J.phone)+fl('Related complaint','',J.cmp==='-'?'-':'<a class="bl" href="#s2">'+J.cmp+'</a>')+fl('Problem',J.prob)+'</div></div>';
+ h+='<div class="card"><div class="hd">Site</div><div class="bd">'+fl('Address line 1',J.a1)+fl('Address line 2','-')+fl('Postcode',J.pc)+fl('City',J.city)+fl('State','Selangor')+fl('Country','Malaysia')+'</div></div>';
+ h+='<div class="card"><div class="hd">Visit</div><div class="bd">'+fl('Scheduled',J.sched)+fl('Technician',J.tech)+fl('Agreed by',J.agreed)+fl('Arrived','-')+fl('Completed','-')+fl('Verified','-')+'</div></div>';
+ h+='<div class="card"><div class="hd">Products<button class="btn sm" data-go="s3" data-mode="add"><i data-ic="plus"></i>Add product</button></div>';
+ if(empty){h+='<div class="bd"><div class="empty"><b>No products yet.</b><span>Add the product with the fault.</span></div></div></div>';
+  h+='<div class="card"><div class="hd">Warranty</div><div class="bd"><div class="empty"><b>No warranty answers</b><span>Add a product to see the warranty.</span></div></div></div>';}
+ else{
+  h+='<div class="bd np" style="position:relative"><div class="dgw"><table class="dg prods" style="min-width:780px"><colgroup><col style="width:130px"><col style="width:230px"><col style="width:220px"><col style="width:120px"><col style="width:120px"></colgroup><thead><tr><th>Product code</th><th>Description</th><th>Kind</th><th>Purchase date</th><th>Defect</th></tr></thead><tbody>';
+  PRODUCTS.forEach(function(p,i){h+='<tr data-pl="'+i+'"'+(menu&&i===0?' class="hl"':'')+'>'+td(p[0])+td(p[1])+td(p[2])+td(p[3],'num')+td(p[4])+'</tr>';});
+  h+='</tbody></table></div>';
+  if(menu)h+='<div class="menu pmenu" style="left:120px;top:70px"><div class="mi" data-go="s3" data-mode="edit">Edit</div><div class="sep"></div><div class="mi del" data-rm>Remove</div></div>';
+  h+='</div></div>';
+  h+='<div class="card"><div class="hd">Warranty</div><div class="bd np"><div class="dgw"><table class="dg" style="min-width:800px"><colgroup><col style="width:130px"><col style="width:180px"><col style="width:150px"><col style="width:110px"><col style="width:230px"></colgroup><thead><tr><th>Product</th><th>Part</th><th>Answer</th><th>Until</th><th>Reason</th></tr></thead><tbody>';
+  WTY.forEach(function(w){h+='<tr>'+td(w[0])+td(w[1])+'<td>'+pill(w[2])+'</td>'+td(w[3],'num')+td(w[4])+'</tr>';});
+  h+='</tbody></table></div></div></div>';}
+ h+='</div><div data-p="h" hidden><div class="card"><div class="hd">History</div><div class="bd" style="padding-top:2px;padding-bottom:2px">';
+ h+='<div class="au"><div class="av">DA</div><div><div class="who">Demo Agent One<span>Added product DEMO-WC-02</span><span>13/11/2026, 9:20 am</span></div><div class="chg"><span class="fn">Purchase date</span><s>-</s>-&gt;<b>15/03/2020</b></div></div></div>';
+ h+='<div class="au"><div class="av">DA</div><div><div class="who">Demo Agent One<span>Created service job</span><span>13/11/2026, 9:05 am</span></div><div class="chg"><span class="fn">Status</span><s>-</s>-&gt;<b>Proposed</b></div></div></div>';
+ h+='</div></div></div>';
+ return h;}
+document.querySelectorAll('[data-job]').forEach(function(m){m.innerHTML=jobPage(m.getAttribute('data-job')==='empty',m.getAttribute('data-menu')==='1');});
+/* list */
+var JOBS=[['SV26/11-0002','Demo Customer Two','Shah Alam','Proposed','gry','-','-','-','-','s4'],['SV26/11-0001','Demo Customer One','Kajang','Confirmed','blu','14/11/2026, 10:00 am','Demo Technician A','CMP2026-0101','Partly covered','s2'],['SV26/11-0003','Demo Customer Three','Klang','On the way','blu','13/11/2026, 2:00 pm','Demo Technician B','-','Covered',''],['SV26/11-0004','Demo Customer Four','Puchong','Arrived','amb','13/11/2026, 11:00 am','Demo Technician A','CMP2026-0098','Not covered',''],['SV26/10-0012','Demo Customer Five','Seremban','Completed','grn','30/10/2026, 9:30 am','Demo Technician B','-','Unknown',''],['SV26/10-0009','Demo Customer Six','Kajang','Verified','grn','28/10/2026, 3:00 pm','Demo Technician A','CMP2026-0090','Covered','']];
+var jb='';JOBS.forEach(function(j){jb+='<tr class="rowl" data-w="'+j[8]+'"'+(j[9]?' data-go="'+j[9]+'"':'')+'><td title="'+j[0]+'"><span class="lnk">'+j[0]+'</span></td>'+td(j[1])+td(j[2])+'<td><span class="pill '+j[4]+'">'+j[3]+'</span></td>'+td(j[5],'num')+td(j[6])+td(j[7])+'<td>'+pill(j[8])+'</td></tr>';});
+document.getElementById('jobs').innerHTML=jb;
+var side=document.getElementById('side').innerHTML;
+document.querySelectorAll('[data-side]').forEach(function(s){s.insertAdjacentHTML('afterbegin',side);var k=s.getAttribute('data-side');var on=s.querySelector('.side [data-k="'+k+'"]');if(on)on.classList.add('on');});
+document.querySelectorAll('i[data-ic]').forEach(function(i){i.outerHTML='<svg class="i" viewBox="0 0 24 24">'+IC[i.getAttribute('data-ic')]+'</svg>';});
+function go(id){document.querySelectorAll('.state').forEach(function(s){s.classList.toggle('on',s.id===id);});document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-go')===id);});if(id==='s5'){var f5=document.getElementById('fpop');if(f5)f5.style.display='grid';}if(id==='s2')document.querySelectorAll('#s2 .pmenu').forEach(function(m){m.style.display='block';});if(location.hash!=='#'+id)history.replaceState(null,'','#'+id);}
+document.addEventListener('click',function(e){var g=e.target.closest('[data-go]');if(!g||e.target.closest('a'))return;
+ if(g.getAttribute('data-mode')){var ed=g.getAttribute('data-mode')==='edit';document.getElementById('apt').textContent=ed?'Edit product':'Add product';document.getElementById('apb').textContent=ed?'Save':'Add product';if(ed){document.getElementById('ppv').textContent='DEMO-WC-02 Demo one piece water closet';document.getElementById('pmenu').style.display='none';}else{document.getElementById('ppv').innerHTML='<span class="ph0">Search code or name</span>';document.getElementById('pmenu').style.display='block';}}
+ go(g.getAttribute('data-go'));window.scrollTo(0,0);});
+/* tabs */
+document.querySelectorAll('[data-tabs]').forEach(function(t){t.addEventListener('click',function(e){var s=e.target.closest('[data-t]');if(!s)return;var root=t.parentNode;t.querySelectorAll('[data-t]').forEach(function(x){x.classList.toggle('on',x===s);});root.querySelectorAll(':scope>[data-p]').forEach(function(p){p.hidden=p.getAttribute('data-p')!==s.getAttribute('data-t');});});});
+/* product line right-click + remove countdown */
+document.querySelectorAll('[data-menu="1"]').forEach(function(m){var menu=m.querySelector('.pmenu');var tgt=null;
+ m.querySelector('.prods').addEventListener('contextmenu',function(e){var tr=e.target.closest('tr[data-pl]');if(!tr)return;e.preventDefault();tgt=tr;var box=menu.parentNode.getBoundingClientRect();menu.style.left=(e.clientX-box.left)+'px';menu.style.top=(e.clientY-box.top)+'px';menu.style.display='block';m.querySelectorAll('tr[data-pl]').forEach(function(r){r.classList.toggle('hl',r===tr);});});
+ tgt=m.querySelector('tr[data-pl="0"]');
+ menu.querySelector('[data-rm]').addEventListener('click',function(){menu.style.display='none';var tr=tgt;var last=tr.lastElementChild;var keep=last.innerHTML;var n=10;tr.classList.add('rm');last.classList.add('cd');
+  function paint(){last.innerHTML='<button class="btn sm">Removing in '+n+'s, Cancel</button>';}paint();
+  var t=setInterval(function(){n--;if(n<=0){clearInterval(t);tr.style.display='none';return;}paint();},1000);
+  last.querySelector('button')&&last.addEventListener('click',function h(){clearInterval(t);tr.classList.remove('rm');last.classList.remove('cd');last.innerHTML=keep;last.removeEventListener('click',h);});});
+ document.addEventListener('click',function(e){if(!menu.contains(e.target)&&!e.target.closest('[data-go]'))menu.style.display='none';});});
+/* add product picker */
+var PP={wc2:['DEMO-WC-02 Demo one piece water closet','Water Closet'],wc7:['DEMO-WC-07 Demo wall hung water closet','Water Closet'],pmp:['DEMO-PMP-05 Demo booster pump','Automatic Water Booster Pump']};
+var pm=document.getElementById('pmenu');document.getElementById('ppick').addEventListener('click',function(){pm.style.display=pm.style.display==='none'?'block':'none';});
+pm.addEventListener('click',function(e){var p=e.target.closest('[data-pp]');if(!p)return;var v=PP[p.getAttribute('data-pp')];document.getElementById('ppv').textContent=v[0];document.getElementById('pkind').textContent=v[1];pm.style.display='none';});
+var dm=document.getElementById('dmenu');document.getElementById('dpick').addEventListener('click',function(e){if(e.target.id==='dclr'){document.getElementById('dv').innerHTML='<span class="ph0">Select a defect</span>';return;}pm.style.display='none';dm.style.display=dm.style.display==='none'?'block':'none';});
+dm.addEventListener('click',function(e){var d=e.target.closest('[data-dd]');if(!d)return;e.stopPropagation();document.getElementById('dv').textContent=d.textContent;dm.querySelectorAll('[data-dd]').forEach(function(x){x.classList.toggle('f',x===d);});dm.style.display='none';});
+/* list warranty filter */
+var sel={};var fp=document.getElementById('fpop');document.getElementById('fbtn').addEventListener('click',function(){fp.style.display=fp.style.display==='none'?'grid':'none';});
+document.addEventListener('click',function(e){if(!fp.contains(e.target)&&!e.target.closest('#fbtn')&&!e.target.closest('#nav'))fp.style.display='none';});
+function applyW(){var ks=Object.keys(sel).filter(function(k){return sel[k];});var n=0;document.querySelectorAll('#jobs tr').forEach(function(r){var show=!ks.length||ks.indexOf(r.getAttribute('data-w'))>=0;r.hidden=!show;if(show)n++;});
+ document.getElementById('jpg').textContent=(n?'1':'0')+' - '+n+' of '+n;document.getElementById('fcnt').hidden=!ks.length;
+ document.getElementById('wfv').innerHTML=ks.length?esc(ks.map(function(k){return k==='-'?'No products':k;}).join(', ')):'<span class="ph0">All warranty answers</span>';
+ document.querySelectorAll('#wmenu [data-wf]').forEach(function(m){var on=!!sel[m.getAttribute('data-wf')];var c=m.querySelector('.cbx');c.classList.toggle('on',on);c.innerHTML=on?'&#10003;':'';});}
+document.getElementById('wmenu').addEventListener('click',function(e){var m=e.target.closest('[data-wf]');if(!m)return;var k=m.getAttribute('data-wf');sel[k]=!sel[k];applyW();});
+document.getElementById('wclr').addEventListener('click',function(){sel={};applyW();});
+/* supersede live line */
+function prevDay(d){var p=d.split('/');var dt=new Date(+p[2],+p[1]-1,+p[0]);dt.setDate(dt.getDate()-1);function z(n){return(n<10?'0':'')+n;}return z(dt.getDate())+'/'+z(dt.getMonth()+1)+'/'+dt.getFullYear();}
+var ds=['01/01/2027','01/07/2027'],di=0;document.getElementById('sdate').addEventListener('click',function(){di=1-di;var d=ds[di];document.getElementById('sdv').textContent=d;document.getElementById('slive').textContent='v15 closes '+prevDay(d)+'; v16 runs from '+d;});
+/* kinds filter */
+var nr=document.getElementById('norule');nr.addEventListener('click',function(){var on=nr.classList.toggle('act');document.querySelectorAll('#kinds tbody tr').forEach(function(r){r.hidden=on&&r.getAttribute('data-r')!=='0';});document.getElementById('kpg').textContent=on?'1 - 10 of 29':'1 - 10 of 31';});
+/* rules kind filter */
+var kc=document.getElementById('kchip'),km=document.getElementById('kmenu');kc.addEventListener('click',function(){var o=km.style.display==='none';km.style.display=o?'grid':'none';document.getElementById('kcnt').hidden=!o;});
+/* tester */
+var tp=document.getElementById('tpick'),tm=document.getElementById('tmenu');tp.addEventListener('click',function(){tm.style.display=tm.style.display==='none'?'block':'none';});
+tm.addEventListener('click',function(e){var p=e.target.closest('[data-pick]');if(!p)return;var mc=p.getAttribute('data-pick')==='mc';tp.querySelector('.v').textContent=mc?'DEMO-MCB-80 Demo mirror cabinet 80':'DEMO-WC-80 Demo water closet 80';tm.style.display='none';document.getElementById('tk').textContent=mc?'Mirror Cabinet':'-';document.getElementById('tr').textContent=mc?'Model list (priority 0)':'No rule matches';});
+var h=location.hash.slice(1);go(document.getElementById(h)&&document.getElementById(h).classList.contains('state')?h:'s2');
+})();
+</script>
+</body></html>
