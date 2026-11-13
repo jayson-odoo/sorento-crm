@@ -17,11 +17,12 @@ warning rule (D2):
     for each PRODUCT line:
       class_label not in guarded             -> None
       no combo chosen and host has none      -> "No package defined"
-      no combo chosen and host has combos    -> "No package chosen"
+      no combo chosen and host has combos    -> None (ala carte, PRICETAG-ALA-CARTE AC-17)
       otherwise, anything the chosen combo
       asks for that no part row answers      -> "Missing: <codes or groups>"
 
-`DUPLICATE_LINE` is untouched, and a product_set line keeps its existing path -
+`DUPLICATE_LINE` now refuses a repeated SET only (PRICETAG-ALA-CARTE), and a product_set
+line keeps its existing path -
 parts are a combo fact on a product line and a set line never grows any.
 """
 from __future__ import annotations
@@ -195,13 +196,13 @@ def test_submit_package_warning_texts(db: Session):
     assert request.status == STATUS_NEW, "submit is never refused for a package reason"
     assert _line_warnings(request) == ["No package defined"]
 
-    # 2. Guarded class, host HAS combos, none chosen.
+    # 2. Guarded class, host HAS combos, none chosen: ala carte, no warning (AC-17).
     cabinet = _product(db, "SRTBF11835", class_label="Bathroom Furniture")
     mirror = _product(db, "SRTMR502-BL")
     top = _product(db, "SRTTT800")
     _combo(db, cabinet, "3 in 1", [(mirror, None), (top, None)])
     request = _submit(db, contact, [{"line_type": "product", "product_id": cabinet.id}])
-    assert _line_warnings(request) == ["No package chosen"]
+    assert _line_warnings(request) == [None]
 
     # 3. Combo chosen, the mirror row removed: the missing part is NAMED by its
     #    code, because "something is missing" is not actionable.
@@ -509,28 +510,21 @@ def test_show_promo_price_is_never_true_at_plain_list(db: Session):
 # --------------------------------------------------------------------------- AC-S2-10
 
 
-def test_duplicate_line_still_refused(db: Session):
-    """Softening the package guard does not soften this one.
-
-    The same product twice on one request is still a mistake - one tag per
-    product per request is what `uq_ptag_line_request_product` is for, and the
-    refusal must stay a named `DUPLICATE_LINE`, never a raw integrity 500.
+def test_repeated_product_is_accepted(db: Session):
+    """PRICETAG-ALA-CARTE AC-11: the same product twice on one request is two
+    lines (ala carte twice included), never a 422 and never a raw integrity 500.
     """
     contact = _contact(db)
     product = _product(db, "SRTBF11834", class_label="Bathroom Furniture")
 
-    with pytest.raises(Exception) as exc_info:
-        _submit(
-            db,
-            contact,
-            [
-                {"line_type": "product", "product_id": product.id},
-                {"line_type": "product", "product_id": product.id},
-            ],
-        )
+    request = _submit(
+        db,
+        contact,
+        [
+            {"line_type": "product", "product_id": product.id},
+            {"line_type": "product", "product_id": product.id},
+        ],
+    )
 
-    error = exc_info.value
-    assert getattr(error, "status_code", None) == 422
-    detail = getattr(error, "detail", None)
-    code = detail.get("code") if isinstance(detail, dict) else None
-    assert code == "DUPLICATE_LINE"
+    assert request.status == STATUS_NEW
+    assert [line.product_id for line in request.lines] == [product.id, product.id]
